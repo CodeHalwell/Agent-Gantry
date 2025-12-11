@@ -40,7 +40,7 @@ class ConversationContext(BaseModel):
 
     # Permission context
     user_capabilities: list[ToolCapability] = Field(
-        default_factory=lambda: list(ToolCapability)
+        default_factory=lambda: [cap for cap in ToolCapability]
     )
     require_confirmation_for: list[ToolCapability] = Field(default_factory=list)
 

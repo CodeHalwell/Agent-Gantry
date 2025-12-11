@@ -38,7 +38,7 @@ class ConversationContextManager:
         self._tools_used: list[str] = []
         self._tools_failed: list[str] = []
         self._conversation_summary: str | None = None
-        self._user_capabilities = user_capabilities or list(ToolCapability)
+        self._user_capabilities = user_capabilities or [cap for cap in ToolCapability]
 
     def add_message(self, role: str, content: str) -> None:
         """
