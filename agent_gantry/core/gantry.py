@@ -6,11 +6,15 @@ Primary entry point for the Agent-Gantry library.
 
 from __future__ import annotations
 
+import uuid
+from time import perf_counter
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
 from agent_gantry.schema.config import AgentGantryConfig
-from agent_gantry.schema.query import RetrievalResult, ToolQuery
+from agent_gantry.schema.query import RetrievalResult, ScoredTool, ToolQuery
 from agent_gantry.schema.tool import ToolCapability, ToolDefinition
 
 if TYPE_CHECKING:
@@ -57,8 +61,8 @@ class AgentGantry:
             telemetry: Custom telemetry adapter
         """
         self._config = config or AgentGantryConfig()
-        self._vector_store = vector_store
-        self._embedder = embedder
+        self._vector_store = vector_store or InMemoryVectorStore()
+        self._embedder = embedder or SimpleEmbedder()
         self._reranker = reranker
         self._telemetry = telemetry
         self._pending_tools: list[ToolDefinition] = []
@@ -135,8 +139,259 @@ class AgentGantry:
 
     def _build_parameters_schema(self, func: Callable[..., Any]) -> dict[str, Any]:
         """Build JSON Schema for function parameters."""
-        import inspect
         return build_parameters_schema(func)
+
+    async def _ensure_initialized(self) -> None:
+        """Initialize backing services once."""
+        if not self._initialized:
+            await self._vector_store.initialize()
+            self._initialized = True
+
+    async def add_tool(self, tool: ToolDefinition) -> None:
+        """
+        Add a tool definition directly.
+
+        Args:
+            tool: The tool definition to add
+        """
+        await self._ensure_initialized()
+        embedding = await self._embedder.embed_text(self._tool_to_text(tool))
+        await self._vector_store.add_tools([tool], [embedding], upsert=True)
+
+    async def sync(self) -> int:
+        """
+        Sync pending registrations to vector store.
+
+        Returns:
+            Number of tools synced
+        """
+        if not self._pending_tools:
+            return 0
+
+        await self._ensure_initialized()
+        texts = [self._tool_to_text(t) for t in self._pending_tools]
+        embeddings = await self._embedder.embed_batch(texts)
+        count = await self._vector_store.add_tools(self._pending_tools, embeddings, upsert=True)
+        self._pending_tools = []
+        return count
+
+    async def retrieve(self, query: ToolQuery) -> RetrievalResult:
+        """
+        Core semantic routing function.
+
+        Args:
+            query: The tool query with context and filters
+
+        Returns:
+            RetrievalResult with scored tools
+        """
+        await self._ensure_initialized()
+        if self._config.auto_sync:
+            await self.sync()
+
+        overall_start = perf_counter()
+        embed_start = perf_counter()
+        query_vector = await self._embedder.embed_text(query.context.query)
+        query_embedding_time_ms = (perf_counter() - embed_start) * 1000
+
+        filters: dict[str, Any] | None = None
+        if query.namespaces:
+            filters = {"namespace": query.namespaces}
+
+        search_start = perf_counter()
+        raw_results = await self._vector_store.search(
+            query_vector,
+            limit=query.limit,
+            filters=filters,
+            score_threshold=query.score_threshold,
+        )
+        vector_search_time_ms = (perf_counter() - search_start) * 1000
+
+        scored: list[ScoredTool] = []
+        for tool, score in raw_results:
+            if query.exclude_deprecated and tool.deprecated:
+                continue
+            if query.namespaces and tool.namespace not in query.namespaces:
+                continue
+            if query.required_capabilities and not all(
+                cap in tool.capabilities for cap in query.required_capabilities
+            ):
+                continue
+            if query.excluded_capabilities and any(
+                cap in tool.capabilities for cap in query.excluded_capabilities
+            ):
+                continue
+            if query.sources and tool.source not in query.sources:
+                continue
+            scored.append(ScoredTool(tool=tool, semantic_score=score))
+
+        scored.sort(key=lambda s: s.final_score, reverse=True)
+        scored = scored[: query.limit]
+
+        total_time_ms = (perf_counter() - overall_start) * 1000
+        return RetrievalResult(
+            tools=scored,
+            query_embedding_time_ms=query_embedding_time_ms,
+            vector_search_time_ms=vector_search_time_ms,
+            rerank_time_ms=None,
+            total_time_ms=total_time_ms,
+            candidate_count=len(raw_results),
+            filtered_count=len(scored),
+            trace_id=str(uuid.uuid4()),
+        )
+
+    async def retrieve_tools(
+        self,
+        query: str,
+        limit: int = 5,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        """
+        Convenience wrapper: returns OpenAI-compatible schemas.
+
+        Args:
+            query: The natural language query
+            limit: Maximum number of tools to return
+            **kwargs: Additional query parameters
+
+        Returns:
+            List of OpenAI-compatible tool schemas
+        """
+        from agent_gantry.schema.query import ConversationContext, ToolQuery
+
+        context = ConversationContext(query=query)
+        tool_query = ToolQuery(context=context, limit=limit, **kwargs)
+        result = await self.retrieve(tool_query)
+        return result.to_openai_tools()
+
+    async def execute(self, call: ToolCall) -> ToolResult:
+        """
+        Execute a tool call with full protections.
+
+        Args:
+            call: The tool call to execute
+
+        Returns:
+            Result of the tool execution
+        """
+        raise NotImplementedError("Execution not yet implemented")
+
+    async def execute_batch(self, batch: BatchToolCall) -> BatchToolResult:
+        """
+        Execute multiple tool calls.
+
+        Args:
+            batch: The batch of tool calls
+
+        Returns:
+            Results of all tool executions
+        """
+        raise NotImplementedError("Batch execution not yet implemented")
+
+    def serve_mcp(self, transport: str = "stdio") -> None:
+        """
+        Start serving as an MCP server.
+
+        Args:
+            transport: Transport type ("stdio" or "sse")
+        """
+        raise NotImplementedError("MCP server not yet implemented")
+
+    def serve_a2a(self, host: str = "0.0.0.0", port: int = 8080) -> None:
+        """
+        Start serving as an A2A agent.
+
+        Args:
+            host: Host to bind to
+            port: Port to listen on
+        """
+        raise NotImplementedError("A2A server not yet implemented")
+
+    @property
+    def tool_count(self) -> int:
+        """Return the number of registered tools."""
+        return len(self._tool_handlers)
+
+    async def get_tool(
+        self, name: str, namespace: str = "default"
+    ) -> ToolDefinition | None:
+        """
+        Get a tool by name.
+
+        Args:
+            name: Tool name
+            namespace: Tool namespace
+
+        Returns:
+            The tool definition if found
+        """
+        await self._ensure_initialized()
+        if self._config.auto_sync:
+            await self.sync()
+        return await self._vector_store.get_by_name(name, namespace)
+
+    async def list_tools(
+        self,
+        namespace: str | None = None,
+    ) -> list[ToolDefinition]:
+        """
+        List all registered tools.
+
+        Args:
+            namespace: Filter by namespace
+
+        Returns:
+            List of tool definitions
+        """
+        await self._ensure_initialized()
+        if self._config.auto_sync:
+            await self.sync()
+        return await self._vector_store.list_all(namespace=namespace)
+
+    async def delete_tool(self, name: str, namespace: str = "default") -> bool:
+        """
+        Delete a tool.
+
+        Args:
+            name: Tool name
+            namespace: Tool namespace
+
+        Returns:
+            True if tool was deleted
+        """
+        await self._ensure_initialized()
+        return await self._vector_store.delete(name, namespace)
+
+    async def health_check(self) -> dict[str, bool]:
+        """
+        Check health of all components.
+
+        Returns:
+            Dictionary of component health status
+        """
+        import inspect
+
+        await self._ensure_initialized()
+        vector_store_ok = await self._vector_store.health_check()
+        embedder_ok = await self._embedder.health_check()
+        telemetry_ok = False
+        if self._telemetry is not None:
+            health = getattr(self._telemetry, "health_check", None)
+            if callable(health):
+                result = health()
+                telemetry_ok = await result if inspect.isawaitable(result) else bool(result)
+            else:
+                telemetry_ok = True
+        return {
+            "vector_store": vector_store_ok,
+            "embedder": embedder_ok,
+            "telemetry": telemetry_ok,
+        }
+
+    def _tool_to_text(self, tool: ToolDefinition) -> str:
+        """Flatten tool metadata into a text string for embedding."""
+        tags = " ".join(tool.tags)
+        return f"{tool.name} {tool.namespace} {tool.description} {tags} {' '.join(tool.examples)}"
 
 
 def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
@@ -182,174 +437,3 @@ def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
         "properties": properties,
         "required": required,
     }
-    async def add_tool(self, tool: ToolDefinition) -> None:
-        """
-        Add a tool definition directly.
-
-        Args:
-            tool: The tool definition to add
-        """
-        self._pending_tools.append(tool)
-
-    async def sync(self) -> int:
-        """
-        Sync pending registrations to vector store.
-
-        Returns:
-            Number of tools synced
-        """
-        if not self._pending_tools:
-            return 0
-
-        # TODO: Implement actual syncing to vector store
-        count = len(self._pending_tools)
-        self._pending_tools = []
-        return count
-
-    async def retrieve(self, query: ToolQuery) -> RetrievalResult:
-        """
-        Core semantic routing function.
-
-        Args:
-            query: The tool query with context and filters
-
-        Returns:
-            RetrievalResult with scored tools
-        """
-        # TODO: Implement actual retrieval logic
-        raise NotImplementedError("Retrieval not yet implemented")
-
-    async def retrieve_tools(
-        self,
-        query: str,
-        limit: int = 5,
-        **kwargs: Any,
-    ) -> list[dict[str, Any]]:
-        """
-        Convenience wrapper: returns OpenAI-compatible schemas.
-
-        Args:
-            query: The natural language query
-            limit: Maximum number of tools to return
-            **kwargs: Additional query parameters
-
-        Returns:
-            List of OpenAI-compatible tool schemas
-        """
-        from agent_gantry.schema.query import ConversationContext, ToolQuery
-
-        context = ConversationContext(query=query)
-        tool_query = ToolQuery(context=context, limit=limit, **kwargs)
-        result = await self.retrieve(tool_query)
-        return result.to_openai_tools()
-
-    async def execute(self, call: ToolCall) -> ToolResult:
-        """
-        Execute a tool call with full protections.
-
-        Args:
-            call: The tool call to execute
-
-        Returns:
-            Result of the tool execution
-        """
-        # TODO: Implement actual execution logic
-        raise NotImplementedError("Execution not yet implemented")
-
-    async def execute_batch(self, batch: BatchToolCall) -> BatchToolResult:
-        """
-        Execute multiple tool calls.
-
-        Args:
-            batch: The batch of tool calls
-
-        Returns:
-            Results of all tool executions
-        """
-        # TODO: Implement batch execution
-        raise NotImplementedError("Batch execution not yet implemented")
-
-    def serve_mcp(self, transport: str = "stdio") -> None:
-        """
-        Start serving as an MCP server.
-
-        Args:
-            transport: Transport type ("stdio" or "sse")
-        """
-        # TODO: Implement MCP server
-        raise NotImplementedError("MCP server not yet implemented")
-
-    def serve_a2a(self, host: str = "0.0.0.0", port: int = 8080) -> None:
-        """
-        Start serving as an A2A agent.
-
-        Args:
-            host: Host to bind to
-            port: Port to listen on
-        """
-        # TODO: Implement A2A server
-        raise NotImplementedError("A2A server not yet implemented")
-
-    @property
-    def tool_count(self) -> int:
-        """Return the number of registered tools."""
-        return len(self._tool_handlers)
-
-    async def get_tool(
-        self, name: str, namespace: str = "default"
-    ) -> ToolDefinition | None:
-        """
-        Get a tool by name.
-
-        Args:
-            name: Tool name
-            namespace: Tool namespace
-
-        Returns:
-            The tool definition if found
-        """
-        # TODO: Implement actual lookup
-        return None
-
-    async def list_tools(
-        self,
-        namespace: str | None = None,
-    ) -> list[ToolDefinition]:
-        """
-        List all registered tools.
-
-        Args:
-            namespace: Filter by namespace
-
-        Returns:
-            List of tool definitions
-        """
-        # TODO: Implement actual listing
-        return []
-
-    async def delete_tool(self, name: str, namespace: str = "default") -> bool:
-        """
-        Delete a tool.
-
-        Args:
-            name: Tool name
-            namespace: Tool namespace
-
-        Returns:
-            True if tool was deleted
-        """
-        # TODO: Implement deletion
-        return False
-
-    async def health_check(self) -> dict[str, bool]:
-        """
-        Check health of all components.
-
-        Returns:
-            Dictionary of component health status
-        """
-        return {
-            "vector_store": self._vector_store is not None,
-            "embedder": self._embedder is not None,
-            "telemetry": self._telemetry is not None,
-        }
