@@ -120,7 +120,7 @@ async def classify_intent(
 
     if use_llm and conversation_summary:
         # TODO: Implement LLM-based classification
-        pass
+        raise NotImplementedError("LLM-based intent classification is not implemented yet.")
 
     return TaskIntent.UNKNOWN
 
