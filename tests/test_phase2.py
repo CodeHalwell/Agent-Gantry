@@ -7,7 +7,6 @@ Tests circuit breaker, retries, timeouts, permissions, validation, and async ope
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
 
 import pytest
 
