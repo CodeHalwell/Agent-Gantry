@@ -35,7 +35,7 @@ INTENT_TAG_MAPPING: dict[TaskIntent, list[str]] = {
     TaskIntent.DATA_QUERY: ["query", "search", "get", "list", "fetch", "read"],
     TaskIntent.DATA_MUTATION: ["create", "update", "delete", "write", "modify"],
     TaskIntent.ANALYSIS: ["analyze", "compute", "aggregate", "calculate", "report"],
-    TaskIntent.COMMUNICATION: ["email", "message", "notify", "slack", "send"],
+    TaskIntent.COMMUNICATION: ["email", "message", "notify", "send", "chat", "dm", "teams", "discord", "communicate"],
     TaskIntent.FILE_OPERATIONS: ["file", "upload", "download", "convert", "export"],
     TaskIntent.CUSTOMER_SUPPORT: ["ticket", "refund", "support", "customer"],
     TaskIntent.ADMIN: ["user", "permission", "setting", "config", "admin"],
