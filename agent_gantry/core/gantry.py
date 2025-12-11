@@ -15,6 +15,7 @@ from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
 from agent_gantry.core.executor import ExecutionEngine
 from agent_gantry.core.registry import ToolRegistry
+from agent_gantry.core.router import RoutingWeights, SemanticRouter
 from agent_gantry.core.security import SecurityPolicy
 from agent_gantry.observability.console import ConsoleTelemetryAdapter
 from agent_gantry.schema.config import AgentGantryConfig
@@ -73,6 +74,13 @@ class AgentGantry:
         self._telemetry = telemetry
         self._security_policy = security_policy or SecurityPolicy()
         self._registry = ToolRegistry()
+        routing_weights = RoutingWeights(**self._config.routing.weights)
+        self._router = SemanticRouter(
+            vector_store=self._vector_store,
+            embedder=self._embedder,
+            reranker=self._reranker,
+            weights=routing_weights,
+        )
         self._executor = ExecutionEngine(
             registry=self._registry,
             security_policy=self._security_policy,
@@ -210,53 +218,26 @@ class AgentGantry:
             await self.sync()
 
         overall_start = perf_counter()
-        embed_start = perf_counter()
-        query_vector = await self._embedder.embed_text(query.context.query)
-        query_embedding_time_ms = (perf_counter() - embed_start) * 1000
+        routing_result = await self._router.route(query)
 
-        filters: dict[str, Any] | None = None
-        if query.namespaces:
-            filters = {"namespace": query.namespaces}
-
-        search_start = perf_counter()
-        raw_results = await self._vector_store.search(
-            query_vector,
-            limit=query.limit,
-            filters=filters,
-            score_threshold=query.score_threshold,
-        )
-        vector_search_time_ms = (perf_counter() - search_start) * 1000
-
-        scored: list[ScoredTool] = []
-        for tool, score in raw_results:
-            if query.exclude_deprecated and tool.deprecated:
-                continue
-            if query.namespaces and tool.namespace not in query.namespaces:
-                continue
-            if query.required_capabilities and not all(
-                cap in tool.capabilities for cap in query.required_capabilities
-            ):
-                continue
-            if query.excluded_capabilities and any(
-                cap in tool.capabilities for cap in query.excluded_capabilities
-            ):
-                continue
-            if query.sources and tool.source not in query.sources:
-                continue
-            scored.append(ScoredTool(tool=tool, semantic_score=score))
-
-        scored.sort(key=lambda s: s.final_score, reverse=True)
-        scored = scored[: query.limit]
+        scored = [
+            ScoredTool(
+                tool=tool,
+                semantic_score=score,
+                rerank_score=score,
+            )
+            for tool, score in routing_result.tools
+        ]
 
         total_time_ms = (perf_counter() - overall_start) * 1000
         return RetrievalResult(
             tools=scored,
-            query_embedding_time_ms=query_embedding_time_ms,
-            vector_search_time_ms=vector_search_time_ms,
-            rerank_time_ms=None,
+            query_embedding_time_ms=routing_result.query_embedding_time_ms,
+            vector_search_time_ms=routing_result.vector_search_time_ms,
+            rerank_time_ms=routing_result.rerank_time_ms,
             total_time_ms=total_time_ms,
-            candidate_count=len(raw_results),
-            filtered_count=len(scored),
+            candidate_count=routing_result.candidate_count,
+            filtered_count=routing_result.filtered_count,
             trace_id=str(uuid.uuid4()),
         )
 

@@ -6,8 +6,10 @@ Intelligent tool selection using semantic search, intent classification, and con
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import Enum
+from time import perf_counter
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -67,6 +69,18 @@ class RoutingWeights:
     cost: float = 0.05
 
 
+@dataclass
+class RoutingResult:
+    """Routing outcome with timing metadata."""
+
+    tools: list[tuple["ToolDefinition", float]]
+    query_embedding_time_ms: float
+    vector_search_time_ms: float
+    rerank_time_ms: float | None
+    candidate_count: int
+    filtered_count: int
+
+
 def compute_final_score(signals: RoutingSignals, weights: RoutingWeights) -> float:
     """
     Compute the final score for a tool.
@@ -111,6 +125,9 @@ async def classify_intent(
     """
     query_lower = query.lower()
     scores: dict[TaskIntent, int] = {}
+
+    if conversation_summary:
+        query_lower = f"{query_lower} {conversation_summary.lower()}"
 
     for intent, keywords in INTENT_TAG_MAPPING.items():
         scores[intent] = sum(1 for kw in keywords if kw in query_lower)
@@ -161,7 +178,7 @@ class SemanticRouter:
     async def route(
         self,
         query: ToolQuery,
-    ) -> list[tuple[ToolDefinition, float]]:
+    ) -> RoutingResult:
         """
         Route a query to the most relevant tools.
 
@@ -169,27 +186,46 @@ class SemanticRouter:
             query: The tool query with context
 
         Returns:
-            List of (tool, score) tuples
+            Routing result with scores and timings
         """
-        # 1. Embed the query
+        embed_start = perf_counter()
         query_embedding = await self._embedder.embed_text(query.context.query)
+        query_embedding_time_ms = (perf_counter() - embed_start) * 1000
 
-        # 2. Vector search
+        filters: dict[str, list[str]] | None = None
+        if query.namespaces:
+            filters = {"namespace": query.namespaces}
+
+        search_start = perf_counter()
         candidates = await self._vector_store.search(
             query_vector=query_embedding,
-            limit=query.limit * 4,  # Get more for filtering
+            limit=max(query.limit * 4, query.limit),
+            filters=filters,
             score_threshold=query.score_threshold,
         )
+        vector_search_time_ms = (perf_counter() - search_start) * 1000
 
-        # 3. Classify intent
-        intent = await classify_intent(
-            query.context.query,
-            query.context.conversation_summary,
-        )
+        intent = await self._resolve_intent(query)
 
-        # 4. Score each candidate
         scored_tools: list[tuple[ToolDefinition, float]] = []
         for tool, semantic_score in candidates:
+            if query.exclude_deprecated and tool.deprecated:
+                continue
+            if query.namespaces and tool.namespace not in query.namespaces:
+                continue
+            if query.required_capabilities and not all(
+                cap in tool.capabilities for cap in query.required_capabilities
+            ):
+                continue
+            if query.excluded_capabilities and any(
+                cap in tool.capabilities for cap in query.excluded_capabilities
+            ):
+                continue
+            if query.sources and tool.source not in query.sources:
+                continue
+            if query.exclude_unhealthy and tool.health.circuit_breaker_open:
+                continue
+
             signals = self._compute_signals(
                 tool=tool,
                 semantic_score=semantic_score,
@@ -199,23 +235,47 @@ class SemanticRouter:
             final_score = compute_final_score(signals, self._weights)
             scored_tools.append((tool, final_score))
 
-        # 5. Sort by score
         scored_tools.sort(key=lambda x: x[1], reverse=True)
 
-        # 6. Optional reranking
+        rerank_time_ms: float | None = None
         if self._reranker and query.enable_reranking:
+            rerank_start = perf_counter()
             scored_tools = await self._reranker.rerank(
                 query.context.query,
                 scored_tools,
                 query.limit,
             )
+            rerank_time_ms = (perf_counter() - rerank_start) * 1000
 
-        # 7. Apply diversity (MMR) if requested
-        if query.diversity_factor > 0:
-            # TODO: Implement MMR
-            pass
+        if query.diversity_factor > 0 and len(scored_tools) > 1:
+            scored_tools = await self._apply_mmr(
+                scored_tools,
+                query_embedding,
+                query.diversity_factor,
+                query.limit,
+            )
 
-        return scored_tools[: query.limit]
+        final_tools = scored_tools[: query.limit]
+        return RoutingResult(
+            tools=final_tools,
+            query_embedding_time_ms=query_embedding_time_ms,
+            vector_search_time_ms=vector_search_time_ms,
+            rerank_time_ms=rerank_time_ms,
+            candidate_count=len(candidates),
+            filtered_count=len(scored_tools),
+        )
+
+    async def _resolve_intent(self, query: ToolQuery) -> TaskIntent:
+        """Resolve intent using context override or classification."""
+        if query.context.inferred_intent:
+            try:
+                return TaskIntent(query.context.inferred_intent)
+            except ValueError:
+                pass
+        return await classify_intent(
+            query.context.query,
+            query.context.conversation_summary,
+        )
 
     def _compute_signals(
         self,
@@ -229,16 +289,24 @@ class SemanticRouter:
         intent_match = 0.0
         if intent != TaskIntent.UNKNOWN:
             intent_keywords = INTENT_TAG_MAPPING.get(intent, [])
-            if any(kw in tool.name.lower() or kw in tool.description.lower() for kw in intent_keywords):
+            tool_text = f"{tool.name.lower()} {tool.description.lower()} {' '.join(tool.tags).lower()}"
+            if any(kw in tool_text for kw in intent_keywords):
                 intent_match = 1.0
 
         # Conversation relevance
         conversation_relevance = 0.0
         if tool.name in query.context.tools_already_used:
             conversation_relevance = 0.5
+        summary = (query.context.conversation_summary or "").lower()
+        if summary and tool.name.lower() in summary:
+            conversation_relevance = min(1.0, conversation_relevance + 0.2)
+        for message in query.context.recent_messages:
+            content = message.get("content", "").lower()
+            if content and tool.name.lower() in content:
+                conversation_relevance = min(1.0, conversation_relevance + 0.2)
 
         # Health score
-        health_score = tool.health.success_rate
+        health_score = 0.0 if tool.health.circuit_breaker_open else tool.health.success_rate
 
         # Cost score (inverse - lower cost is better)
         cost_score = 1.0 - min(tool.cost.estimated_latency_ms / 10000, 1.0)
@@ -258,3 +326,59 @@ class SemanticRouter:
             already_failed_penalty=already_failed_penalty,
             deprecated_penalty=deprecated_penalty,
         )
+
+    async def _apply_mmr(
+        self,
+        scored_tools: list[tuple[ToolDefinition, float]],
+        query_embedding: list[float],
+        diversity_factor: float,
+        limit: int,
+    ) -> list[tuple[ToolDefinition, float]]:
+        """Apply MMR to encourage diversity in selected tools."""
+        lambda_param = max(0.0, min(1.0, 1.0 - diversity_factor))
+        tool_texts = [self._tool_to_text(tool) for tool, _ in scored_tools]
+        embeddings = await self._embedder.embed_batch(tool_texts)
+        query_similarities = [
+            self._cosine_similarity(query_embedding, emb) for emb in embeddings
+        ]
+
+        selected: list[int] = []
+        candidates = list(range(len(scored_tools)))
+
+        if not candidates:
+            return []
+
+        first_idx = max(candidates, key=lambda i: query_similarities[i])
+        selected.append(first_idx)
+        candidates.remove(first_idx)
+
+        while candidates and len(selected) < limit:
+            mmr_scores: dict[int, float] = {}
+            for idx in candidates:
+                diversity = max(
+                    self._cosine_similarity(embeddings[idx], embeddings[sel]) for sel in selected
+                )
+                mmr_scores[idx] = lambda_param * query_similarities[idx] - (1 - lambda_param) * diversity
+
+            next_idx = max(mmr_scores, key=mmr_scores.get)
+            selected.append(next_idx)
+            candidates.remove(next_idx)
+
+        return [scored_tools[i] for i in selected]
+
+    def _cosine_similarity(self, a: list[float], b: list[float]) -> float:
+        """Calculate cosine similarity between two vectors."""
+        if not a or not b or len(a) != len(b):
+            return 0.0
+        dot_product = sum(x * y for x, y in zip(a, b))
+        norm_a = math.sqrt(sum(x * x for x in a))
+        norm_b = math.sqrt(sum(y * y for y in b))
+        if norm_a == 0.0 or norm_b == 0.0:
+            return 0.0
+        return dot_product / (norm_a * norm_b)
+
+    def _tool_to_text(self, tool: ToolDefinition) -> str:
+        """Flatten tool metadata into text for similarity comparisons."""
+        tags = " ".join(tool.tags)
+        examples = " ".join(tool.examples)
+        return f"{tool.name} {tool.description} {tags} {examples}"
