@@ -6,7 +6,6 @@ Provides simple telemetry adapters for development and production.
 
 from __future__ import annotations
 
-import json
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
