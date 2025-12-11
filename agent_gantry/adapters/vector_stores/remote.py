@@ -70,7 +70,7 @@ class _ProxyVectorStore:
 
     async def health_check(self) -> bool:
         """Treat missing endpoints as unhealthy to surface misconfiguration early."""
-        has_endpoint = bool(self._url or self._api_key)
+        has_endpoint = bool(self._url)
         return self._initialized and has_endpoint
 
 

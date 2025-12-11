@@ -241,18 +241,11 @@ class AgentGantry:
         overall_start = perf_counter()
         if self._config.reranker.enabled and self._reranker is not None:
             query.enable_reranking = True
-        telemetry_span = (
-            self._telemetry.span("tool_retrieval", {"query": query.context.query})
-            if self._telemetry
-            else None
-        )
-        if telemetry_span:
-            await telemetry_span.__aenter__()
-        try:
+        if self._telemetry:
+            async with self._telemetry.span("tool_retrieval", {"query": query.context.query}):
+                routing_result = await self._router.route(query)
+        else:
             routing_result = await self._router.route(query)
-        finally:
-            if telemetry_span:
-                await telemetry_span.__aexit__(None, None, None)
 
         # Expect routing_result.tools to yield (tool, semantic_score, rerank_score, composite_score)
         scored = []

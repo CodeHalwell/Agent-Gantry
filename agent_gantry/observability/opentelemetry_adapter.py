@@ -10,9 +10,14 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agent_gantry.observability.telemetry import TelemetryAdapter
+
+if TYPE_CHECKING:
+    from agent_gantry.schema.execution import ToolCall, ToolResult
+    from agent_gantry.schema.query import RetrievalResult, ToolQuery
+    from agent_gantry.schema.tool import ToolHealth
 
 
 class OpenTelemetryAdapter(TelemetryAdapter):
@@ -42,18 +47,23 @@ class OpenTelemetryAdapter(TelemetryAdapter):
             span["end"] = end
             span["duration_ms"] = (end - start).total_seconds() * 1000
 
-    async def record_retrieval(self, query, result) -> None:  # type: ignore[override]
+    async def record_retrieval(self, query: ToolQuery, result: RetrievalResult) -> None:
         self.metrics["retrievals_total"] = self.metrics.get("retrievals_total", 0) + 1
         self.metrics["retrieved_tools"] = self.metrics.get("retrieved_tools", 0) + len(result.tools)
         self.metrics["retrieval_latency_ms"] = result.total_time_ms
 
-    async def record_execution(self, call, result) -> None:  # type: ignore[override]
+    async def record_execution(self, call: ToolCall, result: ToolResult) -> None:
         key = "executions_total"
         self.metrics[key] = self.metrics.get(key, 0) + 1
         status_key = f"executions_status_{result.status.value}"
         self.metrics[status_key] = self.metrics.get(status_key, 0) + 1
 
-    async def record_health_change(self, tool_name, old_health, new_health) -> None:  # type: ignore[override]
+    async def record_health_change(
+        self,
+        tool_name: str,
+        old_health: ToolHealth,
+        new_health: ToolHealth,
+    ) -> None:
         key = f"health_changes_{tool_name}"
         self.metrics[key] = self.metrics.get(key, 0) + 1
 
