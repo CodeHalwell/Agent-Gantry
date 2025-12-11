@@ -81,6 +81,8 @@ python -m build
 
 1. **Type Hints**: Use type hints everywhere. We use strict mypy settings.
    ```python
+   from typing import Any
+   
    def my_function(param: str) -> dict[str, Any]:
        ...
    ```
