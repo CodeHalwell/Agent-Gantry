@@ -59,8 +59,13 @@ class InMemoryVectorStore:
 
             # Apply filters
             if filters:
-                if "namespace" in filters and tool.namespace != filters["namespace"]:
-                    continue
+                if "namespace" in filters:
+                    ns_filter = filters["namespace"]
+                    if isinstance(ns_filter, (list, tuple, set)):
+                        if tool.namespace not in ns_filter:
+                            continue
+                    elif tool.namespace != ns_filter:
+                        continue
                 if "tags" in filters:
                     if not any(tag in tool.tags for tag in filters["tags"]):
                         continue
