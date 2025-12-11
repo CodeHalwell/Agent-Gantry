@@ -112,7 +112,7 @@ python -m build
    """
    ```
 
-5. **Imports**: Follow isort/ruff ordering:
+5. **Imports**: Follow ruff ordering:
    - Standard library
    - Third-party packages
    - Local imports
