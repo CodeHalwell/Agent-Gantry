@@ -14,7 +14,6 @@ from agent_gantry import AgentGantry
 from agent_gantry.core.security import (
     ConfirmationRequired,
     PermissionChecker,
-    PermissionDenied,
     SecurityPolicy,
 )
 from agent_gantry.schema.execution import ExecutionStatus, ToolCall
