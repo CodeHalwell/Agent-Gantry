@@ -136,48 +136,52 @@ class AgentGantry:
     def _build_parameters_schema(self, func: Callable[..., Any]) -> dict[str, Any]:
         """Build JSON Schema for function parameters."""
         import inspect
+        return build_parameters_schema(func)
 
-        sig = inspect.signature(func)
-        type_hints = {}
-        try:
-            type_hints = func.__annotations__
-        except AttributeError:
-            # Some built-in or C-extension functions may not have __annotations__; fall back to empty type hints.
-            pass
 
-        properties: dict[str, Any] = {}
-        required: list[str] = []
+def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
+    """Build JSON Schema for function parameters."""
+    import inspect
 
-        for param_name, param in sig.parameters.items():
-            if param_name in ("self", "cls"):
-                continue
+    sig = inspect.signature(func)
+    type_hints = {}
+    try:
+        type_hints = func.__annotations__
+    except AttributeError:
+        pass
 
-            param_schema: dict[str, Any] = {}
-            param_type = type_hints.get(param_name, Any)
+    properties: dict[str, Any] = {}
+    required: list[str] = []
 
-            # Map Python types to JSON Schema types
-            if param_type is int:
-                param_schema["type"] = "integer"
-            elif param_type is float:
-                param_schema["type"] = "number"
-            elif param_type is bool:
-                param_schema["type"] = "boolean"
-            elif param_type is str:
-                param_schema["type"] = "string"
-            else:
-                param_schema["type"] = "string"  # Default fallback
+    for param_name, param in sig.parameters.items():
+        if param_name in ("self", "cls"):
+            continue
 
-            properties[param_name] = param_schema
+        param_schema: dict[str, Any] = {}
+        param_type = type_hints.get(param_name, Any)
 
-            if param.default is inspect.Parameter.empty:
-                required.append(param_name)
+        # Map Python types to JSON Schema types
+        if param_type is int:
+            param_schema["type"] = "integer"
+        elif param_type is float:
+            param_schema["type"] = "number"
+        elif param_type is bool:
+            param_schema["type"] = "boolean"
+        elif param_type is str:
+            param_schema["type"] = "string"
+        else:
+            param_schema["type"] = "string"  # Default fallback
 
-        return {
-            "type": "object",
-            "properties": properties,
-            "required": required,
-        }
+        properties[param_name] = param_schema
 
+        if param.default is inspect.Parameter.empty:
+            required.append(param_name)
+
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": required,
+    }
     async def add_tool(self, tool: ToolDefinition) -> None:
         """
         Add a tool definition directly.
