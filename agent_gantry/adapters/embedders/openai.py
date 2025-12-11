@@ -40,6 +40,4 @@ class OpenAIEmbedder(_BaseOpenAIEmbedder):
 
 class AzureOpenAIEmbedder(_BaseOpenAIEmbedder):
     """Azure OpenAI embedder stub."""
-
-    async def health_check(self) -> bool:
-        return bool(self._config.api_key)
+    pass

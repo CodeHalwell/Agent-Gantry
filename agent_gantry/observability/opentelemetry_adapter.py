@@ -77,9 +77,9 @@ class OpenTelemetryAdapter(TelemetryAdapter):
 class PrometheusTelemetryAdapter(OpenTelemetryAdapter):
     """Prometheus-flavoured adapter that can export metrics text."""
 
-    def __init__(self, service_name: str, port: int = 9090) -> None:
+    def __init__(self, service_name: str, prometheus_port: int = 9090) -> None:
         super().__init__(service_name, otlp_endpoint=None)
-        self.port = port
+        self.port = prometheus_port
 
     def export_metrics(self) -> str:
         lines = [f"# Metrics for {self.service_name}", f"# Port: {self.port}"]

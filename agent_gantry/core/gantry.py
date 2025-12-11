@@ -493,7 +493,7 @@ class AgentGantry:
         if config.type == "prometheus":
             return PrometheusTelemetryAdapter(
                 service_name=config.service_name,
-                port=config.prometheus_port,
+                prometheus_port=config.prometheus_port,
             )
         return ConsoleTelemetryAdapter()
 
