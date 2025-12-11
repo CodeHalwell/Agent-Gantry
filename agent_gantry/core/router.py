@@ -238,7 +238,7 @@ class SemanticRouter:
             conversation_relevance = 0.5
 
         # Health score
-        health_score = tool.health.success_rate if tool.health else 1.0
+        health_score = tool.health.success_rate
 
         # Cost score (inverse - lower cost is better)
         cost_score = 1.0 - min(tool.cost.estimated_latency_ms / 10000, 1.0)
