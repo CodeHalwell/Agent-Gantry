@@ -58,7 +58,7 @@ result = await gantry.execute(ToolCall(
 Backoff formula: `2^attempt * 0.1` seconds
 
 #### Timeouts
-Prevents long-running tools from blocking:
+Prevent long-running tools from blocking:
 ```python
 result = await gantry.execute(ToolCall(
     tool_name="slow_operation",
