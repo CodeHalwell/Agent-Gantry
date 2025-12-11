@@ -103,7 +103,7 @@ class ExecutionEngine:
             )
 
         # Get handler
-        handler = self._registry.get_handler(call.tool_name)
+        handler = self._registry.get_handler(f"{tool.namespace}.{call.tool_name}")
         if not handler:
             return ToolResult(
                 tool_name=call.tool_name,
