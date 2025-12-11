@@ -1,0 +1,86 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-gantry"
+version = "0.1.0"
+description = "Universal Tool Orchestration Platform - Intelligent, secure tool orchestration for LLM-based agent systems"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Agent-Gantry Contributors" }
+]
+keywords = [
+    "llm",
+    "agents",
+    "tools",
+    "mcp",
+    "orchestration",
+    "semantic-routing",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+embeddings = [
+    "numpy>=1.24.0",
+    "sentence-transformers>=2.2.0",
+]
+openai = [
+    "openai>=1.0.0",
+]
+vector-stores = [
+    "qdrant-client>=1.7.0",
+    "chromadb>=0.4.0",
+]
+all = [
+    "agent-gantry[dev,embeddings,openai,vector-stores]",
+]
+
+[project.scripts]
+agent-gantry = "agent_gantry.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/CodeHalwell/Agent-Gantry"
+Repository = "https://github.com/CodeHalwell/Agent-Gantry"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agent_gantry"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true

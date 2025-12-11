@@ -1,0 +1,189 @@
+"""
+Tool definition models for Agent-Gantry.
+
+Universal representation of tools, regardless of source (Python function, MCP server,
+OpenAPI operation, or A2A agent skill).
+"""
+
+from __future__ import annotations
+
+import hashlib
+from datetime import datetime, timezone
+from enum import Enum
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class SchemaDialect(str, Enum):
+    """Schema dialects for different LLM providers."""
+
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+    GEMINI = "gemini"
+    AUTO = "auto"
+
+
+class ToolSource(str, Enum):
+    """Source of the tool definition."""
+
+    PYTHON_FUNCTION = "python_function"
+    MCP_SERVER = "mcp_server"
+    OPENAPI = "openapi"
+    A2A_AGENT = "a2a_agent"
+    MANUAL = "manual"
+
+
+class ToolCapability(str, Enum):
+    """Capabilities that a tool may have, used for permission checks."""
+
+    READ_DATA = "read_data"
+    WRITE_DATA = "write_data"
+    DELETE_DATA = "delete_data"
+    EXECUTE_CODE = "execute_code"
+    NETWORK_ACCESS = "network_access"
+    FILE_SYSTEM = "file_system"
+    FINANCIAL = "financial"
+    PII_ACCESS = "pii_access"
+    EXTERNAL_API = "external_api"
+
+
+class ToolCost(BaseModel):
+    """Cost model for tool execution."""
+
+    estimated_latency_ms: int = Field(default=100)
+    monetary_cost: float | None = Field(default=None)
+    rate_limit: int | None = Field(default=None, description="Max calls per minute")
+    context_tokens: int = Field(default=0, description="Tokens added when selected")
+
+
+class ToolHealth(BaseModel):
+    """Runtime health metrics for a tool."""
+
+    success_rate: float = Field(default=1.0, ge=0.0, le=1.0)
+    avg_latency_ms: float = Field(default=0.0)
+    total_calls: int = Field(default=0)
+    consecutive_failures: int = Field(default=0)
+    last_success: datetime | None = None
+    last_failure: datetime | None = None
+    circuit_breaker_open: bool = Field(default=False)
+
+
+class ToolDefinition(BaseModel):
+    """
+    Universal representation of a tool.
+
+    Canonical internal format, regardless of original source:
+    - Python function
+    - MCP server tool
+    - OpenAPI operation
+    - A2A agent skill
+    """
+
+    # Identity
+    name: str = Field(..., min_length=1, max_length=128, pattern=r"^[a-z][a-z0-9_]*$")
+    version: str = Field(default="1.0.0", pattern=r"^\d+\.\d+\.\d+$")
+    namespace: str = Field(default="default")
+
+    # Discovery
+    description: str = Field(..., min_length=10, max_length=2000)
+    extended_description: str | None = Field(default=None, max_length=10000)
+    examples: list[str] = Field(default_factory=list, max_length=10)
+    tags: list[str] = Field(default_factory=list)
+
+    # Schema (canonical JSON Schema for input/output)
+    parameters_schema: dict[str, Any] = Field(
+        ..., description="JSON Schema for input parameters (OpenAI-style function calling)"
+    )
+    returns_schema: dict[str, Any] | None = Field(default=None)
+
+    # Provenance
+    source: ToolSource = Field(default=ToolSource.PYTHON_FUNCTION)
+    source_uri: str | None = Field(default=None)
+
+    # Capabilities & permissions
+    capabilities: list[ToolCapability] = Field(default_factory=list)
+    requires_confirmation: bool = Field(default=False)
+
+    # Cost model
+    cost: ToolCost = Field(default_factory=ToolCost)
+
+    # Runtime (non-persisted)
+    health: ToolHealth = Field(default_factory=ToolHealth, exclude=True)
+
+    # Metadata / lifecycle
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    deprecated: bool = Field(default=False)
+    deprecation_message: str | None = Field(default=None)
+    superseded_by: str | None = Field(default=None)
+
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """Validate that the tool name is not reserved."""
+        reserved = {"register", "retrieve", "execute", "list", "delete"}
+        if v in reserved:
+            raise ValueError(f"Tool name '{v}' is reserved")
+        return v
+
+    @property
+    def qualified_name(self) -> str:
+        """Return namespace.name:version."""
+        return f"{self.namespace}.{self.name}:{self.version}"
+
+    @property
+    def content_hash(self) -> str:
+        """
+        Deterministic hash for change detection and efficient syncing.
+
+        Used to avoid re-embedding / re-indexing when nothing changed.
+        """
+        content = f"{self.name}:{self.version}:{self.description}:{self.parameters_schema}"
+        return hashlib.sha256(content.encode()).hexdigest()[:16]
+
+    def to_openai_schema(self) -> dict[str, Any]:
+        """Convert to OpenAI function calling format."""
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.parameters_schema,
+            },
+        }
+
+    def to_anthropic_schema(self) -> dict[str, Any]:
+        """Convert to Anthropic tool format."""
+        return {
+            "name": self.name,
+            "description": self.description,
+            "input_schema": self.parameters_schema,
+        }
+
+    def to_gemini_schema(self) -> dict[str, Any]:
+        """Convert to Gemini function format."""
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": self.parameters_schema,
+        }
+
+    def to_dialect(self, dialect: SchemaDialect) -> dict[str, Any]:
+        """Just-in-Time transcoding for specific LLMs or protocols."""
+        if dialect == SchemaDialect.ANTHROPIC:
+            return self.to_anthropic_schema()
+        if dialect == SchemaDialect.GEMINI:
+            return self.to_gemini_schema()
+        # Default is OpenAI style
+        return self.to_openai_schema()
+
+
+class ToolDependency(BaseModel):
+    """Dependency relationship between tools."""
+
+    tool_name: str
+    dependency_type: Literal["requires", "suggests", "conflicts"]
+    reason: str | None = None
