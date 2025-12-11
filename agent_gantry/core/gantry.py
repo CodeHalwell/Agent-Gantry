@@ -220,14 +220,28 @@ class AgentGantry:
         overall_start = perf_counter()
         routing_result = await self._router.route(query)
 
-        scored = [
-            ScoredTool(
-                tool=tool,
-                semantic_score=score,
-                rerank_score=score,
+        # Expect routing_result.tools to yield (tool, semantic_score, rerank_score, composite_score)
+        scored = []
+        for item in routing_result.tools:
+            # Backward compatibility: support both 2-tuple and 4-tuple
+            if len(item) == 4:
+                tool, semantic_score, rerank_score, composite_score = item
+            elif len(item) == 3:
+                tool, semantic_score, rerank_score = item
+                composite_score = None
+            else:
+                tool, semantic_score = item
+                rerank_score = None
+                composite_score = None
+
+            scored.append(
+                ScoredTool(
+                    tool=tool,
+                    semantic_score=semantic_score,
+                    rerank_score=rerank_score,
+                    composite_score=composite_score,
+                )
             )
-            for tool, score in routing_result.tools
-        ]
 
         total_time_ms = (perf_counter() - overall_start) * 1000
         return RetrievalResult(
