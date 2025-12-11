@@ -25,16 +25,16 @@ class CohereReranker(RerankerAdapter):
         tools: list[tuple[ToolDefinition, float]],
         top_k: int,
     ) -> list[tuple[ToolDefinition, float]]:
-        keywords = set(self._tokenise(query))
+        keywords = set(self._tokenize(query))
         rescored: list[tuple[ToolDefinition, float]] = []
 
         for tool, base_score in tools:
             text = f"{tool.name} {tool.description} {' '.join(tool.tags)}"
-            overlap = len(keywords.intersection(self._tokenise(text)))
+            overlap = len(keywords.intersection(self._tokenize(text)))
             rescored.append((tool, base_score + 0.05 * overlap))
 
         rescored.sort(key=lambda x: x[1], reverse=True)
         return rescored[:top_k]
 
-    def _tokenise(self, text: str) -> Iterable[str]:
+    def _tokenize(self, text: str) -> Iterable[str]:
         return text.lower().split()

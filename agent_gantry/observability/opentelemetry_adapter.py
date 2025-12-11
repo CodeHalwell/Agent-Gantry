@@ -7,6 +7,7 @@ without requiring external collectors.
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -83,6 +84,6 @@ class PrometheusTelemetryAdapter(OpenTelemetryAdapter):
     def export_metrics(self) -> str:
         lines = [f"# Metrics for {self.service_name}", f"# Port: {self.port}"]
         for key, value in sorted(self.metrics.items()):
-            metric_name = key.replace(" ", "_")
+            metric_name = re.sub(r"[^a-zA-Z0-9_:]", "_", key.replace(" ", "_"))
             lines.append(f"agent_gantry_{metric_name} {value}")
         return "\n".join(lines)

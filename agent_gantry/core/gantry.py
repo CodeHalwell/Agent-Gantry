@@ -452,18 +452,24 @@ class AgentGantry:
     def _build_vector_store(self, config: VectorStoreConfig) -> VectorStoreAdapter:
         """Construct a vector store adapter from configuration."""
         if config.type == "qdrant":
+            if not config.url:
+                return InMemoryVectorStore()
             return QdrantVectorStore(url=config.url, api_key=config.api_key)
         if config.type == "chroma":
+            if not config.url:
+                return InMemoryVectorStore()
             return ChromaVectorStore(url=config.url, api_key=config.api_key)
         if config.type == "pgvector":
+            if not config.url:
+                return InMemoryVectorStore()
             return PGVectorStore(url=config.url, api_key=config.api_key)
         return InMemoryVectorStore()
 
     def _build_embedder(self, config: EmbedderConfig) -> EmbeddingAdapter:
         """Construct an embedder from configuration."""
-        if config.type == "openai":
+        if config.type == "openai" and config.api_key:
             return OpenAIEmbedder(config)
-        if config.type == "azure":
+        if config.type == "azure" and config.api_key:
             return AzureOpenAIEmbedder(config)
         return SimpleEmbedder()
 
