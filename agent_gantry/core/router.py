@@ -126,11 +126,12 @@ async def classify_intent(
     query_lower = query.lower()
     scores: dict[TaskIntent, int] = {}
 
+    enriched_query = query_lower
     if conversation_summary:
-        query_lower = f"{query_lower} {conversation_summary.lower()}"
+        enriched_query = f"{enriched_query} {conversation_summary.lower()}"
 
     for intent, keywords in INTENT_TAG_MAPPING.items():
-        scores[intent] = sum(1 for kw in keywords if kw in query_lower)
+        scores[intent] = sum(1 for kw in keywords if kw in enriched_query)
 
     if max(scores.values()) > 0:
         return max(scores, key=lambda k: scores[k])
@@ -199,7 +200,7 @@ class SemanticRouter:
         search_start = perf_counter()
         candidates = await self._vector_store.search(
             query_vector=query_embedding,
-            limit=max(query.limit * 4, query.limit),
+            limit=query.limit * 4,
             filters=filters,
             score_threshold=query.score_threshold,
         )
@@ -335,7 +336,10 @@ class SemanticRouter:
         limit: int,
     ) -> list[tuple[ToolDefinition, float]]:
         """Apply MMR to encourage diversity in selected tools."""
-        lambda_param = max(0.0, min(1.0, 1.0 - diversity_factor))
+        if not scored_tools:
+            return []
+
+        lambda_param = 1.0 - diversity_factor
         tool_texts = [self._tool_to_text(tool) for tool, _ in scored_tools]
         embeddings = await self._embedder.embed_batch(tool_texts)
         query_similarities = [
@@ -345,9 +349,6 @@ class SemanticRouter:
         selected: list[int] = []
         candidates = list(range(len(scored_tools)))
 
-        if not candidates:
-            return []
-
         first_idx = max(candidates, key=lambda i: query_similarities[i])
         selected.append(first_idx)
         candidates.remove(first_idx)
@@ -356,9 +357,12 @@ class SemanticRouter:
             mmr_scores: dict[int, float] = {}
             for idx in candidates:
                 diversity = max(
-                    self._cosine_similarity(embeddings[idx], embeddings[sel]) for sel in selected
+                    (self._cosine_similarity(embeddings[idx], embeddings[sel]) for sel in selected),
+                    default=0.0,
                 )
-                mmr_scores[idx] = lambda_param * query_similarities[idx] - (1 - lambda_param) * diversity
+                mmr_scores[idx] = lambda_param * query_similarities[idx] - (
+                    1.0 - lambda_param
+                ) * diversity
 
             next_idx = max(mmr_scores, key=mmr_scores.get)
             selected.append(next_idx)
@@ -380,5 +384,5 @@ class SemanticRouter:
     def _tool_to_text(self, tool: ToolDefinition) -> str:
         """Flatten tool metadata into text for similarity comparisons."""
         tags = " ".join(tool.tags)
-        examples = " ".join(tool.examples)
+        examples = " ".join(example for example in tool.examples if example)
         return f"{tool.name} {tool.description} {tags} {examples}"

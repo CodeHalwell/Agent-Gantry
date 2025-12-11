@@ -14,7 +14,9 @@ from agent_gantry.schema.tool import ToolDefinition
 class ForceReportReranker:
     """Deterministic reranker that prefers the reporting tool."""
 
-    async def rerank(self, query: str, tools: list[tuple[ToolDefinition, float]], top_k: int):
+    async def rerank(
+        self, query: str, tools: list[tuple[ToolDefinition, float]], top_k: int
+    ) -> list[tuple[ToolDefinition, float]]:
         ordered = sorted(tools, key=lambda t: 0 if t[0].name == "generate_report" else 1)
         return ordered[:top_k]
 
@@ -44,7 +46,8 @@ async def test_failed_tools_are_penalized(sample_tools) -> None:
         await gantry.add_tool(tool)
 
     # Make send_email less attractive after a failure
-    send_email = next(t for t in tools if t.name == "send_email")
+    send_email = next((t for t in tools if t.name == "send_email"), None)
+    assert send_email is not None
     send_email.health.success_rate = 0.4
     send_email.cost.estimated_latency_ms = 9000
 
