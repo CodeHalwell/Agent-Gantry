@@ -70,7 +70,7 @@ class AgentGantry:
         self._vector_store = vector_store or InMemoryVectorStore()
         self._embedder = embedder or SimpleEmbedder()
         self._reranker = reranker
-        self._telemetry = telemetry or ConsoleTelemetryAdapter()
+        self._telemetry = telemetry
         self._security_policy = security_policy or SecurityPolicy()
         self._registry = ToolRegistry()
         self._executor = ExecutionEngine(
