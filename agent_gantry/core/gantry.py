@@ -7,12 +7,16 @@ Primary entry point for the Agent-Gantry library.
 from __future__ import annotations
 
 import uuid
-from time import perf_counter
 from collections.abc import Callable
+from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
+from agent_gantry.core.executor import ExecutionEngine
+from agent_gantry.core.registry import ToolRegistry
+from agent_gantry.core.security import SecurityPolicy
+from agent_gantry.observability.console import ConsoleTelemetryAdapter
 from agent_gantry.schema.config import AgentGantryConfig
 from agent_gantry.schema.query import RetrievalResult, ScoredTool, ToolQuery
 from agent_gantry.schema.tool import ToolCapability, ToolDefinition
@@ -49,6 +53,7 @@ class AgentGantry:
         embedder: EmbeddingAdapter | None = None,
         reranker: RerankerAdapter | None = None,
         telemetry: TelemetryAdapter | None = None,
+        security_policy: SecurityPolicy | None = None,
     ) -> None:
         """
         Initialize AgentGantry.
@@ -59,12 +64,20 @@ class AgentGantry:
             embedder: Custom embedding adapter
             reranker: Custom reranker adapter
             telemetry: Custom telemetry adapter
+            security_policy: Security policy for permission checks
         """
         self._config = config or AgentGantryConfig()
         self._vector_store = vector_store or InMemoryVectorStore()
         self._embedder = embedder or SimpleEmbedder()
         self._reranker = reranker
         self._telemetry = telemetry
+        self._security_policy = security_policy or SecurityPolicy()
+        self._registry = ToolRegistry()
+        self._executor = ExecutionEngine(
+            registry=self._registry,
+            security_policy=self._security_policy,
+            telemetry=self._telemetry,
+        )
         self._pending_tools: list[ToolDefinition] = []
         self._tool_handlers: dict[str, Callable[..., Any]] = {}
         self._initialized = False
@@ -130,6 +143,7 @@ class AgentGantry:
 
             self._pending_tools.append(tool)
             self._tool_handlers[tool_name] = fn
+            self._registry.register_handler(f"{namespace}.{tool_name}", fn)
 
             return fn
 
@@ -157,6 +171,7 @@ class AgentGantry:
         await self._ensure_initialized()
         embedding = await self._embedder.embed_text(self._tool_to_text(tool))
         await self._vector_store.add_tools([tool], [embedding], upsert=True)
+        self._registry.register_tool(tool)
 
     async def sync(self) -> int:
         """
@@ -172,6 +187,11 @@ class AgentGantry:
         texts = [self._tool_to_text(t) for t in self._pending_tools]
         embeddings = await self._embedder.embed_batch(texts)
         count = await self._vector_store.add_tools(self._pending_tools, embeddings, upsert=True)
+        
+        # Register tools in registry
+        for tool in self._pending_tools:
+            self._registry.register_tool(tool)
+        
         self._pending_tools = []
         return count
 
@@ -274,7 +294,15 @@ class AgentGantry:
         Returns:
             Result of the tool execution
         """
-        raise NotImplementedError("Execution not yet implemented")
+        await self._ensure_initialized()
+        if self._config.auto_sync:
+            await self.sync()
+        
+        if self._telemetry:
+            async with self._telemetry.span("tool_execution", {"tool_name": call.tool_name}):
+                return await self._executor.execute(call)
+        else:
+            return await self._executor.execute(call)
 
     async def execute_batch(self, batch: BatchToolCall) -> BatchToolResult:
         """
@@ -286,7 +314,15 @@ class AgentGantry:
         Returns:
             Results of all tool executions
         """
-        raise NotImplementedError("Batch execution not yet implemented")
+        await self._ensure_initialized()
+        if self._config.auto_sync:
+            await self.sync()
+        
+        if self._telemetry:
+            async with self._telemetry.span("batch_execution", {"count": len(batch.calls)}):
+                return await self._executor.execute_batch(batch)
+        else:
+            return await self._executor.execute_batch(batch)
 
     def serve_mcp(self, transport: str = "stdio") -> None:
         """
@@ -416,13 +452,13 @@ def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
         param_type = type_hints.get(param_name, Any)
 
         # Map Python types to JSON Schema types
-        if param_type is int:
+        if param_type == int or param_type == "int":
             param_schema["type"] = "integer"
-        elif param_type is float:
+        elif param_type == float or param_type == "float":
             param_schema["type"] = "number"
-        elif param_type is bool:
+        elif param_type == bool or param_type == "bool":
             param_schema["type"] = "boolean"
-        elif param_type is str:
+        elif param_type == str or param_type == "str":
             param_schema["type"] = "string"
         else:
             param_schema["type"] = "string"  # Default fallback

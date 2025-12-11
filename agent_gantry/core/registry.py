@@ -103,15 +103,17 @@ class ToolRegistry:
             param_schema: dict[str, Any] = {}
             param_type = type_hints.get(param_name)
 
-            if param_type is int:
+            # Check for exact type matches
+            if param_type == int or param_type == "int":
                 param_schema["type"] = "integer"
-            elif param_type is float:
+            elif param_type == float or param_type == "float":
                 param_schema["type"] = "number"
-            elif param_type is bool:
+            elif param_type == bool or param_type == "bool":
                 param_schema["type"] = "boolean"
-            elif param_type is str:
+            elif param_type == str or param_type == "str":
                 param_schema["type"] = "string"
             else:
+                # Default to string for unknown types
                 param_schema["type"] = "string"
 
             properties[param_name] = param_schema
@@ -152,19 +154,37 @@ class ToolRegistry:
         key = f"{namespace}.{name}"
         return self._tools.get(key)
 
-    def get_handler(self, name: str, namespace: str = "default") -> Callable[..., Any] | None:
+    def get_handler(self, key: str) -> Callable[..., Any] | None:
         """
-        Get the handler for a tool.
+        Get the handler for a tool by its full key (namespace.name).
 
         Args:
-            name: Tool name
-            namespace: Tool namespace
+            key: Full tool key (namespace.name)
 
         Returns:
             The handler callable if found
         """
-        key = f"{namespace}.{name}"
         return self._handlers.get(key)
+
+    def register_tool(self, tool: ToolDefinition) -> None:
+        """
+        Register a tool definition.
+
+        Args:
+            tool: The tool definition to register
+        """
+        key = f"{tool.namespace}.{tool.name}"
+        self._tools[key] = tool
+
+    def register_handler(self, key: str, handler: Callable[..., Any]) -> None:
+        """
+        Register a handler for a tool.
+
+        Args:
+            key: Full tool key (namespace.name)
+            handler: The callable to execute
+        """
+        self._handlers[key] = handler
 
     def list_tools(self, namespace: str | None = None) -> list[ToolDefinition]:
         """
