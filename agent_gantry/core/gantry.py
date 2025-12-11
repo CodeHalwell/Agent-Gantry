@@ -6,19 +6,36 @@ Primary entry point for the Agent-Gantry library.
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import Callable
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
+import uuid
 
+from agent_gantry.adapters.embedders.openai import AzureOpenAIEmbedder, OpenAIEmbedder
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+from agent_gantry.adapters.rerankers.cohere import CohereReranker
 from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
+from agent_gantry.adapters.vector_stores.remote import (
+    ChromaVectorStore,
+    PGVectorStore,
+    QdrantVectorStore,
+)
 from agent_gantry.core.executor import ExecutionEngine
 from agent_gantry.core.registry import ToolRegistry
 from agent_gantry.core.router import RoutingWeights, SemanticRouter
 from agent_gantry.core.security import SecurityPolicy
-from agent_gantry.observability.console import ConsoleTelemetryAdapter
-from agent_gantry.schema.config import AgentGantryConfig
+from agent_gantry.observability.console import ConsoleTelemetryAdapter, NoopTelemetryAdapter
+from agent_gantry.observability.opentelemetry_adapter import (
+    OpenTelemetryAdapter,
+    PrometheusTelemetryAdapter,
+)
+from agent_gantry.schema.config import (
+    AgentGantryConfig,
+    EmbedderConfig,
+    RerankerConfig,
+    TelemetryConfig,
+    VectorStoreConfig,
+)
 from agent_gantry.schema.query import RetrievalResult, ScoredTool, ToolQuery
 from agent_gantry.schema.tool import ToolCapability, ToolDefinition
 
@@ -68,10 +85,10 @@ class AgentGantry:
             security_policy: Security policy for permission checks
         """
         self._config = config or AgentGantryConfig()
-        self._vector_store = vector_store or InMemoryVectorStore()
-        self._embedder = embedder or SimpleEmbedder()
-        self._reranker = reranker
-        self._telemetry = telemetry
+        self._vector_store = vector_store or self._build_vector_store(self._config.vector_store)
+        self._embedder = embedder or self._build_embedder(self._config.embedder)
+        self._reranker = reranker or self._build_reranker(self._config.reranker)
+        self._telemetry = telemetry or self._build_telemetry(self._config.telemetry)
         self._security_policy = security_policy or SecurityPolicy()
         self._registry = ToolRegistry()
         routing_weights = RoutingWeights(**self._config.routing.weights)
@@ -83,6 +100,10 @@ class AgentGantry:
         )
         self._executor = ExecutionEngine(
             registry=self._registry,
+            default_timeout_ms=self._config.execution.default_timeout_ms,
+            max_retries=self._config.execution.max_retries,
+            circuit_breaker_threshold=self._config.execution.circuit_breaker_threshold,
+            circuit_breaker_timeout_s=self._config.execution.circuit_breaker_timeout_s,
             security_policy=self._security_policy,
             telemetry=self._telemetry,
         )
@@ -218,7 +239,20 @@ class AgentGantry:
             await self.sync()
 
         overall_start = perf_counter()
-        routing_result = await self._router.route(query)
+        if self._config.reranker.enabled and self._reranker is not None:
+            query.enable_reranking = True
+        telemetry_span = (
+            self._telemetry.span("tool_retrieval", {"query": query.context.query})
+            if self._telemetry
+            else None
+        )
+        if telemetry_span:
+            await telemetry_span.__aenter__()
+        try:
+            routing_result = await self._router.route(query)
+        finally:
+            if telemetry_span:
+                await telemetry_span.__aexit__(None, None, None)
 
         # Expect routing_result.tools to yield (tool, semantic_score, rerank_score, composite_score)
         scored = []
@@ -244,7 +278,7 @@ class AgentGantry:
             )
 
         total_time_ms = (perf_counter() - overall_start) * 1000
-        return RetrievalResult(
+        retrieval = RetrievalResult(
             tools=scored,
             query_embedding_time_ms=routing_result.query_embedding_time_ms,
             vector_search_time_ms=routing_result.vector_search_time_ms,
@@ -254,6 +288,9 @@ class AgentGantry:
             filtered_count=routing_result.filtered_count,
             trace_id=str(uuid.uuid4()),
         )
+        if self._telemetry:
+            await self._telemetry.record_retrieval(query, retrieval)
+        return retrieval
 
     async def retrieve_tools(
         self,
@@ -418,6 +455,48 @@ class AgentGantry:
             "embedder": embedder_ok,
             "telemetry": telemetry_ok,
         }
+
+    def _build_vector_store(self, config: VectorStoreConfig) -> VectorStoreAdapter:
+        """Construct a vector store adapter from configuration."""
+        if config.type == "qdrant":
+            return QdrantVectorStore(url=config.url, api_key=config.api_key)
+        if config.type == "chroma":
+            return ChromaVectorStore(url=config.url, api_key=config.api_key)
+        if config.type == "pgvector":
+            return PGVectorStore(url=config.url, api_key=config.api_key)
+        return InMemoryVectorStore()
+
+    def _build_embedder(self, config: EmbedderConfig) -> EmbeddingAdapter:
+        """Construct an embedder from configuration."""
+        if config.type == "openai":
+            return OpenAIEmbedder(config)
+        if config.type == "azure":
+            return AzureOpenAIEmbedder(config)
+        return SimpleEmbedder()
+
+    def _build_reranker(self, config: RerankerConfig) -> RerankerAdapter | None:
+        """Construct a reranker from configuration."""
+        if not config.enabled:
+            return None
+        if config.type == "cohere":
+            return CohereReranker(model=config.model)
+        return None
+
+    def _build_telemetry(self, config: TelemetryConfig) -> TelemetryAdapter:
+        """Construct telemetry adapter from configuration."""
+        if not config.enabled:
+            return NoopTelemetryAdapter()
+        if config.type == "opentelemetry":
+            return OpenTelemetryAdapter(
+                service_name=config.service_name,
+                otlp_endpoint=config.otlp_endpoint,
+            )
+        if config.type == "prometheus":
+            return PrometheusTelemetryAdapter(
+                service_name=config.service_name,
+                port=config.prometheus_port,
+            )
+        return ConsoleTelemetryAdapter()
 
     def _tool_to_text(self, tool: ToolDefinition) -> str:
         """Flatten tool metadata into a text string for embedding."""
