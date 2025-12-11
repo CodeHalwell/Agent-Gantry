@@ -159,7 +159,7 @@ class ConsoleTelemetryAdapter:
         return True
 
 
-class NoOpTelemetryAdapter:
+class NoopTelemetryAdapter:
     """
     No-op telemetry adapter.
 
