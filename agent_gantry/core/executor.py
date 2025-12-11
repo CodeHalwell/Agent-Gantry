@@ -22,6 +22,8 @@ from agent_gantry.schema.execution import (
 
 if TYPE_CHECKING:
     from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.core.security import SecurityPolicy
+    from agent_gantry.observability.telemetry import TelemetryAdapter
     from agent_gantry.schema.tool import ToolDefinition
 
 
@@ -45,6 +47,8 @@ class ExecutionEngine:
         max_retries: int = 3,
         circuit_breaker_threshold: int = 5,
         circuit_breaker_timeout_s: int = 60,
+        security_policy: SecurityPolicy | None = None,
+        telemetry: TelemetryAdapter | None = None,
     ) -> None:
         """
         Initialize the execution engine.
@@ -55,12 +59,16 @@ class ExecutionEngine:
             max_retries: Maximum number of retry attempts
             circuit_breaker_threshold: Failures before opening circuit
             circuit_breaker_timeout_s: Seconds before attempting recovery
+            security_policy: Security policy for permission checks
+            telemetry: Telemetry adapter for observability
         """
         self._registry = registry
         self._default_timeout = default_timeout_ms
         self._max_retries = max_retries
         self._cb_threshold = circuit_breaker_threshold
         self._cb_timeout = circuit_breaker_timeout_s
+        self._security_policy = security_policy
+        self._telemetry = telemetry
 
     async def execute(self, call: ToolCall) -> ToolResult:
         """
@@ -76,7 +84,7 @@ class ExecutionEngine:
         span_id = self._generate_span_id()
         queued_at = datetime.now(timezone.utc)
 
-        # Look up tool
+        # Look up tool from registry (which has the mutable health state)
         tool = self._registry.get_tool(call.tool_name)
         if not tool:
             return ToolResult(
@@ -92,7 +100,7 @@ class ExecutionEngine:
 
         # Check circuit breaker
         if tool.health.circuit_breaker_open and not self._should_attempt_recovery(tool):
-            return ToolResult(
+            result = ToolResult(
                 tool_name=call.tool_name,
                 status=ExecutionStatus.CIRCUIT_OPEN,
                 error="Circuit breaker is open due to repeated failures",
@@ -101,6 +109,46 @@ class ExecutionEngine:
                 trace_id=trace_id,
                 span_id=span_id,
             )
+            if self._telemetry:
+                await self._telemetry.record_execution(call, result)
+            return result
+
+        # Security policy check
+        if self._security_policy:
+            from agent_gantry.core.security import ConfirmationRequired
+
+            try:
+                self._security_policy.check_permission(call.tool_name, call.arguments)
+            except ConfirmationRequired:
+                result = ToolResult(
+                    tool_name=call.tool_name,
+                    status=ExecutionStatus.PENDING_CONFIRMATION,
+                    error="Tool requires human confirmation",
+                    queued_at=queued_at,
+                    completed_at=datetime.now(timezone.utc),
+                    trace_id=trace_id,
+                    span_id=span_id,
+                )
+                if self._telemetry:
+                    await self._telemetry.record_execution(call, result)
+                return result
+
+        # Argument validation
+        is_valid, validation_error = await self._validate_arguments(tool, call.arguments)
+        if not is_valid:
+            result = ToolResult(
+                tool_name=call.tool_name,
+                status=ExecutionStatus.FAILURE,
+                error=validation_error,
+                error_type="ValidationError",
+                queued_at=queued_at,
+                completed_at=datetime.now(timezone.utc),
+                trace_id=trace_id,
+                span_id=span_id,
+            )
+            if self._telemetry:
+                await self._telemetry.record_execution(call, result)
+            return result
 
         # Get handler
         handler = self._registry.get_handler(f"{tool.namespace}.{call.tool_name}")
@@ -121,7 +169,7 @@ class ExecutionEngine:
         if needs_confirm is None:
             needs_confirm = tool.requires_confirmation
         if needs_confirm:
-            return ToolResult(
+            result = ToolResult(
                 tool_name=call.tool_name,
                 status=ExecutionStatus.PENDING_CONFIRMATION,
                 queued_at=queued_at,
@@ -129,6 +177,9 @@ class ExecutionEngine:
                 trace_id=trace_id,
                 span_id=span_id,
             )
+            if self._telemetry:
+                await self._telemetry.record_execution(call, result)
+            return result
 
         # Execute with retries
         max_attempts = (call.retry_count or self._max_retries) + 1
@@ -138,17 +189,17 @@ class ExecutionEngine:
         for attempt in range(1, max_attempts + 1):
             started_at = datetime.now(timezone.utc)
             try:
-                result = await self._execute_with_timeout(
+                result_value = await self._execute_with_timeout(
                     handler,
                     call.arguments,
                     call.timeout_ms or self._default_timeout,
                 )
                 completed_at = datetime.now(timezone.utc)
                 await self._record_success(tool, (completed_at - started_at).total_seconds() * 1000)
-                return ToolResult(
+                result = ToolResult(
                     tool_name=call.tool_name,
                     status=ExecutionStatus.SUCCESS,
-                    result=result,
+                    result=result_value,
                     queued_at=queued_at,
                     started_at=started_at,
                     completed_at=completed_at,
@@ -156,6 +207,9 @@ class ExecutionEngine:
                     trace_id=trace_id,
                     span_id=span_id,
                 )
+                if self._telemetry:
+                    await self._telemetry.record_execution(call, result)
+                return result
             except asyncio.TimeoutError:
                 last_error = "Execution timed out"
                 last_error_type = "TimeoutError"
@@ -169,9 +223,13 @@ class ExecutionEngine:
         completed_at = datetime.now(timezone.utc)
         await self._record_failure(tool)
 
-        status = ExecutionStatus.TIMEOUT if "timeout" in (last_error or "").lower() else ExecutionStatus.FAILURE
+        status = (
+            ExecutionStatus.TIMEOUT
+            if last_error_type == "TimeoutError"
+            else ExecutionStatus.FAILURE
+        )
 
-        return ToolResult(
+        result = ToolResult(
             tool_name=call.tool_name,
             status=status,
             error=last_error,
@@ -182,6 +240,9 @@ class ExecutionEngine:
             trace_id=trace_id,
             span_id=span_id,
         )
+        if self._telemetry:
+            await self._telemetry.record_execution(call, result)
+        return result
 
     async def execute_batch(self, batch: BatchToolCall) -> BatchToolResult:
         """
@@ -245,8 +306,56 @@ class ExecutionEngine:
         elapsed = (datetime.now(timezone.utc) - tool.health.last_failure).total_seconds()
         return elapsed >= self._cb_timeout
 
+    async def _validate_arguments(
+        self, tool: ToolDefinition, arguments: dict[str, Any]
+    ) -> tuple[bool, str | None]:
+        """
+        Validate arguments against tool schema.
+
+        Args:
+            tool: Tool definition with parameter schema
+            arguments: Arguments to validate
+
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        schema = tool.parameters_schema
+        properties = schema.get("properties", {})
+        required = schema.get("required", [])
+
+        # Check required parameters
+        for param in required:
+            if param not in arguments:
+                return False, f"Missing required parameter: {param}"
+
+        # Check parameter types
+        for param_name, param_value in arguments.items():
+            if param_name not in properties:
+                return False, f"Unknown parameter: {param_name}"
+
+            param_schema = properties[param_name]
+            expected_type = param_schema.get("type")
+
+            # Note: bool is a subclass of int in Python, so check bool first
+            if expected_type == "boolean":
+                if not isinstance(param_value, bool):
+                    return False, f"Parameter '{param_name}' must be a boolean"
+            elif expected_type == "integer":
+                if not isinstance(param_value, int) or isinstance(param_value, bool):
+                    return False, f"Parameter '{param_name}' must be an integer"
+            elif expected_type == "number":
+                if not isinstance(param_value, (int, float)) or isinstance(param_value, bool):
+                    return False, f"Parameter '{param_name}' must be a number"
+            elif expected_type == "string":
+                if not isinstance(param_value, str):
+                    return False, f"Parameter '{param_name}' must be a string"
+
+        return True, None
+
     async def _record_success(self, tool: ToolDefinition, latency_ms: float) -> None:
         """Record a successful execution."""
+        old_health = tool.health.model_copy() if self._telemetry else None
+        
         tool.health.total_calls += 1
         tool.health.last_success = datetime.now(timezone.utc)
         tool.health.consecutive_failures = 0
@@ -260,9 +369,16 @@ class ExecutionEngine:
 
         # Update success rate
         tool.health.success_rate = (tool.health.success_rate * (n - 1) + 1) / n
+        
+        if self._telemetry and old_health:
+            await self._telemetry.record_health_change(
+                f"{tool.namespace}.{tool.name}", old_health, tool.health
+            )
 
     async def _record_failure(self, tool: ToolDefinition) -> None:
         """Record a failed execution."""
+        old_health = tool.health.model_copy() if self._telemetry else None
+        
         tool.health.total_calls += 1
         tool.health.last_failure = datetime.now(timezone.utc)
         tool.health.consecutive_failures += 1
@@ -274,6 +390,11 @@ class ExecutionEngine:
         # Check circuit breaker
         if tool.health.consecutive_failures >= self._cb_threshold:
             tool.health.circuit_breaker_open = True
+        
+        if self._telemetry and old_health:
+            await self._telemetry.record_health_change(
+                f"{tool.namespace}.{tool.name}", old_health, tool.health
+            )
 
     def _generate_trace_id(self) -> str:
         """Generate a unique trace ID."""
