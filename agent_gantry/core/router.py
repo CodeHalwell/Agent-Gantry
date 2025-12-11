@@ -118,7 +118,7 @@ async def classify_intent(
     if max(scores.values()) > 0:
         return max(scores, key=lambda k: scores[k])
 
-    if use_llm and conversation_summary:
+    if use_llm:
         # TODO: Implement LLM-based classification
         raise NotImplementedError("LLM-based intent classification is not implemented yet.")
 
