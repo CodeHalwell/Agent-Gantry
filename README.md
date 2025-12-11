@@ -84,8 +84,12 @@ result = await gantry.execute(ToolCall(
 - **Multi-Protocol Support**: Native support for MCP (Model Context Protocol) and A2A (Agent-to-Agent)
 - **Schema Transcoding**: Automatic conversion between OpenAI, Anthropic, and Gemini tool formats
 - **Circuit Breakers**: Automatic failure detection and recovery
-- **Observability**: Built-in OpenTelemetry integration for tracing and metrics
+- **Observability**: Built-in structured logging and telemetry for tracing and metrics
 - **Zero-Trust Security**: Capability-based permissions and policy enforcement
+- **Argument Validation**: Defensive validation against tool schemas
+- **Async-Native**: Full async support for tools and execution
+- **Retries & Timeouts**: Automatic retries with exponential backoff and configurable timeouts
+- **Health Tracking**: Per-tool health metrics including success rate, latency, and circuit breaker state
 
 ## Project Structure
 
@@ -138,13 +142,13 @@ pytest tests/test_tool.py
 
 See [plan.md](plan.md) for the detailed development roadmap.
 
-- **Phase 1**: Core Foundation - Data models, in-memory vector store, basic routing
-- **Phase 2**: Robustness - Execution engine, retries, circuit breakers
-- **Phase 3**: Context-Aware Routing - Intent classification, MMR diversity
-- **Phase 4**: Production Adapters - Qdrant, Chroma, OpenAI embeddings
-- **Phase 5**: MCP Integration - MCP client and server
-- **Phase 6**: A2A Integration - Agent-to-Agent protocol
-- **Phase 7**: Framework Integrations - LangChain, AutoGen, etc.
+- **Phase 1**: ✅ Core Foundation - Data models, in-memory vector store, basic routing
+- **Phase 2**: ✅ Robustness - Execution engine, retries, circuit breakers, security (see [docs/phase2.md](docs/phase2.md))
+- **Phase 3**: 🚧 Context-Aware Routing - Intent classification, MMR diversity
+- **Phase 4**: 📋 Production Adapters - Qdrant, Chroma, OpenAI embeddings
+- **Phase 5**: 📋 MCP Integration - MCP client and server
+- **Phase 6**: 📋 A2A Integration - Agent-to-Agent protocol
+- **Phase 7**: 📋 Framework Integrations - LangChain, AutoGen, etc.
 
 ## License
 
