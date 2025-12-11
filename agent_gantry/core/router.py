@@ -7,6 +7,7 @@ Intelligent tool selection using semantic search, intent classification, and con
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from enum import Enum
 from time import perf_counter
@@ -299,11 +300,11 @@ class SemanticRouter:
         if tool.name in query.context.tools_already_used:
             conversation_relevance = 0.5
         summary = (query.context.conversation_summary or "").lower()
-        if summary and tool.name.lower() in summary:
+        if summary and self._contains_token(summary, tool.name.lower()):
             conversation_relevance = min(1.0, conversation_relevance + 0.2)
         for message in query.context.recent_messages:
             content = message.get("content", "").lower()
-            if content and tool.name.lower() in content:
+            if content and self._contains_token(content, tool.name.lower()):
                 conversation_relevance = min(1.0, conversation_relevance + 0.2)
 
         # Health score
@@ -339,30 +340,29 @@ class SemanticRouter:
         if not scored_tools:
             return []
 
+        _ = query_embedding  # kept for signature consistency; not used in relevance scoring
         lambda_param = 1.0 - diversity_factor
+        relevance_scores = [score for _, score in scored_tools]
         tool_texts = [self._tool_to_text(tool) for tool, _ in scored_tools]
         embeddings = await self._embedder.embed_batch(tool_texts)
-        query_similarities = [
-            self._cosine_similarity(query_embedding, emb) for emb in embeddings
-        ]
 
         selected: list[int] = []
         candidates = list(range(len(scored_tools)))
 
-        first_idx = max(candidates, key=lambda i: query_similarities[i])
+        first_idx = max(candidates, key=lambda i: relevance_scores[i])
         selected.append(first_idx)
         candidates.remove(first_idx)
 
         while candidates and len(selected) < limit:
             mmr_scores: dict[int, float] = {}
             for idx in candidates:
-                diversity = max(
+                similarity_to_selected = max(
                     (self._cosine_similarity(embeddings[idx], embeddings[sel]) for sel in selected),
                     default=0.0,
                 )
-                mmr_scores[idx] = lambda_param * query_similarities[idx] - (
+                mmr_scores[idx] = lambda_param * relevance_scores[idx] - (
                     1.0 - lambda_param
-                ) * diversity
+                ) * similarity_to_selected
 
             next_idx = max(mmr_scores, key=mmr_scores.get)
             selected.append(next_idx)
@@ -386,3 +386,10 @@ class SemanticRouter:
         tags = " ".join(tool.tags)
         examples = " ".join(example for example in tool.examples if example)
         return f"{tool.name} {tool.description} {tags} {examples}"
+
+    def _contains_token(self, text: str, token: str) -> bool:
+        """Return True if token appears as a standalone word in text."""
+        if not token:
+            return False
+        pattern = rf"(?<!\w){re.escape(token)}(?!\w)"
+        return re.search(pattern, text) is not None
