@@ -142,6 +142,7 @@ class AgentGantry:
         try:
             type_hints = func.__annotations__
         except AttributeError:
+            # Some built-in or C-extension functions may not have __annotations__; fall back to empty type hints.
             pass
 
         properties: dict[str, Any] = {}
