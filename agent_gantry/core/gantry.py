@@ -100,10 +100,7 @@ class AgentGantry:
         )
         self._executor = ExecutionEngine(
             registry=self._registry,
-            default_timeout_ms=self._config.execution.default_timeout_ms,
-            max_retries=self._config.execution.max_retries,
-            circuit_breaker_threshold=self._config.execution.circuit_breaker_threshold,
-            circuit_breaker_timeout_s=self._config.execution.circuit_breaker_timeout_s,
+            execution_config=self._config.execution,
             security_policy=self._security_policy,
             telemetry=self._telemetry,
         )
