@@ -6,9 +6,9 @@ Primary entry point for the Agent-Gantry library.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable
 from time import perf_counter
-import uuid
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.adapters.embedders.openai import AzureOpenAIEmbedder, OpenAIEmbedder
@@ -32,6 +32,7 @@ from agent_gantry.observability.opentelemetry_adapter import (
 from agent_gantry.schema.config import (
     AgentGantryConfig,
     EmbedderConfig,
+    MCPServerConfig,
     RerankerConfig,
     TelemetryConfig,
     VectorStoreConfig,
@@ -100,7 +101,10 @@ class AgentGantry:
         )
         self._executor = ExecutionEngine(
             registry=self._registry,
-            execution_config=self._config.execution,
+            default_timeout_ms=self._config.execution.default_timeout_ms,
+            max_retries=self._config.execution.max_retries,
+            circuit_breaker_threshold=self._config.execution.circuit_breaker_threshold,
+            circuit_breaker_timeout_s=self._config.execution.circuit_breaker_timeout_s,
             security_policy=self._security_policy,
             telemetry=self._telemetry,
         )
@@ -213,11 +217,11 @@ class AgentGantry:
         texts = [self._tool_to_text(t) for t in self._pending_tools]
         embeddings = await self._embedder.embed_batch(texts)
         count = await self._vector_store.add_tools(self._pending_tools, embeddings, upsert=True)
-        
+
         # Register tools in registry
         for tool in self._pending_tools:
             self._registry.register_tool(tool)
-        
+
         self._pending_tools = []
         return count
 
@@ -326,7 +330,7 @@ class AgentGantry:
         await self._ensure_initialized()
         if self._config.auto_sync:
             await self.sync()
-        
+
         if self._telemetry:
             async with self._telemetry.span("tool_execution", {"tool_name": call.tool_name}):
                 return await self._executor.execute(call)
@@ -346,21 +350,64 @@ class AgentGantry:
         await self._ensure_initialized()
         if self._config.auto_sync:
             await self.sync()
-        
+
         if self._telemetry:
             async with self._telemetry.span("batch_execution", {"count": len(batch.calls)}):
                 return await self._executor.execute_batch(batch)
         else:
             return await self._executor.execute_batch(batch)
 
-    def serve_mcp(self, transport: str = "stdio") -> None:
+    async def add_mcp_server(self, config: MCPServerConfig) -> int:
+        """
+        Add an MCP server to discover and register its tools.
+
+        Args:
+            config: Configuration for the MCP server
+
+        Returns:
+            Number of tools discovered and registered
+        """
+        from agent_gantry.adapters.executors.mcp_client import MCPClient
+
+        await self._ensure_initialized()
+
+        # Create MCP client
+        client = MCPClient(config)
+
+        # Discover tools from the server
+        tools = await client.list_tools()
+
+        # Add tools to the gantry
+        for tool in tools:
+            await self.add_tool(tool)
+
+        return len(tools)
+
+    async def serve_mcp(
+        self, transport: str = "stdio", mode: str = "dynamic", name: str = "agent-gantry"
+    ) -> None:
         """
         Start serving as an MCP server.
 
         Args:
             transport: Transport type ("stdio" or "sse")
+            mode: Server mode ("dynamic", "static", or "hybrid")
+            name: Server name for identification
         """
-        raise NotImplementedError("MCP server not yet implemented")
+        from agent_gantry.servers.mcp_server import create_mcp_server
+
+        await self._ensure_initialized()
+        if self._config.auto_sync:
+            await self.sync()
+
+        server = create_mcp_server(self, mode=mode, name=name)
+
+        if transport == "stdio":
+            await server.run_stdio()
+        elif transport == "sse":
+            await server.run_sse()
+        else:
+            raise ValueError(f"Unsupported transport: {transport}")
 
     def serve_a2a(self, host: str = "0.0.0.0", port: int = 8080) -> None:
         """

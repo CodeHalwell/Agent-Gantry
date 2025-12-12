@@ -7,8 +7,6 @@ re-scoring candidates using simple keyword overlap.
 
 from __future__ import annotations
 
-from typing import Iterable
-
 from agent_gantry.adapters.rerankers.base import RerankerAdapter
 from agent_gantry.schema.tool import ToolDefinition
 

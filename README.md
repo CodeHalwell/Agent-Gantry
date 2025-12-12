@@ -138,15 +138,62 @@ pytest --cov=agent_gantry
 pytest tests/test_tool.py
 ```
 
+## MCP Integration
+
+Agent-Gantry provides first-class support for the Model Context Protocol (MCP), enabling seamless integration with Claude Desktop and other MCP clients.
+
+### Serve as MCP Server
+
+```python
+from agent_gantry import AgentGantry
+
+gantry = AgentGantry()
+
+@gantry.register
+def calculate_sum(a: int, b: int) -> int:
+    """Calculate the sum of two numbers."""
+    return a + b
+
+await gantry.sync()
+
+# Serve as MCP server (dynamic mode for context window minimization)
+await gantry.serve_mcp(transport="stdio", mode="dynamic")
+```
+
+**Dynamic Mode Benefits:**
+- Exposes only 2 meta-tools: `find_relevant_tools` and `execute_tool`
+- Reduces context window usage by ~90%
+- Tools discovered on-demand through semantic search
+- Perfect for Claude Desktop integration
+
+### Connect to MCP Servers
+
+```python
+from agent_gantry.schema.config import MCPServerConfig
+
+config = MCPServerConfig(
+    name="filesystem",
+    command=["npx", "-y", "@modelcontextprotocol/server-filesystem"],
+    args=["--path", "/tmp"],
+    namespace="fs",
+)
+
+# Discover and register tools from external MCP server
+count = await gantry.add_mcp_server(config)
+print(f"Added {count} tools from MCP server")
+```
+
+See `examples/mcp_integration_demo.py` for a complete demonstration.
+
 ## Roadmap
 
 See [plan.md](plan.md) for the detailed development roadmap.
 
 - **Phase 1**: ✅ Core Foundation - Data models, in-memory vector store, basic routing
 - **Phase 2**: ✅ Robustness - Execution engine, retries, circuit breakers, security (see [docs/phase2.md](docs/phase2.md))
-- **Phase 3**: 🚧 Context-Aware Routing - Intent classification, MMR diversity
-- **Phase 4**: 📋 Production Adapters - Qdrant, Chroma, OpenAI embeddings
-- **Phase 5**: 📋 MCP Integration - MCP client and server
+- **Phase 3**: ✅ Context-Aware Routing - Intent classification, MMR diversity
+- **Phase 4**: ✅ Production Adapters - Qdrant, Chroma, OpenAI embeddings
+- **Phase 5**: ✅ MCP Integration - MCP client and server, dynamic tool discovery
 - **Phase 6**: 📋 A2A Integration - Agent-to-Agent protocol
 - **Phase 7**: 📋 Framework Integrations - LangChain, AutoGen, etc.
 

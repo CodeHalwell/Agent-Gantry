@@ -355,7 +355,7 @@ class ExecutionEngine:
     async def _record_success(self, tool: ToolDefinition, latency_ms: float) -> None:
         """Record a successful execution."""
         old_health = tool.health.model_copy() if self._telemetry else None
-        
+
         tool.health.total_calls += 1
         tool.health.last_success = datetime.now(timezone.utc)
         tool.health.consecutive_failures = 0
@@ -369,7 +369,7 @@ class ExecutionEngine:
 
         # Update success rate
         tool.health.success_rate = (tool.health.success_rate * (n - 1) + 1) / n
-        
+
         if self._telemetry and old_health:
             await self._telemetry.record_health_change(
                 f"{tool.namespace}.{tool.name}", old_health, tool.health
@@ -378,7 +378,7 @@ class ExecutionEngine:
     async def _record_failure(self, tool: ToolDefinition) -> None:
         """Record a failed execution."""
         old_health = tool.health.model_copy() if self._telemetry else None
-        
+
         tool.health.total_calls += 1
         tool.health.last_failure = datetime.now(timezone.utc)
         tool.health.consecutive_failures += 1
@@ -390,7 +390,7 @@ class ExecutionEngine:
         # Check circuit breaker
         if tool.health.consecutive_failures >= self._cb_threshold:
             tool.health.circuit_breaker_open = True
-        
+
         if self._telemetry and old_health:
             await self._telemetry.record_health_change(
                 f"{tool.namespace}.{tool.name}", old_health, tool.health

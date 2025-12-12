@@ -74,7 +74,7 @@ class RoutingWeights:
 class RoutingResult:
     """Routing outcome with timing metadata."""
 
-    tools: list[tuple["ToolDefinition", float]]
+    tools: list[tuple[ToolDefinition, float]]
     query_embedding_time_ms: float
     vector_search_time_ms: float
     rerank_time_ms: float | None
