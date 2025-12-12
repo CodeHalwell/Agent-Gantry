@@ -483,7 +483,7 @@ class TestMCPProtocolCompliance:
             def make_tool(idx):
                 @gantry.register(name=f"tool_{idx}")
                 def tool_fn(x: int) -> int:
-                    f"""Tool number {idx} for testing context window minimization."""
+                    """Tool for testing context window minimization with many tools."""
                     return x + idx
                 return tool_fn
 
