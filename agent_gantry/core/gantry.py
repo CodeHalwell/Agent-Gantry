@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from time import perf_counter
-from typing import TYPE_CHECKING, Any
 import uuid
+from typing import TYPE_CHECKING, Any
 
 from agent_gantry.adapters.embedders.openai import AzureOpenAIEmbedder, OpenAIEmbedder
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
