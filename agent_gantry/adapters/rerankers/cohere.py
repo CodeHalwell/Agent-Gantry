@@ -44,5 +44,5 @@ class CohereReranker(RerankerAdapter):
         rescored.sort(key=lambda x: x[1], reverse=True)
         return rescored[:top_k]
 
-    def _tokenize(self, text: str) -> Iterable[str]:
+    def _tokenize(self, text: str) -> list[str]:
         return text.lower().split()
