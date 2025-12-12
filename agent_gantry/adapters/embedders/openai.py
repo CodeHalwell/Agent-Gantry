@@ -32,12 +32,28 @@ class _BaseOpenAIEmbedder(SimpleEmbedder):
 
 
 class OpenAIEmbedder(_BaseOpenAIEmbedder):
-    """OpenAI embedder stub."""
+    """
+    Stub implementation of an OpenAI-compatible embedder.
+
+    This class does not make real API calls to the OpenAI embeddings endpoint.
+    Instead, it delegates all embedding logic to SimpleEmbedder, producing deterministic
+    vectors for testing and development purposes. It exists to provide API metadata
+    compatibility and health checks, but should not be used in production where real
+    OpenAI embeddings are required.
+    """
 
     def __init__(self, config: EmbedderConfig) -> None:
         super().__init__(config)
 
 
 class AzureOpenAIEmbedder(_BaseOpenAIEmbedder):
-    """Azure OpenAI embedder stub."""
+    """
+    Stub implementation of an Azure OpenAI-compatible embedder.
+
+    This class does not make real API calls to the Azure OpenAI embeddings endpoint.
+    Instead, it delegates all embedding logic to SimpleEmbedder, producing deterministic
+    vectors for testing and development purposes. It exists to provide API metadata
+    compatibility and health checks, but should not be used in production where real
+    Azure OpenAI embeddings are required.
+    """
     pass
