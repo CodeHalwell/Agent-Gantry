@@ -84,6 +84,6 @@ class PrometheusTelemetryAdapter(OpenTelemetryAdapter):
     def export_metrics(self) -> str:
         lines = [f"# Metrics for {self.service_name}", f"# Port: {self.port}"]
         for key, value in sorted(self.metrics.items()):
-            metric_name = re.sub(r"[^a-zA-Z0-9_:]", "_", key.replace(" ", "_"))
+            metric_name = re.sub(r"[^a-zA-Z0-9_]", "_", key.replace(" ", "_"))
             lines.append(f"agent_gantry_{metric_name} {value}")
         return "\n".join(lines)
