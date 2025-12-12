@@ -75,12 +75,30 @@ class _ProxyVectorStore:
 
 
 class QdrantVectorStore(_ProxyVectorStore):
-    """Qdrant adapter backed by the in-memory store."""
+    """
+    Stub implementation of a Qdrant vector store adapter.
+
+    This class is backed by the in-memory vector store for testing and config-driven
+    switching. It does not connect to a real Qdrant instance. This stub will be replaced
+    with a production implementation in the future.
+    """
 
 
 class ChromaVectorStore(_ProxyVectorStore):
-    """Chroma adapter backed by the in-memory store."""
+    """
+    Stub implementation of a Chroma vector store adapter.
+
+    This class is backed by the in-memory vector store for testing and config-driven
+    switching. It does not connect to a real Chroma instance. This stub will be replaced
+    with a production implementation in the future.
+    """
 
 
 class PGVectorStore(_ProxyVectorStore):
-    """PGVector adapter backed by the in-memory store."""
+    """
+    Stub implementation of a PGVector vector store adapter.
+
+    This class is backed by the in-memory vector store for testing and config-driven
+    switching. It does not connect to a real PGVector instance. This stub will be replaced
+    with a production implementation in the future.
+    """
