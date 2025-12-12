@@ -14,8 +14,16 @@ from agent_gantry.schema.tool import ToolDefinition
 
 
 class CohereReranker(RerankerAdapter):
-    """Deterministic reranker for tests and config switching."""
+    """
+    Stub implementation of a Cohere reranker for tests and configuration switching.
 
+    This class does NOT use the real Cohere API. Instead, it reranks candidates using
+    simple keyword overlap between the query and tool metadata. This is intended for
+    deterministic testing and as a placeholder for environments where the Cohere API
+    is unavailable.
+
+    Do not use this class if you require actual Cohere reranking behavior.
+    """
     def __init__(self, model: str | None = None) -> None:
         self.model = model or "rerank-english-v3.0"
 
