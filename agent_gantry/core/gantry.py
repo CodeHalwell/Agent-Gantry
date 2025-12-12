@@ -450,15 +450,15 @@ class AgentGantry:
         """Construct a vector store adapter from configuration."""
         if config.type == "qdrant":
             if not config.url:
-                return InMemoryVectorStore()
+                raise ValueError("Qdrant vector store requires a 'url' in the configuration.")
             return QdrantVectorStore(url=config.url, api_key=config.api_key)
         if config.type == "chroma":
             if not config.url:
-                return InMemoryVectorStore()
+                raise ValueError("Chroma vector store requires a 'url' in the configuration.")
             return ChromaVectorStore(url=config.url, api_key=config.api_key)
         if config.type == "pgvector":
             if not config.url:
-                return InMemoryVectorStore()
+                raise ValueError("PGVector vector store requires a 'url' in the configuration.")
             return PGVectorStore(url=config.url, api_key=config.api_key)
         return InMemoryVectorStore()
 
