@@ -53,8 +53,11 @@ vector-stores = [
     "qdrant-client>=1.7.0",
     "chromadb>=0.4.0",
 ]
+mcp = [
+    "mcp>=1.0.0",
+]
 all = [
-    "agent-gantry[dev,embeddings,openai,vector-stores]",
+    "agent-gantry[dev,embeddings,openai,vector-stores,mcp]",
 ]
 
 [project.scripts]
