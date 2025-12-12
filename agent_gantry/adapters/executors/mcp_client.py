@@ -6,7 +6,6 @@ Connects to MCP servers and converts their tools to ToolDefinition.
 
 from __future__ import annotations
 
-import asyncio
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -94,7 +93,7 @@ class MCPClient:
         # Extract tool information
         name = mcp_tool.name
         description = mcp_tool.description or f"Tool: {name}"
-        
+
         # Convert input schema to parameters_schema
         parameters_schema = mcp_tool.inputSchema if hasattr(mcp_tool, 'inputSchema') else {
             "type": "object",

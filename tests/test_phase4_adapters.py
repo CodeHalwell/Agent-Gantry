@@ -4,9 +4,8 @@ Tests for Phase 4: production adapters and observability.
 
 from __future__ import annotations
 
-import yaml
-
 import pytest
+import yaml
 
 from agent_gantry import AgentGantry
 from agent_gantry.adapters.embedders.openai import OpenAIEmbedder

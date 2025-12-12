@@ -6,8 +6,6 @@ Tests MCP client, server, and protocol compliance.
 
 from __future__ import annotations
 
-import asyncio
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -15,7 +13,6 @@ import pytest
 from agent_gantry import AgentGantry
 from agent_gantry.adapters.executors.mcp_client import MCPClient, MCPClientPool
 from agent_gantry.schema.config import MCPServerConfig
-from agent_gantry.schema.execution import ToolCall
 from agent_gantry.schema.tool import ToolDefinition, ToolSource
 from agent_gantry.servers.mcp_server import MCPServer, create_mcp_server
 
@@ -97,9 +94,8 @@ class TestMCPClient:
         mock_session.initialize = AsyncMock()
 
         # Create a proper async context manager mock
-        from unittest.mock import AsyncMock as AM
         from contextlib import asynccontextmanager
-        
+
         @asynccontextmanager
         async def mock_connect():
             yield mock_session
@@ -252,17 +248,17 @@ class TestMCPServer:
         self, mcp_server_dynamic: MCPServer
     ) -> None:
         """Test that dynamic mode exposes meta-tools."""
-        # In dynamic mode, we should be able to get tools through list_tools
-        # The handlers are set up via decorators, so we test through the public API
-        tools = await mcp_server_dynamic.gantry.list_tools()
-        
         # Dynamic mode should provide meta-tools, not direct tools
         # We verify this by checking the _handle methods exist
         assert hasattr(mcp_server_dynamic, "_handle_find_relevant_tools")
         assert hasattr(mcp_server_dynamic, "_handle_execute_tool")
-        
+
         # Verify the server is in dynamic mode
         assert mcp_server_dynamic.mode == "dynamic"
+        
+        # Verify tools are still accessible through gantry
+        tools = await mcp_server_dynamic.gantry.list_tools()
+        assert len(tools) > 0
 
     @pytest.mark.asyncio
     async def test_static_mode_tools(
@@ -272,11 +268,11 @@ class TestMCPServer:
         # In static mode, tools should be accessible through the gantry
         tools = await mcp_server_static.gantry.list_tools()
         assert len(tools) >= 2  # At least our registered tools
-        
+
         tool_names = [t.name for t in tools]
         assert "add_numbers" in tool_names
         assert "get_weather" in tool_names
-        
+
         # Verify the server is in static mode
         assert mcp_server_static.mode == "static"
 
@@ -291,7 +287,7 @@ class TestMCPServer:
 
         assert isinstance(result, list)
         assert len(result) > 0
-        
+
         # Check that result contains tool information
         first_result = result[0]
         assert first_result["type"] == "text"
@@ -308,7 +304,7 @@ class TestMCPServer:
 
         assert isinstance(result, list)
         assert len(result) > 0
-        
+
         first_result = result[0]
         assert first_result["type"] == "text"
         assert "8" in first_result["text"]
@@ -324,7 +320,7 @@ class TestMCPServer:
 
         assert isinstance(result, list)
         assert len(result) > 0
-        
+
         first_result = result[0]
         assert first_result["type"] == "text"
         assert "Error" in first_result["text"]
@@ -424,19 +420,19 @@ class TestMCPProtocolCompliance:
         # Get the tool from gantry
         tool = await gantry.get_tool("test_tool")
         assert tool is not None
-        
+
         # Verify the tool has proper MCP-compatible schema
         assert tool.name == "test_tool"
         assert len(tool.description) >= 10  # Meets minimum length
         assert tool.parameters_schema is not None
-        
+
         # Verify schema structure
         schema = tool.parameters_schema
         assert schema["type"] == "object"
         assert "properties" in schema
         assert "param1" in schema["properties"]
         assert "param2" in schema["properties"]
-        
+
         # Test conversion to MCP Tool format
         server = create_mcp_server(gantry, mode="static")
         mcp_tool = server._convert_tool(tool)
@@ -490,7 +486,7 @@ class TestMCPProtocolCompliance:
                     f"""Tool number {idx} for testing context window minimization."""
                     return x + idx
                 return tool_fn
-            
+
             make_tool(i)
 
         await gantry.sync()
@@ -502,7 +498,7 @@ class TestMCPProtocolCompliance:
         # Dynamic mode exposes meta-tools for discovery
         dynamic_server = create_mcp_server(gantry, mode="dynamic")
         assert dynamic_server.mode == "dynamic"
-        
+
         # In dynamic mode, clients would first call find_relevant_tools
         # to discover a small subset, minimizing context window usage
         result = await dynamic_server._handle_find_relevant_tools(

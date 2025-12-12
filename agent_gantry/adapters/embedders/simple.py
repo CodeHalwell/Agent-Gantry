@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import math
 import re
-from typing import Iterable
+from collections.abc import Iterable
 
 from agent_gantry.adapters.embedders.base import EmbeddingAdapter
 

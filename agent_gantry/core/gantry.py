@@ -6,9 +6,9 @@ Primary entry point for the Agent-Gantry library.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable
 from time import perf_counter
-import uuid
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.adapters.embedders.openai import AzureOpenAIEmbedder, OpenAIEmbedder
@@ -217,11 +217,11 @@ class AgentGantry:
         texts = [self._tool_to_text(t) for t in self._pending_tools]
         embeddings = await self._embedder.embed_batch(texts)
         count = await self._vector_store.add_tools(self._pending_tools, embeddings, upsert=True)
-        
+
         # Register tools in registry
         for tool in self._pending_tools:
             self._registry.register_tool(tool)
-        
+
         self._pending_tools = []
         return count
 
@@ -330,7 +330,7 @@ class AgentGantry:
         await self._ensure_initialized()
         if self._config.auto_sync:
             await self.sync()
-        
+
         if self._telemetry:
             async with self._telemetry.span("tool_execution", {"tool_name": call.tool_name}):
                 return await self._executor.execute(call)
@@ -350,7 +350,7 @@ class AgentGantry:
         await self._ensure_initialized()
         if self._config.auto_sync:
             await self.sync()
-        
+
         if self._telemetry:
             async with self._telemetry.span("batch_execution", {"count": len(batch.calls)}):
                 return await self._executor.execute_batch(batch)
@@ -370,17 +370,17 @@ class AgentGantry:
         from agent_gantry.adapters.executors.mcp_client import MCPClient
 
         await self._ensure_initialized()
-        
+
         # Create MCP client
         client = MCPClient(config)
-        
+
         # Discover tools from the server
         tools = await client.list_tools()
-        
+
         # Add tools to the gantry
         for tool in tools:
             await self.add_tool(tool)
-        
+
         return len(tools)
 
     async def serve_mcp(
@@ -401,7 +401,7 @@ class AgentGantry:
             await self.sync()
 
         server = create_mcp_server(self, mode=mode, name=name)
-        
+
         if transport == "stdio":
             await server.run_stdio()
         elif transport == "sse":
