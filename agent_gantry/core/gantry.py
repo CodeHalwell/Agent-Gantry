@@ -239,10 +239,16 @@ class AgentGantry:
         if self._config.reranker.enabled and self._reranker is not None:
             if query.enable_reranking is None:
                 query.enable_reranking = True
-        if self._telemetry:
-            async with self._telemetry.span("tool_retrieval", {"query": query.context.query}):
-                routing_result = await self._router.route(query)
-        else:
+        # Use telemetry span if available, otherwise use a no-op async context manager
+        class _AsyncNoopContext:
+            async def __aenter__(self): return self
+            async def __aexit__(self, exc_type, exc, tb): return False
+
+        span_cm = (
+            self._telemetry.span("tool_retrieval", {"query": query.context.query})
+            if self._telemetry else _AsyncNoopContext()
+        )
+        async with span_cm:
             routing_result = await self._router.route(query)
 
         # Expect routing_result.tools to yield (tool, semantic_score, rerank_score, composite_score)
