@@ -135,7 +135,10 @@ def create_a2a_server(gantry: AgentGantry, base_url: str = "http://localhost:808
                     break
 
             if not query_text:
-                raise HTTPException(status_code=400, detail="No text found in messages")
+                raise HTTPException(
+                    status_code=400,
+                    detail="No text content found in message parts. Expected at least one message with a text part."
+                )
 
             # Route to appropriate skill
             if skill_id == "tool_discovery":
