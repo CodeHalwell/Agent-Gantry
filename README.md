@@ -28,6 +28,28 @@ For development:
 pip install agent-gantry[dev]
 ```
 
+### LLM Provider SDKs
+
+Install with specific LLM provider support:
+
+```bash
+# All LLM providers
+pip install agent-gantry[llm-providers]
+
+# Individual providers
+pip install agent-gantry[openai]        # OpenAI, Azure OpenAI, OpenRouter
+pip install agent-gantry[anthropic]     # Anthropic (Claude)
+pip install agent-gantry[google-genai]  # Google GenAI
+pip install agent-gantry[google-vertexai]  # Google Vertex AI
+pip install agent-gantry[mistral]       # Mistral AI
+pip install agent-gantry[groq]          # Groq
+
+# Everything
+pip install agent-gantry[all]
+```
+
+See [docs/llm_sdk_compatibility.md](docs/llm_sdk_compatibility.md) for detailed provider documentation.
+
 ## Quick Start
 
 ```python
@@ -83,6 +105,7 @@ result = await gantry.execute(ToolCall(
 - **Semantic Routing**: Intelligent tool selection using vector similarity, intent classification, and conversation context
 - **Multi-Protocol Support**: Native support for MCP (Model Context Protocol) and A2A (Agent-to-Agent)
 - **Schema Transcoding**: Automatic conversion between OpenAI, Anthropic, and Gemini tool formats
+- **LLM Provider Compatibility**: Works with OpenAI, Azure OpenAI, Anthropic, Google GenAI, Vertex AI, Mistral, Groq, and OpenRouter
 - **Circuit Breakers**: Automatic failure detection and recovery
 - **Observability**: Built-in structured logging and telemetry for tracing and metrics
 - **Zero-Trust Security**: Capability-based permissions and policy enforcement
