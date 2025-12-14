@@ -80,8 +80,8 @@ class A2AClient:
         Returns:
             Tool name in the format: a2a_{agent_name}_{skill_id}
         """
-        agent_part = _SANITIZE_PATTERN.sub("_", self.config.name.lower())
-        skill_part = _SANITIZE_PATTERN.sub("_", skill_id.lower())
+        agent_part = _SANITIZE_PATTERN.sub("_", self.config.name.lower()).strip("_")
+        skill_part = _SANITIZE_PATTERN.sub("_", skill_id.lower()).strip("_")
         return f"a2a_{agent_part}_{skill_part}"
 
     def _skill_to_tool(self, skill: Any) -> ToolDefinition:
