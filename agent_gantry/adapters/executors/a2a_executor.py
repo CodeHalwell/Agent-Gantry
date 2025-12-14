@@ -100,9 +100,9 @@ class A2AExecutor:
                 raise ValueError(f"Tool {tool.name} missing skill_id metadata")
 
             # Extract query from arguments
-            query = call.arguments.get("query", "")
-            if not query:
+            if "query" not in call.arguments:
                 raise ValueError("Missing required argument: query")
+            query = call.arguments["query"]
 
             # Send task to A2A agent
             result = await client.send_task(

@@ -183,10 +183,13 @@ async def handle_tool_discovery(gantry: AgentGantry, query: str) -> dict[str, An
         query: Search query
 
     Returns:
-        Dictionary with discovered tools
+        Dictionary with discovered tools (serialized as dicts)
     """
     # Retrieve relevant tools using semantic search
-    tools = await gantry.retrieve_tools(query, limit=5)
+    tools_raw = await gantry.retrieve_tools(query, limit=5)
+
+    # Convert to serializable format
+    tools = [tool if isinstance(tool, dict) else tool for tool in tools_raw]
 
     return {
         "query": query,

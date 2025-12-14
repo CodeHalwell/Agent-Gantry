@@ -68,6 +68,18 @@ class A2AClient:
                 f"Failed to discover A2A agent at {self._base_url}: {e}"
             ) from e
 
+    def _generate_tool_name(self, skill_id: str) -> str:
+        """
+        Generate a unique tool name for an A2A skill.
+
+        Args:
+            skill_id: The skill ID
+
+        Returns:
+            Tool name in the format: a2a_{agent_name}_{skill_id}
+        """
+        return f"a2a_{self.config.name}_{skill_id}".lower().replace("-", "_")
+
     def _skill_to_tool(self, skill: Any) -> ToolDefinition:
         """
         Convert an agent skill to a ToolDefinition.
@@ -79,7 +91,7 @@ class A2AClient:
             ToolDefinition for the skill
         """
         # Generate a unique tool name based on agent and skill
-        tool_name = f"a2a_{self.config.name}_{skill.id}".lower().replace("-", "_")
+        tool_name = self._generate_tool_name(skill.id)
 
         # Build parameter schema (for now, accept text input)
         parameters_schema = {
