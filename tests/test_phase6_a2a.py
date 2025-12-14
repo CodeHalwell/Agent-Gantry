@@ -233,6 +233,37 @@ class TestA2AClient:
             assert result["status"] == "success"
             assert result["output"] == "Task completed"
 
+    @pytest.mark.parametrize(
+        ("agent_name", "skill_id", "expected"),
+        [
+            ("test---agent", "analyze_data", "a2a_test_agent_analyze_data"),
+            ("---test", "skill", "a2a_test_skill"),
+            ("test.agent", "skill", "a2a_test_agent_skill"),
+            ("test-agent.v1", "skill", "a2a_test_agent_v1_skill"),
+            ("test-agent", "!!!", "a2a_test_agent_"),
+        ],
+    )
+    async def test_skill_to_tool_sanitization_edge_cases(
+        self, agent_name: str, skill_id: str, expected: str
+    ) -> None:
+        """Ensure tool names are sanitized for edge-case agent/skill identifiers."""
+        config = A2AAgentConfig(name=agent_name, url="http://example.com", namespace="edge")
+        client = A2AClient(config)
+
+        skill = AgentSkill(
+            id=skill_id,
+            name="Edge Skill",
+            description="Edge skill for sanitization tests",
+            input_modes=["text"],
+            output_modes=["text"],
+        )
+
+        tool = client._skill_to_tool(skill)
+
+        assert tool.name == expected
+        assert tool.source == ToolSource.A2A_AGENT
+        assert tool.namespace == "edge"
+
 
 class TestA2AServer:
     """Tests for A2A server functionality."""
