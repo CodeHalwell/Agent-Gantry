@@ -14,4 +14,5 @@ try:
 
     __all__.extend(["MCPServer", "create_mcp_server"])
 except ImportError:
+    # MCP server is optional; ignore if the required package is not installed.
     pass
