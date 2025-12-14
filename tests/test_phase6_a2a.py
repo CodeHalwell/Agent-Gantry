@@ -12,7 +12,7 @@ import pytest
 
 from agent_gantry import AgentGantry
 from agent_gantry.providers.a2a_client import A2AClient
-from agent_gantry.schema.a2a import AgentCard, AgentSkill, TaskMessage, TaskMessagePart
+from agent_gantry.schema.a2a import AgentCard, AgentSkill
 from agent_gantry.schema.config import A2AAgentConfig
 from agent_gantry.schema.tool import ToolDefinition, ToolSource
 from agent_gantry.servers.a2a_server import create_a2a_server, generate_agent_card
