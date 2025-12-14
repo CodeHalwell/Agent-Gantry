@@ -185,6 +185,79 @@ print(f"Added {count} tools from MCP server")
 
 See `examples/mcp_integration_demo.py` for a complete demonstration.
 
+## A2A Integration
+
+Agent-Gantry implements the Agent-to-Agent (A2A) protocol, enabling interoperability between agents.
+
+### Serve as A2A Agent
+
+```python
+from agent_gantry import AgentGantry
+
+gantry = AgentGantry()
+
+@gantry.register
+def analyze_data(data: str) -> str:
+    """Analyze data and provide insights."""
+    return f"Analysis: {data}"
+
+await gantry.sync()
+
+# Serve as A2A agent (requires FastAPI and uvicorn)
+# Agent Card will be available at: http://localhost:8080/.well-known/agent.json
+gantry.serve_a2a(host="0.0.0.0", port=8080)
+```
+
+**Skills Exposed:**
+- **tool_discovery**: Find relevant tools using semantic search
+- **tool_execution**: Execute tools with retries and circuit breakers
+
+### Consume External A2A Agents
+
+```python
+from agent_gantry.schema.config import A2AAgentConfig
+
+config = A2AAgentConfig(
+    name="external-agent",
+    url="https://external-agent.example.com",
+    namespace="external",
+)
+
+# Discover and register external agent's skills as tools
+count = await gantry.add_a2a_agent(config)
+print(f"Added {count} skills from external agent")
+
+# External agent skills are now available as tools
+tools = await gantry.retrieve_tools("translate text")
+```
+
+### Agent Card
+
+Agent-Gantry automatically generates an Agent Card following the A2A protocol:
+
+```json
+{
+  "name": "AgentGantry",
+  "description": "Intelligent tool routing and execution service",
+  "url": "http://localhost:8080",
+  "version": "1.0.0",
+  "skills": [
+    {
+      "id": "tool_discovery",
+      "name": "Tool Discovery",
+      "description": "Find relevant tools for a given task using semantic search"
+    },
+    {
+      "id": "tool_execution",
+      "name": "Tool Execution",
+      "description": "Execute registered tools with retries and timeouts"
+    }
+  ]
+}
+```
+
+See `examples/a2a_integration_demo.py` for a complete demonstration.
+
 ## Roadmap
 
 See [plan.md](plan.md) for the detailed development roadmap.
@@ -194,7 +267,7 @@ See [plan.md](plan.md) for the detailed development roadmap.
 - **Phase 3**: ✅ Context-Aware Routing - Intent classification, MMR diversity
 - **Phase 4**: ✅ Production Adapters - Qdrant, Chroma, OpenAI embeddings
 - **Phase 5**: ✅ MCP Integration - MCP client and server, dynamic tool discovery
-- **Phase 6**: 📋 A2A Integration - Agent-to-Agent protocol
+- **Phase 6**: ✅ A2A Integration - Agent-to-Agent protocol, Agent Card, skill mapping
 - **Phase 7**: 📋 Framework Integrations - LangChain, AutoGen, etc.
 
 ## License
