@@ -76,9 +76,9 @@ class A2AClient:
             skill_id: The skill ID
 
         Returns:
-            Tool name in the format: a2a_{agent_name}_{skill_id}
+            Tool name in the format: a2a.{agent_name}.{skill_id}
         """
-        return f"a2a_{self.config.name}_{skill_id}".lower().replace("-", "_")
+        return f"a2a.{self.config.name}.{skill_id}".lower()
 
     def _skill_to_tool(self, skill: Any) -> ToolDefinition:
         """
