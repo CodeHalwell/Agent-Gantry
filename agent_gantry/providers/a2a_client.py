@@ -7,6 +7,7 @@ Fetches agent cards, maps skills to tools, and executes tasks.
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.schema.a2a import AgentCard, TaskMessage, TaskMessagePart, TaskRequest
@@ -76,9 +77,11 @@ class A2AClient:
             skill_id: The skill ID
 
         Returns:
-            Tool name in the format: a2a.{agent_name}.{skill_id}
+            Tool name in the format: a2a_{agent_name}_{skill_id}
         """
-        return f"a2a.{self.config.name}.{skill_id}".lower()
+        agent_part = re.sub(r"[^a-z0-9_]", "_", self.config.name.lower())
+        skill_part = re.sub(r"[^a-z0-9_]", "_", skill_id.lower())
+        return f"a2a_{agent_part}_{skill_part}"
 
     def _skill_to_tool(self, skill: Any) -> ToolDefinition:
         """
