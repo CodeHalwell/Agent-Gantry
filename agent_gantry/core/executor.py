@@ -150,7 +150,17 @@ class ExecutionEngine:
                 await self._telemetry.record_execution(call, result)
             return result
 
-        # Get handler
+        # Check if this requires special execution (A2A, MCP, etc.)
+        from agent_gantry.schema.tool import ToolSource
+
+        if tool.source == ToolSource.A2A_AGENT:
+            # Use A2A executor
+            from agent_gantry.adapters.executors.a2a_executor import A2AExecutor
+
+            a2a_executor = A2AExecutor()
+            return await a2a_executor.execute(tool, call, None)
+
+        # Get handler for Python functions
         handler = self._registry.get_handler(f"{tool.namespace}.{call.tool_name}")
         if not handler:
             return ToolResult(
