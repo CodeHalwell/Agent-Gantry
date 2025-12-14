@@ -12,7 +12,7 @@ from agent_gantry.schema.a2a import (
     TaskRequest,
     TaskResponse,
 )
-from agent_gantry.schema.config import AgentGantryConfig
+from agent_gantry.schema.config import A2AAgentConfig, A2AConfig, AgentGantryConfig
 from agent_gantry.schema.events import (
     ExecutionEvent,
     HealthChangeEvent,
@@ -54,6 +54,8 @@ __all__ = [
     "RetrievalEvent",
     # Config
     "AgentGantryConfig",
+    "A2AAgentConfig",
+    "A2AConfig",
     # A2A models
     "AgentCard",
     "AgentSkill",

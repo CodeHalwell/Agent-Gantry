@@ -31,6 +31,7 @@ from agent_gantry.observability.opentelemetry_adapter import (
 )
 from agent_gantry.schema.config import (
     A2AAgentConfig,
+    A2AConfig,
     AgentGantryConfig,
     EmbedderConfig,
     MCPServerConfig,
