@@ -166,6 +166,8 @@ async def demo_skill_to_tool_mapping():
     )
 
     client = A2AClient(config)
+    # WARNING: Directly setting a private attribute (_agent_card) is for demonstration purposes only.
+    # Do NOT use this pattern in production code. Always use public APIs when available.
     client._agent_card = mock_card  # Set directly for demo
 
     # Convert skills to tools
