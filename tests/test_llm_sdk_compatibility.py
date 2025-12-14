@@ -375,7 +375,16 @@ class TestSDKVersionCompatibility:
     def test_mistral_minimum_version(self) -> None:
         """Test Mistral SDK meets minimum version."""
         mistralai = pytest.importorskip("mistralai")
-        version = getattr(mistralai, "__version__", "1.0.0")
+        # Try to get version from package metadata if __version__ not available
+        version = getattr(mistralai, "__version__", None)
+        if version is None:
+            # Use importlib.metadata to get version
+            try:
+                from importlib.metadata import version as get_version
+
+                version = get_version("mistralai")
+            except Exception:
+                pytest.skip("Could not determine mistralai version")
         parts = version.split(".")
         major = int(parts[0])
         assert major >= 1, f"Mistral SDK version {version} is below minimum 1.0.0"

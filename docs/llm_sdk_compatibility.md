@@ -329,9 +329,17 @@ client = genai.Client()
 gantry = AgentGantry()
 
 @gantry.register
-def calculate(expression: str) -> str:
-    """Evaluate a math expression."""
-    return str(eval(expression))
+def calculate(a: float, b: float, operation: str) -> str:
+    """Perform a math operation on two numbers."""
+    if operation == "add":
+        return str(a + b)
+    elif operation == "subtract":
+        return str(a - b)
+    elif operation == "multiply":
+        return str(a * b)
+    elif operation == "divide":
+        return str(a / b) if b != 0 else "Error: Division by zero"
+    return "Error: Unknown operation"
 
 await gantry.sync()
 
