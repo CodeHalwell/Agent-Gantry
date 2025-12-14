@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from agent_gantry.schema.config import A2AAgentConfig
 
 logger = logging.getLogger(__name__)
+_SANITIZE_PATTERN = re.compile(r"[^a-z0-9_]+")
 
 
 class A2AClient:
@@ -79,8 +80,8 @@ class A2AClient:
         Returns:
             Tool name in the format: a2a_{agent_name}_{skill_id}
         """
-        agent_part = re.sub(r"[^a-z0-9_]", "_", self.config.name.lower())
-        skill_part = re.sub(r"[^a-z0-9_]", "_", skill_id.lower())
+        agent_part = _SANITIZE_PATTERN.sub("_", self.config.name.lower())
+        skill_part = _SANITIZE_PATTERN.sub("_", skill_id.lower())
         return f"a2a_{agent_part}_{skill_part}"
 
     def _skill_to_tool(self, skill: Any) -> ToolDefinition:
