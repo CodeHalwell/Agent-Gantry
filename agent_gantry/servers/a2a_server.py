@@ -188,8 +188,14 @@ async def handle_tool_discovery(gantry: AgentGantry, query: str) -> dict[str, An
     # Retrieve relevant tools using semantic search
     tools_raw = await gantry.retrieve_tools(query, limit=5)
 
-    # Convert to serializable format
-    tools = [tool if isinstance(tool, dict) else tool for tool in tools_raw]
+    # Convert to serializable format (ensure all are dicts)
+    tools = [
+        tool if isinstance(tool, dict)
+        else tool.model_dump() if hasattr(tool, "model_dump")
+        else dict(tool) if hasattr(tool, "__dict__")
+        else tool
+        for tool in tools_raw
+    ]
 
     return {
         "query": query,
