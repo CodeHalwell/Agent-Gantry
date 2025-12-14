@@ -56,8 +56,13 @@ vector-stores = [
 mcp = [
     "mcp>=1.0.0",
 ]
+a2a = [
+    "httpx>=0.24.0",
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+]
 all = [
-    "agent-gantry[dev,embeddings,openai,vector-stores,mcp]",
+    "agent-gantry[dev,embeddings,openai,vector-stores,mcp,a2a]",
 ]
 
 [project.scripts]

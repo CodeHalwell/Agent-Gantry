@@ -30,6 +30,8 @@ from agent_gantry.observability.opentelemetry_adapter import (
     PrometheusTelemetryAdapter,
 )
 from agent_gantry.schema.config import (
+    A2AAgentConfig,
+    A2AConfig,
     AgentGantryConfig,
     EmbedderConfig,
     MCPServerConfig,
@@ -409,6 +411,33 @@ class AgentGantry:
         else:
             raise ValueError(f"Unsupported transport: {transport}")
 
+    async def add_a2a_agent(self, config: A2AAgentConfig) -> int:
+        """
+        Add an A2A agent to discover and register its skills as tools.
+
+        Args:
+            config: Configuration for the A2A agent
+
+        Returns:
+            Number of skills discovered and registered as tools
+        """
+        from agent_gantry.providers.a2a_client import A2AClient
+
+        await self._ensure_initialized()
+
+        # Create A2A client
+        client = A2AClient(config)
+
+        # Discover agent and its skills
+        await client.discover()
+        tools = await client.list_tools()
+
+        # Add tools to the gantry
+        for tool in tools:
+            await self.add_tool(tool)
+
+        return len(tools)
+
     def serve_a2a(self, host: str = "0.0.0.0", port: int = 8080) -> None:
         """
         Start serving as an A2A agent.
@@ -416,8 +445,26 @@ class AgentGantry:
         Args:
             host: Host to bind to
             port: Port to listen on
+
+        Note:
+            This method requires FastAPI and uvicorn to be installed.
+            Install with: pip install fastapi uvicorn
         """
-        raise NotImplementedError("A2A server not yet implemented")
+        try:
+            import uvicorn
+        except ImportError as e:
+            raise ImportError(
+                "uvicorn is required for A2A server. Install with: pip install fastapi uvicorn"
+            ) from e
+
+        from agent_gantry.servers.a2a_server import create_a2a_server
+
+        # Create FastAPI app
+        base_url = f"http://{host}:{port}"
+        app = create_a2a_server(self, base_url=base_url)
+
+        # Run server
+        uvicorn.run(app, host=host, port=port)
 
     @property
     def tool_count(self) -> int:

@@ -1,10 +1,18 @@
 """
 Schema modules for Agent-Gantry.
 
-Contains data models for tools, queries, events, and configuration.
+Contains data models for tools, queries, events, configuration, and A2A protocol.
 """
 
-from agent_gantry.schema.config import AgentGantryConfig
+from agent_gantry.schema.a2a import (
+    AgentCard,
+    AgentSkill,
+    TaskMessage,
+    TaskMessagePart,
+    TaskRequest,
+    TaskResponse,
+)
+from agent_gantry.schema.config import A2AAgentConfig, A2AConfig, AgentGantryConfig
 from agent_gantry.schema.events import (
     ExecutionEvent,
     HealthChangeEvent,
@@ -46,4 +54,13 @@ __all__ = [
     "RetrievalEvent",
     # Config
     "AgentGantryConfig",
+    "A2AAgentConfig",
+    "A2AConfig",
+    # A2A models
+    "AgentCard",
+    "AgentSkill",
+    "TaskMessage",
+    "TaskMessagePart",
+    "TaskRequest",
+    "TaskResponse",
 ]
