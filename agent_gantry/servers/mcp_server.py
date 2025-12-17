@@ -107,9 +107,52 @@ class MCPServer:
                 return [self._convert_tool(tool) for tool in tools]
             else:  # hybrid mode
                 # TODO: Implement hybrid mode logic
-                # For now, fall back to dynamic
-                result: list[Tool] = await list_tools()
-                return result
+                # For now, fall back to dynamic mode tools
+                return [
+                    Tool(
+                        name="find_relevant_tools",
+                        description=(
+                            "Search for tools relevant to your current task. "
+                            "Use this before calling other tools to discover what's available."
+                        ),
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "What you're trying to accomplish",
+                                },
+                                "limit": {
+                                    "type": "integer",
+                                    "description": "Max tools to return",
+                                    "default": 5,
+                                },
+                            },
+                            "required": ["query"],
+                        },
+                    ),
+                    Tool(
+                        name="execute_tool",
+                        description=(
+                            "Execute a tool by name. Use find_relevant_tools first "
+                            "to discover available tools and their schemas."
+                        ),
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "tool_name": {
+                                    "type": "string",
+                                    "description": "Name of the tool to execute",
+                                },
+                                "arguments": {
+                                    "type": "object",
+                                    "description": "Arguments for the tool",
+                                },
+                            },
+                            "required": ["tool_name", "arguments"],
+                        },
+                    ),
+                ]
 
         @self.server.call_tool()  # type: ignore[untyped-decorator]
         async def call_tool(name: str, arguments: dict[str, Any]) -> list[Any]:

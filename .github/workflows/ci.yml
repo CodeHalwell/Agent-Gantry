@@ -33,7 +33,6 @@ jobs:
       
     - name: Run mypy
       run: mypy agent_gantry/
-      continue-on-error: true  # Don't fail on mypy errors yet
 
   test:
     runs-on: ${{ matrix.os }}
