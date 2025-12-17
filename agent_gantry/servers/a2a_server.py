@@ -82,7 +82,6 @@ def create_a2a_server(gantry: AgentGantry, base_url: str = "http://localhost:808
     """
     try:
         from fastapi import FastAPI, HTTPException
-        from fastapi.responses import JSONResponse
     except ImportError as e:
         raise ImportError(
             "FastAPI is required for A2A server. Install with: pip install fastapi uvicorn"
@@ -222,7 +221,6 @@ async def handle_tool_execution(gantry: AgentGantry, query: str) -> dict[str, An
         This is a simplified implementation. In production, you'd want
         structured input for tool name and arguments.
     """
-    from agent_gantry.schema.execution import ToolCall
 
     # Simple parsing: expect format like "tool_name with arg1=value1, arg2=value2"
     # For demo purposes, we'll just return a message about needing structured input

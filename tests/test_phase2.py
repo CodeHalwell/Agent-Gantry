@@ -12,7 +12,7 @@ import pytest
 
 from agent_gantry import AgentGantry
 from agent_gantry.core.security import (
-    ConfirmationRequired,
+    ConfirmationRequiredError,
     PermissionChecker,
     SecurityPolicy,
 )
@@ -165,10 +165,10 @@ class TestSecurityPolicy:
         """Test that security policy matches tool name patterns."""
         policy = SecurityPolicy(require_confirmation=["delete_*", "payment_*"])
 
-        with pytest.raises(ConfirmationRequired):
+        with pytest.raises(ConfirmationRequiredError):
             policy.check_permission("delete_user", {})
 
-        with pytest.raises(ConfirmationRequired):
+        with pytest.raises(ConfirmationRequiredError):
             policy.check_permission("payment_process", {})
 
         # Should not raise for non-matching patterns

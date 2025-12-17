@@ -31,7 +31,6 @@ from agent_gantry.observability.opentelemetry_adapter import (
 )
 from agent_gantry.schema.config import (
     A2AAgentConfig,
-    A2AConfig,
     AgentGantryConfig,
     EmbedderConfig,
     MCPServerConfig,
@@ -623,13 +622,13 @@ def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
         param_type = type_hints.get(param_name, Any)
 
         # Map Python types to JSON Schema types
-        if param_type == int or param_type == "int":
+        if param_type is int or param_type == "int":
             param_schema["type"] = "integer"
-        elif param_type == float or param_type == "float":
+        elif param_type is float or param_type == "float":
             param_schema["type"] = "number"
-        elif param_type == bool or param_type == "bool":
+        elif param_type is bool or param_type == "bool":
             param_schema["type"] = "boolean"
-        elif param_type == str or param_type == "str":
+        elif param_type is str or param_type == "str":
             param_schema["type"] = "string"
         else:
             param_schema["type"] = "string"  # Default fallback

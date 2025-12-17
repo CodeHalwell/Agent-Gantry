@@ -17,16 +17,21 @@ if TYPE_CHECKING:
     from agent_gantry.schema.tool import ToolCapability, ToolDefinition
 
 
-class ConfirmationRequired(Exception):
+class ConfirmationRequiredError(Exception):
     """Raised when a tool requires human confirmation."""
 
     pass
 
 
-class PermissionDenied(Exception):
+class PermissionDeniedError(Exception):
     """Raised when a tool execution is not permitted."""
 
     pass
+
+
+# Backwards compatibility aliases (deprecated)
+ConfirmationRequired = ConfirmationRequiredError
+PermissionDenied = PermissionDeniedError
 
 
 class ValidationError(Exception):
@@ -70,8 +75,8 @@ class SecurityPolicy:
         Check if tool execution is permitted.
 
         Raises:
-            ConfirmationRequired: If tool requires human approval
-            PermissionDenied: If execution is not permitted
+            ConfirmationRequiredError: If tool requires human approval
+            PermissionDeniedError: If execution is not permitted
 
         Args:
             tool_name: Name of the tool to execute
@@ -79,7 +84,7 @@ class SecurityPolicy:
         """
         for pattern in self.require_confirmation:
             if fnmatch.fnmatch(tool_name, pattern):
-                raise ConfirmationRequired(f"Tool {tool_name} requires human approval.")
+                raise ConfirmationRequiredError(f"Tool {tool_name} requires human approval.")
 
 
 class PermissionChecker:
