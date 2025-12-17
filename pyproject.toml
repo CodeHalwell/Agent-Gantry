@@ -61,8 +61,28 @@ a2a = [
     "fastapi>=0.104.0",
     "uvicorn>=0.24.0",
 ]
+# LLM Provider SDK dependencies (Late 2025 compatible)
+anthropic = [
+    "anthropic>=0.40.0",
+]
+google-genai = [
+    "google-genai>=1.0.0",
+]
+google-vertexai = [
+    "google-cloud-aiplatform>=1.70.0",
+]
+mistral = [
+    "mistralai>=1.0.0",
+]
+groq = [
+    "groq>=0.13.0",
+]
+# Combined LLM provider dependencies
+llm-providers = [
+    "agent-gantry[openai,anthropic,google-genai,google-vertexai,mistral,groq]",
+]
 all = [
-    "agent-gantry[dev,embeddings,openai,vector-stores,mcp,a2a]",
+    "agent-gantry[dev,embeddings,openai,vector-stores,mcp,a2a,llm-providers]",
 ]
 
 [project.scripts]
