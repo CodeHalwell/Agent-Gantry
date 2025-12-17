@@ -364,7 +364,7 @@ class SemanticRouter:
                     1.0 - lambda_param
                 ) * similarity_to_selected
 
-            next_idx = max(mmr_scores, key=mmr_scores.get)
+            next_idx = max(mmr_scores, key=lambda k: mmr_scores[k])
             selected.append(next_idx)
             candidates.remove(next_idx)
 

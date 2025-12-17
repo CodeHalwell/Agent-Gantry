@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
-from mcp.types import Tool
+from mcp.server import Server  # type: ignore[import-not-found]
+from mcp.server.stdio import stdio_server  # type: ignore[import-not-found]
+from mcp.types import Tool  # type: ignore[import-not-found]
 
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 
@@ -51,7 +51,7 @@ class MCPServer:
     def _setup_handlers(self) -> None:
         """Setup MCP server handlers."""
 
-        @self.server.list_tools()
+        @self.server.list_tools()  # type: ignore[untyped-decorator]
         async def list_tools() -> list[Tool]:
             """List available tools based on mode."""
             if self.mode == "dynamic":
@@ -108,9 +108,10 @@ class MCPServer:
             else:  # hybrid mode
                 # TODO: Implement hybrid mode logic
                 # For now, fall back to dynamic
-                return await list_tools()
+                result: list[Tool] = await list_tools()
+                return result
 
-        @self.server.call_tool()
+        @self.server.call_tool()  # type: ignore[untyped-decorator]
         async def call_tool(name: str, arguments: dict[str, Any]) -> list[Any]:
             """Handle tool calls."""
             if name == "find_relevant_tools":

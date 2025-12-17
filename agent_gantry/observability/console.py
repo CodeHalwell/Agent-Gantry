@@ -122,7 +122,8 @@ class ConsoleTelemetryAdapter:
         }
         if result.error:
             log_data["error"] = result.error
-            log_data["error_type"] = result.error_type
+            if result.error_type:
+                log_data["error_type"] = result.error_type
 
         log_level = logging.ERROR if result.error else self.log_level
         logger.log(log_level, "Tool execution", extra=log_data)
