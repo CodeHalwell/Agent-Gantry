@@ -357,7 +357,7 @@ class TestSDKVersionCompatibility:
         minor = int(parts[1])
         # Version 0.40.0 or higher
         assert (
-            major > 0 or minor >= 40
+            (major == 0 and minor >= 40) or major > 0
         ), f"Anthropic SDK version {version} is below minimum 0.40.0"
 
     def test_groq_minimum_version(self) -> None:
@@ -369,7 +369,7 @@ class TestSDKVersionCompatibility:
         minor = int(parts[1])
         # Version 0.13.0 or higher
         assert (
-            major > 0 or minor >= 13
+            (major == 0 and minor >= 13) or major > 0
         ), f"Groq SDK version {version} is below minimum 0.13.0"
 
     def test_mistral_minimum_version(self) -> None:
