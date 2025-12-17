@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
-from mcp.types import Tool
+from mcp.server import Server  # type: ignore[import-not-found]
+from mcp.server.stdio import stdio_server  # type: ignore[import-not-found]
+from mcp.types import Tool  # type: ignore[import-not-found]
 
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 
@@ -51,7 +51,7 @@ class MCPServer:
     def _setup_handlers(self) -> None:
         """Setup MCP server handlers."""
 
-        @self.server.list_tools()
+        @self.server.list_tools()  # type: ignore[untyped-decorator]
         async def list_tools() -> list[Tool]:
             """List available tools based on mode."""
             if self.mode == "dynamic":
@@ -107,10 +107,54 @@ class MCPServer:
                 return [self._convert_tool(tool) for tool in tools]
             else:  # hybrid mode
                 # TODO: Implement hybrid mode logic
-                # For now, fall back to dynamic
-                return await list_tools()
+                # For now, fall back to dynamic mode tools
+                return [
+                    Tool(
+                        name="find_relevant_tools",
+                        description=(
+                            "Search for tools relevant to your current task. "
+                            "Use this before calling other tools to discover what's available."
+                        ),
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "What you're trying to accomplish",
+                                },
+                                "limit": {
+                                    "type": "integer",
+                                    "description": "Max tools to return",
+                                    "default": 5,
+                                },
+                            },
+                            "required": ["query"],
+                        },
+                    ),
+                    Tool(
+                        name="execute_tool",
+                        description=(
+                            "Execute a tool by name. Use find_relevant_tools first "
+                            "to discover available tools and their schemas."
+                        ),
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "tool_name": {
+                                    "type": "string",
+                                    "description": "Name of the tool to execute",
+                                },
+                                "arguments": {
+                                    "type": "object",
+                                    "description": "Arguments for the tool",
+                                },
+                            },
+                            "required": ["tool_name", "arguments"],
+                        },
+                    ),
+                ]
 
-        @self.server.call_tool()
+        @self.server.call_tool()  # type: ignore[untyped-decorator]
         async def call_tool(name: str, arguments: dict[str, Any]) -> list[Any]:
             """Handle tool calls."""
             if name == "find_relevant_tools":

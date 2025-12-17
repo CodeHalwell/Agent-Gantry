@@ -14,7 +14,7 @@ from agent_gantry.schema.execution import ExecutionStatus, ToolResult
 from agent_gantry.schema.tool import ToolSource
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Awaitable
+    from collections.abc import Awaitable, Callable
 
     from agent_gantry.schema.execution import ToolCall
     from agent_gantry.schema.tool import ToolDefinition

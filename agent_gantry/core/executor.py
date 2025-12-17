@@ -115,11 +115,11 @@ class ExecutionEngine:
 
         # Security policy check
         if self._security_policy:
-            from agent_gantry.core.security import ConfirmationRequired
+            from agent_gantry.core.security import ConfirmationRequiredError
 
             try:
                 self._security_policy.check_permission(call.tool_name, call.arguments)
-            except ConfirmationRequired:
+            except ConfirmationRequiredError:
                 result = ToolResult(
                     tool_name=call.tool_name,
                     status=ExecutionStatus.PENDING_CONFIRMATION,

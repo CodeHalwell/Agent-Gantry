@@ -50,7 +50,7 @@ class A2AClient:
         """
         try:
             # Import httpx only when needed
-            import httpx
+            import httpx  # type: ignore[import-not-found]
 
             async with httpx.AsyncClient() as client:
                 response = await client.get(
@@ -199,7 +199,8 @@ class A2AClient:
                 if "error" in result:
                     raise RuntimeError(f"A2A task error: {result['error']}")
 
-                return result.get("result", {})
+                task_result: dict[str, Any] = result.get("result", {})
+                return task_result
 
         except Exception as e:
             raise RuntimeError(

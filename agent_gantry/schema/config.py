@@ -140,7 +140,7 @@ class AgentGantryConfig(BaseModel):
     @classmethod
     def from_yaml(cls, path: str) -> AgentGantryConfig:
         """Load configuration from a YAML file."""
-        import yaml
+        import yaml  # type: ignore[import-untyped]
 
         with open(path) as f:
             data = yaml.safe_load(f)

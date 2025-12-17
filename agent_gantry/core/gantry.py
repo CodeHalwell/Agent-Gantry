@@ -31,7 +31,6 @@ from agent_gantry.observability.opentelemetry_adapter import (
 )
 from agent_gantry.schema.config import (
     A2AAgentConfig,
-    A2AConfig,
     AgentGantryConfig,
     EmbedderConfig,
     MCPServerConfig,
@@ -247,8 +246,11 @@ class AgentGantry:
                 query.enable_reranking = True
         # Use telemetry span if available, otherwise use a no-op async context manager
         class _AsyncNoopContext:
-            async def __aenter__(self): return self
-            async def __aexit__(self, exc_type, exc, tb): return False
+            async def __aenter__(self) -> _AsyncNoopContext:
+                return self
+
+            async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+                return False
 
         span_cm = (
             self._telemetry.span("tool_retrieval", {"query": query.context.query})
@@ -257,26 +259,14 @@ class AgentGantry:
         async with span_cm:
             routing_result = await self._router.route(query)
 
-        # Expect routing_result.tools to yield (tool, semantic_score, rerank_score, composite_score)
+        # routing_result.tools is a list of (tool, semantic_score) tuples
         scored = []
-        for item in routing_result.tools:
-            # Backward compatibility: support both 2-tuple and 4-tuple
-            if len(item) == 4:
-                tool, semantic_score, rerank_score, composite_score = item
-            elif len(item) == 3:
-                tool, semantic_score, rerank_score = item
-                composite_score = None
-            else:
-                tool, semantic_score = item
-                rerank_score = None
-                composite_score = None
-
+        for tool, semantic_score in routing_result.tools:
             scored.append(
                 ScoredTool(
                     tool=tool,
                     semantic_score=semantic_score,
-                    rerank_score=rerank_score,
-                    composite_score=composite_score,
+                    rerank_score=None,  # Rerank scores handled separately if needed
                 )
             )
 
@@ -451,7 +441,7 @@ class AgentGantry:
             Install with: pip install fastapi uvicorn
         """
         try:
-            import uvicorn
+            import uvicorn  # type: ignore[import-not-found]
         except ImportError as e:
             raise ImportError(
                 "uvicorn is required for A2A server. Install with: pip install fastapi uvicorn"
@@ -623,13 +613,13 @@ def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
         param_type = type_hints.get(param_name, Any)
 
         # Map Python types to JSON Schema types
-        if param_type == int or param_type == "int":
+        if param_type is int or param_type == "int":
             param_schema["type"] = "integer"
-        elif param_type == float or param_type == "float":
+        elif param_type is float or param_type == "float":
             param_schema["type"] = "number"
-        elif param_type == bool or param_type == "bool":
+        elif param_type is bool or param_type == "bool":
             param_schema["type"] = "boolean"
-        elif param_type == str or param_type == "str":
+        elif param_type is str or param_type == "str":
             param_schema["type"] = "string"
         else:
             param_schema["type"] = "string"  # Default fallback

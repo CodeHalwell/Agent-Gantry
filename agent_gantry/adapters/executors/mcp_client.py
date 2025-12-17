@@ -9,8 +9,8 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import Any
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+from mcp import ClientSession, StdioServerParameters  # type: ignore[import-not-found]
+from mcp.client.stdio import stdio_client  # type: ignore[import-not-found]
 
 from agent_gantry.schema.config import MCPServerConfig
 from agent_gantry.schema.tool import ToolDefinition, ToolSource
@@ -40,7 +40,7 @@ class MCPClient:
         self._connected = False
 
     @asynccontextmanager
-    async def connect(self):
+    async def connect(self) -> Any:
         """
         Connect to the MCP server.
 
