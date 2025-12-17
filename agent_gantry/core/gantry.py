@@ -246,7 +246,7 @@ class AgentGantry:
                 query.enable_reranking = True
         # Use telemetry span if available, otherwise use a no-op async context manager
         class _AsyncNoopContext:
-            async def __aenter__(self) -> "_AsyncNoopContext":
+            async def __aenter__(self) -> _AsyncNoopContext:
                 return self
 
             async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
@@ -259,21 +259,14 @@ class AgentGantry:
         async with span_cm:
             routing_result = await self._router.route(query)
 
-        # Expect routing_result.tools to yield (tool, semantic_score, rerank_score)
+        # routing_result.tools is a list of (tool, semantic_score) tuples
         scored = []
-        for item in routing_result.tools:
-            # Backward compatibility: support both 2-tuple and 3-tuple
-            if len(item) == 3:
-                tool, semantic_score, rerank_score = item
-            else:
-                tool, semantic_score = item
-                rerank_score = None
-
+        for tool, semantic_score in routing_result.tools:
             scored.append(
                 ScoredTool(
                     tool=tool,
                     semantic_score=semantic_score,
-                    rerank_score=rerank_score,
+                    rerank_score=None,  # Rerank scores handled separately if needed
                 )
             )
 
