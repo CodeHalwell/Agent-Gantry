@@ -16,6 +16,11 @@ from agent_gantry.schema.skill import Skill
 from agent_gantry.schema.tool import ToolDefinition
 
 
+def _escape_sql_string(value: str) -> str:
+    """Escape single quotes in SQL strings to prevent SQL injection."""
+    return value.replace("'", "''")
+
+
 class LanceDBVectorStore:
     """
     LanceDB vector store for on-device semantic indexing.
@@ -192,10 +197,14 @@ class LanceDBVectorStore:
             records.append(record)
 
         if upsert:
-            # Delete existing records with same IDs
-            ids = [f"{t.namespace}.{t.name}" for t in tools]
+            # Delete existing records with same IDs (escape for SQL safety)
+            ids = [_escape_sql_string(f"{t.namespace}.{t.name}") for t in tools]
             try:
-                self._tools_table.delete(f"id IN {tuple(ids)}" if len(ids) > 1 else f"id = '{ids[0]}'")
+                if len(ids) > 1:
+                    escaped_ids = ", ".join(f"'{id_}'" for id_ in ids)
+                    self._tools_table.delete(f"id IN ({escaped_ids})")
+                else:
+                    self._tools_table.delete(f"id = '{ids[0]}'")
             except Exception:
                 pass  # Table might be empty
 
@@ -243,9 +252,14 @@ class LanceDBVectorStore:
             records.append(record)
 
         if upsert:
-            ids = [f"{s.namespace}.{s.name}" for s in skills]
+            # Delete existing records with same IDs (escape for SQL safety)
+            ids = [_escape_sql_string(f"{s.namespace}.{s.name}") for s in skills]
             try:
-                self._skills_table.delete(f"id IN {tuple(ids)}" if len(ids) > 1 else f"id = '{ids[0]}'")
+                if len(ids) > 1:
+                    escaped_ids = ", ".join(f"'{id_}'" for id_ in ids)
+                    self._skills_table.delete(f"id IN ({escaped_ids})")
+                else:
+                    self._skills_table.delete(f"id = '{ids[0]}'")
             except Exception:
                 pass
 
@@ -276,17 +290,20 @@ class LanceDBVectorStore:
         # Build search query
         search = self._tools_table.search(query_vector).limit(limit * 2)  # Over-fetch for filtering
 
-        # Apply namespace filter if specified
+        # Apply namespace filter if specified (escape for SQL safety)
         if filters and "namespace" in filters:
             ns_filter = filters["namespace"]
             if isinstance(ns_filter, (list, tuple, set)):
                 ns_list = list(ns_filter)
                 if len(ns_list) == 1:
-                    search = search.where(f"namespace = '{ns_list[0]}'")
+                    escaped_ns = _escape_sql_string(ns_list[0])
+                    search = search.where(f"namespace = '{escaped_ns}'")
                 else:
-                    search = search.where(f"namespace IN {tuple(ns_list)}")
+                    escaped_values = ", ".join(f"'{_escape_sql_string(ns)}'" for ns in ns_list)
+                    search = search.where(f"namespace IN ({escaped_values})")
             else:
-                search = search.where(f"namespace = '{ns_filter}'")
+                escaped_ns = _escape_sql_string(ns_filter)
+                search = search.where(f"namespace = '{escaped_ns}'")
 
         # Execute search
         results = search.to_list()
@@ -341,19 +358,25 @@ class LanceDBVectorStore:
 
         search = self._skills_table.search(query_vector).limit(limit * 2)
 
+        # Apply namespace filter (escape for SQL safety)
         if filters and "namespace" in filters:
             ns_filter = filters["namespace"]
             if isinstance(ns_filter, (list, tuple, set)):
                 ns_list = list(ns_filter)
                 if len(ns_list) == 1:
-                    search = search.where(f"namespace = '{ns_list[0]}'")
+                    escaped_ns = _escape_sql_string(ns_list[0])
+                    search = search.where(f"namespace = '{escaped_ns}'")
                 else:
-                    search = search.where(f"namespace IN {tuple(ns_list)}")
+                    escaped_values = ", ".join(f"'{_escape_sql_string(ns)}'" for ns in ns_list)
+                    search = search.where(f"namespace IN ({escaped_values})")
             else:
-                search = search.where(f"namespace = '{ns_filter}'")
+                escaped_ns = _escape_sql_string(ns_filter)
+                search = search.where(f"namespace = '{escaped_ns}'")
 
+        # Apply category filter (escape for SQL safety)
         if filters and "category" in filters:
-            search = search.where(f"category = '{filters['category']}'")
+            escaped_cat = _escape_sql_string(filters["category"])
+            search = search.where(f"category = '{escaped_cat}'")
 
         results = search.to_list()
 
@@ -388,7 +411,8 @@ class LanceDBVectorStore:
         """
         await self._ensure_initialized()
 
-        tool_id = f"{namespace}.{name}"
+        # Escape ID for SQL safety
+        tool_id = _escape_sql_string(f"{namespace}.{name}")
         try:
             results = self._tools_table.search().where(f"id = '{tool_id}'").limit(1).to_list()
             if results:
@@ -412,7 +436,8 @@ class LanceDBVectorStore:
         """
         await self._ensure_initialized()
 
-        skill_id = f"{namespace}.{name}"
+        # Escape ID for SQL safety
+        skill_id = _escape_sql_string(f"{namespace}.{name}")
         try:
             results = self._skills_table.search().where(f"id = '{skill_id}'").limit(1).to_list()
             if results:
@@ -434,7 +459,8 @@ class LanceDBVectorStore:
         """
         await self._ensure_initialized()
 
-        tool_id = f"{namespace}.{name}"
+        # Escape ID for SQL safety
+        tool_id = _escape_sql_string(f"{namespace}.{name}")
         try:
             self._tools_table.delete(f"id = '{tool_id}'")
             return True
@@ -454,7 +480,8 @@ class LanceDBVectorStore:
         """
         await self._ensure_initialized()
 
-        skill_id = f"{namespace}.{name}"
+        # Escape ID for SQL safety
+        skill_id = _escape_sql_string(f"{namespace}.{name}")
         try:
             self._skills_table.delete(f"id = '{skill_id}'")
             return True

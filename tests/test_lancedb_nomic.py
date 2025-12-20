@@ -348,6 +348,76 @@ class TestLanceDBVectorStore:
         assert count1 == count2
 
 
+class TestSQLInjectionPrevention:
+    """Tests for SQL injection prevention in LanceDB adapter."""
+
+    @pytest.mark.asyncio
+    async def test_special_characters_in_tool_name(self, tmp_path) -> None:
+        """Test that special characters in names don't cause SQL injection."""
+        pytest.importorskip("lancedb")
+        pytest.importorskip("pyarrow")
+
+        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+
+        db_path = str(tmp_path / "test_db")
+        store = LanceDBVectorStore(db_path=db_path, dimension=64)
+        await store.initialize()
+
+        # Create tool with potentially dangerous name
+        tool = ToolDefinition(
+            name="test_tool",
+            namespace="namespace'with'quotes",  # Contains SQL injection attempt
+            description="A test tool with quotes in namespace",
+            parameters_schema={"type": "object", "properties": {}},
+        )
+
+        embeddings = [[0.5] * 64]
+        count = await store.add_tools([tool], embeddings)
+        assert count == 1
+
+        # Should be able to retrieve it
+        result = await store.get_by_name("test_tool", "namespace'with'quotes")
+        assert result is not None
+        assert result.namespace == "namespace'with'quotes"
+
+        # Should be able to delete it
+        deleted = await store.delete("test_tool", "namespace'with'quotes")
+        assert deleted is True
+
+    @pytest.mark.asyncio
+    async def test_special_characters_in_namespace_filter(self, tmp_path) -> None:
+        """Test that namespace filters with special characters work safely."""
+        pytest.importorskip("lancedb")
+        pytest.importorskip("pyarrow")
+
+        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+
+        db_path = str(tmp_path / "test_db")
+        store = LanceDBVectorStore(db_path=db_path, dimension=64)
+        await store.initialize()
+
+        # Create tool in namespace with special characters
+        tool = ToolDefinition(
+            name="my_tool",
+            namespace="test'; DROP TABLE tools; --",  # SQL injection attempt
+            description="A test tool for SQL injection testing",
+            parameters_schema={"type": "object", "properties": {}},
+        )
+
+        embeddings = [[0.5] * 64]
+        await store.add_tools([tool], embeddings)
+
+        # Search with namespace filter should work safely
+        query_vector = [0.5] * 64
+        results = await store.search(
+            query_vector, limit=5, filters={"namespace": "test'; DROP TABLE tools; --"}
+        )
+
+        # Should find the tool (table wasn't dropped)
+        assert len(results) >= 1
+        assert results[0][0].name == "my_tool"
+
+
 class TestConfigIntegration:
     """Tests for configuration integration with LanceDB and Nomic."""
 
