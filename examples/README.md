@@ -2,6 +2,14 @@
 
 This directory contains examples demonstrating various features of Agent-Gantry.
 
+## Files in this directory
+
+- `a2a_integration_demo.py`: Shows how to serve Agent-Gantry over the A2A protocol and call remote
+  agents.
+- `mcp_integration_demo.py`: Runs Agent-Gantry as an MCP server and connects to other MCP servers.
+- `claude_desktop_config.json`: Sample Claude Desktop configuration pointing at an Agent-Gantry MCP
+  server.
+
 ## MCP Integration Demo
 
 Run the comprehensive MCP integration demo:
