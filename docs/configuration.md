@@ -51,7 +51,7 @@ configs accept `url`, `api_key`, and `collection_name`.
 | ---- | ----- |
 | `openai` / `azure` | Uses OpenAI or Azure OpenAI embeddings (needs API key) |
 | `nomic` | Local Matryoshka embeddings via `nomic-embed-text-v1.5` (requires `pip install agent-gantry[nomic]`) |
-| `sentence_transformers`, `huggingface`, `cohere`, `ollama` | Currently fall back to the simple embedder stub; keep `type` as-is for forward compatibility |
+| `sentence_transformers`, `huggingface` (Hugging Face), `cohere`, `ollama` | Currently fall back to the simple embedder stub; keep `type` as-is for forward compatibility |
 
 `EmbedderConfig` supports `model`, `dimension` (for Matryoshka truncation), and `task_type`
 (`search_document`, `search_query`, `clustering`, `classification` for Nomic).

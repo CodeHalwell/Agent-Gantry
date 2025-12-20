@@ -12,7 +12,7 @@ pip install agent-gantry[lancedb,nomic]
 
 This pulls in:
 - `lancedb` and `pyarrow` for local persistence
-- `sentence-transformers` for Nomic `nomic-embed-text-v1.5` embeddings
+- `sentence-transformers` for `nomic-ai/nomic-embed-text-v1.5` embeddings
 
 ## Configure Agent-Gantry to use LanceDB + Nomic
 
@@ -52,7 +52,8 @@ LanceDB table dimension.
 ## Working with skills
 
 `agent_gantry.schema.skill.Skill` models reusable procedural knowledge that you can retrieve and
-inject into prompts. LanceDB provides first-class support for storing and searching skills.
+inject into prompts. LanceDB provides first-class support for storing and searching skills. Skills
+default to the `default` namespace; set `namespace` to group knowledge by tenant or domain.
 
 ```python
 import asyncio
@@ -69,6 +70,7 @@ await store.initialize()
 skills = [
     Skill(
         name="api_pagination",
+        namespace="playbooks",
         description="How to implement cursor-based pagination for REST APIs",
         content="Use a stable cursor, return next_cursor and has_more.",
         category=SkillCategory.HOW_TO,
@@ -77,6 +79,7 @@ skills = [
     ),
     Skill(
         name="refund_safety",
+        namespace="playbooks",
         description="Checklist before executing a refund",
         content="Verify user identity, amount, currency, and approval flag.",
         category=SkillCategory.PROCEDURE,
