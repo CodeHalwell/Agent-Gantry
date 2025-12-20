@@ -114,7 +114,8 @@ class SemanticToolSelector:
         # Convert to the appropriate dialect
         if self._dialect == "anthropic":
             return result.to_anthropic_tools()
-        # Default to OpenAI format
+        # OpenAI and Gemini use the same format (OpenAI-style function calling)
+        # Default to OpenAI format for "openai", "gemini", and any unknown dialects
         return result.to_openai_tools()
 
     def _extract_prompt(
@@ -216,8 +217,9 @@ class SemanticToolSelector:
         """
         Wrap a sync function with semantic tool selection.
 
-        Note: This runs async retrieval in an event loop, which may not be
-        ideal for all use cases. Prefer async functions when possible.
+        Note: This runs async retrieval synchronously. In threaded environments
+        or when an event loop is already running, this may cause issues.
+        For best compatibility, prefer using async functions.
 
         Args:
             func: The sync function to wrap.
@@ -225,6 +227,8 @@ class SemanticToolSelector:
         Returns:
             Wrapped sync function.
         """
+        import warnings
+
         sig = inspect.signature(func)
 
         @functools.wraps(func)
@@ -232,16 +236,37 @@ class SemanticToolSelector:
             prompt = self._extract_prompt(args, kwargs, sig)
 
             if prompt and self._tools_param not in kwargs:
-                # Run async retrieval in sync context
+                # Run async retrieval in sync context using asyncio.run()
+                # This creates a new event loop which is safer than reusing existing ones
                 try:
-                    loop = asyncio.get_event_loop()
-                except RuntimeError:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
+                    # Check if we're already in an async context
+                    try:
+                        asyncio.get_running_loop()
+                        # If we get here, there's already a running loop
+                        warnings.warn(
+                            "with_semantic_tools sync wrapper is being used inside an "
+                            "async context. This may cause issues. Consider using an "
+                            "async function instead.",
+                            RuntimeWarning,
+                            stacklevel=2,
+                        )
+                        # Use nest_asyncio pattern or fall back to thread pool
+                        import concurrent.futures
 
-                tools = loop.run_until_complete(self._retrieve_tools(prompt))
-                if tools:
-                    kwargs[self._tools_param] = tools
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            future = executor.submit(
+                                asyncio.run, self._retrieve_tools(prompt)
+                            )
+                            tools = future.result()
+                    except RuntimeError:
+                        # No running loop, safe to use asyncio.run()
+                        tools = asyncio.run(self._retrieve_tools(prompt))
+
+                    if tools:
+                        kwargs[self._tools_param] = tools
+                except Exception:
+                    # If tool retrieval fails, call function without tools
+                    pass
 
             return func(*args, **kwargs)
 

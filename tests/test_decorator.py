@@ -12,6 +12,7 @@ Tests cover:
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -174,8 +175,6 @@ class TestSemanticToolSelector:
 
         selector = SemanticToolSelector(mock_gantry, prompt_param="messages")
         captured_prompt: str | None = None
-
-        # Patch the retrieve method to capture the prompt
         original_retrieve = selector._retrieve_tools
 
         async def capture_retrieve(prompt: str) -> list[dict[str, Any]]:
@@ -183,20 +182,21 @@ class TestSemanticToolSelector:
             captured_prompt = prompt
             return await original_retrieve(prompt)
 
-        selector._retrieve_tools = capture_retrieve  # type: ignore[method-assign]
+        # Use patch for cleaner test isolation
+        with patch.object(selector, "_retrieve_tools", side_effect=capture_retrieve):
 
-        @selector
-        async def generate(
-            messages: list[dict[str, str]],
-            *,
-            tools: list[dict[str, Any]] | None = None,
-        ) -> str:
-            return "response"
+            @selector
+            async def generate(
+                messages: list[dict[str, str]],
+                *,
+                tools: list[dict[str, Any]] | None = None,
+            ) -> str:
+                return "response"
 
-        await generate([
-            {"role": "system", "content": "You are helpful"},
-            {"role": "user", "content": "What's the weather?"},
-        ])
+            await generate([
+                {"role": "system", "content": "You are helpful"},
+                {"role": "user", "content": "What's the weather?"},
+            ])
 
         # Should have extracted the user message
         assert captured_prompt == "What's the weather?"
