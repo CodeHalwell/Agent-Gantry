@@ -73,12 +73,13 @@ from openai import OpenAI
 tools = [t.tool.to_openai_schema() for t in retrieval.tools]
 
 client = OpenAI(api_key="sk-...")
-response = client.responses.create(
+response = client.chat.completions.create(
     model="gpt-4.1",
-    input="Summarize Q1 revenue and compute the tax.",
+    messages=[{"role": "user", "content": "Summarize Q1 revenue and compute the tax."}],
     tools=tools,
     tool_choice="auto",
 )
+# If you prefer the Responses API, swap to `client.responses.create(...)` with the same payload.
 ```
 
 ## 4) Provide tools to Google GenAI (Gemini)
