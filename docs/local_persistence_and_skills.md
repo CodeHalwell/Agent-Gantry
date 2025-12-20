@@ -61,45 +61,50 @@ from agent_gantry.adapters.embedders.nomic import NomicEmbedder
 from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
 from agent_gantry.schema.skill import Skill, SkillCategory
 
-# Initialize embedder and store with matching dimensions
-embedder = NomicEmbedder(dimension=256)
-store = LanceDBVectorStore(db_path=".agent_gantry/lancedb", dimension=256)
-await store.initialize()
+async def main() -> None:
+    # Initialize embedder and store with matching dimensions
+    embedder = NomicEmbedder(dimension=256)
+    store = LanceDBVectorStore(db_path=".agent_gantry/lancedb", dimension=256)
+    await store.initialize()
 
-# Define skills
-skills = [
-    Skill(
-        name="api_pagination",
-        namespace="playbooks",
-        description="How to implement cursor-based pagination for REST APIs",
-        content="Use a stable cursor, return next_cursor and has_more.",
-        category=SkillCategory.HOW_TO,
-        tags=["api", "pagination", "rest"],
-        related_tools=["query_database", "fetch_api"],
-    ),
-    Skill(
-        name="refund_safety",
-        namespace="playbooks",
-        description="Checklist before executing a refund",
-        content="Verify user identity, amount, currency, and approval flag.",
-        category=SkillCategory.PROCEDURE,
-        tags=["finance", "risk"],
-    ),
-]
+    # Define skills
+    skills = [
+        Skill(
+            name="api_pagination",
+            namespace="playbooks",
+            description="How to implement cursor-based pagination for REST APIs",
+            content="Use a stable cursor, return next_cursor and has_more.",
+            category=SkillCategory.HOW_TO,
+            tags=["api", "pagination", "rest"],
+            related_tools=["query_database", "fetch_api"],
+        ),
+        Skill(
+            name="refund_safety",
+            namespace="playbooks",
+            description="Checklist before executing a refund",
+            content="Verify user identity, amount, currency, and approval flag.",
+            category=SkillCategory.PROCEDURE,
+            tags=["finance", "risk"],
+        ),
+    ]
 
-# Embed and add skills
-skill_embeddings = [
-    await embedder.embed_text(skill.to_embedding_text()) for skill in skills
-]
-await store.add_skills(skills, skill_embeddings)
+    # Embed and add skills
+    skill_embeddings = [
+        await embedder.embed_text(skill.to_embedding_text()) for skill in skills
+    ]
+    await store.add_skills(skills, skill_embeddings)
 
-# Retrieve skills for a query
-query_vector = await embedder.embed_text("handle cursor pagination safely")
-results = await store.search_skills(query_vector, limit=3)
+    # Retrieve skills for a query
+    query_vector = await embedder.embed_text("handle cursor pagination safely")
+    results = await store.search_skills(query_vector, limit=3)
 
-for skill, score in results:
-    print(f"{skill.name} ({score:.2f})")
-    print(skill.to_prompt_text())
+    for skill, score in results:
+        print(f"{skill.name} ({score:.2f})")
+        print(skill.to_prompt_text())
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 ### Using skills in prompts

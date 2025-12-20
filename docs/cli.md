@@ -6,8 +6,8 @@ is installed as `agent-gantry`.
 ## Commands
 
 ```
-agent-gantry list [--namespace default]
-agent-gantry search "<query>" [--limit 5]
+agent-gantry list [--namespace NAMESPACE]
+agent-gantry search "<query>" [--limit LIMIT]
 ```
 
 ### list

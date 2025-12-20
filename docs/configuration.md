@@ -120,7 +120,7 @@ embedder:
 telemetry:
   type: prometheus
   service_name: agent_gantry_local
-  prometheus_port: 9100
+  prometheus_port: 9090
 reranker:
   enabled: false
 execution:
