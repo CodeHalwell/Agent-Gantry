@@ -8,6 +8,8 @@ hand provider-specific tool schemas to popular SDKs (OpenAI Responses API, Googl
 - Python 3.10+
 - `pip install agent-gantry[llm-providers]`
 - Provider SDKs installed for the clients you plan to call (`openai`, `google-genai`, `anthropic`)
+- For config permutations (remote stores, LanceDB/Nomic) see `configuration.md` and
+  `local_persistence_and_skills.md`.
 
 ## 1) Register tools and sync them into the vector store
 

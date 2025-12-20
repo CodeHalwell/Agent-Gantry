@@ -50,6 +50,19 @@ pip install agent-gantry[all]
 
 See [docs/llm_sdk_compatibility.md](docs/llm_sdk_compatibility.md) for detailed provider documentation.
 
+### Optional components
+
+- **Vector stores**: `pip install agent-gantry[vector-stores]` (Qdrant/Chroma stubs)
+- **Local persistence (LanceDB)**: `pip install agent-gantry[lancedb]`
+- **Local embeddings (Nomic Matryoshka)**: `pip install agent-gantry[nomic]`
+- **Protocols**: `pip install agent-gantry[mcp]` and `pip install agent-gantry[a2a]`
+
+Combine as needed, e.g.:
+
+```bash
+pip install agent-gantry[lancedb,nomic,mcp,a2a]
+```
+
 ## Quick Start
 
 ```python
@@ -74,6 +87,10 @@ result = await gantry.execute(ToolCall(
     arguments={"amount": 100.0},
 ))
 ```
+
+See [docs/configuration.md](docs/configuration.md) for full config options and
+[docs/local_persistence_and_skills.md](docs/local_persistence_and_skills.md) for LanceDB/Nomic setup
+plus skill storage.
 
 ## Architecture
 
@@ -109,6 +126,7 @@ result = await gantry.execute(ToolCall(
 - **Circuit Breakers**: Automatic failure detection and recovery
 - **Observability**: Built-in structured logging and telemetry for tracing and metrics
 - **Zero-Trust Security**: Capability-based permissions and policy enforcement
+- **Local persistence & skills**: LanceDB-backed tool/skill storage, Matryoshka embeddings, and skill schemas for prompt guidance
 - **Argument Validation**: Defensive validation against tool schemas
 - **Async-Native**: Full async support for tools and execution
 - **Retries & Timeouts**: Automatic retries with exponential backoff and configurable timeouts
@@ -280,6 +298,18 @@ Agent-Gantry automatically generates an Agent Card following the A2A protocol:
 ```
 
 See `examples/a2a_integration_demo.py` for a complete demonstration.
+
+## CLI
+
+A lightweight CLI ships with the package for quick inspection:
+
+```bash
+agent-gantry list
+agent-gantry search "refund an order" --limit 3
+```
+
+It boots with demo tools and an in-memory embedder. For details and customization options, see
+[docs/cli.md](docs/cli.md).
 
 ## Roadmap
 
