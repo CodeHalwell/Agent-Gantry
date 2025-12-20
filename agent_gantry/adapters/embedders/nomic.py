@@ -262,7 +262,7 @@ class NomicEmbedder(EmbeddingAdapter):
         if task_type not in self.TASK_PREFIXES:
             raise ValueError(
                 f"Unsupported task_type '{task_type}'. "
-                f"Supported types: {', '.join(self.TASK_PREFIXES.keys())}."
+                f"Supported types: {', '.join(self.TASK_PREFIXES.keys())}"
             )
 
         # Disallow changing task type once it has been set to a different value.

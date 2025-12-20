@@ -171,7 +171,7 @@ class TestLanceDBVectorStore:
         import os
         expected_suffix = os.path.join(".agent_gantry", "lancedb")
         assert store.db_path is not None
-        assert expected_suffix in store.db_path or ".agent_gantry/lancedb" in store.db_path
+        assert expected_suffix in store.db_path
 
     @pytest.mark.asyncio
     async def test_lancedb_initialize_creates_tables(self, tmp_path) -> None:
