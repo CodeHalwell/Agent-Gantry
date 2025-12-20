@@ -56,7 +56,7 @@ vector-stores = [
 ]
 lancedb = [
     "lancedb>=0.4.0",
-    "pyarrow>=14.0.0",
+    "pyarrow>=14.0.1",
 ]
 nomic = [
     "sentence-transformers>=2.2.0",
