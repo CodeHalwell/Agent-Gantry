@@ -192,12 +192,19 @@ class SemanticToolSelector:
         """
         Wrap an async function with semantic tool selection.
 
+        Note: This wrapper mutates the kwargs dictionary by adding tools
+        to it when they are successfully retrieved. The original kwargs
+        dictionary passed by the caller may be modified.
+
         Args:
             func: The async function to wrap.
 
         Returns:
             Wrapped async function.
         """
+        import logging
+
+        logger = logging.getLogger(__name__)
         sig = inspect.signature(func)
 
         @functools.wraps(func)
@@ -205,9 +212,15 @@ class SemanticToolSelector:
             prompt = self._extract_prompt(args, kwargs, sig)
 
             if prompt and self._tools_param not in kwargs:
-                tools = await self._retrieve_tools(prompt)
-                if tools:
-                    kwargs[self._tools_param] = tools
+                try:
+                    tools = await self._retrieve_tools(prompt)
+                    if tools:
+                        kwargs[self._tools_param] = tools
+                except Exception as e:
+                    # If tool retrieval fails, call function without tools
+                    logger.warning(
+                        "Tool retrieval failed, proceeding without tools: %s", e
+                    )
 
             return await func(*args, **kwargs)
 
@@ -221,14 +234,20 @@ class SemanticToolSelector:
         or when an event loop is already running, this may cause issues.
         For best compatibility, prefer using async functions.
 
+        This wrapper mutates the kwargs dictionary by adding tools
+        to it when they are successfully retrieved. The original kwargs
+        dictionary passed by the caller may be modified.
+
         Args:
             func: The sync function to wrap.
 
         Returns:
             Wrapped sync function.
         """
+        import logging
         import warnings
 
+        logger = logging.getLogger(__name__)
         sig = inspect.signature(func)
 
         @functools.wraps(func)
@@ -264,9 +283,11 @@ class SemanticToolSelector:
 
                     if tools:
                         kwargs[self._tools_param] = tools
-                except Exception:
+                except Exception as e:
                     # If tool retrieval fails, call function without tools
-                    pass
+                    logger.warning(
+                        "Tool retrieval failed, proceeding without tools: %s", e
+                    )
 
             return func(*args, **kwargs)
 

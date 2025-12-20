@@ -22,7 +22,6 @@ from agent_gantry.integrations.decorator import (
     SemanticToolSelector,
     with_semantic_tools,
 )
-from agent_gantry.schema.tool import ToolDefinition
 
 
 class TestWithSemanticToolsDecorator:
@@ -72,21 +71,6 @@ class TestSemanticToolSelector:
         gantry = AgentGantry()
         return gantry
 
-    @pytest.fixture
-    def sample_tool(self) -> ToolDefinition:
-        """Create a sample tool definition."""
-        return ToolDefinition(
-            name="get_weather",
-            description="Get the current weather for a specified city location.",
-            parameters_schema={
-                "type": "object",
-                "properties": {
-                    "city": {"type": "string", "description": "City name"},
-                },
-                "required": ["city"],
-            },
-        )
-
     @pytest.mark.asyncio
     async def test_async_function_wrapping(self, mock_gantry: AgentGantry) -> None:
         """Test wrapping an async function."""
@@ -96,8 +80,10 @@ class TestSemanticToolSelector:
         async def generate(prompt: str, *, tools: list[dict[str, Any]] | None = None) -> str:
             return f"Prompt: {prompt}, Tools: {len(tools or [])}"
 
-        # The function should still be async
+        # The function should still be async and callable
         assert hasattr(generate, "__wrapped__")
+        result = await generate("test prompt")
+        assert "Prompt: test prompt" in result
 
     @pytest.mark.asyncio
     async def test_sync_function_wrapping(self, mock_gantry: AgentGantry) -> None:
@@ -108,12 +94,14 @@ class TestSemanticToolSelector:
         def generate(prompt: str, *, tools: list[dict[str, Any]] | None = None) -> str:
             return f"Prompt: {prompt}, Tools: {len(tools or [])}"
 
-        # The function should still be sync
+        # The function should still be sync and callable
         assert hasattr(generate, "__wrapped__")
+        result = generate("test prompt")
+        assert "Prompt: test prompt" in result
 
     @pytest.mark.asyncio
     async def test_tool_injection_when_tools_not_provided(
-        self, mock_gantry: AgentGantry, sample_tool: ToolDefinition
+        self, mock_gantry: AgentGantry
     ) -> None:
         """Test that tools are injected when not provided."""
         # Register a tool
@@ -463,3 +451,124 @@ class TestIntegrationScenarios:
         if received_tools:
             # Anthropic format has input_schema, not parameters
             assert "input_schema" in received_tools[0] or "name" in received_tools[0]
+
+
+class TestErrorScenarios:
+    """Tests for error handling and edge cases."""
+
+    @pytest.mark.asyncio
+    async def test_tool_retrieval_failure_graceful_degradation(self) -> None:
+        """Test that function executes even when tool retrieval fails."""
+        gantry = AgentGantry()
+
+        @gantry.register
+        def some_tool(x: int) -> str:
+            """A tool that exists."""
+            return str(x)
+
+        selector = SemanticToolSelector(gantry)
+        function_called = False
+
+        # Mock _retrieve_tools to raise an exception
+        async def failing_retrieve(prompt: str) -> list:
+            raise RuntimeError("Simulated retrieval failure")
+
+        with patch.object(selector, "_retrieve_tools", side_effect=failing_retrieve):
+
+            @selector
+            async def generate(prompt: str, *, tools: list | None = None) -> str:
+                nonlocal function_called
+                function_called = True
+                return f"Result: {prompt}"
+
+            result = await generate("test prompt")
+
+        # Function should still execute despite retrieval failure
+        assert function_called
+        assert result == "Result: test prompt"
+
+    @pytest.mark.asyncio
+    async def test_prompt_extraction_failure_graceful_degradation(self) -> None:
+        """Test that function executes when prompt extraction fails."""
+        gantry = AgentGantry()
+
+        @gantry.register
+        def some_tool(x: int) -> str:
+            """A tool for testing."""
+            return str(x)
+
+        selector = SemanticToolSelector(gantry)
+        function_called = False
+        received_tools: list | None = "not_set"  # type: ignore[assignment]
+
+        @selector
+        async def generate(other_param: int, *, tools: list | None = None) -> str:
+            nonlocal function_called, received_tools
+            function_called = True
+            received_tools = tools
+            return f"Result: {other_param}"
+
+        # No prompt parameter means extraction will return None
+        result = await generate(42)
+
+        # Function should execute, but no tools should be injected
+        assert function_called
+        assert result == "Result: 42"
+        assert received_tools is None
+
+    @pytest.mark.asyncio
+    async def test_empty_gantry_no_tools_injected(self) -> None:
+        """Test behavior when gantry has no registered tools."""
+        gantry = AgentGantry()  # No tools registered
+
+        selector = SemanticToolSelector(gantry, score_threshold=0.0)
+        received_tools: list | None = "not_set"  # type: ignore[assignment]
+
+        @selector
+        async def generate(prompt: str, *, tools: list | None = None) -> str:
+            nonlocal received_tools
+            received_tools = tools
+            return f"Result: {prompt}"
+
+        result = await generate("What is the weather?")
+
+        # Function should execute
+        assert result == "Result: What is the weather?"
+        # No tools should be injected since gantry is empty
+        # (empty list or None are both acceptable)
+        assert received_tools is None or received_tools == []
+
+    @pytest.mark.asyncio
+    async def test_sync_wrapper_retrieval_failure(self) -> None:
+        """Test that sync wrapper handles retrieval failure gracefully."""
+        gantry = AgentGantry()
+
+        @gantry.register
+        def some_tool(x: int) -> str:
+            """A tool for testing."""
+            return str(x)
+
+        selector = SemanticToolSelector(gantry)
+        function_called = False
+
+        # Mock _retrieve_tools to raise an exception
+        async def failing_retrieve(prompt: str) -> list:
+            raise RuntimeError("Simulated sync retrieval failure")
+
+        original_retrieve = selector._retrieve_tools
+        selector._retrieve_tools = failing_retrieve  # type: ignore[method-assign]
+
+        @selector
+        def generate_sync(prompt: str, *, tools: list | None = None) -> str:
+            nonlocal function_called
+            function_called = True
+            return f"Sync result: {prompt}"
+
+        result = generate_sync("test sync prompt")
+
+        # Restore original
+        selector._retrieve_tools = original_retrieve  # type: ignore[method-assign]
+
+        # Function should still execute despite retrieval failure
+        assert function_called
+        assert result == "Sync result: test sync prompt"

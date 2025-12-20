@@ -213,11 +213,11 @@ selector = SemanticToolSelector(
     limit=5,
 )
 
-# Manually retrieve tools
-tools = await selector._retrieve_tools("What's the weather?")
-
-# Or wrap functions
+# Wrap functions for use
 wrapped = selector.wrap_async(my_async_function)
+
+# Use wrapped in place of my_async_function
+result = await wrapped(...)
 ```
 
 ## Performance Considerations
