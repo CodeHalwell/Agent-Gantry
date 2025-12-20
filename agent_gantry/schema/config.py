@@ -14,11 +14,16 @@ from pydantic import BaseModel, Field
 class VectorStoreConfig(BaseModel):
     """Configuration for vector store backend."""
 
-    type: Literal["memory", "qdrant", "chroma", "pgvector", "pinecone", "weaviate"] = "memory"
+    type: Literal[
+        "memory", "qdrant", "chroma", "pgvector", "pinecone", "weaviate", "lancedb"
+    ] = "memory"
     url: str | None = None
     api_key: str | None = None
     collection_name: str = "agent_gantry"
     dimension: int | None = None
+    db_path: str | None = Field(
+        default=None, description="Path to local database (for LanceDB)"
+    )
     options: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -26,13 +31,19 @@ class EmbedderConfig(BaseModel):
     """Configuration for embedding backend."""
 
     type: Literal[
-        "openai", "azure", "cohere", "huggingface", "sentence_transformers", "ollama"
+        "openai", "azure", "cohere", "huggingface", "sentence_transformers", "ollama", "nomic"
     ] = "sentence_transformers"
     model: str = "all-MiniLM-L6-v2"
     api_key: str | None = None
     api_base: str | None = None
     batch_size: int = 100
     max_retries: int = 3
+    dimension: int | None = Field(
+        default=None, description="Output dimension (for Matryoshka truncation)"
+    )
+    task_type: str | None = Field(
+        default=None, description="Task type for embeddings (for Nomic)"
+    )
 
 
 class RerankerConfig(BaseModel):
