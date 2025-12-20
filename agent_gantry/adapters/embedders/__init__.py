@@ -12,7 +12,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> type:
     """Lazy import for optional dependencies."""
     if name == "NomicEmbedder":
         from agent_gantry.adapters.embedders.nomic import NomicEmbedder

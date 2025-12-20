@@ -631,7 +631,7 @@ class LanceDBVectorStore:
                 records = table.to_pylist()
                 return len([r for r in records if r.get("namespace") == namespace])
             # Use count_rows() for efficient counting when no filter
-            return self._tools_table.count_rows()
+            return int(self._tools_table.count_rows())
         except Exception as e:
             logger.warning(f"Error counting tools: {e}")
             return 0
@@ -653,7 +653,7 @@ class LanceDBVectorStore:
                 table = self._skills_table.to_arrow()
                 records = table.to_pylist()
                 return len([r for r in records if r.get("namespace") == namespace])
-            return self._skills_table.count_rows()
+            return int(self._skills_table.count_rows())
         except Exception as e:
             logger.warning(f"Error counting skills: {e}")
             return 0
