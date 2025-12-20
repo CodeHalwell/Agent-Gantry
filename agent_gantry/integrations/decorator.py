@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import inspect
+import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, overload
 
@@ -36,6 +37,9 @@ if TYPE_CHECKING:
 
 P = ParamSpec("P")
 R = TypeVar("R")
+
+# Module-level logger to avoid repeated instantiation
+_logger = logging.getLogger(__name__)
 
 
 class SemanticToolSelector:
@@ -202,9 +206,6 @@ class SemanticToolSelector:
         Returns:
             Wrapped async function.
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
         sig = inspect.signature(func)
 
         @functools.wraps(func)
@@ -218,7 +219,7 @@ class SemanticToolSelector:
                         kwargs[self._tools_param] = tools
                 except Exception as e:
                     # If tool retrieval fails, call function without tools
-                    logger.warning(
+                    _logger.warning(
                         "Tool retrieval failed, proceeding without tools: %s", e
                     )
 
@@ -244,10 +245,8 @@ class SemanticToolSelector:
         Returns:
             Wrapped sync function.
         """
-        import logging
         import warnings
 
-        logger = logging.getLogger(__name__)
         sig = inspect.signature(func)
 
         @functools.wraps(func)
@@ -285,7 +284,7 @@ class SemanticToolSelector:
                         kwargs[self._tools_param] = tools
                 except Exception as e:
                     # If tool retrieval fails, call function without tools
-                    logger.warning(
+                    _logger.warning(
                         "Tool retrieval failed, proceeding without tools: %s", e
                     )
 

@@ -555,19 +555,16 @@ class TestErrorScenarios:
         async def failing_retrieve(prompt: str) -> list:
             raise RuntimeError("Simulated sync retrieval failure")
 
-        original_retrieve = selector._retrieve_tools
-        selector._retrieve_tools = failing_retrieve  # type: ignore[method-assign]
+        # Use patch.object for proper cleanup
+        with patch.object(selector, "_retrieve_tools", side_effect=failing_retrieve):
 
-        @selector
-        def generate_sync(prompt: str, *, tools: list | None = None) -> str:
-            nonlocal function_called
-            function_called = True
-            return f"Sync result: {prompt}"
+            @selector
+            def generate_sync(prompt: str, *, tools: list | None = None) -> str:
+                nonlocal function_called
+                function_called = True
+                return f"Sync result: {prompt}"
 
-        result = generate_sync("test sync prompt")
-
-        # Restore original
-        selector._retrieve_tools = original_retrieve  # type: ignore[method-assign]
+            result = generate_sync("test sync prompt")
 
         # Function should still execute despite retrieval failure
         assert function_called
