@@ -65,7 +65,7 @@ retrieval = asyncio.run(pick_tools("summarize quarterly revenue and compute tax"
 `retrieval.tools` contains scored `ToolDefinition` objects. Use the helpers below to format them for
 each SDK.
 
-## 3) Provide tools to the OpenAI Responses API
+## 3) Provide tools to OpenAI (Chat Completions or Responses API)
 
 ```python
 from openai import OpenAI
@@ -86,8 +86,11 @@ response = client.chat.completions.create(
 
 ```python
 from google import genai
+from google.genai import types
 
-gemini_tools = [{"function_declarations": [t.tool.to_gemini_schema() for t in retrieval.tools]}]
+gemini_tools = [
+    types.Tool(function_declarations=[t.tool.to_gemini_schema() for t in retrieval.tools])
+]
 
 client = genai.Client(api_key="...")  # genai SDK >= 0.8.0
 result = client.models.generate_content(
