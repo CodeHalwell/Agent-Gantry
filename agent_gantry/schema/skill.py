@@ -90,10 +90,11 @@ class Skill(BaseModel):
         """
         Deterministic hash for change detection.
 
-        Used to avoid re-embedding when content hasn't changed.
+        This hash includes all fields that influence the embedding text, as well
+        as the full content, so that any semantic change will invalidate it.
         """
-        content = f"{self.name}:{self.description}:{self.content}"
-        return hashlib.sha256(content.encode()).hexdigest()[:16]
+        hash_input = f"{self.to_embedding_text()}::{self.content}"
+        return hashlib.sha256(hash_input.encode()).hexdigest()[:16]
 
     def to_prompt_text(self) -> str:
         """

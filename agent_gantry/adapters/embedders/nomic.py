@@ -61,11 +61,38 @@ class NomicEmbedder(EmbeddingAdapter):
             task_type: Task type for prefix ('search_document', 'search_query',
                       'clustering', 'classification')
             device: Device to run model on ('cpu', 'cuda', etc). Auto-detected if None.
+
+        Raises:
+            ValueError: If dimension is invalid or task_type is unsupported.
         """
         self._model_name = model
-        self._dimension = dimension or self.FULL_DIMENSION
+        dim = self.FULL_DIMENSION if dimension is None else dimension
+
+        # Validate dimension
+        if dim < 1 or dim > self.FULL_DIMENSION:
+            raise ValueError(
+                f"dimension must be between 1 and {self.FULL_DIMENSION}, got {dim}"
+            )
+        if dim not in self.MATRYOSHKA_DIMS:
+            import warnings
+
+            warnings.warn(
+                f"dimension {dim} is not a recommended Matryoshka dimension. "
+                f"Recommended values: {self.MATRYOSHKA_DIMS}",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        # Validate task_type
+        if task_type not in self.TASK_PREFIXES:
+            raise ValueError(
+                f"Unsupported task_type '{task_type}'. "
+                f"Supported types: {', '.join(self.TASK_PREFIXES.keys())}"
+            )
+
+        self._dimension = dim
         self._task_type = task_type
-        self._task_prefix = self.TASK_PREFIXES.get(task_type, "")
+        self._task_prefix = self.TASK_PREFIXES[task_type]
         self._device = device
         self._model: Any = None
         self._initialized = False
@@ -104,35 +131,17 @@ class NomicEmbedder(EmbeddingAdapter):
         """
         Apply Matryoshka truncation to embeddings.
 
-        For nomic-embed-text-v1.5, we apply layer normalization before truncation
-        as recommended by Nomic for optimal performance.
+        The underlying sentence-transformers model is called with
+        ``normalize_embeddings=True``, so the embeddings are already
+        L2-normalized. Following Nomic's Matryoshka recommendation, we
+        simply truncate these normalized embeddings to the desired dimension
+        without any additional normalization steps.
         """
         if self._dimension >= self.FULL_DIMENSION:
             return embeddings
 
-        try:
-            import numpy as np
-        except ImportError:
-            # Fallback: simple truncation without normalization
-            return [emb[: self._dimension] for emb in embeddings]
-
-        # Convert to numpy for efficient processing
-        arr = np.array(embeddings, dtype=np.float32)
-
-        # Apply layer normalization before truncation (recommended for v1.5)
-        mean = np.mean(arr, axis=-1, keepdims=True)
-        var = np.var(arr, axis=-1, keepdims=True)
-        arr_normalized = (arr - mean) / np.sqrt(var + 1e-5)
-
-        # Truncate to desired dimension
-        arr_truncated = arr_normalized[:, : self._dimension]
-
-        # Re-normalize to unit length for cosine similarity
-        norms = np.linalg.norm(arr_truncated, axis=-1, keepdims=True)
-        norms = np.where(norms == 0, 1, norms)
-        arr_final = arr_truncated / norms
-
-        return arr_final.tolist()
+        # Simple truncation of already-normalized embeddings
+        return [emb[: self._dimension] for emb in embeddings]
 
     async def embed_text(self, text: str) -> list[float]:
         """
@@ -195,7 +204,9 @@ class NomicEmbedder(EmbeddingAdapter):
         """
         Embed a search query with the appropriate prefix.
 
-        Uses 'search_query' prefix for optimal retrieval performance.
+        This method always uses 'search_query' prefix regardless of the
+        instance's task_type setting, as this is optimal for retrieval.
+        Use embed_text() if you want to use the configured task_type prefix.
 
         Args:
             query: Search query text
@@ -205,7 +216,7 @@ class NomicEmbedder(EmbeddingAdapter):
         """
         self._ensure_initialized()
 
-        # Use search_query prefix for queries
+        # Always use search_query prefix for queries (optimal for retrieval)
         prefixed_query = f"search_query: {query}"
 
         embedding = self._model.encode([prefixed_query], normalize_embeddings=True)
@@ -231,11 +242,37 @@ class NomicEmbedder(EmbeddingAdapter):
 
     def set_task_type(self, task_type: str) -> None:
         """
-        Change the task type for embeddings.
+        Set the task type for embeddings.
+
+        This can be used to configure the embedder before generating any embeddings.
+        Changing the task type after embeddings have been created can lead to
+        inconsistent prefixes between stored embeddings and new queries, which
+        degrades retrieval quality. For that reason, changing the task type to a
+        different value after it has been set is not allowed.
 
         Args:
             task_type: New task type ('search_document', 'search_query',
-                      'clustering', 'classification')
+                'clustering', 'classification')
+
+        Raises:
+            ValueError: If an unknown task type is provided.
+            RuntimeError: If attempting to change the task type after it was
+                already set to a different value.
         """
+        if task_type not in self.TASK_PREFIXES:
+            raise ValueError(
+                f"Unsupported task_type '{task_type}'. "
+                f"Supported types: {', '.join(self.TASK_PREFIXES.keys())}."
+            )
+
+        # Disallow changing task type once it has been set to a different value.
+        # This avoids mixing embeddings generated with different task prefixes.
+        if getattr(self, "_task_type", None) is not None and self._task_type != task_type:
+            raise RuntimeError(
+                "Changing task_type after initialization is not supported, as it can "
+                "lead to inconsistent embeddings. Create a new NomicEmbedder "
+                "instance with the desired task_type instead."
+            )
+
         self._task_type = task_type
-        self._task_prefix = self.TASK_PREFIXES.get(task_type, "")
+        self._task_prefix = self.TASK_PREFIXES[task_type]

@@ -8,12 +8,15 @@ supporting both tools and skills collections for semantic retrieval.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from agent_gantry.schema.skill import Skill
 from agent_gantry.schema.tool import ToolDefinition
+
+logger = logging.getLogger(__name__)
 
 
 def _escape_sql_string(value: str) -> str:
@@ -173,9 +176,27 @@ class LanceDBVectorStore:
 
         Returns:
             Number of tools added/updated
+
+        Raises:
+            ValueError: If tools and embeddings have different lengths or
+                       if embedding dimensions don't match configured dimension
         """
         if not tools:
             return 0
+
+        # Validate inputs
+        if len(tools) != len(embeddings):
+            raise ValueError(
+                f"Tools and embeddings must have same length: "
+                f"got {len(tools)} tools and {len(embeddings)} embeddings"
+            )
+
+        for i, emb in enumerate(embeddings):
+            if len(emb) != self._dimension:
+                raise ValueError(
+                    f"Embedding {i} has dimension {len(emb)}, "
+                    f"expected {self._dimension}"
+                )
 
         await self._ensure_initialized()
 
@@ -205,8 +226,9 @@ class LanceDBVectorStore:
                     self._tools_table.delete(f"id IN ({escaped_ids})")
                 else:
                     self._tools_table.delete(f"id = '{ids[0]}'")
-            except Exception:
-                pass  # Table might be empty
+            except Exception as e:
+                # Table might be empty or records might not exist - this is expected
+                logger.debug(f"Upsert delete during add_tools (may be expected): {e}")
 
         self._tools_table.add(records)
         return len(records)
@@ -227,9 +249,27 @@ class LanceDBVectorStore:
 
         Returns:
             Number of skills added/updated
+
+        Raises:
+            ValueError: If skills and embeddings have different lengths or
+                       if embedding dimensions don't match configured dimension
         """
         if not skills:
             return 0
+
+        # Validate inputs
+        if len(skills) != len(embeddings):
+            raise ValueError(
+                f"Skills and embeddings must have same length: "
+                f"got {len(skills)} skills and {len(embeddings)} embeddings"
+            )
+
+        for i, emb in enumerate(embeddings):
+            if len(emb) != self._dimension:
+                raise ValueError(
+                    f"Embedding {i} has dimension {len(emb)}, "
+                    f"expected {self._dimension}"
+                )
 
         await self._ensure_initialized()
 
@@ -260,8 +300,9 @@ class LanceDBVectorStore:
                     self._skills_table.delete(f"id IN ({escaped_ids})")
                 else:
                     self._skills_table.delete(f"id = '{ids[0]}'")
-            except Exception:
-                pass
+            except Exception as e:
+                # Table might be empty or records might not exist - this is expected
+                logger.debug(f"Upsert delete during add_skills (may be expected): {e}")
 
         self._skills_table.add(records)
         return len(records)
@@ -417,8 +458,9 @@ class LanceDBVectorStore:
             results = self._tools_table.search().where(f"id = '{tool_id}'").limit(1).to_list()
             if results:
                 return ToolDefinition.model_validate_json(results[0]["tool_json"])
-        except Exception:
-            pass
+        except Exception as e:
+            # Record may not exist - log at debug level
+            logger.debug(f"get_by_name lookup failed for {namespace}.{name}: {e}")
         return None
 
     async def get_skill_by_name(
@@ -442,8 +484,9 @@ class LanceDBVectorStore:
             results = self._skills_table.search().where(f"id = '{skill_id}'").limit(1).to_list()
             if results:
                 return Skill.model_validate_json(results[0]["skill_json"])
-        except Exception:
-            pass
+        except Exception as e:
+            # Record may not exist - log at debug level
+            logger.debug(f"get_skill_by_name lookup failed for {namespace}.{name}: {e}")
         return None
 
     async def delete(self, name: str, namespace: str = "default") -> bool:
@@ -523,7 +566,8 @@ class LanceDBVectorStore:
                 ToolDefinition.model_validate_json(r["tool_json"])
                 for r in records
             ]
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Error listing tools: {e}")
             return []
 
     async def list_all_skills(
@@ -564,7 +608,8 @@ class LanceDBVectorStore:
                 Skill.model_validate_json(r["skill_json"])
                 for r in records
             ]
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Error listing skills: {e}")
             return []
 
     async def count(self, namespace: str | None = None) -> int:
@@ -587,7 +632,8 @@ class LanceDBVectorStore:
                 return len([r for r in records if r.get("namespace") == namespace])
             # Use count_rows() for efficient counting when no filter
             return self._tools_table.count_rows()
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Error counting tools: {e}")
             return 0
 
     async def count_skills(self, namespace: str | None = None) -> int:
@@ -608,7 +654,8 @@ class LanceDBVectorStore:
                 records = table.to_pylist()
                 return len([r for r in records if r.get("namespace") == namespace])
             return self._skills_table.count_rows()
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Error counting skills: {e}")
             return 0
 
     async def health_check(self) -> bool:
