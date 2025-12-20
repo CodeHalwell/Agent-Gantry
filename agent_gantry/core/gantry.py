@@ -551,6 +551,14 @@ class AgentGantry:
             if not config.url:
                 raise ValueError("PGVector vector store requires a 'url' in the configuration.")
             return PGVectorStore(url=config.url, api_key=config.api_key)
+        if config.type == "lancedb":
+            from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+
+            return LanceDBVectorStore(
+                db_path=config.db_path,
+                tools_table=config.collection_name,
+                dimension=config.dimension or 768,
+            )
         return InMemoryVectorStore()
 
     def _build_embedder(self, config: EmbedderConfig) -> EmbeddingAdapter:
@@ -559,6 +567,14 @@ class AgentGantry:
             return OpenAIEmbedder(config)
         if config.type == "azure" and config.api_key:
             return AzureOpenAIEmbedder(config)
+        if config.type == "nomic":
+            from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+
+            return NomicEmbedder(
+                model=config.model or "nomic-ai/nomic-embed-text-v1.5",
+                dimension=config.dimension,
+                task_type=config.task_type or "search_document",
+            )
         return SimpleEmbedder()
 
     def _build_reranker(self, config: RerankerConfig) -> RerankerAdapter | None:

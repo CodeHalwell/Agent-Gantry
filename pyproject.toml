@@ -54,6 +54,14 @@ vector-stores = [
     "qdrant-client>=1.7.0",
     "chromadb>=0.4.0",
 ]
+lancedb = [
+    "lancedb>=0.4.0",
+    "pyarrow>=14.0.0",
+]
+nomic = [
+    "sentence-transformers>=2.2.0",
+    "numpy>=1.24.0",
+]
 mcp = [
     "mcp>=1.0.0",
 ]
@@ -83,7 +91,7 @@ llm-providers = [
     "agent-gantry[openai,anthropic,google-genai,google-vertexai,mistral,groq]",
 ]
 all = [
-    "agent-gantry[dev,embeddings,openai,vector-stores,mcp,a2a,llm-providers]",
+    "agent-gantry[dev,embeddings,openai,vector-stores,lancedb,nomic,mcp,a2a,llm-providers]",
 ]
 
 [project.scripts]

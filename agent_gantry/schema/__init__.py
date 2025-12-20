@@ -24,6 +24,12 @@ from agent_gantry.schema.query import (
     ScoredTool,
     ToolQuery,
 )
+from agent_gantry.schema.skill import (
+    Skill,
+    SkillCategory,
+    SkillRetrievalResult,
+    SkillSearchResult,
+)
 from agent_gantry.schema.tool import (
     SchemaDialect,
     ToolCapability,
@@ -43,6 +49,11 @@ __all__ = [
     "ToolDependency",
     "ToolHealth",
     "ToolSource",
+    # Skill models
+    "Skill",
+    "SkillCategory",
+    "SkillRetrievalResult",
+    "SkillSearchResult",
     # Query models
     "ConversationContext",
     "RetrievalResult",
