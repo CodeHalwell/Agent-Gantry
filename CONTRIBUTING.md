@@ -27,7 +27,9 @@ By participating in this project, you agree to maintain a respectful and inclusi
    ```
 3. **Install development dependencies** (uv preferred for reproducibility):
    ```bash
-   # With uv (recommended)
+   # With uv (recommended). uv (https://github.com/astral-sh/uv) is a fast Python
+   # installer/resolver. We use `pip install uv` here for convenience; see
+   # https://docs.astral.sh/uv/getting-started/installation/ for other methods.
    pip install uv
    uv sync --extra dev
 

@@ -203,6 +203,9 @@ git clone https://github.com/CodeHalwell/Agent-Gantry.git
 cd Agent-Gantry
 
 # Preferred: uv for reproducible environments
+# We use `pip install uv` here for convenience in Python-first environments.
+# You can also install uv via curl, pipx, or system packages; see:
+# https://docs.astral.sh/uv/getting-started/installation/
 pip install uv
 uv sync --extra dev
 uv run pytest

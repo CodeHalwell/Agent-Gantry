@@ -8,7 +8,7 @@ and Strands) while preserving dynamic top-k surfacing.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from agent_gantry.core.gantry import AgentGantry
 from agent_gantry.schema.query import ConversationContext, ToolQuery
@@ -31,13 +31,19 @@ async def fetch_framework_tools(
     framework: FrameworkName,
     limit: int = 5,
     score_threshold: float = 0.5,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """
     Retrieve top-k tools and emit the schema shape expected by a framework.
 
     All adapters reuse Agent-Gantry's routing semantics; only the output format
-    varies to keep integrations lightweight and optional.
+    varies to keep integrations lightweight and optional. Today, all supported
+    frameworks accept OpenAI-style tool/function schemas, so that shape is
+    returned; the framework parameter is validated to fail fast and reserved
+    for future per-framework tweaks.
     """
+    if framework not in _SUPPORTED_FRAMEWORKS:
+        raise ValueError(f"Unsupported framework: {framework}")
+
     result = await gantry.retrieve(
         ToolQuery(
             context=ConversationContext(query=query),
@@ -45,9 +51,6 @@ async def fetch_framework_tools(
             score_threshold=score_threshold,
         )
     )
-
-    if framework not in _SUPPORTED_FRAMEWORKS:
-        raise ValueError(f"Unsupported framework: {framework}")
 
     # LangGraph, Semantic Kernel, CrewAI, Google ADK, and Strands all accept
     # OpenAI-style tool/function schemas today, so default to that shape.

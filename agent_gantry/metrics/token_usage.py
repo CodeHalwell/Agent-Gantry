@@ -10,7 +10,7 @@ auditable and reproducible in tests.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping
+from typing import Any, Mapping
 
 
 @dataclass(frozen=True)
@@ -20,7 +20,8 @@ class ProviderUsage:
 
     Providers typically return a `usage` dictionary with prompt, completion, and
     total token counts. Only ``prompt_tokens`` is required; total tokens will be
-    derived when missing.
+    derived when missing. If ``total_tokens`` is explicitly provided (even as 0),
+    that value is preserved.
     """
 
     prompt_tokens: int
@@ -28,15 +29,42 @@ class ProviderUsage:
     total_tokens: int
 
     @classmethod
+    @staticmethod
+    def _coerce_token_value(value: int | float, field_name: str) -> int:
+        """
+        Coerce a provider-reported token value to an int with validation.
+
+        Providers sometimes return floats; we only accept integer-equivalent values
+        to avoid silently truncating non-integer token counts.
+        """
+        if isinstance(value, float) and not value.is_integer():
+            raise ValueError(
+                f"{field_name} must be an integer token count, got non-integer float: {value!r}"
+            )
+        return int(value)
+
+    @classmethod
     def from_usage(cls, usage: Mapping[str, int | float]) -> "ProviderUsage":
         """
         Build from a provider usage mapping (e.g., OpenAI/Anthropic response).
         """
-        prompt = int(usage.get("prompt_tokens", 0))
-        completion = int(usage.get("completion_tokens", 0))
-        total = int(usage.get("total_tokens", prompt + completion))
-        if total == 0 and (prompt or completion):
+        prompt_raw: int | float | None = usage.get("prompt_tokens")
+        completion_raw: int | float | None = usage.get("completion_tokens")
+
+        prompt = cls._coerce_token_value(prompt_raw, "prompt_tokens") if prompt_raw is not None else 0
+        completion = (
+            cls._coerce_token_value(completion_raw, "completion_tokens")
+            if completion_raw is not None
+            else 0
+        )
+
+        if "total_tokens" in usage:
+            total_raw = usage["total_tokens"]
+            total = cls._coerce_token_value(total_raw, "total_tokens")
+        else:
             total = prompt + completion
+
+        # If total is missing we derive it; if explicitly provided as 0 we preserve that
         return cls(
             prompt_tokens=prompt,
             completion_tokens=completion,
@@ -65,6 +93,9 @@ def calculate_token_savings(
     """
     Compute token savings using provider-reported usage blocks.
 
+    Note: savings are clamped at zero to avoid negative values when an optimized
+    request unexpectedly uses more tokens than the baseline. Callers should
+    inspect their inputs if negative deltas were expected.
     Args:
         baseline: Usage for the "all tools" (or unfiltered) invocation.
         optimized: Usage for the top-k / filtered invocation.
