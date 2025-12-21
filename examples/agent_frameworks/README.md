@@ -25,10 +25,19 @@ The general pattern is:
 
 ## Installation Requirements
 
-We recommend using `uv` for managing dependencies.
+You can install all framework integrations at once or install individual frameworks as needed.
 
 ```bash
-# Install all framework dependencies
+# Option 1: Install all framework dependencies with pip
+pip install "agent-gantry[agent-frameworks]"
+
+# Option 2: Install individual frameworks with pip
+pip install agent-gantry langchain langchain-openai langgraph
+pip install agent-gantry crewai
+pip install agent-gantry autogen-agentchat autogen-ext[openai]
+# etc.
+
+# Option 3: If using uv for project dependency management
 uv add langchain langchain-openai langgraph crewai autogen-agentchat autogen-ext[openai] \
 	llama-index-core llama-index-llms-openai semantic-kernel agent-framework google-adk
 ```

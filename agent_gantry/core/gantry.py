@@ -177,7 +177,7 @@ class AgentGantry:
             telemetry=telemetry,
             security_policy=security_policy,
         )
-        await gantry.collect_tools_from_modules(modules, attr=attr)
+        await gantry.collect_tools_from_modules(modules, module_attr=attr)
         return gantry
 
     def register(
@@ -266,7 +266,7 @@ class AgentGantry:
         """
         # If modules were provided in constructor but not yet loaded, load them now
         if self._modules is not None:
-            await self.collect_tools_from_modules(self._modules, attr=self._module_attr)
+            await self.collect_tools_from_modules(self._modules, module_attr=self._module_attr)
             self._modules = None
             self._module_attr = None
 
