@@ -33,7 +33,7 @@ async def main():
             async def handler(data: str):
                 return f"Processed {data} with tool {idx}"
             handler.__name__ = f"tool_{idx}"
-            handler.__doc__ = f"Perform a specialized operation for task category {idx}. This tool is specifically designed for task category {idx}."
+            handler.__doc__ = f"This tool is specifically designed to perform specialized operations for task category {idx}."
             return handler
 
         gantry.register(create_handler(i))
