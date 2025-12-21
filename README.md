@@ -136,14 +136,14 @@ plus skill storage.
 
 Agent-Gantry significantly reduces token usage by dynamically surfacing only the most relevant tools.
 
-**Benchmark Results (15 Tools Registered):**
+**Benchmark Results (15 Tools Registered, provider-reported usage):**
 
 | Scenario | Tools Passed | Prompt Tokens | Cost Reduction |
 |----------|--------------|---------------|----------------|
 | **Standard** (All Tools) | 15 | 366 | - |
 | **Agent-Gantry** (Top 2) | 2 | 78 | **~79%** |
 
-*Measured using `gpt-3.5-turbo` and `tiktoken`. See `examples/llm_integration/token_savings_demo.py` for the full benchmark.*
+*Measured using provider `usage` fields from `gpt-3.5-turbo` responses (no token estimators). See `examples/llm_integration/token_savings_demo.py` for the full benchmark.*
 
 ### Semantic Routing Accuracy
 
@@ -202,10 +202,16 @@ agent_gantry/
 git clone https://github.com/CodeHalwell/Agent-Gantry.git
 cd Agent-Gantry
 
-# Install dependencies
-pip install -e ".[dev]"
+# Preferred: uv for reproducible environments
+# We use `pip install uv` here for convenience in Python-first environments.
+# You can also install uv via curl, pipx, or system packages; see:
+# https://docs.astral.sh/uv/getting-started/installation/
+pip install uv
+uv sync --extra dev
+uv run pytest
 
-# Run tests
+# Or use pip directly
+pip install -e ".[dev]"
 pytest
 ```
 
