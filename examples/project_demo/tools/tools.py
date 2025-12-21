@@ -1,19 +1,30 @@
+import datetime
 from typing import Any
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.nomic import NomicEmbedder
-embedder = NomicEmbedder(dimension=256)
-
-# tool libraries
+import pint
+import pubchempy as pcp
 import requests
 from rdkit import Chem
 from rdkit.Chem import Descriptors
-import pubchempy as pcp
-import pint
-import datetime
-from sympy import symbols, solve, sympify
+from sympy import solve, symbols, sympify
 
-tools = AgentGantry(embedder=embedder)
+from agent_gantry import AgentGantry
+
+
+def _get_tools_instance() -> AgentGantry:
+    """
+    Factory function to create and configure the AgentGantry instance.
+
+    This avoids module-level instantiation which can cause issues with
+    testing, cleanup, or if multiple instances are needed.
+    """
+    from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+    embedder = NomicEmbedder(dimension=256)
+    return AgentGantry(embedder=embedder)
+
+
+# Create the instance - users can also call _get_tools_instance() for a fresh instance
+tools = _get_tools_instance()
 
 @tools.register(tags=["chemistry", "molecular"])
 def get_molecular_weight(smiles: str) -> float:
@@ -75,7 +86,7 @@ def fetch_web_content(url: str) -> str:
         content_length = response.headers.get('content-length')
         if content_length and int(content_length) > 10_000_000:  # 10MB limit
             raise ValueError(f"Content too large: {content_length} bytes")
-        
+
         return response.text
     except requests.exceptions.Timeout:
         raise ValueError(f"Request timed out while fetching: {url}")
