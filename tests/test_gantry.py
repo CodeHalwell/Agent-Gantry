@@ -146,7 +146,6 @@ class TestAgentGantryModuleImport:
             "tests.test_modules.module_a",
             "tests.test_modules.module_c_duplicate"
         ])
-        
         # Should import 2 from module_a, and skip the duplicate from module_c_duplicate
         assert count == 2
         assert gantry.tool_count == 2
