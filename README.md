@@ -132,6 +132,49 @@ plus skill storage.
 - **Retries & Timeouts**: Automatic retries with exponential backoff and configurable timeouts
 - **Health Tracking**: Per-tool health metrics including success rate, latency, and circuit breaker state
 
+## Context Window Savings
+
+Agent-Gantry significantly reduces token usage by dynamically surfacing only the most relevant tools.
+
+**Benchmark Results (15 Tools Registered):**
+
+| Scenario | Tools Passed | Prompt Tokens | Cost Reduction |
+|----------|--------------|---------------|----------------|
+| **Standard** (All Tools) | 15 | 366 | - |
+| **Agent-Gantry** (Top 2) | 2 | 78 | **~79%** |
+
+*Measured using `gpt-3.5-turbo` and `tiktoken`. See `examples/llm_integration/token_savings_demo.py` for the full benchmark.*
+
+### Semantic Routing Accuracy
+
+Agent-Gantry maintains high accuracy even with large toolsets by leveraging semantic embeddings.
+
+**Stress Test Results (100 Tools Registered):**
+
+| Metric | Value |
+|--------|-------|
+| **Total Tools** | 100 |
+| **Retrieval Limit** | Top 2 |
+| **Accuracy** | **100%** (10/10 queries) |
+| **Embedder** | Nomic (`nomic-embed-text-v1.5`) |
+
+*See `examples/testing_limits/stress_test_100_tools.py` for the full stress test.*
+
+### Real-World End-to-End Verification
+
+Agent-Gantry has been verified in end-to-end scenarios with real LLMs and tangible tools.
+
+**Real-World Test (30 Tangible Tools + GPT-4o):**
+
+| Metric | Result |
+|--------|--------|
+| **Scenario** | 30 functional tools (Math, File System, Network, etc.) |
+| **Retrieval Accuracy** | **100%** (Correct tool always in Top 3) |
+| **LLM Selection** | **100%** (GPT-4o correctly selected the tool) |
+| **Execution** | **100%** (Tools executed and returned correct results) |
+
+*See `examples/testing_limits/real_world_30_tools_test.py` for the complete end-to-end verification script.*
+
 ## Project Structure
 
 ```

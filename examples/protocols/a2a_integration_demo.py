@@ -184,7 +184,7 @@ async def demo_skill_to_tool_mapping():
         print(f"  → Namespace: {tool.namespace}")
         print(f"  → Source: {tool.source.value}")
         print(f"  → Source URI: {tool.source_uri}")
-        print(f"  → Metadata:")
+        print("  → Metadata:")
         for key, value in tool.metadata.items():
             print(f"      {key}: {value}")
 

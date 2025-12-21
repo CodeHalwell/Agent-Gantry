@@ -255,7 +255,7 @@ class TestMCPServer:
 
         # Verify the server is in dynamic mode
         assert mcp_server_dynamic.mode == "dynamic"
-        
+
         # Verify tools are still accessible through gantry
         tools = await mcp_server_dynamic.gantry.list_tools()
         assert len(tools) > 0

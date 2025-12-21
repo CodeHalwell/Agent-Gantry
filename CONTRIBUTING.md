@@ -11,6 +11,7 @@ Thank you for your interest in contributing to Agent-Gantry! This document provi
 - [Testing](#testing)
 - [Documentation](#documentation)
 - [Pull Request Process](#pull-request-process)
+- [Publishing](#publishing)
 
 ## Code of Conduct
 
@@ -329,6 +330,10 @@ agent_gantry/
 ├── observability/        # Telemetry, metrics, logging
 └── cli/                  # Command-line interface
 ```
+
+## Publishing
+
+For instructions on how to build and publish releases to PyPI, please see [PUBLISHING.md](PUBLISHING.md).
 
 ## Questions?
 
