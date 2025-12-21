@@ -28,7 +28,7 @@ class ProviderUsage:
     total_tokens: int
 
     @classmethod
-    def from_usage(cls, usage: Mapping[str, int]) -> "ProviderUsage":
+    def from_usage(cls, usage: Mapping[str, int | float]) -> "ProviderUsage":
         """
         Build from a provider usage mapping (e.g., OpenAI/Anthropic response).
         """
@@ -59,8 +59,8 @@ class TokenSavings:
 
 
 def calculate_token_savings(
-    baseline: ProviderUsage | Mapping[str, int],
-    optimized: ProviderUsage | Mapping[str, int],
+    baseline: ProviderUsage | Mapping[str, int | float],
+    optimized: ProviderUsage | Mapping[str, int | float],
 ) -> TokenSavings:
     """
     Compute token savings using provider-reported usage blocks.

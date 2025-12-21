@@ -15,6 +15,14 @@ from agent_gantry.schema.query import ConversationContext, ToolQuery
 
 FrameworkName = Literal["langgraph", "semantic-kernel", "crew_ai", "google_adk", "strands"]
 
+_SUPPORTED_FRAMEWORKS: set[FrameworkName] = {
+    "langgraph",
+    "semantic-kernel",
+    "crew_ai",
+    "google_adk",
+    "strands",
+}
+
 
 async def fetch_framework_tools(
     gantry: AgentGantry,
@@ -38,10 +46,9 @@ async def fetch_framework_tools(
         )
     )
 
+    if framework not in _SUPPORTED_FRAMEWORKS:
+        raise ValueError(f"Unsupported framework: {framework}")
+
     # LangGraph, Semantic Kernel, CrewAI, Google ADK, and Strands all accept
     # OpenAI-style tool/function schemas today, so default to that shape.
-    if framework in {"langgraph", "semantic-kernel", "crew_ai", "google_adk", "strands"}:
-        return result.to_openai_tools()
-
-    # Fallback to OpenAI schema for unknown/experimental frameworks.
     return result.to_openai_tools()
