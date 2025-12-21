@@ -43,7 +43,6 @@ dev = [
     "ruff>=0.1.0",
     "mypy>=1.0.0",
 ]
-# Agent Framework integrations
 agent-frameworks = [
     "agent-framework>=1.0.0b251120",
     "autogen-agentchat>=0.7.5",
@@ -58,7 +57,6 @@ agent-frameworks = [
     "semantic-kernel>=1.30.0",
     "google-adk>=1.14.1",
 ]
-# Example tool dependencies (chemistry, math, etc.)
 example-tools = [
     "einops>=0.8.1",
     "huggingface-hub[hf-xet]>=0.36.0",

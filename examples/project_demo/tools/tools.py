@@ -70,7 +70,7 @@ def fetch_web_content(url: str) -> str:
             headers={"User-Agent": "Agent-Gantry/0.1.0"},
         )
         response.raise_for_status()
-        
+
         # Validate content length to prevent excessive memory usage
         content_length = response.headers.get('content-length')
         if content_length and int(content_length) > 10_000_000:  # 10MB limit
