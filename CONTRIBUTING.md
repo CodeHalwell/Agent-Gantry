@@ -25,8 +25,13 @@ By participating in this project, you agree to maintain a respectful and inclusi
    git clone https://github.com/YOUR_USERNAME/Agent-Gantry.git
    cd Agent-Gantry
    ```
-3. **Install development dependencies**:
+3. **Install development dependencies** (uv preferred for reproducibility):
    ```bash
+   # With uv (recommended)
+   pip install uv
+   uv sync --extra dev
+
+   # Or with pip
    pip install -e ".[dev]"
    ```
 4. **Create a branch** for your changes:
@@ -39,10 +44,13 @@ By participating in this project, you agree to maintain a respectful and inclusi
 ### Setup
 
 ```bash
-# Install for development with all optional dependencies
+# Install for development with all optional dependencies (uv)
+uv sync --extra all
+
+# Or with pip
 pip install -e ".[all]"
 
-# Or just dev dependencies
+# Minimal dev install
 pip install -e ".[dev]"
 ```
 
