@@ -2,7 +2,7 @@ import asyncio
 import os
 from dotenv import load_dotenv
 from semantic_kernel import Kernel
-from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion, OpenAIChatCompletion
+from semantic_kernel.connectors.ai.open_ai import OpenAIChatCompletion
 from semantic_kernel.functions import kernel_function
 
 from agent_gantry import AgentGantry
@@ -38,6 +38,7 @@ async def main():
     user_query = "What is the ROI for a $1000 investment that returned $1200?"
     # Lowering threshold for SimpleEmbedder compatibility in this example
     retrieved_tools = await gantry.retrieve_tools(user_query, limit=1, score_threshold=0.1)
+    print(f"Retrieved tools: {[tool['function']['name'] for tool in retrieved_tools]}")
 
     # 4. Register Gantry tools as Semantic Kernel functions
     class GantryPlugin:

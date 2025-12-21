@@ -1,8 +1,6 @@
-import asyncio
 from typing import Any
 
 from agent_gantry import AgentGantry
-from agent_gantry.schema.execution import ToolCall
 from agent_gantry.adapters.embedders.nomic import NomicEmbedder
 embedder = NomicEmbedder(dimension=256)
 
@@ -10,7 +8,6 @@ embedder = NomicEmbedder(dimension=256)
 import requests
 from rdkit import Chem
 from rdkit.Chem import Descriptors
-from rdkit.Chem import rdMolDescriptors
 import pubchempy as pcp
 import pint
 import datetime
@@ -66,13 +63,31 @@ def solve_equation(equation: str, variable: str) -> Any:
 @tools.register(tags=["web"])
 def fetch_web_content(url: str) -> str:
     """Fetch the content of a web page given its URL."""
-    response = requests.get(url)
-    if response.status_code != 200:
-        raise ValueError(f"Failed to fetch URL: {url} with status code {response.status_code}")
-    return response.text
+    try:
+        response = requests.get(
+            url,
+            timeout=30,
+            headers={"User-Agent": "Agent-Gantry/0.1.0"},
+        )
+        response.raise_for_status()
+        
+        # Validate content length to prevent excessive memory usage
+        content_length = response.headers.get('content-length')
+        if content_length and int(content_length) > 10_000_000:  # 10MB limit
+            raise ValueError(f"Content too large: {content_length} bytes")
+        
+        return response.text
+    except requests.exceptions.Timeout:
+        raise ValueError(f"Request timed out while fetching: {url}")
+    except requests.exceptions.ConnectionError:
+        raise ValueError(f"Connection error while fetching: {url}")
+    except requests.exceptions.HTTPError as e:
+        raise ValueError(f"HTTP error while fetching {url}: {e}")
+    except requests.exceptions.RequestException as e:
+        raise ValueError(f"Error fetching {url}: {e}")
 
 @tools.register(tags=["datetime"])
 def get_current_utc_time() -> str:
     """Get the current UTC time as an ISO formatted string."""
-    return datetime.datetime.utcnow().isoformat() + "Z"
+    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
 

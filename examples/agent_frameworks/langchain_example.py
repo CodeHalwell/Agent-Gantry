@@ -1,5 +1,4 @@
 import asyncio
-import os
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain.agents import create_agent
@@ -43,7 +42,6 @@ async def main():
     langchain_tools = []
     for tool_schema in retrieved_tools:
         name = tool_schema["function"]["name"]
-        description = tool_schema["function"]["description"]
         
         if name == "get_weather":
             @tool

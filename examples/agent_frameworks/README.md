@@ -33,7 +33,7 @@ uv add langchain langchain-openai langgraph crewai autogen-agentchat autogen-ext
 	llama-index-core llama-index-llms-openai semantic-kernel agent-framework google-adk
 ```
 
-**Note on Python Version:** These examples are verified on **Python 3.13**.
+**Note on Python Version:** These examples are verified on **Python 3.13**, but should work on any supported Agent-Gantry version (**Python 3.10+**).
 
 ## Environment Variables
 

@@ -1,8 +1,6 @@
 import asyncio
-import os
 from dotenv import load_dotenv
 from llama_index.llms.openai import OpenAI
-from llama_index.core.agent import ReActAgent
 from llama_index.core.tools import FunctionTool
 
 from agent_gantry import AgentGantry

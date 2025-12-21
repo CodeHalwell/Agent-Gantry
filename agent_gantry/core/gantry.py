@@ -116,20 +116,15 @@ class AgentGantry:
         self._pending_tools: list[ToolDefinition] = []
         self._tool_handlers: dict[str, Callable[..., Any]] = {}
         self._initialized = False
+        self._modules: Sequence[str] | None = None
+        self._module_attr: str | None = None
 
         if modules:
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
-
-            if loop and loop.is_running():
-                raise RuntimeError(
-                    "AgentGantry(modules=...) cannot run inside an active event loop. "
-                    "Use AgentGantry.from_modules(...) or collect_tools_from_modules instead."
-                )
-
-            asyncio.run(self.collect_tools_from_modules(modules, attr=module_attr))
+            # Store modules configuration for explicit async initialization.
+            # Users should call `collect_tools_from_modules` in an async context
+            # or use `AgentGantry.from_modules(...)` if available.
+            self._modules = modules
+            self._module_attr = module_attr
 
     @classmethod
     def from_config(cls, path: str) -> AgentGantry:
@@ -266,6 +261,12 @@ class AgentGantry:
         Returns:
             Number of tools synced
         """
+        # If modules were provided in constructor but not yet loaded, load them now
+        if self._modules is not None:
+            await self.collect_tools_from_modules(self._modules, attr=self._module_attr)
+            self._modules = None
+            self._module_attr = None
+
         if not self._pending_tools:
             return 0
 

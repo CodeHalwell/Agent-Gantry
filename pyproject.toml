@@ -31,31 +31,8 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "agent-framework>=1.0.0b251120",
-    "anthropic>=0.75.0",
-    "autogen-agentchat>=0.7.5",
-    "autogen-ext[openai]>=0.7.5",
-    "crewai>=1.6.1",
-    "einops>=0.8.1",
-    "google-adk>=1.14.1",
-    "google-genai>=1.56.0",
-    "groq>=1.0.0",
-    "huggingface-hub[hf-xet]>=0.36.0",
-    "langchain>=1.2.0",
-    "langchain-openai>=1.1.6",
-    "langgraph>=1.0.5",
-    "llama-index-core>=0.14.10",
-    "llama-index-llms-openai>=0.6.12",
-    "mistralai>=1.10.0",
-    "pint>=0.24.4",
-    "pubchempy>=1.0.5",
-    "pyautogen>=0.10.0",
     "pydantic>=2.0.0",
-    "python-dotenv>=1.2.1",
     "pyyaml>=6.0.0",
-    "rdkit>=2025.9.3",
-    "semantic-kernel>=1.30.0",
-    "sympy>=1.14.0",
 ]
 
 [project.optional-dependencies]
@@ -65,6 +42,31 @@ dev = [
     "pytest-cov>=4.0.0",
     "ruff>=0.1.0",
     "mypy>=1.0.0",
+]
+# Agent Framework integrations
+agent-frameworks = [
+    "agent-framework>=1.0.0b251120",
+    "autogen-agentchat>=0.7.5",
+    "autogen-ext[openai]>=0.7.5",
+    "crewai>=1.6.1",
+    "langchain>=1.2.0",
+    "langchain-openai>=1.1.6",
+    "langgraph>=1.0.5",
+    "llama-index-core>=0.14.10",
+    "llama-index-llms-openai>=0.6.12",
+    "pyautogen>=0.10.0",
+    "semantic-kernel>=1.30.0",
+    "google-adk>=1.14.1",
+]
+# Example tool dependencies (chemistry, math, etc.)
+example-tools = [
+    "einops>=0.8.1",
+    "huggingface-hub[hf-xet]>=0.36.0",
+    "pint>=0.24.4",
+    "pubchempy>=1.0.5",
+    "rdkit>=2025.9.3",
+    "sympy>=1.14.0",
+    "python-dotenv>=1.2.1",
 ]
 embeddings = [
     "numpy>=1.24.0",
@@ -114,7 +116,7 @@ llm-providers = [
     "agent-gantry[openai,anthropic,google-genai,google-vertexai,mistral,groq]",
 ]
 all = [
-    "agent-gantry[dev,embeddings,openai,vector-stores,lancedb,nomic,mcp,a2a,llm-providers]",
+    "agent-gantry[dev,embeddings,openai,vector-stores,lancedb,nomic,mcp,a2a,llm-providers,agent-frameworks,example-tools]",
 ]
 
 [project.scripts]

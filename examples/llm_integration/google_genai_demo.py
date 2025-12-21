@@ -67,10 +67,9 @@ async def main():
 
     # Wrap in Tool object
     if gemini_tools:
-        toolbox = types.Tool(function_declarations=gemini_tools)
-        config = types.GenerateContentConfig(tools=[toolbox])
+        tool = types.Tool(function_declarations=gemini_tools)
+        config = types.GenerateContentConfig(tools=[tool])
     else:
-        toolbox = None
         config = None
     
     print(f"Gantry retrieved {len(gemini_tools)} tool(s)")

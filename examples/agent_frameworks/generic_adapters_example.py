@@ -1,9 +1,7 @@
 import asyncio
-import os
 from dotenv import load_dotenv
 from agent_gantry import AgentGantry
 from agent_gantry.integrations.framework_adapters import fetch_framework_tools
-from agent_gantry.schema.execution import ToolCall
 
 load_dotenv()
 
