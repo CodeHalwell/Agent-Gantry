@@ -46,15 +46,22 @@ class ProviderUsage:
     def from_usage(cls, usage: Mapping[str, int | float]) -> "ProviderUsage":
         """
         Build from a provider usage mapping (e.g., OpenAI/Anthropic/Google response).
+        
+        Supports multiple provider token field conventions:
+        - OpenAI: prompt_tokens, completion_tokens, total_tokens
+        - Anthropic: input_tokens, output_tokens
+        - Google: prompt_token_count, candidates_token_count, total_token_count
+        
+        Uses "or" chaining to check multiple possible field names. Only one naming
+        convention should be present per response to avoid ambiguity.
         """
-        # OpenAI: prompt_tokens, completion_tokens
-        # Anthropic: input_tokens, output_tokens
-        # Google: prompt_token_count, candidates_token_count
+        # Check for prompt tokens (OpenAI, Anthropic, or Google naming)
         prompt_raw: int | float | None = (
             usage.get("prompt_tokens")
             or usage.get("input_tokens")
             or usage.get("prompt_token_count")
         )
+        # Check for completion/output tokens (OpenAI, Anthropic, or Google naming)
         completion_raw: int | float | None = (
             usage.get("completion_tokens")
             or usage.get("output_tokens")

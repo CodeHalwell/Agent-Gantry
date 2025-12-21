@@ -73,7 +73,7 @@ async def main():
     from agent_gantry.integrations.decorator import with_semantic_tools
 
     @with_semantic_tools(gantry, limit=1, score_threshold=0.1, prompt_param="user_query")
-    def chat_with_mistral(user_query: str, tools: list[dict[str, Any]] = None):
+    async def chat_with_mistral(user_query: str, tools: list[dict[str, Any]] = None):
         """
         This function automatically gets relevant tools injected into the 'tools' argument
         based on the user_query.
@@ -94,7 +94,7 @@ async def main():
         return "No tool called"
 
     # The decorator handles the retrieval logic internally
-    chat_with_mistral("Translate 'Good Morning' to Spanish")
+    await chat_with_mistral("Translate 'Good Morning' to Spanish")
 
 if __name__ == "__main__":
     asyncio.run(main())

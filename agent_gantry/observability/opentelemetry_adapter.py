@@ -88,13 +88,21 @@ class OpenTelemetryAdapter(TelemetryAdapter):
             self.metrics["tokens_saved_prompt_total"] = (
                 self.metrics.get("tokens_saved_prompt_total", 0) + savings.saved_prompt_tokens
             )
-            # We track the average savings percentage
-            count = self.metrics.get("savings_count", 0)
-            current_avg = self.metrics.get("avg_prompt_savings_pct", 0.0)
-            self.metrics["avg_prompt_savings_pct"] = (
-                (current_avg * count) + savings.prompt_savings_pct
-            ) / (count + 1)
-            self.metrics["savings_count"] = count + 1
+            # We track the running average prompt savings percentage.
+            # Handle the first (or any invalid non-positive) count explicitly to avoid
+            # division-by-zero and keep the logic easy to follow.
+            count = int(self.metrics.get("savings_count", 0))
+            if count <= 0:
+                # First sample: the average is just this savings value.
+                self.metrics["avg_prompt_savings_pct"] = savings.prompt_savings_pct
+                self.metrics["savings_count"] = 1
+            else:
+                current_avg = self.metrics.get("avg_prompt_savings_pct", 0.0)
+                new_count = count + 1
+                self.metrics["avg_prompt_savings_pct"] = (
+                    (current_avg * count) + savings.prompt_savings_pct
+                ) / new_count
+                self.metrics["savings_count"] = new_count
 
     async def health_check(self) -> bool:
         if self.otlp_endpoint:
