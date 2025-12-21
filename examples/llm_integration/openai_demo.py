@@ -54,7 +54,7 @@ async def main():
     print(f"User Query: '{query}'")
 
     # Retrieve only relevant tools (OpenAI format by default)
-    tools = await gantry.retrieve_tools(query, limit=1)
+    tools = await gantry.retrieve_tools(query, limit=1, score_threshold=0.1)
     print(f"Gantry retrieved {len(tools)} tool(s): {[t['function']['name'] for t in tools]}")
 
     # Call LLM
@@ -95,7 +95,7 @@ async def main():
     # 1. Extract the prompt from 'messages'
     # 2. Retrieve relevant tools
     # 3. Inject them into the 'tools' argument
-    @with_semantic_tools(gantry, limit=1)
+    @with_semantic_tools(gantry, limit=1, score_threshold=0.1)
     async def chat_with_tools(messages: List[Dict[str, str]], tools: List[Dict[str, Any]] = None):
         print(f"   [Decorator] Injected {len(tools) if tools else 0} tools")
         return await client.chat.completions.create(

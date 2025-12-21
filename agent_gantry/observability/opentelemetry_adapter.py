@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from agent_gantry.observability.telemetry import TelemetryAdapter
 
 if TYPE_CHECKING:
+    from agent_gantry.metrics.token_usage import ProviderUsage, TokenSavings
     from agent_gantry.schema.execution import ToolCall, ToolResult
     from agent_gantry.schema.query import RetrievalResult, ToolQuery
     from agent_gantry.schema.tool import ToolHealth
@@ -67,6 +68,33 @@ class OpenTelemetryAdapter(TelemetryAdapter):
     ) -> None:
         key = f"health_changes_{tool_name}"
         self.metrics[key] = self.metrics.get(key, 0) + 1
+
+    async def record_token_usage(
+        self,
+        usage: ProviderUsage,
+        model_name: str,
+        savings: TokenSavings | None = None,
+        trace_id: str | None = None,
+    ) -> None:
+        self.metrics["tokens_prompt_total"] = (
+            self.metrics.get("tokens_prompt_total", 0) + usage.prompt_tokens
+        )
+        self.metrics["tokens_completion_total"] = (
+            self.metrics.get("tokens_completion_total", 0) + usage.completion_tokens
+        )
+        self.metrics["tokens_total"] = self.metrics.get("tokens_total", 0) + usage.total_tokens
+
+        if savings:
+            self.metrics["tokens_saved_prompt_total"] = (
+                self.metrics.get("tokens_saved_prompt_total", 0) + savings.saved_prompt_tokens
+            )
+            # We track the average savings percentage
+            count = self.metrics.get("savings_count", 0)
+            current_avg = self.metrics.get("avg_prompt_savings_pct", 0.0)
+            self.metrics["avg_prompt_savings_pct"] = (
+                (current_avg * count) + savings.prompt_savings_pct
+            ) / (count + 1)
+            self.metrics["savings_count"] = count + 1
 
     async def health_check(self) -> bool:
         if self.otlp_endpoint:

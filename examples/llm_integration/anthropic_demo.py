@@ -53,7 +53,8 @@ async def main():
     # so we can convert them to Anthropic's format.
     retrieval_result = await gantry.retrieve(ToolQuery(
         context=ConversationContext(query=query),
-        limit=1
+        limit=1,
+        score_threshold=0.1
     ))
 
     # B. Convert to Anthropic Schema
@@ -89,7 +90,7 @@ async def main():
     from agent_gantry.integrations.decorator import with_semantic_tools
 
     # The decorator handles retrieval AND schema conversion (dialect="anthropic")
-    @with_semantic_tools(gantry, limit=1, dialect="anthropic")
+    @with_semantic_tools(gantry, limit=1, dialect="anthropic", score_threshold=0.1)
     async def chat_with_claude(messages: List[Dict[str, str]], tools: List[Dict[str, Any]] = None):
         print(f"   [Decorator] Injected {len(tools) if tools else 0} tools (Anthropic format)")
         return await client.messages.create(

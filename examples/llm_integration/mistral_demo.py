@@ -33,14 +33,9 @@ async def main():
     print(f"✅ Registered {gantry.tool_count} tools\n")
 
     # 4. Initialize Mistral Client
-    from mistralai.client import MistralClient
-    from mistralai.models.chat_completion import ChatMessage
+    from mistralai import Mistral
 
-    # Note: Mistral SDK might be sync or async depending on version. 
-    # Assuming sync client for this demo, or async if available.
-    # We'll use the sync client wrapped in a thread for simplicity if needed, 
-    # but let's assume standard usage.
-    client = MistralClient(api_key=api_key)
+    client = Mistral(api_key=api_key)
 
     # --- Scenario: Dynamic Retrieval ---
     print("--- Scenario: Dynamic Retrieval ---")
@@ -48,14 +43,14 @@ async def main():
     print(f"User Query: '{query}'")
 
     # Retrieve tools (OpenAI format is compatible with Mistral)
-    tools = await gantry.retrieve_tools(query, limit=1)
+    tools = await gantry.retrieve_tools(query, limit=1, score_threshold=0.1)
     print(f"Gantry retrieved {len(tools)} tool(s)")
 
     # Call Mistral
     # Mistral's `tools` parameter accepts the same JSON schema structure
-    response = client.chat(
+    response = client.chat.complete(
         model="mistral-large-latest",
-        messages=[ChatMessage(role="user", content=query)],
+        messages=[{"role": "user", "content": query}],
         tools=tools,
         tool_choice="auto"
     )
@@ -68,7 +63,7 @@ async def main():
             # Execute securely via Gantry
             result = await gantry.execute(ToolCall(
                 tool_name=tc.function.name,
-                arguments=json.loads(tc.function.arguments)
+                arguments=json.loads(tc.function.arguments) if isinstance(tc.function.arguments, str) else tc.function.arguments
             ))
             print(f"Execution Result: {result.result}")
 
@@ -77,12 +72,7 @@ async def main():
     
     from agent_gantry.integrations.decorator import with_semantic_tools
 
-    # Note: The decorator must be async if the wrapped function is async, 
-    # or it can wrap a sync function if running in an async context.
-    # Since MistralClient is sync here, we wrap a sync function but call it 
-    # from our async main loop.
-    
-    @with_semantic_tools(gantry, limit=1)
+    @with_semantic_tools(gantry, limit=1, score_threshold=0.1, prompt_param="user_query")
     def chat_with_mistral(user_query: str, tools: list[dict[str, Any]] = None):
         """
         This function automatically gets relevant tools injected into the 'tools' argument
@@ -90,9 +80,9 @@ async def main():
         """
         print(f"Decorator injected {len(tools) if tools else 0} tools")
         
-        response = client.chat(
+        response = client.chat.complete(
             model="mistral-large-latest",
-            messages=[ChatMessage(role="user", content=user_query)],
+            messages=[{"role": "user", "content": user_query}],
             tools=tools,
             tool_choice="auto"
         )
@@ -104,8 +94,6 @@ async def main():
         return "No tool called"
 
     # The decorator handles the retrieval logic internally
-    # Note: Since the decorated function is sync, we call it directly.
-    # If the decorated function was async, we would await it.
     chat_with_mistral("Translate 'Good Morning' to Spanish")
 
 if __name__ == "__main__":

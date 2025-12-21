@@ -45,10 +45,22 @@ class ProviderUsage:
     @classmethod
     def from_usage(cls, usage: Mapping[str, int | float]) -> "ProviderUsage":
         """
-        Build from a provider usage mapping (e.g., OpenAI/Anthropic response).
+        Build from a provider usage mapping (e.g., OpenAI/Anthropic/Google response).
         """
-        prompt_raw: int | float | None = usage.get("prompt_tokens")
-        completion_raw: int | float | None = usage.get("completion_tokens")
+        # OpenAI: prompt_tokens, completion_tokens
+        # Anthropic: input_tokens, output_tokens
+        # Google: prompt_token_count, candidates_token_count
+        prompt_raw: int | float | None = (
+            usage.get("prompt_tokens")
+            or usage.get("input_tokens")
+            or usage.get("prompt_token_count")
+        )
+        completion_raw: int | float | None = (
+            usage.get("completion_tokens")
+            or usage.get("output_tokens")
+            or usage.get("candidates_token_count")
+            or usage.get("completion_token_count")
+        )
 
         prompt = cls._coerce_token_value(prompt_raw, "prompt_tokens") if prompt_raw is not None else 0
         completion = (
@@ -59,11 +71,13 @@ class ProviderUsage:
 
         if "total_tokens" in usage:
             total_raw = usage["total_tokens"]
-            total = (
-                cls._coerce_token_value(total_raw, "total_tokens")
-                if total_raw is not None
-                else prompt + completion
-            )
+        elif "total_token_count" in usage:
+            total_raw = usage["total_token_count"]
+        else:
+            total_raw = None
+
+        if total_raw is not None:
+            total = cls._coerce_token_value(total_raw, "total_tokens")
         else:
             total = prompt + completion
 

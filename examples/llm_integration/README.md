@@ -5,6 +5,7 @@ provider, and execute whichever tool the model selects.
 
 ## Files
 - `llm_demo.py`: Provider-agnostic chat loop (retrieve -> chat -> execute).
+- `multi_turn_conversation.py`: Two-turn conversation that reuses Gantry tool routing across turns.
 - `decorator_demo.py`: Uses `with_semantic_tools` to inject top-k tools into SDK calls automatically.
 - `token_savings_demo.py`: Benchmarks prompt-token savings when surfacing only the top 2 tools.
 - `openai_demo.py`, `anthropic_demo.py`, `google_genai_demo.py`, `mistral_demo.py`, `groq_demo.py`:
@@ -14,6 +15,7 @@ provider, and execute whichever tool the model selects.
 
 ```bash
 python examples/llm_integration/llm_demo.py
+python examples/llm_integration/multi_turn_conversation.py
 python examples/llm_integration/decorator_demo.py
 python examples/llm_integration/token_savings_demo.py
 ```

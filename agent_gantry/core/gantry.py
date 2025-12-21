@@ -6,8 +6,10 @@ Primary entry point for the Agent-Gantry library.
 
 from __future__ import annotations
 
+import asyncio
+import importlib
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
@@ -74,6 +76,8 @@ class AgentGantry:
         reranker: RerankerAdapter | None = None,
         telemetry: TelemetryAdapter | None = None,
         security_policy: SecurityPolicy | None = None,
+        modules: Sequence[str] | None = None,
+        module_attr: str = "tools",
     ) -> None:
         """
         Initialize AgentGantry.
@@ -113,6 +117,20 @@ class AgentGantry:
         self._tool_handlers: dict[str, Callable[..., Any]] = {}
         self._initialized = False
 
+        if modules:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                raise RuntimeError(
+                    "AgentGantry(modules=...) cannot run inside an active event loop. "
+                    "Use AgentGantry.from_modules(...) or collect_tools_from_modules instead."
+                )
+
+            asyncio.run(self.collect_tools_from_modules(modules, attr=module_attr))
+
     @classmethod
     def from_config(cls, path: str) -> AgentGantry:
         """
@@ -126,6 +144,43 @@ class AgentGantry:
         """
         config = AgentGantryConfig.from_yaml(path)
         return cls(config=config)
+
+    @classmethod
+    async def from_modules(
+        cls,
+        modules: Sequence[str],
+        *,
+        attr: str = "tools",
+        config: AgentGantryConfig | None = None,
+        vector_store: VectorStoreAdapter | None = None,
+        embedder: EmbeddingAdapter | None = None,
+        reranker: RerankerAdapter | None = None,
+        telemetry: TelemetryAdapter | None = None,
+        security_policy: SecurityPolicy | None = None,
+    ) -> AgentGantry:
+        """
+        Build a Gantry instance and populate it by importing tool-bearing modules.
+
+        Args:
+            modules: Iterable of module paths (dot-notation) to import.
+            attr: Attribute on each module that holds an AgentGantry instance (default "tools").
+            config/vector_store/embedder/reranker/telemetry/security_policy: Optional overrides
+                for the constructed gantry instance.
+
+        Returns:
+            A populated AgentGantry instance.
+        """
+
+        gantry = cls(
+            config=config,
+            vector_store=vector_store,
+            embedder=embedder,
+            reranker=reranker,
+            telemetry=telemetry,
+            security_policy=security_policy,
+        )
+        await gantry.collect_tools_from_modules(modules, attr=attr)
+        return gantry
 
     def register(
         self,
@@ -225,6 +280,56 @@ class AgentGantry:
 
         self._pending_tools = []
         return count
+
+    async def collect_tools_from_modules(
+        self,
+        modules: Sequence[str],
+        attr: str = "tools",
+    ) -> int:
+        """
+        Import AgentGantry instances from other modules and register their tools locally.
+
+        This is useful when you split tools across multiple files (e.g., a tools/ package). The
+        tools are re-embedded with this gantry's embedder and added to its vector store and
+        registry so they can be retrieved and executed without sharing vector stores.
+
+        Args:
+            modules: Iterable of module paths (dot-notation) to import.
+            attr: Attribute name on each module that holds an AgentGantry instance (default "tools").
+
+        Returns:
+            Number of tools imported into this gantry.
+        """
+
+        imported = 0
+        seen: set[str] = set()
+
+        for module_path in modules:
+            module = importlib.import_module(module_path)
+            other = getattr(module, attr, None)
+            if not isinstance(other, AgentGantry):
+                raise ValueError(f"Module '{module_path}' does not expose an AgentGantry at '{attr}'")
+
+            # Combine synced tools and any pending ones on the source gantry
+            source_tools = other._registry.list_tools()
+            pending_registry = getattr(other._registry, "get_pending", lambda: [])()
+            pending_unsynced = getattr(other, "_pending_tools", [])
+
+            for tool in [*source_tools, *pending_registry, *pending_unsynced]:
+                key = f"{tool.namespace}.{tool.name}"
+                if key in seen:
+                    continue
+                handler = other._registry.get_handler(key)
+
+                await self.add_tool(tool)
+                if handler:
+                    self._registry.register_handler(key, handler)
+                    self._tool_handlers[tool.name] = handler
+
+                seen.add(key)
+                imported += 1
+
+        return imported
 
     async def retrieve(self, query: ToolQuery) -> RetrievalResult:
         """
