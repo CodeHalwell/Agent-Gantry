@@ -1,5 +1,4 @@
 import asyncio
-import os
 from dotenv import load_dotenv
 from crewai import Agent, Task, Crew, Process
 from langchain_openai import ChatOpenAI
@@ -29,17 +28,22 @@ async def main():
     # 3. Wrap Gantry tools for CrewAI
     from crewai.tools import tool
 
+    def make_crew_tool(tool_name: str, tool_desc: str, gantry_instance: AgentGantry):
+        """Factory function to properly bind tool name to CrewAI tool wrapper."""
+        @tool(tool_name)
+        async def tool_wrapper(**kwargs):
+            result = await gantry_instance.execute(ToolCall(tool_name=tool_name, arguments=kwargs))
+            return result.result if result.status == "success" else result.error
+        tool_wrapper.__doc__ = tool_desc
+        return tool_wrapper
+
     crew_tools = []
     for ts in tools_schema:
         name = ts["function"]["name"]
+        desc = ts["function"]["description"]
         
         if name == "get_customer_info":
-            @tool("get_customer_info")
-            async def get_customer_info(email: str):
-                """Retrieve customer details from the CRM."""
-                result = await gantry.execute(ToolCall(tool_name="get_customer_info", arguments={"email": email}))
-                return result.result if result.status == "success" else result.error
-            crew_tools.append(get_customer_info)
+            crew_tools.append(make_crew_tool(name, desc, gantry))
 
     # 4. Define CrewAI Agent
     llm = ChatOpenAI(model="gpt-4o")

@@ -1,4 +1,3 @@
-import asyncio
 from types import SimpleNamespace
 from typing import Any
 
@@ -73,7 +72,9 @@ async def test_google_adk_example_runs_with_fakes(monkeypatch):
             self.app_name = app_name
             self.session_service = session_service
 
-        def run_async(self, *, user_id, session_id, new_message):  # noqa: ANN001
+        def run_async(
+            self, *, user_id: str, session_id: str, new_message: Any
+        ) -> Any:
             async def _aiter():
                 # Execute the first tool to simulate ADK calling it
                 tool = self.agent.tools[0]
@@ -90,7 +91,9 @@ async def test_google_adk_example_runs_with_fakes(monkeypatch):
             self.tools = tools
 
     class FakeSessionService:
-        async def create_session(self, *, app_name, user_id, session_id):  # noqa: ANN001
+        async def create_session(
+            self, *, app_name: str, user_id: str, session_id: str
+        ) -> dict[str, str]:
             return {"app_name": app_name, "user_id": user_id, "session_id": session_id}
 
     async def fake_execute(self, tool_call):

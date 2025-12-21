@@ -1,8 +1,6 @@
 import asyncio
-import os
 from dotenv import load_dotenv
 from llama_index.llms.openai import OpenAI
-from llama_index.core.agent import ReActAgent
 from llama_index.core.tools import FunctionTool
 
 from agent_gantry import AgentGantry
@@ -27,17 +25,22 @@ async def main():
     retrieved_tools = await gantry.retrieve_tools(user_query, limit=1, score_threshold=0.1)
 
     # 3. Convert Gantry tools to LlamaIndex tools
+    def make_llama_tool(tool_name: str, tool_desc: str, gantry_instance: AgentGantry):
+        """Factory function to properly bind tool name to LlamaIndex tool wrapper."""
+        async def tool_wrapper(user_id: str):
+            result = await gantry_instance.execute(ToolCall(tool_name=tool_name, arguments={"user_id": user_id}))
+            return str(result.result) if result.status == "success" else result.error
+        tool_wrapper.__doc__ = tool_desc
+        tool_wrapper.__name__ = tool_name
+        return FunctionTool.from_defaults(async_fn=tool_wrapper)
+
     llama_tools = []
     for ts in retrieved_tools:
         name = ts["function"]["name"]
+        desc = ts["function"]["description"]
         
         if name == "get_user_preferences":
-            async def get_user_preferences(user_id: str):
-                """Get preferences for a specific user."""
-                result = await gantry.execute(ToolCall(tool_name="get_user_preferences", arguments={"user_id": user_id}))
-                return str(result.result) if result.status == "success" else result.error
-            
-            llama_tools.append(FunctionTool.from_defaults(async_fn=get_user_preferences))
+            llama_tools.append(make_llama_tool(name, desc, gantry))
 
     # 4. Setup LlamaIndex Agent
     from llama_index.core.agent.workflow import ReActAgent
