@@ -7,6 +7,7 @@ from __future__ import annotations
 import pytest
 
 from agent_gantry import AgentGantry
+from agent_gantry.integrations import fetch_framework_tools
 from agent_gantry.metrics import ProviderUsage, calculate_token_savings
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 
@@ -61,3 +62,21 @@ async def test_retrieval_topk_accuracy(sample_tools) -> None:
 
     accuracy = hits / len(queries)
     assert accuracy >= 0.75
+
+
+@pytest.mark.asyncio
+async def test_framework_adapter_returns_top_k(sample_tools) -> None:
+    """Framework adapters should emit limited OpenAI-style tool schemas."""
+    gantry = AgentGantry()
+    for tool in sample_tools:
+        await gantry.add_tool(tool)
+
+    tools = await fetch_framework_tools(
+        gantry,
+        "send a quick email",
+        framework="langgraph",
+        limit=1,
+    )
+
+    assert len(tools) == 1
+    assert tools[0]["function"]["name"] == "send_email"
