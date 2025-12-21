@@ -32,21 +32,24 @@ async def run_query(query: str) -> str:
     retrieved_tools = await gantry.retrieve_tools(query, limit=1, score_threshold=0.1)
 
     # 3) Wrap Gantry tools as ADK FunctionTools
-    def make_adk_tool(tool_name: str, gantry_instance: AgentGantry):
+    def make_adk_tool(tool_name: str, tool_desc: str, gantry_instance: AgentGantry):
         """Factory function to properly bind tool name to ADK tool wrapper."""
         async def tool_wrapper(order_id: str) -> str:
             result = await gantry_instance.execute(
                 ToolCall(tool_name=tool_name, arguments={"order_id": order_id})
             )
             return str(result.result) if result.status == "success" else str(result.error)
+        tool_wrapper.__name__ = tool_name
+        tool_wrapper.__doc__ = tool_desc
         return FunctionTool(func=tool_wrapper)
 
     adk_tools: list[FunctionTool] = []
     for schema in retrieved_tools:
         name = schema["function"]["name"]
+        desc = schema["function"]["description"]
 
         if name == "get_order_status":
-            adk_tools.append(make_adk_tool(name, gantry))
+            adk_tools.append(make_adk_tool(name, desc, gantry))
 
     # 4) Build ADK agent and runner
     adk_agent = Agent(

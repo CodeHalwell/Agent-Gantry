@@ -31,6 +31,7 @@ async def main():
             result = await gantry_instance.execute(ToolCall(tool_name=tool_name, arguments={"user_id": user_id}))
             return str(result.result) if result.status == "success" else result.error
         tool_wrapper.__doc__ = tool_desc
+        tool_wrapper.__name__ = tool_name
         return FunctionTool.from_defaults(async_fn=tool_wrapper)
 
     llama_tools = []

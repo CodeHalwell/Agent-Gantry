@@ -37,6 +37,13 @@ async def main() -> str:
                 ToolCall(tool_name=tool_name, arguments={"user_id": user_id})
             )
             return str(result.result) if result.status == "success" else str(result.error)
+
+        # Set wrapper metadata for better debuggability and framework compatibility.
+        tool_wrapper.__name__ = tool_name
+        tool_wrapper.__doc__ = (
+            f"Tool wrapper for Agent-Gantry tool '{tool_name}'. "
+            "Invokes the underlying tool with a user_id argument."
+        )
         return tool_wrapper
 
     agent_tools = []

@@ -39,7 +39,7 @@ async def main():
 
     # 5. Convert Gantry tools to LangChain tools
     # We wrap the Gantry execution so LangChain can call it
-    def make_langchain_tool(tool_name: str, tool_desc: str, param_name: str, gantry_instance: AgentGantry):
+    def make_langchain_tool(tool_name: str, tool_desc: str, gantry_instance: AgentGantry):
         """Factory function to properly bind tool name to LangChain tool wrapper."""
         @tool
         async def tool_wrapper(**kwargs):
@@ -55,9 +55,9 @@ async def main():
         desc = tool_schema["function"]["description"]
         
         if name == "get_weather":
-            langchain_tools.append(make_langchain_tool(name, desc, "location", gantry))
+            langchain_tools.append(make_langchain_tool(name, desc, gantry))
         elif name == "get_stock_price":
-            langchain_tools.append(make_langchain_tool(name, desc, "symbol", gantry))
+            langchain_tools.append(make_langchain_tool(name, desc, gantry))
 
     # 6. Setup LangChain Agent
     # In the latest LangChain, create_agent is the preferred way to build agents
