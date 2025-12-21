@@ -10,7 +10,7 @@ auditable and reproducible in tests.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Mapping
 
 
 @dataclass(frozen=True)
@@ -28,7 +28,6 @@ class ProviderUsage:
     completion_tokens: int
     total_tokens: int
 
-    @classmethod
     @staticmethod
     def _coerce_token_value(value: int | float, field_name: str) -> int:
         """
@@ -60,7 +59,11 @@ class ProviderUsage:
 
         if "total_tokens" in usage:
             total_raw = usage["total_tokens"]
-            total = cls._coerce_token_value(total_raw, "total_tokens")
+            total = (
+                cls._coerce_token_value(total_raw, "total_tokens")
+                if total_raw is not None
+                else prompt + completion
+            )
         else:
             total = prompt + completion
 
@@ -96,6 +99,7 @@ def calculate_token_savings(
     Note: savings are clamped at zero to avoid negative values when an optimized
     request unexpectedly uses more tokens than the baseline. Callers should
     inspect their inputs if negative deltas were expected.
+
     Args:
         baseline: Usage for the "all tools" (or unfiltered) invocation.
         optimized: Usage for the top-k / filtered invocation.

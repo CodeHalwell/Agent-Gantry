@@ -16,7 +16,7 @@ gantry = AgentGantry()
 
 tools = await fetch_framework_tools(
     gantry,
-    "send a follow up email",
+    "send a follow-up email",
     framework="langgraph",
     limit=2,
 )

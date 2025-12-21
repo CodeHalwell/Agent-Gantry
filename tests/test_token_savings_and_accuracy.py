@@ -77,6 +77,8 @@ def test_token_savings_edge_cases() -> None:
     )
     assert savings_zero.saved_prompt_tokens == 0
     assert savings_zero.saved_total_tokens == 0
+    assert savings_zero.prompt_savings_pct == 0.0
+    assert savings_zero.total_savings_pct == 0.0
 
     # Optimized exceeds baseline (clamped to zero)
     savings_negative = calculate_token_savings(
