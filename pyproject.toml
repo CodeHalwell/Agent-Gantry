@@ -63,6 +63,7 @@ example-tools = [
     "pint>=0.24.4",
     "pubchempy>=1.0.5",
     "rdkit>=2025.9.3",
+    "requests>=2.31.0",
     "sympy>=1.14.0",
     "python-dotenv>=1.2.1",
 ]

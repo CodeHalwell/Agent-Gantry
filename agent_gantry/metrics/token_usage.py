@@ -9,8 +9,8 @@ auditable and reproducible in tests.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
 
 
 @dataclass(frozen=True)
@@ -43,31 +43,31 @@ class ProviderUsage:
         return int(value)
 
     @classmethod
-    def from_usage(cls, usage: Mapping[str, int | float]) -> "ProviderUsage":
+    def from_usage(cls, usage: Mapping[str, int | float]) -> ProviderUsage:
         """
         Build from a provider usage mapping (e.g., OpenAI/Anthropic/Google response).
-        
+
         Supports multiple provider token field conventions:
         - OpenAI: prompt_tokens, completion_tokens, total_tokens
         - Anthropic: input_tokens, output_tokens
         - Google: prompt_token_count, candidates_token_count, total_token_count
-        
-        Uses "or" chaining to check multiple possible field names. Only one naming
-        convention should be present per response to avoid ambiguity.
+
+        Checks each provider convention in order and uses the first present field,
+        even if its value is 0. This ensures we don't skip valid zero token counts.
         """
         # Check for prompt tokens (OpenAI, Anthropic, or Google naming)
-        prompt_raw: int | float | None = (
-            usage.get("prompt_tokens")
-            or usage.get("input_tokens")
-            or usage.get("prompt_token_count")
-        )
+        prompt_raw: int | float | None = None
+        for key in ("prompt_tokens", "input_tokens", "prompt_token_count"):
+            if key in usage:
+                prompt_raw = usage[key]
+                break
+
         # Check for completion/output tokens (OpenAI, Anthropic, or Google naming)
-        completion_raw: int | float | None = (
-            usage.get("completion_tokens")
-            or usage.get("output_tokens")
-            or usage.get("candidates_token_count")
-            or usage.get("completion_token_count")
-        )
+        completion_raw: int | float | None = None
+        for key in ("completion_tokens", "output_tokens", "candidates_token_count", "completion_token_count"):
+            if key in usage:
+                completion_raw = usage[key]
+                break
 
         prompt = cls._coerce_token_value(prompt_raw, "prompt_tokens") if prompt_raw is not None else 0
         completion = (

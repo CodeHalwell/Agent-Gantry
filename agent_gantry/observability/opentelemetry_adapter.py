@@ -91,8 +91,8 @@ class OpenTelemetryAdapter(TelemetryAdapter):
             # We track the running average prompt savings percentage.
             # Handle the first (or any invalid non-positive) count explicitly to avoid
             # division-by-zero and keep the logic easy to follow.
-            count = int(self.metrics.get("savings_count", 0))
-            if count <= 0:
+            count = max(int(self.metrics.get("savings_count", 0)), 0)
+            if count == 0:
                 # First sample: the average is just this savings value.
                 self.metrics["avg_prompt_savings_pct"] = savings.prompt_savings_pct
                 self.metrics["savings_count"] = 1
