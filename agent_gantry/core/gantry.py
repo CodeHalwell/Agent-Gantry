@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import logging
 import uuid
 from collections.abc import Callable, Sequence
 from time import perf_counter
@@ -49,6 +50,9 @@ if TYPE_CHECKING:
     from agent_gantry.adapters.vector_stores.base import VectorStoreAdapter
     from agent_gantry.observability.telemetry import TelemetryAdapter
     from agent_gantry.schema.execution import BatchToolCall, BatchToolResult, ToolCall, ToolResult
+
+
+logger = logging.getLogger(__name__)
 
 
 class AgentGantry:
@@ -300,6 +304,9 @@ class AgentGantry:
 
         Returns:
             Number of tools imported into this gantry.
+            
+        Raises:
+            ValueError: If a module doesn't expose an AgentGantry at the specified attribute.
         """
 
         imported = 0
@@ -309,26 +316,58 @@ class AgentGantry:
             module = importlib.import_module(module_path)
             other = getattr(module, attr, None)
             if not isinstance(other, AgentGantry):
-                raise ValueError(f"Module '{module_path}' does not expose an AgentGantry at '{attr}'")
+                raise ValueError(
+                    f"Module '{module_path}' does not expose an AgentGantry instance at '{attr}'. "
+                    f"Found: {type(other).__name__ if other else 'None'}"
+                )
 
-            # Combine synced tools and any pending ones on the source gantry
+            # Collect tools from the source gantry:
+            # 1. Already registered/synced tools from the registry
             source_tools = other._registry.list_tools()
-            pending_registry = getattr(other._registry, "get_pending", lambda: [])()
-            pending_unsynced = getattr(other, "_pending_tools", [])
+            
+            # 2. Pending tools that haven't been synced yet
+            # Use explicit checks to validate API expectations
+            pending_from_registry = []
+            if hasattr(other._registry, "get_pending") and callable(other._registry.get_pending):
+                try:
+                    pending_from_registry = other._registry.get_pending() or []
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to get pending tools from registry in '{module_path}': {e}"
+                    )
+            
+            pending_unsynced = getattr(other, "_pending_tools", []) or []
 
-            for tool in [*source_tools, *pending_registry, *pending_unsynced]:
+            all_tools = [*source_tools, *pending_from_registry, *pending_unsynced]
+            
+            for tool in all_tools:
                 key = f"{tool.namespace}.{tool.name}"
+                
+                # Check for duplicates across modules
                 if key in seen:
+                    logger.warning(
+                        f"Skipping duplicate tool '{key}' from module '{module_path}'. "
+                        f"A tool with this name was already imported from another module."
+                    )
                     continue
+                
+                # Get the tool handler from the source gantry
                 handler = other._registry.get_handler(key)
 
+                # Add the tool to this gantry (will be embedded and synced)
                 await self.add_tool(tool)
+                
+                # Register the handler if available
                 if handler:
                     self._registry.register_handler(key, handler)
                     self._tool_handlers[tool.name] = handler
+                else:
+                    logger.debug(f"No handler found for tool '{key}' in module '{module_path}'")
 
                 seen.add(key)
                 imported += 1
+            
+            logger.info(f"Imported {len(all_tools)} tools from module '{module_path}'")
 
         return imported
 
