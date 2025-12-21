@@ -28,20 +28,23 @@ async def main() -> str:
     tools = await gantry.retrieve_tools(user_query, limit=1, score_threshold=0.1)
 
     # 3) Wrap Gantry tools for Microsoft Agent Framework
+    def make_tool_wrapper(tool_name: str, gantry_instance: AgentGantry):
+        """Factory function to properly bind tool name to wrapper."""
+        async def tool_wrapper(
+            user_id: Annotated[str, Field(description="The user ID to look up.")]
+        ) -> str:
+            result = await gantry_instance.execute(
+                ToolCall(tool_name=tool_name, arguments={"user_id": user_id})
+            )
+            return str(result.result) if result.status == "success" else str(result.error)
+        return tool_wrapper
+
     agent_tools = []
     for schema in tools:
         name = schema["function"]["name"]
 
         if name == "get_user_profile":
-            async def get_user_profile_tool(
-                user_id: Annotated[str, Field(description="The user ID to look up.")]
-            ) -> str:
-                result = await gantry.execute(
-                    ToolCall(tool_name="get_user_profile", arguments={"user_id": user_id})
-                )
-                return str(result.result) if result.status == "success" else str(result.error)
-
-            agent_tools.append(get_user_profile_tool)
+            agent_tools.append(make_tool_wrapper(name, gantry))
 
     # 4) Create and run the Agent Framework ChatAgent
     chat_agent = ChatAgent(

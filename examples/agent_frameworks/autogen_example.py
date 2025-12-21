@@ -26,16 +26,21 @@ async def main():
     retrieved_tools = await gantry.retrieve_tools(user_query, limit=1, score_threshold=0.1)
 
     # 3. Wrap Gantry tools for AutoGen (AG2)
+    def make_autogen_tool(tool_name: str, gantry_instance: AgentGantry):
+        """Factory function to properly bind tool name to AutoGen tool wrapper."""
+        async def tool_wrapper() -> str:
+            result = await gantry_instance.execute(ToolCall(tool_name=tool_name, arguments={}))
+            return str(result.result) if result.status == "success" else result.error
+        tool_wrapper.__name__ = tool_name
+        tool_wrapper.__doc__ = f"Get the current {tool_name.replace('_', ' ')}."
+        return tool_wrapper
+
     autogen_tools = []
     for ts in retrieved_tools:
         name = ts["function"]["name"]
         
         if name == "get_system_load":
-            async def get_system_load() -> str:
-                """Get the current system CPU load."""
-                result = await gantry.execute(ToolCall(tool_name="get_system_load", arguments={}))
-                return str(result.result) if result.status == "success" else result.error
-            autogen_tools.append(get_system_load)
+            autogen_tools.append(make_autogen_tool(name, gantry))
 
     # 4. Setup AutoGen Agent
     model_client = OpenAIChatCompletionClient(model="gpt-4o")

@@ -39,17 +39,23 @@ async def main():
     # Wrap Gantry execution for LangGraph
     from langchain.tools import tool
     
+    def make_langgraph_tool(tool_name: str, tool_desc: str, gantry_instance: AgentGantry):
+        """Factory function to properly bind tool name to wrapper."""
+        @tool
+        async def tool_wrapper(**kwargs):
+            result = await gantry_instance.execute(ToolCall(tool_name=tool_name, arguments=kwargs))
+            return result.result if result.status == "success" else result.error
+        tool_wrapper.__name__ = tool_name
+        tool_wrapper.__doc__ = tool_desc
+        return tool_wrapper
+    
     gantry_tools = []
     for ts in tools_schema:
         name = ts["function"]["name"]
+        desc = ts["function"]["description"]
         
         if name == "search_docs":
-            @tool
-            async def search_docs(query: str):
-                """Search internal documentation about how Agent-Gantry works."""
-                result = await gantry.execute(ToolCall(tool_name="search_docs", arguments={"query": query}))
-                return result.result if result.status == "success" else result.error
-            gantry_tools.append(search_docs)
+            gantry_tools.append(make_langgraph_tool(name, desc, gantry))
 
     # 3. Build the Agent using the new create_agent pattern
     # This returns a compiled graph that handles tool calling

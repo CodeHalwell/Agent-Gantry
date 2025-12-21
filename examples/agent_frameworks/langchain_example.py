@@ -39,24 +39,25 @@ async def main():
 
     # 5. Convert Gantry tools to LangChain tools
     # We wrap the Gantry execution so LangChain can call it
+    def make_langchain_tool(tool_name: str, tool_desc: str, param_name: str, gantry_instance: AgentGantry):
+        """Factory function to properly bind tool name to LangChain tool wrapper."""
+        @tool
+        async def tool_wrapper(**kwargs):
+            result = await gantry_instance.execute(ToolCall(tool_name=tool_name, arguments=kwargs))
+            return result.result if result.status == "success" else result.error
+        tool_wrapper.__name__ = tool_name
+        tool_wrapper.__doc__ = tool_desc
+        return tool_wrapper
+
     langchain_tools = []
     for tool_schema in retrieved_tools:
         name = tool_schema["function"]["name"]
+        desc = tool_schema["function"]["description"]
         
         if name == "get_weather":
-            @tool
-            async def get_weather(location: str):
-                """Get the current weather in a given location."""
-                result = await gantry.execute(ToolCall(tool_name="get_weather", arguments={"location": location}))
-                return result.result if result.status == "success" else result.error
-            langchain_tools.append(get_weather)
+            langchain_tools.append(make_langchain_tool(name, desc, "location", gantry))
         elif name == "get_stock_price":
-            @tool
-            async def get_stock_price(symbol: str):
-                """Get the current stock price for a symbol."""
-                result = await gantry.execute(ToolCall(tool_name="get_stock_price", arguments={"symbol": symbol}))
-                return result.result if result.status == "success" else result.error
-            langchain_tools.append(get_stock_price)
+            langchain_tools.append(make_langchain_tool(name, desc, "symbol", gantry))
 
     # 6. Setup LangChain Agent
     # In the latest LangChain, create_agent is the preferred way to build agents
