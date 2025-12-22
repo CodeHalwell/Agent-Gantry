@@ -106,7 +106,7 @@ await ask_llm("What's the weather in San Francisco?")
 
 ```mermaid
 graph LR
-    A[LLM Call] --> B[@with_semantic_tools]
+    A[LLM Call] --> B[<code>@with_semantic_tools</code>]
     B --> C[Agent-Gantry<br/>Semantic Router]
     C --> D[Vector Search]
     D --> E[Top-K Tools]
