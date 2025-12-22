@@ -7,9 +7,11 @@ upgrade it to use Agent-Gantry's semantic tool routing with minimal changes.
 import asyncio
 import os
 
-from dotenv import load_dotenv
-
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv is optional
 
 
 async def main():
