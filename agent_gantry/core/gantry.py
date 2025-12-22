@@ -40,6 +40,7 @@ from agent_gantry.schema.config import (
     TelemetryConfig,
     VectorStoreConfig,
 )
+from agent_gantry.schema.introspection import build_parameters_schema
 from agent_gantry.schema.query import RetrievalResult, ScoredTool, ToolQuery
 from agent_gantry.schema.tool import ToolCapability, ToolDefinition
 
@@ -144,6 +145,99 @@ class AgentGantry:
         return cls(config=config)
 
     @classmethod
+    async def quick_start(
+        cls,
+        embedder: str = "auto",
+        dimension: int = 256,
+        **kwargs: Any,
+    ) -> AgentGantry:
+        """
+        Quick setup with sensible defaults for getting started.
+
+        Automatically detects the best available embedder and sets up
+        an in-memory vector store for immediate use.
+
+        Args:
+            embedder: Embedder type - "auto", "nomic", "openai", or "simple"
+            dimension: Embedding dimension (for Nomic, default 256)
+            **kwargs: Additional AgentGantry constructor arguments
+
+        Returns:
+            Ready-to-use AgentGantry instance
+
+        Example:
+            >>> gantry = await AgentGantry.quick_start()
+            >>>
+            >>> @gantry.register
+            ... def my_tool(x: int) -> int:
+            ...     '''Double a number.'''
+            ...     return x * 2
+            >>>
+            >>> await gantry.sync()
+            >>> tools = await gantry.retrieve_tools("double a number")
+        """
+        import warnings
+
+        config = AgentGantryConfig()
+        embedder_instance: EmbeddingAdapter
+
+        if embedder == "auto":
+            # Try Nomic first (best for local use)
+            try:
+                from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+                
+                # Test that sentence-transformers is actually available
+                import sentence_transformers  # noqa: F401
+                embedder_instance = NomicEmbedder(dimension=dimension)
+            except ImportError:
+                warnings.warn(
+                    "Nomic embedder not available. Using SimpleEmbedder (hash-based, low accuracy). "
+                    "For better semantic search: pip install agent-gantry[nomic]",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                embedder_instance = SimpleEmbedder()
+        elif embedder == "nomic":
+            try:
+                from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+            except ImportError as exc:
+                raise ImportError(
+                    "Nomic embedder is not available. To enable it, install the optional "
+                    "dependencies:\n"
+                    "  pip install agent-gantry[nomic]"
+                ) from exc
+
+            try:
+                import sentence_transformers  # noqa: F401
+            except ImportError as exc:
+                raise ImportError(
+                    "sentence-transformers is required for the Nomic embedder. Install it with:\n"
+                    "  pip install agent-gantry[nomic]"
+                ) from exc
+            
+            embedder_instance = NomicEmbedder(dimension=dimension)
+        elif embedder == "openai":
+            api_key = kwargs.pop("openai_api_key", None)
+            if not api_key:
+                raise ValueError(
+                    "OpenAI embedder requires a valid API key. "
+                    "Pass openai_api_key=... to quick_start() or configure AgentGantryConfig."
+                )
+            embedder_config = EmbedderConfig(type="openai", api_key=api_key)
+            try:
+                embedder_instance = OpenAIEmbedder(embedder_config)
+            except Exception as exc:
+                raise RuntimeError(
+                    "Failed to initialize OpenAI embedder. Ensure optional dependencies are "
+                    'installed with "pip install agent-gantry[openai]" and that your OpenAI '
+                    "API key is valid."
+                ) from exc
+        else:  # "simple" or unknown
+            embedder_instance = SimpleEmbedder()
+
+        return cls(config=config, embedder=embedder_instance, **kwargs)
+
+    @classmethod
     async def from_modules(
         cls,
         modules: Sequence[str],
@@ -212,7 +306,7 @@ class AgentGantry:
             tool_description = fn.__doc__ or f"Tool: {tool_name}"
 
             # Build parameters schema from function signature
-            parameters_schema = self._build_parameters_schema(fn)
+            parameters_schema = build_parameters_schema(fn)
 
             tool = ToolDefinition(
                 name=tool_name,
@@ -234,10 +328,6 @@ class AgentGantry:
         if func is not None:
             return decorator(func)
         return decorator
-
-    def _build_parameters_schema(self, func: Callable[..., Any]) -> dict[str, Any]:
-        """Build JSON Schema for function parameters."""
-        return build_parameters_schema(func)
 
     async def _ensure_initialized(self) -> None:
         """Initialize backing services once."""
@@ -475,6 +565,66 @@ class AgentGantry:
                 return await self._executor.execute(call)
         else:
             return await self._executor.execute(call)
+
+    async def search_and_execute(
+        self,
+        query: str,
+        arguments: dict[str, Any] | None = None,
+        limit: int = 1,
+        **kwargs: Any,
+    ) -> ToolResult:
+        """
+        One-shot convenience: search for a tool and execute it.
+
+        Combines retrieve_tools() and execute() into a single operation.
+        Useful for simple scripting and quick tool invocation.
+
+        Args:
+            query: Natural language query to find the tool
+            arguments: Arguments to pass to the tool (optional)
+            limit: Number of tools to retrieve (default: 1, uses best match)
+            **kwargs: Additional retrieval parameters (score_threshold, etc.)
+
+        Returns:
+            Result of executing the best matching tool
+
+        Raises:
+            ValueError: If no matching tools found
+
+        Example:
+            >>> result = await gantry.search_and_execute(
+            ...     "calculate tax on 100",
+            ...     arguments={"amount": 100.0}
+            ... )
+            >>> print(result.result)
+            8.0
+        """
+        from agent_gantry.schema.execution import ToolCall
+        from agent_gantry.schema.query import ConversationContext, ToolQuery
+
+        # Retrieve best matching tool
+        context = ConversationContext(query=query)
+        tool_query = ToolQuery(context=context, limit=limit, **kwargs)
+        result = await self.retrieve(tool_query)
+
+        if not result.tools:
+            raise ValueError(
+                f"No tools found matching query: '{query}'. "
+                f"Try a different query or check registered tools."
+            )
+
+        # Use the best scoring tool
+        best_tool = result.tools[0].tool
+        tool_name = best_tool.name
+
+        # Use provided arguments or empty dict
+        if arguments is None:
+            arguments = {}
+
+        # Execute the tool
+        return await self.execute(
+            ToolCall(tool_name=tool_name, namespace=best_tool.namespace, arguments=arguments)
+        )
 
     async def execute_batch(self, batch: BatchToolCall) -> BatchToolResult:
         """
@@ -750,50 +900,4 @@ class AgentGantry:
 
     def _tool_to_text(self, tool: ToolDefinition) -> str:
         """Flatten tool metadata into a text string for embedding."""
-        tags = " ".join(tool.tags)
-        return f"{tool.name} {tool.namespace} {tool.description} {tags} {' '.join(tool.examples)}"
-
-
-def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
-    """Build JSON Schema for function parameters."""
-    import inspect
-
-    sig = inspect.signature(func)
-    type_hints = {}
-    try:
-        type_hints = func.__annotations__
-    except AttributeError:
-        pass
-
-    properties: dict[str, Any] = {}
-    required: list[str] = []
-
-    for param_name, param in sig.parameters.items():
-        if param_name in ("self", "cls"):
-            continue
-
-        param_schema: dict[str, Any] = {}
-        param_type = type_hints.get(param_name, Any)
-
-        # Map Python types to JSON Schema types
-        if param_type is int or param_type == "int":
-            param_schema["type"] = "integer"
-        elif param_type is float or param_type == "float":
-            param_schema["type"] = "number"
-        elif param_type is bool or param_type == "bool":
-            param_schema["type"] = "boolean"
-        elif param_type is str or param_type == "str":
-            param_schema["type"] = "string"
-        else:
-            param_schema["type"] = "string"  # Default fallback
-
-        properties[param_name] = param_schema
-
-        if param.default is inspect.Parameter.empty:
-            required.append(param_name)
-
-    return {
-        "type": "object",
-        "properties": properties,
-        "required": required,
-    }
+        return tool.to_searchable_text()

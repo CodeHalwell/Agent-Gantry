@@ -6,8 +6,7 @@ automatically perform semantic tool selection using Agent Gantry before
 forwarding to the underlying LLM API.
 
 Example:
-    from agent_gantry import AgentGantry
-    from agent_gantry.integrations.decorator import with_semantic_tools
+    from agent_gantry import AgentGantry, with_semantic_tools
 
     gantry = AgentGantry()
 
@@ -40,6 +39,52 @@ R = TypeVar("R")
 
 # Module-level logger to avoid repeated instantiation
 _logger = logging.getLogger(__name__)
+
+# Global default gantry instance for convenience
+# Note: This is a module-level global. In multi-threaded applications or when
+# running tests in parallel, be aware that this global state is shared across
+# all threads. For thread-safe usage, pass gantry explicitly to decorators or
+# use a thread-local storage pattern if needed.
+_DEFAULT_GANTRY: AgentGantry | None = None
+
+
+def set_default_gantry(gantry: AgentGantry) -> None:
+    """
+    Set the default AgentGantry instance for decorators.
+
+    This allows using @with_semantic_tools without explicitly passing
+    a gantry instance, making the decorator simpler to use.
+
+    **Thread Safety Note:** This sets a module-level global variable that
+    is shared across all threads. In multi-threaded applications or when
+    running tests in parallel, consider passing the gantry explicitly to
+    decorators instead of using this global default.
+
+    Args:
+        gantry: The AgentGantry instance to use as default
+
+    Example:
+        >>> from agent_gantry import AgentGantry, with_semantic_tools, set_default_gantry
+        >>>
+        >>> gantry = AgentGantry()
+        >>> set_default_gantry(gantry)
+        >>>
+        >>> @with_semantic_tools(limit=3)  # No need to pass gantry!
+        ... async def generate(prompt: str, *, tools=None):
+        ...     ...
+    """
+    global _DEFAULT_GANTRY
+    _DEFAULT_GANTRY = gantry
+
+
+def get_default_gantry() -> AgentGantry | None:
+    """
+    Get the default AgentGantry instance if set.
+
+    Returns:
+        The default gantry or None if not set
+    """
+    return _DEFAULT_GANTRY
 
 
 class SemanticToolSelector:
@@ -327,7 +372,7 @@ def with_semantic_tools(
 
 
 def with_semantic_tools(
-    gantry_or_func: AgentGantry | Callable[..., Any],
+    gantry_or_func: AgentGantry | Callable[..., Any] | None = None,
     *,
     prompt_param: str = "prompt",
     tools_param: str = "tools",
@@ -343,14 +388,21 @@ def with_semantic_tools(
     uses Agent Gantry to semantically select relevant tools, and injects them
     into the function call via the specified tools parameter.
 
-    Can be used in two ways:
+    Can be used in three ways:
 
     1. With explicit gantry instance:
         @with_semantic_tools(gantry, limit=3)
         async def generate(prompt: str, *, tools: list | None = None) -> Response:
             ...
 
-    2. As a class method with gantry instance:
+    2. With default gantry (set via set_default_gantry):
+        set_default_gantry(gantry)
+        
+        @with_semantic_tools(limit=3)
+        async def generate(prompt: str, *, tools: list | None = None) -> Response:
+            ...
+
+    3. As a factory that returns a selector:
         selector = with_semantic_tools(gantry, dialect="anthropic")
 
         @selector
@@ -358,7 +410,7 @@ def with_semantic_tools(
             ...
 
     Args:
-        gantry_or_func: Either an AgentGantry instance or the function to wrap.
+        gantry_or_func: AgentGantry instance, function to wrap, or None for default.
         prompt_param: Parameter name for the prompt (default: "prompt").
                      Also supports OpenAI/Anthropic "messages" format.
         tools_param: Parameter name for injecting tools (default: "tools").
@@ -371,8 +423,7 @@ def with_semantic_tools(
         SemanticToolSelector instance or wrapped function.
 
     Example:
-        from agent_gantry import AgentGantry
-        from agent_gantry.integrations.decorator import with_semantic_tools
+        from agent_gantry import AgentGantry, with_semantic_tools, set_default_gantry
         from openai import OpenAI
 
         gantry = AgentGantry()
@@ -382,26 +433,17 @@ def with_semantic_tools(
             '''Get current weather for a city.'''
             return f"Weather in {city}: Sunny"
 
-        @gantry.register
-        def search_web(query: str) -> str:
-            '''Search the web for information.'''
-            return f"Results for: {query}"
-
-        client = OpenAI()
-
+        # Option 1: Explicit gantry
         @with_semantic_tools(gantry, limit=3)
-        async def generate(prompt: str, *, tools: list | None = None):
-            return client.chat.completions.create(
-                model="gpt-4",
-                messages=[{"role": "user", "content": prompt}],
-                tools=tools,
-            )
+        async def generate1(prompt: str, *, tools: list | None = None):
+            ...
 
-        # When called, the decorator will:
-        # 1. Extract the prompt
-        # 2. Use Agent Gantry to find relevant tools
-        # 3. Inject them as the 'tools' parameter
-        response = await generate("What's the weather in Paris?")
+        # Option 2: Use default gantry
+        set_default_gantry(gantry)
+        
+        @with_semantic_tools(limit=3)
+        async def generate2(prompt: str, *, tools: list | None = None):
+            ...
 
     Architectural Notes:
         - The decorator preserves the original function signature
@@ -417,6 +459,24 @@ def with_semantic_tools(
     """
     from agent_gantry.core.gantry import AgentGantry
 
+    # If gantry_or_func is None, use the default gantry
+    if gantry_or_func is None:
+        if _DEFAULT_GANTRY is None:
+            raise ValueError(
+                "No gantry provided and no default set. Use one of:\n"
+                "  1. @with_semantic_tools(gantry, ...)\n"
+                "  2. set_default_gantry(gantry) then @with_semantic_tools(...)"
+            )
+        return SemanticToolSelector(
+            _DEFAULT_GANTRY,
+            prompt_param=prompt_param,
+            tools_param=tools_param,
+            limit=limit,
+            dialect=dialect,
+            auto_sync=auto_sync,
+            score_threshold=score_threshold,
+        )
+
     # If gantry_or_func is an AgentGantry instance, return a selector
     if isinstance(gantry_or_func, AgentGantry):
         return SemanticToolSelector(
@@ -429,10 +489,28 @@ def with_semantic_tools(
             score_threshold=score_threshold,
         )
 
-    # Otherwise, we need a default gantry (error case)
+    # Otherwise, assume it's a function and use default gantry
+    if callable(gantry_or_func):
+        if _DEFAULT_GANTRY is None:
+            raise ValueError(
+                "No default gantry set. Use set_default_gantry(gantry) first "
+                "or pass gantry explicitly: @with_semantic_tools(gantry)"
+            )
+        selector = SemanticToolSelector(
+            _DEFAULT_GANTRY,
+            prompt_param=prompt_param,
+            tools_param=tools_param,
+            limit=limit,
+            dialect=dialect,
+            auto_sync=auto_sync,
+            score_threshold=score_threshold,
+        )
+        return selector(gantry_or_func)
+
+    # Invalid argument
     raise TypeError(
-        "with_semantic_tools requires an AgentGantry instance as the first argument. "
-        "Usage: @with_semantic_tools(gantry)"
+        f"Invalid argument type: {type(gantry_or_func).__name__}. "
+        "Expected AgentGantry instance, callable, or None."
     )
 
 

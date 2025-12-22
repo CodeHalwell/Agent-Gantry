@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from agent_gantry.schema.introspection import build_parameters_schema
 from agent_gantry.schema.tool import ToolCapability, ToolDefinition
 
 
@@ -58,7 +59,7 @@ class ToolRegistry:
         def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
             tool_name = name or fn.__name__
             tool_description = fn.__doc__ or f"Tool: {tool_name}"
-            parameters_schema = self._build_parameters_schema(fn)
+            parameters_schema = build_parameters_schema(fn)
 
             tool = ToolDefinition(
                 name=tool_name,
@@ -81,51 +82,6 @@ class ToolRegistry:
         if func is not None:
             return decorator(func)
         return decorator
-
-    def _build_parameters_schema(self, func: Callable[..., Any]) -> dict[str, Any]:
-        """Build JSON Schema for function parameters."""
-        import inspect
-        from typing import get_type_hints
-
-        sig = inspect.signature(func)
-        try:
-            type_hints = get_type_hints(func)
-        except Exception:
-            type_hints = {}
-
-        properties: dict[str, Any] = {}
-        required: list[str] = []
-
-        for param_name, param in sig.parameters.items():
-            if param_name in ("self", "cls"):
-                continue
-
-            param_schema: dict[str, Any] = {}
-            param_type = type_hints.get(param_name)
-
-            # Check for exact type matches
-            if param_type is int or param_type == "int":
-                param_schema["type"] = "integer"
-            elif param_type is float or param_type == "float":
-                param_schema["type"] = "number"
-            elif param_type is bool or param_type == "bool":
-                param_schema["type"] = "boolean"
-            elif param_type is str or param_type == "str":
-                param_schema["type"] = "string"
-            else:
-                # Default to string for unknown types
-                param_schema["type"] = "string"
-
-            properties[param_name] = param_schema
-
-            if param.default is inspect.Parameter.empty:
-                required.append(param_name)
-
-        return {
-            "type": "object",
-            "properties": properties,
-            "required": required,
-        }
 
     def add_tool(self, tool: ToolDefinition, handler: Callable[..., Any]) -> None:
         """

@@ -383,9 +383,7 @@ class SemanticRouter:
 
     def _tool_to_text(self, tool: ToolDefinition) -> str:
         """Flatten tool metadata into text for similarity comparisons."""
-        tags = " ".join(tool.tags)
-        examples = " ".join(example for example in tool.examples if example)
-        return f"{tool.name} {tool.description} {tags} {examples}"
+        return tool.to_searchable_text()
 
     def _contains_token(self, text: str, token: str) -> bool:
         """Return True if token appears as a standalone word in text."""
