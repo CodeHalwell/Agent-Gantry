@@ -433,25 +433,28 @@ class AgentGantry:
         self,
         query: str,
         limit: int = 5,
+        dialect: str = "openai",
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """
-        Convenience wrapper: returns OpenAI-compatible schemas.
+        Convenience wrapper: returns provider-specific tool schemas.
 
         Args:
             query: The natural language query
             limit: Maximum number of tools to return
-            **kwargs: Additional query parameters
+            dialect: Target dialect/provider name (default: 'openai')
+                Supported: 'openai', 'anthropic', 'gemini', 'mistral', 'groq', 'auto'
+            **kwargs: Additional query parameters (e.g., score_threshold)
 
         Returns:
-            List of OpenAI-compatible tool schemas
+            List of provider-specific tool schemas
         """
         from agent_gantry.schema.query import ConversationContext, ToolQuery
 
         context = ConversationContext(query=query)
         tool_query = ToolQuery(context=context, limit=limit, **kwargs)
         result = await self.retrieve(tool_query)
-        return result.to_openai_tools()
+        return result.to_dialect(dialect)
 
     async def execute(self, call: ToolCall) -> ToolResult:
         """

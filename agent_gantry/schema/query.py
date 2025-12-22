@@ -105,3 +105,18 @@ class RetrievalResult(BaseModel):
     def to_anthropic_tools(self) -> list[dict[str, Any]]:
         """Convert retrieved tools to Anthropic format."""
         return [t.tool.to_anthropic_schema() for t in self.tools]
+
+    def to_dialect(self, dialect: str = "auto", **options: Any) -> list[dict[str, Any]]:
+        """
+        Convert retrieved tools to provider-specific format.
+
+        Uses the dialect registry for extensible provider support.
+
+        Args:
+            dialect: Target dialect/provider name (default: 'auto')
+            **options: Provider-specific options (e.g., strict mode for OpenAI)
+
+        Returns:
+            List of provider-specific tool schemas
+        """
+        return [t.tool.to_dialect(dialect, **options) for t in self.tools]

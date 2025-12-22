@@ -115,12 +115,8 @@ class SemanticToolSelector:
 
         result = await self._gantry.retrieve(query)
 
-        # Convert to the appropriate dialect
-        if self._dialect == "anthropic":
-            return result.to_anthropic_tools()
-        # OpenAI and Gemini use the same format (OpenAI-style function calling)
-        # Default to OpenAI format for "openai", "gemini", and any unknown dialects
-        return result.to_openai_tools()
+        # Use the dialect registry for extensible provider support
+        return result.to_dialect(self._dialect)
 
     def _extract_prompt(
         self,
