@@ -8,23 +8,11 @@ from rdkit import Chem
 from rdkit.Chem import Descriptors
 from sympy import solve, symbols, sympify
 
-from agent_gantry import AgentGantry
+from agent_gantry import create_default_gantry
 
-
-def _get_tools_instance() -> AgentGantry:
-    """
-    Factory function to create and configure the AgentGantry instance.
-
-    This avoids module-level instantiation which can cause issues with
-    testing, cleanup, or if multiple instances are needed.
-    """
-    from agent_gantry.adapters.embedders.nomic import NomicEmbedder
-    embedder = NomicEmbedder(dimension=256)
-    return AgentGantry(embedder=embedder)
-
-
-# Create the instance - users can also call _get_tools_instance() for a fresh instance
-tools = _get_tools_instance()
+# Create the instance using the factory function
+# Users can also call create_default_gantry() for a fresh instance
+tools = create_default_gantry()
 
 @tools.register(tags=["chemistry", "molecular"])
 def get_molecular_weight(smiles: str) -> float:

@@ -4,19 +4,13 @@ import json
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.nomic import NomicEmbedder
 from agent_gantry.integrations.decorator import with_semantic_tools
 from agent_gantry.schema.execution import ToolCall
 
+# Import the tools module which creates and configures the gantry instance
+from examples.project_demo.tools.tools import tools as gantry
 
 load_dotenv()
-
-# Build Gantry and import tool modules in the constructor (no manual bootstrap needed).
-gantry = AgentGantry(
-    embedder=NomicEmbedder(dimension=256),
-    modules=["examples.project_demo.tools.tools"],
-)
 
 client = AsyncOpenAI()
 
