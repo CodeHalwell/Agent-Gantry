@@ -65,10 +65,64 @@ Combine as needed, e.g.:
 pip install agent-gantry[lancedb,nomic,mcp,a2a]
 ```
 
-## Quick Start
+## Quick Start: The "Plug and Play" Experience
+
+Transform your existing LLM code into a semantically-aware agent system with just a decorator:
+
+```python
+from openai import AsyncOpenAI
+from agent_gantry import AgentGantry, with_semantic_tools, set_default_gantry
+
+# Initialize
+client = AsyncOpenAI()
+gantry = AgentGantry()
+set_default_gantry(gantry)
+
+# Register tools with a simple decorator
+@gantry.register(tags=["weather"])
+def get_weather(city: str) -> str:
+    """Get the current weather for a city."""
+    return f"The weather in {city} is 72°F and sunny."
+
+# Apply decorator to your existing LLM function - tools are automatically injected!
+@with_semantic_tools(limit=3)
+async def ask_llm(prompt: str, *, tools=None):
+    return await client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": prompt}],
+        tools=tools  # Agent-Gantry injects relevant tools here
+    )
+
+# Just call it - semantic routing happens automatically
+await ask_llm("What's the weather in San Francisco?")
+```
+
+**That's it!** Agent-Gantry automatically:
+- 🎯 Selects only relevant tools based on the query (reducing token costs by ~79%)
+- 🔄 Converts tool schemas to any LLM provider format (OpenAI, Anthropic, Google, etc.)
+- 🛡️ Executes tools with circuit breakers, retries, and security policies
+
+### Architecture Flow
+
+```mermaid
+graph LR
+    A[LLM Call] --> B[@with_semantic_tools]
+    B --> C[Agent-Gantry<br/>Semantic Router]
+    C --> D[Vector Search]
+    D --> E[Top-K Tools]
+    E --> F[Schema Transcoding]
+    F --> G[LLM Call<br/>with Injected Tools]
+    style C fill:#4CAF50
+    style B fill:#2196F3
+```
+
+### Manual Control (Power Users)
+
+For fine-grained control over tool retrieval and execution:
 
 ```python
 from agent_gantry import AgentGantry
+from agent_gantry.schema.execution import ToolCall
 
 # Initialize
 gantry = AgentGantry()
@@ -79,11 +133,13 @@ def calculate_tax(amount: float) -> float:
     """Calculates US sales tax for a given amount."""
     return amount * 0.08
 
+# Sync tools to enable semantic search
+await gantry.sync()
+
 # Retrieve relevant tools (returns OpenAI-compatible schemas)
 tools = await gantry.retrieve_tools("What is the tax on $100?", limit=5)
 
-# Execute a tool
-from agent_gantry.schema.execution import ToolCall
+# Execute a tool directly
 result = await gantry.execute(ToolCall(
     tool_name="calculate_tax",
     arguments={"amount": 100.0},
@@ -94,41 +150,76 @@ See [docs/configuration.md](docs/configuration.md) for full config options and
 [docs/local_persistence_and_skills.md](docs/local_persistence_and_skills.md) for LanceDB/Nomic setup
 plus skill storage.
 
-### 3-Line Integration with Existing OpenAI Code
+### Framework Ready: Works with Any LLM Provider
 
-Add Agent-Gantry's semantic tool selection to your existing code with minimal changes:
+Agent-Gantry seamlessly integrates with all major LLM providers. Just use the `dialect` parameter:
 
+**OpenAI / Azure OpenAI / OpenRouter / Groq:**
 ```python
 from openai import AsyncOpenAI
-from agent_gantry import AgentGantry, with_semantic_tools, set_default_gantry
+from agent_gantry import with_semantic_tools
 
-# Initialize OpenAI client
 client = AsyncOpenAI()
 
-# Line 1: Initialize and set default gantry
-gantry = AgentGantry()
-set_default_gantry(gantry)
-
-# Register your tools (your existing tool definitions)
-@gantry.register
-def get_weather(city: str) -> str:
-    """Get weather for a city."""
-    return f"Weather in {city}: Sunny"
-
-# Line 2-3: Add decorator to your existing function
-@with_semantic_tools(limit=5)  # Tools automatically selected by query
-async def generate(prompt: str, *, tools=None):
+@with_semantic_tools(limit=3)  # Default dialect is "openai"
+async def chat(messages, *, tools=None):
     return await client.chat.completions.create(
-        model="gpt-4",
-        messages=[{"role": "user", "content": prompt}],
-        tools=tools,  # Agent-Gantry injects relevant tools here
+        model="gpt-4o",
+        messages=messages,
+        tools=tools
     )
-
-# That's it! Tools are now semantically selected per-request
-response = await generate("What's the weather in Paris?")
 ```
 
-**Works with all major providers**: OpenAI, Anthropic, Google, Mistral, Groq - just change `dialect="anthropic"` etc.
+**Anthropic (Claude):**
+```python
+from anthropic import AsyncAnthropic
+from agent_gantry import with_semantic_tools
+
+client = AsyncAnthropic()
+
+@with_semantic_tools(dialect="anthropic", limit=3)
+async def chat(messages, *, tools=None):
+    return await client.messages.create(
+        model="claude-sonnet-4-20250514",
+        messages=messages,
+        tools=tools,  # Automatically converted to Anthropic format
+        max_tokens=1024
+    )
+```
+
+**Google Gemini:**
+```python
+from google import genai
+from agent_gantry import with_semantic_tools
+
+client = genai.Client()
+
+@with_semantic_tools(dialect="gemini", limit=3)
+async def chat(prompt, *, tools=None):
+    return client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=prompt,
+        tools=tools  # Automatically converted to Gemini format
+    )
+```
+
+**Mistral:**
+```python
+from mistralai import Mistral
+from agent_gantry import with_semantic_tools
+
+client = Mistral()
+
+@with_semantic_tools(limit=3)  # Mistral uses OpenAI-compatible format
+async def chat(messages, *, tools=None):
+    return await client.chat.complete_async(
+        model="mistral-large-latest",
+        messages=messages,
+        tools=tools
+    )
+```
+
+See [docs/llm_sdk_compatibility.md](docs/llm_sdk_compatibility.md) for detailed integration guides.
 
 ### Load tools from multiple modules
 
