@@ -27,9 +27,10 @@ from agent_gantry.integrations.decorator import (
 class TestWithSemanticToolsDecorator:
     """Tests for the with_semantic_tools decorator."""
 
-    def test_decorator_requires_gantry_instance(self) -> None:
-        """Test that decorator requires an AgentGantry instance."""
-        with pytest.raises(TypeError, match="requires an AgentGantry instance"):
+    def test_decorator_requires_gantry_or_default(self) -> None:
+        """Test that decorator requires an AgentGantry instance or default gantry."""
+        # When passing a callable without default gantry set, raises ValueError
+        with pytest.raises(ValueError, match="No default gantry set"):
 
             @with_semantic_tools(lambda x: x)  # type: ignore[arg-type]
             def generate(prompt: str) -> str:

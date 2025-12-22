@@ -7,7 +7,8 @@ Provides schema building from Python function signatures and type hints.
 from __future__ import annotations
 
 import inspect
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 
 def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:

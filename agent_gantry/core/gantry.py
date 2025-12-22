@@ -184,10 +184,10 @@ class AgentGantry:
         if embedder == "auto":
             # Try Nomic first (best for local use)
             try:
-                from agent_gantry.adapters.embedders.nomic import NomicEmbedder
-                
                 # Test that sentence-transformers is actually available
                 import sentence_transformers  # noqa: F401
+
+                from agent_gantry.adapters.embedders.nomic import NomicEmbedder
                 embedder_instance = NomicEmbedder(dimension=dimension)
             except ImportError:
                 warnings.warn(
@@ -214,7 +214,7 @@ class AgentGantry:
                     "sentence-transformers is required for the Nomic embedder. Install it with:\n"
                     "  pip install agent-gantry[nomic]"
                 ) from exc
-            
+
             embedder_instance = NomicEmbedder(dimension=dimension)
         elif embedder == "openai":
             api_key = kwargs.pop("openai_api_key", None)
