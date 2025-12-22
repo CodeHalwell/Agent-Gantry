@@ -75,19 +75,38 @@ def solve_equation(equation: str, variable: str) -> Any:
 def fetch_web_content(url: str) -> str:
     """Fetch the content of a web page given its URL."""
     try:
-        response = requests.get(
+        max_bytes = 10_000_000  # 10MB limit
+        with requests.get(
             url,
             timeout=30,
             headers={"User-Agent": "Agent-Gantry/0.1.0"},
-        )
-        response.raise_for_status()
+            stream=True,
+        ) as response:
+            response.raise_for_status()
 
-        # Validate content length to prevent excessive memory usage
-        content_length = response.headers.get('content-length')
-        if content_length and int(content_length) > 10_000_000:  # 10MB limit
-            raise ValueError(f"Content too large: {content_length} bytes")
+            # Validate content length header before downloading body
+            content_length = response.headers.get("content-length")
+            if content_length is not None:
+                try:
+                    if int(content_length) > max_bytes:
+                        raise ValueError(f"Content too large: {content_length} bytes")
+                except ValueError:
+                    # Ignore invalid Content-Length value and fall back to streaming limit
+                    pass
 
-        return response.text
+            # Stream response body and enforce maximum size while downloading
+            chunks: list[bytes] = []
+            bytes_read = 0
+            for chunk in response.iter_content(chunk_size=8192):
+                if not chunk:
+                    continue
+                chunks.append(chunk)
+                bytes_read += len(chunk)
+                if bytes_read > max_bytes:
+                    raise ValueError(f"Content too large: {bytes_read} bytes")
+
+            encoding = response.encoding or "utf-8"
+            return b"".join(chunks).decode(encoding, errors="replace")
     except requests.exceptions.Timeout:
         raise ValueError(f"Request timed out while fetching: {url}")
     except requests.exceptions.ConnectionError:
