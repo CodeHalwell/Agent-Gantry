@@ -128,29 +128,67 @@ response = await generate("What's the weather in Paris?")
 
 ### Load tools from multiple modules
 
-Split tools across files and merge them into a single gantry without sharing vector stores.
+Organize tools in a `tools/` directory with separate files for each category, then import them into your main file:
 
 ```python
-# tools/catalog.py
+# tools/web_tools.py
 from agent_gantry import AgentGantry
 
 tools = AgentGantry()
 
 @tools.register
-def tool_a(x: int) -> int:
-    """Double a number."""
-    return x * 2
+def search_web(query: str) -> str:
+    """Search the web for information."""
+    return f"Results for: {query}"
+
+@tools.register
+def fetch_url(url: str) -> str:
+    """Fetch content from a URL."""
+    return f"Content from {url}"
+
+# tools/math_tools.py
+from agent_gantry import AgentGantry
+
+tools = AgentGantry()
+
+@tools.register
+def calculate(expression: str) -> float:
+    """Evaluate a mathematical expression."""
+    return eval(expression)
+
+@tools.register
+def convert_units(value: float, from_unit: str, to_unit: str) -> float:
+    """Convert between units."""
+    return value  # simplified
 
 # main.py
 import asyncio
-from agent_gantry import AgentGantry
+from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
 
-async def bootstrap() -> None:
-    gantry = await AgentGantry.from_modules(["tools.catalog"], attr="tools")
+async def main():
+    # Import tools from multiple module files
+    gantry = await AgentGantry.from_modules([
+        "tools.web_tools",
+        "tools.math_tools",
+    ], attr="tools")
+    
     await gantry.sync()
-    print(await gantry.retrieve_tools("double 5"))
+    set_default_gantry(gantry)
+    
+    # Now all tools are available for semantic selection
+    @with_semantic_tools(limit=3)
+    async def generate(prompt: str, *, tools=None):
+        return await client.chat.completions.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}],
+            tools=tools,
+        )
+    
+    # Tools are automatically selected based on query
+    response = await generate("Search for Python tutorials")  # selects web_tools
+    response = await generate("Calculate 15% of 200")  # selects math_tools
 
-asyncio.run(bootstrap())
+asyncio.run(main())
 ```
 
 You can also pass `modules=[...]` to `AgentGantry(...)` for deferred loading or call
