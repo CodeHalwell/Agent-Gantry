@@ -99,7 +99,11 @@ plus skill storage.
 Add Agent-Gantry's semantic tool selection to your existing code with minimal changes:
 
 ```python
+from openai import AsyncOpenAI
 from agent_gantry import AgentGantry, with_semantic_tools, set_default_gantry
+
+# Initialize OpenAI client
+client = AsyncOpenAI()
 
 # Line 1: Initialize and set default gantry
 gantry = AgentGantry()
@@ -153,8 +157,23 @@ tools = AgentGantry()
 
 @tools.register
 def calculate(expression: str) -> float:
-    """Evaluate a mathematical expression."""
-    return eval(expression)
+    """Evaluate a mathematical expression safely."""
+    # Use ast.literal_eval for safe evaluation of simple expressions
+    import ast
+    import operator
+    
+    # Define safe operators
+    ops = {ast.Add: operator.add, ast.Sub: operator.sub,
+           ast.Mult: operator.mul, ast.Div: operator.truediv}
+    
+    def safe_eval(node):
+        if isinstance(node, ast.Num):
+            return node.n
+        elif isinstance(node, ast.BinOp):
+            return ops[type(node.op)](safe_eval(node.left), safe_eval(node.right))
+        raise ValueError(f"Unsupported expression")
+    
+    return safe_eval(ast.parse(expression, mode='eval').body)
 
 @tools.register
 def convert_units(value: float, from_unit: str, to_unit: str) -> float:
@@ -163,7 +182,10 @@ def convert_units(value: float, from_unit: str, to_unit: str) -> float:
 
 # main.py
 import asyncio
+from openai import AsyncOpenAI
 from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
+
+client = AsyncOpenAI()
 
 async def main():
     # Import tools from multiple module files
