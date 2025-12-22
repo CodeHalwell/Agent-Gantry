@@ -193,6 +193,33 @@ class ToolDefinition(BaseModel):
         adapter = get_adapter(dialect_str)
         return adapter.to_provider_schema(self, **options)
 
+    def to_searchable_text(self) -> str:
+        """
+        Convert tool metadata to searchable text for embedding.
+
+        Combines name, namespace, description, tags, and examples into a
+        single text representation optimized for semantic search.
+
+        Returns:
+            Concatenated string of tool metadata for embedding
+
+        Example:
+            >>> tool = ToolDefinition(
+            ...     name="calculate_tax",
+            ...     namespace="finance",
+            ...     description="Calculate sales tax",
+            ...     tags=["math", "money"],
+            ...     examples=["tax on $100"],
+            ...     parameters_schema={"type": "object", "properties": {}}
+            ... )
+            >>> text = tool.to_searchable_text()
+            >>> "calculate_tax" in text and "finance" in text
+            True
+        """
+        tags = " ".join(self.tags)
+        examples = " ".join(self.examples)
+        return f"{self.name} {self.namespace} {self.description} {tags} {examples}"
+
 
 class ToolDependency(BaseModel):
     """Dependency relationship between tools."""

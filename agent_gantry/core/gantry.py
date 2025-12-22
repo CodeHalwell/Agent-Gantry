@@ -40,6 +40,7 @@ from agent_gantry.schema.config import (
     TelemetryConfig,
     VectorStoreConfig,
 )
+from agent_gantry.schema.introspection import build_parameters_schema
 from agent_gantry.schema.query import RetrievalResult, ScoredTool, ToolQuery
 from agent_gantry.schema.tool import ToolCapability, ToolDefinition
 
@@ -212,7 +213,7 @@ class AgentGantry:
             tool_description = fn.__doc__ or f"Tool: {tool_name}"
 
             # Build parameters schema from function signature
-            parameters_schema = self._build_parameters_schema(fn)
+            parameters_schema = build_parameters_schema(fn)
 
             tool = ToolDefinition(
                 name=tool_name,
@@ -234,10 +235,6 @@ class AgentGantry:
         if func is not None:
             return decorator(func)
         return decorator
-
-    def _build_parameters_schema(self, func: Callable[..., Any]) -> dict[str, Any]:
-        """Build JSON Schema for function parameters."""
-        return build_parameters_schema(func)
 
     async def _ensure_initialized(self) -> None:
         """Initialize backing services once."""
@@ -750,50 +747,4 @@ class AgentGantry:
 
     def _tool_to_text(self, tool: ToolDefinition) -> str:
         """Flatten tool metadata into a text string for embedding."""
-        tags = " ".join(tool.tags)
-        return f"{tool.name} {tool.namespace} {tool.description} {tags} {' '.join(tool.examples)}"
-
-
-def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
-    """Build JSON Schema for function parameters."""
-    import inspect
-
-    sig = inspect.signature(func)
-    type_hints = {}
-    try:
-        type_hints = func.__annotations__
-    except AttributeError:
-        pass
-
-    properties: dict[str, Any] = {}
-    required: list[str] = []
-
-    for param_name, param in sig.parameters.items():
-        if param_name in ("self", "cls"):
-            continue
-
-        param_schema: dict[str, Any] = {}
-        param_type = type_hints.get(param_name, Any)
-
-        # Map Python types to JSON Schema types
-        if param_type is int or param_type == "int":
-            param_schema["type"] = "integer"
-        elif param_type is float or param_type == "float":
-            param_schema["type"] = "number"
-        elif param_type is bool or param_type == "bool":
-            param_schema["type"] = "boolean"
-        elif param_type is str or param_type == "str":
-            param_schema["type"] = "string"
-        else:
-            param_schema["type"] = "string"  # Default fallback
-
-        properties[param_name] = param_schema
-
-        if param.default is inspect.Parameter.empty:
-            required.append(param_name)
-
-    return {
-        "type": "object",
-        "properties": properties,
-        "required": required,
-    }
+        return tool.to_searchable_text()
