@@ -102,17 +102,17 @@ response = await chat("What's the weather in Tokyo?")
         # Register tools
         @gantry.register
         def get_weather(city: str) -> str:
-            """Get current weather for a city."""
+            '''Get current weather for a city.'''
             return f"Weather in {city}: Sunny, 72°F"
 
         @gantry.register
         def get_stock_price(symbol: str) -> str:
-            """Get current stock price for a symbol."""
+            '''Get current stock price for a symbol.'''
             return f"{symbol}: $150.00"
 
         @gantry.register
         def send_email(to: str, subject: str) -> str:
-            """Send an email."""
+            '''Send an email.'''
             return f"Email sent to {to}"
 
         # Add decorator

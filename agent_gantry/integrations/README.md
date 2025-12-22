@@ -178,7 +178,7 @@ agent = ConversableAgent(
 ### CrewAI Integration
 
 ```python
-from crewai import Agent, Task, Crew
+from crewai import Agent  # Task and Crew also available for full workflows
 from agent_gantry import AgentGantry
 
 gantry = AgentGantry()

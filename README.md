@@ -154,10 +154,6 @@ plus skill storage.
 
 Agent-Gantry seamlessly integrates with all major LLM providers. Just use the `dialect` parameter:
 
-### Framework Ready: Works with Any LLM Provider
-
-Agent-Gantry seamlessly integrates with all major LLM providers. Just use the `dialect` parameter:
-
 **OpenAI / Azure OpenAI / OpenRouter / Groq:**
 ```python
 from openai import AsyncOpenAI
