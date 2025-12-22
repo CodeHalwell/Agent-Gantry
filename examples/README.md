@@ -36,4 +36,4 @@ script when you want to reuse tool packages across demos.
 
 Most scripts print step-by-step output so you can see retrieval scores, telemetry spans, and results
 as they execute. Many demos rely only on the in-memory embedder/vector store; provider-specific demos
-(OpenAI, Anthropic, Google GenAI, etc.) will read credentials from the environment when needed.***
+(OpenAI, Anthropic, Google GenAI, etc.) will read credentials from the environment when needed.
