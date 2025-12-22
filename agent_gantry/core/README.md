@@ -108,7 +108,6 @@ ToolCall(...)  ──▶ ExecutionEngine.execute(...) ──▶ result / Circuit
 ```python
 from agent_gantry import AgentGantry, with_semantic_tools
 from openai import AsyncOpenAI
-import os
 from pathlib import Path
 
 gantry = AgentGantry()
@@ -152,7 +151,6 @@ response = await chat("read the data.json file")
 ```python
 from agent_gantry import AgentGantry
 from agent_gantry.schema.execution import ToolCall
-import os
 from pathlib import Path
 
 gantry = AgentGantry()
