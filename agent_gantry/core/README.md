@@ -25,6 +25,73 @@ framework integrations) ultimately flows through these building blocks.
   `confirm`). The executor checks these policies before invoking tools to implement zero-trust
   semantics.
 
+## How the Decorator Works Behind the Scenes
+
+When you use the `@with_semantic_tools` decorator from `agent_gantry.integrations.decorator`, here's what happens:
+
+```
+User's LLM Function Call
+    ↓
+@with_semantic_tools intercepts
+    ↓
+Extract prompt from function arguments
+    ↓
+Build ToolQuery with ConversationContext
+    ↓
+SemanticRouter.search()
+    ├──▶ Embedder: Convert query to vector
+    ├──▶ VectorStore: Semantic similarity search
+    ├──▶ Reranker (optional): Re-rank by relevance
+    └──▶ RoutingWeights: Combine semantic + health scores
+    ↓
+Return list[ScoredTool]
+    ↓
+Convert to target dialect (OpenAI/Anthropic/Gemini)
+    ↓
+Inject tools into function's 'tools' parameter
+    ↓
+User's LLM Function executes with relevant tools
+    ↓
+LLM returns tool_calls
+    ↓
+ExecutionEngine.execute()
+    ├──▶ Registry: Lookup tool callable
+    ├──▶ SecurityPolicy: Check capabilities
+    ├──▶ Validator: Validate arguments
+    ├──▶ CircuitBreaker: Check tool health
+    └──▶ Execute with retries + telemetry
+    ↓
+Return ExecutionResult
+```
+
+**Key Components:**
+
+1. **Registry**: Stores tool metadata and callables
+   ```python
+   @gantry.register(tags=["weather"])
+   def get_weather(city: str) -> str:
+       ...
+   # Registry now maps "get_weather" → callable + ToolDefinition
+   ```
+
+2. **Router**: Performs semantic search
+   ```python
+   # Behind the scenes in decorator:
+   query = ToolQuery(context=ConversationContext(query="What's the weather?"))
+   scored_tools = await router.search(query, limit=3)
+   # Returns tools ranked by relevance
+   ```
+
+3. **Executor**: Runs tools safely
+   ```python
+   # When LLM calls a tool:
+   result = await executor.execute(ToolCall(
+       tool_name="get_weather",
+       arguments={"city": "Paris"}
+   ))
+   # Handles retries, timeouts, circuit breakers, telemetry
+   ```
+
 ## Control flow at a glance
 
 ```
@@ -36,7 +103,34 @@ ToolCall(...)  ──▶ ExecutionEngine.execute(...) ──▶ result / Circuit
 
 ## Common patterns
 
-### Register, sync, retrieve, execute
+### Pattern 1: Automatic Injection (with decorator)
+
+```python
+from agent_gantry import AgentGantry, with_semantic_tools
+from openai import AsyncOpenAI
+
+gantry = AgentGantry()
+client = AsyncOpenAI()
+
+@gantry.register(capability="files:read")
+def read_file(path: str) -> str:
+    with open(path) as f:
+        return f.read()
+
+# The decorator handles: sync, retrieve, inject
+@with_semantic_tools(gantry, limit=2)
+async def chat(prompt: str, *, tools=None):
+    return await client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": prompt}],
+        tools=tools  # Auto-populated by decorator
+    )
+
+# Router + Registry work behind the scenes
+response = await chat("read the README file")
+```
+
+### Pattern 2: Manual Control (explicit retrieval and execution)
 
 ```python
 from agent_gantry import AgentGantry
@@ -51,9 +145,11 @@ def read_file(path: str) -> str:
 
 await gantry.sync()  # embeds tools and loads vector store
 
+# Manually query the router
 results = await gantry.retrieve_tools("open and read a markdown file", limit=2)
 best_tool = results[0].tool
 
+# Manually execute via executor
 output = await gantry.execute(ToolCall(tool_name=best_tool.name, arguments={"path": "README.md"}))
 print(output.output)
 ```
@@ -72,6 +168,13 @@ config.routing.weights = RoutingWeights(semantic=0.8, health=0.2)
 gantry = AgentGantry(config=config)
 ```
 
+## Debugging Tips
+
+- **Routing Scores:** If tools aren't being selected correctly, check `router.py` and the embedder quality. Use `score_threshold` to filter low-relevance tools.
+- **Execution Failures:** Check `executor.py` for timeout/retry settings. Review telemetry for execution spans.
+- **Circuit Breakers:** Tools with high failure rates trigger circuit breakers. Check health metrics with `gantry.get_tool_health(tool_name)`.
+- **Security Blocks:** If tools are blocked, verify the `SecurityPolicy` and capability requirements.
+
 The core package is intentionally small but highly composable. If you are debugging routing scores,
 start in `router.py`. If a tool is being blocked or timing out, look at `executor.py` and the
-telemetry emitted there.*** End Patch"|()
+telemetry emitted there.
