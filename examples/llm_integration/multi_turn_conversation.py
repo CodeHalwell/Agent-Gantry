@@ -81,11 +81,22 @@ async def run_turn(
         tool_calls = message.tool_calls or []
     else:
         tool_calls = _mock_tool_calls(user_content, tools)
+        serialized_tool_calls = [
+            {
+                "id": tc.id,
+                "type": "function",
+                "function": {
+                    "name": tc.function.name,
+                    "arguments": tc.function.arguments,
+                },
+            }
+            for tc in tool_calls
+        ]
         messages.append(
             {
                 "role": "assistant",
                 "content": "Let me check that.",
-                "tool_calls": tool_calls,
+                "tool_calls": serialized_tool_calls,
             }
         )
 
