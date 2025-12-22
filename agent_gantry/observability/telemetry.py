@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
+    from agent_gantry.metrics.token_usage import ProviderUsage, TokenSavings
     from agent_gantry.schema.execution import ToolCall, ToolResult
     from agent_gantry.schema.query import RetrievalResult, ToolQuery
     from agent_gantry.schema.tool import ToolHealth
@@ -77,5 +78,24 @@ class TelemetryAdapter(Protocol):
             tool_name: Name of the tool
             old_health: Previous health state
             new_health: New health state
+        """
+        ...
+
+    @abstractmethod
+    async def record_token_usage(
+        self,
+        usage: ProviderUsage,
+        model_name: str,
+        savings: TokenSavings | None = None,
+        trace_id: str | None = None,
+    ) -> None:
+        """
+        Record token usage and optional savings.
+
+        Args:
+            usage: The actual usage reported by the provider
+            model_name: Name of the model used
+            savings: Optional savings calculation
+            trace_id: Optional trace ID
         """
         ...

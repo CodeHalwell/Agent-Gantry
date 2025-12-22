@@ -44,12 +44,12 @@ async def main():
     print(f"User Query: '{query}'")
 
     # Retrieve tools
-    tools = await gantry.retrieve_tools(query, limit=1)
+    tools = await gantry.retrieve_tools(query, limit=1, score_threshold=0.1)
     print(f"Gantry retrieved {len(tools)} tool(s)")
 
     # Call Groq
     response = await client.chat.completions.create(
-        model="llama3-70b-8192",
+        model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": query}],
         tools=tools,
         tool_choice="auto"
@@ -72,7 +72,7 @@ async def main():
     
     from agent_gantry.integrations.decorator import with_semantic_tools
 
-    @with_semantic_tools(gantry, limit=1)
+    @with_semantic_tools(gantry, limit=1, score_threshold=0.1, prompt_param="user_query")
     async def chat_with_groq(user_query: str, tools: list[dict[str, Any]] = None):
         """
         This function automatically gets relevant tools injected into the 'tools' argument
@@ -81,7 +81,7 @@ async def main():
         print(f"Decorator injected {len(tools) if tools else 0} tools")
         
         response = await client.chat.completions.create(
-            model="llama3-70b-8192",
+            model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": user_query}],
             tools=tools,
             tool_choice="auto"

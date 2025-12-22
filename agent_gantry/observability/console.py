@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+    from agent_gantry.metrics.token_usage import ProviderUsage, TokenSavings
     from agent_gantry.schema.execution import ToolCall, ToolResult
     from agent_gantry.schema.query import RetrievalResult, ToolQuery
     from agent_gantry.schema.tool import ToolHealth
@@ -155,6 +156,40 @@ class ConsoleTelemetryAdapter:
             },
         )
 
+    async def record_token_usage(
+        self,
+        usage: ProviderUsage,
+        model_name: str,
+        savings: TokenSavings | None = None,
+        trace_id: str | None = None,
+    ) -> None:
+        """
+        Record token usage and optional savings.
+
+        Args:
+            usage: The actual usage reported by the provider
+            model_name: Name of the model used
+            savings: Optional savings calculation
+            trace_id: Optional trace ID
+        """
+        log_data = {
+            "event_type": "token_usage",
+            "model_name": model_name,
+            "prompt_tokens": usage.prompt_tokens,
+            "completion_tokens": usage.completion_tokens,
+            "total_tokens": usage.total_tokens,
+            "trace_id": trace_id,
+        }
+        if savings:
+            log_data.update(
+                {
+                    "saved_prompt_tokens": savings.saved_prompt_tokens,
+                    "prompt_savings_pct": f"{savings.prompt_savings_pct:.1f}%",
+                }
+            )
+
+        logger.log(self.log_level, "Token usage", extra=log_data)
+
     async def health_check(self) -> bool:
         """Check if telemetry is healthy."""
         return True
@@ -195,6 +230,16 @@ class NoopTelemetryAdapter:
         new_health: ToolHealth,
     ) -> None:
         """Record a health change event (no-op)."""
+        pass
+
+    async def record_token_usage(
+        self,
+        usage: ProviderUsage,
+        model_name: str,
+        savings: TokenSavings | None = None,
+        trace_id: str | None = None,
+    ) -> None:
+        """Record token usage (no-op)."""
         pass
 
     async def health_check(self) -> bool:

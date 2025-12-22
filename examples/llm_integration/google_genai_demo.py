@@ -34,10 +34,10 @@ async def main():
     print(f"✅ Registered {gantry.tool_count} tools\n")
 
     # 4. Initialize Google GenAI
-    import google.generativeai as genai
-    from google.generativeai.types import FunctionDeclaration, Tool
+    from google import genai
+    from google.genai import types
     
-    genai.configure(api_key=api_key)
+    client = genai.Client(api_key=api_key)
 
     # --- Scenario: Dynamic Retrieval with Gemini Schema ---
     print("--- Scenario: Dynamic Retrieval with Gemini Schema ---")
@@ -47,7 +47,8 @@ async def main():
     # A. Retrieve Tools
     retrieval_result = await gantry.retrieve(ToolQuery(
         context=ConversationContext(query=user_query),
-        limit=1
+        limit=1,
+        score_threshold=0.1
     ))
 
     # B. Convert to Gemini Schema
@@ -57,7 +58,7 @@ async def main():
         schema = t.tool.to_gemini_schema()
         
         # Create Gemini FunctionDeclaration object
-        func_decl = FunctionDeclaration(
+        func_decl = types.FunctionDeclaration(
             name=schema["name"],
             description=schema["description"],
             parameters=schema["parameters"]
@@ -65,49 +66,38 @@ async def main():
         gemini_tools.append(func_decl)
 
     # Wrap in Tool object
-    toolbox = Tool(function_declarations=gemini_tools)
+    if gemini_tools:
+        tool = types.Tool(function_declarations=gemini_tools)
+        config = types.GenerateContentConfig(tools=[tool])
+    else:
+        config = None
     
     print(f"Gantry retrieved {len(gemini_tools)} tool(s)")
 
     # C. Call Gemini
-    model = genai.GenerativeModel('gemini-1.5-flash', tools=[toolbox])
-    chat = model.start_chat(enable_automatic_function_calling=True) # Or manual handling
-    
-    # Note: automatic_function_calling executes the function internally if you provide the implementation map.
-    # Since we want Gantry to execute it (for security/telemetry), we usually handle it manually.
-    # But for this demo, we'll show how to inspect the response part.
-    
-    response = chat.send_message(user_query)
+    # Note: Gemini 2.0 Flash is a good default
+    response = client.models.generate_content(
+        model='gemini-2.0-flash',
+        contents=user_query,
+        config=config
+    )
     
     # Inspect response for function calls
-    for part in response.parts:
+    for part in response.candidates[0].content.parts:
         if fn := part.function_call:
             print(f"Gemini decided to call: {fn.name}({fn.args})")
             
             # Execute securely via Gantry
-            # Note: fn.args is a ProtoStruct, convert to dict
-            args_dict = dict(fn.args)
-            
+            # Note: fn.args is a dict in the new SDK
             result = await gantry.execute(ToolCall(
                 tool_name=fn.name,
-                arguments=args_dict
+                arguments=fn.args
             ))
             print(f"Execution Result: {result.result}")
-            
-            # In a real loop, you would send this result back to Gemini
-            # response = chat.send_message(
-            #     Part.from_function_response(name=fn.name, response={"result": result.result})
-            # )
 
     # --- Scenario: Using the Decorator ---
     print("\n--- Scenario: Using @with_semantic_tools Decorator ---")
     from agent_gantry.integrations.decorator import with_semantic_tools
-
-    # Note: The decorator returns a list of dicts (OpenAI format by default).
-    # For Gemini, we need to manually convert these or use the 'gemini' dialect if supported.
-    # Currently, the decorator's 'gemini' dialect returns OpenAI-compatible dicts because 
-    # Gemini's Python SDK often prefers FunctionDeclaration objects.
-    # Here we show how to adapt the decorator output for Gemini.
 
     @with_semantic_tools(gantry, limit=1)
     async def chat_with_gemini(prompt: str, tools: list = None):
@@ -118,25 +108,28 @@ async def main():
             for t in tools:
                 # t is {'type': 'function', 'function': {...}}
                 f_spec = t['function']
-                gemini_funcs.append(FunctionDeclaration(
+                gemini_funcs.append(types.FunctionDeclaration(
                     name=f_spec['name'],
                     description=f_spec['description'],
                     parameters=f_spec['parameters']
                 ))
-            toolbox = Tool(function_declarations=gemini_funcs)
-            model = genai.GenerativeModel('gemini-1.5-flash', tools=[toolbox])
+            toolbox = types.Tool(function_declarations=gemini_funcs)
+            config = types.GenerateContentConfig(tools=[toolbox])
         else:
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            config = None
             
-        chat = model.start_chat()
-        return await chat.send_message_async(prompt)
+        return client.models.generate_content(
+            model='gemini-2.0-flash',
+            contents=prompt,
+            config=config
+        )
 
     query_dec = "Find documents about project beta"
     print(f"User Query: '{query_dec}'")
     
     response_dec = await chat_with_gemini(prompt=query_dec)
     
-    for part in response_dec.parts:
+    for part in response_dec.candidates[0].content.parts:
         if fn := part.function_call:
             print(f"Gemini decided to call: {fn.name}")
 

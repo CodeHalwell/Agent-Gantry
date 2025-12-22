@@ -50,3 +50,19 @@ class HealthChangeEvent(BaseModel):
     old_health: ToolHealth
     new_health: ToolHealth
     reason: str
+
+
+class TokenUsageEvent(BaseModel):
+    """Event emitted for LLM token usage and savings."""
+
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    model_name: str
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+
+    # Optional savings info if this was an optimized call
+    baseline_prompt_tokens: int | None = None
+    saved_prompt_tokens: int | None = None
+    savings_pct: float | None = None
+    trace_id: str | None = None
