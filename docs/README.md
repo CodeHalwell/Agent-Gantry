@@ -5,7 +5,7 @@ then dive into topic-specific guides. Most documents contain runnable snippets t
 examples under `examples/`.
 
 - `index.md`: High-level navigation and quick links into the docs set.
-- `configuration.md`: Reference for `AgentGantryConfig` with YAML examples.
+- `configuration.md`: Reference for `AgentGantryConfig` with YAML examples and module-based loading patterns.
 - `local_persistence_and_skills.md`: How to use LanceDB/Nomic locally and store skills.
 - `vector_store_llm_integration.md`: End-to-end guide for building a large tool vector store and
   wiring it into OpenAI, Google GenAI, and Claude SDKs.
