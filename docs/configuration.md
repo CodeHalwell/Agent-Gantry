@@ -32,6 +32,39 @@ telemetry:
   type: console
 ```
 
+## Module-based tool loading
+
+When your tools live in multiple files, you can import and deduplicate their registries without
+sharing vector stores:
+
+- Pass `modules=[...]` into `AgentGantry(...)` to defer loading until the first `sync()`
+- Use `AgentGantry.from_modules([...], attr="tools")` to build and populate a new gantry in one call
+- Call `collect_tools_from_modules([...], module_attr="tools")` to merge into an existing instance;
+  pending unsynced tools are imported and duplicates are skipped with a warning
+
+```python
+# tools/payments.py
+from agent_gantry import AgentGantry
+
+tools = AgentGantry()
+
+@tools.register
+def refund(order_id: str, amount: float) -> str:
+    """Issue a refund."""
+    return f"Refunded {amount} for {order_id}"
+
+# bootstrap.py
+import asyncio
+from agent_gantry import AgentGantry
+
+async def main() -> None:
+    gantry = await AgentGantry.from_modules(["tools.payments"], attr="tools")
+    await gantry.sync()
+    print(await gantry.retrieve_tools("refund an order"))
+
+asyncio.run(main())
+```
+
 ## Core components
 
 ### Vector stores

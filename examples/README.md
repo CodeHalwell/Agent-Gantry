@@ -24,6 +24,16 @@ python examples/routing/health_aware_routing_demo.py
 python examples/protocols/mcp_integration_demo.py
 ```
 
+Provider-specific or framework demos may need extras:
+
+```bash
+pip install -e ".[example-tools,agent-frameworks,mcp,a2a]"
+```
+
+Install only the extras you need (e.g., `.[mcp]` for Claude Desktop, `.[a2a]` for the FastAPI agent).
+Multi-module tool catalogs can be stitched together with `AgentGantry.from_modules` before running a
+script when you want to reuse tool packages across demos.
+
 Most scripts print step-by-step output so you can see retrieval scores, telemetry spans, and results
 as they execute. Many demos rely only on the in-memory embedder/vector store; provider-specific demos
 (OpenAI, Anthropic, Google GenAI, etc.) will read credentials from the environment when needed.***

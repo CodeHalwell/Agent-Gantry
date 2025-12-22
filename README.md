@@ -55,6 +55,8 @@ See [docs/llm_sdk_compatibility.md](docs/llm_sdk_compatibility.md) for detailed 
 - **Vector stores**: `pip install agent-gantry[vector-stores]` (Qdrant/Chroma stubs)
 - **Local persistence (LanceDB)**: `pip install agent-gantry[lancedb]`
 - **Local embeddings (Nomic Matryoshka)**: `pip install agent-gantry[nomic]`
+- **Agent framework integrations**: `pip install agent-gantry[agent-frameworks]` (LangChain, AutoGen, CrewAI, LlamaIndex, Semantic Kernel, etc.)
+- **Example extras**: `pip install agent-gantry[example-tools]` for optional libraries used by the example scripts
 - **Protocols**: `pip install agent-gantry[mcp]` and `pip install agent-gantry[a2a]`
 
 Combine as needed, e.g.:
@@ -92,6 +94,37 @@ See [docs/configuration.md](docs/configuration.md) for full config options and
 [docs/local_persistence_and_skills.md](docs/local_persistence_and_skills.md) for LanceDB/Nomic setup
 plus skill storage.
 
+### Load tools from multiple modules
+
+Split tools across files and merge them into a single gantry without sharing vector stores.
+
+```python
+# tools/catalog.py
+from agent_gantry import AgentGantry
+
+tools = AgentGantry()
+
+@tools.register
+def tool_a(x: int) -> int:
+    """Double a number."""
+    return x * 2
+
+# main.py
+import asyncio
+from agent_gantry import AgentGantry
+
+async def bootstrap() -> None:
+    gantry = await AgentGantry.from_modules(["tools.catalog"], attr="tools")
+    await gantry.sync()
+    print(await gantry.retrieve_tools("double 5"))
+
+asyncio.run(bootstrap())
+```
+
+You can also pass `modules=[...]` to `AgentGantry(...)` for deferred loading or call
+`collect_tools_from_modules([...])` to import into an existing instance. Duplicate tools are skipped
+with a warning so shared modules can be safely combined.
+
 ## Architecture
 
 ```
@@ -126,6 +159,7 @@ plus skill storage.
 - **Circuit Breakers**: Automatic failure detection and recovery
 - **Observability**: Built-in structured logging and telemetry for tracing and metrics
 - **Zero-Trust Security**: Capability-based permissions and policy enforcement
+- **Modular tool loading**: Import and deduplicate tool registries from other modules or packages
 - **Local persistence & skills**: LanceDB-backed tool/skill storage, Matryoshka embeddings, and skill schemas for prompt guidance
 - **Argument Validation**: Defensive validation against tool schemas
 - **Async-Native**: Full async support for tools and execution

@@ -4,6 +4,7 @@ Start here for an overview of the available guides and how to navigate the docs.
 
 - **Quick start**: See `README.md` at the repository root for installation and basic usage.
 - **Configuration reference**: `configuration.md` describes all config knobs and ready-made YAML.
+- **Module-based loading**: `configuration.md` also shows how to merge tools from multiple modules.
 - **Local persistence + skills**: `local_persistence_and_skills.md` shows LanceDB/Nomic setup and skill storage.
 - **Vector store + LLM wiring**: `vector_store_llm_integration.md` shows how to register many tools,
   build a vector index, and present tools to OpenAI, Google GenAI, and Claude SDKs.
