@@ -21,6 +21,8 @@ class SchemaDialect(str, Enum):
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
     GEMINI = "gemini"
+    MISTRAL = "mistral"
+    GROQ = "groq"
     AUTO = "auto"
 
 
@@ -171,14 +173,25 @@ class ToolDefinition(BaseModel):
             "parameters": self.parameters_schema,
         }
 
-    def to_dialect(self, dialect: SchemaDialect) -> dict[str, Any]:
-        """Just-in-Time transcoding for specific LLMs or protocols."""
-        if dialect == SchemaDialect.ANTHROPIC:
-            return self.to_anthropic_schema()
-        if dialect == SchemaDialect.GEMINI:
-            return self.to_gemini_schema()
-        # Default is OpenAI style
-        return self.to_openai_schema()
+    def to_dialect(self, dialect: SchemaDialect | str, **options: Any) -> dict[str, Any]:
+        """
+        Just-in-Time transcoding for specific LLMs or protocols.
+
+        Uses the dialect registry for extensible provider support.
+
+        Args:
+            dialect: Target dialect (SchemaDialect enum or string name)
+            **options: Provider-specific options (e.g., strict mode for OpenAI)
+
+        Returns:
+            Provider-specific tool schema dictionary
+        """
+        from agent_gantry.adapters.tool_spec.registry import get_adapter
+
+        # Convert enum to string if needed
+        dialect_str = dialect.value if isinstance(dialect, SchemaDialect) else dialect
+        adapter = get_adapter(dialect_str)
+        return adapter.to_provider_schema(self, **options)
 
 
 class ToolDependency(BaseModel):
