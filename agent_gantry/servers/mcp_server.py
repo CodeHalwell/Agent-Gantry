@@ -51,7 +51,7 @@ class MCPServer:
     def _setup_handlers(self) -> None:
         """Setup MCP server handlers."""
 
-        @self.server.list_tools()  # type: ignore[misc]
+        @self.server.list_tools()  # type: ignore[misc, no-untyped-call]
         async def list_tools() -> list[Tool]:
             """List available tools based on mode."""
             if self.mode == "static":
@@ -63,7 +63,7 @@ class MCPServer:
                 # (hybrid could add common tools later)
                 return self._get_meta_tools()
 
-        @self.server.call_tool()  # type: ignore[untyped-decorator]
+        @self.server.call_tool()  # type: ignore[misc, no-untyped-call]
         async def call_tool(name: str, arguments: dict[str, Any]) -> list[Any]:
             """Handle tool calls."""
             if name == "find_relevant_tools":
