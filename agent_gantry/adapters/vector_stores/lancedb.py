@@ -99,8 +99,8 @@ class LanceDBVectorStore:
             return
 
         try:
-            import lancedb
-            import pyarrow as pa
+            import lancedb  # type: ignore[import-untyped]
+            import pyarrow as pa  # type: ignore[import-untyped]
         except ImportError as e:
             raise ImportError(
                 "lancedb and pyarrow are required. "

@@ -50,7 +50,7 @@ class A2AClient:
         """
         try:
             # Import httpx only when needed
-            import httpx  # type: ignore[import-not-found]
+            import httpx
 
             async with httpx.AsyncClient() as client:
                 response = await client.get(

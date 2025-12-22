@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from mcp.server import Server  # type: ignore[import-not-found]
-from mcp.server.stdio import stdio_server  # type: ignore[import-not-found]
-from mcp.types import Tool  # type: ignore[import-not-found]
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
+from mcp.types import Tool
 
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 
@@ -51,7 +51,7 @@ class MCPServer:
     def _setup_handlers(self) -> None:
         """Setup MCP server handlers."""
 
-        @self.server.list_tools()  # type: ignore[untyped-decorator]
+        @self.server.list_tools()  # type: ignore[misc]
         async def list_tools() -> list[Tool]:
             """List available tools based on mode."""
             if self.mode == "static":

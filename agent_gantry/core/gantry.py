@@ -738,7 +738,7 @@ class AgentGantry:
             Install with: pip install fastapi uvicorn
         """
         try:
-            import uvicorn  # type: ignore[import-not-found]
+            import uvicorn
         except ImportError as e:
             raise ImportError(
                 "uvicorn is required for A2A server. Install with: pip install fastapi uvicorn"

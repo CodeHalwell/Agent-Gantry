@@ -9,8 +9,8 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import Any
 
-from mcp import ClientSession, StdioServerParameters  # type: ignore[import-not-found]
-from mcp.client.stdio import stdio_client  # type: ignore[import-not-found]
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
 from agent_gantry.schema.config import MCPServerConfig
 from agent_gantry.schema.tool import ToolDefinition, ToolSource
