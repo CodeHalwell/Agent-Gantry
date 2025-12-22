@@ -94,6 +94,38 @@ See [docs/configuration.md](docs/configuration.md) for full config options and
 [docs/local_persistence_and_skills.md](docs/local_persistence_and_skills.md) for LanceDB/Nomic setup
 plus skill storage.
 
+### 3-Line Integration with Existing OpenAI Code
+
+Add Agent-Gantry's semantic tool selection to your existing code with minimal changes:
+
+```python
+from agent_gantry import AgentGantry, with_semantic_tools, set_default_gantry
+
+# Line 1: Initialize and set default gantry
+gantry = AgentGantry()
+set_default_gantry(gantry)
+
+# Register your tools (your existing tool definitions)
+@gantry.register
+def get_weather(city: str) -> str:
+    """Get weather for a city."""
+    return f"Weather in {city}: Sunny"
+
+# Line 2-3: Add decorator to your existing function
+@with_semantic_tools(limit=5)  # Tools automatically selected by query
+async def generate(prompt: str, *, tools=None):
+    return await client.chat.completions.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}],
+        tools=tools,  # Agent-Gantry injects relevant tools here
+    )
+
+# That's it! Tools are now semantically selected per-request
+response = await generate("What's the weather in Paris?")
+```
+
+**Works with all major providers**: OpenAI, Anthropic, Google, Mistral, Groq - just change `dialect="anthropic"` etc.
+
 ### Load tools from multiple modules
 
 Split tools across files and merge them into a single gantry without sharing vector stores.

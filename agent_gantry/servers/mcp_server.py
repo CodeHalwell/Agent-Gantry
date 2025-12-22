@@ -54,105 +54,14 @@ class MCPServer:
         @self.server.list_tools()  # type: ignore[untyped-decorator]
         async def list_tools() -> list[Tool]:
             """List available tools based on mode."""
-            if self.mode == "dynamic":
-                # Dynamic mode: only expose meta-tools
-                return [
-                    Tool(
-                        name="find_relevant_tools",
-                        description=(
-                            "Search for tools relevant to your current task. "
-                            "Use this before calling other tools to discover what's available."
-                        ),
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "query": {
-                                    "type": "string",
-                                    "description": "What you're trying to accomplish",
-                                },
-                                "limit": {
-                                    "type": "integer",
-                                    "description": "Max tools to return",
-                                    "default": 5,
-                                },
-                            },
-                            "required": ["query"],
-                        },
-                    ),
-                    Tool(
-                        name="execute_tool",
-                        description=(
-                            "Execute a tool by name. Use find_relevant_tools first "
-                            "to discover available tools and their schemas."
-                        ),
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "tool_name": {
-                                    "type": "string",
-                                    "description": "Name of the tool to execute",
-                                },
-                                "arguments": {
-                                    "type": "object",
-                                    "description": "Arguments for the tool",
-                                },
-                            },
-                            "required": ["tool_name", "arguments"],
-                        },
-                    ),
-                ]
-            elif self.mode == "static":
+            if self.mode == "static":
                 # Static mode: expose all tools directly
                 tools = await self.gantry.list_tools()
                 return [self._convert_tool(tool) for tool in tools]
-            else:  # hybrid mode
-                # TODO: Implement hybrid mode logic
-                # For now, fall back to dynamic mode tools
-                return [
-                    Tool(
-                        name="find_relevant_tools",
-                        description=(
-                            "Search for tools relevant to your current task. "
-                            "Use this before calling other tools to discover what's available."
-                        ),
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "query": {
-                                    "type": "string",
-                                    "description": "What you're trying to accomplish",
-                                },
-                                "limit": {
-                                    "type": "integer",
-                                    "description": "Max tools to return",
-                                    "default": 5,
-                                },
-                            },
-                            "required": ["query"],
-                        },
-                    ),
-                    Tool(
-                        name="execute_tool",
-                        description=(
-                            "Execute a tool by name. Use find_relevant_tools first "
-                            "to discover available tools and their schemas."
-                        ),
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "tool_name": {
-                                    "type": "string",
-                                    "description": "Name of the tool to execute",
-                                },
-                                "arguments": {
-                                    "type": "object",
-                                    "description": "Arguments for the tool",
-                                },
-                            },
-                            "required": ["tool_name", "arguments"],
-                        },
-                    ),
-                ]
+            else:
+                # Dynamic and hybrid modes: expose meta-tools for context savings
+                # (hybrid could add common tools later)
+                return self._get_meta_tools()
 
         @self.server.call_tool()  # type: ignore[untyped-decorator]
         async def call_tool(name: str, arguments: dict[str, Any]) -> list[Any]:
@@ -166,6 +75,54 @@ class MCPServer:
                 return await self._handle_execute_tool(
                     {"tool_name": name, "arguments": arguments}
                 )
+
+    def _get_meta_tools(self) -> list[Tool]:
+        """Return the meta-tools for dynamic tool discovery."""
+        return [
+            Tool(
+                name="find_relevant_tools",
+                description=(
+                    "Search for tools relevant to your current task. "
+                    "Use this before calling other tools to discover what's available."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "What you're trying to accomplish",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Max tools to return",
+                            "default": 5,
+                        },
+                    },
+                    "required": ["query"],
+                },
+            ),
+            Tool(
+                name="execute_tool",
+                description=(
+                    "Execute a tool by name. Use find_relevant_tools first "
+                    "to discover available tools and their schemas."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "tool_name": {
+                            "type": "string",
+                            "description": "Name of the tool to execute",
+                        },
+                        "arguments": {
+                            "type": "object",
+                            "description": "Arguments for the tool",
+                        },
+                    },
+                    "required": ["tool_name", "arguments"],
+                },
+            ),
+        ]
 
     def _convert_tool(self, tool_def: Any) -> Tool:
         """
