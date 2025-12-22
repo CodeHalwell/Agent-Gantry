@@ -901,3 +901,59 @@ class AgentGantry:
     def _tool_to_text(self, tool: ToolDefinition) -> str:
         """Flatten tool metadata into a text string for embedding."""
         return tool.to_searchable_text()
+
+
+def create_default_gantry(dimension: int = 256) -> AgentGantry:
+    """
+    Factory function to create a pre-configured AgentGantry instance.
+
+    This provides a convenient way to create an AgentGantry instance with
+    sensible defaults, automatically selecting the best available embedder:
+    - NomicEmbedder (if sentence-transformers is available)
+    - SimpleEmbedder (fallback, hash-based)
+
+    This avoids module-level instantiation which can cause issues with
+    testing, cleanup, or if multiple instances are needed.
+
+    Args:
+        dimension: Embedding dimension for Nomic embedder (default: 256).
+                   Ignored if NomicEmbedder is not available.
+
+    Returns:
+        A configured AgentGantry instance ready for tool registration.
+
+    Example:
+        >>> from agent_gantry import create_default_gantry
+        >>>
+        >>> tools = create_default_gantry()
+        >>>
+        >>> @tools.register(tags=["math"])
+        ... def add(a: int, b: int) -> int:
+        ...     '''Add two numbers.'''
+        ...     return a + b
+
+    Note:
+        For better semantic search quality, install the Nomic dependencies:
+        `pip install agent-gantry[nomic]`
+    """
+    import warnings
+
+    embedder: EmbeddingAdapter
+
+    # Try to use NomicEmbedder if available
+    try:
+        import sentence_transformers  # noqa: F401
+
+        from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+
+        embedder = NomicEmbedder(dimension=dimension)
+    except ImportError:
+        warnings.warn(
+            "Nomic embedder not available. Using SimpleEmbedder (hash-based, low accuracy). "
+            "For better semantic search: pip install agent-gantry[nomic]",
+            UserWarning,
+            stacklevel=2,
+        )
+        embedder = SimpleEmbedder()
+
+    return AgentGantry(embedder=embedder)

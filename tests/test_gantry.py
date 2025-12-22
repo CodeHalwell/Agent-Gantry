@@ -6,7 +6,51 @@ from __future__ import annotations
 
 import pytest
 
-from agent_gantry import AgentGantry
+from agent_gantry import AgentGantry, create_default_gantry
+
+
+class TestCreateDefaultGantry:
+    """Tests for create_default_gantry factory function."""
+
+    def test_create_default_gantry_returns_instance(self) -> None:
+        """Test that create_default_gantry returns an AgentGantry instance."""
+        gantry = create_default_gantry()
+        assert isinstance(gantry, AgentGantry)
+        assert gantry is not None
+        assert gantry.tool_count == 0
+
+    def test_create_default_gantry_with_dimension(self) -> None:
+        """Test create_default_gantry with custom dimension parameter."""
+        gantry = create_default_gantry(dimension=512)
+        assert isinstance(gantry, AgentGantry)
+        assert gantry is not None
+
+    def test_create_default_gantry_multiple_instances(self) -> None:
+        """Test that create_default_gantry creates independent instances."""
+        gantry1 = create_default_gantry()
+        gantry2 = create_default_gantry()
+        assert gantry1 is not gantry2
+
+        # Register tool on one instance
+        @gantry1.register
+        def test_tool(x: int) -> int:
+            """A test tool."""
+            return x * 2
+
+        # Should not affect the other instance
+        assert gantry1.tool_count == 1
+        assert gantry2.tool_count == 0
+
+    def test_create_default_gantry_can_register_tools(self) -> None:
+        """Test that gantry from create_default_gantry can register tools."""
+        gantry = create_default_gantry()
+
+        @gantry.register(tags=["math"])
+        def add(a: int, b: int) -> int:
+            """Add two numbers."""
+            return a + b
+
+        assert gantry.tool_count == 1
 
 
 class TestAgentGantry:

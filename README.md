@@ -150,6 +150,28 @@ See [docs/configuration.md](docs/configuration.md) for full config options and
 [docs/local_persistence_and_skills.md](docs/local_persistence_and_skills.md) for LanceDB/Nomic setup
 plus skill storage.
 
+### Factory Function for Easy Setup
+
+For quick setup with sensible defaults, use the `create_default_gantry()` factory function:
+
+```python
+from agent_gantry import create_default_gantry
+
+# Creates an AgentGantry instance with automatic embedder selection
+# (NomicEmbedder if available, falls back to SimpleEmbedder)
+tools = create_default_gantry()
+
+@tools.register(tags=["math"])
+def add(a: int, b: int) -> int:
+    """Add two numbers."""
+    return a + b
+```
+
+This is ideal for:
+- Rapid prototyping and testing
+- Projects that need multiple independent AgentGantry instances
+- Avoiding module-level instantiation issues
+
 ### Framework Ready: Works with Any LLM Provider
 
 Agent-Gantry seamlessly integrates with all major LLM providers. Just use the `dialect` parameter:
