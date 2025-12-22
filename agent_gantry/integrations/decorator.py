@@ -41,6 +41,10 @@ R = TypeVar("R")
 _logger = logging.getLogger(__name__)
 
 # Global default gantry instance for convenience
+# Note: This is a module-level global. In multi-threaded applications or when
+# running tests in parallel, be aware that this global state is shared across
+# all threads. For thread-safe usage, pass gantry explicitly to decorators or
+# use a thread-local storage pattern if needed.
 _DEFAULT_GANTRY: AgentGantry | None = None
 
 
@@ -51,12 +55,16 @@ def set_default_gantry(gantry: AgentGantry) -> None:
     This allows using @with_semantic_tools without explicitly passing
     a gantry instance, making the decorator simpler to use.
 
+    **Thread Safety Note:** This sets a module-level global variable that
+    is shared across all threads. In multi-threaded applications or when
+    running tests in parallel, consider passing the gantry explicitly to
+    decorators instead of using this global default.
+
     Args:
         gantry: The AgentGantry instance to use as default
 
     Example:
-        >>> from agent_gantry import AgentGantry, with_semantic_tools
-        >>> from agent_gantry.integrations.decorator import set_default_gantry
+        >>> from agent_gantry import AgentGantry, with_semantic_tools, set_default_gantry
         >>>
         >>> gantry = AgentGantry()
         >>> set_default_gantry(gantry)
@@ -415,8 +423,7 @@ def with_semantic_tools(
         SemanticToolSelector instance or wrapped function.
 
     Example:
-        from agent_gantry import AgentGantry, with_semantic_tools
-        from agent_gantry.integrations.decorator import set_default_gantry
+        from agent_gantry import AgentGantry, with_semantic_tools, set_default_gantry
         from openai import OpenAI
 
         gantry = AgentGantry()

@@ -185,12 +185,10 @@ class AgentGantry:
             # Try Nomic first (best for local use)
             try:
                 from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+                
                 # Test that sentence-transformers is actually available
-                try:
-                    import sentence_transformers  # noqa: F401
-                    embedder_instance = NomicEmbedder(dimension=dimension)
-                except ImportError:
-                    raise ImportError("sentence-transformers not available")
+                import sentence_transformers  # noqa: F401
+                embedder_instance = NomicEmbedder(dimension=dimension)
             except ImportError:
                 warnings.warn(
                     "Nomic embedder not available. Using SimpleEmbedder (hash-based, low accuracy). "
@@ -200,13 +198,40 @@ class AgentGantry:
                 )
                 embedder_instance = SimpleEmbedder()
         elif embedder == "nomic":
-            from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+            try:
+                from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+            except ImportError as exc:
+                raise ImportError(
+                    "Nomic embedder is not available. To enable it, install the optional "
+                    "dependencies:\n"
+                    "  pip install agent-gantry[nomic]"
+                ) from exc
 
+            try:
+                import sentence_transformers  # noqa: F401
+            except ImportError as exc:
+                raise ImportError(
+                    "sentence-transformers is required for the Nomic embedder. Install it with:\n"
+                    "  pip install agent-gantry[nomic]"
+                ) from exc
+            
             embedder_instance = NomicEmbedder(dimension=dimension)
         elif embedder == "openai":
             api_key = kwargs.pop("openai_api_key", None)
+            if not api_key:
+                raise ValueError(
+                    "OpenAI embedder requires a valid API key. "
+                    "Pass openai_api_key=... to quick_start() or configure AgentGantryConfig."
+                )
             embedder_config = EmbedderConfig(type="openai", api_key=api_key)
-            embedder_instance = OpenAIEmbedder(embedder_config)
+            try:
+                embedder_instance = OpenAIEmbedder(embedder_config)
+            except Exception as exc:
+                raise RuntimeError(
+                    "Failed to initialize OpenAI embedder. Ensure optional dependencies are "
+                    'installed with "pip install agent-gantry[openai]" and that your OpenAI '
+                    "API key is valid."
+                ) from exc
         else:  # "simple" or unknown
             embedder_instance = SimpleEmbedder()
 

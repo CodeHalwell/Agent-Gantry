@@ -81,18 +81,34 @@ def _type_to_json_schema(param_type: Any) -> dict[str, str]:
         str: "string",
     }
 
-    # Also check for string representations (e.g., from __annotations__)
+    # Direct type match (most reliable)
     if param_type in type_map:
         return {"type": type_map[param_type]}
 
-    # Check string representations
+    # Try to get the origin type for generic types (e.g., Optional[int])
+    try:
+        import typing
+        origin = typing.get_origin(param_type)
+        if origin is not None:
+            # For Optional[T], get T
+            args = typing.get_args(param_type)
+            if args:
+                # Recursively check the first argument
+                return _type_to_json_schema(args[0])
+    except (AttributeError, ImportError):
+        pass
+
+    # Check string representations as fallback (less reliable)
     type_str = str(param_type)
-    if "int" in type_str:
+    # Use word boundaries to avoid false positives
+    if type_str in ("int", "<class 'int'>"):
         return {"type": "integer"}
-    elif "float" in type_str:
+    elif type_str in ("float", "<class 'float'>"):
         return {"type": "number"}
-    elif "bool" in type_str:
+    elif type_str in ("bool", "<class 'bool'>"):
         return {"type": "boolean"}
+    elif type_str in ("str", "<class 'str'>"):
+        return {"type": "string"}
 
     # Default to string for unknown types
     return {"type": "string"}

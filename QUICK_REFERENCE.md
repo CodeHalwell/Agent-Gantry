@@ -28,9 +28,8 @@ from agent_gantry import AgentGantry, ToolCall, with_semantic_tools
 from agent_gantry import AgentGantry
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 
-config = AgentGantryConfig()
 embedder = SimpleEmbedder()
-gantry = AgentGantry(config=config, embedder=embedder)
+gantry = AgentGantry(embedder=embedder)
 
 # New way - auto-configured!
 gantry = await AgentGantry.quick_start()
