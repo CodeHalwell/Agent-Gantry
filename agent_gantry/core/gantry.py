@@ -356,7 +356,7 @@ class AgentGantry:
         """
         # If modules were provided in constructor but not yet loaded, load them now
         if self._modules is not None:
-            await self.collect_tools_from_modules(self._modules, module_attr=self._module_attr)
+            await self.collect_tools_from_modules(self._modules, module_attr=self._module_attr or "tools")
             self._modules = None
             self._module_attr = None
 
@@ -623,7 +623,7 @@ class AgentGantry:
 
         # Execute the tool
         return await self.execute(
-            ToolCall(tool_name=tool_name, namespace=best_tool.namespace, arguments=arguments)
+            ToolCall(tool_name=tool_name, arguments=arguments)
         )
 
     async def execute_batch(self, batch: BatchToolCall) -> BatchToolResult:

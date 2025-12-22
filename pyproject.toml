@@ -42,6 +42,7 @@ dev = [
     "pytest-cov>=4.0.0",
     "ruff>=0.1.0",
     "mypy>=1.0.0",
+    "python-dotenv>=1.0.0",
 ]
 agent-frameworks = [
     "agent-framework>=1.0.0b251120",
