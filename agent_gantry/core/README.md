@@ -108,13 +108,30 @@ ToolCall(...)  ──▶ ExecutionEngine.execute(...) ──▶ result / Circuit
 ```python
 from agent_gantry import AgentGantry, with_semantic_tools
 from openai import AsyncOpenAI
+import os
+from pathlib import Path
 
 gantry = AgentGantry()
 client = AsyncOpenAI()
 
+# Define allowed directory for file access (security best practice)
+ALLOWED_DIR = Path("/app/data").resolve()
+
 @gantry.register(capability="files:read")
 def read_file(path: str) -> str:
-    with open(path) as f:
+    """Safely read a file with path validation to prevent directory traversal attacks."""
+    # Resolve the absolute path and validate it's within allowed directory
+    file_path = (ALLOWED_DIR / path).resolve()
+    
+    # Security check: ensure the resolved path is within ALLOWED_DIR
+    if not str(file_path).startswith(str(ALLOWED_DIR)):
+        raise ValueError(f"Access denied: path must be within {ALLOWED_DIR}")
+    
+    # Additional security: check file exists and is a file (not a directory)
+    if not file_path.is_file():
+        raise ValueError(f"Invalid path: {path} is not a valid file")
+    
+    with open(file_path) as f:
         return f.read()
 
 # The decorator handles: sync, retrieve, inject
@@ -127,7 +144,7 @@ async def chat(prompt: str, *, tools=None):
     )
 
 # Router + Registry work behind the scenes
-response = await chat("read the README file")
+response = await chat("read the data.json file")
 ```
 
 ### Pattern 2: Manual Control (explicit retrieval and execution)
@@ -135,12 +152,29 @@ response = await chat("read the README file")
 ```python
 from agent_gantry import AgentGantry
 from agent_gantry.schema.execution import ToolCall
+import os
+from pathlib import Path
 
 gantry = AgentGantry()
 
+# Define allowed directory for file access (security best practice)
+ALLOWED_DIR = Path("/app/data").resolve()
+
 @gantry.register(capability="files:read")
 def read_file(path: str) -> str:
-    with open(path) as f:
+    """Safely read a file with path validation to prevent directory traversal attacks."""
+    # Resolve the absolute path and validate it's within allowed directory
+    file_path = (ALLOWED_DIR / path).resolve()
+    
+    # Security check: ensure the resolved path is within ALLOWED_DIR
+    if not str(file_path).startswith(str(ALLOWED_DIR)):
+        raise ValueError(f"Access denied: path must be within {ALLOWED_DIR}")
+    
+    # Additional security: check file exists and is a file (not a directory)
+    if not file_path.is_file():
+        raise ValueError(f"Invalid path: {path} is not a valid file")
+    
+    with open(file_path) as f:
         return f.read()
 
 await gantry.sync()  # embeds tools and loads vector store
@@ -149,8 +183,8 @@ await gantry.sync()  # embeds tools and loads vector store
 results = await gantry.retrieve_tools("open and read a markdown file", limit=2)
 best_tool = results[0].tool
 
-# Manually execute via executor
-output = await gantry.execute(ToolCall(tool_name=best_tool.name, arguments={"path": "README.md"}))
+# Manually execute via executor (will only work for files in /app/data)
+output = await gantry.execute(ToolCall(tool_name=best_tool.name, arguments={"path": "data.md"}))
 print(output.output)
 ```
 
