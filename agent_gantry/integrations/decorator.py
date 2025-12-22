@@ -397,7 +397,7 @@ def with_semantic_tools(
 
     2. With default gantry (set via set_default_gantry):
         set_default_gantry(gantry)
-        
+
         @with_semantic_tools(limit=3)
         async def generate(prompt: str, *, tools: list | None = None) -> Response:
             ...
@@ -440,7 +440,7 @@ def with_semantic_tools(
 
         # Option 2: Use default gantry
         set_default_gantry(gantry)
-        
+
         @with_semantic_tools(limit=3)
         async def generate2(prompt: str, *, tools: list | None = None):
             ...

@@ -10,6 +10,7 @@ import math
 import re
 from dataclasses import dataclass
 from enum import Enum
+from functools import lru_cache
 from time import perf_counter
 from typing import TYPE_CHECKING
 
@@ -19,6 +20,12 @@ if TYPE_CHECKING:
     from agent_gantry.adapters.vector_stores.base import VectorStoreAdapter
     from agent_gantry.schema.query import ToolQuery
     from agent_gantry.schema.tool import ToolDefinition
+
+
+@lru_cache(maxsize=256)
+def _get_token_pattern(token: str) -> re.Pattern[str]:
+    """Cache compiled regex patterns for token matching."""
+    return re.compile(rf"(?<!\w){re.escape(token)}(?!\w)")
 
 
 class TaskIntent(str, Enum):
@@ -389,5 +396,4 @@ class SemanticRouter:
         """Return True if token appears as a standalone word in text."""
         if not token:
             return False
-        pattern = rf"(?<!\w){re.escape(token)}(?!\w)"
-        return re.search(pattern, text) is not None
+        return _get_token_pattern(token).search(text) is not None

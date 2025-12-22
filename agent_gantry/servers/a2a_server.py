@@ -81,7 +81,7 @@ def create_a2a_server(gantry: AgentGantry, base_url: str = "http://localhost:808
         ImportError: If FastAPI is not installed
     """
     try:
-        from fastapi import FastAPI, HTTPException  # type: ignore[import-not-found]
+        from fastapi import FastAPI, HTTPException
     except ImportError as e:
         raise ImportError(
             "FastAPI is required for A2A server. Install with: pip install fastapi uvicorn"
@@ -96,12 +96,12 @@ def create_a2a_server(gantry: AgentGantry, base_url: str = "http://localhost:808
     # Generate agent card
     agent_card = generate_agent_card(gantry, base_url)
 
-    @app.get("/.well-known/agent.json")  # type: ignore[untyped-decorator]
+    @app.get("/.well-known/agent.json")
     async def get_agent_card() -> dict[str, Any]:
         """Serve the Agent Card."""
         return agent_card.model_dump()
 
-    @app.post("/tasks/send")  # type: ignore[untyped-decorator]
+    @app.post("/tasks/send")
     async def send_task(request: dict[str, Any]) -> dict[str, Any]:
         """
         Handle JSON-RPC task requests.

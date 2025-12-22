@@ -184,10 +184,10 @@ class AgentGantry:
         if embedder == "auto":
             # Try Nomic first (best for local use)
             try:
-                from agent_gantry.adapters.embedders.nomic import NomicEmbedder
-                
                 # Test that sentence-transformers is actually available
                 import sentence_transformers  # noqa: F401
+
+                from agent_gantry.adapters.embedders.nomic import NomicEmbedder
                 embedder_instance = NomicEmbedder(dimension=dimension)
             except ImportError:
                 warnings.warn(
@@ -214,7 +214,7 @@ class AgentGantry:
                     "sentence-transformers is required for the Nomic embedder. Install it with:\n"
                     "  pip install agent-gantry[nomic]"
                 ) from exc
-            
+
             embedder_instance = NomicEmbedder(dimension=dimension)
         elif embedder == "openai":
             api_key = kwargs.pop("openai_api_key", None)
@@ -356,7 +356,7 @@ class AgentGantry:
         """
         # If modules were provided in constructor but not yet loaded, load them now
         if self._modules is not None:
-            await self.collect_tools_from_modules(self._modules, module_attr=self._module_attr)
+            await self.collect_tools_from_modules(self._modules, module_attr=self._module_attr or "tools")
             self._modules = None
             self._module_attr = None
 
@@ -623,7 +623,7 @@ class AgentGantry:
 
         # Execute the tool
         return await self.execute(
-            ToolCall(tool_name=tool_name, namespace=best_tool.namespace, arguments=arguments)
+            ToolCall(tool_name=tool_name, arguments=arguments)
         )
 
     async def execute_batch(self, batch: BatchToolCall) -> BatchToolResult:
@@ -738,7 +738,7 @@ class AgentGantry:
             Install with: pip install fastapi uvicorn
         """
         try:
-            import uvicorn  # type: ignore[import-not-found]
+            import uvicorn
         except ImportError as e:
             raise ImportError(
                 "uvicorn is required for A2A server. Install with: pip install fastapi uvicorn"
