@@ -145,6 +145,74 @@ class AgentGantry:
         return cls(config=config)
 
     @classmethod
+    async def quick_start(
+        cls,
+        embedder: str = "auto",
+        dimension: int = 256,
+        **kwargs: Any,
+    ) -> AgentGantry:
+        """
+        Quick setup with sensible defaults for getting started.
+
+        Automatically detects the best available embedder and sets up
+        an in-memory vector store for immediate use.
+
+        Args:
+            embedder: Embedder type - "auto", "nomic", "openai", or "simple"
+            dimension: Embedding dimension (for Nomic, default 256)
+            **kwargs: Additional AgentGantry constructor arguments
+
+        Returns:
+            Ready-to-use AgentGantry instance
+
+        Example:
+            >>> gantry = await AgentGantry.quick_start()
+            >>>
+            >>> @gantry.register
+            ... def my_tool(x: int) -> int:
+            ...     '''Double a number.'''
+            ...     return x * 2
+            >>>
+            >>> await gantry.sync()
+            >>> tools = await gantry.retrieve_tools("double a number")
+        """
+        import warnings
+
+        config = AgentGantryConfig()
+        embedder_instance: EmbeddingAdapter
+
+        if embedder == "auto":
+            # Try Nomic first (best for local use)
+            try:
+                from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+                # Test that sentence-transformers is actually available
+                try:
+                    import sentence_transformers  # noqa: F401
+                    embedder_instance = NomicEmbedder(dimension=dimension)
+                except ImportError:
+                    raise ImportError("sentence-transformers not available")
+            except ImportError:
+                warnings.warn(
+                    "Nomic embedder not available. Using SimpleEmbedder (hash-based, low accuracy). "
+                    "For better semantic search: pip install agent-gantry[nomic]",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                embedder_instance = SimpleEmbedder()
+        elif embedder == "nomic":
+            from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+
+            embedder_instance = NomicEmbedder(dimension=dimension)
+        elif embedder == "openai":
+            api_key = kwargs.pop("openai_api_key", None)
+            embedder_config = EmbedderConfig(type="openai", api_key=api_key)
+            embedder_instance = OpenAIEmbedder(embedder_config)
+        else:  # "simple" or unknown
+            embedder_instance = SimpleEmbedder()
+
+        return cls(config=config, embedder=embedder_instance, **kwargs)
+
+    @classmethod
     async def from_modules(
         cls,
         modules: Sequence[str],
@@ -472,6 +540,66 @@ class AgentGantry:
                 return await self._executor.execute(call)
         else:
             return await self._executor.execute(call)
+
+    async def search_and_execute(
+        self,
+        query: str,
+        arguments: dict[str, Any] | None = None,
+        limit: int = 1,
+        **kwargs: Any,
+    ) -> ToolResult:
+        """
+        One-shot convenience: search for a tool and execute it.
+
+        Combines retrieve_tools() and execute() into a single operation.
+        Useful for simple scripting and quick tool invocation.
+
+        Args:
+            query: Natural language query to find the tool
+            arguments: Arguments to pass to the tool (optional)
+            limit: Number of tools to retrieve (default: 1, uses best match)
+            **kwargs: Additional retrieval parameters (score_threshold, etc.)
+
+        Returns:
+            Result of executing the best matching tool
+
+        Raises:
+            ValueError: If no matching tools found
+
+        Example:
+            >>> result = await gantry.search_and_execute(
+            ...     "calculate tax on 100",
+            ...     arguments={"amount": 100.0}
+            ... )
+            >>> print(result.result)
+            8.0
+        """
+        from agent_gantry.schema.execution import ToolCall
+        from agent_gantry.schema.query import ConversationContext, ToolQuery
+
+        # Retrieve best matching tool
+        context = ConversationContext(query=query)
+        tool_query = ToolQuery(context=context, limit=limit, **kwargs)
+        result = await self.retrieve(tool_query)
+
+        if not result.tools:
+            raise ValueError(
+                f"No tools found matching query: '{query}'. "
+                f"Try a different query or check registered tools."
+            )
+
+        # Use the best scoring tool
+        best_tool = result.tools[0].tool
+        tool_name = best_tool.name
+
+        # Use provided arguments or empty dict
+        if arguments is None:
+            arguments = {}
+
+        # Execute the tool
+        return await self.execute(
+            ToolCall(tool_name=tool_name, namespace=best_tool.namespace, arguments=arguments)
+        )
 
     async def execute_batch(self, batch: BatchToolCall) -> BatchToolResult:
         """
