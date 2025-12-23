@@ -359,6 +359,27 @@ class ExecutionEngine:
             elif expected_type == "string":
                 if not isinstance(param_value, str):
                     return False, f"Parameter '{param_name}' must be a string"
+            elif expected_type == "array":
+                if not isinstance(param_value, list):
+                    return False, f"Parameter '{param_name}' must be an array"
+
+                # Optional: validate items if schema provided
+                item_schema = param_schema.get("items")
+                if item_schema:
+                    item_type = item_schema.get("type")
+                    for i, item in enumerate(param_value):
+                        if item_type == "number":
+                            if not isinstance(item, (int, float)) or isinstance(item, bool):
+                                return False, f"Item at index {i} in '{param_name}' must be a number"
+                        elif item_type == "integer":
+                            if not isinstance(item, int) or isinstance(item, bool):
+                                return False, f"Item at index {i} in '{param_name}' must be an integer"
+                        elif item_type == "string":
+                            if not isinstance(item, str):
+                                return False, f"Item at index {i} in '{param_name}' must be a string"
+                        elif item_type == "boolean":
+                            if not isinstance(item, bool):
+                                return False, f"Item at index {i} in '{param_name}' must be a boolean"
 
         return True, None
 

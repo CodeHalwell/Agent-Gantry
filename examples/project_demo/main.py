@@ -14,7 +14,7 @@ load_dotenv()
 
 client = AsyncOpenAI()
 
-@with_semantic_tools(gantry, limit=1, score_threshold=0.1)
+@with_semantic_tools(gantry, limit=3, score_threshold=0.6)
 async def generate_response(prompt: str, tools: list | None = None):
     """LLM call that gets semantic tools injected."""
 
@@ -73,7 +73,7 @@ async def generate_response(prompt: str, tools: list | None = None):
 
 
 async def main() -> None:
-    user_query = "What is the molecular weight of caffeine?"
+    user_query = "I have a dataset [12.5, 14.2, 11.8, 13.9, 15.1]. Can you calculate the mean and standard deviation, and also generate a random secure password for me?"
     print(f"User Query: '{user_query}'")
 
     final_text, tool_calls, tool_results = await generate_response(user_query)

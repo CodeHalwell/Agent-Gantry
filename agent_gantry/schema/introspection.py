@@ -64,7 +64,7 @@ def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
     }
 
 
-def _type_to_json_schema(param_type: Any) -> dict[str, str]:
+def _type_to_json_schema(param_type: Any) -> dict[str, Any]:
     """
     Map Python type to JSON Schema type.
 
@@ -86,15 +86,30 @@ def _type_to_json_schema(param_type: Any) -> dict[str, str]:
     if param_type in type_map:
         return {"type": type_map[param_type]}
 
-    # Try to get the origin type for generic types (e.g., Optional[int])
+    # Try to get the origin type for generic types (e.g., Optional[int], list[float])
     try:
         import typing
         origin = typing.get_origin(param_type)
+        args = typing.get_args(param_type)
+
         if origin is not None:
-            # For Optional[T], get T
-            args = typing.get_args(param_type)
+            # Handle list/Sequence/Iterable
+            if origin in (list, typing.Sequence, typing.Iterable, list):
+                item_type = args[0] if args else str
+                return {
+                    "type": "array",
+                    "items": _type_to_json_schema(item_type)
+                }
+
+            # For Optional[T] or Union[T, None], get T
+            if origin is typing.Union:
+                # Filter out NoneType
+                non_none_args = [a for a in args if a is not type(None)]
+                if non_none_args:
+                    return _type_to_json_schema(non_none_args[0])
+
+            # Fallback for other generics: use the first argument if available
             if args:
-                # Recursively check the first argument
                 return _type_to_json_schema(args[0])
     except (AttributeError, ImportError):
         pass

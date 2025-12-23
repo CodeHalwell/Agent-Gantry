@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test suite with 69% coverage
 - Production-ready linting and type checking setup
 
-## [0.1.0] - 2024-12-17
+## [0.1.0] - 2025-12-23
 
 ### Added
 - Core foundation with semantic routing and tool orchestration

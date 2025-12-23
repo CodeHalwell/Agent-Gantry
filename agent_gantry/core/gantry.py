@@ -342,14 +342,16 @@ class AgentGantry:
         Args:
             tool: The tool definition to add
         """
-        await self._ensure_initialized()
-        embedding = await self._embedder.embed_text(self._tool_to_text(tool))
-        await self._vector_store.add_tools([tool], [embedding], upsert=True)
-        self._registry.register_tool(tool)
+        self._pending_tools.append(tool)
+        if self._config.auto_sync:
+            await self.sync()
 
-    async def sync(self) -> int:
+    async def sync(self, batch_size: int = 100) -> int:
         """
         Sync pending registrations to vector store.
+
+        Args:
+            batch_size: Number of tools to embed and sync in each batch
 
         Returns:
             Number of tools synced
@@ -364,16 +366,24 @@ class AgentGantry:
             return 0
 
         await self._ensure_initialized()
-        texts = [self._tool_to_text(t) for t in self._pending_tools]
-        embeddings = await self._embedder.embed_batch(texts)
-        count = await self._vector_store.add_tools(self._pending_tools, embeddings, upsert=True)
 
-        # Register tools in registry
-        for tool in self._pending_tools:
-            self._registry.register_tool(tool)
-
+        total_synced = 0
+        pending = self._pending_tools.copy()
         self._pending_tools = []
-        return count
+
+        for i in range(0, len(pending), batch_size):
+            batch = pending[i : i + batch_size]
+            texts = [self._tool_to_text(t) for t in batch]
+            embeddings = await self._embedder.embed_batch(texts)
+            count = await self._vector_store.add_tools(batch, embeddings, upsert=True)
+
+            # Register tools in registry
+            for tool in batch:
+                self._registry.register_tool(tool)
+
+            total_synced += count
+
+        return total_synced
 
     async def collect_tools_from_modules(
         self,
@@ -400,6 +410,7 @@ class AgentGantry:
 
         imported = 0
         seen: set[str] = set()
+        tools_to_add: list[ToolDefinition] = []
 
         for module_path in modules:
             module = importlib.import_module(module_path)
@@ -443,8 +454,8 @@ class AgentGantry:
                 # Get the tool handler from the source gantry
                 handler = other._registry.get_handler(key)
 
-                # Add the tool to this gantry (will be embedded and synced)
-                await self.add_tool(tool)
+                # Add to batch for efficient processing
+                tools_to_add.append(tool)
 
                 # Register the handler if available
                 if handler:
@@ -457,6 +468,17 @@ class AgentGantry:
                 imported += 1
 
             logger.info(f"Imported {len(all_tools)} tools from module '{module_path}'")
+
+        if tools_to_add:
+            await self._ensure_initialized()
+            batch_size = 100
+            for i in range(0, len(tools_to_add), batch_size):
+                batch = tools_to_add[i : i + batch_size]
+                texts = [self._tool_to_text(t) for t in batch]
+                embeddings = await self._embedder.embed_batch(texts)
+                await self._vector_store.add_tools(batch, embeddings, upsert=True)
+                for tool in batch:
+                    self._registry.register_tool(tool)
 
         return imported
 
