@@ -19,6 +19,7 @@ class SchemaDialect(str, Enum):
     """Schema dialects for different LLM providers."""
 
     OPENAI = "openai"
+    OPENAI_RESPONSES = "openai_responses"  # OpenAI Responses API (newer API)
     ANTHROPIC = "anthropic"
     GEMINI = "gemini"
     MISTRAL = "mistral"

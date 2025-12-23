@@ -21,6 +21,7 @@ from agent_gantry.adapters.tool_spec.providers import (
     GroqAdapter,
     MistralAdapter,
     OpenAIAdapter,
+    OpenAIResponsesAdapter,
 )
 from agent_gantry.schema.tool import SchemaDialect, ToolDefinition
 
@@ -159,6 +160,103 @@ class TestOpenAIAdapter:
         assert result["name"] == "get_weather"
         assert result["tool_call_id"] == "call_abc123"
         assert "content" in result
+
+
+class TestOpenAIResponsesAdapter:
+    """Tests for OpenAI Responses API adapter."""
+
+    def test_dialect_name(self) -> None:
+        """Test dialect name property."""
+        adapter = OpenAIResponsesAdapter()
+        assert adapter.dialect_name == "openai_responses"
+
+    def test_to_provider_schema(self, sample_tool: ToolDefinition) -> None:
+        """Test converting ToolDefinition to OpenAI Responses API schema."""
+        adapter = OpenAIResponsesAdapter()
+        schema = adapter.to_provider_schema(sample_tool)
+
+        # Responses API has name at top level, not nested in function
+        assert schema["type"] == "function"
+        assert schema["name"] == "get_weather"
+        assert "description" in schema
+        assert "parameters" in schema
+        assert schema["parameters"]["type"] == "object"
+        # Should NOT have nested "function" key
+        assert "function" not in schema
+
+    def test_to_provider_schema_strict_mode(self, sample_tool: ToolDefinition) -> None:
+        """Test converting with strict mode enabled."""
+        adapter = OpenAIResponsesAdapter()
+        schema = adapter.to_provider_schema(sample_tool, strict=True)
+
+        assert schema["strict"] is True
+
+    def test_from_provider_payload(self) -> None:
+        """Test parsing OpenAI Responses API function_call payload."""
+        adapter = OpenAIResponsesAdapter()
+        payload = adapter.from_provider_payload({
+            "type": "function_call",
+            "call_id": "call_abc123",
+            "name": "get_weather",
+            "arguments": '{"city": "London"}',
+        })
+
+        assert payload.tool_name == "get_weather"
+        assert payload.tool_call_id == "call_abc123"
+        assert payload.arguments == {"city": "London"}
+
+    def test_from_provider_payload_invalid_json(self) -> None:
+        """Test parsing payload with invalid JSON arguments."""
+        adapter = OpenAIResponsesAdapter()
+        payload = adapter.from_provider_payload({
+            "type": "function_call",
+            "call_id": "call_abc123",
+            "name": "get_weather",
+            "arguments": "invalid json",
+        })
+
+        assert payload.tool_name == "get_weather"
+        assert payload.arguments == {}
+
+    def test_to_tool_call(self) -> None:
+        """Test converting payload to ToolCall."""
+        adapter = OpenAIResponsesAdapter()
+        payload = ToolCallPayload(
+            tool_name="get_weather",
+            tool_call_id="call_abc123",
+            arguments={"city": "London"},
+        )
+        call = adapter.to_tool_call(payload, timeout_ms=5000)
+
+        assert call.tool_name == "get_weather"
+        assert call.arguments == {"city": "London"}
+        assert call.timeout_ms == 5000
+
+    def test_format_tool_result(self) -> None:
+        """Test formatting tool result for OpenAI Responses API."""
+        adapter = OpenAIResponsesAdapter()
+        result = adapter.format_tool_result(
+            tool_name="get_weather",
+            result={"temperature": 20, "unit": "celsius"},
+            tool_call_id="call_abc123",
+        )
+
+        # Responses API uses function_call_output format
+        assert result["type"] == "function_call_output"
+        assert result["call_id"] == "call_abc123"
+        assert "output" in result
+
+    def test_format_tool_result_string(self) -> None:
+        """Test formatting string result for OpenAI Responses API."""
+        adapter = OpenAIResponsesAdapter()
+        result = adapter.format_tool_result(
+            tool_name="get_weather",
+            result="Sunny, 72°F",
+            tool_call_id="call_abc123",
+        )
+
+        assert result["type"] == "function_call_output"
+        assert result["output"] == "Sunny, 72°F"
 
 
 class TestAnthropicAdapter:
@@ -323,6 +421,7 @@ class TestDialectRegistry:
         registry = DialectRegistry.default()
 
         assert registry.has("openai")
+        assert registry.has("openai_responses")
         assert registry.has("anthropic")
         assert registry.has("gemini")
         assert registry.has("mistral")
@@ -434,6 +533,15 @@ class TestToolDefinitionToDialect:
         schema = sample_tool.to_dialect(SchemaDialect.GROQ)
         assert schema["type"] == "function"
 
+    def test_to_dialect_openai_responses(self, sample_tool: ToolDefinition) -> None:
+        """Test to_dialect with OpenAI Responses API dialect."""
+        schema = sample_tool.to_dialect(SchemaDialect.OPENAI_RESPONSES)
+        assert schema["type"] == "function"
+        assert schema["name"] == "get_weather"
+        assert "parameters" in schema
+        # Should NOT have nested "function" key (unlike chat completions)
+        assert "function" not in schema
+
     def test_to_dialect_string_name(self, sample_tool: ToolDefinition) -> None:
         """Test to_dialect with string dialect name."""
         schema = sample_tool.to_dialect("anthropic")
@@ -517,3 +625,29 @@ class TestRetrievalResultToDialect:
         assert len(result) >= 1
         assert "name" in result[0]
         assert "parameters" in result[0]
+
+    @pytest.mark.asyncio
+    async def test_retrieve_tools_openai_responses_dialect(self) -> None:
+        """Test retrieve_tools with OpenAI Responses API dialect."""
+        from agent_gantry import AgentGantry
+
+        gantry = AgentGantry()
+
+        @gantry.register
+        def send_email(to: str, subject: str, body: str) -> str:
+            """Send an email to the specified recipient."""
+            return f"Email sent to {to}"
+
+        await gantry.sync()
+
+        result = await gantry.retrieve_tools(
+            "send email", limit=1, dialect="openai_responses"
+        )
+
+        assert len(result) >= 1
+        # Responses API format has name at top level
+        assert result[0]["type"] == "function"
+        assert "name" in result[0]
+        assert "parameters" in result[0]
+        # Should NOT have nested "function" key
+        assert "function" not in result[0]

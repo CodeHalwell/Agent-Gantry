@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-gantry"
-version = "0.1.0"
+version = "0.1.1"
 description = "Universal Tool Orchestration Platform - Intelligent, secure tool orchestration for LLM-based agent systems"
 readme = "README.md"
 license = "MIT"
@@ -102,6 +102,7 @@ lancedb = [
 nomic = [
     "sentence-transformers>=2.2.0",
     "numpy>=1.24.0",
+    "einops>=0.8.1",
 ]
 mcp = [
     "mcp>=1.0.0",

@@ -59,9 +59,11 @@ class DialectRegistry:
             GroqAdapter,
             MistralAdapter,
             OpenAIAdapter,
+            OpenAIResponsesAdapter,
         )
 
         self.register(OpenAIAdapter())
+        self.register(OpenAIResponsesAdapter())
         self.register(AnthropicAdapter())
         self.register(GeminiAdapter())
         self.register(MistralAdapter())

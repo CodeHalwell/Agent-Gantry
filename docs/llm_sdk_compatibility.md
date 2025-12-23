@@ -78,6 +78,17 @@ response = client.chat.completions.create(
 print(response.choices[0].message.content)
 ```
 
+#### Responses API (Modern)
+```python
+# The newer Responses API with simpler tool format
+response = client.responses.create(
+    model="gpt-4o",
+    instructions="You are a helpful assistant.",
+    input="Hello!"
+)
+print(response.output_text)
+```
+
 #### Realtime API (Beta)
 ```python
 # WebSocket-based realtime conversations
@@ -116,14 +127,28 @@ def get_current_weather(location: str) -> str:
 
 await gantry.sync()
 
-# Get tools in OpenAI format
+# Get tools in OpenAI Chat Completions format (default)
 tools = await gantry.retrieve_tools("What's the weather?", limit=5)
 
-# Use with OpenAI
+# Use with OpenAI Chat Completions API
 response = client.chat.completions.create(
     model="gpt-4o",
     messages=[{"role": "user", "content": "What's the weather in SF?"}],
     tools=tools
+)
+
+# Or get tools in OpenAI Responses API format
+tools_responses = await gantry.retrieve_tools(
+    "What's the weather?", 
+    limit=5, 
+    dialect="openai_responses"
+)
+
+# Use with OpenAI Responses API
+response = client.responses.create(
+    model="gpt-4o",
+    input="What's the weather in SF?",
+    tools=tools_responses
 )
 ```
 
@@ -159,14 +184,43 @@ response = client.chat.completions.create(
 )
 ```
 
-#### Responses API (Structured Output)
+#### Responses API
 ```python
-# Preferred for RAG workflows with structured/multimodal output
+# The Responses API uses a different format for tools and responses
 response = client.responses.create(
-    model="gpt-4o",
+    model="gpt-4o",  # Your deployment name
     input="Analyze this document and extract key points",
-    response_format={"type": "json_object"}
+    tools=[
+        {
+            "type": "function",
+            "name": "extract_key_points",
+            "description": "Extract key points from text",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"}
+                },
+                "required": ["text"]
+            }
+        }
+    ]
 )
+
+# Handle function calls from Responses API
+for output in response.output:
+    if output.type == "function_call":
+        print(f"Tool called: {output.name}")
+        print(f"Arguments: {output.arguments}")
+        # Execute tool and send result back
+        result = client.responses.create(
+            model="gpt-4o",
+            previous_response_id=response.id,
+            input=[{
+                "type": "function_call_output",
+                "call_id": output.call_id,
+                "output": "your tool result here"
+            }]
+        )
 ```
 
 ### Agent-Gantry Integration
@@ -655,9 +709,9 @@ response = client.chat.completions.create(
 
 ## Tool Format Conversion
 
-Agent-Gantry provides OpenAI-compatible tool schemas by default. Here's how to convert them for other providers:
+Agent-Gantry provides OpenAI Chat Completions compatible tool schemas by default. Here's how to convert them for other providers:
 
-### OpenAI Format (Default)
+### OpenAI Chat Completions Format (Default)
 ```python
 {
     "type": "function",
@@ -670,6 +724,39 @@ Agent-Gantry provides OpenAI-compatible tool schemas by default. Here's how to c
             "required": [...]
         }
     }
+}
+```
+
+### OpenAI Responses API Format
+```python
+# Use dialect="openai_responses" when retrieving tools
+tools = await gantry.retrieve_tools("query", dialect="openai_responses")
+
+# Format structure:
+{
+    "type": "function",
+    "name": "my_tool",
+    "description": "Tool description",
+    "parameters": {
+        "type": "object",
+        "properties": {...},
+        "required": [...]
+    }
+}
+
+# Tool call format (from response.output):
+{
+    "type": "function_call",
+    "call_id": "call_xxx",
+    "name": "my_tool",
+    "arguments": "{\"arg\": \"value\"}"
+}
+
+# Tool result format (to send back):
+{
+    "type": "function_call_output",
+    "call_id": "call_xxx",
+    "output": "result string"
 }
 ```
 
@@ -718,18 +805,19 @@ def to_vertex_functions(openai_tools):
 from google import genai
 ```
 
-### 2. Azure OpenAI Responses API
+### 2. OpenAI Chat Completions vs Responses API
 
-**Issue**: The `responses` API is Azure-specific and not available in standard OpenAI.
+**Issue**: OpenAI has two APIs with different tool formats:
+- **Chat Completions** (`client.chat.completions.create`): Traditional API with nested `function` key
+- **Responses API** (`client.responses.create`): Newer API with flattened tool schema
 
-**Workaround**: Use `chat.completions` for cross-platform compatibility, or feature-detect:
+**Workaround**: Agent-Gantry supports both via the `dialect` parameter:
 ```python
-if hasattr(client, 'responses'):
-    # Azure-specific code
-    response = client.responses.create(...)
-else:
-    # Standard OpenAI code
-    response = client.chat.completions.create(...)
+# For Chat Completions API (default)
+tools = await gantry.retrieve_tools("query", dialect="openai")
+
+# For Responses API
+tools = await gantry.retrieve_tools("query", dialect="openai_responses")
 ```
 
 ### 3. Tool Schema Differences

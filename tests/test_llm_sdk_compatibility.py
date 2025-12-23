@@ -63,6 +63,10 @@ class TestOpenAICompatibility:
         # Chat completions
         assert hasattr(client.chat.completions, "create")
 
+        # Responses API (newer API)
+        assert hasattr(client, "responses")
+        assert hasattr(client.responses, "create")
+
         # Audio transcriptions
         assert hasattr(client, "audio")
         assert hasattr(client.audio, "transcriptions")
@@ -335,6 +339,42 @@ class TestAgentGantryToolFormatCompatibility:
 
         assert result.status == ExecutionStatus.SUCCESS
         assert result.result == 8
+
+    @pytest.mark.asyncio
+    async def test_openai_responses_api_tool_format(self) -> None:
+        """Test that Agent-Gantry produces valid OpenAI Responses API tool format."""
+        from agent_gantry import AgentGantry
+
+        gantry = AgentGantry()
+
+        @gantry.register
+        def get_weather(location: str, unit: str = "celsius") -> str:
+            """Get weather for a location."""
+            return f"Weather in {location}: 72°F"
+
+        await gantry.sync()
+
+        # Get tools in OpenAI Responses API format
+        tools = await gantry.retrieve_tools(
+            "get weather", limit=1, dialect="openai_responses"
+        )
+
+        assert len(tools) >= 1
+        tool = tools[0]
+
+        # Verify OpenAI Responses API tool format
+        assert tool["type"] == "function"
+        assert tool["name"] == "get_weather"
+        assert "description" in tool
+        assert "parameters" in tool
+        # Should NOT have nested "function" key (unlike Chat Completions)
+        assert "function" not in tool
+
+        # Verify parameters schema
+        params = tool["parameters"]
+        assert params["type"] == "object"
+        assert "properties" in params
+        assert "location" in params["properties"]
 
 
 class TestSDKVersionCompatibility:
