@@ -373,7 +373,7 @@ class AgentGantry:
 
         for i in range(0, len(pending), batch_size):
             batch = pending[i : i + batch_size]
-            texts = [self._tool_to_text(t) for t in batch]
+            texts = [t.to_searchable_text() for t in batch]
             embeddings = await self._embedder.embed_batch(texts)
             count = await self._vector_store.add_tools(batch, embeddings, upsert=True)
 
@@ -421,24 +421,8 @@ class AgentGantry:
                     f"Found: {type(other).__name__ if other else 'None'}"
                 )
 
-            # Collect tools from the source gantry:
-            # 1. Already registered/synced tools from the registry
-            source_tools = other._registry.list_tools()
-
-            # 2. Pending tools that haven't been synced yet
-            # Use explicit checks to validate API expectations
-            pending_from_registry = []
-            if hasattr(other._registry, "get_pending") and callable(other._registry.get_pending):
-                try:
-                    pending_from_registry = other._registry.get_pending() or []
-                except AttributeError as e:
-                    logger.warning(
-                        f"Failed to get pending tools from registry in '{module_path}': {e}"
-                    )
-
-            pending_unsynced = getattr(other, "_pending_tools", []) or []
-
-            all_tools = [*source_tools, *pending_from_registry, *pending_unsynced]
+            # Collect tools from the source gantry using the public API
+            all_tools = other.export_tools()
 
             for tool in all_tools:
                 key = f"{tool.namespace}.{tool.name}"
@@ -474,7 +458,7 @@ class AgentGantry:
             batch_size = 100
             for i in range(0, len(tools_to_add), batch_size):
                 batch = tools_to_add[i : i + batch_size]
-                texts = [self._tool_to_text(t) for t in batch]
+                texts = [t.to_searchable_text() for t in batch]
                 embeddings = await self._embedder.embed_batch(texts)
                 await self._vector_store.add_tools(batch, embeddings, upsert=True)
                 for tool in batch:
@@ -816,6 +800,31 @@ class AgentGantry:
             await self.sync()
         return await self._vector_store.list_all(namespace=namespace)
 
+    def export_tools(self) -> list[ToolDefinition]:
+        """
+        Export all registered and pending tools.
+
+        Useful for importing tools into another AgentGantry instance
+        without accessing private attributes.
+
+        Returns:
+            List of all tool definitions (registered + pending)
+        """
+        registered = self._registry.list_tools()
+        pending = self._pending_tools.copy()
+
+        # Deduplicate by qualified name
+        seen: set[str] = set()
+        result: list[ToolDefinition] = []
+
+        for tool in registered + pending:
+            key = f"{tool.namespace}.{tool.name}"
+            if key not in seen:
+                seen.add(key)
+                result.append(tool)
+
+        return result
+
     async def delete_tool(self, name: str, namespace: str = "default") -> bool:
         """
         Delete a tool.
@@ -837,24 +846,29 @@ class AgentGantry:
         Returns:
             Dictionary of component health status
         """
-        import inspect
+        import asyncio
 
         await self._ensure_initialized()
-        vector_store_ok = await self._vector_store.health_check()
-        embedder_ok = await self._embedder.health_check()
-        telemetry_ok = False
-        if self._telemetry is not None:
-            health = getattr(self._telemetry, "health_check", None)
-            if callable(health):
-                result = health()
-                telemetry_ok = await result if inspect.isawaitable(result) else bool(result)
-            else:
-                telemetry_ok = True
-        return {
-            "vector_store": vector_store_ok,
-            "embedder": embedder_ok,
-            "telemetry": telemetry_ok,
+
+        results = {
+            "vector_store": await self._vector_store.health_check(),
+            "embedder": await self._embedder.health_check(),
         }
+
+        if self._telemetry is not None:
+            try:
+                health_method = getattr(self._telemetry, "health_check", None)
+                if health_method is not None:
+                    if asyncio.iscoroutinefunction(health_method):
+                        results["telemetry"] = await health_method()
+                    else:
+                        results["telemetry"] = bool(health_method())
+                else:
+                    results["telemetry"] = True
+            except Exception:
+                results["telemetry"] = False
+
+        return results
 
     def _build_vector_store(self, config: VectorStoreConfig) -> VectorStoreAdapter:
         """Construct a vector store adapter from configuration."""
@@ -919,10 +933,6 @@ class AgentGantry:
                 prometheus_port=config.prometheus_port,
             )
         return ConsoleTelemetryAdapter()
-
-    def _tool_to_text(self, tool: ToolDefinition) -> str:
-        """Flatten tool metadata into a text string for embedding."""
-        return tool.to_searchable_text()
 
 
 def create_default_gantry(dimension: int = 256) -> AgentGantry:
