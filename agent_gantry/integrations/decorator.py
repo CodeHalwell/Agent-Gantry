@@ -29,6 +29,7 @@ import functools
 import inspect
 import logging
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, overload
 
 if TYPE_CHECKING:
@@ -40,25 +41,20 @@ R = TypeVar("R")
 # Module-level logger to avoid repeated instantiation
 _logger = logging.getLogger(__name__)
 
-# Global default gantry instance for convenience
-# Note: This is a module-level global. In multi-threaded applications or when
-# running tests in parallel, be aware that this global state is shared across
-# all threads. For thread-safe usage, pass gantry explicitly to decorators or
-# use a thread-local storage pattern if needed.
-_DEFAULT_GANTRY: AgentGantry | None = None
+# Context-local default gantry instance for thread-safe usage
+# Uses contextvars to provide isolation between async tasks and threads
+_gantry_context: ContextVar[AgentGantry | None] = ContextVar("default_gantry", default=None)
 
 
 def set_default_gantry(gantry: AgentGantry) -> None:
     """
-    Set the default AgentGantry instance for decorators.
+    Set the default AgentGantry instance for the current context.
 
     This allows using @with_semantic_tools without explicitly passing
     a gantry instance, making the decorator simpler to use.
 
-    **Thread Safety Note:** This sets a module-level global variable that
-    is shared across all threads. In multi-threaded applications or when
-    running tests in parallel, consider passing the gantry explicitly to
-    decorators instead of using this global default.
+    **Thread Safety:** Uses contextvars for proper isolation between
+    async tasks and threads. Each context has its own gantry instance.
 
     Args:
         gantry: The AgentGantry instance to use as default
@@ -73,18 +69,17 @@ def set_default_gantry(gantry: AgentGantry) -> None:
         ... async def generate(prompt: str, *, tools=None):
         ...     ...
     """
-    global _DEFAULT_GANTRY
-    _DEFAULT_GANTRY = gantry
+    _gantry_context.set(gantry)
 
 
 def get_default_gantry() -> AgentGantry | None:
     """
-    Get the default AgentGantry instance if set.
+    Get the default AgentGantry instance for the current context.
 
     Returns:
         The default gantry or None if not set
     """
-    return _DEFAULT_GANTRY
+    return _gantry_context.get()
 
 
 class SemanticToolSelector:
@@ -461,14 +456,15 @@ def with_semantic_tools(
 
     # If gantry_or_func is None, use the default gantry
     if gantry_or_func is None:
-        if _DEFAULT_GANTRY is None:
+        default_gantry = _gantry_context.get()
+        if default_gantry is None:
             raise ValueError(
                 "No gantry provided and no default set. Use one of:\n"
                 "  1. @with_semantic_tools(gantry, ...)\n"
                 "  2. set_default_gantry(gantry) then @with_semantic_tools(...)"
             )
         return SemanticToolSelector(
-            _DEFAULT_GANTRY,
+            default_gantry,
             prompt_param=prompt_param,
             tools_param=tools_param,
             limit=limit,
@@ -491,13 +487,14 @@ def with_semantic_tools(
 
     # Otherwise, assume it's a function and use default gantry
     if callable(gantry_or_func):
-        if _DEFAULT_GANTRY is None:
+        default_gantry = _gantry_context.get()
+        if default_gantry is None:
             raise ValueError(
                 "No default gantry set. Use set_default_gantry(gantry) first "
                 "or pass gantry explicitly: @with_semantic_tools(gantry)"
             )
         selector = SemanticToolSelector(
-            _DEFAULT_GANTRY,
+            default_gantry,
             prompt_param=prompt_param,
             tools_param=tools_param,
             limit=limit,
