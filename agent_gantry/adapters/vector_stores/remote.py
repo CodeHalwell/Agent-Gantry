@@ -7,7 +7,6 @@ collection management, filtering, and error handling.
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from typing import Any
@@ -199,7 +198,6 @@ class QdrantVectorStore:
         self, name: str, namespace: str = "default"
     ) -> ToolDefinition | None:
         """Get a tool by name."""
-        from qdrant_client.models import FieldCondition, Filter, MatchValue
 
         await self.initialize()
 

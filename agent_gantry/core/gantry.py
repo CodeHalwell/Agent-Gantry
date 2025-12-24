@@ -15,13 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from agent_gantry.adapters.embedders.openai import AzureOpenAIEmbedder, OpenAIEmbedder
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.adapters.rerankers.cohere import CohereReranker
 from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
-from agent_gantry.adapters.vector_stores.remote import (
-    ChromaVectorStore,
-    PGVectorStore,
-    QdrantVectorStore,
-)
 from agent_gantry.core.executor import ExecutionEngine
 from agent_gantry.core.registry import ToolRegistry
 from agent_gantry.core.router import RoutingWeights, SemanticRouter

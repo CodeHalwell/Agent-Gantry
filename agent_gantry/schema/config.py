@@ -163,9 +163,9 @@ class AgentGantryConfig(BaseModel):
             FileNotFoundError: If the config file doesn't exist
             ValueError: If the YAML is invalid or doesn't match schema
         """
-        import yaml  # type: ignore[import-untyped]
-
         from pathlib import Path as PathLib
+
+        import yaml  # type: ignore[import-untyped]
 
         config_path = PathLib(path)
         if not config_path.exists():
