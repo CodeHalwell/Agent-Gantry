@@ -84,6 +84,7 @@ example-tools = [
     "sympy>=1.14.0",
     "python-dotenv>=1.2.1",
 ]
+# Individual embedding providers
 embeddings = [
     "numpy>=1.24.0",
     "sentence-transformers>=2.2.0",
@@ -91,13 +92,28 @@ embeddings = [
 openai = [
     "openai>=1.0.0",
 ]
-vector-stores = [
+cohere = [
+    "cohere>=5.0.0",
+]
+# Individual vector store providers
+qdrant = [
     "qdrant-client>=1.7.0",
+]
+chroma = [
     "chromadb>=0.4.0",
+]
+pgvector = [
+    "asyncpg>=0.29.0",
 ]
 lancedb = [
     "lancedb>=0.4.0",
     "pyarrow>=14.0.1",
+]
+# Combined vector stores
+vector-stores = [
+    "qdrant-client>=1.7.0",
+    "chromadb>=0.4.0",
+    "asyncpg>=0.29.0",
 ]
 nomic = [
     "sentence-transformers>=2.2.0",
@@ -133,7 +149,7 @@ llm-providers = [
     "agent-gantry[openai,anthropic,google-genai,google-vertexai,mistral,groq]",
 ]
 all = [
-    "agent-gantry[dev,embeddings,openai,vector-stores,lancedb,nomic,mcp,a2a,llm-providers,agent-frameworks,example-tools]",
+    "agent-gantry[dev,embeddings,openai,cohere,vector-stores,lancedb,nomic,mcp,a2a,llm-providers,agent-frameworks,example-tools]",
 ]
 
 [project.scripts]

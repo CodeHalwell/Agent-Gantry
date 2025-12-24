@@ -873,17 +873,34 @@ class AgentGantry:
     def _build_vector_store(self, config: VectorStoreConfig) -> VectorStoreAdapter:
         """Construct a vector store adapter from configuration."""
         if config.type == "qdrant":
+            from agent_gantry.adapters.vector_stores.remote import QdrantVectorStore
+
             if not config.url:
-                raise ValueError("Qdrant vector store requires a 'url' in the configuration.")
-            return QdrantVectorStore(url=config.url, api_key=config.api_key)
+                raise ValueError("Qdrant requires 'url' in configuration")
+            return QdrantVectorStore(
+                url=config.url,
+                api_key=config.api_key,
+                collection_name=config.collection_name,
+                dimension=config.dimension or 1536,
+            )
         if config.type == "chroma":
-            if not config.url:
-                raise ValueError("Chroma vector store requires a 'url' in the configuration.")
-            return ChromaVectorStore(url=config.url, api_key=config.api_key)
+            from agent_gantry.adapters.vector_stores.remote import ChromaVectorStore
+
+            return ChromaVectorStore(
+                url=config.url,
+                collection_name=config.collection_name,
+                persist_directory=config.db_path,
+            )
         if config.type == "pgvector":
+            from agent_gantry.adapters.vector_stores.remote import PGVectorStore
+
             if not config.url:
-                raise ValueError("PGVector vector store requires a 'url' in the configuration.")
-            return PGVectorStore(url=config.url, api_key=config.api_key)
+                raise ValueError("PGVector requires 'url' (connection string) in configuration")
+            return PGVectorStore(
+                url=config.url,
+                table_name=config.collection_name,
+                dimension=config.dimension or 1536,
+            )
         if config.type == "lancedb":
             from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
 
@@ -915,6 +932,8 @@ class AgentGantry:
         if not config.enabled:
             return None
         if config.type == "cohere":
+            from agent_gantry.adapters.rerankers.cohere import CohereReranker
+
             return CohereReranker(model=config.model)
         return None
 
