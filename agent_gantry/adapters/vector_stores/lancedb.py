@@ -20,8 +20,18 @@ logger = logging.getLogger(__name__)
 
 
 def _escape_sql_string(value: str) -> str:
-    """Escape single quotes in SQL strings to prevent SQL injection."""
-    return value.replace("'", "''")
+    """Escape special characters in SQL strings to prevent injection."""
+    # Escape backslashes first, then single quotes
+    return value.replace("\\", "\\\\").replace("'", "''")
+
+
+def _validate_identifier(value: str, field_name: str) -> None:
+    """Validate that a value is safe to use in SQL."""
+    if not value or len(value) > 256:
+        raise ValueError(f"{field_name} must be 1-256 characters")
+    # Reject null bytes and other control characters
+    if any(ord(c) < 32 for c in value):
+        raise ValueError(f"{field_name} contains invalid characters")
 
 
 class LanceDBVectorStore:
@@ -452,6 +462,10 @@ class LanceDBVectorStore:
         """
         await self._ensure_initialized()
 
+        # Validate inputs for SQL safety
+        _validate_identifier(name, "name")
+        _validate_identifier(namespace, "namespace")
+
         # Escape ID for SQL safety
         tool_id = _escape_sql_string(f"{namespace}.{name}")
         try:
@@ -478,6 +492,10 @@ class LanceDBVectorStore:
         """
         await self._ensure_initialized()
 
+        # Validate inputs for SQL safety
+        _validate_identifier(name, "name")
+        _validate_identifier(namespace, "namespace")
+
         # Escape ID for SQL safety
         skill_id = _escape_sql_string(f"{namespace}.{name}")
         try:
@@ -502,6 +520,10 @@ class LanceDBVectorStore:
         """
         await self._ensure_initialized()
 
+        # Validate inputs for SQL safety
+        _validate_identifier(name, "name")
+        _validate_identifier(namespace, "namespace")
+
         # Escape ID for SQL safety
         tool_id = _escape_sql_string(f"{namespace}.{name}")
         try:
@@ -522,6 +544,10 @@ class LanceDBVectorStore:
             True if deleted, False if not found
         """
         await self._ensure_initialized()
+
+        # Validate inputs for SQL safety
+        _validate_identifier(name, "name")
+        _validate_identifier(namespace, "namespace")
 
         # Escape ID for SQL safety
         skill_id = _escape_sql_string(f"{namespace}.{name}")
@@ -549,6 +575,10 @@ class LanceDBVectorStore:
             List of tool definitions
         """
         await self._ensure_initialized()
+
+        # Validate namespace if provided
+        if namespace is not None:
+            _validate_identifier(namespace, "namespace")
 
         try:
             # Use to_arrow for listing (doesn't require pandas)
@@ -591,6 +621,12 @@ class LanceDBVectorStore:
         """
         await self._ensure_initialized()
 
+        # Validate inputs if provided
+        if namespace is not None:
+            _validate_identifier(namespace, "namespace")
+        if category is not None:
+            _validate_identifier(category, "category")
+
         try:
             table = self._skills_table.to_arrow()
             records = table.to_pylist()
@@ -624,6 +660,10 @@ class LanceDBVectorStore:
         """
         await self._ensure_initialized()
 
+        # Validate namespace if provided
+        if namespace is not None:
+            _validate_identifier(namespace, "namespace")
+
         try:
             if namespace:
                 # For namespace filtering, we need to scan records
@@ -647,6 +687,10 @@ class LanceDBVectorStore:
             Number of skills
         """
         await self._ensure_initialized()
+
+        # Validate namespace if provided
+        if namespace is not None:
+            _validate_identifier(namespace, "namespace")
 
         try:
             if namespace:

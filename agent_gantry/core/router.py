@@ -350,7 +350,7 @@ class SemanticRouter:
         _ = query_embedding  # kept for signature consistency; not used in relevance scoring
         lambda_param = 1.0 - diversity_factor
         relevance_scores = [score for _, score in scored_tools]
-        tool_texts = [self._tool_to_text(tool) for tool, _ in scored_tools]
+        tool_texts = [tool.to_searchable_text() for tool, _ in scored_tools]
         embeddings = await self._embedder.embed_batch(tool_texts)
 
         selected: list[int] = []
@@ -387,10 +387,6 @@ class SemanticRouter:
         if norm_a == 0.0 or norm_b == 0.0:
             return 0.0
         return dot_product / (norm_a * norm_b)
-
-    def _tool_to_text(self, tool: ToolDefinition) -> str:
-        """Flatten tool metadata into text for similarity comparisons."""
-        return tool.to_searchable_text()
 
     def _contains_token(self, text: str, token: str) -> bool:
         """Return True if token appears as a standalone word in text."""

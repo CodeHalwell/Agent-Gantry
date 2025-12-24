@@ -150,9 +150,40 @@ class AgentGantryConfig(BaseModel):
 
     @classmethod
     def from_yaml(cls, path: str) -> AgentGantryConfig:
-        """Load configuration from a YAML file."""
+        """
+        Load configuration from a YAML file.
+
+        Args:
+            path: Path to the YAML configuration file
+
+        Returns:
+            Configured AgentGantryConfig instance
+
+        Raises:
+            FileNotFoundError: If the config file doesn't exist
+            ValueError: If the YAML is invalid or doesn't match schema
+        """
+        from pathlib import Path as PathLib
+
         import yaml  # type: ignore[import-untyped]
 
-        with open(path) as f:
-            data = yaml.safe_load(f)
-        return cls(**data)
+        config_path = PathLib(path)
+        if not config_path.exists():
+            raise FileNotFoundError(
+                f"Configuration file not found: {path}\n"
+                f"Create a config file or use AgentGantryConfig() for defaults."
+            )
+
+        try:
+            with open(config_path) as f:
+                data = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            raise ValueError(f"Invalid YAML in {path}: {e}") from e
+
+        if data is None:
+            data = {}
+
+        try:
+            return cls(**data)
+        except Exception as e:
+            raise ValueError(f"Invalid configuration in {path}: {e}") from e
