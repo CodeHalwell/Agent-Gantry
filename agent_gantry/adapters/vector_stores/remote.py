@@ -7,13 +7,37 @@ collection management, filtering, and error handling.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
 import uuid
 from typing import Any
 
 from agent_gantry.schema.tool import ToolDefinition
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_sql_identifier(value: str, field_name: str) -> None:
+    """
+    Validate that a value is safe to use as a SQL identifier.
+
+    Args:
+        value: The identifier to validate
+        field_name: Name of the field for error messages
+
+    Raises:
+        ValueError: If the identifier is invalid
+    """
+    if not value or len(value) > 63:  # PostgreSQL identifier length limit
+        raise ValueError(f"{field_name} must be 1-63 characters")
+
+    # Must start with letter or underscore, contain only alphanumeric and underscores
+    if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', value):
+        raise ValueError(
+            f"{field_name} must start with a letter or underscore and contain only "
+            "alphanumeric characters and underscores"
+        )
 
 
 class QdrantVectorStore:
@@ -225,9 +249,11 @@ class QdrantVectorStore:
         point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{namespace}.{name}"))
 
         try:
+            from qdrant_client.models import PointIdsList
+
             await self._client.delete(
                 collection_name=self._collection_name,
-                points_selector=[point_id],
+                points_selector=PointIdsList(points=[point_id]),
             )
             return True
         except Exception:
@@ -362,7 +388,9 @@ class ChromaVectorStore:
             return
 
         # Get or create collection with cosine similarity
-        self._collection = self._client.get_or_create_collection(
+        # Wrap synchronous operation to avoid blocking event loop
+        self._collection = await asyncio.to_thread(
+            self._client.get_or_create_collection,
             name=self._collection_name,
             metadata={"hnsw:space": "cosine"},
         )
@@ -405,15 +433,18 @@ class ChromaVectorStore:
             vectors.append(embedding)
 
         # Upsert to collection
+        # Wrap synchronous operations to avoid blocking event loop
         if upsert:
-            self._collection.upsert(
+            await asyncio.to_thread(
+                self._collection.upsert,
                 ids=ids,
                 embeddings=vectors,
                 documents=documents,
                 metadatas=metadatas,
             )
         else:
-            self._collection.add(
+            await asyncio.to_thread(
+                self._collection.add,
                 ids=ids,
                 embeddings=vectors,
                 documents=documents,
@@ -438,7 +469,9 @@ class ChromaVectorStore:
             where = {"namespace": filters["namespace"]}
 
         # Query collection
-        results = self._collection.query(
+        # Wrap synchronous operation to avoid blocking event loop
+        results = await asyncio.to_thread(
+            self._collection.query,
             query_embeddings=[query_vector],
             n_results=limit,
             where=where,
@@ -470,7 +503,8 @@ class ChromaVectorStore:
         tool_id = f"{namespace}.{name}"
 
         try:
-            result = self._collection.get(ids=[tool_id])
+            # Wrap synchronous operation to avoid blocking event loop
+            result = await asyncio.to_thread(self._collection.get, ids=[tool_id])
 
             if result["metadatas"]:
                 tool_json = result["metadatas"][0].get("tool_json", "{}")
@@ -487,7 +521,8 @@ class ChromaVectorStore:
         tool_id = f"{namespace}.{name}"
 
         try:
-            self._collection.delete(ids=[tool_id])
+            # Wrap synchronous operation to avoid blocking event loop
+            await asyncio.to_thread(self._collection.delete, ids=[tool_id])
             return True
         except Exception:
             return False
@@ -507,7 +542,9 @@ class ChromaVectorStore:
             where = {"namespace": namespace}
 
         try:
-            result = self._collection.get(
+            # Wrap synchronous operation to avoid blocking event loop
+            result = await asyncio.to_thread(
+                self._collection.get,
                 where=where,
                 limit=limit,
                 offset=offset,
@@ -533,7 +570,11 @@ class ChromaVectorStore:
             if namespace:
                 where = {"namespace": namespace}
 
-            result = self._collection.count(where=where) if where else self._collection.count()
+            # Wrap synchronous operation to avoid blocking event loop
+            if where:
+                result = await asyncio.to_thread(self._collection.count, where=where)
+            else:
+                result = await asyncio.to_thread(self._collection.count)
             return result
         except Exception:
             return 0
@@ -578,6 +619,9 @@ class PGVectorStore:
 
         if not url:
             raise ValueError("PGVector requires a connection string (url)")
+
+        # Validate table name to prevent SQL injection
+        _validate_sql_identifier(table_name, "table_name")
 
         self._url = url
         self._table_name = table_name
