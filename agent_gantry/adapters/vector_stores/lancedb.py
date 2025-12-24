@@ -323,7 +323,8 @@ class LanceDBVectorStore:
         limit: int,
         filters: dict[str, Any] | None = None,
         score_threshold: float | None = None,
-    ) -> list[tuple[ToolDefinition, float]]:
+        include_embeddings: bool = False,
+    ) -> list[tuple[ToolDefinition, float]] | list[tuple[ToolDefinition, float, list[float]]]:
         """
         Search for tools similar to the query vector.
 
@@ -332,10 +333,20 @@ class LanceDBVectorStore:
             limit: Maximum number of results
             filters: Optional filters (namespace, tags)
             score_threshold: Minimum similarity score (0-1, higher is better)
+            include_embeddings: If True, return embeddings along with tools
 
         Returns:
-            List of (tool, score) tuples sorted by relevance
+            List of (tool, score) tuples if include_embeddings=False
+            List of (tool, score, embedding) tuples if include_embeddings=True
         """
+        import logging
+
+        if include_embeddings:
+            logging.getLogger(__name__).warning(
+                "LanceDBVectorStore does not support include_embeddings yet. "
+                "Returning without embeddings."
+            )
+
         await self._ensure_initialized()
 
         # Build search query

@@ -181,9 +181,16 @@ class QdrantVectorStore:
         limit: int,
         filters: dict[str, Any] | None = None,
         score_threshold: float | None = None,
-    ) -> list[tuple[ToolDefinition, float]]:
+        include_embeddings: bool = False,
+    ) -> list[tuple[ToolDefinition, float]] | list[tuple[ToolDefinition, float, list[float]]]:
         """Search for similar tools."""
         from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+        if include_embeddings:
+            logger.warning(
+                "QdrantVectorStore does not support include_embeddings yet. "
+                "Returning without embeddings."
+            )
 
         await self.initialize()
 
@@ -459,8 +466,15 @@ class ChromaVectorStore:
         limit: int,
         filters: dict[str, Any] | None = None,
         score_threshold: float | None = None,
-    ) -> list[tuple[ToolDefinition, float]]:
+        include_embeddings: bool = False,
+    ) -> list[tuple[ToolDefinition, float]] | list[tuple[ToolDefinition, float, list[float]]]:
         """Search for similar tools."""
+        if include_embeddings:
+            logger.warning(
+                "ChromaVectorStore does not support include_embeddings yet. "
+                "Returning without embeddings."
+            )
+
         await self.initialize()
 
         # Build where filter for namespace
@@ -737,8 +751,15 @@ class PGVectorStore:
         limit: int,
         filters: dict[str, Any] | None = None,
         score_threshold: float | None = None,
-    ) -> list[tuple[ToolDefinition, float]]:
+        include_embeddings: bool = False,
+    ) -> list[tuple[ToolDefinition, float]] | list[tuple[ToolDefinition, float, list[float]]]:
         """Search for similar tools."""
+        if include_embeddings:
+            logger.warning(
+                "PGVectorStore does not support include_embeddings yet. "
+                "Returning without embeddings."
+            )
+
         await self.initialize()
 
         embedding_str = "[" + ",".join(str(x) for x in query_vector) + "]"

@@ -36,6 +36,9 @@ class EmbedderConfig(BaseModel):
     model: str = "all-MiniLM-L6-v2"
     api_key: str | None = None
     api_base: str | None = None
+    api_version: str | None = Field(
+        default=None, description="API version (for Azure OpenAI)"
+    )
     batch_size: int = 100
     max_retries: int = 3
     dimension: int | None = Field(

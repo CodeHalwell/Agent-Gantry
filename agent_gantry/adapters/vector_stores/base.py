@@ -50,7 +50,8 @@ class VectorStoreAdapter(Protocol):
         limit: int,
         filters: dict[str, Any] | None = None,
         score_threshold: float | None = None,
-    ) -> list[tuple[ToolDefinition, float]]:
+        include_embeddings: bool = False,
+    ) -> list[tuple[ToolDefinition, float]] | list[tuple[ToolDefinition, float, list[float]]]:
         """
         Search for tools similar to the query vector.
 
@@ -59,9 +60,11 @@ class VectorStoreAdapter(Protocol):
             limit: Maximum number of results
             filters: Optional filters to apply
             score_threshold: Minimum score threshold
+            include_embeddings: If True, return embeddings along with tools
 
         Returns:
-            List of (tool, score) tuples
+            List of (tool, score) tuples if include_embeddings=False
+            List of (tool, score, embedding) tuples if include_embeddings=True
         """
         ...
 

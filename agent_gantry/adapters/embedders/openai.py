@@ -222,8 +222,12 @@ class AzureOpenAIEmbedder:
         else:
             self._dimension = self.MODEL_DIMENSIONS.get(self._model, 1536)
 
-        # Azure API version
-        api_version = "2024-02-01"
+        # Azure API version - use config, env var, or latest stable default
+        api_version = (
+            config.api_version
+            or os.getenv("AZURE_OPENAI_API_VERSION")
+            or "2024-10-01-preview"  # Latest stable as of Dec 2025
+        )
 
         # Initialize Azure client with retry logic
         self._client = AsyncAzureOpenAI(
