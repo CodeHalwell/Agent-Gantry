@@ -90,6 +90,25 @@ class RoutingConfig(BaseModel):
     mmr_lambda: float = 0.7
 
 
+class RateLimitConfig(BaseModel):
+    """Configuration for rate limiting."""
+
+    enabled: bool = True
+    strategy: Literal["sliding_window", "token_bucket", "fixed_window"] = "sliding_window"
+    max_calls_per_minute: int = 60
+    max_calls_per_hour: int = 1000
+    max_concurrent: int = 10
+    burst_size: int | None = Field(
+        default=None, description="Burst size for token bucket strategy"
+    )
+    per_tool: bool = Field(
+        default=True, description="Rate limit per tool (vs. globally)"
+    )
+    per_namespace: bool = Field(
+        default=False, description="Rate limit per namespace"
+    )
+
+
 class ExecutionConfig(BaseModel):
     """Configuration for tool execution."""
 
@@ -99,6 +118,7 @@ class ExecutionConfig(BaseModel):
     circuit_breaker_timeout_s: int = 60
     enable_sandbox: bool = False
     sandbox_type: Literal["none", "subprocess", "docker"] = "none"
+    rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
 
 
 class TelemetryConfig(BaseModel):
