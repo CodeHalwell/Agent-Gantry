@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
+    from agent_gantry.adapters.llm_client import LLMClient
     from agent_gantry.adapters.rerankers.base import RerankerAdapter
     from agent_gantry.adapters.vector_stores.base import VectorStoreAdapter
     from agent_gantry.schema.query import ToolQuery
@@ -119,6 +120,7 @@ async def classify_intent(
     query: str,
     conversation_summary: str | None = None,
     use_llm: bool = False,
+    llm_client: "LLMClient | None" = None,
 ) -> TaskIntent:
     """
     Classify the intent of a query.
@@ -127,6 +129,7 @@ async def classify_intent(
         query: The user's query
         conversation_summary: Optional conversation context
         use_llm: Whether to use LLM for classification
+        llm_client: Optional LLM client for classification
 
     Returns:
         The classified intent
@@ -138,15 +141,29 @@ async def classify_intent(
     if conversation_summary:
         enriched_query = f"{enriched_query} {conversation_summary.lower()}"
 
+    # First try keyword-based classification
     for intent, keywords in INTENT_TAG_MAPPING.items():
         scores[intent] = sum(1 for kw in keywords if kw in enriched_query)
 
     if max(scores.values()) > 0:
         return max(scores, key=lambda k: scores[k])
 
-    if use_llm:
-        # TODO: Implement LLM-based classification
-        raise NotImplementedError("LLM-based intent classification is not implemented yet.")
+    # Fall back to LLM-based classification if enabled and available
+    if use_llm and llm_client:
+        available_intents = [intent.value for intent in TaskIntent]
+        try:
+            result = await llm_client.classify_intent(
+                query=query,
+                conversation_summary=conversation_summary,
+                available_intents=available_intents,
+            )
+            # Convert string result to TaskIntent enum
+            for intent in TaskIntent:
+                if intent.value == result:
+                    return intent
+        except Exception:
+            # Fall back to UNKNOWN if LLM classification fails
+            pass
 
     return TaskIntent.UNKNOWN
 
@@ -169,6 +186,8 @@ class SemanticRouter:
         embedder: EmbeddingAdapter,
         reranker: RerankerAdapter | None = None,
         weights: RoutingWeights | None = None,
+        llm_client: "LLMClient | None" = None,
+        use_llm_for_intent: bool = False,
     ) -> None:
         """
         Initialize the semantic router.
@@ -178,11 +197,15 @@ class SemanticRouter:
             embedder: Embedding model for queries
             reranker: Optional reranker for precision
             weights: Routing signal weights
+            llm_client: Optional LLM client for intent classification
+            use_llm_for_intent: Whether to use LLM for intent classification
         """
         self._vector_store = vector_store
         self._embedder = embedder
         self._reranker = reranker
         self._weights = weights or RoutingWeights()
+        self._llm_client = llm_client
+        self._use_llm_for_intent = use_llm_for_intent
 
     async def route(
         self,
@@ -205,19 +228,32 @@ class SemanticRouter:
         if query.namespaces:
             filters = {"namespace": query.namespaces}
 
+        # Request embeddings if MMR will be used (optimization to avoid re-embedding)
+        include_embeddings = query.diversity_factor > 0
+
         search_start = perf_counter()
         candidates = await self._vector_store.search(
             query_vector=query_embedding,
             limit=query.limit * 4,
             filters=filters,
             score_threshold=query.score_threshold,
+            include_embeddings=include_embeddings,
         )
         vector_search_time_ms = (perf_counter() - search_start) * 1000
 
         intent = await self._resolve_intent(query)
 
+        # Store embeddings separately for MMR if they were included
+        tool_embeddings: dict[str, list[float]] = {}
         scored_tools: list[tuple[ToolDefinition, float]] = []
-        for tool, semantic_score in candidates:
+
+        for candidate in candidates:
+            if include_embeddings:
+                tool, semantic_score, embedding = candidate  # type: ignore
+                tool_key = f"{tool.namespace}.{tool.name}"
+                tool_embeddings[tool_key] = embedding
+            else:
+                tool, semantic_score = candidate  # type: ignore
             if query.exclude_deprecated and tool.deprecated:
                 continue
             if query.namespaces and tool.namespace not in query.namespaces:
@@ -262,6 +298,7 @@ class SemanticRouter:
                 query_embedding,
                 query.diversity_factor,
                 query.limit,
+                tool_embeddings,
             )
 
         final_tools = scored_tools[: query.limit]
@@ -284,6 +321,8 @@ class SemanticRouter:
         return await classify_intent(
             query.context.query,
             query.context.conversation_summary,
+            use_llm=self._use_llm_for_intent,
+            llm_client=self._llm_client,
         )
 
     def _compute_signals(
@@ -342,6 +381,7 @@ class SemanticRouter:
         query_embedding: list[float],
         diversity_factor: float,
         limit: int,
+        cached_embeddings: dict[str, list[float]] | None = None,
     ) -> list[tuple[ToolDefinition, float]]:
         """Apply MMR to encourage diversity in selected tools."""
         if not scored_tools:
@@ -350,8 +390,21 @@ class SemanticRouter:
         _ = query_embedding  # kept for signature consistency; not used in relevance scoring
         lambda_param = 1.0 - diversity_factor
         relevance_scores = [score for _, score in scored_tools]
-        tool_texts = [tool.to_searchable_text() for tool, _ in scored_tools]
-        embeddings = await self._embedder.embed_batch(tool_texts)
+
+        # Use cached embeddings if available, otherwise re-embed (fallback)
+        if cached_embeddings:
+            embeddings = []
+            for tool, _ in scored_tools:
+                tool_key = f"{tool.namespace}.{tool.name}"
+                embedding = cached_embeddings.get(tool_key)
+                if embedding is None:
+                    # Fallback: re-embed this specific tool if not in cache
+                    embedding = await self._embedder.embed_text(tool.to_searchable_text())
+                embeddings.append(embedding)
+        else:
+            # Fallback: re-embed all tools (old behavior for backward compatibility)
+            tool_texts = [tool.to_searchable_text() for tool, _ in scored_tools]
+            embeddings = await self._embedder.embed_batch(tool_texts)
 
         selected: list[int] = []
         candidates = list(range(len(scored_tools)))

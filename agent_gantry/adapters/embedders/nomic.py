@@ -153,13 +153,19 @@ class NomicEmbedder(EmbeddingAdapter):
         Returns:
             Embedding vector of configured dimension
         """
+        import asyncio
+
         self._ensure_initialized()
 
         # Add task prefix
         prefixed_text = f"{self._task_prefix}{text}"
 
-        # Generate embedding
-        embedding = self._model.encode([prefixed_text], normalize_embeddings=True)
+        # Generate embedding (run in thread pool to avoid blocking event loop)
+        loop = asyncio.get_event_loop()
+        embedding = await loop.run_in_executor(
+            None,
+            lambda: self._model.encode([prefixed_text], normalize_embeddings=True)
+        )
         result = embedding.tolist()
 
         # Apply Matryoshka truncation if needed
@@ -181,6 +187,8 @@ class NomicEmbedder(EmbeddingAdapter):
         Returns:
             List of embedding vectors
         """
+        import asyncio
+
         if not texts:
             return []
 
@@ -189,12 +197,16 @@ class NomicEmbedder(EmbeddingAdapter):
         # Add task prefix to all texts
         prefixed_texts = [f"{self._task_prefix}{text}" for text in texts]
 
-        # Generate embeddings
+        # Generate embeddings (run in thread pool to avoid blocking event loop)
         kwargs: dict[str, Any] = {"normalize_embeddings": True}
         if batch_size is not None:
             kwargs["batch_size"] = batch_size
 
-        embeddings = self._model.encode(prefixed_texts, **kwargs)
+        loop = asyncio.get_event_loop()
+        embeddings = await loop.run_in_executor(
+            None,
+            lambda: self._model.encode(prefixed_texts, **kwargs)
+        )
         result = embeddings.tolist()
 
         # Apply Matryoshka truncation if needed
@@ -214,12 +226,19 @@ class NomicEmbedder(EmbeddingAdapter):
         Returns:
             Query embedding vector
         """
+        import asyncio
+
         self._ensure_initialized()
 
         # Always use search_query prefix for queries (optimal for retrieval)
         prefixed_query = f"search_query: {query}"
 
-        embedding = self._model.encode([prefixed_query], normalize_embeddings=True)
+        # Generate embedding (run in thread pool to avoid blocking event loop)
+        loop = asyncio.get_event_loop()
+        embedding = await loop.run_in_executor(
+            None,
+            lambda: self._model.encode([prefixed_query], normalize_embeddings=True)
+        )
         result = embedding.tolist()
 
         truncated = self._apply_matryoshka_truncation(result)
@@ -232,10 +251,16 @@ class NomicEmbedder(EmbeddingAdapter):
         Returns:
             True if the model can be loaded and used
         """
+        import asyncio
+
         try:
             self._ensure_initialized()
-            # Quick sanity check
-            test_embedding = self._model.encode(["test"], normalize_embeddings=True)
+            # Quick sanity check (run in thread pool to avoid blocking event loop)
+            loop = asyncio.get_event_loop()
+            test_embedding = await loop.run_in_executor(
+                None,
+                lambda: self._model.encode(["test"], normalize_embeddings=True)
+            )
             return len(test_embedding[0]) > 0
         except Exception:
             return False

@@ -36,6 +36,9 @@ class EmbedderConfig(BaseModel):
     model: str = "all-MiniLM-L6-v2"
     api_key: str | None = None
     api_base: str | None = None
+    api_version: str | None = Field(
+        default=None, description="API version (for Azure OpenAI)"
+    )
     batch_size: int = 100
     max_retries: int = 3
     dimension: int | None = Field(
@@ -55,6 +58,19 @@ class RerankerConfig(BaseModel):
     top_k: int = 10
 
 
+class LLMConfig(BaseModel):
+    """Configuration for LLM-based features (intent classification, etc.)."""
+
+    provider: Literal["openai", "anthropic", "google", "mistral", "groq"] = "openai"
+    model: str = "gpt-4o-mini"
+    api_key: str | None = None
+    base_url: str | None = Field(
+        default=None, description="Custom base URL (for OpenRouter, etc.)"
+    )
+    max_tokens: int = 100
+    temperature: float = 0.0
+
+
 class RoutingConfig(BaseModel):
     """Configuration for semantic routing."""
 
@@ -69,8 +85,28 @@ class RoutingConfig(BaseModel):
     )
     enable_intent_classification: bool = True
     use_llm_for_intent: bool = False
+    llm: LLMConfig = Field(default_factory=LLMConfig)
     enable_mmr: bool = True
     mmr_lambda: float = 0.7
+
+
+class RateLimitConfig(BaseModel):
+    """Configuration for rate limiting."""
+
+    enabled: bool = True
+    strategy: Literal["sliding_window", "token_bucket", "fixed_window"] = "sliding_window"
+    max_calls_per_minute: int = 60
+    max_calls_per_hour: int = 1000
+    max_concurrent: int = 10
+    burst_size: int | None = Field(
+        default=None, description="Burst size for token bucket strategy"
+    )
+    per_tool: bool = Field(
+        default=True, description="Rate limit per tool (vs. globally)"
+    )
+    per_namespace: bool = Field(
+        default=False, description="Rate limit per namespace"
+    )
 
 
 class ExecutionConfig(BaseModel):
@@ -82,6 +118,7 @@ class ExecutionConfig(BaseModel):
     circuit_breaker_timeout_s: int = 60
     enable_sandbox: bool = False
     sandbox_type: Literal["none", "subprocess", "docker"] = "none"
+    rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
 
 
 class TelemetryConfig(BaseModel):

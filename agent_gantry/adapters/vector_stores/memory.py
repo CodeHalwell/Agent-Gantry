@@ -48,9 +48,10 @@ class InMemoryVectorStore:
         limit: int,
         filters: dict[str, Any] | None = None,
         score_threshold: float | None = None,
-    ) -> list[tuple[ToolDefinition, float]]:
+        include_embeddings: bool = False,
+    ) -> list[tuple[ToolDefinition, float]] | list[tuple[ToolDefinition, float, list[float]]]:
         """Search for similar tools using cosine similarity."""
-        results: list[tuple[ToolDefinition, float]] = []
+        results: list[tuple[ToolDefinition, float, list[float]]] = []
 
         for key, tool in self._tools.items():
             embedding = self._embeddings.get(key)
@@ -74,12 +75,16 @@ class InMemoryVectorStore:
             score = self._cosine_similarity(query_vector, embedding)
 
             if score_threshold is None or score >= score_threshold:
-                results.append((tool, score))
+                results.append((tool, score, embedding))
 
         # Sort by score descending
         results.sort(key=lambda x: x[1], reverse=True)
 
-        return results[:limit]
+        # Return with or without embeddings based on parameter
+        limited = results[:limit]
+        if include_embeddings:
+            return limited
+        return [(tool, score) for tool, score, _ in limited]
 
     async def get_by_name(
         self, name: str, namespace: str = "default"
