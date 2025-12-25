@@ -186,12 +186,6 @@ class QdrantVectorStore:
         """Search for similar tools."""
         from qdrant_client.models import FieldCondition, Filter, MatchValue
 
-        if include_embeddings:
-            logger.warning(
-                "QdrantVectorStore does not support include_embeddings yet. "
-                "Returning without embeddings."
-            )
-
         await self.initialize()
 
         # Build filter for namespace
@@ -207,21 +201,31 @@ class QdrantVectorStore:
                 ]
             )
 
-        # Search
+        # Search with optional vector retrieval
         results = await self._client.search(
             collection_name=self._collection_name,
             query_vector=query_vector,
             limit=limit,
             query_filter=query_filter,
             score_threshold=score_threshold,
+            with_vectors=include_embeddings,  # Request vectors if needed
         )
 
         # Convert results to tools
-        tools: list[tuple[ToolDefinition, float]] = []
-        for result in results:
-            tool_json = result.payload.get("tool_json", "{}")
-            tool = ToolDefinition.model_validate_json(tool_json)
-            tools.append((tool, result.score))
+        if include_embeddings:
+            tools: list[tuple[ToolDefinition, float, list[float]]] = []
+            for result in results:
+                tool_json = result.payload.get("tool_json", "{}")
+                tool = ToolDefinition.model_validate_json(tool_json)
+                # Extract vector from result
+                embedding = result.vector if result.vector else []
+                tools.append((tool, result.score, embedding))
+        else:
+            tools: list[tuple[ToolDefinition, float]] = []
+            for result in results:
+                tool_json = result.payload.get("tool_json", "{}")
+                tool = ToolDefinition.model_validate_json(tool_json)
+                tools.append((tool, result.score))
 
         return tools
 
@@ -469,12 +473,6 @@ class ChromaVectorStore:
         include_embeddings: bool = False,
     ) -> list[tuple[ToolDefinition, float]] | list[tuple[ToolDefinition, float, list[float]]]:
         """Search for similar tools."""
-        if include_embeddings:
-            logger.warning(
-                "ChromaVectorStore does not support include_embeddings yet. "
-                "Returning without embeddings."
-            )
-
         await self.initialize()
 
         # Build where filter for namespace
@@ -482,29 +480,49 @@ class ChromaVectorStore:
         if filters and "namespace" in filters:
             where = {"namespace": filters["namespace"]}
 
-        # Query collection
+        # Query collection with optional embeddings
         # Wrap synchronous operation to avoid blocking event loop
         results = await asyncio.to_thread(
             self._collection.query,
             query_embeddings=[query_vector],
             n_results=limit,
             where=where,
+            include=["metadatas", "distances", "embeddings"] if include_embeddings else ["metadatas", "distances"],
         )
 
         # Convert results to tools
-        tools: list[tuple[ToolDefinition, float]] = []
+        if include_embeddings:
+            tools: list[tuple[ToolDefinition, float, list[float]]] = []
 
-        if results["metadatas"] and results["distances"]:
-            for metadata, distance in zip(results["metadatas"][0], results["distances"][0]):
-                tool_json = metadata.get("tool_json", "{}")
-                tool = ToolDefinition.model_validate_json(tool_json)
+            if results["metadatas"] and results["distances"] and results.get("embeddings"):
+                for metadata, distance, embedding in zip(
+                    results["metadatas"][0],
+                    results["distances"][0],
+                    results["embeddings"][0]
+                ):
+                    tool_json = metadata.get("tool_json", "{}")
+                    tool = ToolDefinition.model_validate_json(tool_json)
 
-                # Convert distance to similarity score (1 - distance for cosine)
-                score = 1.0 - distance
+                    # Convert distance to similarity score (1 - distance for cosine)
+                    score = 1.0 - distance
 
-                # Apply score threshold if specified
-                if score_threshold is None or score >= score_threshold:
-                    tools.append((tool, score))
+                    # Apply score threshold if specified
+                    if score_threshold is None or score >= score_threshold:
+                        tools.append((tool, score, embedding))
+        else:
+            tools: list[tuple[ToolDefinition, float]] = []
+
+            if results["metadatas"] and results["distances"]:
+                for metadata, distance in zip(results["metadatas"][0], results["distances"][0]):
+                    tool_json = metadata.get("tool_json", "{}")
+                    tool = ToolDefinition.model_validate_json(tool_json)
+
+                    # Convert distance to similarity score (1 - distance for cosine)
+                    score = 1.0 - distance
+
+                    # Apply score threshold if specified
+                    if score_threshold is None or score >= score_threshold:
+                        tools.append((tool, score))
 
         return tools
 
