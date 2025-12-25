@@ -95,12 +95,24 @@ class AgentGantry:
         self._telemetry = telemetry or self._build_telemetry(self._config.telemetry)
         self._security_policy = security_policy or SecurityPolicy()
         self._registry = ToolRegistry()
+
+        # Initialize LLM client for intent classification if enabled
+        self._llm_client = None
+        if self._config.routing.use_llm_for_intent:
+            from agent_gantry.adapters.llm_client import LLMClient
+            try:
+                self._llm_client = LLMClient(self._config.routing.llm)
+            except Exception as e:
+                logger.warning(f"Failed to initialize LLM client for intent classification: {e}")
+
         routing_weights = RoutingWeights(**self._config.routing.weights)
         self._router = SemanticRouter(
             vector_store=self._vector_store,
             embedder=self._embedder,
             reranker=self._reranker,
             weights=routing_weights,
+            llm_client=self._llm_client,
+            use_llm_for_intent=self._config.routing.use_llm_for_intent,
         )
         self._executor = ExecutionEngine(
             registry=self._registry,
