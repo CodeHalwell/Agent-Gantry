@@ -1,16 +1,17 @@
 """
-Anthropic Skills API Demo with Agent-Gantry.
+Anthropic Skills Demo with Agent-Gantry.
 
-This example demonstrates how to use Anthropic's Skills API with Agent-Gantry
+This example demonstrates how to use the Skills abstraction with Agent-Gantry
 to create reusable, composable skills that combine multiple tools.
+
+Skills inject instructions into the system prompt and provide associated
+tools to Claude, enabling coherent multi-tool workflows.
 
 Requirements:
     pip install anthropic agent-gantry
 
 Environment:
     Set ANTHROPIC_API_KEY in your environment
-
-Beta version: skills-2025-10-02
 """
 
 import asyncio
@@ -89,7 +90,7 @@ async def demo_basic_skills():
     print()
 
     response = await client.create_message(
-        model="claude-3-5-sonnet-20241022",
+        model="claude-sonnet-4-5",
         messages=[
             {
                 "role": "user",
@@ -183,7 +184,7 @@ async def demo_multi_skill_workflow():
     print()
 
     response = await client.create_message(
-        model="claude-3-5-sonnet-20241022",
+        model="claude-sonnet-4-5",
         messages=[
             {
                 "role": "user",
@@ -257,7 +258,7 @@ async def demo_skill_from_gantry_tools():
     print()
 
     response = await client.create_message(
-        model="claude-3-5-sonnet-20241022",
+        model="claude-sonnet-4-5",
         messages=[
             {
                 "role": "user",
@@ -368,7 +369,8 @@ async def main():
 
     except Exception as e:
         print(f"\n❌ Error: {e}")
-        print("\nNote: Skills API requires beta access and specific model versions")
+        import traceback
+        traceback.print_exc()
 
 
 if __name__ == "__main__":

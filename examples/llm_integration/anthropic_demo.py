@@ -66,7 +66,7 @@ async def main():
 
     # C. Call Claude
     response = await client.messages.create(
-        model="claude-3-opus-20240229",
+        model="claude-sonnet-4-5",
         max_tokens=1024,
         messages=[{"role": "user", "content": query}],
         tools=anthropic_tools
@@ -94,7 +94,7 @@ async def main():
     async def chat_with_claude(messages: list[dict[str, str]], tools: list[dict[str, Any]] = None):
         print(f"   [Decorator] Injected {len(tools) if tools else 0} tools (Anthropic format)")
         return await client.messages.create(
-            model="claude-3-opus-20240229",
+            model="claude-sonnet-4-5",
             max_tokens=1024,
             messages=messages,
             tools=tools

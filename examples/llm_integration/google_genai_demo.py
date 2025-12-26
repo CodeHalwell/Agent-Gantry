@@ -76,7 +76,7 @@ async def main():
     # C. Call Gemini
     # Note: Gemini 2.0 Flash is a good default
     response = client.models.generate_content(
-        model='gemini-2.0-flash',
+        model='models/gemini-3-flash-preview',
         contents=user_query,
         config=config
     )
@@ -98,7 +98,7 @@ async def main():
     print("\n--- Scenario: Using @with_semantic_tools Decorator ---")
     from agent_gantry.integrations.decorator import with_semantic_tools
 
-    @with_semantic_tools(gantry, limit=1)
+    @with_semantic_tools(gantry, limit=1, score_threshold=0.1)
     async def chat_with_gemini(prompt: str, tools: list = None):
         # Convert the injected 'tools' (list of dicts) to Gemini Tool objects
         if tools:
@@ -115,10 +115,11 @@ async def main():
             toolbox = types.Tool(function_declarations=gemini_funcs)
             config = types.GenerateContentConfig(tools=[toolbox])
         else:
+            print("   [Decorator] No tools injected")
             config = None
 
         return client.models.generate_content(
-            model='gemini-2.0-flash',
+            model='models/gemini-3-flash-preview',
             contents=prompt,
             config=config
         )

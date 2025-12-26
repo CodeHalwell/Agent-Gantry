@@ -1,10 +1,13 @@
 """
-Anthropic Skills API support for Agent-Gantry.
+Anthropic Skills support for Agent-Gantry.
 
-The Skills API allows you to create reusable, composable skills that Claude can use.
-This module provides integration between Anthropic Skills and Agent-Gantry tools.
+Skills allow you to create reusable, composable abstractions that combine
+multiple tools with instructions and examples. When used in a message,
+skill instructions are injected into the system prompt and the associated
+tools are made available to Claude.
 
-Beta version: skills-2025-10-02
+This provides a way to organize related tools into cohesive capabilities
+that Claude can reason about and use effectively.
 """
 
 from __future__ import annotations
@@ -122,9 +125,11 @@ class SkillRegistry:
 
 class SkillsClient:
     """
-    Anthropic client with Skills API support.
+    Anthropic client with Skills support.
 
-    Provides easy integration between Anthropic Skills and Agent-Gantry tools.
+    Skills are implemented by injecting skill instructions into the system
+    prompt and providing the associated tools to Claude. This allows for
+    reusable, composable tool workflows without requiring a special API.
     """
 
     def __init__(
@@ -152,11 +157,8 @@ class SkillsClient:
         self._gantry = gantry
         self._skills = skill_registry or SkillRegistry()
 
-        # Initialize client with Skills API beta header
-        self._client = AsyncAnthropic(
-            api_key=self._api_key,
-            default_headers={"anthropic-beta": "skills-2025-10-02"},
-        )
+        # Initialize client
+        self._client = AsyncAnthropic(api_key=self._api_key)
 
     @property
     def skills(self) -> SkillRegistry:
@@ -172,33 +174,73 @@ class SkillsClient:
         auto_retrieve_tools: bool = True,
         query: str | None = None,
         tool_limit: int = 10,
+        system: str | None = None,
         **kwargs: Any,
     ) -> Any:
         """
-        Create a message with Skills API support.
+        Create a message with Skills support.
+
+        Skills are implemented by:
+        1. Injecting skill instructions into the system prompt
+        2. Including tools associated with skills
 
         Args:
-            model: Model identifier (e.g., "claude-3-5-sonnet-20241022")
+            model: Model identifier (e.g., "claude-sonnet-4-5")
             messages: Message history
             max_tokens: Maximum tokens to generate
             skills: List of skill names to enable, "all" for all skills, or None
             auto_retrieve_tools: Whether to automatically retrieve tools from Agent-Gantry
             query: Query for tool retrieval (defaults to last user message)
             tool_limit: Maximum number of tools to retrieve
+            system: Optional system prompt (will be combined with skill instructions)
             **kwargs: Additional arguments passed to messages.create()
 
         Returns:
             Anthropic message response
         """
         # Determine which skills to include
-        skill_schemas: list[dict[str, Any]] = []
+        selected_skills: list[Skill] = []
+        skill_tool_names: set[str] = set()
+
         if skills == "all":
-            skill_schemas = self._skills.to_anthropic_schema()
+            selected_skills = self._skills.list_skills()
         elif skills:
             for skill_name in skills:
                 skill = self._skills.get(skill_name)
                 if skill:
-                    skill_schemas.append(skill.to_anthropic_schema())
+                    selected_skills.append(skill)
+
+        # Collect tool names from skills
+        for skill in selected_skills:
+            skill_tool_names.update(skill.tools)
+
+        # Build system prompt with skill instructions
+        system_parts: list[str] = []
+        if system:
+            system_parts.append(system)
+
+        if selected_skills:
+            system_parts.append("\n--- Skills ---\n")
+            for skill in selected_skills:
+                skill_section = f"## {skill.name}\n"
+                skill_section += f"Description: {skill.description}\n\n"
+                skill_section += f"Instructions:\n{skill.instructions}\n"
+                if skill.tools:
+                    skill_section += f"\nAvailable tools: {', '.join(skill.tools)}\n"
+                if skill.examples:
+                    skill_section += "\nExamples:\n"
+                    for example in skill.examples:
+                        if "input" in example:
+                            skill_section += f"  Input: {example['input']}\n"
+                        if "output" in example:
+                            skill_section += f"  Output: {example['output']}\n"
+                        if "steps" in example:
+                            skill_section += "  Steps:\n"
+                            for step in example["steps"]:
+                                skill_section += f"    - {step}\n"
+                system_parts.append(skill_section)
+
+        final_system = "\n".join(system_parts) if system_parts else None
 
         # Extract query from messages if not provided
         if not query and auto_retrieve_tools:
@@ -211,24 +253,40 @@ class SkillsClient:
 
         # Retrieve tools if enabled and gantry available
         tools: list[dict[str, Any]] = []
-        if auto_retrieve_tools and self._gantry and query:
-            retrieval_result = await self._gantry.retrieve(
-                ToolQuery(
-                    context=ConversationContext(query=query),
-                    limit=tool_limit,
+        if self._gantry:
+            # If skills define specific tools, get those
+            if skill_tool_names:
+                # Get all registered tools from gantry that match skill tool names
+                all_tools = await self._gantry.list_tools()
+                for tool_def in all_tools:
+                    if tool_def.name in skill_tool_names:
+                        tools.append(tool_def.to_anthropic_schema())
+            elif auto_retrieve_tools and query:
+                # Fall back to semantic retrieval
+                retrieval_result = await self._gantry.retrieve(
+                    ToolQuery(
+                        context=ConversationContext(query=query),
+                        limit=tool_limit,
+                    )
                 )
-            )
-            tools = [t.tool.to_anthropic_schema() for t in retrieval_result.tools]
+                tools = [t.tool.to_anthropic_schema() for t in retrieval_result.tools]
 
-        # Create message with skills and tools
-        response = await self._client.messages.create(
-            model=model,
-            messages=messages,
-            max_tokens=max_tokens,
-            skills=skill_schemas if skill_schemas else None,
-            tools=tools if tools else [],
+        # Build the request kwargs
+        request_kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
             **kwargs,
-        )
+        }
+
+        if final_system:
+            request_kwargs["system"] = final_system
+
+        if tools:
+            request_kwargs["tools"] = tools
+
+        # Create message
+        response = await self._client.messages.create(**request_kwargs)
 
         return response
 

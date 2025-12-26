@@ -42,7 +42,7 @@ async def demo_interleaved_thinking():
 
     # Ask a question that requires reasoning
     response, thinking = await client.chat_with_thinking(
-        model="claude-3-5-sonnet-20241022",
+        model="claude-sonnet-4-5",
         messages=[
             {
                 "role": "user",
@@ -88,7 +88,7 @@ async def demo_extended_thinking():
 
     # Ask a complex problem
     response = await client.create_message(
-        model="claude-3-5-sonnet-20241022",
+        model="claude-sonnet-4-5",
         messages=[
             {
                 "role": "user",
@@ -142,7 +142,7 @@ async def demo_thinking_with_tools():
 
     # Query that benefits from both thinking and tools
     response, thinking = await client.chat_with_thinking(
-        model="claude-3-5-sonnet-20241022",
+        model="claude-sonnet-4-5",
         messages=[
             {
                 "role": "user",
@@ -191,7 +191,7 @@ async def demo_comparison():
     print("-" * 80)
     client_normal = AnthropicClient()
     response_normal = await client_normal.create_message(
-        model="claude-3-5-sonnet-20241022",
+        model="claude-sonnet-4-5",
         messages=[{"role": "user", "content": query}],
         max_tokens=512,
         auto_retrieve_tools=False,
@@ -206,7 +206,7 @@ async def demo_comparison():
     print("-" * 80)
     client_thinking = await create_anthropic_client(enable_thinking="interleaved")
     response_thinking, thinking = await client_thinking.chat_with_thinking(
-        model="claude-3-5-sonnet-20241022",
+        model="claude-sonnet-4-5",
         messages=[{"role": "user", "content": query}],
         max_tokens=512,
         auto_retrieve_tools=False,
