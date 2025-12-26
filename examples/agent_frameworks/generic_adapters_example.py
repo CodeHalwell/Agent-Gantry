@@ -1,5 +1,7 @@
 import asyncio
+
 from dotenv import load_dotenv
+
 from agent_gantry import AgentGantry
 from agent_gantry.integrations.framework_adapters import fetch_framework_tools
 
@@ -23,16 +25,16 @@ async def main():
     # This helper returns the schema shape expected by the framework
     # (Currently OpenAI-style function calling for all supported frameworks)
     google_adk_tools = await fetch_framework_tools(
-        gantry, 
-        user_query, 
-        framework="google_adk", 
+        gantry,
+        user_query,
+        framework="google_adk",
         limit=3
     )
-    
+
     strands_tools = await fetch_framework_tools(
-        gantry, 
-        user_query, 
-        framework="strands", 
+        gantry,
+        user_query,
+        framework="strands",
         limit=3
     )
 
@@ -44,7 +46,7 @@ async def main():
     for tool in google_adk_tools:
         name = tool["function"]["name"]
         print(f"Integrating tool: {name}")
-        
+
         # The framework would then call back to Gantry for execution:
         # result = await gantry.execute(ToolCall(tool_name=name, arguments=args))
 

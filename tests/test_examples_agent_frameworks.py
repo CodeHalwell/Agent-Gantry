@@ -3,7 +3,6 @@ from typing import Any
 
 import pytest
 
-
 pytestmark = pytest.mark.filterwarnings(
     "ignore:Support for google-cloud-storage < 3.0.0:FutureWarning"
 )

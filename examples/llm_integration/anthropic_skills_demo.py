@@ -20,8 +20,6 @@ from dotenv import load_dotenv
 
 from agent_gantry import AgentGantry
 from agent_gantry.integrations.anthropic_skills import (
-    Skill,
-    SkillsClient,
     create_skills_client,
 )
 

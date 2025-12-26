@@ -5,6 +5,7 @@ Tests for provider-backed token savings calculations and retrieval accuracy.
 from __future__ import annotations
 
 import asyncio
+
 import pytest
 
 from agent_gantry import AgentGantry

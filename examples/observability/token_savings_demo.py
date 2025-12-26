@@ -3,6 +3,7 @@ import os
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
+
 from agent_gantry import AgentGantry
 from agent_gantry.metrics import calculate_token_savings
 
@@ -21,7 +22,7 @@ async def main():
 
     # Initialize OpenAI Client
     client = AsyncOpenAI(api_key=api_key)
-    
+
     # Initialize Gantry
     gantry = AgentGantry()
 
@@ -47,14 +48,14 @@ async def main():
     # --- Baseline: Send ALL tools ---
     print("Step 1: Running Baseline (Sending ALL 30 tools to OpenAI)...")
     all_tools = [t.to_openai_schema() for t in await gantry.list_tools()]
-    
+
     baseline_response = await client.chat.completions.create(
         model="gpt-4o",
         messages=[{"role": "user", "content": query}],
         tools=all_tools,
         tool_choice="auto"
     )
-    
+
     baseline_usage = baseline_response.usage
     print(f"📊 Baseline Prompt Tokens: {baseline_usage.prompt_tokens}")
 
@@ -70,7 +71,7 @@ async def main():
         tools=optimized_tools,
         tool_choice="auto"
     )
-    
+
     optimized_usage = optimized_response.usage
     print(f"📊 Optimized Prompt Tokens: {optimized_usage.prompt_tokens}")
 
@@ -78,7 +79,7 @@ async def main():
     print("\n" + "="*40)
     print("       TOKEN SAVINGS REPORT")
     print("="*40)
-    
+
     # calculate_token_savings accepts dicts or ProviderUsage objects
     savings = calculate_token_savings(
         baseline=baseline_usage.model_dump(),

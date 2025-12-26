@@ -17,7 +17,7 @@ import sys
 import tempfile
 import time
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 import pint
 import pubchempy as pcp
@@ -137,7 +137,7 @@ def list_directory(path: str = ".") -> list[str]:
 @tools.register(tags=["fs", "file"])
 def read_text_file(path: str) -> str:
     """Read the contents of a text file."""
-    with open(path, 'r', encoding='utf-8') as f:
+    with open(path, encoding='utf-8') as f:
         return f.read()
 
 @tools.register(tags=["fs", "file"])
@@ -227,7 +227,7 @@ def get_cpu_count() -> int:
     return os.cpu_count() or 0
 
 @tools.register(tags=["system", "env"])
-def get_environment_variable(name: str, default: Optional[str] = None) -> Optional[str]:
+def get_environment_variable(name: str, default: str | None = None) -> str | None:
     """Get the value of an environment variable."""
     return os.environ.get(name, default)
 
@@ -319,7 +319,6 @@ def dict_to_json(data: dict[str, Any], indent: int = 4) -> str:
 @tools.register(tags=["data", "csv"])
 def csv_to_list(csv_str: str) -> list[dict[str, str]]:
     """Convert a CSV string to a list of dictionaries."""
-    import io
     import csv
     f = io.StringIO(csv_str)
     reader = csv.DictReader(f)
@@ -514,8 +513,8 @@ def is_valid_url(url: str) -> bool:
 @tools.register(tags=["security"])
 def generate_password(length: int = 12, include_special: bool = True) -> str:
     """Generate a random secure password."""
-    import string
     import secrets
+    import string
     alphabet = string.ascii_letters + string.digits
     if include_special:
         alphabet += string.punctuation
@@ -549,7 +548,7 @@ def convert_temperature(value: float, from_unit: str, to_unit: str) -> float:
     """Convert temperature between Celsius, Fahrenheit, and Kelvin."""
     from_unit = from_unit.upper()[0]
     to_unit = to_unit.upper()[0]
-    
+
     # Convert to Celsius first
     if from_unit == 'F':
         c = (value - 32) * 5/9
@@ -557,7 +556,7 @@ def convert_temperature(value: float, from_unit: str, to_unit: str) -> float:
         c = value - 273.15
     else:
         c = value
-        
+
     # Convert from Celsius to target
     if to_unit == 'F':
         return (c * 9/5) + 32
@@ -581,7 +580,7 @@ def get_python_version() -> str:
 def get_installed_packages() -> list[str]:
     """Get a list of installed Python packages (names only)."""
     try:
-        result = subprocess.run([sys.executable, "-m", "pip", "list", "--format=json"], 
+        result = subprocess.run([sys.executable, "-m", "pip", "list", "--format=json"],
                                capture_output=True, text=True)
         if result.returncode == 0:
             packages = json.loads(result.stdout)
@@ -873,7 +872,7 @@ def is_ipv4(ip: str) -> bool:
     try:
         socket.inet_aton(ip)
         return True
-    except socket.error:
+    except OSError:
         return False
 
 @tools.register(tags=["network"])
@@ -1008,7 +1007,7 @@ def get_time_difference_seconds(start_time: float, end_time: float) -> float:
 @tools.register(tags=["web", "url"])
 def get_url_query_params(url: str) -> dict[str, list[str]]:
     """Extract query parameters from a URL."""
-    from urllib.parse import urlparse, parse_qs
+    from urllib.parse import parse_qs, urlparse
     return parse_qs(urlparse(url).query)
 
 @tools.register(tags=["web", "url"])
@@ -1134,7 +1133,7 @@ def get_current_day_of_year() -> int:
     return datetime.datetime.now().timetuple().tm_yday
 
 @tools.register(tags=["time"])
-def is_weekend(date_str: Optional[str] = None) -> bool:
+def is_weekend(date_str: str | None = None) -> bool:
     """Check if a date is a weekend. If no date is provided, checks today."""
     if date_str:
         d = datetime.datetime.strptime(date_str, "%Y-%m-%d")
@@ -1151,7 +1150,7 @@ def is_secure_url(url: str) -> bool:
     return urlparse(url).scheme == 'https'
 
 @tools.register(tags=["web", "url"])
-def get_url_port(url: str) -> Optional[int]:
+def get_url_port(url: str) -> int | None:
     """Extract the port number from a URL."""
     from urllib.parse import urlparse
     return urlparse(url).port
@@ -1336,7 +1335,7 @@ def calculate_geometric_mean(numbers: list[float]) -> float:
 # --- Advanced Dictionary Analysis Tools ---
 
 @tools.register(tags=["data"])
-def get_dict_key_with_max_value(d: dict[Any, float]) -> Optional[Any]:
+def get_dict_key_with_max_value(d: dict[Any, float]) -> Any | None:
     """Get the key associated with the maximum value in a dictionary."""
     if not d: return None
     return max(d, key=d.get)
@@ -1462,8 +1461,8 @@ def train_simple_linear_regression(x: list[float], y: list[float]) -> dict[str, 
 @tools.register(tags=["ml", "sklearn"])
 def cluster_data_kmeans(data: list[list[float]], n_clusters: int = 3) -> list[int]:
     """Cluster data points using K-Means algorithm."""
-    from sklearn.cluster import KMeans
     import numpy as np
+    from sklearn.cluster import KMeans
     X = np.array(data)
     kmeans = KMeans(n_clusters=n_clusters, n_init='auto').fit(X)
     return kmeans.labels_.tolist()
@@ -1555,7 +1554,7 @@ def read_docx_file(docx_path: str) -> str:
     return "\n".join([para.text for para in doc.paragraphs])
 
 @tools.register(tags=["document", "docx"])
-def create_docx_file(docx_path: str, content: str, title: Optional[str] = None) -> str:
+def create_docx_file(docx_path: str, content: str, title: str | None = None) -> str:
     """Create a new .docx file with the specified content."""
     import docx
     doc = docx.Document()
@@ -1596,14 +1595,14 @@ def correct_spelling(text: str) -> str:
 @tools.register(tags=["viz", "matplotlib"])
 def generate_bar_chart_base64(labels: list[str], values: list[float], title: str = "Bar Chart") -> str:
     """Generate a bar chart and return it as a Base64-encoded PNG string."""
-    import matplotlib.pyplot as plt
-    import io
     import base64
-    
+
+    import matplotlib.pyplot as plt
+
     plt.figure(figsize=(10, 6))
     plt.bar(labels, values)
     plt.title(title)
-    
+
     buf = io.BytesIO()
     plt.savefig(buf, format='png')
     plt.close()
@@ -1613,14 +1612,14 @@ def generate_bar_chart_base64(labels: list[str], values: list[float], title: str
 @tools.register(tags=["viz", "matplotlib"])
 def generate_line_plot_base64(x: list[float], y: list[float], title: str = "Line Plot") -> str:
     """Generate a line plot and return it as a Base64-encoded PNG string."""
-    import matplotlib.pyplot as plt
-    import io
     import base64
-    
+
+    import matplotlib.pyplot as plt
+
     plt.figure(figsize=(10, 6))
     plt.plot(x, y)
     plt.title(title)
-    
+
     buf = io.BytesIO()
     plt.savefig(buf, format='png')
     plt.close()
@@ -1631,7 +1630,7 @@ def generate_line_plot_base64(x: list[float], y: list[float], title: str = "Line
 def generate_pie_chart_base64(labels: list[str], values: list[float], title: str = "Pie Chart") -> str:
     """Generate a pie chart and return it as a Base64-encoded PNG string."""
     import base64
-    import io
+
     import matplotlib.pyplot as plt
 
     plt.figure(figsize=(8, 8))
@@ -1713,8 +1712,9 @@ def decrypt_message(encrypted_message: str, key: str) -> str:
 @tools.register(tags=["web", "scraping"])
 def extract_all_links_from_url(url: str) -> list[str]:
     """Extract all unique absolute links from a web page."""
-    from bs4 import BeautifulSoup
     from urllib.parse import urljoin
+
+    from bs4 import BeautifulSoup
     response = requests.get(url, timeout=10)
     soup = BeautifulSoup(response.text, 'html.parser')
     links = set()
@@ -1735,8 +1735,9 @@ def get_page_title(url: str) -> str:
 @tools.register(tags=["time", "pytz"])
 def get_time_in_timezone(timezone_name: str) -> str:
     """Get the current time in a specific timezone (e.g., 'America/New_York')."""
-    import pytz
     from datetime import datetime
+
+    import pytz
     tz = pytz.timezone(timezone_name)
     return datetime.now(tz).isoformat()
 
@@ -1751,10 +1752,10 @@ def list_all_timezones() -> list[str]:
 @tools.register(tags=["misc", "qrcode"])
 def generate_qr_code_base64(data: str) -> str:
     """Generate a QR code for the given data and return it as a Base64-encoded PNG string."""
-    import qrcode
-    import io
     import base64
-    
+
+    import qrcode
+
     img = qrcode.make(data)
     buf = io.BytesIO()
     img.save(buf, format='PNG')
@@ -1763,11 +1764,11 @@ def generate_qr_code_base64(data: str) -> str:
 @tools.register(tags=["misc", "barcode"])
 def generate_barcode_base64(data: str) -> str:
     """Generate a barcode (Code128) for the given data and return it as a Base64-encoded PNG string."""
+    import base64
+
     import barcode
     from barcode.writer import ImageWriter
-    import io
-    import base64
-    
+
     EAN = barcode.get_generator('code128')
     ean = EAN(data, writer=ImageWriter())
     buf = io.BytesIO()
@@ -1868,7 +1869,7 @@ def get_fibonacci_sequence(n: int) -> list[int]:
     return seq
 
 @tools.register(tags=["misc"])
-def solve_quadratic_equation(a: float, b: float, c: float) -> tuple[Optional[complex], Optional[complex]]:
+def solve_quadratic_equation(a: float, b: float, c: float) -> tuple[complex | None, complex | None]:
     """Solve a quadratic equation ax^2 + bx + c = 0."""
     import cmath
     d = (b**2) - (4*a*c)

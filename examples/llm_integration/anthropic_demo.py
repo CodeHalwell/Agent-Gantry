@@ -1,9 +1,9 @@
 import asyncio
 import os
-import json
-from typing import Any, Dict, List
+from typing import Any
 
 from dotenv import load_dotenv
+
 from agent_gantry import AgentGantry
 from agent_gantry.schema.execution import ToolCall
 from agent_gantry.schema.query import ConversationContext, ToolQuery
@@ -60,7 +60,7 @@ async def main():
     # B. Convert to Anthropic Schema
     # Agent-Gantry provides a helper method `to_anthropic_schema()` on ToolDefinition
     anthropic_tools = [t.tool.to_anthropic_schema() for t in retrieval_result.tools]
-    
+
     print(f"Gantry retrieved {len(anthropic_tools)} tool(s)")
     # print(json.dumps(anthropic_tools, indent=2)) # Uncomment to see schema
 
@@ -77,7 +77,7 @@ async def main():
     for block in response.content:
         if block.type == "tool_use":
             print(f"Claude decided to call: {block.name}({block.input})")
-            
+
             # Execute securely via Gantry
             result = await gantry.execute(ToolCall(
                 tool_name=block.name,
@@ -91,7 +91,7 @@ async def main():
 
     # The decorator handles retrieval AND schema conversion (dialect="anthropic")
     @with_semantic_tools(gantry, limit=1, dialect="anthropic", score_threshold=0.1)
-    async def chat_with_claude(messages: List[Dict[str, str]], tools: List[Dict[str, Any]] = None):
+    async def chat_with_claude(messages: list[dict[str, str]], tools: list[dict[str, Any]] = None):
         print(f"   [Decorator] Injected {len(tools) if tools else 0} tools (Anthropic format)")
         return await client.messages.create(
             model="claude-3-opus-20240229",
@@ -102,9 +102,9 @@ async def main():
 
     query_dec = "Check staging status"
     print(f"User Query: '{query_dec}'")
-    
+
     response_dec = await chat_with_claude(messages=[{"role": "user", "content": query_dec}])
-    
+
     for block in response_dec.content:
         if block.type == "tool_use":
             print(f"Claude decided to call: {block.name}")

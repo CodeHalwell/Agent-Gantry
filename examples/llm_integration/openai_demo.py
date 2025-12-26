@@ -1,9 +1,10 @@
 import asyncio
-import os
 import json
-from typing import Any, Dict, List
+import os
+from typing import Any
 
 from dotenv import load_dotenv
+
 from agent_gantry import AgentGantry
 from agent_gantry.schema.execution import ToolCall
 
@@ -69,7 +70,7 @@ async def main():
     if tool_calls:
         for tc in tool_calls:
             print(f"LLM decided to call: {tc.function.name}({tc.function.arguments})")
-            
+
             # Execute securely via Gantry
             result = await gantry.execute(ToolCall(
                 tool_name=tc.function.name,
@@ -84,7 +85,7 @@ async def main():
     # If you have < 10 tools, you might just want to pass them all
     all_tools = [t.to_openai_schema() for t in await gantry.list_tools()]
     print(f"Passing all {len(all_tools)} tools to LLM...")
-    
+
     # (The rest of the LLM call is the same, just passing `tools=all_tools`)
 
     # --- Scenario C: Using the Decorator (Automatic Injection) ---
@@ -96,7 +97,7 @@ async def main():
     # 2. Retrieve relevant tools
     # 3. Inject them into the 'tools' argument
     @with_semantic_tools(gantry, limit=1, score_threshold=0.1)
-    async def chat_with_tools(messages: List[Dict[str, str]], tools: List[Dict[str, Any]] = None):
+    async def chat_with_tools(messages: list[dict[str, str]], tools: list[dict[str, Any]] = None):
         print(f"   [Decorator] Injected {len(tools) if tools else 0} tools")
         return await client.chat.completions.create(
             model="gpt-4o",
@@ -107,9 +108,9 @@ async def main():
 
     query_c = "What is the stock price of AAPL?"
     print(f"User Query: '{query_c}'")
-    
+
     response_c = await chat_with_tools(messages=[{"role": "user", "content": query_c}])
-    
+
     tool_calls_c = response_c.choices[0].message.tool_calls
     if tool_calls_c:
         print(f"LLM decided to call: {tool_calls_c[0].function.name}")

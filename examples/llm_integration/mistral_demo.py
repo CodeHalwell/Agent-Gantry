@@ -1,9 +1,10 @@
 import asyncio
-import os
 import json
+import os
 from typing import Any
 
 from dotenv import load_dotenv
+
 from agent_gantry import AgentGantry
 from agent_gantry.schema.execution import ToolCall
 
@@ -59,7 +60,7 @@ async def main():
     if tool_calls:
         for tc in tool_calls:
             print(f"Mistral decided to call: {tc.function.name}({tc.function.arguments})")
-            
+
             # Execute securely via Gantry
             result = await gantry.execute(ToolCall(
                 tool_name=tc.function.name,
@@ -69,7 +70,7 @@ async def main():
 
     # --- Scenario: Using @with_semantic_tools Decorator ---
     print("\n--- Scenario: Using @with_semantic_tools Decorator ---")
-    
+
     from agent_gantry.integrations.decorator import with_semantic_tools
 
     @with_semantic_tools(gantry, limit=1, score_threshold=0.1, prompt_param="user_query")
@@ -79,14 +80,14 @@ async def main():
         based on the user_query.
         """
         print(f"Decorator injected {len(tools) if tools else 0} tools")
-        
+
         response = client.chat.complete(
             model="mistral-large-latest",
             messages=[{"role": "user", "content": user_query}],
             tools=tools,
             tool_choice="auto"
         )
-        
+
         if response.choices[0].message.tool_calls:
             tc = response.choices[0].message.tool_calls[0]
             print(f"Mistral (via decorator) called: {tc.function.name}")

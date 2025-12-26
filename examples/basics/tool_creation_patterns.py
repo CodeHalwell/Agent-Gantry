@@ -1,5 +1,4 @@
 import asyncio
-from typing import Any
 
 from agent_gantry import AgentGantry
 from agent_gantry.schema.execution import ToolCall
@@ -7,7 +6,7 @@ from agent_gantry.schema.execution import ToolCall
 
 class MathService:
     """A sample service class."""
-    
+
     def __init__(self, multiplier: float):
         self.multiplier = multiplier
 
@@ -18,12 +17,12 @@ class MathService:
 
 async def main():
     print("=== Agent-Gantry Tool Creation Patterns ===\n")
-    
+
     gantry = AgentGantry()
 
     # --- Pattern 1: The Standard Decorator ---
     print("1. Registering via Decorator (@gantry.register)")
-    
+
     @gantry.register(tags=["math", "basic"])
     def add(a: int, b: int) -> int:
         """Adds two integers together."""
@@ -31,17 +30,17 @@ async def main():
 
     # --- Pattern 2: Direct Function Registration ---
     print("2. Registering via Function Call (gantry.register(func))")
-    
+
     def subtract(a: int, b: int) -> int:
         """Subtracts b from a."""
         return a - b
-    
+
     # You can pass arguments just like the decorator
     gantry.register(subtract, tags=["math", "basic"])
 
     # --- Pattern 3: Async Functions ---
     print("3. Registering Async Functions")
-    
+
     @gantry.register(tags=["async", "io"])
     async def fetch_data(url: str) -> str:
         """Simulates fetching data from a URL asynchronously."""
@@ -50,24 +49,24 @@ async def main():
 
     # --- Pattern 4: Class Methods (Bound Methods) ---
     print("4. Registering Class Methods")
-    
+
     service = MathService(multiplier=10.0)
-    
+
     # Register the bound method 'multiply' from the instance
     # Note: The 'self' parameter is handled automatically by the bound method
     gantry.register(
-        service.multiply, 
+        service.multiply,
         name="service_multiply",  # Good practice to give unique names to methods
         tags=["service", "math"]
     )
 
     # --- Pattern 5: Renaming Tools ---
     print("5. Renaming Tools during Registration")
-    
+
     def complex_internal_function_name_v2(x: int) -> int:
         """Returns the square of x."""
         return x * x
-    
+
     # Expose it as 'square' to the LLM
     gantry.register(complex_internal_function_name_v2, name="square", tags=["math"])
 

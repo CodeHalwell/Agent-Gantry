@@ -1,8 +1,9 @@
 import asyncio
 import json
 import os
+from collections.abc import Sequence
 from types import SimpleNamespace
-from typing import Any, Sequence
+from typing import Any
 
 from dotenv import load_dotenv
 

@@ -19,10 +19,11 @@ Migration Notes:
 """
 
 import asyncio
-from dotenv import load_dotenv
+
 from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.ui import Console
 from autogen_ext.models.openai import OpenAIChatCompletionClient
+from dotenv import load_dotenv
 
 from agent_gantry import AgentGantry
 from agent_gantry.schema.execution import ToolCall

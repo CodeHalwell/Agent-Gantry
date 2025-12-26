@@ -1,9 +1,10 @@
 import asyncio
+
 from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
 from langchain.agents import create_agent
 from langchain.tools import tool
 from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
 
 from agent_gantry import AgentGantry
 from agent_gantry.schema.execution import ToolCall
@@ -34,7 +35,7 @@ async def main():
     # This reduces the prompt size by only sending what's needed
     # Lowering threshold for SimpleEmbedder compatibility in this example
     retrieved_tools = await gantry.retrieve_tools(user_query, limit=2, score_threshold=0.1)
-    
+
     print(f"Gantry retrieved {len(retrieved_tools)} tools.")
 
     # 5. Convert Gantry tools to LangChain tools
@@ -53,7 +54,7 @@ async def main():
     for tool_schema in retrieved_tools:
         name = tool_schema["function"]["name"]
         desc = tool_schema["function"]["description"]
-        
+
         if name == "get_weather":
             langchain_tools.append(make_langchain_tool(name, desc, gantry))
         elif name == "get_stock_price":
@@ -62,7 +63,7 @@ async def main():
     # 6. Setup LangChain Agent
     # In the latest LangChain, create_agent is the preferred way to build agents
     llm = ChatOpenAI(model="gpt-4o", temperature=0)
-    
+
     agent = create_agent(llm, tools=langchain_tools)
 
     # 7. Run the agent
@@ -71,7 +72,7 @@ async def main():
     response = await agent.ainvoke({
         "messages": [HumanMessage(content=user_query)]
     })
-    
+
     # Extract the final message content
     final_message = response["messages"][-1]
     print(f"\nFinal Response: {final_message.content}")

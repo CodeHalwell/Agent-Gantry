@@ -202,9 +202,8 @@ class TestBuildParametersSchema:
 
     def test_optional_type_handling(self):
         """Test handling of Optional[T] type hints."""
-        from typing import Optional
 
-        def func(x: Optional[int] = None, y: Optional[str] = None) -> None:
+        def func(x: int | None = None, y: str | None = None) -> None:
             pass
 
         schema = build_parameters_schema(func)

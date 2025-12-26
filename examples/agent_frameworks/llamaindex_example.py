@@ -1,7 +1,8 @@
 import asyncio
+
 from dotenv import load_dotenv
-from llama_index.llms.openai import OpenAI
 from llama_index.core.tools import FunctionTool
+from llama_index.llms.openai import OpenAI
 
 from agent_gantry import AgentGantry
 from agent_gantry.schema.execution import ToolCall
@@ -38,7 +39,7 @@ async def main():
     for ts in retrieved_tools:
         name = ts["function"]["name"]
         desc = ts["function"]["description"]
-        
+
         if name == "get_user_preferences":
             llama_tools.append(make_llama_tool(name, desc, gantry))
 

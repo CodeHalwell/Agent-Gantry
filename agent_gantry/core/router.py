@@ -120,7 +120,7 @@ async def classify_intent(
     query: str,
     conversation_summary: str | None = None,
     use_llm: bool = False,
-    llm_client: "LLMClient | None" = None,
+    llm_client: LLMClient | None = None,
 ) -> TaskIntent:
     """
     Classify the intent of a query.
@@ -186,7 +186,7 @@ class SemanticRouter:
         embedder: EmbeddingAdapter,
         reranker: RerankerAdapter | None = None,
         weights: RoutingWeights | None = None,
-        llm_client: "LLMClient | None" = None,
+        llm_client: LLMClient | None = None,
         use_llm_for_intent: bool = False,
     ) -> None:
         """

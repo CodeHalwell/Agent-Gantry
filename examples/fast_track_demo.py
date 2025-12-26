@@ -93,7 +93,8 @@ response = await chat("What's the weather in Tokyo?")
         print("\n🚀 Running actual demo...\n")
 
         from openai import AsyncOpenAI
-        from agent_gantry import AgentGantry, with_semantic_tools, set_default_gantry
+
+        from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
 
         client = AsyncOpenAI()
         gantry = AgentGantry()
@@ -137,7 +138,7 @@ response = await chat("What's the weather in Tokyo?")
         for query in queries:
             print(f"\n📨 Query: '{query}'")
             response = await chat(query)
-            
+
             # Check if LLM called tools
             if response.choices[0].message.tool_calls:
                 tool_call = response.choices[0].message.tool_calls[0]

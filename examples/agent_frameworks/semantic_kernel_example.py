@@ -1,5 +1,6 @@
 import asyncio
 import os
+
 from dotenv import load_dotenv
 from semantic_kernel import Kernel
 from semantic_kernel.connectors.ai.open_ai import OpenAIChatCompletion
@@ -23,7 +24,7 @@ async def main():
 
     # 2. Initialize Semantic Kernel
     kernel = Kernel()
-    
+
     # Add AI Service
     service_id = "chat-gpt"
     kernel.add_service(
@@ -57,7 +58,7 @@ async def main():
 
     # 5. Run the kernel
     print("--- Running Semantic Kernel with Agent-Gantry ---")
-    
+
     from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
     from semantic_kernel.connectors.ai.open_ai import OpenAIChatPromptExecutionSettings
 
@@ -68,7 +69,7 @@ async def main():
         prompt=user_query,
         settings=settings
     )
-    
+
     print(f"\nResult: {result}")
 
 if __name__ == "__main__":

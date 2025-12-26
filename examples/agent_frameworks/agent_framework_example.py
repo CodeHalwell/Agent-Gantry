@@ -1,9 +1,9 @@
 import asyncio
 from typing import Annotated
 
-from dotenv import load_dotenv
 from agent_framework import ChatAgent
 from agent_framework.openai import OpenAIChatClient
+from dotenv import load_dotenv
 from pydantic import Field
 
 from agent_gantry import AgentGantry

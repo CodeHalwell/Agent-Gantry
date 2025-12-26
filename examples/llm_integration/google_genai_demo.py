@@ -1,9 +1,8 @@
 import asyncio
 import os
-import json
-from typing import Any
 
 from dotenv import load_dotenv
+
 from agent_gantry import AgentGantry
 from agent_gantry.schema.execution import ToolCall
 from agent_gantry.schema.query import ConversationContext, ToolQuery
@@ -36,7 +35,7 @@ async def main():
     # 4. Initialize Google GenAI
     from google import genai
     from google.genai import types
-    
+
     client = genai.Client(api_key=api_key)
 
     # --- Scenario: Dynamic Retrieval with Gemini Schema ---
@@ -56,7 +55,7 @@ async def main():
     gemini_tools = []
     for t in retrieval_result.tools:
         schema = t.tool.to_gemini_schema()
-        
+
         # Create Gemini FunctionDeclaration object
         func_decl = types.FunctionDeclaration(
             name=schema["name"],
@@ -71,7 +70,7 @@ async def main():
         config = types.GenerateContentConfig(tools=[tool])
     else:
         config = None
-    
+
     print(f"Gantry retrieved {len(gemini_tools)} tool(s)")
 
     # C. Call Gemini
@@ -81,12 +80,12 @@ async def main():
         contents=user_query,
         config=config
     )
-    
+
     # Inspect response for function calls
     for part in response.candidates[0].content.parts:
         if fn := part.function_call:
             print(f"Gemini decided to call: {fn.name}({fn.args})")
-            
+
             # Execute securely via Gantry
             # Note: fn.args is a dict in the new SDK
             result = await gantry.execute(ToolCall(
@@ -117,7 +116,7 @@ async def main():
             config = types.GenerateContentConfig(tools=[toolbox])
         else:
             config = None
-            
+
         return client.models.generate_content(
             model='gemini-2.0-flash',
             contents=prompt,
@@ -126,9 +125,9 @@ async def main():
 
     query_dec = "Find documents about project beta"
     print(f"User Query: '{query_dec}'")
-    
+
     response_dec = await chat_with_gemini(prompt=query_dec)
-    
+
     for part in response_dec.candidates[0].content.parts:
         if fn := part.function_call:
             print(f"Gemini decided to call: {fn.name}")

@@ -11,7 +11,6 @@ Run with: pytest tests/test_performance_benchmarks.py -v -s
 
 import asyncio
 import time
-from typing import Any
 
 import pytest
 
@@ -111,7 +110,7 @@ async def test_concurrent_retrieval_throughput(gantry_with_tools):
     speedup = sequential_duration / concurrent_duration
 
     print(f"\n{'='*60}")
-    print(f"Concurrent Retrieval Throughput Benchmark")
+    print("Concurrent Retrieval Throughput Benchmark")
     print(f"{'='*60}")
     print(f"Sequential: {sequential_duration:.2f}s ({num_requests/sequential_duration:.1f} req/s)")
     print(f"Concurrent: {concurrent_duration:.2f}s ({num_requests/concurrent_duration:.1f} req/s)")
@@ -164,7 +163,7 @@ async def test_mmr_embedding_caching():
     retrieval_embeds = embed_count_after - initial_embed_count
 
     print(f"\n{'='*60}")
-    print(f"MMR Embedding Caching Benchmark")
+    print("MMR Embedding Caching Benchmark")
     print(f"{'='*60}")
     print(f"Duration: {duration*1000:.1f}ms")
     print(f"Embeddings generated during retrieval: {retrieval_embeds}")
@@ -200,7 +199,7 @@ async def test_embedding_latency():
     batch_duration = time.time() - start
 
     print(f"\n{'='*60}")
-    print(f"Embedding Latency Benchmark")
+    print("Embedding Latency Benchmark")
     print(f"{'='*60}")
     print(f"Single embedding: {single_duration*1000:.1f}ms")
     print(f"Batch (10 texts): {batch_duration*1000:.1f}ms ({batch_duration*100:.1f}ms per text)")
@@ -235,7 +234,7 @@ async def test_vector_search_performance(gantry_with_tools):
     avg_latency = (duration / iterations) * 1000
 
     print(f"\n{'='*60}")
-    print(f"Vector Search Performance Benchmark")
+    print("Vector Search Performance Benchmark")
     print(f"{'='*60}")
     print(f"Total searches: {iterations}")
     print(f"Total duration: {duration:.2f}s")
@@ -281,7 +280,7 @@ async def test_end_to_end_retrieval_latency(gantry_with_tools):
     p95 = sorted(latencies)[int(len(latencies) * 0.95)]
 
     print(f"\n{'='*60}")
-    print(f"End-to-End Retrieval Latency Benchmark")
+    print("End-to-End Retrieval Latency Benchmark")
     print(f"{'='*60}")
     print(f"Iterations: {iterations}")
     print(f"Average: {avg_latency:.1f}ms")
@@ -337,7 +336,7 @@ async def test_concurrent_execution_scalability():
         }
 
     print(f"\n{'='*60}")
-    print(f"Concurrent Execution Scalability Benchmark")
+    print("Concurrent Execution Scalability Benchmark")
     print(f"{'='*60}")
     for concurrency, metrics in results.items():
         print(f"Concurrency {concurrency:2d}: {metrics['duration']:.2f}s, "
@@ -352,7 +351,6 @@ async def test_concurrent_execution_scalability():
 
 if __name__ == "__main__":
     # Run benchmarks directly
-    import sys
     asyncio.run(test_concurrent_retrieval_throughput(
         asyncio.run(gantry_with_tools())
     ))
