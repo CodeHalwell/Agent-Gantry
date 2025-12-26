@@ -10,7 +10,7 @@ async def test_toolpack_can_be_loaded_and_filtered() -> None:
     tools = await gantry.retrieve_tools(
         "convert 10 kilometers to miles",
         limit=3,
-        score_threshold=0.0,
+        score_threshold=0.1,
     )
 
     tool_names = {tool["function"]["name"] for tool in tools}
@@ -23,7 +23,7 @@ async def test_decorator_injects_relevant_tools() -> None:
 
     captured: dict[str, list[str]] = {}
 
-    @with_semantic_tools(gantry, limit=2, score_threshold=0.0)
+    @with_semantic_tools(gantry, limit=2, score_threshold=0.1)
     async def chat(prompt: str, *, tools=None):
         captured["tools"] = [t["function"]["name"] for t in tools or []]
         return "ok"

@@ -26,7 +26,7 @@ async def main() -> None:
     set_default_gantry(gantry)
 
     # Add a single decorator to inject only the relevant tools per prompt
-    @with_semantic_tools(limit=2, score_threshold=0.0)
+    @with_semantic_tools(limit=2, score_threshold=0.1)
     async def chat(prompt: str, *, tools: list[dict[str, Any]] | None = None):
         return await mock_llm(prompt, tools=tools)
 

@@ -21,7 +21,7 @@ def convert_km_to_miles(kilometers: float) -> float:
 @tools.register(tags=["time", "datetime"], examples=["what is the current UTC time?"])
 def current_utc_time() -> str:
     """Get the current UTC time."""
-    return datetime.datetime.utcnow().isoformat() + "Z"
+    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 @tools.register(tags=["finance", "payments"], examples=["format a $45 invoice"])
