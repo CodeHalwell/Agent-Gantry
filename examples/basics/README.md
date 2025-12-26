@@ -7,6 +7,8 @@ Introductory examples that show how to register tools, sync embeddings, and exec
 - `multi_tool_demo.py`: Registers a diverse set of tools (math, travel, support) to illustrate semantic routing across namespaces.
 - `async_demo.py`: Demonstrates native async tool execution and awaits multiple tool calls.
 - `tool_creation_patterns.py`: Side-by-side patterns for decorating functions, registering lambdas, and attaching metadata such as namespaces, tags, and capabilities.
+- `plug_and_play_semantic_filter.py`: Loads tools from `toolpack.py` and injects only relevant ones into an existing LLM call with a single decorator.
+- `toolpack.py`: Reusable tool catalog exported as `tools` for plug-and-play imports.
 
 ## Run commands
 

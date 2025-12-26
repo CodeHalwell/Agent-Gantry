@@ -17,7 +17,7 @@ This demo shows the "before and after" of adding Agent-Gantry to a basic LLM cal
 ## Directory map
 
 - `fast_track_demo.py`: **START HERE** - Shows how to upgrade vanilla OpenAI to semantic tools in ~10 lines.
-- `basics/`: Tool registration, async execution, and multi-tool routing patterns.
+- `basics/`: Tool registration, async execution, multi-tool routing, and plug-and-play imports.
 - `routing/`: Advanced semantic routing, custom adapters, health-aware ranking.
 - `execution/`: Circuit breakers, batch execution, and security policy enforcement.
 - `llm_integration/`: End-to-end loops with OpenAI/Anthropic/Google/Groq/Mistral plus the semantic
@@ -38,8 +38,9 @@ python examples/fast_track_demo.py
 # Or use uv (recommended for reproducible environments)
 uv run python examples/fast_track_demo.py
 
-# Basic examples
+# Basic examples (plug-and-play ready)
 uv run python examples/basics/tool_demo.py
+python examples/basics/plug_and_play_semantic_filter.py
 python examples/routing/health_aware_routing_demo.py
 
 # Protocol examples
@@ -58,6 +59,14 @@ pip install -e ".[agent-frameworks]"   # For framework integration examples
 pip install -e ".[mcp]"                # For Claude Desktop integration
 pip install -e ".[a2a]"                # For Agent-to-Agent protocol
 ```
+
+### Plug-and-play tool catalogs
+
+- Import prebuilt tools from `examples.basics.toolpack` with one line:
+  ```bash
+  python examples/basics/plug_and_play_semantic_filter.py
+  ```
+- Swap in your own tool modules using `AgentGantry.from_modules([...])` to keep code changes minimal.
 
 ## Key Patterns Demonstrated
 
