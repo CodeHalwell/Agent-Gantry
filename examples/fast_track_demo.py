@@ -165,6 +165,7 @@ Total Lines Added: ~10 lines (3 imports, 1 init, 3 tool registrations, 1 decorat
 
     print("\n🔗 Next Steps:")
     print("   - See examples/llm_integration/ for provider-specific examples")
+    print("   - Run examples/basics/plug_and_play_semantic_filter.py to import tools from a module with one decorator")
     print("   - Read docs/semantic_tool_decorator.md for advanced usage")
     print("   - Try examples/agent_frameworks/ for LangChain, AutoGen, CrewAI")
 
