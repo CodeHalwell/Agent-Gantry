@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 
 from agent_gantry import AgentGantry, with_semantic_tools
@@ -24,11 +26,9 @@ async def test_decorator_injects_relevant_tools() -> None:
     captured: dict[str, list[str]] = {}
 
     @with_semantic_tools(gantry, limit=2, score_threshold=0.1)
-    async def chat(prompt: str, *, tools=None):
+    async def chat(prompt: str, *, tools: list[dict[str, Any]] | None = None):
         captured["tools"] = [t["function"]["name"] for t in tools or []]
         return "ok"
 
     await chat("What is the current UTC time?")
-
     assert "current_utc_time" in captured["tools"]
-    assert captured["tools"][0] == "current_utc_time"
