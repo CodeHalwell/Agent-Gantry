@@ -1,0 +1,5 @@
+$74bfbc56-4745-426c-a2f7-c823854e9fb2²ªid ÿÿÿÿÿÿÿÿÿ*string08name ÿÿÿÿÿÿÿÿÿ*string08$	namespace ÿÿÿÿÿÿÿÿÿ*string08&description ÿÿÿÿÿÿÿÿÿ*string08$	tool_json ÿÿÿÿÿÿÿÿÿ*string08&fingerprint ÿÿÿÿÿÿÿÿÿ*string084vector ÿÿÿÿÿÿÿÿÿ*fixed_size_list:float:25608%
+created_at ÿÿÿÿÿÿÿÿÿ*string08%
+updated_at ÿÿÿÿÿÿÿÿÿ*string08"'
+lance.auto_cleanup.older_than14days"!
+lance.auto_cleanup.interval20

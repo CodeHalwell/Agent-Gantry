@@ -145,9 +145,9 @@ class TestDefaultGantryDecorator:
     async def test_decorator_without_default_gantry_raises(self):
         """Test decorator without default gantry raises helpful error."""
         # Reset default
-        from agent_gantry.integrations import decorator
+        from agent_gantry.integrations import semantic_tools
 
-        decorator._DEFAULT_GANTRY = None
+        semantic_tools._DEFAULT_GANTRY = None
 
         with pytest.raises(ValueError, match="No gantry provided and no default set"):
 

@@ -16,7 +16,7 @@ This PR implements the key recommendations from the in-depth refactoring analysi
 # Old way (still works)
 from agent_gantry.core.gantry import AgentGantry
 from agent_gantry.schema.execution import ToolCall
-from agent_gantry.integrations.decorator import with_semantic_tools
+from agent_gantry.integrations.semantic_tools import with_semantic_tools
 
 # New way - everything in one place!
 from agent_gantry import AgentGantry, ToolCall, with_semantic_tools
@@ -82,7 +82,7 @@ async def generate2(prompt, *, tools=None): ...
 ```python
 from agent_gantry.core.gantry import AgentGantry
 from agent_gantry.schema.execution import ToolCall
-from agent_gantry.integrations.decorator import with_semantic_tools
+from agent_gantry.integrations.semantic_tools import with_semantic_tools
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 
 gantry = AgentGantry(embedder=SimpleEmbedder())

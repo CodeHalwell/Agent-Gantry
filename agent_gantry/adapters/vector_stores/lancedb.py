@@ -7,6 +7,7 @@ supporting both tools and skills collections for semantic retrieval.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from datetime import datetime, timezone
@@ -78,10 +79,12 @@ class LanceDBVectorStore:
         self._db_path = self._resolve_db_path(db_path)
         self._tools_table_name = tools_table
         self._skills_table_name = skills_table
+        self._metadata_table_name = "_gantry_metadata"
         self._dimension = dimension
         self._db: Any = None
         self._tools_table: Any = None
         self._skills_table: Any = None
+        self._metadata_table: Any = None
         self._initialized = False
 
     def _resolve_db_path(self, db_path: str | None) -> str:
@@ -131,6 +134,7 @@ class LanceDBVectorStore:
             pa.field("namespace", pa.string()),
             pa.field("description", pa.string()),
             pa.field("tool_json", pa.string()),  # Full serialized ToolDefinition
+            pa.field("fingerprint", pa.string()),  # Hash of tool for change detection
             pa.field("vector", pa.list_(pa.float32(), self._dimension)),
             pa.field("created_at", pa.string()),
             pa.field("updated_at", pa.string()),
@@ -149,8 +153,21 @@ class LanceDBVectorStore:
             pa.field("updated_at", pa.string()),
         ])
 
+        # Create metadata table schema (stores sync state)
+        metadata_schema = pa.schema([
+            pa.field("key", pa.string()),
+            pa.field("value", pa.string()),
+            pa.field("updated_at", pa.string()),
+        ])
+
         # Create or open tables
-        existing_tables = self._db.list_tables()
+        # Note: list_tables() returns a TableListResult object with a 'tables' attribute
+        table_list_result = self._db.list_tables()
+        existing_tables = (
+            table_list_result.tables
+            if hasattr(table_list_result, "tables")
+            else list(table_list_result)
+        )
 
         if self._tools_table_name in existing_tables:
             self._tools_table = self._db.open_table(self._tools_table_name)
@@ -167,6 +184,16 @@ class LanceDBVectorStore:
                 self._skills_table_name,
                 schema=skills_schema,
             )
+
+        if self._metadata_table_name in existing_tables:
+            self._metadata_table = self._db.open_table(self._metadata_table_name)
+        else:
+            self._metadata_table = self._db.create_table(
+                self._metadata_table_name,
+                schema=metadata_schema,
+            )
+
+        self._initialized = True
 
         self._initialized = True
 
@@ -215,12 +242,14 @@ class LanceDBVectorStore:
 
         for tool, embedding in zip(tools, embeddings):
             tool_id = f"{tool.namespace}.{tool.name}"
+            fingerprint = self._compute_tool_fingerprint(tool)
             record = {
                 "id": tool_id,
                 "name": tool.name,
                 "namespace": tool.namespace,
                 "description": tool.description,
                 "tool_json": tool.model_dump_json(),
+                "fingerprint": fingerprint,
                 "vector": embedding,
                 "created_at": now,
                 "updated_at": now,
@@ -242,6 +271,30 @@ class LanceDBVectorStore:
 
         self._tools_table.add(records)
         return len(records)
+
+    def _compute_tool_fingerprint(self, tool: ToolDefinition) -> str:
+        """
+        Compute a fingerprint hash for a tool definition.
+
+        The fingerprint is based on name, namespace, description, and parameters schema.
+        This allows detecting when a tool has changed and needs re-embedding.
+
+        Args:
+            tool: The tool definition
+
+        Returns:
+            SHA256 hash of the tool's semantic content
+        """
+        # Include fields that affect semantic meaning
+        content = json.dumps({
+            "name": tool.name,
+            "namespace": tool.namespace,
+            "description": tool.description,
+            "parameters_schema": tool.parameters_schema,
+            "tags": sorted(tool.tags),
+            "examples": sorted(tool.examples),
+        }, sort_keys=True)
+        return hashlib.sha256(content.encode()).hexdigest()[:16]
 
     async def add_skills(
         self,
@@ -743,3 +796,133 @@ class LanceDBVectorStore:
     def dimension(self) -> int:
         """Return the vector dimension."""
         return self._dimension
+
+    # =========================================================================
+    # Metadata and Fingerprint Methods (for auto-sync support)
+    # =========================================================================
+
+    async def get_metadata(self, key: str) -> str | None:
+        """
+        Get a metadata value by key.
+
+        Args:
+            key: The metadata key
+
+        Returns:
+            The value if found, None otherwise
+        """
+        await self._ensure_initialized()
+
+        try:
+            escaped_key = _escape_sql_string(key)
+            results = self._metadata_table.search().where(f"key = '{escaped_key}'").limit(1).to_list()
+            if results:
+                return results[0]["value"]
+        except Exception as e:
+            logger.debug(f"get_metadata failed for key '{key}': {e}")
+        return None
+
+    async def set_metadata(self, key: str, value: str) -> None:
+        """
+        Set a metadata value.
+
+        Args:
+            key: The metadata key
+            value: The value to store
+        """
+        await self._ensure_initialized()
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Delete existing record if present
+        try:
+            escaped_key = _escape_sql_string(key)
+            self._metadata_table.delete(f"key = '{escaped_key}'")
+        except Exception:
+            pass  # May not exist
+
+        # Add new record
+        self._metadata_table.add([{
+            "key": key,
+            "value": value,
+            "updated_at": now,
+        }])
+
+    async def get_stored_fingerprints(self) -> dict[str, str]:
+        """
+        Get all stored tool fingerprints.
+
+        Returns:
+            Dictionary mapping tool_id to fingerprint
+        """
+        await self._ensure_initialized()
+
+        try:
+            table = self._tools_table.to_arrow()
+            records = table.to_pylist()
+            return {r["id"]: r.get("fingerprint", "") for r in records}
+        except Exception as e:
+            logger.debug(f"get_stored_fingerprints failed: {e}")
+            return {}
+
+    async def get_sync_status(self) -> dict[str, Any]:
+        """
+        Get the current sync status including metadata.
+
+        Returns:
+            Dictionary with sync status info:
+            - tool_count: Number of tools in database
+            - embedder_id: Identifier of embedder used
+            - dimension: Vector dimension
+            - last_sync: ISO timestamp of last sync
+        """
+        await self._ensure_initialized()
+
+        status: dict[str, Any] = {
+            "tool_count": await self.count(),
+            "dimension": self._dimension,
+        }
+
+        # Get metadata values
+        embedder_id = await self.get_metadata("embedder_id")
+        if embedder_id:
+            status["embedder_id"] = embedder_id
+
+        last_sync = await self.get_metadata("last_sync")
+        if last_sync:
+            status["last_sync"] = last_sync
+
+        stored_dimension = await self.get_metadata("dimension")
+        if stored_dimension:
+            status["stored_dimension"] = int(stored_dimension)
+
+        return status
+
+    async def update_sync_metadata(
+        self,
+        embedder_id: str,
+        dimension: int,
+    ) -> None:
+        """
+        Update sync metadata after a successful sync.
+
+        Args:
+            embedder_id: Identifier for the embedder used
+            dimension: Vector dimension used
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        await self.set_metadata("embedder_id", embedder_id)
+        await self.set_metadata("dimension", str(dimension))
+        await self.set_metadata("last_sync", now)
+
+    def compute_tool_fingerprint(self, tool: ToolDefinition) -> str:
+        """
+        Public method to compute a tool fingerprint.
+
+        Args:
+            tool: The tool definition
+
+        Returns:
+            SHA256 hash (first 16 chars) of the tool's semantic content
+        """
+        return self._compute_tool_fingerprint(tool)

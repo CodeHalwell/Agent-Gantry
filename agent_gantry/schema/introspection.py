@@ -33,13 +33,19 @@ def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
         >>> schema["properties"]["y"]["type"]
         'string'
     """
+    import typing
+
     sig = inspect.signature(func)
 
-    # Try to get type hints, fall back to empty dict
+    # Use get_type_hints to resolve string annotations (from __future__ import annotations)
     try:
-        type_hints = func.__annotations__
-    except AttributeError:
-        type_hints = {}
+        type_hints = typing.get_type_hints(func)
+    except Exception:
+        # Fall back to raw annotations if get_type_hints fails
+        try:
+            type_hints = func.__annotations__
+        except AttributeError:
+            type_hints = {}
 
     properties: dict[str, Any] = {}
     required: list[str] = []

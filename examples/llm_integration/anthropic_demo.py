@@ -87,7 +87,7 @@ async def main():
 
     # --- Scenario: Using the Decorator ---
     print("\n--- Scenario: Using @with_semantic_tools Decorator ---")
-    from agent_gantry.integrations.decorator import with_semantic_tools
+    from agent_gantry.integrations.semantic_tools import with_semantic_tools
 
     # The decorator handles retrieval AND schema conversion (dialect="anthropic")
     @with_semantic_tools(gantry, limit=1, dialect="anthropic", score_threshold=0.1)

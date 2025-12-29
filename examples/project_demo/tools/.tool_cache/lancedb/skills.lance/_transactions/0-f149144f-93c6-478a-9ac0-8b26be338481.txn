@@ -1,0 +1,6 @@
+$f149144f-93c6-478a-9ac0-8b26be338481²¨id ÿÿÿÿÿÿÿÿÿ*string08name ÿÿÿÿÿÿÿÿÿ*string08$	namespace ÿÿÿÿÿÿÿÿÿ*string08&description ÿÿÿÿÿÿÿÿÿ*string08#category ÿÿÿÿÿÿÿÿÿ*string08%
+skill_json ÿÿÿÿÿÿÿÿÿ*string084vector ÿÿÿÿÿÿÿÿÿ*fixed_size_list:float:25608%
+created_at ÿÿÿÿÿÿÿÿÿ*string08%
+updated_at ÿÿÿÿÿÿÿÿÿ*string08"'
+lance.auto_cleanup.older_than14days"!
+lance.auto_cleanup.interval20

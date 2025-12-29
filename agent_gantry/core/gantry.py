@@ -6,7 +6,9 @@ Primary entry point for the Agent-Gantry library.
 
 from __future__ import annotations
 
+import hashlib
 import importlib
+import json
 import logging
 import uuid
 from collections.abc import Callable, Sequence
@@ -126,6 +128,7 @@ class AgentGantry:
         self._pending_tools: list[ToolDefinition] = []
         self._tool_handlers: dict[str, Callable[..., Any]] = {}
         self._initialized = False
+        self._synced = False  # Track if we've done initial sync check
         self._modules: Sequence[str] | None = None
         self._module_attr: str | None = None
 
@@ -327,7 +330,11 @@ class AgentGantry:
 
             self._pending_tools.append(tool)
             self._tool_handlers[tool_name] = fn
-            self._registry.register_handler(f"{namespace}.{tool_name}", fn)
+
+            # Register both tool definition and handler in the registry
+            key = f"{namespace}.{tool_name}"
+            self._registry.register_tool(tool)
+            self._registry.register_handler(key, fn)
 
             return fn
 
@@ -352,15 +359,20 @@ class AgentGantry:
         if self._config.auto_sync:
             await self.sync()
 
-    async def sync(self, batch_size: int = 100) -> int:
+    async def sync(self, batch_size: int = 100, force: bool = False) -> int:
         """
-        Sync pending registrations to vector store.
+        Sync pending registrations to vector store with smart change detection.
+
+        This method uses fingerprinting to detect which tools have actually changed
+        and only re-embeds those tools. On subsequent runs with the same tools,
+        this operation is nearly instant.
 
         Args:
             batch_size: Number of tools to embed and sync in each batch
+            force: If True, re-embed all tools regardless of fingerprints
 
         Returns:
-            Number of tools synced
+            Number of tools synced (0 if nothing changed)
         """
         # If modules were provided in constructor but not yet loaded, load them now
         if self._modules is not None:
@@ -368,17 +380,82 @@ class AgentGantry:
             self._modules = None
             self._module_attr = None
 
-        if not self._pending_tools:
-            return 0
-
         await self._ensure_initialized()
 
-        total_synced = 0
-        pending = self._pending_tools.copy()
+        # Get all registered tools (pending + already registered)
+        all_tools = self.export_tools()
+        if not all_tools:
+            self._synced = True
+            return 0
+
+        # Compute fingerprints for current tools
+        current_fingerprints = {
+            f"{t.namespace}.{t.name}": self._compute_tool_fingerprint(t)
+            for t in all_tools
+        }
+
+        # Get stored fingerprints from vector store (if supported)
+        stored_fingerprints: dict[str, str] = {}
+        embedder_id = self._get_embedder_id()
+        needs_full_resync = force
+
+        if hasattr(self._vector_store, "get_stored_fingerprints"):
+            stored_fingerprints = await self._vector_store.get_stored_fingerprints()
+
+            # Check if embedder changed (requires full re-embed)
+            if hasattr(self._vector_store, "get_metadata"):
+                stored_embedder = await self._vector_store.get_metadata("embedder_id")
+                stored_dim = await self._vector_store.get_metadata("dimension")
+
+                if stored_embedder and stored_embedder != embedder_id:
+                    logger.info(
+                        f"Embedder changed from '{stored_embedder}' to '{embedder_id}'. "
+                        "Full re-sync required."
+                    )
+                    needs_full_resync = True
+                elif stored_dim and int(stored_dim) != self._vector_store.dimension:
+                    logger.info(
+                        f"Dimension changed from {stored_dim} to {self._vector_store.dimension}. "
+                        "Full re-sync required."
+                    )
+                    needs_full_resync = True
+
+        # Determine which tools need syncing
+        if needs_full_resync:
+            tools_to_sync = all_tools
+        else:
+            tools_to_sync = []
+            for tool in all_tools:
+                tool_id = f"{tool.namespace}.{tool.name}"
+                current_fp = current_fingerprints[tool_id]
+                stored_fp = stored_fingerprints.get(tool_id, "")
+
+                if current_fp != stored_fp:
+                    tools_to_sync.append(tool)
+                    if stored_fp:
+                        logger.debug(f"Tool '{tool_id}' changed, will re-embed")
+                    else:
+                        logger.debug(f"Tool '{tool_id}' is new, will embed")
+
+        # Nothing to sync
+        if not tools_to_sync:
+            logger.debug(f"All {len(all_tools)} tools up-to-date, skipping sync")
+            self._synced = True
+
+            # Ensure handlers are registered even if tools are already in DB
+            for tool in all_tools:
+                self._registry.register_tool(tool)
+
+            return 0
+
+        logger.info(f"Syncing {len(tools_to_sync)}/{len(all_tools)} tools to vector store...")
+
+        # Clear pending tools since we're processing them
         self._pending_tools = []
 
-        for i in range(0, len(pending), batch_size):
-            batch = pending[i : i + batch_size]
+        total_synced = 0
+        for i in range(0, len(tools_to_sync), batch_size):
+            batch = tools_to_sync[i : i + batch_size]
             texts = [t.to_searchable_text() for t in batch]
             embeddings = await self._embedder.embed_batch(texts)
             count = await self._vector_store.add_tools(batch, embeddings, upsert=True)
@@ -389,7 +466,78 @@ class AgentGantry:
 
             total_synced += count
 
+        # Update sync metadata (if supported)
+        if hasattr(self._vector_store, "update_sync_metadata"):
+            await self._vector_store.update_sync_metadata(
+                embedder_id=embedder_id,
+                dimension=self._vector_store.dimension,
+            )
+
+        # Ensure all tools are registered (even those not synced)
+        for tool in all_tools:
+            if tool not in tools_to_sync:
+                self._registry.register_tool(tool)
+
+        self._synced = True
+        logger.info(f"Synced {total_synced} tools")
         return total_synced
+
+    def _compute_tool_fingerprint(self, tool: ToolDefinition) -> str:
+        """
+        Compute a fingerprint hash for a tool definition.
+
+        Args:
+            tool: The tool definition
+
+        Returns:
+            SHA256 hash (first 16 chars) of the tool's semantic content
+        """
+        content = json.dumps({
+            "name": tool.name,
+            "namespace": tool.namespace,
+            "description": tool.description,
+            "parameters_schema": tool.parameters_schema,
+            "tags": sorted(tool.tags),
+            "examples": sorted(tool.examples),
+        }, sort_keys=True)
+        return hashlib.sha256(content.encode()).hexdigest()[:16]
+
+    def _get_embedder_id(self) -> str:
+        """
+        Get a unique identifier for the current embedder configuration.
+
+        Returns:
+            String identifier combining embedder class and key params
+        """
+        embedder_class = self._embedder.__class__.__name__
+
+        # Try to get dimension from embedder
+        dimension = getattr(self._embedder, "dimension", None)
+        if dimension is None:
+            dimension = getattr(self._embedder, "_dimension", None)
+
+        # Try to get model name
+        model = getattr(self._embedder, "model", None)
+        if model is None:
+            model = getattr(self._embedder, "_model_name", None)
+
+        parts = [embedder_class]
+        if model:
+            parts.append(str(model))
+        if dimension:
+            parts.append(f"dim{dimension}")
+
+        return "-".join(parts)
+
+    async def ensure_synced(self) -> None:
+        """
+        Ensure tools are synced to the vector store.
+
+        This is called automatically before retrieval operations.
+        Uses smart fingerprinting to avoid unnecessary re-embedding.
+        """
+        if not self._synced:
+            await self.sync()
 
     async def collect_tools_from_modules(
         self,
@@ -476,6 +624,9 @@ class AgentGantry:
         """
         Core semantic routing function.
 
+        Automatically ensures tools are synced before retrieval using smart
+        fingerprint-based change detection.
+
         Args:
             query: The tool query with context and filters
 
@@ -483,8 +634,9 @@ class AgentGantry:
             RetrievalResult with scored tools
         """
         await self._ensure_initialized()
-        if self._config.auto_sync:
-            await self.sync()
+        
+        # Auto-sync with smart change detection
+        await self.ensure_synced()
 
         overall_start = perf_counter()
         if self._config.reranker.enabled and self._reranker is not None:
@@ -569,8 +721,9 @@ class AgentGantry:
             Result of the tool execution
         """
         await self._ensure_initialized()
-        if self._config.auto_sync:
-            await self.sync()
+        
+        # Auto-sync to ensure handlers are registered
+        await self.ensure_synced()
 
         if self._telemetry:
             async with self._telemetry.span("tool_execution", {"tool_name": call.tool_name}):
@@ -649,8 +802,9 @@ class AgentGantry:
             Results of all tool executions
         """
         await self._ensure_initialized()
-        if self._config.auto_sync:
-            await self.sync()
+        
+        # Auto-sync to ensure handlers are registered
+        await self.ensure_synced()
 
         if self._telemetry:
             async with self._telemetry.span("batch_execution", {"count": len(batch.calls)}):
@@ -698,8 +852,7 @@ class AgentGantry:
         from agent_gantry.servers.mcp_server import create_mcp_server
 
         await self._ensure_initialized()
-        if self._config.auto_sync:
-            await self.sync()
+        await self.ensure_synced()
 
         server = create_mcp_server(self, mode=mode, name=name)
 
@@ -784,8 +937,7 @@ class AgentGantry:
             The tool definition if found
         """
         await self._ensure_initialized()
-        if self._config.auto_sync:
-            await self.sync()
+        await self.ensure_synced()
         return await self._vector_store.get_by_name(name, namespace)
 
     async def list_tools(
@@ -802,8 +954,7 @@ class AgentGantry:
             List of tool definitions
         """
         await self._ensure_initialized()
-        if self._config.auto_sync:
-            await self.sync()
+        await self.ensure_synced()
         return await self._vector_store.list_all(namespace=namespace)
 
     def export_tools(self) -> list[ToolDefinition]:

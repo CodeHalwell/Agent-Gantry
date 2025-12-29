@@ -12,7 +12,7 @@ The decorator is part of the core Agent Gantry library:
 
 ```python
 from agent_gantry import AgentGantry
-from agent_gantry.integrations.decorator import with_semantic_tools
+from agent_gantry.integrations.semantic_tools import with_semantic_tools
 ```
 
 ## Basic Usage
@@ -21,7 +21,7 @@ from agent_gantry.integrations.decorator import with_semantic_tools
 
 ```python
 from agent_gantry import AgentGantry
-from agent_gantry.integrations.decorator import with_semantic_tools
+from agent_gantry.integrations.semantic_tools import with_semantic_tools
 from openai import OpenAI
 
 # Initialize Agent Gantry
@@ -132,7 +132,7 @@ async def custom_generate(query: str, *, functions: list | None = None):
 For reusable configuration across multiple functions:
 
 ```python
-from agent_gantry.integrations.decorator import SemanticToolsDecorator
+from agent_gantry.integrations.semantic_tools import SemanticToolsDecorator
 
 # Create a reusable decorator factory
 decorator = SemanticToolsDecorator(
@@ -204,7 +204,7 @@ User Request → Decorator → Agent Gantry → LLM API
 For more control, use `SemanticToolSelector` directly:
 
 ```python
-from agent_gantry.integrations.decorator import SemanticToolSelector
+from agent_gantry.integrations.semantic_tools import SemanticToolSelector
 
 selector = SemanticToolSelector(
     gantry,

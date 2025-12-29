@@ -135,6 +135,9 @@ class SemanticToolSelector:
         """
         Retrieve semantically relevant tools for the given prompt.
 
+        The gantry now handles auto-sync internally with smart fingerprint-based
+        change detection, so we no longer need to explicitly sync here.
+
         Args:
             prompt: The user prompt to match tools against.
 
@@ -143,8 +146,8 @@ class SemanticToolSelector:
         """
         from agent_gantry.schema.query import ConversationContext, ToolQuery
 
-        if self._auto_sync:
-            await self._gantry.sync()
+        # Note: sync() is now called automatically by gantry.retrieve()
+        # with smart fingerprinting - no need to explicitly call it here
 
         context = ConversationContext(query=prompt)
         query = ToolQuery(

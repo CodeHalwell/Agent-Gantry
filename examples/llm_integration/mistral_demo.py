@@ -71,7 +71,7 @@ async def main():
     # --- Scenario: Using @with_semantic_tools Decorator ---
     print("\n--- Scenario: Using @with_semantic_tools Decorator ---")
 
-    from agent_gantry.integrations.decorator import with_semantic_tools
+    from agent_gantry.integrations.semantic_tools import with_semantic_tools
 
     @with_semantic_tools(gantry, limit=1, score_threshold=0.1, prompt_param="user_query")
     async def chat_with_mistral(user_query: str, tools: list[dict[str, Any]] = None):

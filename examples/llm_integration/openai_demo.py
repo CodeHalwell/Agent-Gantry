@@ -90,7 +90,7 @@ async def main():
 
     # --- Scenario C: Using the Decorator (Automatic Injection) ---
     print("\n--- Scenario C: Using @with_semantic_tools Decorator ---")
-    from agent_gantry.integrations.decorator import with_semantic_tools
+    from agent_gantry.integrations.semantic_tools import with_semantic_tools
 
     # Wrap a function that calls the LLM. The decorator will:
     # 1. Extract the prompt from 'messages'
