@@ -7,7 +7,6 @@ supporting both tools and skills collections for semantic retrieval.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 from datetime import datetime, timezone
@@ -16,18 +15,56 @@ from typing import Any
 
 from agent_gantry.schema.skill import Skill
 from agent_gantry.schema.tool import ToolDefinition
+from agent_gantry.utils.fingerprint import compute_tool_fingerprint
 
 logger = logging.getLogger(__name__)
 
 
 def _escape_sql_string(value: str) -> str:
-    """Escape special characters in SQL strings to prevent injection."""
+    """
+    Escape special characters in SQL strings to prevent injection.
+
+    This function provides SQL injection protection for LanceDB queries by:
+    1. Escaping backslashes (must be done first)
+    2. Escaping single quotes using SQL standard ('') escaping
+
+    Note: This is used in conjunction with _validate_identifier() which rejects
+    control characters and enforces length limits. LanceDB does not currently
+    support parameterized queries for WHERE clauses, so string escaping is
+    necessary. All user-provided values go through validation before escaping.
+
+    Security considerations:
+    - Only used for metadata key lookups (not arbitrary user input)
+    - Keys are validated by _validate_identifier() before escaping
+    - All test cases in test suite verify SQL injection attempts are blocked
+
+    Args:
+        value: The string value to escape
+
+    Returns:
+        Escaped string safe for SQL inclusion
+    """
     # Escape backslashes first, then single quotes
     return value.replace("\\", "\\\\").replace("'", "''")
 
 
 def _validate_identifier(value: str, field_name: str) -> None:
-    """Validate that a value is safe to use in SQL."""
+    """
+    Validate that a value is safe to use in SQL queries.
+
+    This provides the first line of defense against SQL injection by:
+    1. Enforcing length limits (1-256 characters)
+    2. Rejecting null bytes and control characters (ASCII < 32)
+
+    This validation occurs before any SQL escaping is applied.
+
+    Args:
+        value: The value to validate
+        field_name: Name of the field (for error messages)
+
+    Raises:
+        ValueError: If validation fails
+    """
     if not value or len(value) > 256:
         raise ValueError(f"{field_name} must be 1-256 characters")
     # Reject null bytes and other control characters
@@ -42,6 +79,15 @@ class LanceDBVectorStore:
     Provides SQLite-like local persistence for tools and skills with
     high-speed, low-memory vector search. Supports zero-config setup
     with automatic database creation.
+
+    Security Note:
+        SQL injection protection is implemented through a defense-in-depth approach:
+        1. Input validation via _validate_identifier() (length limits, control char rejection)
+        2. SQL escaping via _escape_sql_string() (backslash and quote escaping)
+        3. Limited scope - only metadata key lookups use WHERE clauses
+
+        LanceDB does not currently support parameterized queries for WHERE clauses.
+        All SQL injection test cases in the test suite verify this protection is effective.
 
     Attributes:
         db_path: Path to the LanceDB database directory
@@ -195,8 +241,6 @@ class LanceDBVectorStore:
 
         self._initialized = True
 
-        self._initialized = True
-
     async def add_tools(
         self,
         tools: list[ToolDefinition],
@@ -242,7 +286,7 @@ class LanceDBVectorStore:
 
         for tool, embedding in zip(tools, embeddings):
             tool_id = f"{tool.namespace}.{tool.name}"
-            fingerprint = self._compute_tool_fingerprint(tool)
+            fingerprint = compute_tool_fingerprint(tool)
             record = {
                 "id": tool_id,
                 "name": tool.name,
@@ -271,30 +315,6 @@ class LanceDBVectorStore:
 
         self._tools_table.add(records)
         return len(records)
-
-    def _compute_tool_fingerprint(self, tool: ToolDefinition) -> str:
-        """
-        Compute a fingerprint hash for a tool definition.
-
-        The fingerprint is based on name, namespace, description, and parameters schema.
-        This allows detecting when a tool has changed and needs re-embedding.
-
-        Args:
-            tool: The tool definition
-
-        Returns:
-            SHA256 hash of the tool's semantic content
-        """
-        # Include fields that affect semantic meaning
-        content = json.dumps({
-            "name": tool.name,
-            "namespace": tool.namespace,
-            "description": tool.description,
-            "parameters_schema": tool.parameters_schema,
-            "tags": sorted(tool.tags),
-            "examples": sorted(tool.examples),
-        }, sort_keys=True)
-        return hashlib.sha256(content.encode()).hexdigest()[:16]
 
     async def add_skills(
         self,
@@ -914,15 +934,3 @@ class LanceDBVectorStore:
         await self.set_metadata("embedder_id", embedder_id)
         await self.set_metadata("dimension", str(dimension))
         await self.set_metadata("last_sync", now)
-
-    def compute_tool_fingerprint(self, tool: ToolDefinition) -> str:
-        """
-        Public method to compute a tool fingerprint.
-
-        Args:
-            tool: The tool definition
-
-        Returns:
-            SHA256 hash (first 16 chars) of the tool's semantic content
-        """
-        return self._compute_tool_fingerprint(tool)
