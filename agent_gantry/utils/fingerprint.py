@@ -59,7 +59,10 @@ def compute_tool_fingerprint(tool: ToolDefinition, version: str | None = None) -
             "parameters_schema": tool.parameters_schema,
             "tags": sorted(tool.tags),
             "examples": sorted(tool.examples),
-            "capabilities": sorted([cap.value for cap in tool.capabilities]),
+            "capabilities": sorted([
+                cap.value if hasattr(cap, "value") else str(cap)
+                for cap in tool.capabilities
+            ]),
             "requires_confirmation": tool.requires_confirmation,
         },
         sort_keys=True,
