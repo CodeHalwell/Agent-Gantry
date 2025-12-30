@@ -4,7 +4,7 @@ Framework integrations for Agent-Gantry.
 Integrations with LangChain, AutoGen, LlamaIndex, CrewAI, etc.
 """
 
-from agent_gantry.integrations.decorator import (
+from agent_gantry.integrations.semantic_tools import (
     SemanticToolsDecorator,
     SemanticToolSelector,
     with_semantic_tools,

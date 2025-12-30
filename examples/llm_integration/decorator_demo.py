@@ -1,7 +1,7 @@
 import asyncio
 
 from agent_gantry import AgentGantry
-from agent_gantry.integrations.decorator import with_semantic_tools
+from agent_gantry.integrations.semantic_tools import with_semantic_tools
 
 
 # Mock LLM Client to simulate an API call

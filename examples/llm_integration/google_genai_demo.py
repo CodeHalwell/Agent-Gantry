@@ -96,7 +96,7 @@ async def main():
 
     # --- Scenario: Using the Decorator ---
     print("\n--- Scenario: Using @with_semantic_tools Decorator ---")
-    from agent_gantry.integrations.decorator import with_semantic_tools
+    from agent_gantry.integrations.semantic_tools import with_semantic_tools
 
     @with_semantic_tools(gantry, limit=1, score_threshold=0.1)
     async def chat_with_gemini(prompt: str, tools: list = None):
