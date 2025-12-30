@@ -373,6 +373,148 @@ class TestLanceDBVectorStore:
         assert count1 == count2, f"Expected count to remain {count1}, got {count2} (tools were duplicated)"
         assert count1 == len(sample_tools), f"Expected {len(sample_tools)} tools, got {count1}"
 
+    @pytest.mark.asyncio
+    async def test_lancedb_get_health_status_basic(self, tmp_path) -> None:
+        """Test get_health_status returns correct structure."""
+        pytest.importorskip("lancedb")
+        pytest.importorskip("pyarrow")
+
+        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+
+        db_path = str(tmp_path / "test_db")
+        store = LanceDBVectorStore(db_path=db_path, dimension=64)
+
+        status = await store.get_health_status()
+
+        # Check required fields are present
+        assert "healthy" in status
+        assert "tool_count" in status
+        assert "skill_count" in status
+        assert "migration_needed" in status
+        assert "migration_status" in status
+        assert "schema_version" in status
+        assert "issues" in status
+
+        # Check types
+        assert isinstance(status["healthy"], bool)
+        assert isinstance(status["tool_count"], int)
+        assert isinstance(status["skill_count"], int)
+        assert isinstance(status["migration_needed"], bool)
+        assert isinstance(status["migration_status"], str)
+        assert isinstance(status["schema_version"], str)
+        assert isinstance(status["issues"], list)
+
+    @pytest.mark.asyncio
+    async def test_lancedb_get_health_status_with_tools(
+        self, tmp_path, sample_tools: list
+    ) -> None:
+        """Test get_health_status reports correct counts."""
+        pytest.importorskip("lancedb")
+        pytest.importorskip("pyarrow")
+
+        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+
+        db_path = str(tmp_path / "test_db")
+        store = LanceDBVectorStore(db_path=db_path, dimension=64)
+        await store.initialize()
+
+        # Add tools
+        embeddings = [[float(i) / 64 for i in range(64)] for _ in sample_tools]
+        await store.add_tools(sample_tools, embeddings)
+
+        status = await store.get_health_status()
+
+        assert status["healthy"] is True
+        assert status["tool_count"] == len(sample_tools)
+        assert status["skill_count"] == 0
+        assert status["migration_status"] == "up_to_date"
+        assert status["migration_needed"] is False
+        assert len(status["issues"]) == 0
+
+    @pytest.mark.asyncio
+    async def test_lancedb_get_health_status_dimension_mismatch(self, tmp_path) -> None:
+        """Test get_health_status detects dimension mismatches."""
+        pytest.importorskip("lancedb")
+        pytest.importorskip("pyarrow")
+
+        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+
+        db_path = str(tmp_path / "test_db")
+        store = LanceDBVectorStore(db_path=db_path, dimension=64)
+        await store.initialize()
+
+        # Set incorrect dimension metadata
+        await store.set_metadata("dimension", "128")
+
+        status = await store.get_health_status()
+
+        assert status["healthy"] is True
+        assert len(status["issues"]) > 0
+        assert any("Dimension mismatch" in issue for issue in status["issues"])
+
+    @pytest.mark.asyncio
+    async def test_lancedb_get_health_status_invalid_dimension(self, tmp_path) -> None:
+        """Test get_health_status handles invalid dimension metadata."""
+        pytest.importorskip("lancedb")
+        pytest.importorskip("pyarrow")
+
+        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+
+        db_path = str(tmp_path / "test_db")
+        store = LanceDBVectorStore(db_path=db_path, dimension=64)
+        await store.initialize()
+
+        # Set non-numeric dimension metadata
+        await store.set_metadata("dimension", "invalid")
+
+        status = await store.get_health_status()
+
+        assert status["healthy"] is True
+        assert len(status["issues"]) > 0
+        assert any("must be an integer" in issue for issue in status["issues"])
+
+    @pytest.mark.asyncio
+    async def test_lancedb_get_health_status_negative_dimension(self, tmp_path) -> None:
+        """Test get_health_status detects negative dimension values."""
+        pytest.importorskip("lancedb")
+        pytest.importorskip("pyarrow")
+
+        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+
+        db_path = str(tmp_path / "test_db")
+        store = LanceDBVectorStore(db_path=db_path, dimension=64)
+        await store.initialize()
+
+        # Set negative dimension metadata
+        await store.set_metadata("dimension", "-5")
+
+        status = await store.get_health_status()
+
+        assert status["healthy"] is True
+        assert len(status["issues"]) > 0
+        assert any("must be a positive integer" in issue for issue in status["issues"])
+
+    @pytest.mark.asyncio
+    async def test_lancedb_get_health_status_with_embedder_id(self, tmp_path) -> None:
+        """Test get_health_status includes embedder_id when present."""
+        pytest.importorskip("lancedb")
+        pytest.importorskip("pyarrow")
+
+        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+
+        db_path = str(tmp_path / "test_db")
+        store = LanceDBVectorStore(db_path=db_path, dimension=64)
+        await store.initialize()
+
+        # Set embedder_id metadata
+        await store.set_metadata("embedder_id", "openai-text-embedding-3-small")
+
+        status = await store.get_health_status()
+
+        assert status["healthy"] is True
+        assert "embedder_id" in status
+        assert status["embedder_id"] == "openai-text-embedding-3-small"
+
 
 class TestSQLInjectionPrevention:
     """Tests for SQL injection prevention in LanceDB adapter."""
