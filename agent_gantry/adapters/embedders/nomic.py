@@ -107,6 +107,18 @@ class NomicEmbedder(EmbeddingAdapter):
         """Return the model name."""
         return self._model_name
 
+    def get_embedder_id(self) -> str:
+        """
+        Return a unique identifier for this embedder configuration.
+
+        Includes model name, dimension, and task type to ensure proper
+        invalidation when any of these change.
+
+        Returns:
+            Unique identifier (e.g., "nomic-ai/nomic-embed-text-v1.5:768:search_document")
+        """
+        return f"{self._model_name}:{self._dimension}:{self._task_type}"
+
     def _ensure_initialized(self) -> None:
         """Lazy-load the model on first use."""
         if self._initialized:
