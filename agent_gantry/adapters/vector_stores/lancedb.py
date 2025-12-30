@@ -889,7 +889,7 @@ class LanceDBVectorStore:
             - tool_count: int - Number of tools in database
             - skill_count: int - Number of skills in database
             - migration_needed: bool - Whether schema migration is needed
-            - migration_status: str - "up_to_date", "pending", or "failed"
+            - migration_status: str - "unknown", "up_to_date", "pending", or "failed"
             - schema_version: str - Current schema version info
             - embedder_id: str (optional) - Embedder ID from metadata if available
             - issues: list[str] - List of any detected issues
@@ -955,7 +955,12 @@ class LanceDBVectorStore:
                 if stored_dimension:
                     try:
                         stored_dim_int = int(stored_dimension)
-                        if stored_dim_int != self._dimension:
+                        if stored_dim_int <= 0:
+                            status["issues"].append(
+                                f"Invalid dimension metadata: '{stored_dimension}' "
+                                f"must be a positive integer"
+                            )
+                        elif stored_dim_int != self._dimension:
                             status["issues"].append(
                                 f"Dimension mismatch: stored={stored_dimension}, "
                                 f"configured={self._dimension}"
@@ -963,7 +968,7 @@ class LanceDBVectorStore:
                     except ValueError:
                         status["issues"].append(
                             f"Invalid dimension metadata: '{stored_dimension}' "
-                            f"must be a positive integer"
+                            f"must be an integer"
                         )
 
                 if embedder_id:
