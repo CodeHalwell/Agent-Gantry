@@ -40,8 +40,10 @@ def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
     # Use get_type_hints to resolve string annotations (from __future__ import annotations)
     try:
         type_hints = typing.get_type_hints(func)
-    except Exception:
+    except (NameError, TypeError):
         # Fall back to raw annotations if get_type_hints fails
+        # NameError: forward references that can't be resolved
+        # TypeError: invalid type annotations
         try:
             type_hints = func.__annotations__
         except AttributeError:

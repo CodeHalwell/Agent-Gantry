@@ -140,3 +140,62 @@ class VectorStoreAdapter(Protocol):
             True if healthy
         """
         ...
+
+    async def get_stored_fingerprints(self) -> dict[str, str]:
+        """
+        Get all stored tool fingerprints for change detection.
+
+        This method enables smart sync by returning fingerprints of all tools
+        currently in the vector store. Vector stores that don't support
+        fingerprinting can use the default implementation.
+
+        Returns:
+            Dictionary mapping tool_id (namespace.name) to fingerprint hash.
+            Default implementation returns empty dict (no fingerprinting support).
+        """
+        return {}
+
+    async def get_metadata(self, key: str) -> str | None:
+        """
+        Get a metadata value by key.
+
+        This method supports storing vector store metadata such as embedder_id
+        and dimension for consistency checking. Vector stores that don't support
+        metadata storage can use the default implementation.
+
+        Args:
+            key: The metadata key to retrieve
+
+        Returns:
+            The metadata value if found, None otherwise.
+            Default implementation returns None (no metadata support).
+        """
+        return None
+
+    async def set_metadata(self, key: str, value: str) -> None:
+        """
+        Set a metadata value.
+
+        This method supports storing vector store metadata such as embedder_id
+        and dimension for consistency checking. Vector stores that don't support
+        metadata storage can use the default implementation (no-op).
+
+        Args:
+            key: The metadata key
+            value: The value to store
+        """
+        pass
+
+    async def update_sync_metadata(self, embedder_id: str, dimension: int) -> None:
+        """
+        Update sync metadata after a successful sync operation.
+
+        This is a convenience method that updates both embedder_id and dimension
+        metadata. Vector stores that don't support metadata storage can use the
+        default implementation (no-op).
+
+        Args:
+            embedder_id: Unique identifier for the embedder configuration
+            dimension: Vector dimension
+        """
+        pass

@@ -6,9 +6,7 @@ Primary entry point for the Agent-Gantry library.
 
 from __future__ import annotations
 
-import hashlib
 import importlib
-import json
 import logging
 import uuid
 from collections.abc import Callable, Sequence
@@ -27,6 +25,7 @@ from agent_gantry.observability.opentelemetry_adapter import (
     OpenTelemetryAdapter,
     PrometheusTelemetryAdapter,
 )
+from agent_gantry.utils.fingerprint import compute_tool_fingerprint
 from agent_gantry.schema.config import (
     A2AAgentConfig,
     AgentGantryConfig,
@@ -390,7 +389,7 @@ class AgentGantry:
 
         # Compute fingerprints for current tools
         current_fingerprints = {
-            f"{t.namespace}.{t.name}": self._compute_tool_fingerprint(t)
+            f"{t.namespace}.{t.name}": compute_tool_fingerprint(t)
             for t in all_tools
         }
 
@@ -399,26 +398,24 @@ class AgentGantry:
         embedder_id = self._get_embedder_id()
         needs_full_resync = force
 
-        if hasattr(self._vector_store, "get_stored_fingerprints"):
-            stored_fingerprints = await self._vector_store.get_stored_fingerprints()
+        stored_fingerprints = await self._vector_store.get_stored_fingerprints()
 
-            # Check if embedder changed (requires full re-embed)
-            if hasattr(self._vector_store, "get_metadata"):
-                stored_embedder = await self._vector_store.get_metadata("embedder_id")
-                stored_dim = await self._vector_store.get_metadata("dimension")
+        # Check if embedder changed (requires full re-embed)
+        stored_embedder = await self._vector_store.get_metadata("embedder_id")
+        stored_dim = await self._vector_store.get_metadata("dimension")
 
-                if stored_embedder and stored_embedder != embedder_id:
-                    logger.info(
-                        f"Embedder changed from '{stored_embedder}' to '{embedder_id}'. "
-                        "Full re-sync required."
-                    )
-                    needs_full_resync = True
-                elif stored_dim and int(stored_dim) != self._vector_store.dimension:
-                    logger.info(
-                        f"Dimension changed from {stored_dim} to {self._vector_store.dimension}. "
-                        "Full re-sync required."
-                    )
-                    needs_full_resync = True
+        if stored_embedder and stored_embedder != embedder_id:
+            logger.info(
+                f"Embedder changed from '{stored_embedder}' to '{embedder_id}'. "
+                "Full re-sync required."
+            )
+            needs_full_resync = True
+        elif stored_dim and int(stored_dim) != self._vector_store.dimension:
+            logger.info(
+                f"Dimension changed from {stored_dim} to {self._vector_store.dimension}. "
+                "Full re-sync required."
+            )
+            needs_full_resync = True
 
         # Determine which tools need syncing
         if needs_full_resync:
@@ -467,11 +464,10 @@ class AgentGantry:
             total_synced += count
 
         # Update sync metadata (if supported)
-        if hasattr(self._vector_store, "update_sync_metadata"):
-            await self._vector_store.update_sync_metadata(
-                embedder_id=embedder_id,
-                dimension=self._vector_store.dimension,
-            )
+        await self._vector_store.update_sync_metadata(
+            embedder_id=embedder_id,
+            dimension=self._vector_store.dimension,
+        )
 
         # Ensure all tools are registered (even those not synced)
         for tool in all_tools:
@@ -481,26 +477,6 @@ class AgentGantry:
         self._synced = True
         logger.info(f"Synced {total_synced} tools")
         return total_synced
-
-    def _compute_tool_fingerprint(self, tool: ToolDefinition) -> str:
-        """
-        Compute a fingerprint hash for a tool definition.
-
-        Args:
-            tool: The tool definition
-
-        Returns:
-            SHA256 hash (first 16 chars) of the tool's semantic content
-        """
-        content = json.dumps({
-            "name": tool.name,
-            "namespace": tool.namespace,
-            "description": tool.description,
-            "parameters_schema": tool.parameters_schema,
-            "tags": sorted(tool.tags),
-            "examples": sorted(tool.examples),
-        }, sort_keys=True)
-        return hashlib.sha256(content.encode()).hexdigest()[:16]
 
     def _get_embedder_id(self) -> str:
         """

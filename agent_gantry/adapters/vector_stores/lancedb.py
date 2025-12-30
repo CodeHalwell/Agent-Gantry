@@ -7,8 +7,6 @@ supporting both tools and skills collections for semantic retrieval.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +14,7 @@ from typing import Any
 
 from agent_gantry.schema.skill import Skill
 from agent_gantry.schema.tool import ToolDefinition
+from agent_gantry.utils.fingerprint import compute_tool_fingerprint
 
 logger = logging.getLogger(__name__)
 
@@ -195,8 +194,6 @@ class LanceDBVectorStore:
 
         self._initialized = True
 
-        self._initialized = True
-
     async def add_tools(
         self,
         tools: list[ToolDefinition],
@@ -242,7 +239,7 @@ class LanceDBVectorStore:
 
         for tool, embedding in zip(tools, embeddings):
             tool_id = f"{tool.namespace}.{tool.name}"
-            fingerprint = self._compute_tool_fingerprint(tool)
+            fingerprint = compute_tool_fingerprint(tool)
             record = {
                 "id": tool_id,
                 "name": tool.name,
@@ -271,30 +268,6 @@ class LanceDBVectorStore:
 
         self._tools_table.add(records)
         return len(records)
-
-    def _compute_tool_fingerprint(self, tool: ToolDefinition) -> str:
-        """
-        Compute a fingerprint hash for a tool definition.
-
-        The fingerprint is based on name, namespace, description, and parameters schema.
-        This allows detecting when a tool has changed and needs re-embedding.
-
-        Args:
-            tool: The tool definition
-
-        Returns:
-            SHA256 hash of the tool's semantic content
-        """
-        # Include fields that affect semantic meaning
-        content = json.dumps({
-            "name": tool.name,
-            "namespace": tool.namespace,
-            "description": tool.description,
-            "parameters_schema": tool.parameters_schema,
-            "tags": sorted(tool.tags),
-            "examples": sorted(tool.examples),
-        }, sort_keys=True)
-        return hashlib.sha256(content.encode()).hexdigest()[:16]
 
     async def add_skills(
         self,
@@ -915,14 +888,6 @@ class LanceDBVectorStore:
         await self.set_metadata("dimension", str(dimension))
         await self.set_metadata("last_sync", now)
 
-    def compute_tool_fingerprint(self, tool: ToolDefinition) -> str:
-        """
-        Public method to compute a tool fingerprint.
-
-        Args:
-            tool: The tool definition
-
-        Returns:
-            SHA256 hash (first 16 chars) of the tool's semantic content
-        """
-        return self._compute_tool_fingerprint(tool)
+    # Public method for computing tool fingerprints
+    # Delegates to the shared utility function
+    compute_tool_fingerprint = staticmethod(compute_tool_fingerprint)
