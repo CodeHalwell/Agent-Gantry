@@ -934,7 +934,3 @@ class LanceDBVectorStore:
         await self.set_metadata("embedder_id", embedder_id)
         await self.set_metadata("dimension", str(dimension))
         await self.set_metadata("last_sync", now)
-
-    # Public method for computing tool fingerprints
-    # Delegates to the shared utility function
-    compute_tool_fingerprint = staticmethod(compute_tool_fingerprint)

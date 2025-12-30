@@ -12,6 +12,10 @@ import json
 
 from agent_gantry.schema.tool import ToolDefinition
 
+# Hash length for fingerprints (16 hex chars = 64 bits)
+# Provides good collision resistance while keeping storage compact
+FINGERPRINT_LENGTH = 16
+
 
 def compute_tool_fingerprint(tool: ToolDefinition) -> str:
     """
@@ -25,7 +29,9 @@ def compute_tool_fingerprint(tool: ToolDefinition) -> str:
         tool: The tool definition
 
     Returns:
-        SHA256 hash (first 16 chars) of the tool's semantic content
+        SHA256 hash (first 16 hex chars = 64 bits) of the tool's semantic content.
+        This provides good collision resistance for typical tool counts while
+        keeping storage compact.
     """
     content = json.dumps(
         {
@@ -38,4 +44,5 @@ def compute_tool_fingerprint(tool: ToolDefinition) -> str:
         },
         sort_keys=True,
     )
-    return hashlib.sha256(content.encode()).hexdigest()[:16]
+    return hashlib.sha256(content.encode()).hexdigest()[:FINGERPRINT_LENGTH]
+
