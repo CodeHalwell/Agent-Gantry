@@ -859,7 +859,7 @@ class LanceDBVectorStore:
 
         Returns:
             True if database is accessible and operational
-            
+
         Note:
             For detailed health information including migration status,
             use get_health_status() instead.
@@ -925,13 +925,13 @@ class LanceDBVectorStore:
             try:
                 current_schema = self._tools_table.schema
                 current_field_names = {field.name for field in current_schema}
-                
+
                 # Expected fields in current schema version
                 expected_fields = {
                     "id", "name", "namespace", "description", "tool_json",
                     "fingerprint", "vector", "created_at", "updated_at"
                 }
-                
+
                 missing_fields = expected_fields - current_field_names
                 if missing_fields:
                     status["migration_needed"] = True
@@ -950,13 +950,13 @@ class LanceDBVectorStore:
             try:
                 embedder_id = await self.get_metadata("embedder_id")
                 stored_dimension = await self.get_metadata("dimension")
-                
+
                 if stored_dimension and int(stored_dimension) != self._dimension:
                     status["issues"].append(
                         f"Dimension mismatch: stored={stored_dimension}, "
                         f"configured={self._dimension}"
                     )
-                
+
                 if embedder_id:
                     status["embedder_id"] = embedder_id
             except Exception as e:
@@ -1178,14 +1178,14 @@ class LanceDBVectorStore:
         Rollback Limitations:
             Due to LanceDB's lack of native transaction support, rollback is
             best-effort only and may fail if:
-            
+
             - The metadata table becomes corrupted during updates
             - A second concurrent process modifies metadata simultaneously
             - The database connection is lost during rollback
-            
+
             If rollback fails, the metadata may be left in an inconsistent state
             with some fields updated and others not. In this case:
-            
+
             - Check logs for "Rollback failed" error messages
             - Manually verify metadata consistency with get_sync_status()
             - Consider re-syncing all tools to restore consistency
