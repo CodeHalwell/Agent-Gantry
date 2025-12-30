@@ -25,7 +25,6 @@ from agent_gantry.observability.opentelemetry_adapter import (
     OpenTelemetryAdapter,
     PrometheusTelemetryAdapter,
 )
-from agent_gantry.utils.fingerprint import compute_tool_fingerprint
 from agent_gantry.schema.config import (
     A2AAgentConfig,
     AgentGantryConfig,
@@ -38,6 +37,7 @@ from agent_gantry.schema.config import (
 from agent_gantry.schema.introspection import build_parameters_schema
 from agent_gantry.schema.query import RetrievalResult, ScoredTool, ToolQuery
 from agent_gantry.schema.tool import ToolCapability, ToolDefinition
+from agent_gantry.utils.fingerprint import compute_tool_fingerprint
 
 if TYPE_CHECKING:
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
@@ -610,7 +610,7 @@ class AgentGantry:
             RetrievalResult with scored tools
         """
         await self._ensure_initialized()
-        
+
         # Auto-sync with smart change detection
         await self.ensure_synced()
 
@@ -697,7 +697,7 @@ class AgentGantry:
             Result of the tool execution
         """
         await self._ensure_initialized()
-        
+
         # Auto-sync to ensure handlers are registered
         await self.ensure_synced()
 
@@ -778,7 +778,7 @@ class AgentGantry:
             Results of all tool executions
         """
         await self._ensure_initialized()
-        
+
         # Auto-sync to ensure handlers are registered
         await self.ensure_synced()
 

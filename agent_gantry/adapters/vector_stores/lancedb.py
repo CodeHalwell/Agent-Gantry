@@ -7,6 +7,7 @@ supporting both tools and skills collections for semantic retrieval.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,24 +23,24 @@ logger = logging.getLogger(__name__)
 def _escape_sql_string(value: str) -> str:
     """
     Escape special characters in SQL strings to prevent injection.
-    
+
     This function provides SQL injection protection for LanceDB queries by:
     1. Escaping backslashes (must be done first)
     2. Escaping single quotes using SQL standard ('') escaping
-    
+
     Note: This is used in conjunction with _validate_identifier() which rejects
     control characters and enforces length limits. LanceDB does not currently
     support parameterized queries for WHERE clauses, so string escaping is
     necessary. All user-provided values go through validation before escaping.
-    
+
     Security considerations:
     - Only used for metadata key lookups (not arbitrary user input)
     - Keys are validated by _validate_identifier() before escaping
     - All test cases in test suite verify SQL injection attempts are blocked
-    
+
     Args:
         value: The string value to escape
-        
+
     Returns:
         Escaped string safe for SQL inclusion
     """
@@ -50,17 +51,17 @@ def _escape_sql_string(value: str) -> str:
 def _validate_identifier(value: str, field_name: str) -> None:
     """
     Validate that a value is safe to use in SQL queries.
-    
+
     This provides the first line of defense against SQL injection by:
     1. Enforcing length limits (1-256 characters)
     2. Rejecting null bytes and control characters (ASCII < 32)
-    
+
     This validation occurs before any SQL escaping is applied.
-    
+
     Args:
         value: The value to validate
         field_name: Name of the field (for error messages)
-        
+
     Raises:
         ValueError: If validation fails
     """
@@ -84,7 +85,7 @@ class LanceDBVectorStore:
         1. Input validation via _validate_identifier() (length limits, control char rejection)
         2. SQL escaping via _escape_sql_string() (backslash and quote escaping)
         3. Limited scope - only metadata key lookups use WHERE clauses
-        
+
         LanceDB does not currently support parameterized queries for WHERE clauses.
         All SQL injection test cases in the test suite verify this protection is effective.
 
