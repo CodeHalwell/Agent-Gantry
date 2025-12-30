@@ -962,7 +962,8 @@ class LanceDBVectorStore:
                             )
                     except ValueError:
                         status["issues"].append(
-                            f"Invalid dimension metadata: '{stored_dimension}' is not numeric"
+                            f"Invalid dimension metadata: '{stored_dimension}' "
+                            f"must be a positive integer"
                         )
 
                 if embedder_id:
