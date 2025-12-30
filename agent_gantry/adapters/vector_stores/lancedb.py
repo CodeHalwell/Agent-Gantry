@@ -1074,14 +1074,30 @@ class LanceDBVectorStore:
 
         This method provides transaction-like semantics by updating all
         metadata fields together. If any update fails, the entire operation
-        is considered failed and previous state is preserved.
+        is considered failed and an attempt is made to rollback to previous state.
+
+        Rollback Limitations:
+            Due to LanceDB's lack of native transaction support, rollback is
+            best-effort only and may fail if:
+            
+            - The metadata table becomes corrupted during updates
+            - A second concurrent process modifies metadata simultaneously
+            - The database connection is lost during rollback
+            
+            If rollback fails, the metadata may be left in an inconsistent state
+            with some fields updated and others not. In this case:
+            
+            - Check logs for "Rollback failed" error messages
+            - Manually verify metadata consistency with get_sync_status()
+            - Consider re-syncing all tools to restore consistency
+            - Use external locks (e.g., file locks) to prevent concurrent writes
 
         Args:
             embedder_id: Identifier for the embedder used
             dimension: Vector dimension used
 
         Raises:
-            Exception: If metadata update fails
+            Exception: If metadata update fails (with rollback attempted)
         """
         now = datetime.now(timezone.utc).isoformat()
 
