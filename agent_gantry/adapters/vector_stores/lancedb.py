@@ -859,6 +859,10 @@ class LanceDBVectorStore:
 
         Returns:
             True if database is accessible and operational
+            
+        Note:
+            For detailed health information including migration status,
+            use get_health_status() instead.
         """
         try:
             await self._ensure_initialized()
@@ -868,6 +872,101 @@ class LanceDBVectorStore:
             return True
         except Exception:
             return False
+
+    async def get_health_status(self) -> dict[str, Any]:
+        """
+        Get detailed health status of the vector store.
+
+        Returns detailed information about database health, including:
+        - Basic health check (is database accessible)
+        - Tool and skill counts
+        - Schema migration status
+        - Metadata consistency
+
+        Returns:
+            Dictionary with health status information:
+            - healthy: bool - Overall health status
+            - tool_count: int - Number of tools in database
+            - skill_count: int - Number of skills in database
+            - migration_needed: bool - Whether schema migration is needed
+            - migration_status: str - "up_to_date", "pending", or "failed"
+            - schema_version: str - Current schema version info
+            - issues: list[str] - List of any detected issues
+
+        Example:
+            >>> status = await store.get_health_status()
+            >>> if status["migration_needed"]:
+            ...     print(f"Migration status: {status['migration_status']}")
+        """
+        status: dict[str, Any] = {
+            "healthy": False,
+            "tool_count": 0,
+            "skill_count": 0,
+            "migration_needed": False,
+            "migration_status": "unknown",
+            "schema_version": "v1.0",
+            "issues": [],
+        }
+
+        try:
+            await self._ensure_initialized()
+
+            # Check basic health
+            status["healthy"] = await self.health_check()
+            if not status["healthy"]:
+                status["issues"].append("Database is not accessible")
+                return status
+
+            # Get counts
+            status["tool_count"] = await self.count()
+            status["skill_count"] = await self.count_skills()
+
+            # Check schema migration status
+            try:
+                current_schema = self._tools_table.schema
+                current_field_names = {field.name for field in current_schema}
+                
+                # Expected fields in current schema version
+                expected_fields = {
+                    "id", "name", "namespace", "description", "tool_json",
+                    "fingerprint", "vector", "created_at", "updated_at"
+                }
+                
+                missing_fields = expected_fields - current_field_names
+                if missing_fields:
+                    status["migration_needed"] = True
+                    status["migration_status"] = "pending"
+                    status["issues"].append(
+                        f"Schema migration needed: missing fields {missing_fields}"
+                    )
+                else:
+                    status["migration_status"] = "up_to_date"
+
+            except Exception as e:
+                status["migration_status"] = "failed"
+                status["issues"].append(f"Schema check failed: {e}")
+
+            # Check metadata consistency
+            try:
+                embedder_id = await self.get_metadata("embedder_id")
+                stored_dimension = await self.get_metadata("dimension")
+                
+                if stored_dimension and int(stored_dimension) != self._dimension:
+                    status["issues"].append(
+                        f"Dimension mismatch: stored={stored_dimension}, "
+                        f"configured={self._dimension}"
+                    )
+                
+                if embedder_id:
+                    status["embedder_id"] = embedder_id
+            except Exception as e:
+                status["issues"].append(f"Metadata check failed: {e}")
+
+        except Exception as e:
+            status["healthy"] = False
+            status["issues"].append(f"Health check error: {e}")
+
+        return status
 
     async def _ensure_initialized(self) -> None:
         """Ensure the database is initialized."""
