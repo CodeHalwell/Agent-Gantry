@@ -530,7 +530,8 @@ class TestSQLInjectionPrevention:
         assert result is not None, "Expected to find tool"
         assert result.namespace == "namespace_with_underscores"
 
-        # Test that our escaping function handles backslashes
+        # Verify our SQL escaping implementation handles backslashes correctly
+        # Note: Testing private function here is acceptable for security-critical logic
         from agent_gantry.adapters.vector_stores.lancedb import _escape_sql_string
 
         test_str = "test\\with\\backslashes"

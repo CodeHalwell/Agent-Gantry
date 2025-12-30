@@ -178,8 +178,8 @@ class LanceDBVectorStore:
             return
 
         try:
-            import lancedb
-            import pyarrow as pa
+            import lancedb  # type: ignore[import-untyped]
+            import pyarrow as pa  # type: ignore[import-untyped]
         except ImportError as e:
             raise ImportError(
                 "lancedb and pyarrow are required. "
@@ -332,7 +332,8 @@ class LanceDBVectorStore:
                 else:
                     self._tools_table.delete(f"id = '{ids[0]}'")
             except RuntimeError as e:
-                # Table might be empty or records might not exist - this is expected
+                # LanceDB raises RuntimeError when attempting to delete non-existent records
+                # This is expected during upsert when records don't exist yet
                 logger.debug(f"Delete during upsert (expected if records don't exist): {e}")
             except Exception as e:
                 # Unexpected error during deletion
@@ -410,7 +411,8 @@ class LanceDBVectorStore:
                 else:
                     self._skills_table.delete(f"id = '{ids[0]}'")
             except RuntimeError as e:
-                # Table might be empty or records might not exist - this is expected
+                # LanceDB raises RuntimeError when attempting to delete non-existent records
+                # This is expected during upsert when records don't exist yet
                 logger.debug(f"Delete during upsert (expected if records don't exist): {e}")
             except Exception as e:
                 # Unexpected error during deletion
@@ -975,7 +977,7 @@ class LanceDBVectorStore:
         try:
             escaped_key = _escape_sql_string(key)
             results = self._metadata_table.search().where(f"key = '{escaped_key}'").limit(1).to_list()
-            if results and results[0].get("value"):
+            if results and results[0].get("value") is not None:
                 value: str = results[0]["value"]
                 return value
         except Exception as e:
@@ -999,7 +1001,8 @@ class LanceDBVectorStore:
             escaped_key = _escape_sql_string(key)
             self._metadata_table.delete(f"key = '{escaped_key}'")
         except RuntimeError:
-            pass  # Record doesn't exist - this is expected
+            # LanceDB raises RuntimeError when attempting to delete non-existent records
+            pass
         except Exception as e:
             logger.warning(f"Unexpected error deleting metadata key '{key}': {e}")
             # Continue anyway - we'll try to add the new record
