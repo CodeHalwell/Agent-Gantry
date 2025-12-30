@@ -28,8 +28,9 @@ def compute_tool_fingerprint(tool: ToolDefinition, version: str | None = None) -
     Compute a fingerprint hash for a tool definition.
 
     The fingerprint is based on the tool's semantic content (name, namespace,
-    description, parameters schema, tags, and examples). This allows detecting
-    when a tool has changed and needs re-embedding.
+    description, parameters schema, tags, examples) AND security-critical fields
+    (capabilities, requires_confirmation). This ensures that changes to tool
+    permissions trigger re-embedding.
 
     Args:
         tool: The tool definition
@@ -48,6 +49,8 @@ def compute_tool_fingerprint(tool: ToolDefinition, version: str | None = None) -
         raise ValueError(f"Unsupported fingerprint version: {version}")
 
     # v1.0 algorithm: SHA256 of sorted JSON
+    # Includes security-critical fields (capabilities, requires_confirmation)
+    # to ensure permission changes trigger re-embedding
     content = json.dumps(
         {
             "name": tool.name,
@@ -56,6 +59,8 @@ def compute_tool_fingerprint(tool: ToolDefinition, version: str | None = None) -
             "parameters_schema": tool.parameters_schema,
             "tags": sorted(tool.tags),
             "examples": sorted(tool.examples),
+            "capabilities": sorted([cap.value for cap in tool.capabilities]),
+            "requires_confirmation": tool.requires_confirmation,
         },
         sort_keys=True,
     )
