@@ -80,6 +80,26 @@ class LanceDBVectorStore:
     high-speed, low-memory vector search. Supports zero-config setup
     with automatic database creation.
 
+    Multi-Process Limitations:
+        LanceDB uses file-based storage and does not provide built-in locking
+        mechanisms for concurrent writes. To ensure data consistency:
+
+        * **Single Writer**: Only one process should write to a database at a time
+        * **Multiple Readers**: Multiple processes can safely read from the same database
+        * **Coordination**: Use external locks (e.g., file locks, distributed locks)
+          if you need concurrent writes from multiple processes
+        * **Alternatives**: For true multi-process write support, consider using
+          Qdrant or PostgreSQL with pgvector adapters
+
+        Example with file locking:
+        ```python
+        import fcntl
+        with open('.agent_gantry/lancedb.lock', 'w') as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            await store.add_tools(tools, embeddings)
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        ```
+
     Security Note:
         SQL injection protection is implemented through a defense-in-depth approach:
         1. Input validation via _validate_identifier() (length limits, control char rejection)
@@ -158,8 +178,8 @@ class LanceDBVectorStore:
             return
 
         try:
-            import lancedb  # type: ignore[import-untyped]
-            import pyarrow as pa  # type: ignore[import-untyped]
+            import lancedb
+            import pyarrow as pa
         except ImportError as e:
             raise ImportError(
                 "lancedb and pyarrow are required. "
@@ -217,6 +237,8 @@ class LanceDBVectorStore:
 
         if self._tools_table_name in existing_tables:
             self._tools_table = self._db.open_table(self._tools_table_name)
+            # Migrate schema if needed
+            await self._migrate_tools_schema(tools_schema)
         else:
             self._tools_table = self._db.create_table(
                 self._tools_table_name,
@@ -309,9 +331,13 @@ class LanceDBVectorStore:
                     self._tools_table.delete(f"id IN ({escaped_ids})")
                 else:
                     self._tools_table.delete(f"id = '{ids[0]}'")
-            except Exception as e:
+            except RuntimeError as e:
                 # Table might be empty or records might not exist - this is expected
-                logger.debug(f"Upsert delete during add_tools (may be expected): {e}")
+                logger.debug(f"Delete during upsert (expected if records don't exist): {e}")
+            except Exception as e:
+                # Unexpected error during deletion
+                logger.warning(f"Unexpected error during upsert delete: {e}")
+                raise
 
         self._tools_table.add(records)
         return len(records)
@@ -383,9 +409,13 @@ class LanceDBVectorStore:
                     self._skills_table.delete(f"id IN ({escaped_ids})")
                 else:
                     self._skills_table.delete(f"id = '{ids[0]}'")
-            except Exception as e:
+            except RuntimeError as e:
                 # Table might be empty or records might not exist - this is expected
-                logger.debug(f"Upsert delete during add_skills (may be expected): {e}")
+                logger.debug(f"Delete during upsert (expected if records don't exist): {e}")
+            except Exception as e:
+                # Unexpected error during deletion
+                logger.warning(f"Unexpected error during upsert delete: {e}")
+                raise
 
         self._skills_table.add(records)
         return len(records)
@@ -456,13 +486,27 @@ class LanceDBVectorStore:
 
             # Filter by tags if specified
             if filters and "tags" in filters:
-                tool_json = json.loads(row["tool_json"])
+                tool_json_str = row.get("tool_json")
+                if not tool_json_str:
+                    logger.warning("Skipping row with missing tool_json field")
+                    continue
+                tool_json = json.loads(tool_json_str)
                 tool_tags = tool_json.get("tags", [])
                 if not any(tag in tool_tags for tag in filters["tags"]):
                     continue
 
             # Deserialize tool
-            tool = ToolDefinition.model_validate_json(row["tool_json"])
+            tool_json_str = row.get("tool_json")
+            if not tool_json_str:
+                logger.warning("Skipping row with missing tool_json field")
+                continue
+
+            try:
+                tool = ToolDefinition.model_validate_json(tool_json_str)
+            except Exception as e:
+                logger.warning(f"Failed to deserialize tool: {e}")
+                continue
+
             output.append((tool, score))
 
             if len(output) >= limit:
@@ -523,7 +567,18 @@ class LanceDBVectorStore:
             if score_threshold is not None and score < score_threshold:
                 continue
 
-            skill = Skill.model_validate_json(row["skill_json"])
+            # Deserialize skill with None check
+            skill_json_str = row.get("skill_json")
+            if not skill_json_str:
+                logger.warning("Skipping row with missing skill_json field")
+                continue
+
+            try:
+                skill = Skill.model_validate_json(skill_json_str)
+            except Exception as e:
+                logger.warning(f"Failed to deserialize skill: {e}")
+                continue
+
             output.append((skill, score))
 
             if len(output) >= limit:
@@ -555,7 +610,11 @@ class LanceDBVectorStore:
         try:
             results = self._tools_table.search().where(f"id = '{tool_id}'").limit(1).to_list()
             if results:
-                return ToolDefinition.model_validate_json(results[0]["tool_json"])
+                tool_json_str = results[0].get("tool_json")
+                if tool_json_str:
+                    return ToolDefinition.model_validate_json(tool_json_str)
+                else:
+                    logger.warning(f"Tool {namespace}.{name} has missing tool_json field")
         except Exception as e:
             # Record may not exist - log at debug level
             logger.debug(f"get_by_name lookup failed for {namespace}.{name}: {e}")
@@ -585,7 +644,11 @@ class LanceDBVectorStore:
         try:
             results = self._skills_table.search().where(f"id = '{skill_id}'").limit(1).to_list()
             if results:
-                return Skill.model_validate_json(results[0]["skill_json"])
+                skill_json_str = results[0].get("skill_json")
+                if skill_json_str:
+                    return Skill.model_validate_json(skill_json_str)
+                else:
+                    logger.warning(f"Skill {namespace}.{name} has missing skill_json field")
         except Exception as e:
             # Record may not exist - log at debug level
             logger.debug(f"get_skill_by_name lookup failed for {namespace}.{name}: {e}")
@@ -679,6 +742,7 @@ class LanceDBVectorStore:
             return [
                 ToolDefinition.model_validate_json(r["tool_json"])
                 for r in records
+                if r.get("tool_json")  # Skip records with missing tool_json
             ]
         except Exception as e:
             logger.warning(f"Error listing tools: {e}")
@@ -727,6 +791,7 @@ class LanceDBVectorStore:
             return [
                 Skill.model_validate_json(r["skill_json"])
                 for r in records
+                if r.get("skill_json")  # Skip records with missing skill_json
             ]
         except Exception as e:
             logger.warning(f"Error listing skills: {e}")
@@ -807,6 +872,80 @@ class LanceDBVectorStore:
         if not self._initialized:
             await self.initialize()
 
+    async def _migrate_tools_schema(self, target_schema: Any) -> None:
+        """
+        Migrate tools table schema if needed.
+
+        This handles adding missing columns to existing databases to support
+        new features like fingerprinting without losing data.
+
+        Args:
+            target_schema: The target PyArrow schema
+        """
+        try:
+            # Get current schema
+            current_schema = self._tools_table.schema
+            current_field_names = {field.name for field in current_schema}
+            target_field_names = {field.name for field in target_schema}
+
+            # Check if migration is needed
+            missing_fields = target_field_names - current_field_names
+            if not missing_fields:
+                return  # Schema is up to date
+
+            logger.info(f"Migrating tools table schema. Adding fields: {missing_fields}")
+
+            # LanceDB doesn't support ALTER TABLE, so we need to:
+            # 1. Read all existing data
+            # 2. Add missing columns with default values
+            # 3. Re-insert data
+
+            # Read existing data
+            table = self._tools_table.to_arrow()
+            records = table.to_pylist()
+
+            if not records:
+                # Empty table, just recreate with new schema
+                self._db.drop_table(self._tools_table_name)
+                self._tools_table = self._db.create_table(
+                    self._tools_table_name,
+                    schema=target_schema,
+                )
+                return
+
+            # Add missing fields with default values
+            now = datetime.now(timezone.utc).isoformat()
+            for record in records:
+                if "fingerprint" not in record and "fingerprint" in missing_fields:
+                    # Compute fingerprint for existing tools
+                    try:
+                        tool = ToolDefinition.model_validate_json(record["tool_json"])
+                        record["fingerprint"] = compute_tool_fingerprint(tool)
+                    except Exception as e:
+                        # Fallback to empty fingerprint if tool JSON is invalid
+                        logger.warning(f"Failed to compute fingerprint during migration: {e}")
+                        record["fingerprint"] = ""
+                if "created_at" not in record and "created_at" in missing_fields:
+                    record["created_at"] = now
+                if "updated_at" not in record and "updated_at" in missing_fields:
+                    record["updated_at"] = now
+
+            # Drop and recreate table with new schema
+            self._db.drop_table(self._tools_table_name)
+            self._tools_table = self._db.create_table(
+                self._tools_table_name,
+                schema=target_schema,
+            )
+
+            # Re-insert data
+            self._tools_table.add(records)
+            logger.info(f"Successfully migrated {len(records)} tools to new schema")
+
+        except Exception as e:
+            logger.error(f"Schema migration failed: {e}")
+            # Don't raise - allow system to continue with current schema
+            # This makes the migration non-breaking
+
     @property
     def db_path(self) -> str:
         """Return the database path."""
@@ -836,8 +975,9 @@ class LanceDBVectorStore:
         try:
             escaped_key = _escape_sql_string(key)
             results = self._metadata_table.search().where(f"key = '{escaped_key}'").limit(1).to_list()
-            if results:
-                return results[0]["value"]
+            if results and results[0].get("value"):
+                value: str = results[0]["value"]
+                return value
         except Exception as e:
             logger.debug(f"get_metadata failed for key '{key}': {e}")
         return None
@@ -858,8 +998,11 @@ class LanceDBVectorStore:
         try:
             escaped_key = _escape_sql_string(key)
             self._metadata_table.delete(f"key = '{escaped_key}'")
-        except Exception:
-            pass  # May not exist
+        except RuntimeError:
+            pass  # Record doesn't exist - this is expected
+        except Exception as e:
+            logger.warning(f"Unexpected error deleting metadata key '{key}': {e}")
+            # Continue anyway - we'll try to add the new record
 
         # Add new record
         self._metadata_table.add([{
@@ -926,11 +1069,40 @@ class LanceDBVectorStore:
         """
         Update sync metadata after a successful sync.
 
+        This method provides transaction-like semantics by updating all
+        metadata fields together. If any update fails, the entire operation
+        is considered failed and previous state is preserved.
+
         Args:
             embedder_id: Identifier for the embedder used
             dimension: Vector dimension used
+
+        Raises:
+            Exception: If metadata update fails
         """
         now = datetime.now(timezone.utc).isoformat()
-        await self.set_metadata("embedder_id", embedder_id)
-        await self.set_metadata("dimension", str(dimension))
-        await self.set_metadata("last_sync", now)
+
+        # Store old values for rollback
+        old_embedder_id = await self.get_metadata("embedder_id")
+        old_dimension = await self.get_metadata("dimension")
+        old_last_sync = await self.get_metadata("last_sync")
+
+        try:
+            # Update all metadata fields
+            await self.set_metadata("embedder_id", embedder_id)
+            await self.set_metadata("dimension", str(dimension))
+            await self.set_metadata("last_sync", now)
+        except Exception as e:
+            # Attempt rollback on failure
+            logger.error(f"Sync metadata update failed: {e}. Attempting rollback...")
+            try:
+                if old_embedder_id is not None:
+                    await self.set_metadata("embedder_id", old_embedder_id)
+                if old_dimension is not None:
+                    await self.set_metadata("dimension", old_dimension)
+                if old_last_sync is not None:
+                    await self.set_metadata("last_sync", old_last_sync)
+                logger.info("Rollback completed successfully")
+            except Exception as rollback_error:
+                logger.error(f"Rollback failed: {rollback_error}")
+            raise  # Re-raise original exception

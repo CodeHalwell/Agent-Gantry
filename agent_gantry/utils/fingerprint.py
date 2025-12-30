@@ -16,8 +16,14 @@ from agent_gantry.schema.tool import ToolDefinition
 # Provides good collision resistance while keeping storage compact
 FINGERPRINT_LENGTH = 16
 
+# Fingerprint version - increment when fingerprint algorithm changes
+# Format: v{major}.{minor}
+# - Major: Breaking changes (all fingerprints must be recomputed)
+# - Minor: Non-breaking enhancements
+FINGERPRINT_VERSION = "v1.0"
 
-def compute_tool_fingerprint(tool: ToolDefinition) -> str:
+
+def compute_tool_fingerprint(tool: ToolDefinition, version: str | None = None) -> str:
     """
     Compute a fingerprint hash for a tool definition.
 
@@ -27,12 +33,21 @@ def compute_tool_fingerprint(tool: ToolDefinition) -> str:
 
     Args:
         tool: The tool definition
+        version: Fingerprint version to use (defaults to current FINGERPRINT_VERSION)
 
     Returns:
-        SHA256 hash (first 16 hex chars = 64 bits) of the tool's semantic content.
-        This provides good collision resistance for typical tool counts while
-        keeping storage compact.
+        Versioned fingerprint string in format: {version}:{hash}
+        Example: "v1.0:a1b2c3d4e5f67890"
+
+    Raises:
+        ValueError: If unsupported version is requested
     """
+    version = version or FINGERPRINT_VERSION
+
+    if version != "v1.0":
+        raise ValueError(f"Unsupported fingerprint version: {version}")
+
+    # v1.0 algorithm: SHA256 of sorted JSON
     content = json.dumps(
         {
             "name": tool.name,
@@ -44,5 +59,30 @@ def compute_tool_fingerprint(tool: ToolDefinition) -> str:
         },
         sort_keys=True,
     )
-    return hashlib.sha256(content.encode()).hexdigest()[:FINGERPRINT_LENGTH]
+    hash_value = hashlib.sha256(content.encode()).hexdigest()[:FINGERPRINT_LENGTH]
+    return f"{version}:{hash_value}"
+
+
+def parse_fingerprint(fingerprint: str) -> tuple[str, str]:
+    """
+    Parse a versioned fingerprint into version and hash components.
+
+    Args:
+        fingerprint: Versioned fingerprint string (e.g., "v1.0:a1b2c3d4e5f67890")
+
+    Returns:
+        Tuple of (version, hash)
+
+    Raises:
+        ValueError: If fingerprint format is invalid
+    """
+    if ":" not in fingerprint:
+        # Legacy fingerprint without version
+        return ("v1.0", fingerprint)
+
+    parts = fingerprint.split(":", 1)
+    if len(parts) != 2:
+        raise ValueError(f"Invalid fingerprint format: {fingerprint}")
+
+    return (parts[0], parts[1])
 

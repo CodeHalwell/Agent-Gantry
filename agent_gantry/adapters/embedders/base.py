@@ -28,6 +28,22 @@ class EmbeddingAdapter(Protocol):
         """Return the model name."""
         ...
 
+    def get_embedder_id(self) -> str:
+        """
+        Return a unique identifier for this embedder configuration.
+
+        This ID is used to track which embedder was used to create embeddings,
+        enabling proper invalidation when the embedder changes.
+
+        The default implementation combines model name and dimension.
+        Implementations can override this to include additional parameters
+        (e.g., task type, quantization, fine-tuning).
+
+        Returns:
+            Unique identifier string (e.g., "nomic-ai/nomic-embed-text-v1.5:768")
+        """
+        return f"{self.model_name}:{self.dimension}"
+
     @abstractmethod
     async def embed_text(self, text: str) -> list[float]:
         """
