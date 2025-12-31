@@ -76,10 +76,8 @@ class CohereReranker(RerankerAdapter):
             parts.append(f"Tags: {', '.join(tool.tags)}")
 
         if tool.examples:
-            examples_str = " | ".join(
-                f"{ex.description}: {ex.example}"
-                for ex in tool.examples
-            )
+            # examples is list[str] - join them as a simple list
+            examples_str = " | ".join(tool.examples)
             parts.append(f"Examples: {examples_str}")
 
         return " | ".join(parts)

@@ -102,6 +102,11 @@ class QdrantVectorStore:
             f"Initialized QdrantVectorStore with url={url}, collection={collection_name}"
         )
 
+    @property
+    def dimension(self) -> int:
+        """Return the vector dimension."""
+        return self._dimension
+
     async def initialize(self) -> None:
         """Initialize the collection, creating it if needed."""
         if self._initialized:
@@ -213,21 +218,21 @@ class QdrantVectorStore:
 
         # Convert results to tools
         if include_embeddings:
-            tools: list[tuple[ToolDefinition, float, list[float]]] = []
+            tools_with_embeddings: list[tuple[ToolDefinition, float, list[float]]] = []
             for result in results:
                 tool_json = result.payload.get("tool_json", "{}")
                 tool = ToolDefinition.model_validate_json(tool_json)
                 # Extract vector from result
-                embedding = result.vector if result.vector else []
-                tools.append((tool, result.score, embedding))
+                embedding = list(result.vector) if result.vector else []
+                tools_with_embeddings.append((tool, float(result.score), embedding))
+            return tools_with_embeddings
         else:
-            tools: list[tuple[ToolDefinition, float]] = []
+            tools_without_embeddings: list[tuple[ToolDefinition, float]] = []
             for result in results:
                 tool_json = result.payload.get("tool_json", "{}")
                 tool = ToolDefinition.model_validate_json(tool_json)
-                tools.append((tool, result.score))
-
-        return tools
+                tools_without_embeddings.append((tool, float(result.score)))
+            return tools_without_embeddings
 
     async def get_by_name(
         self, name: str, namespace: str = "default"
@@ -356,6 +361,7 @@ class ChromaVectorStore:
         collection_name: str = "agent_gantry",
         persist_directory: str | None = None,
         api_key: str | None = None,
+        dimension: int = 0,
     ) -> None:
         """
         Initialize the Chroma vector store.
@@ -365,6 +371,7 @@ class ChromaVectorStore:
             collection_name: Name of the collection
             persist_directory: Local persistence directory (for persistent mode)
             api_key: Optional API key for authentication
+            dimension: Vector dimension (optional, for tracking purposes)
         """
         try:
             import chromadb
@@ -375,6 +382,7 @@ class ChromaVectorStore:
             ) from exc
 
         self._collection_name = collection_name
+        self._dimension = dimension
         self._initialized = False
 
         # Determine client mode
@@ -392,6 +400,11 @@ class ChromaVectorStore:
             logger.info("Initialized ChromaVectorStore in memory mode")
 
         self._collection = None
+
+    @property
+    def dimension(self) -> int:
+        """Return the vector dimension."""
+        return self._dimension
 
     async def initialize(self) -> None:
         """Initialize the collection."""
@@ -492,7 +505,7 @@ class ChromaVectorStore:
 
         # Convert results to tools
         if include_embeddings:
-            tools: list[tuple[ToolDefinition, float, list[float]]] = []
+            tools_with_embeddings: list[tuple[ToolDefinition, float, list[float]]] = []
 
             if results["metadatas"] and results["distances"] and results.get("embeddings"):
                 for metadata, distance, embedding in zip(
@@ -504,13 +517,15 @@ class ChromaVectorStore:
                     tool = ToolDefinition.model_validate_json(tool_json)
 
                     # Convert distance to similarity score (1 - distance for cosine)
-                    score = 1.0 - distance
+                    score = 1.0 - float(distance)
 
                     # Apply score threshold if specified
                     if score_threshold is None or score >= score_threshold:
-                        tools.append((tool, score, embedding))
+                        tools_with_embeddings.append((tool, score, list(embedding)))
+
+            return tools_with_embeddings
         else:
-            tools: list[tuple[ToolDefinition, float]] = []
+            tools_without_embeddings: list[tuple[ToolDefinition, float]] = []
 
             if results["metadatas"] and results["distances"]:
                 for metadata, distance in zip(results["metadatas"][0], results["distances"][0]):
@@ -518,13 +533,13 @@ class ChromaVectorStore:
                     tool = ToolDefinition.model_validate_json(tool_json)
 
                     # Convert distance to similarity score (1 - distance for cosine)
-                    score = 1.0 - distance
+                    score = 1.0 - float(distance)
 
                     # Apply score threshold if specified
                     if score_threshold is None or score >= score_threshold:
-                        tools.append((tool, score))
+                        tools_without_embeddings.append((tool, score))
 
-        return tools
+            return tools_without_embeddings
 
     async def get_by_name(
         self, name: str, namespace: str = "default"
@@ -662,6 +677,11 @@ class PGVectorStore:
         self._initialized = False
 
         logger.info(f"Initialized PGVectorStore with table={table_name}")
+
+    @property
+    def dimension(self) -> int:
+        """Return the vector dimension."""
+        return self._dimension
 
     async def initialize(self) -> None:
         """Initialize database connection and create table if needed."""

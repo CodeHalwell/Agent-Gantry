@@ -90,3 +90,6 @@ Thumbs.db
 
 # Project specific
 *.log
+Claude.md
+.claude
+code_review/

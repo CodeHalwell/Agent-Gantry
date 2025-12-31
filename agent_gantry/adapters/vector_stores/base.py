@@ -18,6 +18,16 @@ class VectorStoreAdapter(Protocol):
                      PineconeAdapter, WeaviateAdapter, InMemoryAdapter.
     """
 
+    @property
+    def dimension(self) -> int:
+        """
+        Return the vector dimension of this store.
+
+        Implementations should return the configured dimension or auto-detect
+        from stored embeddings.
+        """
+        ...
+
     @abstractmethod
     async def initialize(self) -> None:
         """Idempotent setup of collections / indexes."""

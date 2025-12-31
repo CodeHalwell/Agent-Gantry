@@ -11,58 +11,17 @@ The `with_semantic_tools` decorator wraps LLM client generate functions to autom
 The decorator is part of the core Agent Gantry library:
 
 ```python
-from agent_gantry import AgentGantry, with_semantic_tools, set_default_gantry
+from agent_gantry import AgentGantry
+from agent_gantry.integrations.semantic_tools import with_semantic_tools
 ```
-
-## Recommended Pattern: set_default_gantry()
-
-The recommended way to use the decorator is with `set_default_gantry()` for cleaner, more maintainable code:
-
-```python
-from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
-from openai import OpenAI
-
-# Initialize and set default once at startup
-gantry = AgentGantry()
-set_default_gantry(gantry)
-
-# Register tools...
-@gantry.register
-def get_weather(city: str) -> str:
-    """Get the current weather for a city."""
-    return f"Weather in {city}: Sunny, 72°F"
-
-# Create OpenAI client
-client = OpenAI()
-
-# Cleaner decorator syntax - no gantry parameter needed
-@with_semantic_tools(limit=3)
-async def generate(prompt: str, *, tools: list | None = None):
-    """Generate a response with automatically selected tools."""
-    return client.chat.completions.create(
-        model="gpt-4",
-        messages=[{"role": "user", "content": prompt}],
-        tools=tools,
-    )
-
-# Usage
-response = await generate("What's the weather in Paris?")
-```
-
-**Benefits:**
-- Cleaner decorator syntax (no gantry parameter on every decorator)
-- Set once, use everywhere pattern
-- Thread-safe and async-safe (uses contextvars)
-- Still allows explicit gantry parameter for advanced use cases
 
 ## Basic Usage
 
-### With Explicit Gantry Parameter
-
-The explicit `gantry` parameter still works for backward compatibility and multi-instance scenarios:
+### With OpenAI
 
 ```python
-from agent_gantry import AgentGantry, with_semantic_tools
+from agent_gantry import AgentGantry
+from agent_gantry.integrations.semantic_tools import with_semantic_tools
 from openai import OpenAI
 
 # Initialize Agent Gantry
@@ -87,7 +46,7 @@ def send_email(to: str, subject: str, body: str) -> str:
 # Create OpenAI client
 client = OpenAI()
 
-# Wrap your generate function with explicit gantry
+# Wrap your generate function
 @with_semantic_tools(gantry, limit=3)
 async def generate(prompt: str, *, tools: list | None = None):
     """Generate a response with automatically selected tools."""
@@ -105,7 +64,7 @@ response = await generate("What's the weather in Paris?")
 ### With Messages Format (OpenAI/Anthropic Style)
 
 ```python
-@with_semantic_tools(limit=3)  # Using default gantry
+@with_semantic_tools(gantry, limit=3)
 async def chat(messages: list[dict], *, tools: list | None = None):
     """Chat with automatic tool selection."""
     return client.chat.completions.create(
@@ -129,7 +88,7 @@ from anthropic import Anthropic
 
 client = Anthropic()
 
-@with_semantic_tools(dialect="anthropic", limit=5)
+@with_semantic_tools(gantry, dialect="anthropic", limit=5)
 async def claude_chat(messages: list[dict], *, tools: list | None = None):
     """Chat with Claude using automatic tool selection."""
     return client.messages.create(
@@ -156,6 +115,7 @@ The decorator accepts several configuration options:
 
 ```python
 @with_semantic_tools(
+    gantry,
     prompt_param="query",       # Custom prompt parameter name
     tools_param="functions",    # Custom tools parameter name
     limit=3,                    # Return top 3 tools
@@ -172,7 +132,7 @@ async def custom_generate(query: str, *, functions: list | None = None):
 For reusable configuration across multiple functions:
 
 ```python
-from agent_gantry import SemanticToolsDecorator
+from agent_gantry.integrations.semantic_tools import SemanticToolsDecorator
 
 # Create a reusable decorator factory
 decorator = SemanticToolsDecorator(
@@ -244,7 +204,7 @@ User Request → Decorator → Agent Gantry → LLM API
 For more control, use `SemanticToolSelector` directly:
 
 ```python
-from agent_gantry import SemanticToolSelector
+from agent_gantry.integrations.semantic_tools import SemanticToolSelector
 
 selector = SemanticToolSelector(
     gantry,
@@ -272,7 +232,7 @@ result = await wrapped(...)
 The decorator handles errors gracefully:
 
 ```python
-@with_semantic_tools()
+@with_semantic_tools(gantry)
 async def generate(prompt: str, *, tools: list | None = None):
     try:
         return await client.chat.completions.create(...)
@@ -288,26 +248,26 @@ async def generate(prompt: str, *, tools: list | None = None):
 
 ```python
 import pytest
-from agent_gantry import AgentGantry, with_semantic_tools, set_default_gantry
+from agent_gantry import AgentGantry
+from agent_gantry.integrations.decorator import with_semantic_tools
 
 @pytest.mark.asyncio
 async def test_tool_injection():
     gantry = AgentGantry()
-    set_default_gantry(gantry)
-
+    
     @gantry.register
     def my_tool(x: int) -> str:
         """A test tool for demonstration."""
         return str(x)
-
+    
     received_tools = None
-
-    @with_semantic_tools(score_threshold=0.0)
+    
+    @with_semantic_tools(gantry, score_threshold=0.0)
     async def generate(prompt: str, *, tools: list | None = None):
         nonlocal received_tools
         received_tools = tools
         return "response"
-
+    
     await generate("test prompt")
     assert received_tools is not None
 ```
@@ -329,13 +289,10 @@ async def generate(prompt: str):
 
 After:
 ```python
-from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
-
 gantry = AgentGantry()
-set_default_gantry(gantry)
-# Register tools dynamically...
+# Register tools dynamically
 
-@with_semantic_tools()
+@with_semantic_tools(gantry)
 async def generate(prompt: str, *, tools: list | None = None):
     return client.chat.completions.create(
         messages=[{"role": "user", "content": prompt}],
@@ -355,7 +312,7 @@ async def generate(prompt: str):
         tools = [email_tool]
     else:
         tools = []
-
+    
     return client.chat.completions.create(
         messages=[{"role": "user", "content": prompt}],
         tools=tools,
@@ -364,7 +321,7 @@ async def generate(prompt: str):
 
 After:
 ```python
-@with_semantic_tools()
+@with_semantic_tools(gantry)
 async def generate(prompt: str, *, tools: list | None = None):
     # Semantic selection replaces manual logic
     return client.chat.completions.create(

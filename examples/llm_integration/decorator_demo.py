@@ -1,7 +1,15 @@
+"""
+Semantic tools decorator demo.
+
+Shows how the @with_semantic_tools decorator automatically retrieves and injects
+relevant tools into LLM function calls based on the user's prompt.
+
+This example demonstrates both the OLD and NEW patterns for using the decorator.
+"""
+
 import asyncio
 
-from agent_gantry import AgentGantry
-from agent_gantry.integrations.semantic_tools import with_semantic_tools
+from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
 
 
 # Mock LLM Client to simulate an API call
@@ -17,7 +25,8 @@ class MockLLMClient:
             print("[MockLLM] No tools received.")
             return "I have no tools to use."
 
-async def main():
+
+async def main() -> None:
     gantry = AgentGantry()
 
     # 1. Register some tools
@@ -40,20 +49,40 @@ async def main():
 
     client = MockLLMClient()
 
+    print("=== Pattern 1: Using set_default_gantry() (RECOMMENDED) ===")
+    # Set the default gantry instance for the current context
+    # This allows using @with_semantic_tools without passing gantry explicitly
+    set_default_gantry(gantry)
+
     # 2. Decorate a function with @with_semantic_tools
-    # This will automatically intercept the call, find relevant tools for the prompt,
-    # and inject them into the 'tools' argument.
-    # We set score_threshold=0.1 because we are using the default SimpleEmbedder (hashing)
-    @with_semantic_tools(gantry, limit=1, score_threshold=0.1)
-    async def generate_response(prompt: str, tools: list | None = None):
+    # The decorator will:
+    # - Extract the prompt from function arguments
+    # - Retrieve semantically relevant tools
+    # - Inject them into the 'tools' parameter
+    #
+    # Note: score_threshold=0.1 is used because the default SimpleEmbedder
+    # uses deterministic hashing, which produces low similarity scores.
+    # For production, use OpenAI or Nomic embeddings with the default threshold (0.5).
+    @with_semantic_tools(limit=1, score_threshold=0.1)
+    async def generate_response(prompt: str, tools: list | None = None) -> str:
         return await client.create(prompt, tools=tools)
 
     # 3. Call the decorated function
-    print("--- Query 1: Weather ---")
+    print("\n--- Query 1: Weather ---")
     await generate_response("What is the weather in Tokyo?")
 
     print("\n--- Query 2: Stocks ---")
     await generate_response("What is the price of AAPL?")
+
+    print("\n=== Pattern 2: Explicit Gantry (BACKWARDS COMPATIBLE) ===")
+    # You can still pass gantry explicitly if you prefer
+    @with_semantic_tools(gantry, limit=1, score_threshold=0.1)
+    async def generate_response_explicit(prompt: str, tools: list | None = None) -> str:
+        return await client.create(prompt, tools=tools)
+
+    print("\n--- Query 3: Email ---")
+    await generate_response_explicit("Send an email to the team")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
