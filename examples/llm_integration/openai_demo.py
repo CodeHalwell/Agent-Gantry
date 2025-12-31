@@ -71,7 +71,7 @@ async def main() -> None:
 
     # Retrieve only relevant tools (OpenAI format by default)
     # Note: score_threshold=0.1 for SimpleEmbedder, use 0.5 (default) for Nomic/OpenAI
-    score_threshold = 0.1 if isinstance(gantry._embedder, object) else 0.5
+    score_threshold = 0.1 if isinstance(gantry._embedder, SimpleEmbedder) else 0.5
     tools = await gantry.retrieve_tools(query, limit=1, score_threshold=score_threshold)
     print(f"Gantry retrieved {len(tools)} tool(s): {[t['function']['name'] for t in tools]}")
 
