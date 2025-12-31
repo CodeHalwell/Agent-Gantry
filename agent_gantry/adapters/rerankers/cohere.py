@@ -76,14 +76,9 @@ class CohereReranker(RerankerAdapter):
             parts.append(f"Tags: {', '.join(tool.tags)}")
 
         if tool.examples:
-            # Validate that examples is a list of strings
-            if isinstance(tool.examples, list) and all(isinstance(ex, str) for ex in tool.examples):
-                examples_str = " | ".join(tool.examples)
-                parts.append(f"Examples: {examples_str}")
-            else:
-                # Fallback for unexpected types - convert to strings
-                examples_str = " | ".join(str(ex) for ex in tool.examples)
-                parts.append(f"Examples: {examples_str}")
+            # ToolDefinition schema enforces examples: list[str]
+            examples_str = " | ".join(tool.examples)
+            parts.append(f"Examples: {examples_str}")
 
         return " | ".join(parts)
 
