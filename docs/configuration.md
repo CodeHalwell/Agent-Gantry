@@ -144,11 +144,11 @@ reranker:
 vector_store:
   type: lancedb
   db_path: .agent_gantry/lancedb
-  dimension: 256
+  dimension: 768
 embedder:
   type: nomic
   model: nomic-ai/nomic-embed-text-v1.5
-  dimension: 256
+  dimension: 768
   task_type: search_document
 telemetry:
   type: prometheus

@@ -17,10 +17,33 @@ class InMemoryVectorStore:
     Uses cosine similarity for search.
     """
 
-    def __init__(self) -> None:
-        """Initialize the in-memory store."""
+    def __init__(self, dimension: int = 0) -> None:
+        """
+        Initialize the in-memory store.
+
+        Args:
+            dimension: Vector dimension (optional, auto-detected from first embedding)
+        """
         self._tools: dict[str, ToolDefinition] = {}
         self._embeddings: dict[str, list[float]] = {}
+        self._fingerprints: dict[str, str] = {}
+        self._metadata: dict[str, str] = {}
+        self._dimension = dimension
+
+    @property
+    def dimension(self) -> int:
+        """
+        Return the vector dimension.
+
+        Returns the configured dimension, or auto-detects from first stored embedding.
+        """
+        if self._dimension > 0:
+            return self._dimension
+        # Auto-detect from first embedding
+        if self._embeddings:
+            first_embedding = next(iter(self._embeddings.values()))
+            return len(first_embedding)
+        return 0
 
     async def initialize(self) -> None:
         """Initialize the store (no-op for in-memory)."""
@@ -39,6 +62,8 @@ class InMemoryVectorStore:
             if key not in self._tools or upsert:
                 self._tools[key] = tool
                 self._embeddings[key] = embedding
+                # Store fingerprint for change detection
+                self._fingerprints[key] = tool.content_hash
                 count += 1
         return count
 
@@ -99,6 +124,7 @@ class InMemoryVectorStore:
         if key in self._tools:
             del self._tools[key]
             self._embeddings.pop(key, None)
+            self._fingerprints.pop(key, None)
             return True
         return False
 
@@ -124,6 +150,11 @@ class InMemoryVectorStore:
         """Check health (always healthy for in-memory)."""
         return True
 
+    @property
+    def supports_metadata(self) -> bool:
+        """Return True as in-memory store supports metadata storage."""
+        return True
+
     def _cosine_similarity(self, a: list[float], b: list[float]) -> float:
         """Calculate cosine similarity between two vectors."""
         if len(a) != len(b):
@@ -137,3 +168,45 @@ class InMemoryVectorStore:
             return 0.0
 
         return dot_product / (norm_a * norm_b)
+
+    async def get_stored_fingerprints(self) -> dict[str, str]:
+        """
+        Get all stored tool fingerprints for change detection.
+
+        Returns:
+            Dictionary mapping tool_id (namespace.name) to fingerprint hash.
+        """
+        return dict(self._fingerprints)
+
+    async def get_metadata(self, key: str) -> str | None:
+        """
+        Get a metadata value by key.
+
+        Args:
+            key: The metadata key to retrieve
+
+        Returns:
+            The metadata value if found, None otherwise.
+        """
+        return self._metadata.get(key)
+
+    async def set_metadata(self, key: str, value: str) -> None:
+        """
+        Set a metadata value.
+
+        Args:
+            key: The metadata key
+            value: The value to store
+        """
+        self._metadata[key] = value
+
+    async def update_sync_metadata(self, embedder_id: str, dimension: int) -> None:
+        """
+        Update sync metadata after a successful sync operation.
+
+        Args:
+            embedder_id: Unique identifier for the embedder configuration
+            dimension: Vector dimension
+        """
+        self._metadata["embedder_id"] = embedder_id
+        self._metadata["dimension"] = str(dimension)

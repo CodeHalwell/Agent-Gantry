@@ -20,9 +20,9 @@ from agent_gantry import AgentGantry
 from agent_gantry.adapters.embedders.nomic import NomicEmbedder
 from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
 
-# Create gantry instance with Nomic embeddings (256 dimensions)
-embedder = NomicEmbedder(dimension=256)
-vector_store = LanceDBVectorStore(db_path="gantry_tools.lancedb", dimension=256)
+# Create gantry instance with Nomic embeddings (768 dimensions)
+embedder = NomicEmbedder(dimension=768)
+vector_store = LanceDBVectorStore(db_path="gantry_tools.lancedb", dimension=768)
 tools = AgentGantry(embedder=embedder, vector_store=vector_store)
 
 

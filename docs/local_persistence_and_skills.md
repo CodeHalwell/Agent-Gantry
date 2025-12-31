@@ -25,12 +25,12 @@ config = AgentGantryConfig(
     vector_store=VectorStoreConfig(
         type="lancedb",
         db_path=".agent_gantry/lancedb",
-        dimension=256,
+        dimension=768,
     ),
     embedder=EmbedderConfig(
         type="nomic",
         model="nomic-ai/nomic-embed-text-v1.5",
-        dimension=256,  # Matryoshka truncation (64/128/256/512/768 supported)
+        dimension=768,  # Matryoshka truncation (64/128/256/512/768 supported)
         task_type="search_document",
     ),
 )
@@ -63,8 +63,8 @@ from agent_gantry.schema.skill import Skill, SkillCategory
 
 async def main() -> None:
     # Initialize embedder and store with matching dimensions
-    embedder = NomicEmbedder(dimension=256)
-    store = LanceDBVectorStore(db_path=".agent_gantry/lancedb", dimension=256)
+    embedder = NomicEmbedder(dimension=768)
+    store = LanceDBVectorStore(db_path=".agent_gantry/lancedb", dimension=768)
     await store.initialize()
 
     # Define skills

@@ -1,17 +1,27 @@
+"""
+Anthropic (Claude) + Agent-Gantry integration demo.
+
+Demonstrates how to use Agent-Gantry with Anthropic's Claude API, including:
+- Dynamic tool retrieval with Anthropic schema conversion
+- Using the @with_semantic_tools decorator with dialect="anthropic"
+- Tool execution handling specific to Anthropic's response format
+"""
+
 import asyncio
 import os
 from typing import Any
 
 from dotenv import load_dotenv
 
-from agent_gantry import AgentGantry
+from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
 from agent_gantry.schema.execution import ToolCall
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 
 # Load environment variables
 load_dotenv()
 
-async def main():
+
+async def main() -> None:
     print("=== Agent-Gantry + Anthropic (Claude) Integration Demo ===\n")
 
     # 1. Check for API Key
@@ -24,6 +34,7 @@ async def main():
     # 2. Initialize Gantry
     try:
         from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+
         gantry = AgentGantry(embedder=NomicEmbedder())
         print("✅ Initialized with Nomic Embeddings")
     except ImportError:
@@ -41,21 +52,20 @@ async def main():
 
     # 4. Initialize Anthropic Client
     from anthropic import AsyncAnthropic
+
     client = AsyncAnthropic(api_key=api_key)
 
-    # --- Scenario: Dynamic Retrieval with Schema Conversion ---
-    print("--- Scenario: Dynamic Retrieval with Anthropic Schema ---")
+    # --- Scenario A: Dynamic Retrieval with Manual Schema Conversion ---
+    print("--- Scenario A: Dynamic Retrieval with Anthropic Schema ---")
     query = "Check the production server status"
     print(f"User Query: '{query}'")
 
     # A. Retrieve Tools (Returns RetrievalResult)
     # We use the lower-level `retrieve` method to get the internal ToolDefinition objects
     # so we can convert them to Anthropic's format.
-    retrieval_result = await gantry.retrieve(ToolQuery(
-        context=ConversationContext(query=query),
-        limit=1,
-        score_threshold=0.1
-    ))
+    retrieval_result = await gantry.retrieve(
+        ToolQuery(context=ConversationContext(query=query), limit=1, score_threshold=0.1)
+    )
 
     # B. Convert to Anthropic Schema
     # Agent-Gantry provides a helper method `to_anthropic_schema()` on ToolDefinition
@@ -69,7 +79,7 @@ async def main():
         model="claude-sonnet-4-5",
         max_tokens=1024,
         messages=[{"role": "user", "content": query}],
-        tools=anthropic_tools
+        tools=anthropic_tools,
     )
 
     # D. Handle Tool Use
@@ -79,25 +89,26 @@ async def main():
             print(f"Claude decided to call: {block.name}({block.input})")
 
             # Execute securely via Gantry
-            result = await gantry.execute(ToolCall(
-                tool_name=block.name,
-                arguments=block.input
-            ))
+            result = await gantry.execute(ToolCall(tool_name=block.name, arguments=block.input))
             print(f"Execution Result: {result.result}")
 
-    # --- Scenario: Using the Decorator ---
-    print("\n--- Scenario: Using @with_semantic_tools Decorator ---")
-    from agent_gantry.integrations.semantic_tools import with_semantic_tools
+    # --- Scenario B: Using the Decorator (RECOMMENDED) ---
+    print("\n--- Scenario B: Using @with_semantic_tools Decorator (RECOMMENDED) ---")
+
+    # Set default gantry for decorator usage
+    set_default_gantry(gantry)
 
     # The decorator handles retrieval AND schema conversion (dialect="anthropic")
-    @with_semantic_tools(gantry, limit=1, dialect="anthropic", score_threshold=0.1)
-    async def chat_with_claude(messages: list[dict[str, str]], tools: list[dict[str, Any]] = None):
+    # Note: score_threshold=0.1 is used because we may be using SimpleEmbedder.
+    # With Nomic or OpenAI embeddings, use the default (0.5).
+    @with_semantic_tools(limit=1, dialect="anthropic", score_threshold=0.1)
+    async def chat_with_claude(
+        messages: list[dict[str, str]],
+        tools: list[dict[str, Any]] | None = None,
+    ):
         print(f"   [Decorator] Injected {len(tools) if tools else 0} tools (Anthropic format)")
         return await client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=1024,
-            messages=messages,
-            tools=tools
+            model="claude-sonnet-4-5", max_tokens=1024, messages=messages, tools=tools
         )
 
     query_dec = "Check staging status"
@@ -108,6 +119,7 @@ async def main():
     for block in response_dec.content:
         if block.type == "tool_use":
             print(f"Claude decided to call: {block.name}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

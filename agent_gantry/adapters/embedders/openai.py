@@ -90,6 +90,15 @@ class OpenAIEmbedder:
         """Return the model name."""
         return self._model
 
+    def get_embedder_id(self) -> str:
+        """
+        Return a unique identifier for this embedder configuration.
+
+        Returns:
+            Identifier combining model name and dimension
+        """
+        return f"{self._model}:{self._dimension}"
+
     async def embed_text(self, text: str) -> list[float]:
         """
         Embed a single text.
@@ -251,6 +260,15 @@ class AzureOpenAIEmbedder:
     def model_name(self) -> str:
         """Return the model name."""
         return self._model
+
+    def get_embedder_id(self) -> str:
+        """
+        Return a unique identifier for this embedder configuration.
+
+        Returns:
+            Identifier combining model name and dimension
+        """
+        return f"azure:{self._model}:{self._dimension}"
 
     async def embed_text(self, text: str) -> list[float]:
         """
