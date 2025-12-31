@@ -19,6 +19,7 @@ class VectorStoreAdapter(Protocol):
     """
 
     @property
+    @abstractmethod
     def dimension(self) -> int:
         """
         Return the vector dimension of this store.
@@ -150,6 +151,21 @@ class VectorStoreAdapter(Protocol):
             True if healthy
         """
         ...
+
+    @property
+    def supports_metadata(self) -> bool:
+        """
+        Indicate whether this vector store supports metadata storage.
+
+        Metadata storage enables features like embedder_id and dimension tracking
+        for consistency checking across syncs. Implementations that support
+        metadata should override this to return True.
+
+        Returns:
+            True if metadata storage is supported, False otherwise.
+            Default implementation returns False.
+        """
+        return False
 
     async def get_stored_fingerprints(self) -> dict[str, str]:
         """

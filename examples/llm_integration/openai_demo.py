@@ -15,6 +15,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
+from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 from agent_gantry.schema.execution import ToolCall
 
 # Load environment variables

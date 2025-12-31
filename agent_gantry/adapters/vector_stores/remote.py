@@ -371,7 +371,9 @@ class ChromaVectorStore:
             collection_name: Name of the collection
             persist_directory: Local persistence directory (for persistent mode)
             api_key: Optional API key for authentication
-            dimension: Vector dimension (optional, for tracking purposes)
+            dimension: Vector dimension for tracking purposes only. This parameter
+                      is not used for validation or dimension enforcement by Chroma,
+                      but provides a way to track the expected dimension externally.
         """
         try:
             import chromadb
@@ -403,7 +405,12 @@ class ChromaVectorStore:
 
     @property
     def dimension(self) -> int:
-        """Return the vector dimension."""
+        """
+        Return the vector dimension for tracking purposes.
+
+        Note: This dimension is not enforced by Chroma and is used for
+        external tracking and consistency checks only.
+        """
         return self._dimension
 
     async def initialize(self) -> None:

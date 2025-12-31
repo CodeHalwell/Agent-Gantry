@@ -150,6 +150,11 @@ class InMemoryVectorStore:
         """Check health (always healthy for in-memory)."""
         return True
 
+    @property
+    def supports_metadata(self) -> bool:
+        """Return True as in-memory store supports metadata storage."""
+        return True
+
     def _cosine_similarity(self, a: list[float], b: list[float]) -> float:
         """Calculate cosine similarity between two vectors."""
         if len(a) != len(b):
