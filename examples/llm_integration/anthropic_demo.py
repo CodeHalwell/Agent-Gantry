@@ -103,7 +103,8 @@ async def main() -> None:
     # With Nomic or OpenAI embeddings, use the default (0.5).
     @with_semantic_tools(limit=1, dialect="anthropic", score_threshold=0.1)
     async def chat_with_claude(
-        messages: list[dict[str, str]], tools: list[dict[str, Any]] | None = None
+        messages: list[dict[str, str]],
+        tools: list[dict[str, Any]] | None = None,
     ):
         print(f"   [Decorator] Injected {len(tools) if tools else 0} tools (Anthropic format)")
         return await client.messages.create(
