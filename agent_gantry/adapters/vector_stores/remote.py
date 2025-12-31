@@ -407,7 +407,7 @@ class ChromaVectorStore:
     def dimension(self) -> int:
         """
         Return the vector dimension for tracking purposes.
-        
+
         Note: This dimension is not enforced by Chroma and is used for
         external tracking and consistency checks only.
         """
