@@ -12,7 +12,7 @@ import pytest
 
 from agent_gantry import AgentGantry
 from agent_gantry.core.mcp_registry import MCPRegistry
-from agent_gantry.core.mcp_router import MCPRouter, MCPRoutingResult, MCPServerScore
+from agent_gantry.core.mcp_router import MCPRouter, MCPRoutingResult
 from agent_gantry.schema.mcp import MCPServerDefinition
 
 
