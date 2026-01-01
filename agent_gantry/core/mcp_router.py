@@ -107,13 +107,10 @@ class MCPRouter:
         scored_servers: list[MCPServerScore] = []
 
         # This is a placeholder - actual implementation will require
-        # the vector store to support multiple entity types
-        # For now, we'll return empty list and handle this in integration
-        # When vector store integration is complete, we'll process candidates like:
-        # for candidate in candidates[:limit]:
-        #     entity, score = candidate[0], candidate[1]
-        #     if isinstance(entity, MCPServerDefinition):
-        #         scored_servers.append(MCPServerScore(server=entity, score=score))
+        # the vector store to support multiple entity types.
+        # When vector store integration is complete, search results will be
+        # inspected for MCP server entities and converted into MCPServerScore
+        # instances (up to the requested limit).
 
         total_time_ms = (perf_counter() - start_time) * 1000
 
