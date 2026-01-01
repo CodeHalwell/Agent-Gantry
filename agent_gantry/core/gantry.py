@@ -982,10 +982,7 @@ class AgentGantry:
             capabilities=capabilities or [],
         )
 
-        # Add to pending servers for sync
-        self._pending_mcp_servers.append(server_def)
-
-        # Register in MCP registry
+        # Register in MCP registry and mark as pending for sync
         self._mcp_registry.register_server(server_def)
         self._mcp_registry.add_pending(server_def)
 
