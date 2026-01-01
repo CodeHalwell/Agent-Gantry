@@ -471,6 +471,60 @@ pytest tests/test_tool.py
 
 Agent-Gantry provides first-class support for the Model Context Protocol (MCP), enabling seamless integration with Claude Desktop and other MCP clients.
 
+### Dynamic MCP Server Selection (NEW ✨)
+
+Register MCP servers with rich metadata and let Agent-Gantry intelligently select which servers to connect to based on your query:
+
+```python
+from agent_gantry import AgentGantry
+
+gantry = AgentGantry()
+
+# Register servers with metadata (no immediate connection)
+gantry.register_mcp_server(
+    name="filesystem",
+    command=["npx", "-y", "@modelcontextprotocol/server-filesystem"],
+    description="Provides tools for reading and writing files on the local filesystem",
+    args=["--path", "/home/user/documents"],
+    tags=["filesystem", "files", "io"],
+    examples=["read a file", "write to a file", "list directory"],
+    capabilities=["read_files", "write_files"],
+)
+
+gantry.register_mcp_server(
+    name="database",
+    command=["python", "-m", "mcp_postgresql"],
+    description="Access PostgreSQL databases for querying and data manipulation",
+    tags=["database", "sql", "data"],
+    examples=["query database", "insert record"],
+    capabilities=["read_data", "write_data"],
+)
+
+# Sync server metadata for semantic search
+await gantry.sync_mcp_servers()
+
+# Semantic search finds relevant servers
+servers = await gantry.retrieve_mcp_servers(
+    query="I need to read a configuration file",
+    limit=2
+)
+
+# Connect and load tools only from selected servers
+for server in servers:
+    await gantry.discover_tools_from_server(server.name)
+
+# Now use the tools
+tools = await gantry.retrieve_tools("read my config.yaml")
+```
+
+**Benefits:**
+- 🎯 **Semantic Routing**: Automatically finds relevant servers based on query context
+- ⚡ **Lazy Loading**: Connects to servers only when needed
+- 🔒 **Security**: Minimizes attack surface by connecting only to necessary servers
+- 📊 **Health Tracking**: Monitors server availability and connection success
+
+See [docs/dynamic_mcp_selection.md](docs/dynamic_mcp_selection.md) for complete documentation.
+
 ### Serve as MCP Server
 
 ```python
