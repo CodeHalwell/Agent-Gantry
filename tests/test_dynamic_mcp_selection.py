@@ -364,13 +364,6 @@ class TestAgentGantryMCPIntegration:
             "agent_gantry.core.mcp_registry.MCPClient"
         ) as mock_client_class:
             mock_client = AsyncMock()
-            mock_tools = [
-                MagicMock(
-                    name="test_tool",
-                    description="A test tool from the server",
-                    inputSchema={"type": "object", "properties": {}},
-                )
-            ]
 
             # Mock list_tools to return our test tools
             mock_client.list_tools = AsyncMock(return_value=[])
