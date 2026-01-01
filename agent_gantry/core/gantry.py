@@ -585,12 +585,39 @@ class AgentGantry:
             # Note: We need to store these in a way that distinguishes them from tools
             # For now, we'll use a metadata tag to identify them as MCP servers
             # This requires the vector store to support metadata filtering
-            for server, embedding in zip(batch, embeddings):
-                # We'll store server metadata as a special "tool" with a marker
-                # A better approach would be to extend the vector store to support
-                # multiple entity types, but this works for now
-                pass  # Placeholder - actual storage implementation needed
+            ids: list[str] = []
+            metadatas: list[dict[str, Any]] = []
+            for server in batch:
+                # Generate a unique ID for this server entry. We avoid assuming
+                # specific attributes on MCPServerDefinition for stability.
+                server_id = getattr(server, "server_id", None) or getattr(server, "name", None)
+                if server_id is None:
+                    # Fall back to a random UUID if we can't infer a stable ID
+                    server_id = uuid.uuid4().hex
+                # Prefix with "mcp:" to avoid colliding with tool IDs.
+                ids.append(f"mcp:{server_id}")
 
+                metadata: dict[str, Any] = {
+                    "entity_type": "mcp_server",
+                }
+                # Optionally enrich metadata with commonly expected fields if present.
+                name = getattr(server, "name", None)
+                if name is not None:
+                    metadata["name"] = name
+                declared_server_id = getattr(server, "server_id", None)
+                if declared_server_id is not None:
+                    metadata["server_id"] = declared_server_id
+
+                metadatas.append(metadata)
+
+            # Persist MCP server embeddings to the vector store. We assume the
+            # adapter exposes an `upsert` method compatible with the one used
+            # for tool synchronization elsewhere in this class.
+            await self._vector_store.upsert(
+                ids=ids,
+                embeddings=embeddings,
+                metadatas=metadatas,
+            )
             total_synced += len(batch)
 
         self._mcp_synced = True
