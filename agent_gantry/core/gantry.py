@@ -35,6 +35,7 @@ from agent_gantry.schema.config import (
     VectorStoreConfig,
 )
 from agent_gantry.schema.introspection import build_parameters_schema
+from agent_gantry.schema.mcp import MCPServerDefinition
 from agent_gantry.schema.query import RetrievalResult, ScoredTool, ToolQuery
 from agent_gantry.schema.tool import ToolCapability, ToolDefinition
 from agent_gantry.utils.fingerprint import compute_tool_fingerprint
@@ -97,6 +98,17 @@ class AgentGantry:
         self._security_policy = security_policy or SecurityPolicy()
         self._registry = ToolRegistry()
 
+        # Initialize MCP registry and router for dynamic server selection
+        from agent_gantry.core.mcp_registry import MCPRegistry
+        from agent_gantry.core.mcp_router import MCPRouter
+
+        self._mcp_registry = MCPRegistry()
+        self._mcp_router = MCPRouter(
+            vector_store=self._vector_store,
+            embedder=self._embedder,
+            registry=self._mcp_registry,
+        )
+
         # Initialize LLM client for intent classification if enabled
         self._llm_client = None
         if self._config.routing.use_llm_for_intent:
@@ -125,9 +137,11 @@ class AgentGantry:
             telemetry=self._telemetry,
         )
         self._pending_tools: list[ToolDefinition] = []
+        self._pending_mcp_servers: list[MCPServerDefinition] = []
         self._tool_handlers: dict[str, Callable[..., Any]] = {}
         self._initialized = False
         self._synced = False  # Track if we've done initial sync check
+        self._mcp_synced = False  # Track if MCP servers are synced
         self._modules: Sequence[str] | None = None
         self._module_attr: str | None = None
 
@@ -515,6 +529,92 @@ class AgentGantry:
         if not self._synced:
             await self.sync()
 
+    async def _ensure_mcp_synced(self) -> None:
+        """
+        Ensure MCP servers are synced to the vector store.
+
+        Similar to ensure_synced() but for MCP server metadata.
+        """
+        if not self._mcp_synced:
+            await self.sync_mcp_servers()
+
+    async def sync_mcp_servers(self, batch_size: int = 100, force: bool = False) -> int:
+        """
+        Sync pending MCP server registrations to vector store.
+
+        Similar to sync() but for MCP servers instead of tools.
+
+        Args:
+            batch_size: Number of servers to embed and sync in each batch
+            force: If True, re-embed all servers regardless of fingerprints
+
+        Returns:
+            Number of servers synced
+        """
+        await self._ensure_initialized()
+
+        # Get all registered servers
+        all_servers = self._mcp_registry.list_servers()
+        if not all_servers:
+            self._mcp_synced = True
+            return 0
+
+        # For now, we'll just embed all pending servers
+        # A future enhancement would be to use fingerprinting like tools
+        pending_servers = self._mcp_registry.get_pending()
+        if not pending_servers and not force:
+            self._mcp_synced = True
+            return 0
+
+        servers_to_sync = all_servers if force else pending_servers
+
+        if not servers_to_sync:
+            self._mcp_synced = True
+            return 0
+
+        logger.info(f"Syncing {len(servers_to_sync)} MCP servers to vector store...")
+
+        # Clear pending servers
+        self._mcp_registry.clear_pending()
+
+        total_synced = 0
+        for i in range(0, len(servers_to_sync), batch_size):
+            batch = servers_to_sync[i : i + batch_size]
+            texts = [s.to_searchable_text() for s in batch]
+            embeddings = await self._embedder.embed_batch(texts)
+
+            # Transform MCP servers into pseudo-tools for storage in the vector store
+            # This allows us to reuse the existing vector store infrastructure
+            # while maintaining entity type discrimination via metadata
+            pseudo_tools: list[ToolDefinition] = []
+            for server in batch:
+                # Create a pseudo-tool representation of the MCP server
+                # Use a valid tool name format (lowercase, alphanumeric with underscores)
+                pseudo_name = f"mcp_server_{server.namespace}_{server.name}".replace("-", "_")
+                pseudo_tool = ToolDefinition(
+                    name=pseudo_name,
+                    namespace="__mcp_servers__",
+                    description=server.to_searchable_text(),
+                    parameters_schema={"type": "object", "properties": {}},
+                    metadata={
+                        "entity_type": "mcp_server",
+                        "server_name": server.name,
+                        "server_namespace": server.namespace,
+                        "server_tags": server.tags,
+                        "server_capabilities": server.capabilities,
+                        "server_command": server.command,
+                    },
+                )
+                pseudo_tools.append(pseudo_tool)
+
+            # Use the existing add_tools method with upsert=True
+            count = await self._vector_store.add_tools(pseudo_tools, embeddings, upsert=True)
+            total_synced += count
+
+        self._mcp_synced = True
+        logger.info(f"Synced {total_synced} MCP servers")
+        return total_synced
+
     async def collect_tools_from_modules(
         self,
         modules: Sequence[str],
@@ -792,6 +892,9 @@ class AgentGantry:
         """
         Add an MCP server to discover and register its tools.
 
+        Note: This method immediately discovers and registers ALL tools from the server.
+        For dynamic server selection, use register_mcp_server() instead.
+
         Args:
             config: Configuration for the MCP server
 
@@ -813,6 +916,218 @@ class AgentGantry:
             await self.add_tool(tool)
 
         return len(tools)
+
+    def register_mcp_server(
+        self,
+        name: str,
+        command: list[str],
+        *,
+        description: str,
+        namespace: str = "default",
+        args: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        tags: list[str] | None = None,
+        examples: list[str] | None = None,
+        capabilities: list[str] | None = None,
+    ) -> None:
+        """
+        Register an MCP server for dynamic selection via semantic routing.
+
+        Unlike add_mcp_server(), this method does NOT immediately connect to the server.
+        Instead, it registers the server metadata for semantic search, and tools are
+        discovered on-demand when the server is selected.
+
+        Args:
+            name: Unique name for the server
+            command: Command to start the MCP server (e.g., ["npx", "@modelcontextprotocol/server-filesystem"])
+            description: Description of what the server provides
+            namespace: Namespace for organizing servers
+            args: Additional command-line arguments
+            env: Environment variables for the server process
+            tags: Tags for categorizing the server
+            examples: Example queries this server handles
+            capabilities: Server capabilities (e.g., "read_files", "write_files")
+
+        Example:
+            >>> gantry.register_mcp_server(
+            ...     name="filesystem",
+            ...     command=["npx", "-y", "@modelcontextprotocol/server-filesystem"],
+            ...     description="Provides tools for reading and writing files on the local filesystem",
+            ...     args=["--path", "/tmp"],
+            ...     tags=["filesystem", "files", "io"],
+            ...     examples=["read a file", "write to a file", "list directory contents"],
+            ...     capabilities=["read_files", "write_files", "list_directory"],
+            ... )
+        """
+        from agent_gantry.schema.mcp import MCPServerDefinition
+
+        server_def = MCPServerDefinition(
+            name=name,
+            namespace=namespace,
+            description=description,
+            command=command,
+            args=args or [],
+            env=env or {},
+            tags=tags or [],
+            examples=examples or [],
+            capabilities=capabilities or [],
+        )
+
+        # Register in MCP registry and mark as pending for sync
+        self._mcp_registry.register_server(server_def)
+        self._mcp_registry.add_pending(server_def)
+
+        logger.info(f"Registered MCP server: {server_def.qualified_name}")
+
+    async def retrieve_mcp_servers(
+        self,
+        query: str,
+        limit: int = 3,
+        score_threshold: float | None = None,
+        namespaces: list[str] | None = None,
+    ) -> list[MCPServerDefinition]:
+        """
+        Retrieve relevant MCP servers based on a query using semantic search.
+
+        Args:
+            query: Natural language query describing needed functionality
+            limit: Maximum number of servers to return
+            score_threshold: Minimum similarity score (0-1)
+            namespaces: Filter by server namespaces
+
+        Returns:
+            List of relevant MCP server definitions
+
+        Example:
+            >>> servers = await gantry.retrieve_mcp_servers(
+            ...     "read and write files",
+            ...     limit=2
+            ... )
+            >>> for server in servers:
+            ...     print(f"Server: {server.name} - {server.description}")
+        """
+        await self._ensure_initialized()
+        await self._ensure_mcp_synced()
+
+        result = await self._mcp_router.route(
+            query=query,
+            limit=limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+        )
+
+        return [scored.server for scored in result.servers]
+
+    async def discover_tools_from_server(
+        self,
+        server_name: str,
+        namespace: str = "default",
+        timeout: float = 30.0,
+    ) -> int:
+        """
+        Dynamically discover and register tools from a previously registered MCP server.
+
+        This method connects to the server, discovers its tools, and adds them to
+        the gantry's tool registry.
+
+        Args:
+            server_name: Name of the registered MCP server
+            namespace: Server namespace
+            timeout: Connection timeout in seconds (default: 30.0)
+
+        Returns:
+            Number of tools discovered and registered
+
+        Raises:
+            ValueError: If the server is not registered
+            TimeoutError: If the connection or tool discovery times out
+            Exception: If tool discovery fails
+
+        Example:
+            >>> # First register the server metadata
+            >>> gantry.register_mcp_server(...)
+            >>> await gantry.sync()
+            >>>
+            >>> # Later, discover tools on-demand
+            >>> count = await gantry.discover_tools_from_server("filesystem")
+            >>> print(f"Discovered {count} tools")
+        """
+        import asyncio
+        from datetime import datetime, timezone
+
+        await self._ensure_initialized()
+
+        # Get the MCP client for this server
+        client = self._mcp_registry.get_client(server_name, namespace)
+        if not client:
+            raise ValueError(
+                f"MCP server '{namespace}.{server_name}' not found. "
+                f"Register it first with register_mcp_server()."
+            )
+
+        try:
+            # Discover tools from the server with timeout protection
+            tools = await asyncio.wait_for(
+                client.list_tools(),
+                timeout=timeout
+            )
+
+            # Add tools to the gantry
+            for tool in tools:
+                await self.add_tool(tool)
+
+            # Update server health
+            self._mcp_registry.update_health(
+                server_name,
+                namespace,
+                available=True,
+                last_success=datetime.now(timezone.utc),
+                consecutive_failures=0,
+            )
+
+            logger.info(
+                f"Discovered {len(tools)} tools from MCP server: {namespace}.{server_name}"
+            )
+            return len(tools)
+
+        except asyncio.TimeoutError:
+            # Update server health on timeout
+            server = self._mcp_registry.get_server(server_name, namespace)
+            consecutive_failures = server.health.consecutive_failures + 1 if server else 1
+
+            self._mcp_registry.update_health(
+                server_name,
+                namespace,
+                available=False,
+                last_failure=datetime.now(timezone.utc),
+                consecutive_failures=consecutive_failures,
+            )
+
+            logger.error(
+                f"Timeout while discovering tools from MCP server {namespace}.{server_name} "
+                f"(timeout: {timeout}s)"
+            )
+            raise TimeoutError(
+                f"MCP server {namespace}.{server_name} did not respond within {timeout}s"
+            )
+
+        except Exception as e:
+            # Update server health on failure
+            server = self._mcp_registry.get_server(server_name, namespace)
+            consecutive_failures = server.health.consecutive_failures + 1 if server else 1
+
+            self._mcp_registry.update_health(
+                server_name,
+                namespace,
+                available=False,
+                last_failure=datetime.now(timezone.utc),
+                consecutive_failures=consecutive_failures,
+            )
+
+            logger.error(
+                f"Failed to discover tools from MCP server {namespace}.{server_name}: {e}"
+            )
+            raise
 
     async def serve_mcp(
         self, transport: str = "stdio", mode: str = "dynamic", name: str = "agent-gantry"

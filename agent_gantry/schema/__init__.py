@@ -18,6 +18,7 @@ from agent_gantry.schema.events import (
     HealthChangeEvent,
     RetrievalEvent,
 )
+from agent_gantry.schema.mcp import MCPServerCost, MCPServerDefinition, MCPServerHealth
 from agent_gantry.schema.query import (
     ConversationContext,
     RetrievalResult,
@@ -67,6 +68,10 @@ __all__ = [
     "AgentGantryConfig",
     "A2AAgentConfig",
     "A2AConfig",
+    # MCP models
+    "MCPServerCost",
+    "MCPServerDefinition",
+    "MCPServerHealth",
     # A2A models
     "AgentCard",
     "AgentSkill",
