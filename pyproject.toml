@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-gantry"
-version = "0.1.1"
+version = "0.1.2"
 description = "Universal Tool Orchestration Platform - Intelligent, secure tool orchestration for LLM-based agent systems"
 readme = "README.md"
 license = "MIT"
