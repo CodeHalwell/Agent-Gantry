@@ -93,7 +93,7 @@ class MCPRouter:
         search_start = perf_counter()
         # Note: We're reusing the same vector store but with a different collection/tag
         # The vector store implementation should support storing both tools and MCP servers
-        candidates = await self._vector_store.search(
+        _ = await self._vector_store.search(
             query_vector=query_embedding,
             limit=limit * 2,  # Get extra candidates for filtering
             filters=filters,
@@ -109,13 +109,11 @@ class MCPRouter:
         # This is a placeholder - actual implementation will require
         # the vector store to support multiple entity types
         # For now, we'll return empty list and handle this in integration
-        for candidate in candidates[:limit]:
-            # Each candidate is a tuple of (entity, score, [embedding])
-            if len(candidate) >= 2:
-                entity, score = candidate[0], candidate[1]
-                # We'll need to check if this is an MCPServerDefinition
-                # This will be implemented when we integrate with the vector store
-                pass
+        # When vector store integration is complete, we'll process candidates like:
+        # for candidate in candidates[:limit]:
+        #     entity, score = candidate[0], candidate[1]
+        #     if isinstance(entity, MCPServerDefinition):
+        #         scored_servers.append(MCPServerScore(server=entity, score=score))
 
         total_time_ms = (perf_counter() - start_time) * 1000
 
