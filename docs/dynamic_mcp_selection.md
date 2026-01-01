@@ -1,10 +1,12 @@
 # Dynamic MCP Server Selection
 
-**Status**: 🚧 In Progress (Placeholder Implementation)
+**Status**: ✅ Functional (using pseudo-tool storage approach)
 
 ## Overview
 
 Dynamic MCP Server Selection enables Agent-Gantry to intelligently route queries to the most relevant MCP servers using semantic search, similar to how tools are selected. This feature allows you to register multiple MCP servers with rich metadata and have Agent-Gantry automatically determine which servers to connect to based on the user's query.
+
+> **Implementation Note**: MCP servers are stored as pseudo-tools in the vector store with special metadata tags for entity type discrimination. This approach allows us to leverage the existing vector store infrastructure while maintaining full functionality. A future enhancement could add native multi-entity support to the vector store layer.
 
 ## Key Benefits
 
@@ -583,6 +585,16 @@ if not servers:
 5. **Health Monitoring**: Check server health before critical operations
 6. **Sync Regularly**: Call `sync_mcp_servers()` after batch registrations
 7. **Namespace Organization**: Group related servers in namespaces
+8. **Command Security**: ⚠️ **CRITICAL** - Only use trusted commands and arguments
+   - Never pass unsanitized user input to `command` or `args` fields
+   - Validate all inputs to prevent command injection attacks
+   - Consider using allowlists for approved commands
+9. **Environment Variables**: Mark sensitive data in `env` as confidential
+   - Avoid logging environment variables that contain secrets
+   - Use secure credential management systems when possible
+10. **Timeout Configuration**: Use appropriate timeouts for `discover_tools_from_server()`
+    - Default is 30 seconds; adjust based on your server's typical response time
+    - Monitor timeout failures and adjust as needed
 
 ## Migration Guide
 

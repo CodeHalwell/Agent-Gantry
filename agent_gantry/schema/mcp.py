@@ -55,13 +55,28 @@ class MCPServerDefinition(BaseModel):
     examples: list[str] = Field(
         default_factory=list,
         max_length=10,
-        description="Example queries this server handles",
+        description="Example queries this server handles (max 10 examples, each should be concise)",
     )
 
     # Connection configuration (from MCPServerConfig)
-    command: list[str] = Field(..., description="Command to start the MCP server")
-    args: list[str] = Field(default_factory=list, description="Arguments for the command")
-    env: dict[str, str] = Field(default_factory=dict, description="Environment variables")
+    command: list[str] = Field(
+        ...,
+        min_length=1,
+        description="Command to start the MCP server. "
+        "WARNING: Ensure command components are from trusted sources to prevent command injection. "
+        "Never pass unsanitized user input directly to this field.",
+    )
+    args: list[str] = Field(
+        default_factory=list,
+        description="Arguments for the command. "
+        "WARNING: Validate and sanitize all arguments to prevent command injection.",
+    )
+    env: dict[str, str] = Field(
+        default_factory=dict,
+        description="Environment variables for the server process. "
+        "Marked as sensitive - avoid logging.",
+        repr=False,
+    )
 
     # Capabilities
     capabilities: list[str] = Field(

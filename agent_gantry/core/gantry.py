@@ -106,6 +106,7 @@ class AgentGantry:
         self._mcp_router = MCPRouter(
             vector_store=self._vector_store,
             embedder=self._embedder,
+            registry=self._mcp_registry,
         )
 
         # Initialize LLM client for intent classification if enabled
@@ -582,43 +583,33 @@ class AgentGantry:
             texts = [s.to_searchable_text() for s in batch]
             embeddings = await self._embedder.embed_batch(texts)
 
-            # Note: We need to store these in a way that distinguishes them from tools
-            # For now, we'll use a metadata tag to identify them as MCP servers
-            # This requires the vector store to support metadata filtering
-            ids: list[str] = []
-            metadatas: list[dict[str, Any]] = []
+            # Transform MCP servers into pseudo-tools for storage in the vector store
+            # This allows us to reuse the existing vector store infrastructure
+            # while maintaining entity type discrimination via metadata
+            pseudo_tools: list[ToolDefinition] = []
             for server in batch:
-                # Generate a unique ID for this server entry. We avoid assuming
-                # specific attributes on MCPServerDefinition for stability.
-                server_id = getattr(server, "server_id", None) or getattr(server, "name", None)
-                if server_id is None:
-                    # Fall back to a random UUID if we can't infer a stable ID
-                    server_id = uuid.uuid4().hex
-                # Prefix with "mcp:" to avoid colliding with tool IDs.
-                ids.append(f"mcp:{server_id}")
+                # Create a pseudo-tool representation of the MCP server
+                # Use a valid tool name format (lowercase, alphanumeric with underscores)
+                pseudo_name = f"mcp_server_{server.namespace}_{server.name}".replace("-", "_")
+                pseudo_tool = ToolDefinition(
+                    name=pseudo_name,
+                    namespace="__mcp_servers__",
+                    description=server.to_searchable_text(),
+                    parameters_schema={"type": "object", "properties": {}},
+                    metadata={
+                        "entity_type": "mcp_server",
+                        "server_name": server.name,
+                        "server_namespace": server.namespace,
+                        "server_tags": server.tags,
+                        "server_capabilities": server.capabilities,
+                        "server_command": server.command,
+                    },
+                )
+                pseudo_tools.append(pseudo_tool)
 
-                metadata: dict[str, Any] = {
-                    "entity_type": "mcp_server",
-                }
-                # Optionally enrich metadata with commonly expected fields if present.
-                name = getattr(server, "name", None)
-                if name is not None:
-                    metadata["name"] = name
-                declared_server_id = getattr(server, "server_id", None)
-                if declared_server_id is not None:
-                    metadata["server_id"] = declared_server_id
-
-                metadatas.append(metadata)
-
-            # Persist MCP server embeddings to the vector store. We assume the
-            # adapter exposes an `upsert` method compatible with the one used
-            # for tool synchronization elsewhere in this class.
-            await self._vector_store.upsert(
-                ids=ids,
-                embeddings=embeddings,
-                metadatas=metadatas,
-            )
-            total_synced += len(batch)
+            # Use the existing add_tools method with upsert=True
+            count = await self._vector_store.add_tools(pseudo_tools, embeddings, upsert=True)
+            total_synced += count
 
         self._mcp_synced = True
         logger.info(f"Synced {total_synced} MCP servers")
@@ -1031,6 +1022,7 @@ class AgentGantry:
         self,
         server_name: str,
         namespace: str = "default",
+        timeout: float = 30.0,
     ) -> int:
         """
         Dynamically discover and register tools from a previously registered MCP server.
@@ -1041,12 +1033,15 @@ class AgentGantry:
         Args:
             server_name: Name of the registered MCP server
             namespace: Server namespace
+            timeout: Connection timeout in seconds (default: 30.0)
 
         Returns:
             Number of tools discovered and registered
 
         Raises:
             ValueError: If the server is not registered
+            TimeoutError: If the connection or tool discovery times out
+            Exception: If tool discovery fails
 
         Example:
             >>> # First register the server metadata
@@ -1057,6 +1052,9 @@ class AgentGantry:
             >>> count = await gantry.discover_tools_from_server("filesystem")
             >>> print(f"Discovered {count} tools")
         """
+        import asyncio
+        from datetime import datetime, timezone
+
         await self._ensure_initialized()
 
         # Get the MCP client for this server
@@ -1068,16 +1066,17 @@ class AgentGantry:
             )
 
         try:
-            # Discover tools from the server
-            tools = await client.list_tools()
+            # Discover tools from the server with timeout protection
+            tools = await asyncio.wait_for(
+                client.list_tools(),
+                timeout=timeout
+            )
 
             # Add tools to the gantry
             for tool in tools:
                 await self.add_tool(tool)
 
             # Update server health
-            from datetime import datetime, timezone
-
             self._mcp_registry.update_health(
                 server_name,
                 namespace,
@@ -1091,10 +1090,29 @@ class AgentGantry:
             )
             return len(tools)
 
+        except asyncio.TimeoutError:
+            # Update server health on timeout
+            server = self._mcp_registry.get_server(server_name, namespace)
+            consecutive_failures = server.health.consecutive_failures + 1 if server else 1
+
+            self._mcp_registry.update_health(
+                server_name,
+                namespace,
+                available=False,
+                last_failure=datetime.now(timezone.utc),
+                consecutive_failures=consecutive_failures,
+            )
+
+            logger.error(
+                f"Timeout while discovering tools from MCP server {namespace}.{server_name} "
+                f"(timeout: {timeout}s)"
+            )
+            raise TimeoutError(
+                f"MCP server {namespace}.{server_name} did not respond within {timeout}s"
+            )
+
         except Exception as e:
             # Update server health on failure
-            from datetime import datetime, timezone
-
             server = self._mcp_registry.get_server(server_name, namespace)
             consecutive_failures = server.health.consecutive_failures + 1 if server else 1
 

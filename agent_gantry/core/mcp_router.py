@@ -16,6 +16,10 @@ if TYPE_CHECKING:
     from agent_gantry.schema.mcp import MCPServerDefinition
 
 
+# Import for registry access
+from agent_gantry.core.mcp_registry import MCPRegistry
+
+
 @dataclass
 class MCPServerScore:
     """Scored MCP server result."""
@@ -47,6 +51,7 @@ class MCPRouter:
         self,
         vector_store: VectorStoreAdapter,
         embedder: EmbeddingAdapter,
+        registry: MCPRegistry | None = None,
     ) -> None:
         """
         Initialize the MCP router.
@@ -54,9 +59,11 @@ class MCPRouter:
         Args:
             vector_store: Vector store for server embeddings
             embedder: Embedding model for queries
+            registry: MCP registry for looking up server definitions
         """
         self._vector_store = vector_store
         self._embedder = embedder
+        self._registry = registry
 
     async def route(
         self,
@@ -91,26 +98,37 @@ class MCPRouter:
 
         # Search for relevant servers
         search_start = perf_counter()
-        # Note: We're reusing the same vector store but with a different collection/tag
-        # The vector store implementation should support storing both tools and MCP servers
-        _ = await self._vector_store.search(
+        # Search the vector store for MCP server pseudo-tools
+        # These are stored with namespace "__mcp_servers__" to distinguish from real tools
+        candidates = await self._vector_store.search(
             query_vector=query_embedding,
             limit=limit * 2,  # Get extra candidates for filtering
-            filters=filters,
+            filters={"namespace": ["__mcp_servers__"]} if not filters else {**filters, "namespace": ["__mcp_servers__"]},
             score_threshold=score_threshold,
         )
         search_time_ms = (perf_counter() - search_start) * 1000
 
-        # Convert results to MCPServerScore
-        # Note: candidates contain tools, but we'll need to handle MCP servers separately
-        # For now, we'll assume the vector store can distinguish between tools and servers
+        # Convert pseudo-tool results back to MCPServerScore
         scored_servers: list[MCPServerScore] = []
 
-        # This is a placeholder - actual implementation will require
-        # the vector store to support multiple entity types.
-        # When vector store integration is complete, search results will be
-        # inspected for MCP server entities and converted into MCPServerScore
-        # instances (up to the requested limit).
+        # Process candidates - they are pseudo-tools representing MCP servers
+        for candidate in candidates[:limit]:
+            # Extract tool and score from the tuple
+            if len(candidate) >= 2:
+                pseudo_tool, score = candidate[0], candidate[1]
+
+                # Verify this is an MCP server pseudo-tool
+                if (pseudo_tool.metadata.get("entity_type") == "mcp_server" and
+                    pseudo_tool.namespace == "__mcp_servers__"):
+
+                    # Reconstruct MCPServerDefinition from metadata
+                    server_name = pseudo_tool.metadata.get("server_name")
+                    server_namespace = pseudo_tool.metadata.get("server_namespace", "default")
+
+                    # Get the full server definition from the registry
+                    server = await self._get_server_from_registry(server_name, server_namespace)
+                    if server:
+                        scored_servers.append(MCPServerScore(server=server, score=score))
 
         total_time_ms = (perf_counter() - start_time) * 1000
 
@@ -164,3 +182,22 @@ class MCPRouter:
             return servers
 
         return [server for server in servers if server.health.available]
+
+    async def _get_server_from_registry(
+        self,
+        server_name: str,
+        server_namespace: str = "default",
+    ) -> MCPServerDefinition | None:
+        """
+        Get server definition from registry.
+
+        Args:
+            server_name: Name of the server
+            server_namespace: Namespace of the server
+
+        Returns:
+            Server definition if found
+        """
+        if self._registry is None:
+            return None
+        return self._registry.get_server(server_name, server_namespace)
