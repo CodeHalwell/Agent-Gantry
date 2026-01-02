@@ -106,7 +106,10 @@ def _evaluate_math_expression(expression: str) -> float:
                 if left < 0 and not float(right).is_integer():
                     raise ValueError("Fractional exponents are not allowed for negative bases")
                 return left ** right
-            raise ValueError("Unsupported operator. Allowed operators: +, -, *, /, %, **")
+            raise ValueError(
+                "Internal error: binary operator passed validation but was not handled. "
+                "This indicates a bug in the math expression evaluator."
+            )
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
             value = _evaluate(node.operand)
             return value if isinstance(node.op, ast.UAdd) else -value
