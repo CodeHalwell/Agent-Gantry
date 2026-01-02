@@ -640,7 +640,7 @@ if servers:
 
 ## See Also
 
-- [MCP Integration Documentation](phase5_mcp.md)
+- [Architecture Overview](../architecture/overview.md)
 - [Example: dynamic_mcp_selection_demo.py](../examples/protocols/dynamic_mcp_selection_demo.py)
 - [Tests: test_dynamic_mcp_selection.py](../tests/test_dynamic_mcp_selection.py)
 - [MCP Protocol Specification](https://modelcontextprotocol.io/)

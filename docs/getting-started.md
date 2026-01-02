@@ -63,6 +63,8 @@ Create a new file `my_agent.py` and import the necessary modules:
 
 ```python
 import asyncio
+import ast
+import json
 from openai import AsyncOpenAI
 from agent_gantry import AgentGantry, with_semantic_tools, set_default_gantry
 
@@ -119,11 +121,38 @@ def calculate(expression: str) -> float:
     Returns:
         Result of the calculation
     """
-    # Use eval() with caution in production - this is simplified
     try:
-        # In production, use ast.literal_eval or a proper math parser
-        result = eval(expression, {"__builtins__": {}}, {})
-        return float(result)
+        node = ast.parse(expression, mode="eval").body
+
+        def _evaluate(node: ast.AST) -> float:
+            if isinstance(node, ast.BinOp) and isinstance(
+                node.op,
+                (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Mod, ast.Pow),
+            ):
+                left = _evaluate(node.left)
+                right = _evaluate(node.right)
+                if isinstance(node.op, ast.Add):
+                    return left + right
+                if isinstance(node.op, ast.Sub):
+                    return left - right
+                if isinstance(node.op, ast.Mult):
+                    return left * right
+                if isinstance(node.op, ast.Div):
+                    return left / right
+                if isinstance(node.op, ast.Mod):
+                    return left % right
+                return left ** right
+            if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+                value = _evaluate(node.operand)
+                return value if isinstance(node.op, ast.UAdd) else -value
+            if isinstance(node, ast.Constant):
+                value = ast.literal_eval(node)
+                if isinstance(value, (int, float)):
+                    return float(value)
+                raise ValueError("Only numeric literals are allowed")
+            raise ValueError("Unsupported expression. Allowed operators: +, -, *, /, %, **")
+
+        return float(_evaluate(node))
     except Exception as e:
         return f"Error: {e}"
 
@@ -218,10 +247,18 @@ No manual tool retrieval needed!
 
                 # Execute the tool
                 from agent_gantry.schema.execution import ToolCall
-                result = await gantry.execute(ToolCall(
-                    tool_name=tool_call.function.name,
-                    arguments=eval(tool_call.function.arguments)
-                ))
+                try:
+                    parsed_args = json.loads(tool_call.function.arguments)
+                except json.JSONDecodeError as err:
+                    print(f"  ⚠️ Unable to parse tool arguments: {err}")
+                    continue
+
+                result = await gantry.execute(
+                    ToolCall(
+                        tool_name=tool_call.function.name,
+                        arguments=parsed_args,
+                    )
+                )
                 print(f"  ✓ Result: {result.output}")
         else:
             print(f"Assistant: {response.choices[0].message.content}")
@@ -238,9 +275,46 @@ Here's the full code in one place:
 
 ```python
 import asyncio
+import ast
+import json
 from openai import AsyncOpenAI
 from agent_gantry import AgentGantry, with_semantic_tools, set_default_gantry
 from agent_gantry.schema.execution import ToolCall
+
+
+def _evaluate_math_expression(expression: str) -> float:
+    """Safely evaluate a basic math expression using the AST module."""
+    node = ast.parse(expression, mode="eval").body
+
+    def _evaluate(node: ast.AST) -> float:
+        if isinstance(node, ast.BinOp) and isinstance(
+            node.op,
+            (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Mod, ast.Pow),
+        ):
+            left = _evaluate(node.left)
+            right = _evaluate(node.right)
+            if isinstance(node.op, ast.Add):
+                return left + right
+            if isinstance(node.op, ast.Sub):
+                return left - right
+            if isinstance(node.op, ast.Mult):
+                return left * right
+            if isinstance(node.op, ast.Div):
+                return left / right
+            if isinstance(node.op, ast.Mod):
+                return left % right
+            return left ** right
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            value = _evaluate(node.operand)
+            return value if isinstance(node.op, ast.UAdd) else -value
+        if isinstance(node, ast.Constant):
+            value = ast.literal_eval(node)
+            if isinstance(value, (int, float)):
+                return float(value)
+            raise ValueError("Only numeric literals are allowed")
+        raise ValueError("Unsupported expression. Allowed operators: +, -, *, /, %, **")
+
+    return float(_evaluate(node))
 
 # Initialize
 client = AsyncOpenAI()
@@ -259,8 +333,7 @@ def get_weather(city: str, units: str = "fahrenheit") -> str:
 def calculate(expression: str) -> float:
     """Evaluate a mathematical expression."""
     try:
-        result = eval(expression, {"__builtins__": {}}, {})
-        return float(result)
+        return _evaluate_math_expression(expression)
     except Exception as e:
         return f"Error: {e}"
 
