@@ -118,7 +118,9 @@ def _evaluate_math_expression(expression: str) -> float:
             if isinstance(value, (int, float)):
                 return float(value)
             raise ValueError("Only numeric literals are allowed")
-        raise ValueError("Unsupported expression. Allowed operators: +, -, *, /, %, **")
+        raise ValueError(
+            "Unsupported expression. Allowed operators: +, -, *, /, %, ** and parentheses for grouping"
+        )
 
     return float(_evaluate(node))
 
