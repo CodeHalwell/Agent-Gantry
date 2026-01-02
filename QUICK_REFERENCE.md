@@ -1,8 +1,10 @@
-# Quick Reference: Agent-Gantry Improvements
+# Quick Reference: Agent-Gantry API Improvements
+
+> **Note**: This guide focuses on the API improvements and convenience methods added to Agent-Gantry. For complete documentation, tutorials, and API reference, visit the [official documentation site](https://codehalwell.github.io/Agent-Gantry/).
 
 ## What Changed?
 
-This PR implements the key recommendations from the in-depth refactoring analysis, focusing on:
+This document outlines the key API improvements that make Agent-Gantry more user-friendly:
 1. **Code efficiency** - Eliminating duplication
 2. **User-friendliness** - Simpler APIs and better defaults
 3. **Developer experience** - Less boilerplate for common patterns

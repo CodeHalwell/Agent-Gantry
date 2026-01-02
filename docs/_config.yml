@@ -1,0 +1,113 @@
+# Agent-Gantry Documentation Site Configuration
+# GitHub Pages configuration using Jekyll
+
+# Site settings
+title: Agent-Gantry
+description: Universal Tool Orchestration Platform for LLM-Based Agent Systems
+baseurl: ""
+url: "https://codehalwell.github.io/Agent-Gantry"
+
+# Theme
+theme: null  # Using custom CSS for modern design
+remote_theme: null
+
+# Build settings
+markdown: kramdown
+kramdown:
+  input: GFM
+  syntax_highlighter: rouge
+  syntax_highlighter_opts:
+    block:
+      line_numbers: true
+
+# Plugins
+plugins:
+  - jekyll-feed
+  - jekyll-seo-tag
+  - jekyll-sitemap
+
+# Navigation structure
+navigation:
+  - title: Home
+    url: /
+  - title: Getting Started
+    url: /getting-started
+  - title: Guides
+    items:
+      - title: Semantic Tool Decorator
+        url: /guides/semantic_tool_decorator
+      - title: Dynamic MCP Selection
+        url: /guides/dynamic_mcp_selection
+      - title: Vector Store & LLM Integration
+        url: /guides/vector_store_llm_integration
+      - title: Local Persistence & Skills
+        url: /guides/local_persistence_and_skills
+  - title: Reference
+    items:
+      - title: API Reference
+        url: /reference/api-reference
+      - title: Configuration
+        url: /reference/configuration
+      - title: LLM SDK Compatibility
+        url: /reference/llm_sdk_compatibility
+      - title: CLI
+        url: /reference/cli
+  - title: Architecture
+    items:
+      - title: System Overview
+        url: /architecture/overview
+      - title: Best Practices
+        url: /architecture/best-practices
+  - title: Help
+    items:
+      - title: Troubleshooting
+        url: /troubleshooting
+      - title: GitHub
+        url: https://github.com/CodeHalwell/Agent-Gantry
+        external: true
+
+# Exclude from processing
+exclude:
+  - README.md
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - vendor
+  - .sass-cache
+  - .jekyll-cache
+
+# Include in processing
+include:
+  - _pages
+  - assets
+
+# Collections
+collections:
+  pages:
+    output: true
+    permalink: /:path/
+
+# Defaults
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
+  - scope:
+      path: "guides"
+      type: "pages"
+    values:
+      layout: default
+      section: guides
+  - scope:
+      path: "reference"
+      type: "pages"
+    values:
+      layout: default
+      section: reference
+  - scope:
+      path: "architecture"
+      type: "pages"
+    values:
+      layout: default
+      section: architecture

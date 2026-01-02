@@ -5,7 +5,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from agent_gantry import AgentGantry
+from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
 from agent_gantry.schema.execution import ToolCall
 
 # Load environment variables
@@ -23,6 +23,7 @@ async def main():
 
     # 2. Initialize Gantry
     gantry = AgentGantry()
+    set_default_gantry(gantry)  # Set default for decorator usage
 
     # 3. Register Tools
     @gantry.register(tags=["translation"])
@@ -68,12 +69,12 @@ async def main():
             ))
             print(f"Execution Result: {result.result}")
 
-    # --- Scenario: Using @with_semantic_tools Decorator ---
-    print("\n--- Scenario: Using @with_semantic_tools Decorator ---")
+    # --- Scenario: Using @with_semantic_tools Decorator (RECOMMENDED) ---
+    print("\n--- Scenario: Using @with_semantic_tools Decorator (RECOMMENDED) ---")
 
-    from agent_gantry.integrations.semantic_tools import with_semantic_tools
-
-    @with_semantic_tools(gantry, limit=1, score_threshold=0.1, prompt_param="user_query")
+    # The decorator uses the default gantry set above
+    # Mistral uses OpenAI-compatible format, so no dialect parameter needed
+    @with_semantic_tools(limit=1, score_threshold=0.1, prompt_param="user_query")
     async def chat_with_mistral(user_query: str, tools: list[dict[str, Any]] = None):
         """
         This function automatically gets relevant tools injected into the 'tools' argument

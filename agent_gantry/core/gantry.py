@@ -6,12 +6,14 @@ Primary entry point for the Agent-Gantry library.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import logging
 import uuid
 from collections.abc import Callable, Sequence
+from datetime import datetime, timezone
 from time import perf_counter
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from agent_gantry.adapters.embedders.openai import AzureOpenAIEmbedder, OpenAIEmbedder
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
@@ -1052,9 +1054,6 @@ class AgentGantry:
             >>> count = await gantry.discover_tools_from_server("filesystem")
             >>> print(f"Discovered {count} tools")
         """
-        import asyncio
-        from datetime import datetime, timezone
-
         await self._ensure_initialized()
 
         # Get the MCP client for this server
@@ -1325,37 +1324,49 @@ class AgentGantry:
 
             if not config.url:
                 raise ValueError("Qdrant requires 'url' in configuration")
-            return QdrantVectorStore(
-                url=config.url,
-                api_key=config.api_key,
-                collection_name=config.collection_name,
-                dimension=config.dimension or 1536,
+            return cast(
+                "VectorStoreAdapter",
+                QdrantVectorStore(
+                    url=config.url,
+                    api_key=config.api_key,
+                    collection_name=config.collection_name,
+                    dimension=config.dimension or 1536,
+                ),
             )
         if config.type == "chroma":
             from agent_gantry.adapters.vector_stores.remote import ChromaVectorStore
 
-            return ChromaVectorStore(
-                url=config.url,
-                collection_name=config.collection_name,
-                persist_directory=config.db_path,
+            return cast(
+                "VectorStoreAdapter",
+                ChromaVectorStore(
+                    url=config.url,
+                    collection_name=config.collection_name,
+                    persist_directory=config.db_path,
+                ),
             )
         if config.type == "pgvector":
             from agent_gantry.adapters.vector_stores.remote import PGVectorStore
 
             if not config.url:
                 raise ValueError("PGVector requires 'url' (connection string) in configuration")
-            return PGVectorStore(
-                url=config.url,
-                table_name=config.collection_name,
-                dimension=config.dimension or 1536,
+            return cast(
+                "VectorStoreAdapter",
+                PGVectorStore(
+                    url=config.url,
+                    table_name=config.collection_name,
+                    dimension=config.dimension or 1536,
+                ),
             )
         if config.type == "lancedb":
             from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
 
-            return LanceDBVectorStore(
-                db_path=config.db_path,
-                tools_table=config.collection_name,
-                dimension=config.dimension or 768,
+            return cast(
+                "VectorStoreAdapter",
+                LanceDBVectorStore(
+                    db_path=config.db_path,
+                    tools_table=config.collection_name,
+                    dimension=config.dimension or 768,
+                ),
             )
         return InMemoryVectorStore()
 

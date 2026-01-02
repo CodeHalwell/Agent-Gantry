@@ -21,7 +21,7 @@ from agent_gantry.schema.tool import (
     ToolSource,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.1.3"
 __all__ = [
     "AgentGantry",
     "create_default_gantry",

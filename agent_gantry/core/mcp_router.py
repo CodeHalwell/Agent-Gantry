@@ -100,10 +100,14 @@ class MCPRouter:
         search_start = perf_counter()
         # Search the vector store for MCP server pseudo-tools
         # These are stored with namespace "__mcp_servers__" to distinguish from real tools
+        mcp_namespace_filter: dict[str, list[str]] = {"namespace": ["__mcp_servers__"]}
+        if filters:
+            mcp_namespace_filter.update(filters)
+
         candidates = await self._vector_store.search(
             query_vector=query_embedding,
             limit=limit * 2,  # Get extra candidates for filtering
-            filters={"namespace": ["__mcp_servers__"]} if not filters else {**filters, "namespace": ["__mcp_servers__"]},
+            filters=mcp_namespace_filter,
             score_threshold=score_threshold,
         )
         search_time_ms = (perf_counter() - search_start) * 1000
@@ -123,6 +127,9 @@ class MCPRouter:
 
                     # Reconstruct MCPServerDefinition from metadata
                     server_name = pseudo_tool.metadata.get("server_name")
+                    if not server_name:
+                        continue
+
                     server_namespace = pseudo_tool.metadata.get("server_namespace", "default")
 
                     # Get the full server definition from the registry
