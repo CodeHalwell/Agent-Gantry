@@ -54,8 +54,10 @@ class OpenAIEmbedder:
         api_key = config.api_key or os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError(
-                "OpenAI API key is required. Set it in config or "
-                "OPENAI_API_KEY environment variable."
+                (
+                    "OpenAI API key is required. Set it in config or "
+                    "OPENAI_API_KEY environment variable."
+                )
             )
 
         self._config = config
