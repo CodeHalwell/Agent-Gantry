@@ -9,9 +9,6 @@ jobs:
   pypi-publish:
     name: Upload release to PyPI
     runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/p/agent-gantry
     permissions:
       id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
     steps:
@@ -26,6 +23,4 @@ jobs:
       - name: Publish package
         run: uv publish
         env:
-          # If not using Trusted Publishing, set UV_PUBLISH_TOKEN in repository secrets
-          # UV_PUBLISH_TOKEN: ${{ secrets.UV_PUBLISH_TOKEN }}
-          pass: pass
+          UV_PUBLISH_TOKEN: ${{ secrets.UV_PUBLISH_TOKEN }}

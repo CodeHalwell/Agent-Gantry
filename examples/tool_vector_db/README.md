@@ -45,7 +45,7 @@ from agent_gantry.integrations.semantic_tools import with_semantic_tools
 from agent_gantry.schema.execution import ToolCall
 
 # 1. Create gantry with Nomic embeddings (high-quality semantic search)
-embedder = NomicEmbedder(dimension=256)
+embedder = NomicEmbedder(dimension=768)  # Matryoshka truncation (64/128/256/512/768)
 vector_store = InMemoryVectorStore()
 tools = AgentGantry(embedder=embedder, vector_store=vector_store)
 

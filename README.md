@@ -521,6 +521,7 @@ tools = await gantry.retrieve_tools("read my config.yaml")
 > preview/placeholder implementation. The underlying semantic search logic is not yet fully
 > implemented and behavior may change in future releases. See the dynamic MCP selection docs
 > for the current status and roadmap.
+
 **Benefits:**
 - 🎯 **Semantic Routing**: Automatically finds relevant servers based on query context
 - ⚡ **Lazy Loading**: Connects to servers only when needed
@@ -657,17 +658,28 @@ agent-gantry search "refund an order" --limit 3
 It boots with demo tools and an in-memory embedder. For details and customization options, see
 [docs/cli.md](docs/cli.md).
 
+## Documentation
+
+📚 **[View Full Documentation](https://codehalwell.github.io/Agent-Gantry/)** - Complete guides, API reference, and tutorials
+
+### Quick Links
+
+- **[Getting Started](https://codehalwell.github.io/Agent-Gantry/getting-started.html)** - 5-minute tutorial
+- **[API Reference](https://codehalwell.github.io/Agent-Gantry/reference/api-reference.html)** - Complete API docs
+- **[Architecture](https://codehalwell.github.io/Agent-Gantry/architecture/overview.html)** - System design and patterns
+- **[Best Practices](https://codehalwell.github.io/Agent-Gantry/architecture/best-practices.html)** - Production deployment guide
+- **[Troubleshooting](https://codehalwell.github.io/Agent-Gantry/troubleshooting.html)** - Common issues and solutions
+
 ## Roadmap
 
-See [plan.md](plan.md) for the detailed development roadmap.
-
 - **Phase 1**: ✅ Core Foundation - Data models, in-memory vector store, basic routing
-- **Phase 2**: ✅ Robustness - Execution engine, retries, circuit breakers, security (see [docs/phase2.md](docs/phase2.md))
+- **Phase 2**: ✅ Robustness - Execution engine, retries, circuit breakers, security
 - **Phase 3**: ✅ Context-Aware Routing - Intent classification, MMR diversity
 - **Phase 4**: ✅ Production Adapters - Qdrant, Chroma, OpenAI embeddings
 - **Phase 5**: ✅ MCP Integration - MCP client and server, dynamic tool discovery
 - **Phase 6**: ✅ A2A Integration - Agent-to-Agent protocol, Agent Card, skill mapping
-- **Phase 7**: 📋 Framework Integrations - LangChain, AutoGen, etc.
+- **Phase 7**: ✅ Framework Integrations - LangChain, AutoGen, CrewAI, LlamaIndex, Semantic Kernel
+- **Phase 8**: ✅ Documentation & Quality - Professional docs site, type safety, comprehensive examples
 
 ## License
 

@@ -3,7 +3,7 @@ import os
 
 from dotenv import load_dotenv
 
-from agent_gantry import AgentGantry
+from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
 from agent_gantry.schema.execution import ToolCall
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 
@@ -22,6 +22,7 @@ async def main():
 
     # 2. Initialize Gantry
     gantry = AgentGantry()
+    set_default_gantry(gantry)  # Set default for decorator usage
 
     # 3. Register Tools
     @gantry.register(tags=["search"])
@@ -95,10 +96,11 @@ async def main():
             print(f"Execution Result: {result.result}")
 
     # --- Scenario: Using the Decorator ---
-    print("\n--- Scenario: Using @with_semantic_tools Decorator ---")
-    from agent_gantry.integrations.semantic_tools import with_semantic_tools
+    print("\n--- Scenario: Using @with_semantic_tools Decorator (RECOMMENDED) ---")
 
-    @with_semantic_tools(gantry, limit=1, score_threshold=0.1)
+    # The decorator uses the default gantry set above and automatically
+    # converts tools to Gemini format via dialect="gemini"
+    @with_semantic_tools(limit=1, score_threshold=0.1, dialect="gemini")
     async def chat_with_gemini(prompt: str, tools: list = None):
         # Convert the injected 'tools' (list of dicts) to Gemini Tool objects
         if tools:

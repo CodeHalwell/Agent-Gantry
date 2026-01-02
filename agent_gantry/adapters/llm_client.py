@@ -172,7 +172,7 @@ Respond with ONLY the intent category name (e.g., "data_query"), nothing else.""
             # Default to unknown if no match
             return "unknown"
 
-        return result
+        return str(result)
 
     async def health_check(self) -> bool:
         """
