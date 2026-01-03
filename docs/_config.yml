@@ -4,7 +4,7 @@
 # Site settings
 title: Agent-Gantry
 description: Universal Tool Orchestration Platform for LLM-Based Agent Systems
-baseurl: ""
+baseurl: "/Agent-Gantry"
 url: "https://codehalwell.github.io/Agent-Gantry"
 
 # Theme

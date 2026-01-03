@@ -37,7 +37,11 @@ tests/                    # pytest-based test suite
 ### Setup
 
 ```bash
-# Install for development
+# Preferred: uv for reproducible environments
+pip install uv
+uv sync --extra dev
+
+# Or use pip directly
 pip install -e ".[dev]"
 
 # Install all optional dependencies
@@ -54,6 +58,14 @@ pip install -e ".[all]"
 
 **Important**: Always run existing tests before and after changes. We use fixtures like `gantry` and `sample_tools` for consistent test setup.
 
+**Async Tests**: All core functionality is async. Always use `@pytest.mark.asyncio` decorator:
+```python
+@pytest.mark.asyncio
+async def test_retrieve_tools_returns_relevant_results(gantry, sample_tools):
+    tools = await gantry.retrieve_tools("calculate sum", limit=5)
+    assert len(tools) > 0
+```
+
 ### Linting and Code Quality
 
 - **Linter**: `ruff` (configured in `pyproject.toml`)
@@ -66,6 +78,10 @@ Run before committing:
 ruff check agent_gantry/
 mypy agent_gantry/
 ```
+
+**Auto-fix**: Use `ruff check --fix agent_gantry/` to automatically fix linting issues.
+
+**Format**: Use `ruff format agent_gantry/` to format code.
 
 ### Building
 
@@ -108,11 +124,18 @@ python -m build
    """
    Brief description.
    
-   More detailed explanation if needed.
+   Args:
+        param: Description of parameter
+        
+    Returns:
+        Description of return value
+        
+    Raises:
+        ValueError: When something goes wrong
    """
    ```
 
-5. **Imports**: Follow ruff ordering:
+5. **Imports**: Follow ruff ordering (enforced by linter):
    - Standard library
    - Third-party packages
    - Local imports
@@ -133,6 +156,63 @@ python -m build
 - **Functions/Methods**: snake_case (`retrieve_tools`, `execute_tool`)
 - **Constants**: UPPER_SNAKE_CASE (`DEFAULT_LIMIT`, `MAX_RETRIES`)
 - **Private**: Prefix with underscore (`_internal_method`)
+5. **ContextVars**: Use `contextvars` for thread-safe and async-safe state management (see `core/context.py`)
+
+### Tool Registration Pattern
+
+Always use the `@gantry.register()` decorator with tags for semantic search:
+```python
+@gantry.register(tags=["weather", "api"], examples=["What's the weather in Tokyo?"])
+def get_weather(city: str) -> str:
+    """Get current weather for a city."""
+    return f"Weather in {city}: 72°F and sunny"
+ (>80%)
+2. **Async Tests**: Use `pytest-asyncio` for async test functions (auto mode enabled)
+3. **Fixtures**: Leverage shared fixtures from `conftest.py`
+4. **Test Structure**: Mirror the source structure in tests
+5. **Test Naming**: Use descriptive names: `test_<function>_<scenario>_<expected>`
+
+**Standard Test Pattern**:
+```python
+import pytest
+from agent_gantry import AgentGantry
+
+@pytest.mark.asyncio
+async def test_retrieve_tools_returns_relevant_results(gantry, sample_tools):
+    """Test that retrieve_tools returns semantically relevant tools."""
+    # Setup
+    await gantry.sync()
+    
+    # Execute
+    tools = await gantry.retrieve_tools("calculate sum", limit=5)
+    
+    # Assert
+    assert len(tools) > 0
+    assert any("sum" in tool.name.lower() for tool in tools)
+```
+
+**Test Fixtures Available**:
+- `gantry`: Fresh `AgentGantry` instance
+- `sample_tools`: List of `ToolDefinition` objects for testing
+
+**Running Tests**:
+```bash
+# All tests
+pytest
+
+# Specific file
+pytest tests/test_tool.py
+
+# Specific test
+pytest tests/test_tool.py::TestToolDefinition::test_create_minimal_tool
+
+# With coverage
+pytest --cov=agent_gantry --cov-report=htmlurn await client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": prompt}],
+        tools=tools  # Automatically injected
+    )
+```
 
 ### Architecture Patterns
 
@@ -173,17 +253,45 @@ async def test_retrieve_tools_returns_relevant_results(gantry, sample_tools):
 ### Adding a New Adapter (e.g., Vector Store)
 
 1. Create new file in appropriate `adapters/` subdirectory
-2. Implement the adapter interface/protocol
-3. Add tests in `tests/`
-4. Update optional dependencies in `pyproject.toml` if needed
-5. Document usage in README or docs
+2. Implement the adapter interface/protocol (see `adapters/vector_stores/base.py` for example)
+3. Add tests in `tests/` (mirror existing adapter tests)
+4. Update optional dependencies in `pyproject.toml` under `[project.optional-dependencies]`
+5. Document usage in `adapters/{type}/README.md`
+
+**Adapter Pattern Example**:
+```python
+# In adapters/vector_stores/my_store.py
+from agent_gantry.adapters.vector_stores.base import VectorStoreAdapter
+
+class MyVectorStore(VectorStoreAdapter):
+    def __init__(self, config: dict[str, Any]) -> None:
+        # Initialize your store
+        pass
+    
+    async def add(self, tools: list[ToolDefinition]) -> None:
+        # Add tools to vector store
+        pass
+    
+    async def search(self, query: str, limit: int = 10) -> list[ScoredTool]:
+        # Perform semantic search
+        pass
+```
 
 ### Adding Framework Integration
 
 1. Create new module in `integrations/`
 2. Follow the pattern of wrapping AgentGantry for the framework
-3. Add integration tests
-4. Update README with usage example
+3. Add integration tests in `tests/test_framework_adapters.py` or new test file
+4. Create example in `examples/agent_frameworks/`
+5. Update `integrations/README.md` with usage example
+
+### Adding LLM Provider Support
+
+1. Add transcoding logic in `adapters/tool_spec/providers.py`
+2. Update `with_semantic_tools` decorator in `integrations/semantic_tools.py`
+3. Add tests in `tests/test_llm_sdk_compatibility.py`
+4. Create example in `examples/llm_integration/`
+5. Update `docs/llm_sdk_compatibility.md`
 
 ## Key Principles
 
