@@ -46,6 +46,12 @@
   --spacing-lg: 1.5rem;
   --spacing-xl: 2rem;
   --spacing-2xl: 3rem;
+  
+  /* Callout Backgrounds (Light Mode) */
+  --bg-callout-note: #dbeafe;
+  --bg-callout-warning: #fef3c7;
+  --bg-callout-tip: #d1fae5;
+  --bg-callout-danger: #fee2e2;
 
   /* Layout */
   --sidebar-width: 280px;
@@ -68,6 +74,12 @@
     --text-secondary: #cbd5e1;
     --text-muted: #64748b;
     --border-color: #334155;
+
+    /* Callout Backgrounds (Dark Mode) */
+    --bg-callout-note: rgba(37, 99, 235, 0.15);
+    --bg-callout-warning: rgba(245, 158, 11, 0.15);
+    --bg-callout-tip: rgba(16, 185, 129, 0.15);
+    --bg-callout-danger: rgba(239, 68, 68, 0.15);
   }
 }
 
@@ -357,22 +369,22 @@ em, i {
 
 .callout.note {
   border-color: var(--primary-color);
-  background-color: var(--primary-light);
+  background-color: var(--bg-callout-note);
 }
 
 .callout.warning {
   border-color: var(--warning-color);
-  background-color: #fef3c7;
+  background-color: var(--bg-callout-warning);
 }
 
 .callout.tip {
   border-color: var(--accent-color);
-  background-color: #d1fae5;
+  background-color: var(--bg-callout-tip);
 }
 
 .callout.danger {
   border-color: var(--danger-color);
-  background-color: #fee2e2;
+  background-color: var(--bg-callout-danger);
 }
 
 /* Code Blocks */
