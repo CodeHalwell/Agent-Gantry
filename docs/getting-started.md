@@ -63,8 +63,66 @@ Create a new file `my_agent.py` and import the necessary modules:
 
 ```python
 import asyncio
+import ast
+import json
+from typing import Union
 from openai import AsyncOpenAI
 from agent_gantry import AgentGantry, with_semantic_tools, set_default_gantry
+
+
+def _evaluate_math_expression(expression: str) -> float:
+    """Safely evaluate a basic math expression using the AST module."""
+    if len(expression) > 200:
+        raise ValueError("Expression too long")
+
+    node = ast.parse(expression, mode="eval").body
+    if sum(1 for _ in ast.walk(node)) > 50:
+        raise ValueError("Expression too complex")
+
+    def _evaluate(node: ast.AST) -> float:
+        if isinstance(node, ast.BinOp) and isinstance(
+            node.op,
+            (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Mod, ast.Pow),
+        ):
+            left = _evaluate(node.left)
+            right = _evaluate(node.right)
+            if isinstance(node.op, ast.Add):
+                return left + right
+            if isinstance(node.op, ast.Sub):
+                return left - right
+            if isinstance(node.op, ast.Mult):
+                return left * right
+            if isinstance(node.op, ast.Div):
+                if right == 0:
+                    raise ValueError("Division by zero is not allowed")
+                return left / right
+            if isinstance(node.op, ast.Mod):
+                if right == 0:
+                    raise ValueError("Modulo by zero is not allowed")
+                return left % right
+            if isinstance(node.op, ast.Pow):
+                if abs(right) > 100:
+                    raise ValueError("Exponent too large")
+                if left < 0 and not float(right).is_integer():
+                    raise ValueError("Fractional exponents are not allowed for negative bases")
+                return left ** right
+            raise ValueError(
+                "Internal error: binary operator passed validation but was not handled. "
+                "This indicates a bug in the math expression evaluator."
+            )
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            value = _evaluate(node.operand)
+            return value if isinstance(node.op, ast.UAdd) else -value
+        if isinstance(node, ast.Constant):
+            value = node.value
+            if isinstance(value, (int, float)):
+                return float(value)
+            raise ValueError("Only numeric literals are allowed")
+        raise ValueError(
+            "Unsupported expression. Allowed operators: +, -, *, /, %, ** and parentheses for grouping"
+        )
+
+    return float(_evaluate(node))
 
 # Initialize OpenAI client
 client = AsyncOpenAI()  # Requires OPENAI_API_KEY in environment
@@ -109,7 +167,7 @@ def get_weather(city: str, units: str = "fahrenheit") -> str:
     tags=["math", "calculation"],
     description="Perform mathematical calculations"
 )
-def calculate(expression: str) -> float:
+def calculate(expression: str) -> Union[float, str]:
     """
     Evaluate a mathematical expression.
 
@@ -119,11 +177,8 @@ def calculate(expression: str) -> float:
     Returns:
         Result of the calculation
     """
-    # Use eval() with caution in production - this is simplified
     try:
-        # In production, use ast.literal_eval or a proper math parser
-        result = eval(expression, {"__builtins__": {}}, {})
-        return float(result)
+        return _evaluate_math_expression(expression)
     except Exception as e:
         return f"Error: {e}"
 
@@ -218,10 +273,18 @@ No manual tool retrieval needed!
 
                 # Execute the tool
                 from agent_gantry.schema.execution import ToolCall
-                result = await gantry.execute(ToolCall(
-                    tool_name=tool_call.function.name,
-                    arguments=eval(tool_call.function.arguments)
-                ))
+                try:
+                    parsed_args = json.loads(tool_call.function.arguments)
+                except json.JSONDecodeError as err:
+                    print(f"  ⚠️ Unable to parse tool arguments: {err}")
+                    continue
+
+                result = await gantry.execute(
+                    ToolCall(
+                        tool_name=tool_call.function.name,
+                        arguments=parsed_args,
+                    )
+                )
                 print(f"  ✓ Result: {result.output}")
         else:
             print(f"Assistant: {response.choices[0].message.content}")
@@ -236,8 +299,12 @@ if __name__ == "__main__":
 
 Here's the full code in one place:
 
+> This example reuses the `_evaluate_math_expression` helper shown in the first code block of this guide. Copy that helper into your `my_agent.py` before these imports so the script remains self-contained.
+
 ```python
 import asyncio
+import json
+from typing import Union
 from openai import AsyncOpenAI
 from agent_gantry import AgentGantry, with_semantic_tools, set_default_gantry
 from agent_gantry.schema.execution import ToolCall
@@ -256,11 +323,10 @@ def get_weather(city: str, units: str = "fahrenheit") -> str:
 
 
 @gantry.register(tags=["math"])
-def calculate(expression: str) -> float:
+def calculate(expression: str) -> Union[float, str]:
     """Evaluate a mathematical expression."""
     try:
-        result = eval(expression, {"__builtins__": {}}, {})
-        return float(result)
+        return _evaluate_math_expression(expression)
     except Exception as e:
         return f"Error: {e}"
 
@@ -295,7 +361,24 @@ async def main():
     query = "What's the weather like in Paris?"
     response = await chat(query)
     print(f"Query: {query}")
-    print(f"Response: {response.choices[0].message}")
+    message = response.choices[0].message
+
+    if message.tool_calls:
+        print("Tool calls requested:")
+        for tool_call in message.tool_calls:
+            print(f"  → {tool_call.function.name}({tool_call.function.arguments})")
+            try:
+                parsed_args = json.loads(tool_call.function.arguments)
+            except json.JSONDecodeError as err:
+                print(f"  ⚠️ Unable to parse tool arguments: {err}")
+                continue
+
+            result = await gantry.execute(
+                ToolCall(tool_name=tool_call.function.name, arguments=parsed_args)
+            )
+            print(f"  ✓ Result: {result.output}")
+    else:
+        print(f"Response: {message}")
 
 
 if __name__ == "__main__":

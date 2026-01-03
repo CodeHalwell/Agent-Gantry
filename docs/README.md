@@ -13,6 +13,5 @@ examples under `examples/`.
 - `cli.md`: Usage of the bundled `agent-gantry` CLI.
 - `llm_sdk_compatibility.md`: Notes on SDK expectations across major LLM providers.
 - `issue_template_implementation.md`: Guidance on writing implementation plans for new features.
-- `phase2.md`: Details for Phase 2 (robustness) milestones.
-- `phase5_mcp.md`: Model Context Protocol integration plan and design notes.
-- `phase6_a2a.md`: Agent-to-Agent (A2A) integration design.
+- `architecture/overview.md`: High-level system architecture and design principles.
+- `architecture/best-practices.md`: Security, performance, and reliability recommendations.

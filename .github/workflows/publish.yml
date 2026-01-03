@@ -22,5 +22,3 @@ jobs:
 
       - name: Publish package
         run: uv publish
-        env:
-          UV_PUBLISH_TOKEN: ${{ secrets.UV_PUBLISH_TOKEN }}
