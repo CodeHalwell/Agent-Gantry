@@ -169,7 +169,7 @@ class AgentGantry:
         return cls(config=config)
 
     @classmethod
-    async def quick_start(
+    def quick_start(
         cls,
         embedder: str = "auto",
         dimension: int = 256,
@@ -190,7 +190,7 @@ class AgentGantry:
             Ready-to-use AgentGantry instance
 
         Example:
-            >>> gantry = await AgentGantry.quick_start()
+            >>> gantry = AgentGantry.quick_start()
             >>>
             >>> @gantry.register
             ... def my_tool(x: int) -> int:
@@ -1446,24 +1446,4 @@ def create_default_gantry(dimension: int = 256) -> AgentGantry:
         For better semantic search quality, install the Nomic dependencies:
         `pip install agent-gantry[nomic]`
     """
-    import warnings
-
-    embedder: EmbeddingAdapter
-
-    # Try to use NomicEmbedder if available
-    try:
-        import sentence_transformers  # noqa: F401
-
-        from agent_gantry.adapters.embedders.nomic import NomicEmbedder
-
-        embedder = NomicEmbedder(dimension=dimension)
-    except ImportError:
-        warnings.warn(
-            "Nomic embedder not available. Using SimpleEmbedder (hash-based, low accuracy). "
-            "For better semantic search: pip install agent-gantry[nomic]",
-            UserWarning,
-            stacklevel=2,
-        )
-        embedder = SimpleEmbedder()
-
-    return AgentGantry(embedder=embedder)
+    return AgentGantry.quick_start(embedder="auto", dimension=dimension)
