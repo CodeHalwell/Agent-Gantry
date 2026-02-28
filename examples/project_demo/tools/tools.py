@@ -9,6 +9,7 @@ import pathlib
 import platform
 import random
 import re
+import shlex
 import shutil
 import socket
 import statistics
@@ -683,9 +684,14 @@ def snake_to_camel(text: str) -> str:
 
 @tools.register(tags=["system"])
 def run_shell_command(command: str) -> dict[str, Any]:
-    """Run a shell command and return its output and exit code."""
+    """Run a shell command and return its output and exit code.
+
+    Warning: This command does not use a shell to execute, meaning
+    shell builtins, redirects, and pipes are not supported.
+    """
     try:
-        result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=30)
+        command_list = shlex.split(command)
+        result = subprocess.run(command_list, shell=False, capture_output=True, text=True, timeout=30)
         return {
             "stdout": result.stdout,
             "stderr": result.stderr,
