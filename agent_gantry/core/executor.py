@@ -370,16 +370,28 @@ class ExecutionEngine:
                     for i, item in enumerate(param_value):
                         if item_type == "number":
                             if not isinstance(item, (int, float)) or isinstance(item, bool):
-                                return False, f"Item at index {i} in '{param_name}' must be a number"
+                                return (
+                                    False,
+                                    f"Item at index {i} in '{param_name}' must be a number",
+                                )
                         elif item_type == "integer":
                             if not isinstance(item, int) or isinstance(item, bool):
-                                return False, f"Item at index {i} in '{param_name}' must be an integer"
+                                return (
+                                    False,
+                                    f"Item at index {i} in '{param_name}' must be an integer",
+                                )
                         elif item_type == "string":
                             if not isinstance(item, str):
-                                return False, f"Item at index {i} in '{param_name}' must be a string"
+                                return (
+                                    False,
+                                    f"Item at index {i} in '{param_name}' must be a string",
+                                )
                         elif item_type == "boolean":
                             if not isinstance(item, bool):
-                                return False, f"Item at index {i} in '{param_name}' must be a boolean"
+                                return (
+                                    False,
+                                    f"Item at index {i} in '{param_name}' must be a boolean",
+                                )
 
         return True, None
 
@@ -394,9 +406,7 @@ class ExecutionEngine:
 
         # Update average latency
         n = tool.health.total_calls
-        tool.health.avg_latency_ms = (
-            (tool.health.avg_latency_ms * (n - 1) + latency_ms) / n
-        )
+        tool.health.avg_latency_ms = (tool.health.avg_latency_ms * (n - 1) + latency_ms) / n
 
         # Update success rate
         tool.health.success_rate = (tool.health.success_rate * (n - 1) + 1) / n

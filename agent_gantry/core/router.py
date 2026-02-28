@@ -46,7 +46,17 @@ INTENT_TAG_MAPPING: dict[TaskIntent, list[str]] = {
     TaskIntent.DATA_QUERY: ["query", "search", "get", "list", "fetch", "read"],
     TaskIntent.DATA_MUTATION: ["create", "update", "delete", "write", "modify"],
     TaskIntent.ANALYSIS: ["analyze", "compute", "aggregate", "calculate", "report"],
-    TaskIntent.COMMUNICATION: ["email", "message", "notify", "send", "chat", "dm", "teams", "discord", "communicate"],
+    TaskIntent.COMMUNICATION: [
+        "email",
+        "message",
+        "notify",
+        "send",
+        "chat",
+        "dm",
+        "teams",
+        "discord",
+        "communicate",
+    ],
     TaskIntent.FILE_OPERATIONS: ["file", "upload", "download", "convert", "export"],
     TaskIntent.CUSTOMER_SUPPORT: ["ticket", "refund", "support", "customer"],
     TaskIntent.ADMIN: ["user", "permission", "setting", "config", "admin"],
@@ -109,9 +119,7 @@ def compute_final_score(signals: RoutingSignals, weights: RoutingWeights) -> flo
         + signals.cost_score * weights.cost
     )
     penalties = (
-        signals.already_used_penalty
-        + signals.already_failed_penalty
-        + signals.deprecated_penalty
+        signals.already_used_penalty + signals.already_failed_penalty + signals.deprecated_penalty
     )
     return max(0.0, base_score - penalties)
 
@@ -337,7 +345,9 @@ class SemanticRouter:
         intent_match = 0.0
         if intent != TaskIntent.UNKNOWN:
             intent_keywords = INTENT_TAG_MAPPING.get(intent, [])
-            tool_text = f"{tool.name.lower()} {tool.description.lower()} {' '.join(tool.tags).lower()}"
+            tool_text = (
+                f"{tool.name.lower()} {tool.description.lower()} {' '.join(tool.tags).lower()}"
+            )
             if any(kw in tool_text for kw in intent_keywords):
                 intent_match = 1.0
 
@@ -394,13 +404,24 @@ class SemanticRouter:
         # Use cached embeddings if available, otherwise re-embed (fallback)
         if cached_embeddings:
             embeddings = []
-            for tool, _ in scored_tools:
+            missing_tools_indices = []
+            missing_tool_texts = []
+
+            for idx, (tool, _) in enumerate(scored_tools):
                 tool_key = f"{tool.namespace}.{tool.name}"
                 embedding = cached_embeddings.get(tool_key)
                 if embedding is None:
-                    # Fallback: re-embed this specific tool if not in cache
-                    embedding = await self._embedder.embed_text(tool.to_searchable_text())
-                embeddings.append(embedding)
+                    missing_tools_indices.append(idx)
+                    missing_tool_texts.append(tool.to_searchable_text())
+                    embeddings.append([])  # Placeholder
+                else:
+                    embeddings.append(embedding)
+
+            if missing_tool_texts:
+                # Fallback: batch embed missing tools
+                missing_embeddings = await self._embedder.embed_batch(missing_tool_texts)
+                for idx, emb in zip(missing_tools_indices, missing_embeddings):
+                    embeddings[idx] = emb
         else:
             # Fallback: re-embed all tools (old behavior for backward compatibility)
             tool_texts = [tool.to_searchable_text() for tool, _ in scored_tools]
@@ -420,9 +441,10 @@ class SemanticRouter:
                     (self._cosine_similarity(embeddings[idx], embeddings[sel]) for sel in selected),
                     default=0.0,
                 )
-                mmr_scores[idx] = lambda_param * relevance_scores[idx] - (
-                    1.0 - lambda_param
-                ) * similarity_to_selected
+                mmr_scores[idx] = (
+                    lambda_param * relevance_scores[idx]
+                    - (1.0 - lambda_param) * similarity_to_selected
+                )
 
             next_idx = max(mmr_scores, key=lambda k: mmr_scores[k])
             selected.append(next_idx)

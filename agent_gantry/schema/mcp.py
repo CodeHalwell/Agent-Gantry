@@ -107,10 +107,7 @@ class MCPServerDefinition(BaseModel):
 
         Used to avoid re-embedding when server metadata hasn't changed.
         """
-        content = (
-            f"{self.name}:{self.description}:"
-            f"{','.join(self.tags)}:{','.join(self.examples)}"
-        )
+        content = f"{self.name}:{self.description}:{','.join(self.tags)}:{','.join(self.examples)}"
         return hashlib.sha256(content.encode()).hexdigest()[:16]
 
     def to_searchable_text(self) -> str:

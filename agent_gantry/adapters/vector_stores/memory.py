@@ -111,9 +111,7 @@ class InMemoryVectorStore:
             return limited
         return [(tool, score) for tool, score, _ in limited]
 
-    async def get_by_name(
-        self, name: str, namespace: str = "default"
-    ) -> ToolDefinition | None:
+    async def get_by_name(self, name: str, namespace: str = "default") -> ToolDefinition | None:
         """Get a tool by name."""
         key = f"{namespace}.{name}"
         return self._tools.get(key)

@@ -11,6 +11,7 @@ from agent_gantry.schema.execution import ToolCall
 # Load environment variables
 load_dotenv()
 
+
 async def main():
     print("=== Agent-Gantry + Mistral AI Integration Demo ===\n")
 
@@ -54,7 +55,7 @@ async def main():
         model="mistral-large-latest",
         messages=[{"role": "user", "content": query}],
         tools=tools,
-        tool_choice="auto"
+        tool_choice="auto",
     )
 
     tool_calls = response.choices[0].message.tool_calls
@@ -63,10 +64,14 @@ async def main():
             print(f"Mistral decided to call: {tc.function.name}({tc.function.arguments})")
 
             # Execute securely via Gantry
-            result = await gantry.execute(ToolCall(
-                tool_name=tc.function.name,
-                arguments=json.loads(tc.function.arguments) if isinstance(tc.function.arguments, str) else tc.function.arguments
-            ))
+            result = await gantry.execute(
+                ToolCall(
+                    tool_name=tc.function.name,
+                    arguments=json.loads(tc.function.arguments)
+                    if isinstance(tc.function.arguments, str)
+                    else tc.function.arguments,
+                )
+            )
             print(f"Execution Result: {result.result}")
 
     # --- Scenario: Using @with_semantic_tools Decorator (RECOMMENDED) ---
@@ -86,7 +91,7 @@ async def main():
             model="mistral-large-latest",
             messages=[{"role": "user", "content": user_query}],
             tools=tools,
-            tool_choice="auto"
+            tool_choice="auto",
         )
 
         if response.choices[0].message.tool_calls:
@@ -97,6 +102,7 @@ async def main():
 
     # The decorator handles the retrieval logic internally
     await chat_with_mistral("Translate 'Good Morning' to Spanish")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

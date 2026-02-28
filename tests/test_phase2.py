@@ -187,9 +187,7 @@ class TestSecurityPolicy:
 
         # Force confirmation even though tool doesn't require it
         result = await gantry.execute(
-            ToolCall(
-                tool_name="safe_tool", arguments={"x": 5}, require_confirmation=True
-            )
+            ToolCall(tool_name="safe_tool", arguments={"x": 5}, require_confirmation=True)
         )
         assert result.status == ExecutionStatus.PENDING_CONFIRMATION
 
@@ -310,9 +308,7 @@ class TestArgumentValidation:
         await gantry.sync()
 
         result = await gantry.execute(
-            ToolCall(
-                tool_name="simple_tool", arguments={"x": 5, "unknown_param": "value"}
-            )
+            ToolCall(tool_name="simple_tool", arguments={"x": 5, "unknown_param": "value"})
         )
         assert result.status == ExecutionStatus.FAILURE
         assert "unknown parameter" in result.error.lower()
@@ -333,9 +329,7 @@ class TestAsyncOperations:
 
         await gantry.sync()
 
-        result = await gantry.execute(
-            ToolCall(tool_name="async_tool", arguments={"x": 5})
-        )
+        result = await gantry.execute(ToolCall(tool_name="async_tool", arguments={"x": 5}))
         assert result.status == ExecutionStatus.SUCCESS
         assert result.result == 10
 
@@ -350,9 +344,7 @@ class TestAsyncOperations:
 
         await gantry.sync()
 
-        result = await gantry.execute(
-            ToolCall(tool_name="sync_tool", arguments={"x": 5})
-        )
+        result = await gantry.execute(ToolCall(tool_name="sync_tool", arguments={"x": 5}))
         assert result.status == ExecutionStatus.SUCCESS
         assert result.result == 15
 
@@ -407,9 +399,7 @@ class TestHealthTracking:
         assert tool.health.success_rate == 1.0
 
         # Execute successfully
-        result = await gantry.execute(
-            ToolCall(tool_name="success_tool", arguments={"x": 5})
-        )
+        result = await gantry.execute(ToolCall(tool_name="success_tool", arguments={"x": 5}))
         assert result.status == ExecutionStatus.SUCCESS
 
         # Check health updated

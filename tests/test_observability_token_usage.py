@@ -187,9 +187,7 @@ class TestConsoleTelemetryAdapterTokenUsage:
         assert log_record.trace_id == "test-trace-123"
 
     @pytest.mark.asyncio
-    async def test_record_token_usage_with_savings(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    async def test_record_token_usage_with_savings(self, caplog: pytest.LogCaptureFixture) -> None:
         """Test token usage logging with savings data."""
         import logging
 
@@ -234,9 +232,7 @@ class TestConsoleTelemetryAdapterTokenUsage:
         assert log_record.trace_id is None
 
     @pytest.mark.asyncio
-    async def test_record_token_usage_formatting(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    async def test_record_token_usage_formatting(self, caplog: pytest.LogCaptureFixture) -> None:
         """Test that savings percentage is properly formatted."""
         import logging
 

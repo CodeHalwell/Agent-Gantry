@@ -128,6 +128,7 @@ async def demo_meta_tool_flow():
     print("Arguments: {x: 5, y: 7}")
 
     from agent_gantry.schema.execution import ToolCall
+
     call = ToolCall(tool_name="multiply_numbers", arguments={"x": 5, "y": 7})
     result = await gantry.execute(call)
 
@@ -145,6 +146,7 @@ async def demo_context_window_savings():
     # Register many tools
     print("Registering 50 tools...")
     for i in range(50):
+
         @gantry.register(name=f"tool_{i}", tags=[f"category_{i % 5}"])
         def tool_fn(x: int) -> int:
             f"""Tool number {i} for various operations and demonstrations."""

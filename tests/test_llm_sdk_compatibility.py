@@ -333,9 +333,7 @@ class TestAgentGantryToolFormatCompatibility:
 
         await gantry.sync()
 
-        result = await gantry.execute(
-            ToolCall(tool_name="add_numbers", arguments={"a": 5, "b": 3})
-        )
+        result = await gantry.execute(ToolCall(tool_name="add_numbers", arguments={"a": 5, "b": 3}))
 
         assert result.status == ExecutionStatus.SUCCESS
         assert result.result == 8
@@ -355,9 +353,7 @@ class TestAgentGantryToolFormatCompatibility:
         await gantry.sync()
 
         # Get tools in OpenAI Responses API format
-        tools = await gantry.retrieve_tools(
-            "get weather", limit=1, dialect="openai_responses"
-        )
+        tools = await gantry.retrieve_tools("get weather", limit=1, dialect="openai_responses")
 
         assert len(tools) >= 1
         tool = tools[0]
@@ -396,9 +392,9 @@ class TestSDKVersionCompatibility:
         major = int(parts[0])
         minor = int(parts[1])
         # Version 0.40.0 or higher
-        assert (
-            (major == 0 and minor >= 40) or major > 0
-        ), f"Anthropic SDK version {version} is below minimum 0.40.0"
+        assert (major == 0 and minor >= 40) or major > 0, (
+            f"Anthropic SDK version {version} is below minimum 0.40.0"
+        )
 
     def test_groq_minimum_version(self) -> None:
         """Test Groq SDK meets minimum version."""
@@ -408,9 +404,9 @@ class TestSDKVersionCompatibility:
         major = int(parts[0])
         minor = int(parts[1])
         # Version 0.13.0 or higher
-        assert (
-            (major == 0 and minor >= 13) or major > 0
-        ), f"Groq SDK version {version} is below minimum 0.13.0"
+        assert (major == 0 and minor >= 13) or major > 0, (
+            f"Groq SDK version {version} is below minimum 0.13.0"
+        )
 
     def test_mistral_minimum_version(self) -> None:
         """Test Mistral SDK meets minimum version."""

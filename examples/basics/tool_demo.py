@@ -26,11 +26,9 @@ async def main():
     print(f"Found tool: {relevant_tools}")
 
     # 5. Execute a tool
-    result = await gantry.execute(ToolCall(
-        tool_name="calculate_tax",
-        arguments={"amount": 100.0}
-    ))
+    result = await gantry.execute(ToolCall(tool_name="calculate_tax", arguments={"amount": 100.0}))
     print(f"Result: {result.result}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

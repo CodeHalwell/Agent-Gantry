@@ -62,10 +62,7 @@ async def test_inmemory_store_dimension_zero_when_empty():
 # ============================================================================
 
 
-@pytest.mark.skipif(
-    True,
-    reason="Requires openai package - test embedder_id logic with mocks"
-)
+@pytest.mark.skipif(True, reason="Requires openai package - test embedder_id logic with mocks")
 def test_openai_embedder_id():
     """Test OpenAIEmbedder get_embedder_id() returns correct identifier."""
     # This test is skipped because it requires the openai package
@@ -89,28 +86,19 @@ def test_embedder_id_format():
     assert expected_azure_format.startswith("azure:")
 
 
-@pytest.mark.skipif(
-    True,
-    reason="Requires openai package - test embedder_id logic with mocks"
-)
+@pytest.mark.skipif(True, reason="Requires openai package - test embedder_id logic with mocks")
 def test_openai_embedder_id_with_default_dimension():
     """Test OpenAIEmbedder get_embedder_id() with default dimension."""
     pass
 
 
-@pytest.mark.skipif(
-    True,
-    reason="Requires openai package - test embedder_id logic with mocks"
-)
+@pytest.mark.skipif(True, reason="Requires openai package - test embedder_id logic with mocks")
 def test_azure_embedder_id():
     """Test AzureOpenAIEmbedder get_embedder_id() returns correct identifier."""
     pass
 
 
-@pytest.mark.skipif(
-    True,
-    reason="Requires openai package - test embedder_id logic with mocks"
-)
+@pytest.mark.skipif(True, reason="Requires openai package - test embedder_id logic with mocks")
 def test_azure_embedder_id_with_default_dimension():
     """Test AzureOpenAIEmbedder get_embedder_id() with default dimension."""
     pass

@@ -28,10 +28,12 @@ class MockLLMClient:
         available_intents: list[str] | None = None,
     ) -> str:
         """Mock classify_intent that returns a fixed response."""
-        self.calls.append({
-            "query": query,
-            "conversation_summary": conversation_summary,
-        })
+        self.calls.append(
+            {
+                "query": query,
+                "conversation_summary": conversation_summary,
+            }
+        )
         return self.response
 
     async def health_check(self) -> bool:
@@ -127,6 +129,7 @@ async def test_classify_intent_with_conversation_summary():
 @pytest.mark.asyncio
 async def test_classify_intent_llm_error_fallback():
     """Test that errors in LLM classification fall back to UNKNOWN."""
+
     class FailingLLMClient:
         async def classify_intent(self, **kwargs):
             raise Exception("API error")
@@ -216,4 +219,6 @@ async def test_all_intent_types():
 
     for query, expected_intent in test_cases:
         intent = await classify_intent(query)
-        assert intent == expected_intent, f"Query '{query}' should be {expected_intent}, got {intent}"
+        assert intent == expected_intent, (
+            f"Query '{query}' should be {expected_intent}, got {intent}"
+        )

@@ -45,6 +45,7 @@ from agent_gantry.schema.config import AgentGantryConfig, EmbedderConfig, Vector
 def _lazy_import(module_name: str, package: str | None = None) -> Any:
     """Lazily import a module only when first accessed."""
     import importlib
+
     return importlib.import_module(module_name, package)
 
 
@@ -52,66 +53,77 @@ def _get_rdkit():
     """Lazy load RDKit (chemistry library - very memory intensive)."""
     from rdkit import Chem
     from rdkit.Chem import Descriptors
+
     return Chem, Descriptors
 
 
 def _get_pubchempy():
     """Lazy load PubChemPy."""
     import pubchempy as pcp
+
     return pcp
 
 
 def _get_pint():
     """Lazy load Pint unit conversion."""
     import pint
+
     return pint
 
 
 def _get_sympy():
     """Lazy load SymPy for symbolic math."""
     from sympy import solve, symbols, sympify
+
     return solve, symbols, sympify
 
 
 def _get_requests():
     """Lazy load requests."""
     import requests
+
     return requests
 
 
 def _get_pandas():
     """Lazy load pandas."""
     import pandas as pd
+
     return pd
 
 
 def _get_numpy():
     """Lazy load numpy."""
     import numpy as np
+
     return np
 
 
 def _get_sklearn():
     """Lazy load scikit-learn."""
     import sklearn
+
     return sklearn
 
 
 def _get_pillow():
     """Lazy load Pillow."""
     from PIL import Image
+
     return Image
 
 
 def _get_matplotlib():
     """Lazy load matplotlib."""
     import matplotlib.pyplot as plt
+
     return plt
 
 
 def _get_psutil():
     """Lazy load psutil."""
     import psutil
+
     return psutil
 
 
@@ -126,13 +138,13 @@ DB_PATH = pathlib.Path(__file__).parent / ".tool_cache" / "lancedb"
 def create_persistent_gantry(dimension: int = 256) -> AgentGantry:
     """
     Create an AgentGantry with persistent LanceDB storage.
-    
+
     Embeddings are stored on disk, so tools only need to be embedded once.
     Subsequent runs load from disk instantly.
-    
+
     Args:
         dimension: Embedding dimension (256 for Nomic with Matryoshka)
-        
+
     Returns:
         AgentGantry configured with persistent storage
     """
@@ -143,6 +155,7 @@ def create_persistent_gantry(dimension: int = 256) -> AgentGantry:
         import sentence_transformers  # noqa: F401
 
         from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+
         embedder = NomicEmbedder(dimension=dimension)
         embedder_config = EmbedderConfig(type="nomic", dimension=dimension)
     except ImportError:
@@ -153,6 +166,7 @@ def create_persistent_gantry(dimension: int = 256) -> AgentGantry:
             stacklevel=2,
         )
         from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+
         embedder = SimpleEmbedder()
         embedder_config = EmbedderConfig(type="sentence_transformers")
 
@@ -195,6 +209,7 @@ tools = create_persistent_gantry()
 
 # --- Chemistry Tools (Heavy - uses RDKit and PubChem) ---
 
+
 @tools.register(tags=["chemistry", "molecular"])
 def get_molecular_weight(smiles: str) -> float:
     """Calculate the molecular weight of a compound given its SMILES representation."""
@@ -209,7 +224,7 @@ def get_molecular_weight(smiles: str) -> float:
 def get_compound_info(name: str) -> dict[str, Any]:
     """Fetch compound information from PubChem given its name."""
     pcp = _get_pubchempy()
-    compounds = pcp.get_compounds(name, 'name')
+    compounds = pcp.get_compounds(name, "name")
     if not compounds:
         raise ValueError(f"No compound found for name: {name}")
     compound = compounds[0]
@@ -225,7 +240,7 @@ def get_compound_info(name: str) -> dict[str, Any]:
 def get_smiles_from_name(name: str) -> str:
     """Get the SMILES string for a compound name using PubChem."""
     pcp = _get_pubchempy()
-    compounds = pcp.get_compounds(name, 'name')
+    compounds = pcp.get_compounds(name, "name")
     if not compounds:
         raise ValueError(f"No compound found for name: {name}")
     return compounds[0].isomeric_smiles
@@ -250,6 +265,7 @@ def is_valid_smiles(smiles: str) -> bool:
 
 # --- Unit Conversion (uses Pint) ---
 
+
 @tools.register(tags=["unit_conversion"])
 def convert_units(value: float, from_unit: str, to_unit: str) -> float:
     """Convert a value from one unit to another."""
@@ -262,6 +278,7 @@ def convert_units(value: float, from_unit: str, to_unit: str) -> float:
 
 # --- Math & Algebra (uses SymPy) ---
 
+
 @tools.register(tags=["math", "algebra"])
 def solve_equation(equation: str, variable: str) -> Any:
     """Solve a simple algebraic equation for the given variable."""
@@ -273,6 +290,7 @@ def solve_equation(equation: str, variable: str) -> Any:
 
 
 # --- Date & Time Tools (stdlib only - lightweight) ---
+
 
 @tools.register(tags=["date_calculation"])
 def calculate_date_difference(date1: str, date2: str) -> int:
@@ -312,6 +330,7 @@ def get_days_until(target_date: str) -> int:
 def is_leap_year(year: int) -> bool:
     """Check if a year is a leap year."""
     import calendar
+
     return calendar.isleap(year)
 
 
@@ -324,6 +343,7 @@ def get_weekday(date_str: str) -> str:
 
 # --- File System Tools (stdlib only) ---
 
+
 @tools.register(tags=["fs", "file"])
 def list_directory(path: str = ".") -> list[str]:
     """List the contents of a directory."""
@@ -333,14 +353,14 @@ def list_directory(path: str = ".") -> list[str]:
 @tools.register(tags=["fs", "file"])
 def read_text_file(path: str) -> str:
     """Read the contents of a text file."""
-    with open(path, encoding='utf-8') as f:
+    with open(path, encoding="utf-8") as f:
         return f.read()
 
 
 @tools.register(tags=["fs", "file"])
 def write_text_file(path: str, content: str) -> str:
     """Write content to a text file."""
-    with open(path, 'w', encoding='utf-8') as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(content)
     return f"File written to {path}"
 
@@ -364,6 +384,7 @@ def search_files(pattern: str, root_dir: str = ".") -> list[str]:
 
 
 # --- Math & Statistics Tools (stdlib) ---
+
 
 @tools.register(tags=["math", "stats"])
 def calculate_mean(numbers: list[float]) -> float:
@@ -423,7 +444,7 @@ def calculate_triangle_area(base: float, height: float) -> float:
 @tools.register(tags=["math", "geometry"])
 def calculate_sphere_volume(radius: float) -> float:
     """Calculate the volume of a sphere."""
-    return (4 / 3) * math.pi * (radius ** 3)
+    return (4 / 3) * math.pi * (radius**3)
 
 
 @tools.register(tags=["math", "geometry"])
@@ -447,6 +468,7 @@ def get_lcm(a: int, b: int) -> int:
 
 
 # --- Text Tools (stdlib) ---
+
 
 @tools.register(tags=["text", "regex"])
 def regex_search(pattern: str, text: str) -> list[str]:
@@ -483,44 +505,45 @@ def reverse_string(text: str) -> str:
 @tools.register(tags=["text"])
 def extract_emails(text: str) -> list[str]:
     """Extract all email addresses from text."""
-    email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+    email_pattern = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
     return re.findall(email_pattern, text)
 
 
 @tools.register(tags=["text"])
 def extract_urls(text: str) -> list[str]:
     """Extract all URLs from text."""
-    url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+'
+    url_pattern = r"https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+"
     return re.findall(url_pattern, text)
 
 
 @tools.register(tags=["text"])
 def strip_html_tags(html: str) -> str:
     """Remove HTML tags from a string."""
-    return re.sub(r'<[^>]*>', '', html)
+    return re.sub(r"<[^>]*>", "", html)
 
 
 @tools.register(tags=["text"])
 def is_palindrome(text: str) -> bool:
     """Check if a string is a palindrome."""
-    clean_text = re.sub(r'[^a-zA-Z0-9]', '', text).lower()
+    clean_text = re.sub(r"[^a-zA-Z0-9]", "", text).lower()
     return clean_text == clean_text[::-1]
 
 
 @tools.register(tags=["text"])
 def camel_to_snake(text: str) -> str:
     """Convert CamelCase to snake_case."""
-    s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', text)
-    return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
+    s1 = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", text)
+    return re.sub("([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
 
 
 @tools.register(tags=["text"])
 def snake_to_camel(text: str) -> str:
     """Convert snake_case to CamelCase."""
-    return ''.join(word.title() for word in text.split('_'))
+    return "".join(word.title() for word in text.split("_"))
 
 
 # --- Data & Serialization Tools (stdlib) ---
+
 
 @tools.register(tags=["data", "json"])
 def json_to_dict(json_str: str) -> dict[str, Any]:
@@ -538,6 +561,7 @@ def dict_to_json(data: dict[str, Any], indent: int = 4) -> str:
 def base64_encode(text: str) -> str:
     """Encode a string to Base64."""
     import base64
+
     return base64.b64encode(text.encode()).decode()
 
 
@@ -545,6 +569,7 @@ def base64_encode(text: str) -> str:
 def base64_decode(encoded_str: str) -> str:
     """Decode a Base64 string."""
     import base64
+
     return base64.b64decode(encoded_str.encode()).decode()
 
 
@@ -564,6 +589,7 @@ def get_hash(text: str, algorithm: str = "sha256") -> str:
 
 # --- Network Tools (stdlib) ---
 
+
 @tools.register(tags=["network", "dns"])
 def resolve_dns(hostname: str) -> str:
     """Resolve a hostname to an IP address."""
@@ -575,10 +601,10 @@ def get_local_ip() -> str:
     """Get the local IP address of the machine."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        s.connect(('10.255.255.255', 1))
+        s.connect(("10.255.255.255", 1))
         ip = s.getsockname()[0]
     except Exception:
-        ip = '127.0.0.1'
+        ip = "127.0.0.1"
     finally:
         s.close()
     return ip
@@ -604,15 +630,17 @@ def is_ipv4(ip: str) -> bool:
 
 # --- Security Tools (stdlib) ---
 
+
 @tools.register(tags=["security"])
 def generate_password(length: int = 12, include_special: bool = True) -> str:
     """Generate a random secure password."""
     import secrets
     import string
+
     alphabet = string.ascii_letters + string.digits
     if include_special:
         alphabet += string.punctuation
-    return ''.join(secrets.choice(alphabet) for _ in range(length))
+    return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
 @tools.register(tags=["security"])
@@ -638,6 +666,7 @@ def mask_sensitive_data(text: str, visible_chars: int = 4) -> str:
 
 
 # --- System Tools (stdlib) ---
+
 
 @tools.register(tags=["system", "os"])
 def get_os_name() -> str:
@@ -679,11 +708,7 @@ def get_process_id() -> int:
 def get_disk_usage(path: str = ".") -> dict[str, int]:
     """Get disk usage statistics for a path."""
     usage = shutil.disk_usage(path)
-    return {
-        "total": usage.total,
-        "used": usage.used,
-        "free": usage.free
-    }
+    return {"total": usage.total, "used": usage.used, "free": usage.free}
 
 
 @tools.register(tags=["misc", "system"])
@@ -693,6 +718,7 @@ def get_python_version() -> str:
 
 
 # --- Web Tools (lazy loading requests) ---
+
 
 @tools.register(tags=["web"])
 def fetch_web_content(url: str) -> str:
@@ -744,10 +770,12 @@ def get_http_headers(url: str) -> dict[str, str]:
 
 # --- URL Tools (stdlib) ---
 
+
 @tools.register(tags=["network", "url"])
 def url_encode(text: str) -> str:
     """URL-encode a string."""
     import urllib.parse
+
     return urllib.parse.quote(text)
 
 
@@ -755,6 +783,7 @@ def url_encode(text: str) -> str:
 def url_decode(text: str) -> str:
     """URL-decode a string."""
     import urllib.parse
+
     return urllib.parse.unquote(text)
 
 
@@ -762,6 +791,7 @@ def url_decode(text: str) -> str:
 def get_domain_from_url(url: str) -> str:
     """Extract the domain name from a URL."""
     from urllib.parse import urlparse
+
     return urlparse(url).netloc
 
 
@@ -769,6 +799,7 @@ def get_domain_from_url(url: str) -> str:
 def is_valid_url(url: str) -> bool:
     """Check if a string is a valid URL."""
     from urllib.parse import urlparse
+
     try:
         result = urlparse(url)
         return all([result.scheme, result.netloc])
@@ -777,6 +808,7 @@ def is_valid_url(url: str) -> bool:
 
 
 # --- Misc Tools (stdlib) ---
+
 
 @tools.register(tags=["misc"])
 def get_random_color() -> str:
@@ -789,15 +821,15 @@ def convert_temperature(value: float, from_unit: str, to_unit: str) -> float:
     """Convert temperature between Celsius, Fahrenheit, and Kelvin."""
     from_unit = from_unit.upper()[0]
     to_unit = to_unit.upper()[0]
-    if from_unit == 'F':
+    if from_unit == "F":
         c = (value - 32) * 5 / 9
-    elif from_unit == 'K':
+    elif from_unit == "K":
         c = value - 273.15
     else:
         c = value
-    if to_unit == 'F':
+    if to_unit == "F":
         return (c * 9 / 5) + 32
-    elif to_unit == 'K':
+    elif to_unit == "K":
         return c + 273.15
     else:
         return c
@@ -808,7 +840,7 @@ def calculate_bmi(weight_kg: float, height_m: float) -> float:
     """Calculate Body Mass Index (BMI)."""
     if height_m == 0:
         return 0.0
-    return weight_kg / (height_m ** 2)
+    return weight_kg / (height_m**2)
 
 
 @tools.register(tags=["misc", "game"])
@@ -831,7 +863,7 @@ def get_random_quote() -> str:
         "Innovation distinguishes between a leader and a follower. - Steve Jobs",
         "Your time is limited, so don't waste it living someone else's life. - Steve Jobs",
         "Stay hungry, stay foolish. - Steve Jobs",
-        "The future belongs to those who believe in the beauty of their dreams. - Eleanor Roosevelt"
+        "The future belongs to those who believe in the beauty of their dreams. - Eleanor Roosevelt",
     ]
     return random.choice(quotes)
 
@@ -861,6 +893,7 @@ def calculate_roi(gain: float, cost: float) -> float:
 
 
 # --- Conversion Tools (stdlib) ---
+
 
 @tools.register(tags=["conversion"])
 def meters_to_feet(meters: float) -> float:
@@ -900,6 +933,7 @@ def miles_to_km(miles: float) -> float:
 
 # --- Data Science Tools (lazy loading) ---
 
+
 @tools.register(tags=["data", "pandas"])
 def create_dataframe_summary(data: list[dict[str, Any]]) -> dict[str, Any]:
     """Create a statistical summary of a list of dictionaries using Pandas."""
@@ -926,6 +960,7 @@ def generate_normal_distribution(mean: float, std: float, size: int) -> list[flo
 
 # --- System Monitoring (lazy loading psutil) ---
 
+
 @tools.register(tags=["system", "psutil"])
 def get_cpu_usage_percent(interval: float = 1.0) -> float:
     """Get the current CPU usage percentage."""
@@ -943,7 +978,7 @@ def get_memory_info() -> dict[str, Any]:
         "available": mem.available,
         "percent": mem.percent,
         "used": mem.used,
-        "free": mem.free
+        "free": mem.free,
     }
 
 
@@ -955,10 +990,10 @@ def get_memory_info() -> dict[str, Any]:
 async def sync_tools() -> int:
     """
     Sync all registered tools to the persistent vector store.
-    
+
     This embeds all tools and saves them to disk. Only needs to be run once,
     or when tools are added/modified.
-    
+
     Returns:
         Number of tools synced
     """
@@ -971,7 +1006,7 @@ async def sync_tools() -> int:
 async def check_sync_status() -> dict[str, Any]:
     """
     Check if tools are already synced to the persistent store.
-    
+
     Returns:
         Dict with sync status information
     """
@@ -1003,9 +1038,7 @@ def main():
     """CLI entry point for syncing tools."""
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description="Manage persistent tool storage for Agent-Gantry"
-    )
+    parser = argparse.ArgumentParser(description="Manage persistent tool storage for Agent-Gantry")
     parser.add_argument(
         "--sync",
         action="store_true",
@@ -1035,7 +1068,7 @@ def main():
         print(f"Database path: {status['db_path']}")
         print(f"Tools in storage: {status['stored']}")
         print(f"Pending tools: {status['pending']}")
-        if status.get('needs_sync'):
+        if status.get("needs_sync"):
             print("\n⚠️  Run with --sync to persist tools")
         else:
             print("\n✓ Tools are synced and ready!")

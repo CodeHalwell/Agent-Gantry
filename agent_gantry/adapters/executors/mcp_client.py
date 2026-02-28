@@ -95,11 +95,9 @@ class MCPClient:
         description = mcp_tool.description or f"Tool: {name}"
 
         # Convert input schema to parameters_schema
-        parameters_schema = getattr(mcp_tool, 'inputSchema', {
-            "type": "object",
-            "properties": {},
-            "required": []
-        })
+        parameters_schema = getattr(
+            mcp_tool, "inputSchema", {"type": "object", "properties": {}, "required": []}
+        )
 
         # Create ToolDefinition with MCP source
         return ToolDefinition(

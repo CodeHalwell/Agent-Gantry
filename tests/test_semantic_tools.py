@@ -101,10 +101,9 @@ class TestSemanticToolSelector:
         assert "Prompt: test prompt" in result
 
     @pytest.mark.asyncio
-    async def test_tool_injection_when_tools_not_provided(
-        self, mock_gantry: AgentGantry
-    ) -> None:
+    async def test_tool_injection_when_tools_not_provided(self, mock_gantry: AgentGantry) -> None:
         """Test that tools are injected when not provided."""
+
         # Register a tool
         @mock_gantry.register
         def get_weather(city: str) -> str:
@@ -128,10 +127,9 @@ class TestSemanticToolSelector:
         assert len(captured_tools) >= 1
 
     @pytest.mark.asyncio
-    async def test_tools_not_overwritten_when_provided(
-        self, mock_gantry: AgentGantry
-    ) -> None:
+    async def test_tools_not_overwritten_when_provided(self, mock_gantry: AgentGantry) -> None:
         """Test that existing tools are not overwritten."""
+
         @mock_gantry.register
         def some_tool(x: int) -> str:
             """Some tool for testing purposes."""
@@ -153,10 +151,9 @@ class TestSemanticToolSelector:
         assert captured_tools == provided_tools
 
     @pytest.mark.asyncio
-    async def test_prompt_extraction_from_messages(
-        self, mock_gantry: AgentGantry
-    ) -> None:
+    async def test_prompt_extraction_from_messages(self, mock_gantry: AgentGantry) -> None:
         """Test prompt extraction from OpenAI-style messages."""
+
         @mock_gantry.register
         def test_tool(x: str) -> str:
             """A test tool for message extraction."""
@@ -182,10 +179,12 @@ class TestSemanticToolSelector:
             ) -> str:
                 return "response"
 
-            await generate([
-                {"role": "system", "content": "You are helpful"},
-                {"role": "user", "content": "What's the weather?"},
-            ])
+            await generate(
+                [
+                    {"role": "system", "content": "You are helpful"},
+                    {"role": "user", "content": "What's the weather?"},
+                ]
+            )
 
         # Should have extracted the user message
         assert captured_prompt == "What's the weather?"
@@ -362,9 +361,7 @@ class TestPromptExtraction:
         result = selector._extract_prompt((), {"messages": messages}, sig)
         assert result == "What's in this image?"
 
-    def test_extract_returns_none_when_no_prompt(
-        self, selector: SemanticToolSelector
-    ) -> None:
+    def test_extract_returns_none_when_no_prompt(self, selector: SemanticToolSelector) -> None:
         """Test that None is returned when no prompt is found."""
         import inspect
 

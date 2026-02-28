@@ -20,7 +20,7 @@ from agent_gantry.integrations.anthropic_features import AnthropicFeatures
 # Create mock anthropic module
 mock_anthropic = Mock()
 mock_anthropic.AsyncAnthropic = MagicMock
-sys.modules['anthropic'] = mock_anthropic
+sys.modules["anthropic"] = mock_anthropic
 
 # Now we can import regardless of whether anthropic is installed
 from agent_gantry.integrations.anthropic_features import (

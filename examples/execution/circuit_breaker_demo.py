@@ -11,7 +11,7 @@ async def main():
     config = AgentGantryConfig(
         execution=ExecutionConfig(
             circuit_breaker_threshold=2,
-            circuit_breaker_timeout_s=5  # Short timeout for demo
+            circuit_breaker_timeout_s=5,  # Short timeout for demo
         )
     )
     gantry = AgentGantry(config=config)
@@ -40,6 +40,7 @@ async def main():
         if result.status == ExecutionStatus.CIRCUIT_OPEN:
             print(">>> CIRCUIT BREAKER IS OPEN! Execution blocked to protect system. <<<")
             break
+
 
 if __name__ == "__main__":
     asyncio.run(main())

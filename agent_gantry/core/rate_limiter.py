@@ -46,7 +46,9 @@ class RateLimiter:
         self._call_history: dict[str, deque[float]] = defaultdict(lambda: deque())
 
         # Token bucket: tokens and last refill time per key
-        self._tokens: dict[str, float] = defaultdict(lambda: float(self._config.max_calls_per_minute))
+        self._tokens: dict[str, float] = defaultdict(
+            lambda: float(self._config.max_calls_per_minute)
+        )
         self._last_refill: dict[str, float] = defaultdict(time.time)
 
         # Fixed window: call count and window start per key
@@ -222,12 +224,13 @@ class RateLimiter:
             return {
                 "key": key,
                 "concurrent": self._concurrent.get(key, 0),
-                "calls_last_minute": len([
-                    t for t in self._call_history.get(key, [])
-                    if time.time() - t < 60
-                ]),
+                "calls_last_minute": len(
+                    [t for t in self._call_history.get(key, []) if time.time() - t < 60]
+                ),
                 "calls_last_hour": len(self._call_history.get(key, [])),
-                "tokens": self._tokens.get(key, 0) if self._config.strategy == "token_bucket" else None,
+                "tokens": self._tokens.get(key, 0)
+                if self._config.strategy == "token_bucket"
+                else None,
             }
         else:
             # Global stats

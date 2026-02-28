@@ -27,10 +27,12 @@ async def main():
     # 3. Perform Execution
     # This should trigger a 'tool_execution' span and record an execution event
     from agent_gantry.schema.execution import ToolCall
+
     call = ToolCall(tool_name="calculate_tax", arguments={"amount": 100.0})
     await gantry.execute(call)
 
     print("\n--- Demo Complete ---")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

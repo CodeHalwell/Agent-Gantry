@@ -23,6 +23,7 @@ async def main():
     start_time = time.perf_counter()
 
     from agent_gantry.schema.execution import ToolCall
+
     call = ToolCall(tool_name="slow_operation", arguments={"seconds": 2})
 
     # The executor awaits the async function automatically
@@ -31,6 +32,7 @@ async def main():
     end_time = time.perf_counter()
     print(f"Result: {result.result}")
     print(f"Total Execution Time: {end_time - start_time:.2f}s")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

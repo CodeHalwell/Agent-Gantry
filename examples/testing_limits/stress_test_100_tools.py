@@ -23,14 +23,17 @@ CATEGORIES = [
 ACTIONS = [
     ("create", "Create a new resource"),
     ("read", "Read or retrieve details of a resource"),
-    ("update", "Update content or properties"),  # Changed from "Update configuration or content" to avoid overlap
+    (
+        "update",
+        "Update content or properties",
+    ),  # Changed from "Update configuration or content" to avoid overlap
     ("delete", "Remove or destroy a resource"),
     ("list", "List all available resources"),
     ("search", "Search for specific resources"),
     ("archive", "Archive old data or resources"),
     ("restore", "Restore data from backups"),
     ("monitor", "Check health and metrics"),
-    ("configure", "Change configuration settings and permissions"), # Added "configuration" here
+    ("configure", "Change configuration settings and permissions"),  # Added "configuration" here
 ]
 
 # Specific overrides to make tools more realistic and distinct
@@ -45,14 +48,17 @@ CATEGORY_OVERRIDES = {
     },
 }
 
+
 def generate_tool_factory(name: str, description: str) -> Callable[..., str]:
     """Generates a dummy tool function."""
+
     def tool_func(**kwargs: Any) -> str:
         return f"Executed {name} with {kwargs}"
 
     tool_func.__name__ = name
     tool_func.__doc__ = description
     return tool_func
+
 
 async def main():
     print("--- Agent-Gantry Stress Test: 100 Tools ---")
@@ -62,15 +68,14 @@ async def main():
     print("Initializing Agent-Gantry with Nomic Embedder...")
     try:
         config = AgentGantryConfig(
-            embedder=EmbedderConfig(
-                type="nomic",
-                model="nomic-ai/nomic-embed-text-v1.5"
-            )
+            embedder=EmbedderConfig(type="nomic", model="nomic-ai/nomic-embed-text-v1.5")
         )
         gantry = AgentGantry(config=config)
     except ImportError:
         print("Warning: 'sentence-transformers' not found. Falling back to SimpleEmbedder.")
-        print("Note: Accuracy will be lower with SimpleEmbedder due to lack of semantic understanding.")
+        print(
+            "Note: Accuracy will be lower with SimpleEmbedder due to lack of semantic understanding."
+        )
         gantry = AgentGantry()
 
     # 2. Register 100 Tools
@@ -111,10 +116,13 @@ async def main():
         ("Find a ticket in Jira about the login bug", "jira_search"),
         ("Check if the Azure VM is running", "azure_vm_monitor"),
         ("Delete the old logs from the local disk", "local_fs_delete"),
-        ("Send a message to the team on Slack", "slack_create"), # 'create' message
+        ("Send a message to the team on Slack", "slack_create"),  # 'create' message
         ("Restore the database backup in Postgres", "postgres_restore"),
         ("List all repositories in GitHub", "github_list"),
-        ("Change the settings for the Google Cloud bucket", "gcp_storage_configure"), # Changed query to match 'configure' better
+        (
+            "Change the settings for the Google Cloud bucket",
+            "gcp_storage_configure",
+        ),  # Changed query to match 'configure' better
         ("Archive the old blobs in Azure storage", "azure_blob_archive"),
         ("Read the details of the EC2 instance", "aws_ec2_read"),
     ]
@@ -134,7 +142,7 @@ async def main():
             print("❌ Failed: No tools found.")
             continue
 
-        retrieved_names = [t['function']['name'] for t in tools]
+        retrieved_names = [t["function"]["name"] for t in tools]
 
         if expected_tool_name in retrieved_names:
             print(f"✅ Success: Found '{expected_tool_name}' in top 2 {retrieved_names}")
@@ -145,13 +153,14 @@ async def main():
     end_test = time.perf_counter()
 
     print("\n--- Results ---")
-    print(f"Accuracy: {score}/{total} ({score/total*100:.1f}%)")
+    print(f"Accuracy: {score}/{total} ({score / total * 100:.1f}%)")
     print(f"Test Duration: {end_test - start_test:.2f}s")
 
     if score == total:
         print(">>> PERFECT SCORE! Agent-Gantry successfully routed 100 tools.")
     else:
         print(">>> Some queries failed. This may happen with ambiguous queries or SimpleEmbedder.")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -33,7 +33,9 @@ class SimpleEmbedder(EmbeddingAdapter):
         """Embed a single text into a fixed-length vector."""
         return self._vectorise(self._tokenise(text))
 
-    async def embed_batch(self, texts: list[str], batch_size: int | None = None) -> list[list[float]]:
+    async def embed_batch(
+        self, texts: list[str], batch_size: int | None = None
+    ) -> list[list[float]]:
         """Embed multiple texts."""
         return [await self.embed_text(text) for text in texts]
 

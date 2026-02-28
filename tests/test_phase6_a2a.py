@@ -24,6 +24,7 @@ class TestAgentCard:
     @pytest.mark.asyncio
     async def test_generate_agent_card(self, gantry: AgentGantry) -> None:
         """Test agent card generation from gantry instance."""
+
         # Register a few tools
         @gantry.register
         def test_tool(x: int) -> int:
@@ -99,9 +100,7 @@ class TestA2AClient:
         """Create an A2A client instance."""
         return A2AClient(a2a_config)
 
-    def test_client_initialization(
-        self, a2a_client: A2AClient, a2a_config: A2AAgentConfig
-    ) -> None:
+    def test_client_initialization(self, a2a_client: A2AClient, a2a_config: A2AAgentConfig) -> None:
         """Test A2A client initialization."""
         assert a2a_client.config == a2a_config
         assert a2a_client._agent_card is None

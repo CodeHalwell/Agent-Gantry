@@ -54,10 +54,8 @@ class OpenAIEmbedder:
         api_key = config.api_key or os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError(
-                (
-                    "OpenAI API key is required. Set it in config or "
-                    "OPENAI_API_KEY environment variable."
-                )
+                "OpenAI API key is required. Set it in config or "
+                "OPENAI_API_KEY environment variable."
             )
 
         self._config = config
@@ -218,9 +216,7 @@ class AzureOpenAIEmbedder:
 
         api_base = config.api_base
         if not api_base:
-            raise ValueError(
-                "Azure OpenAI api_base (endpoint) is required in config."
-            )
+            raise ValueError("Azure OpenAI api_base (endpoint) is required in config.")
 
         self._config = config
         self._model = config.model or "text-embedding-3-small"
@@ -345,4 +341,3 @@ class AzureOpenAIEmbedder:
         except Exception as e:
             logger.warning(f"Health check failed: {e}")
             return False
-

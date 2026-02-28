@@ -33,9 +33,7 @@ def _mock_tool_calls(text: str, tool_schemas: Sequence[dict[str, Any]]) -> list[
     if "order" in text and "get_order_status" in names:
         calls.append(MockToolCall("get_order_status", {"order_id": "12345"}))
     if "upgrade" in text and "upgrade_shipping" in names:
-        calls.append(
-            MockToolCall("upgrade_shipping", {"order_id": "12345", "speed": "express"})
-        )
+        calls.append(MockToolCall("upgrade_shipping", {"order_id": "12345", "speed": "express"}))
     return calls
 
 

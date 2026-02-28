@@ -30,8 +30,9 @@ async def main() -> str:
     # 3) Wrap Gantry tools for Microsoft Agent Framework
     def make_tool_wrapper(tool_name: str, gantry_instance: AgentGantry):
         """Factory function to properly bind tool name to wrapper."""
+
         async def tool_wrapper(
-            user_id: Annotated[str, Field(description="The user ID to look up.")]
+            user_id: Annotated[str, Field(description="The user ID to look up.")],
         ) -> str:
             result = await gantry_instance.execute(
                 ToolCall(tool_name=tool_name, arguments={"user_id": user_id})
@@ -56,9 +57,7 @@ async def main() -> str:
     # 4) Create and run the Agent Framework ChatAgent
     chat_agent = ChatAgent(
         chat_client=OpenAIChatClient(model_id="gpt-4o"),
-        instructions=(
-            "You are a support assistant. Use the tools to fetch customer data."
-        ),
+        instructions=("You are a support assistant. Use the tools to fetch customer data."),
         tools=agent_tools,
     )
 

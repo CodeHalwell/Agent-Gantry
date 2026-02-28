@@ -75,6 +75,7 @@ async def main() -> None:
     await generate_response("What is the price of AAPL?")
 
     print("\n=== Pattern 2: Explicit Gantry (BACKWARDS COMPATIBLE) ===")
+
     # You can still pass gantry explicitly if you prefer
     @with_semantic_tools(gantry, limit=1, score_threshold=0.1)
     async def generate_response_explicit(prompt: str, tools: list | None = None) -> str:

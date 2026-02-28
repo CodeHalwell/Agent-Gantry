@@ -11,6 +11,7 @@ class RandomEmbedder(EmbeddingAdapter):
     A dummy embedder that returns random vectors.
     Useful for testing or when no LLM is available.
     """
+
     def __init__(self, dimension: int = 10):
         self._dimension = dimension
 
@@ -27,11 +28,14 @@ class RandomEmbedder(EmbeddingAdapter):
         random.seed(len(text))
         return [random.random() for _ in range(self._dimension)]
 
-    async def embed_batch(self, texts: list[str], batch_size: int | None = None) -> list[list[float]]:
+    async def embed_batch(
+        self, texts: list[str], batch_size: int | None = None
+    ) -> list[list[float]]:
         return [await self.embed_text(t) for t in texts]
 
     async def health_check(self) -> bool:
         return True
+
 
 async def main():
     # 2. Initialize Gantry with the custom embedder
@@ -60,6 +64,7 @@ async def main():
     print(f"Retrieved {len(tools)} tools using custom embedder.")
     for t in tools:
         print(f" - {t['function']['name']}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -122,9 +122,10 @@ class MCPRouter:
                 pseudo_tool, score = candidate[0], candidate[1]
 
                 # Verify this is an MCP server pseudo-tool
-                if (pseudo_tool.metadata.get("entity_type") == "mcp_server" and
-                    pseudo_tool.namespace == "__mcp_servers__"):
-
+                if (
+                    pseudo_tool.metadata.get("entity_type") == "mcp_server"
+                    and pseudo_tool.namespace == "__mcp_servers__"
+                ):
                     # Reconstruct MCPServerDefinition from metadata
                     server_name = pseudo_tool.metadata.get("server_name")
                     if not server_name:

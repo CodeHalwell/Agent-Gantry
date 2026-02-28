@@ -150,9 +150,7 @@ class SkillsClient:
 
         self._api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
         if not self._api_key:
-            raise ValueError(
-                "API key required. Set ANTHROPIC_API_KEY or pass api_key parameter."
-            )
+            raise ValueError("API key required. Set ANTHROPIC_API_KEY or pass api_key parameter.")
 
         self._gantry = gantry
         self._skills = skill_registry or SkillRegistry()
@@ -318,11 +316,15 @@ class SkillsClient:
                 )
 
                 # Format result for Anthropic
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": str(result.result) if result.status == "success" else f"Error: {result.error}",
-                })
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": str(result.result)
+                        if result.status == "success"
+                        else f"Error: {result.error}",
+                    }
+                )
 
         return tool_results
 
