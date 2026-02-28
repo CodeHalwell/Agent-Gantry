@@ -260,7 +260,7 @@ class SkillsClient:
                 all_tools = await self._gantry.list_tools()
                 for tool_def in all_tools:
                     if tool_def.name in skill_tool_names:
-                        tools.append(tool_def.to_anthropic_schema())
+                        tools.append(tool_def.to_dialect("anthropic"))
             elif auto_retrieve_tools and query:
                 # Fall back to semantic retrieval
                 retrieval_result = await self._gantry.retrieve(
@@ -269,7 +269,7 @@ class SkillsClient:
                         limit=tool_limit,
                     )
                 )
-                tools = [t.tool.to_anthropic_schema() for t in retrieval_result.tools]
+                tools = [t.tool.to_dialect("anthropic") for t in retrieval_result.tools]
 
         # Build the request kwargs
         request_kwargs: dict[str, Any] = {

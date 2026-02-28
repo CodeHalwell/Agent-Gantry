@@ -99,12 +99,20 @@ class RetrievalResult(BaseModel):
     trace_id: str
 
     def to_openai_tools(self) -> list[dict[str, Any]]:
-        """Convert retrieved tools to OpenAI format."""
-        return [t.tool.to_openai_schema() for t in self.tools]
+        """
+        Convert retrieved tools to OpenAI format.
+
+        Deprecated: Use `to_dialect("openai")` instead.
+        """
+        return [t.tool.to_dialect("openai") for t in self.tools]
 
     def to_anthropic_tools(self) -> list[dict[str, Any]]:
-        """Convert retrieved tools to Anthropic format."""
-        return [t.tool.to_anthropic_schema() for t in self.tools]
+        """
+        Convert retrieved tools to Anthropic format.
+
+        Deprecated: Use `to_dialect("anthropic")` instead.
+        """
+        return [t.tool.to_dialect("anthropic") for t in self.tools]
 
     def to_dialect(self, dialect: str = "auto", **options: Any) -> list[dict[str, Any]]:
         """

@@ -100,8 +100,8 @@ class TestToolDefinition:
                 parameters_schema={"type": "object", "properties": {}},
             )
 
-    def test_to_openai_schema(self) -> None:
-        """Test conversion to OpenAI schema format."""
+    def test_to_dialect_openai(self) -> None:
+        """Test dialect conversion to OpenAI schema format."""
         tool = ToolDefinition(
             name="test_tool",
             description="A test tool for OpenAI.",
@@ -110,13 +110,13 @@ class TestToolDefinition:
                 "properties": {"x": {"type": "integer"}},
             },
         )
-        schema = tool.to_openai_schema()
+        schema = tool.to_dialect("openai")
         assert schema["type"] == "function"
         assert schema["function"]["name"] == "test_tool"
         assert schema["function"]["description"] == "A test tool for OpenAI."
 
-    def test_to_anthropic_schema(self) -> None:
-        """Test conversion to Anthropic schema format."""
+    def test_to_dialect_anthropic(self) -> None:
+        """Test dialect conversion to Anthropic schema format."""
         tool = ToolDefinition(
             name="test_tool",
             description="A test tool for Anthropic.",
@@ -125,7 +125,7 @@ class TestToolDefinition:
                 "properties": {"x": {"type": "integer"}},
             },
         )
-        schema = tool.to_anthropic_schema()
+        schema = tool.to_dialect("anthropic")
         assert schema["name"] == "test_tool"
         assert schema["description"] == "A test tool for Anthropic."
         assert "input_schema" in schema
