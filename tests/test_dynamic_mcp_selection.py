@@ -362,7 +362,7 @@ class TestAgentGantryMCPIntegration:
         # Mock the MCPClient to avoid actual connection
         with patch(
             "agent_gantry.core.mcp_registry.MCPClient"
-        ) as mock_client_class:
+        ):
             mock_client = AsyncMock()
 
             # Mock list_tools to return our test tools
@@ -402,7 +402,7 @@ class TestAgentGantryMCPIntegration:
 
         with patch(
             "agent_gantry.core.mcp_registry.MCPClient"
-        ) as mock_client_class:
+        ):
             mock_client = AsyncMock()
             mock_client.list_tools = AsyncMock(
                 side_effect=Exception("Connection failed")
