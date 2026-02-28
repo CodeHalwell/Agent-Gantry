@@ -333,7 +333,53 @@ class ExecutionEngine:
         properties = schema.get("properties", {})
         required = schema.get("required", [])
 
-        # Check required parameters
+        def _validate_value(value: Any, val_schema: dict[str, Any], path: str) -> tuple[bool, str | None]:
+            expected_type = val_schema.get("type")
+
+            if expected_type == "boolean":
+                if not isinstance(value, bool):
+                    return False, f"Parameter '{path}' must be a boolean"
+            elif expected_type == "integer":
+                if not isinstance(value, int) or isinstance(value, bool):
+                    return False, f"Parameter '{path}' must be an integer"
+            elif expected_type == "number":
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    return False, f"Parameter '{path}' must be a number"
+            elif expected_type == "string":
+                if not isinstance(value, str):
+                    return False, f"Parameter '{path}' must be a string"
+            elif expected_type == "array":
+                if not isinstance(value, list):
+                    return False, f"Parameter '{path}' must be an array"
+
+                item_schema = val_schema.get("items")
+                if item_schema:
+                    for i, item in enumerate(value):
+                        is_valid, err = _validate_value(item, item_schema, f"{path}[{i}]")
+                        if not is_valid:
+                            return False, err
+            elif expected_type == "object":
+                if not isinstance(value, dict):
+                    return False, f"Parameter '{path}' must be an object"
+
+                obj_properties = val_schema.get("properties", {})
+                obj_required = val_schema.get("required", [])
+
+                for req_prop in obj_required:
+                    if req_prop not in value:
+                        return False, f"Missing required parameter: {path}.{req_prop}"
+
+                for prop_name, prop_value in value.items():
+                    if prop_name not in obj_properties:
+                        return False, f"Unknown parameter: {path}.{prop_name}"
+
+                    is_valid, err = _validate_value(prop_value, obj_properties[prop_name], f"{path}.{prop_name}")
+                    if not is_valid:
+                        return False, err
+
+            return True, None
+
+        # Check top-level required parameters
         for param in required:
             if param not in arguments:
                 return False, f"Missing required parameter: {param}"
@@ -343,43 +389,9 @@ class ExecutionEngine:
             if param_name not in properties:
                 return False, f"Unknown parameter: {param_name}"
 
-            param_schema = properties[param_name]
-            expected_type = param_schema.get("type")
-
-            # Note: bool is a subclass of int in Python, so check bool first
-            if expected_type == "boolean":
-                if not isinstance(param_value, bool):
-                    return False, f"Parameter '{param_name}' must be a boolean"
-            elif expected_type == "integer":
-                if not isinstance(param_value, int) or isinstance(param_value, bool):
-                    return False, f"Parameter '{param_name}' must be an integer"
-            elif expected_type == "number":
-                if not isinstance(param_value, (int, float)) or isinstance(param_value, bool):
-                    return False, f"Parameter '{param_name}' must be a number"
-            elif expected_type == "string":
-                if not isinstance(param_value, str):
-                    return False, f"Parameter '{param_name}' must be a string"
-            elif expected_type == "array":
-                if not isinstance(param_value, list):
-                    return False, f"Parameter '{param_name}' must be an array"
-
-                # Optional: validate items if schema provided
-                item_schema = param_schema.get("items")
-                if item_schema:
-                    item_type = item_schema.get("type")
-                    for i, item in enumerate(param_value):
-                        if item_type == "number":
-                            if not isinstance(item, (int, float)) or isinstance(item, bool):
-                                return False, f"Item at index {i} in '{param_name}' must be a number"
-                        elif item_type == "integer":
-                            if not isinstance(item, int) or isinstance(item, bool):
-                                return False, f"Item at index {i} in '{param_name}' must be an integer"
-                        elif item_type == "string":
-                            if not isinstance(item, str):
-                                return False, f"Item at index {i} in '{param_name}' must be a string"
-                        elif item_type == "boolean":
-                            if not isinstance(item, bool):
-                                return False, f"Item at index {i} in '{param_name}' must be a boolean"
+            is_valid, err = _validate_value(param_value, properties[param_name], param_name)
+            if not is_valid:
+                return False, err
 
         return True, None
 
