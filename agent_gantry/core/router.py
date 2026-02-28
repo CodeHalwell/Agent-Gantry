@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
 from time import perf_counter
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
@@ -243,42 +243,12 @@ class SemanticRouter:
 
         intent = await self._resolve_intent(query)
 
-        # Store embeddings separately for MMR if they were included
-        tool_embeddings: dict[str, list[float]] = {}
-        scored_tools: list[tuple[ToolDefinition, float]] = []
-
-        for candidate in candidates:
-            if include_embeddings:
-                tool, semantic_score, embedding = candidate  # type: ignore
-                tool_key = f"{tool.namespace}.{tool.name}"
-                tool_embeddings[tool_key] = embedding
-            else:
-                tool, semantic_score = candidate  # type: ignore
-            if query.exclude_deprecated and tool.deprecated:
-                continue
-            if query.namespaces and tool.namespace not in query.namespaces:
-                continue
-            if query.required_capabilities and not all(
-                cap in tool.capabilities for cap in query.required_capabilities
-            ):
-                continue
-            if query.excluded_capabilities and any(
-                cap in tool.capabilities for cap in query.excluded_capabilities
-            ):
-                continue
-            if query.sources and tool.source not in query.sources:
-                continue
-            if query.exclude_unhealthy and tool.health.circuit_breaker_open:
-                continue
-
-            signals = self._compute_signals(
-                tool=tool,
-                semantic_score=semantic_score,
-                intent=intent,
-                query=query,
-            )
-            final_score = compute_final_score(signals, self._weights)
-            scored_tools.append((tool, final_score))
+        scored_tools, tool_embeddings = self._score_and_filter_candidates(
+            candidates=list(candidates),
+            query=query,
+            intent=intent,
+            include_embeddings=include_embeddings,
+        )
 
         scored_tools.sort(key=lambda x: x[1], reverse=True)
 
@@ -310,6 +280,59 @@ class SemanticRouter:
             candidate_count=len(candidates),
             filtered_count=len(scored_tools),
         )
+
+    def _score_and_filter_candidates(
+        self,
+        candidates: list[Any],
+        query: ToolQuery,
+        intent: TaskIntent,
+        include_embeddings: bool,
+    ) -> tuple[list[tuple[ToolDefinition, float]], dict[str, list[float]]]:
+        """Score and filter candidates from vector search."""
+        tool_embeddings: dict[str, list[float]] = {}
+        scored_tools: list[tuple[ToolDefinition, float]] = []
+
+        for candidate in candidates:
+            if include_embeddings:
+                tool, semantic_score, embedding = candidate  # type: ignore
+                tool_key = f"{tool.namespace}.{tool.name}"
+                tool_embeddings[tool_key] = embedding
+            else:
+                tool, semantic_score = candidate  # type: ignore
+
+            if not self._is_tool_allowed(tool, query):
+                continue
+
+            signals = self._compute_signals(
+                tool=tool,
+                semantic_score=semantic_score,
+                intent=intent,
+                query=query,
+            )
+            final_score = compute_final_score(signals, self._weights)
+            scored_tools.append((tool, final_score))
+
+        return scored_tools, tool_embeddings
+
+    def _is_tool_allowed(self, tool: ToolDefinition, query: ToolQuery) -> bool:
+        """Filter candidates based on query constraints."""
+        if query.exclude_deprecated and tool.deprecated:
+            return False
+        if query.namespaces and tool.namespace not in query.namespaces:
+            return False
+        if query.required_capabilities and not all(
+            cap in tool.capabilities for cap in query.required_capabilities
+        ):
+            return False
+        if query.excluded_capabilities and any(
+            cap in tool.capabilities for cap in query.excluded_capabilities
+        ):
+            return False
+        if query.sources and tool.source not in query.sources:
+            return False
+        if query.exclude_unhealthy and tool.health.circuit_breaker_open:
+            return False
+        return True
 
     async def _resolve_intent(self, query: ToolQuery) -> TaskIntent:
         """Resolve intent using context override or classification."""
