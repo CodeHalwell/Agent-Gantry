@@ -374,6 +374,86 @@ class AgentGantry:
         if self._config.auto_sync:
             await self.sync()
 
+    async def _detect_changes(self, all_tools: list[ToolDefinition], force: bool) -> list[ToolDefinition]:
+        """
+        Detect which tools need to be synced based on fingerprints and vector store state.
+
+        Args:
+            all_tools: List of all current tools
+            force: If True, force resync of all tools
+
+        Returns:
+            List of tools that need to be synced
+        """
+        current_fingerprints = {
+            f"{t.namespace}.{t.name}": compute_tool_fingerprint(t)
+            for t in all_tools
+        }
+
+        stored_fingerprints = await self._vector_store.get_stored_fingerprints()
+        embedder_id = self._get_embedder_id()
+        needs_full_resync = force
+
+        # Check if embedder or dimension changed
+        stored_embedder = await self._vector_store.get_metadata("embedder_id")
+        stored_dim = await self._vector_store.get_metadata("dimension")
+
+        if stored_embedder and stored_embedder != embedder_id:
+            logger.info(
+                f"Embedder changed from '{stored_embedder}' to '{embedder_id}'. "
+                "Full re-sync required."
+            )
+            needs_full_resync = True
+        elif stored_dim and int(stored_dim) != self._vector_store.dimension:
+            logger.info(
+                f"Dimension changed from {stored_dim} to {self._vector_store.dimension}. "
+                "Full re-sync required."
+            )
+            needs_full_resync = True
+
+        if needs_full_resync:
+            return all_tools
+
+        tools_to_sync = []
+        for tool in all_tools:
+            tool_id = f"{tool.namespace}.{tool.name}"
+            current_fp = current_fingerprints[tool_id]
+            stored_fp = stored_fingerprints.get(tool_id, "")
+
+            if current_fp != stored_fp:
+                tools_to_sync.append(tool)
+                if stored_fp:
+                    logger.debug(f"Tool '{tool_id}' changed, will re-embed")
+                else:
+                    logger.debug(f"Tool '{tool_id}' is new, will embed")
+
+        return tools_to_sync
+
+    async def _sync_batches(self, tools_to_sync: list[ToolDefinition], batch_size: int) -> int:
+        """
+        Embed and save tools in batches.
+
+        Args:
+            tools_to_sync: Tools to embed and save
+            batch_size: Number of tools per batch
+
+        Returns:
+            Number of tools synced
+        """
+        total_synced = 0
+        for i in range(0, len(tools_to_sync), batch_size):
+            batch = tools_to_sync[i : i + batch_size]
+            texts = [t.to_searchable_text() for t in batch]
+            embeddings = await self._embedder.embed_batch(texts)
+            count = await self._vector_store.add_tools(batch, embeddings, upsert=True)
+
+            # Register tools in registry
+            for tool in batch:
+                self._registry.register_tool(tool)
+
+            total_synced += count
+        return total_synced
+
     async def sync(self, batch_size: int = 100, force: bool = False) -> int:
         """
         Sync pending registrations to vector store with smart change detection.
@@ -403,52 +483,8 @@ class AgentGantry:
             self._synced = True
             return 0
 
-        # Compute fingerprints for current tools
-        current_fingerprints = {
-            f"{t.namespace}.{t.name}": compute_tool_fingerprint(t)
-            for t in all_tools
-        }
-
-        # Get stored fingerprints from vector store (if supported)
-        stored_fingerprints: dict[str, str] = {}
-        embedder_id = self._get_embedder_id()
-        needs_full_resync = force
-
-        stored_fingerprints = await self._vector_store.get_stored_fingerprints()
-
-        # Check if embedder changed (requires full re-embed)
-        stored_embedder = await self._vector_store.get_metadata("embedder_id")
-        stored_dim = await self._vector_store.get_metadata("dimension")
-
-        if stored_embedder and stored_embedder != embedder_id:
-            logger.info(
-                f"Embedder changed from '{stored_embedder}' to '{embedder_id}'. "
-                "Full re-sync required."
-            )
-            needs_full_resync = True
-        elif stored_dim and int(stored_dim) != self._vector_store.dimension:
-            logger.info(
-                f"Dimension changed from {stored_dim} to {self._vector_store.dimension}. "
-                "Full re-sync required."
-            )
-            needs_full_resync = True
-
         # Determine which tools need syncing
-        if needs_full_resync:
-            tools_to_sync = all_tools
-        else:
-            tools_to_sync = []
-            for tool in all_tools:
-                tool_id = f"{tool.namespace}.{tool.name}"
-                current_fp = current_fingerprints[tool_id]
-                stored_fp = stored_fingerprints.get(tool_id, "")
-
-                if current_fp != stored_fp:
-                    tools_to_sync.append(tool)
-                    if stored_fp:
-                        logger.debug(f"Tool '{tool_id}' changed, will re-embed")
-                    else:
-                        logger.debug(f"Tool '{tool_id}' is new, will embed")
+        tools_to_sync = await self._detect_changes(all_tools, force)
 
         # Nothing to sync
         if not tools_to_sync:
@@ -466,22 +502,11 @@ class AgentGantry:
         # Clear pending tools since we're processing them
         self._pending_tools = []
 
-        total_synced = 0
-        for i in range(0, len(tools_to_sync), batch_size):
-            batch = tools_to_sync[i : i + batch_size]
-            texts = [t.to_searchable_text() for t in batch]
-            embeddings = await self._embedder.embed_batch(texts)
-            count = await self._vector_store.add_tools(batch, embeddings, upsert=True)
-
-            # Register tools in registry
-            for tool in batch:
-                self._registry.register_tool(tool)
-
-            total_synced += count
+        total_synced = await self._sync_batches(tools_to_sync, batch_size)
 
         # Update sync metadata (if supported)
         await self._vector_store.update_sync_metadata(
-            embedder_id=embedder_id,
+            embedder_id=self._get_embedder_id(),
             dimension=self._vector_store.dimension,
         )
 
