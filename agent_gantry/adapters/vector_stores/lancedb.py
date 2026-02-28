@@ -7,6 +7,7 @@ supporting both tools and skills collections for semantic retrieval.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -328,9 +329,13 @@ class LanceDBVectorStore:
             try:
                 if len(ids) > 1:
                     escaped_ids = ", ".join(f"'{id_}'" for id_ in ids)
-                    self._tools_table.delete(f"id IN ({escaped_ids})")
+                    def _delete():
+                        self._tools_table.delete(f"id IN ({escaped_ids})")
+                    await asyncio.to_thread(_delete)
                 else:
-                    self._tools_table.delete(f"id = '{ids[0]}'")
+                    def _delete():
+                        self._tools_table.delete(f"id = '{ids[0]}'")
+                    await asyncio.to_thread(_delete)
             except RuntimeError as e:
                 # LanceDB raises RuntimeError when attempting to delete non-existent records
                 # This is expected during upsert when records don't exist yet
@@ -340,7 +345,7 @@ class LanceDBVectorStore:
                 logger.warning(f"Unexpected error during upsert delete: {e}")
                 raise
 
-        self._tools_table.add(records)
+        await asyncio.to_thread(self._tools_table.add, records)
         return len(records)
 
     async def add_skills(
@@ -407,9 +412,13 @@ class LanceDBVectorStore:
             try:
                 if len(ids) > 1:
                     escaped_ids = ", ".join(f"'{id_}'" for id_ in ids)
-                    self._skills_table.delete(f"id IN ({escaped_ids})")
+                    def _delete():
+                        self._skills_table.delete(f"id IN ({escaped_ids})")
+                    await asyncio.to_thread(_delete)
                 else:
-                    self._skills_table.delete(f"id = '{ids[0]}'")
+                    def _delete():
+                        self._skills_table.delete(f"id = '{ids[0]}'")
+                    await asyncio.to_thread(_delete)
             except RuntimeError as e:
                 # LanceDB raises RuntimeError when attempting to delete non-existent records
                 # This is expected during upsert when records don't exist yet
@@ -419,7 +428,7 @@ class LanceDBVectorStore:
                 logger.warning(f"Unexpected error during upsert delete: {e}")
                 raise
 
-        self._skills_table.add(records)
+        await asyncio.to_thread(self._skills_table.add, records)
         return len(records)
 
     async def search(
