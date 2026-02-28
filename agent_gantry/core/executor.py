@@ -329,59 +329,46 @@ class ExecutionEngine:
         Returns:
             Tuple of (is_valid, error_message)
         """
-        schema = tool.parameters_schema
-        properties = schema.get("properties", {})
-        required = schema.get("required", [])
+        import jsonschema
 
-        # Check required parameters
-        for param in required:
-            if param not in arguments:
-                return False, f"Missing required parameter: {param}"
+        # Create a copy to avoid modifying the original schema
+        schema = tool.parameters_schema.copy()
 
-        # Check parameter types
-        for param_name, param_value in arguments.items():
-            if param_name not in properties:
-                return False, f"Unknown parameter: {param_name}"
+        # To match legacy behavior, disallow additional properties unless explicitly permitted
+        if "additionalProperties" not in schema:
+            schema["additionalProperties"] = False
 
-            param_schema = properties[param_name]
-            expected_type = param_schema.get("type")
+        try:
+            jsonschema.validate(instance=arguments, schema=schema)
+            return True, None
+        except jsonschema.exceptions.ValidationError as e:
+            if e.validator == "required":
+                # e.message contains the missing property name
+                missing = e.message.split("'")[1] if "'" in e.message else e.message
+                return False, f"Missing required parameter: {missing}"
+            elif e.validator == "additionalProperties":
+                # e.message contains the unexpected property name
+                extra = e.message.split("'")[1] if "'" in e.message else "unknown"
+                return False, f"Unknown parameter: {extra}"
+            elif e.validator == "type":
+                path_len = len(e.path)
+                if path_len == 0:
+                    return False, e.message
 
-            # Note: bool is a subclass of int in Python, so check bool first
-            if expected_type == "boolean":
-                if not isinstance(param_value, bool):
-                    return False, f"Parameter '{param_name}' must be a boolean"
-            elif expected_type == "integer":
-                if not isinstance(param_value, int) or isinstance(param_value, bool):
-                    return False, f"Parameter '{param_name}' must be an integer"
-            elif expected_type == "number":
-                if not isinstance(param_value, (int, float)) or isinstance(param_value, bool):
-                    return False, f"Parameter '{param_name}' must be a number"
-            elif expected_type == "string":
-                if not isinstance(param_value, str):
-                    return False, f"Parameter '{param_name}' must be a string"
-            elif expected_type == "array":
-                if not isinstance(param_value, list):
-                    return False, f"Parameter '{param_name}' must be an array"
+                expected_type = e.validator_value
+                if isinstance(expected_type, list):
+                    expected_type = expected_type[0]
 
-                # Optional: validate items if schema provided
-                item_schema = param_schema.get("items")
-                if item_schema:
-                    item_type = item_schema.get("type")
-                    for i, item in enumerate(param_value):
-                        if item_type == "number":
-                            if not isinstance(item, (int, float)) or isinstance(item, bool):
-                                return False, f"Item at index {i} in '{param_name}' must be a number"
-                        elif item_type == "integer":
-                            if not isinstance(item, int) or isinstance(item, bool):
-                                return False, f"Item at index {i} in '{param_name}' must be an integer"
-                        elif item_type == "string":
-                            if not isinstance(item, str):
-                                return False, f"Item at index {i} in '{param_name}' must be a string"
-                        elif item_type == "boolean":
-                            if not isinstance(item, bool):
-                                return False, f"Item at index {i} in '{param_name}' must be a boolean"
+                article = "an" if expected_type in ("integer", "array", "object") else "a"
+                param_name = e.path[0]
 
-        return True, None
+                if path_len == 1:
+                    return False, f"Parameter '{param_name}' must be {article} {expected_type}"
+                else:
+                    index = e.path[-1]
+                    return False, f"Item at index {index} in '{param_name}' must be {article} {expected_type}"
+
+            return False, e.message
 
     async def _record_success(self, tool: ToolDefinition, latency_ms: float) -> None:
         """Record a successful execution."""
