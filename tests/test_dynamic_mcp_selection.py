@@ -268,6 +268,91 @@ class TestMCPRouter:
         mock_vector_store.search.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_route_with_candidates(
+        self,
+        router: MCPRouter,
+        mock_vector_store: MagicMock,
+    ) -> None:
+        """Test routing that returns pseudo-tool candidates."""
+        from agent_gantry.schema.tool import ToolDefinition
+
+        # Add a mock registry to the router
+        registry = MagicMock()
+        mock_server_def = MCPServerDefinition(
+            name="test_server",
+            description="A test server",
+            command=["test_cmd"]
+        )
+        registry.get_server.return_value = mock_server_def
+        router._registry = registry
+
+        # Create pseudo-tools
+        valid_pseudo_tool = ToolDefinition(
+            name="pseudo_test_server",
+            description="Pseudo tool for server",
+            parameters_schema={"type": "object"},
+            namespace="__mcp_servers__",
+            metadata={
+                "entity_type": "mcp_server",
+                "server_name": "test_server",
+                "server_namespace": "default"
+            }
+        )
+
+        invalid_pseudo_tool_no_name = ToolDefinition(
+            name="pseudo_test_server2",
+            description="Pseudo tool without server_name",
+            parameters_schema={"type": "object"},
+            namespace="__mcp_servers__",
+            metadata={
+                "entity_type": "mcp_server"
+            }
+        )
+
+        # Mock vector store returning candidates: [(tool, score)]
+        mock_vector_store.search.return_value = [
+            (valid_pseudo_tool, 0.95),
+            (invalid_pseudo_tool_no_name, 0.80),
+            # Missing tuple elements edge case
+            (valid_pseudo_tool,)
+        ]
+
+        result = await router.route("test query", limit=3, namespaces=["default"])
+
+        # Check vector store was called with correct filters including namespaces
+        mock_vector_store.search.assert_called_once()
+        call_kwargs = mock_vector_store.search.call_args.kwargs
+        assert "namespace" in call_kwargs["filters"]
+        # The routing currently overrides `__mcp_servers__` if namespaces are provided in `route` call
+        # because of `mcp_namespace_filter.update(filters)`. We assert what the behavior currently is.
+        assert "default" in call_kwargs["filters"]["namespace"]
+
+        # Only the valid candidate should be processed
+        assert len(result.servers) == 1
+        assert result.servers[0].server == mock_server_def
+        assert result.servers[0].score == 0.95
+
+    @pytest.mark.asyncio
+    async def test_get_server_from_registry(self, router: MCPRouter) -> None:
+        """Test _get_server_from_registry handles missing registry or server."""
+        # When no registry is configured
+        assert router._registry is None
+        assert await router._get_server_from_registry("test") is None
+
+        # When registry exists
+        mock_registry = MagicMock()
+        mock_server = MCPServerDefinition(
+            name="test",
+            description="Test server",
+            command=["cmd"]
+        )
+        mock_registry.get_server.return_value = mock_server
+        router._registry = mock_registry
+
+        assert await router._get_server_from_registry("test", "default") == mock_server
+        mock_registry.get_server.assert_called_once_with("test", "default")
+
+    @pytest.mark.asyncio
     async def test_filter_by_capabilities(self, router: MCPRouter) -> None:
         """Test filtering servers by capabilities."""
         servers = [
@@ -292,6 +377,10 @@ class TestMCPRouter:
 
         # Filter for servers with just read
         filtered = await router.filter_by_capabilities(servers, ["read"])
+        assert len(filtered) == 2
+
+        # Filter with empty required capabilities
+        filtered = await router.filter_by_capabilities(servers, [])
         assert len(filtered) == 2
 
     @pytest.mark.asyncio
