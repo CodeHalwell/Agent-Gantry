@@ -263,6 +263,72 @@ class LanceDBVectorStore:
 
         self._initialized = True
 
+    async def _add_items(
+        self,
+        items: list[Any],
+        embeddings: list[list[float]],
+        upsert: bool,
+        table: Any,
+        item_type_name: str,
+        to_record: Any,
+    ) -> int:
+        """
+        Generic method to add items with their embeddings.
+
+        Args:
+            items: List of items (tools or skills)
+            embeddings: List of embedding vectors
+            upsert: Whether to update existing items
+            table: The LanceDB table to add to
+            item_type_name: Name of the item type for error messages (e.g., "Tools")
+            to_record: Callable that converts an item and its embedding into a dictionary record
+
+        Returns:
+            Number of items added/updated
+        """
+        if not items:
+            return 0
+
+        # Validate inputs
+        if len(items) != len(embeddings):
+            raise ValueError(
+                f"{item_type_name} and embeddings must have same length: "
+                f"got {len(items)} {item_type_name.lower()} and {len(embeddings)} embeddings"
+            )
+
+        for i, emb in enumerate(embeddings):
+            if len(emb) != self._dimension:
+                raise ValueError(
+                    f"Embedding {i} has dimension {len(emb)}, "
+                    f"expected {self._dimension}"
+                )
+
+        await self._ensure_initialized()
+
+        now = datetime.now(timezone.utc).isoformat()
+        records = [to_record(item, embedding, now) for item, embedding in zip(items, embeddings)]
+
+        if upsert:
+            # Delete existing records with same IDs (escape for SQL safety)
+            ids = [_escape_sql_string(f"{item.namespace}.{item.name}") for item in items]
+            try:
+                if len(ids) > 1:
+                    escaped_ids = ", ".join(f"'{id_}'" for id_ in ids)
+                    table.delete(f"id IN ({escaped_ids})")
+                else:
+                    table.delete(f"id = '{ids[0]}'")
+            except RuntimeError as e:
+                # LanceDB raises RuntimeError when attempting to delete non-existent records
+                # This is expected during upsert when records don't exist yet
+                logger.debug(f"Delete during upsert (expected if records don't exist): {e}")
+            except Exception as e:
+                # Unexpected error during deletion
+                logger.warning(f"Unexpected error during upsert delete: {e}")
+                raise
+
+        table.add(records)
+        return len(records)
+
     async def add_tools(
         self,
         tools: list[ToolDefinition],
@@ -284,64 +350,27 @@ class LanceDBVectorStore:
             ValueError: If tools and embeddings have different lengths or
                        if embedding dimensions don't match configured dimension
         """
-        if not tools:
-            return 0
-
-        # Validate inputs
-        if len(tools) != len(embeddings):
-            raise ValueError(
-                f"Tools and embeddings must have same length: "
-                f"got {len(tools)} tools and {len(embeddings)} embeddings"
-            )
-
-        for i, emb in enumerate(embeddings):
-            if len(emb) != self._dimension:
-                raise ValueError(
-                    f"Embedding {i} has dimension {len(emb)}, "
-                    f"expected {self._dimension}"
-                )
-
-        await self._ensure_initialized()
-
-        now = datetime.now(timezone.utc).isoformat()
-        records = []
-
-        for tool, embedding in zip(tools, embeddings):
-            tool_id = f"{tool.namespace}.{tool.name}"
-            fingerprint = compute_tool_fingerprint(tool)
-            record = {
-                "id": tool_id,
+        def to_record(tool: ToolDefinition, embedding: list[float], now: str) -> dict[str, Any]:
+            return {
+                "id": f"{tool.namespace}.{tool.name}",
                 "name": tool.name,
                 "namespace": tool.namespace,
                 "description": tool.description,
                 "tool_json": tool.model_dump_json(),
-                "fingerprint": fingerprint,
+                "fingerprint": compute_tool_fingerprint(tool),
                 "vector": embedding,
                 "created_at": now,
                 "updated_at": now,
             }
-            records.append(record)
 
-        if upsert:
-            # Delete existing records with same IDs (escape for SQL safety)
-            ids = [_escape_sql_string(f"{t.namespace}.{t.name}") for t in tools]
-            try:
-                if len(ids) > 1:
-                    escaped_ids = ", ".join(f"'{id_}'" for id_ in ids)
-                    self._tools_table.delete(f"id IN ({escaped_ids})")
-                else:
-                    self._tools_table.delete(f"id = '{ids[0]}'")
-            except RuntimeError as e:
-                # LanceDB raises RuntimeError when attempting to delete non-existent records
-                # This is expected during upsert when records don't exist yet
-                logger.debug(f"Delete during upsert (expected if records don't exist): {e}")
-            except Exception as e:
-                # Unexpected error during deletion
-                logger.warning(f"Unexpected error during upsert delete: {e}")
-                raise
-
-        self._tools_table.add(records)
-        return len(records)
+        return await self._add_items(
+            items=tools,
+            embeddings=embeddings,
+            upsert=upsert,
+            table=self._tools_table,
+            item_type_name="Tools",
+            to_record=to_record,
+        )
 
     async def add_skills(
         self,
@@ -364,32 +393,9 @@ class LanceDBVectorStore:
             ValueError: If skills and embeddings have different lengths or
                        if embedding dimensions don't match configured dimension
         """
-        if not skills:
-            return 0
-
-        # Validate inputs
-        if len(skills) != len(embeddings):
-            raise ValueError(
-                f"Skills and embeddings must have same length: "
-                f"got {len(skills)} skills and {len(embeddings)} embeddings"
-            )
-
-        for i, emb in enumerate(embeddings):
-            if len(emb) != self._dimension:
-                raise ValueError(
-                    f"Embedding {i} has dimension {len(emb)}, "
-                    f"expected {self._dimension}"
-                )
-
-        await self._ensure_initialized()
-
-        now = datetime.now(timezone.utc).isoformat()
-        records = []
-
-        for skill, embedding in zip(skills, embeddings):
-            skill_id = f"{skill.namespace}.{skill.name}"
-            record = {
-                "id": skill_id,
+        def to_record(skill: Skill, embedding: list[float], now: str) -> dict[str, Any]:
+            return {
+                "id": f"{skill.namespace}.{skill.name}",
                 "name": skill.name,
                 "namespace": skill.namespace,
                 "description": skill.description,
@@ -399,28 +405,15 @@ class LanceDBVectorStore:
                 "created_at": now,
                 "updated_at": now,
             }
-            records.append(record)
 
-        if upsert:
-            # Delete existing records with same IDs (escape for SQL safety)
-            ids = [_escape_sql_string(f"{s.namespace}.{s.name}") for s in skills]
-            try:
-                if len(ids) > 1:
-                    escaped_ids = ", ".join(f"'{id_}'" for id_ in ids)
-                    self._skills_table.delete(f"id IN ({escaped_ids})")
-                else:
-                    self._skills_table.delete(f"id = '{ids[0]}'")
-            except RuntimeError as e:
-                # LanceDB raises RuntimeError when attempting to delete non-existent records
-                # This is expected during upsert when records don't exist yet
-                logger.debug(f"Delete during upsert (expected if records don't exist): {e}")
-            except Exception as e:
-                # Unexpected error during deletion
-                logger.warning(f"Unexpected error during upsert delete: {e}")
-                raise
-
-        self._skills_table.add(records)
-        return len(records)
+        return await self._add_items(
+            items=skills,
+            embeddings=embeddings,
+            upsert=upsert,
+            table=self._skills_table,
+            item_type_name="Skills",
+            to_record=to_record,
+        )
 
     async def search(
         self,
