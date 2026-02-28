@@ -33,7 +33,7 @@ def _validate_sql_identifier(value: str, field_name: str) -> None:
         raise ValueError(f"{field_name} must be 1-63 characters")
 
     # Must start with letter or underscore, contain only alphanumeric and underscores
-    if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', value):
+    if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", value):
         raise ValueError(
             f"{field_name} must start with a letter or underscore and contain only "
             "alphanumeric characters and underscores"
@@ -98,9 +98,7 @@ class QdrantVectorStore:
         )
         self._VectorParams = VectorParams
 
-        logger.info(
-            f"Initialized QdrantVectorStore with url={url}, collection={collection_name}"
-        )
+        logger.info(f"Initialized QdrantVectorStore with url={url}, collection={collection_name}")
 
     @property
     def dimension(self) -> int:
@@ -152,9 +150,7 @@ class QdrantVectorStore:
         points = []
         for tool, embedding in zip(tools, embeddings):
             # Generate deterministic ID
-            point_id = str(
-                uuid.uuid5(uuid.NAMESPACE_DNS, f"{tool.namespace}.{tool.name}")
-            )
+            point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{tool.namespace}.{tool.name}"))
 
             # Create payload with tool data
             payload = {
@@ -234,9 +230,7 @@ class QdrantVectorStore:
                 tools_without_embeddings.append((tool, float(result.score)))
             return tools_without_embeddings
 
-    async def get_by_name(
-        self, name: str, namespace: str = "default"
-    ) -> ToolDefinition | None:
+    async def get_by_name(self, name: str, namespace: str = "default") -> ToolDefinition | None:
         """Get a tool by name."""
 
         await self.initialize()
@@ -379,8 +373,7 @@ class ChromaVectorStore:
             import chromadb
         except ImportError as exc:
             raise ImportError(
-                "chromadb is not installed. Install it with:\n"
-                "  pip install agent-gantry[chroma]"
+                "chromadb is not installed. Install it with:\n  pip install agent-gantry[chroma]"
             ) from exc
 
         self._collection_name = collection_name
@@ -390,7 +383,9 @@ class ChromaVectorStore:
         # Determine client mode
         if url:
             # Remote mode
-            self._client = chromadb.HttpClient(host=url, headers={"Authorization": api_key} if api_key else None)
+            self._client = chromadb.HttpClient(
+                host=url, headers={"Authorization": api_key} if api_key else None
+            )
             logger.info(f"Initialized ChromaVectorStore in remote mode: {url}")
         elif persist_directory:
             # Persistent mode
@@ -455,11 +450,13 @@ class ChromaVectorStore:
             documents.append(tool.description)
 
             # Metadata includes full tool JSON
-            metadatas.append({
-                "name": tool.name,
-                "namespace": tool.namespace,
-                "tool_json": tool.model_dump_json(),
-            })
+            metadatas.append(
+                {
+                    "name": tool.name,
+                    "namespace": tool.namespace,
+                    "tool_json": tool.model_dump_json(),
+                }
+            )
 
             vectors.append(embedding)
 
@@ -507,7 +504,9 @@ class ChromaVectorStore:
             query_embeddings=[query_vector],
             n_results=limit,
             where=where,
-            include=["metadatas", "distances", "embeddings"] if include_embeddings else ["metadatas", "distances"],
+            include=["metadatas", "distances", "embeddings"]
+            if include_embeddings
+            else ["metadatas", "distances"],
         )
 
         # Convert results to tools
@@ -516,9 +515,7 @@ class ChromaVectorStore:
 
             if results["metadatas"] and results["distances"] and results.get("embeddings"):
                 for metadata, distance, embedding in zip(
-                    results["metadatas"][0],
-                    results["distances"][0],
-                    results["embeddings"][0]
+                    results["metadatas"][0], results["distances"][0], results["embeddings"][0]
                 ):
                     tool_json = metadata.get("tool_json", "{}")
                     tool = ToolDefinition.model_validate_json(tool_json)
@@ -548,9 +545,7 @@ class ChromaVectorStore:
 
             return tools_without_embeddings
 
-    async def get_by_name(
-        self, name: str, namespace: str = "default"
-    ) -> ToolDefinition | None:
+    async def get_by_name(self, name: str, namespace: str = "default") -> ToolDefinition | None:
         """Get a tool by name."""
         await self.initialize()
 
@@ -667,8 +662,7 @@ class PGVectorStore:
             import asyncpg  # noqa: F401
         except ImportError as exc:
             raise ImportError(
-                "asyncpg is not installed. Install it with:\n"
-                "  pip install agent-gantry[pgvector]"
+                "asyncpg is not installed. Install it with:\n  pip install agent-gantry[pgvector]"
             ) from exc
 
         if not url:
@@ -799,12 +793,6 @@ class PGVectorStore:
         include_embeddings: bool = False,
     ) -> list[tuple[ToolDefinition, float]] | list[tuple[ToolDefinition, float, list[float]]]:
         """Search for similar tools."""
-        if include_embeddings:
-            logger.warning(
-                "PGVectorStore does not support include_embeddings yet. "
-                "Returning without embeddings."
-            )
-
         await self.initialize()
 
         embedding_str = "[" + ",".join(str(x) for x in query_vector) + "]"
@@ -817,8 +805,12 @@ class PGVectorStore:
             namespace_clause = "WHERE namespace = $3"
             params.append(filters["namespace"])
 
+        select_cols = "tool_json, 1 - (embedding <=> $1::vector) AS similarity"
+        if include_embeddings:
+            select_cols += ", embedding"
+
         query = f"""
-            SELECT tool_json, 1 - (embedding <=> $1::vector) AS similarity
+            SELECT {select_cols}
             FROM {self._table_name}
             {namespace_clause}
             ORDER BY embedding <=> $1::vector
@@ -828,20 +820,42 @@ class PGVectorStore:
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(query, *params)
 
-            tools: list[tuple[ToolDefinition, float]] = []
-            for row in rows:
-                score = float(row["similarity"])
+            if include_embeddings:
+                tools_with_embeddings: list[tuple[ToolDefinition, float, list[float]]] = []
+                for row in rows:
+                    score = float(row["similarity"])
 
-                # Apply score threshold if specified
-                if score_threshold is None or score >= score_threshold:
-                    tool = ToolDefinition.model_validate_json(row["tool_json"])
-                    tools.append((tool, score))
+                    # Apply score threshold if specified
+                    if score_threshold is None or score >= score_threshold:
+                        tool = ToolDefinition.model_validate_json(row["tool_json"])
+                        # Parse embedding depending on asyncpg return type
+                        # It may be returned as a list-like type or a string, depending on type setup
+                        embedding_val = row["embedding"]
+                        if isinstance(embedding_val, str):
+                            # It's a string like "[1.0, 2.0, ...]"
+                            import json
 
-            return tools
+                            parsed_embedding = json.loads(embedding_val)
+                        else:
+                            # Try to coerce it to list (pgvector type returned by asyncpg/pgvector)
+                            parsed_embedding = list(embedding_val)
 
-    async def get_by_name(
-        self, name: str, namespace: str = "default"
-    ) -> ToolDefinition | None:
+                        tools_with_embeddings.append((tool, score, parsed_embedding))
+
+                return tools_with_embeddings
+            else:
+                tools: list[tuple[ToolDefinition, float]] = []
+                for row in rows:
+                    score = float(row["similarity"])
+
+                    # Apply score threshold if specified
+                    if score_threshold is None or score >= score_threshold:
+                        tool = ToolDefinition.model_validate_json(row["tool_json"])
+                        tools.append((tool, score))
+
+                return tools
+
+    async def get_by_name(self, name: str, namespace: str = "default") -> ToolDefinition | None:
         """Get a tool by name."""
         await self.initialize()
 
