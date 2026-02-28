@@ -14,6 +14,7 @@ from agent_gantry import AgentGantry
 from agent_gantry.core.security import (
     ConfirmationRequiredError,
     PermissionChecker,
+    PermissionDeniedError,
     SecurityPolicy,
 )
 from agent_gantry.schema.execution import ExecutionStatus, ToolCall
@@ -192,6 +193,37 @@ class TestSecurityPolicy:
             )
         )
         assert result.status == ExecutionStatus.PENDING_CONFIRMATION
+
+    @pytest.mark.asyncio
+    async def test_allowed_domains(self) -> None:
+        """Test that security policy restricts execution to allowed domains."""
+        policy = SecurityPolicy(allowed_domains=["*.github.com", "localhost"])
+
+        # Should not raise for allowed domains
+        policy.check_permission("fetch_data", {"url": "https://api.github.com/v1/users"})
+        policy.check_permission("fetch_data", {"url": "http://localhost:8080/api"})
+
+        # Should not raise for arguments without domains or just filenames
+        policy.check_permission("fetch_data", {"query": "test query", "count": "10"})
+        policy.check_permission("fetch_data", {"file": "main.py"})
+
+        # Should raise for disallowed domains
+        with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
+            policy.check_permission("fetch_data", {"url": "https://evil.com/payload"})
+
+        with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
+            policy.check_permission("fetch_data", {"text": "check out https://evil.com"})
+
+        # Prevent bypasses using HTTP basic auth
+        with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
+            policy.check_permission("fetch_data", {"url": "http://github.com@evil.com/"})
+
+        with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
+            policy.check_permission("fetch_data", {"text": "check out http://github.com:password@evil.com/"})
+
+        # Empty allowed_domains should allow everything
+        open_policy = SecurityPolicy(allowed_domains=[])
+        open_policy.check_permission("fetch_data", {"url": "https://evil.com/payload"})
 
 
 class TestPermissionChecker:
