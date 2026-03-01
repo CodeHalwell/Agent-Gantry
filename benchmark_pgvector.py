@@ -11,7 +11,10 @@ async def main():
 
     mock_pool = MagicMock()
     mock_conn = AsyncMock()
-    mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+    mock_acquire_cm = AsyncMock()
+    mock_acquire_cm.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_acquire_cm.__aexit__ = AsyncMock(return_value=None)
+    mock_pool.acquire.return_value = mock_acquire_cm
     store._pool = mock_pool
 
     # Generate mock tools
