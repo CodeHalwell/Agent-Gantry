@@ -50,7 +50,7 @@ class MockEmbedder(EmbeddingAdapter):
         batch_size: int | None = None,
     ) -> list[list[float]]:
         """Simulate batch embedding."""
-        self.embed_count += len(texts)
+        self.embed_count += 1
         await asyncio.sleep(self._latency_ms / 1000)
         # Generate deterministic embedding based on text hash
         import hashlib
@@ -176,11 +176,11 @@ async def test_mmr_embedding_caching():
     print(f"Total embed calls: {embed_count_after}")
     print(f"{'='*60}\n")
 
-    # With caching, we should only embed the query (1 embedding)
-    # Without caching, we would embed: query + top candidates for MMR (>10 embeddings)
-    assert retrieval_embeds <= 2, (
-        f"MMR generated {retrieval_embeds} embeddings during retrieval. "
-        f"Expected <=2 (query + maybe fallback). Cache not working?"
+    # With caching, we should only call the embedder once (for the query).
+    # If caching fails, an extra embed_batch call would be made (retrieval_embeds == 2).
+    assert retrieval_embeds <= 1, (
+        f"MMR made {retrieval_embeds} embedding API calls during retrieval. "
+        f"Expected <=1 (query only). Cache not working?"
     )
 
 

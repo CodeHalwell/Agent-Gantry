@@ -154,6 +154,29 @@ class AgentGantry:
             self._modules = modules
             self._module_attr = module_attr
 
+    def __await__(self):  # type: ignore[override]
+        """Allow awaiting an AgentGantry instance for backward compatibility.
+
+        ``quick_start()`` is now synchronous. Code that previously used
+        ``gantry = await AgentGantry.quick_start()`` will still work, but a
+        :class:`DeprecationWarning` is emitted. Prefer the synchronous form::
+
+            gantry = AgentGantry.quick_start()
+        """
+        import warnings
+
+        warnings.warn(
+            "Awaiting an AgentGantry instance is deprecated. "
+            "quick_start() is now synchronous and does not need to be awaited.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+        async def _return_self() -> AgentGantry:
+            return self
+
+        return _return_self().__await__()
+
     @classmethod
     def from_config(cls, path: str) -> AgentGantry:
         """

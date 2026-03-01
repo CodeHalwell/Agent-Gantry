@@ -413,12 +413,28 @@ class SemanticRouter:
             # Batch embed missing
             if missing_texts:
                 new_embeddings = await self._embedder.embed_batch(missing_texts)
+                if len(new_embeddings) != len(missing_texts):
+                    raise ValueError(
+                        "EmbeddingAdapter.embed_batch returned a different number of embeddings "
+                        f"({len(new_embeddings)}) than requested ({len(missing_texts)})."
+                    )
                 for idx, emb in zip(missing_indices, new_embeddings):
                     embeddings[idx] = emb
         else:
             # Fallback: re-embed all tools (old behavior for backward compatibility)
             tool_texts = [tool.to_searchable_text() for tool, _ in scored_tools]
             embeddings = await self._embedder.embed_batch(tool_texts)
+            if len(embeddings) != len(tool_texts):
+                raise ValueError(
+                    "EmbeddingAdapter.embed_batch returned a different number of embeddings "
+                    f"({len(embeddings)}) than requested ({len(tool_texts)})."
+                )
+
+        # Validate that all embeddings are present and non-empty before computing norms
+        if len(embeddings) != len(scored_tools) or any(not emb for emb in embeddings):
+            raise ValueError(
+                "MMR routing received incomplete or empty embeddings; cannot proceed safely."
+            )
 
         # Pre-compute norms
         norms = [math.sqrt(sum(x * x for x in emb)) for emb in embeddings]
@@ -444,7 +460,7 @@ class SemanticRouter:
                         vec_b = embeddings[sel_idx]
                         norm_b = norms[sel_idx]
 
-                        if norm_b > 0:
+                        if norm_b > 0 and len(vec_a) == len(vec_b):
                             dot_product = sum(x * y for x, y in zip(vec_a, vec_b))
                             sim = dot_product / (norm_a * norm_b)
                             if sim > max_sim:
