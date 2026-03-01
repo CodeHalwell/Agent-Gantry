@@ -148,31 +148,28 @@ class ToolDefinition(BaseModel):
         return hashlib.sha256(content.encode()).hexdigest()[:16]
 
     def to_openai_schema(self) -> dict[str, Any]:
-        """Convert to OpenAI function calling format."""
-        return {
-            "type": "function",
-            "function": {
-                "name": self.name,
-                "description": self.description,
-                "parameters": self.parameters_schema,
-            },
-        }
+        """
+        Convert to OpenAI function calling format.
+
+        Deprecated: Use `to_dialect("openai")` instead.
+        """
+        return self.to_dialect("openai")
 
     def to_anthropic_schema(self) -> dict[str, Any]:
-        """Convert to Anthropic tool format."""
-        return {
-            "name": self.name,
-            "description": self.description,
-            "input_schema": self.parameters_schema,
-        }
+        """
+        Convert to Anthropic tool format.
+
+        Deprecated: Use `to_dialect("anthropic")` instead.
+        """
+        return self.to_dialect("anthropic")
 
     def to_gemini_schema(self) -> dict[str, Any]:
-        """Convert to Gemini function format."""
-        return {
-            "name": self.name,
-            "description": self.description,
-            "parameters": self.parameters_schema,
-        }
+        """
+        Convert to Gemini function format.
+
+        Deprecated: Use `to_dialect("gemini")` instead.
+        """
+        return self.to_dialect("gemini")
 
     def to_dialect(self, dialect: SchemaDialect | str, **options: Any) -> dict[str, Any]:
         """

@@ -14,6 +14,7 @@ from agent_gantry import AgentGantry
 from agent_gantry.core.security import (
     ConfirmationRequiredError,
     PermissionChecker,
+    PermissionDeniedError,
     SecurityPolicy,
 )
 from agent_gantry.schema.execution import ExecutionStatus, ToolCall
@@ -161,6 +162,21 @@ class TestSecurityPolicy:
         assert result.status == ExecutionStatus.PENDING_CONFIRMATION
 
     @pytest.mark.asyncio
+    async def test_security_policy_rate_limiting(self) -> None:
+        """Test that security policy enforces max_requests_per_minute."""
+        from agent_gantry.core.security import PermissionDeniedError
+
+        policy = SecurityPolicy(max_requests_per_minute=2)
+
+        # First two requests should pass
+        policy.check_permission("test_tool", {})
+        policy.check_permission("test_tool", {})
+
+        # Third request should fail
+        with pytest.raises(PermissionDeniedError, match="Rate limit exceeded: maximum 2 requests per minute allowed."):
+            policy.check_permission("test_tool", {})
+
+    @pytest.mark.asyncio
     async def test_security_policy_pattern_matching(self) -> None:
         """Test that security policy matches tool name patterns."""
         policy = SecurityPolicy(require_confirmation=["delete_*", "payment_*"])
@@ -192,6 +208,37 @@ class TestSecurityPolicy:
             )
         )
         assert result.status == ExecutionStatus.PENDING_CONFIRMATION
+
+    @pytest.mark.asyncio
+    async def test_allowed_domains(self) -> None:
+        """Test that security policy restricts execution to allowed domains."""
+        policy = SecurityPolicy(allowed_domains=["*.github.com", "localhost"])
+
+        # Should not raise for allowed domains
+        policy.check_permission("fetch_data", {"url": "https://api.github.com/v1/users"})
+        policy.check_permission("fetch_data", {"url": "http://localhost:8080/api"})
+
+        # Should not raise for arguments without domains or just filenames
+        policy.check_permission("fetch_data", {"query": "test query", "count": "10"})
+        policy.check_permission("fetch_data", {"file": "main.py"})
+
+        # Should raise for disallowed domains
+        with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
+            policy.check_permission("fetch_data", {"url": "https://evil.com/payload"})
+
+        with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
+            policy.check_permission("fetch_data", {"text": "check out https://evil.com"})
+
+        # Prevent bypasses using HTTP basic auth
+        with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
+            policy.check_permission("fetch_data", {"url": "http://github.com@evil.com/"})
+
+        with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
+            policy.check_permission("fetch_data", {"text": "check out http://github.com:password@evil.com/"})
+
+        # Empty allowed_domains should allow everything
+        open_policy = SecurityPolicy(allowed_domains=[])
+        open_policy.check_permission("fetch_data", {"url": "https://evil.com/payload"})
 
 
 class TestPermissionChecker:
@@ -316,6 +363,140 @@ class TestArgumentValidation:
         )
         assert result.status == ExecutionStatus.FAILURE
         assert "unknown parameter" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_array_validation(self, gantry: AgentGantry) -> None:
+        """Test validation of array types and items."""
+
+        @gantry.register
+        def process_list(items: list[int]) -> int:
+            """Process a list of integers."""
+            return sum(items)
+
+        await gantry.sync()
+
+        # Valid array
+        result = await gantry.execute(
+            ToolCall(tool_name="process_list", arguments={"items": [1, 2, 3]})
+        )
+        assert result.status == ExecutionStatus.SUCCESS
+
+        # Invalid array type
+        result = await gantry.execute(
+            ToolCall(tool_name="process_list", arguments={"items": "not_a_list"})
+        )
+        assert result.status == ExecutionStatus.FAILURE
+        assert "must be an array" in result.error.lower()
+
+        # Invalid array item type
+        result = await gantry.execute(
+            ToolCall(tool_name="process_list", arguments={"items": [1, "two", 3]})
+        )
+        assert result.status == ExecutionStatus.FAILURE
+        assert "must be an integer" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_boolean_edge_cases(self, gantry: AgentGantry) -> None:
+        """Test boolean edge cases (bool is subclass of int)."""
+
+        @gantry.register
+        def process_number(value: int) -> int:
+            """Process a number."""
+            return value * 2
+
+        @gantry.register
+        def process_bool(flag: bool) -> str:
+            """Process a boolean."""
+            return str(flag)
+
+        await gantry.sync()
+
+        # Bool where int expected
+        result = await gantry.execute(
+            ToolCall(tool_name="process_number", arguments={"value": True})
+        )
+        assert result.status == ExecutionStatus.FAILURE
+        assert "must be an integer" in result.error.lower()
+
+        # Int where bool expected
+        result = await gantry.execute(
+            ToolCall(tool_name="process_bool", arguments={"flag": 1})
+        )
+        assert result.status == ExecutionStatus.FAILURE
+        assert "must be a boolean" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_nested_object_validation(self, gantry: AgentGantry) -> None:
+        """Test validation of nested object types."""
+
+        @gantry.register
+        def process_model(data: dict) -> bool:
+            """Process a nested model."""
+            return True
+
+        # Override the auto-generated schema to test nested validation explicitly
+        tool = gantry._registry.get_tool("process_model")
+        tool.parameters_schema = {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "object",
+                    "properties": {
+                        "inner": {
+                            "type": "object",
+                            "properties": {
+                                "active": {"type": "boolean"}
+                            },
+                            "required": ["active"]
+                        },
+                        "name": {"type": "string"}
+                    },
+                    "required": ["inner", "name"]
+                }
+            },
+            "required": ["data"]
+        }
+
+        await gantry.sync()
+
+        # Valid nested object
+        result = await gantry.execute(
+            ToolCall(
+                tool_name="process_model",
+                arguments={"data": {"inner": {"active": True}, "name": "test"}}
+            )
+        )
+        assert result.status == ExecutionStatus.SUCCESS
+
+        # Invalid top-level type
+        result = await gantry.execute(
+            ToolCall(
+                tool_name="process_model",
+                arguments={"data": "not_an_object"}
+            )
+        )
+        assert result.status == ExecutionStatus.FAILURE
+        assert "must be an object" in result.error.lower()
+
+        # Missing required property in nested object
+        result = await gantry.execute(
+            ToolCall(
+                tool_name="process_model",
+                arguments={"data": {"inner": {}, "name": "test"}}
+            )
+        )
+        assert result.status == ExecutionStatus.FAILURE
+        assert "missing required parameter" in result.error.lower()
+
+        # Invalid type in nested object
+        result = await gantry.execute(
+            ToolCall(
+                tool_name="process_model",
+                arguments={"data": {"inner": {"active": "yes"}, "name": "test"}}
+            )
+        )
+        assert result.status == ExecutionStatus.FAILURE
+        assert "must be a boolean" in result.error.lower()
 
 
 class TestAsyncOperations:

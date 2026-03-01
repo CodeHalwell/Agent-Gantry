@@ -13,6 +13,7 @@ that Claude can reason about and use effectively.
 from __future__ import annotations
 
 import os
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -222,23 +223,25 @@ class SkillsClient:
         if selected_skills:
             system_parts.append("\n--- Skills ---\n")
             for skill in selected_skills:
-                skill_section = f"## {skill.name}\n"
-                skill_section += f"Description: {skill.description}\n\n"
-                skill_section += f"Instructions:\n{skill.instructions}\n"
+                skill_section_parts: list[str] = [
+                    f"## {skill.name}\n",
+                    f"Description: {skill.description}\n\n",
+                    f"Instructions:\n{skill.instructions}\n"
+                ]
                 if skill.tools:
-                    skill_section += f"\nAvailable tools: {', '.join(skill.tools)}\n"
+                    skill_section_parts.append(f"\nAvailable tools: {', '.join(skill.tools)}\n")
                 if skill.examples:
-                    skill_section += "\nExamples:\n"
+                    skill_section_parts.append("\nExamples:\n")
                     for example in skill.examples:
                         if "input" in example:
-                            skill_section += f"  Input: {example['input']}\n"
+                            skill_section_parts.append(f"  Input: {example['input']}\n")
                         if "output" in example:
-                            skill_section += f"  Output: {example['output']}\n"
+                            skill_section_parts.append(f"  Output: {example['output']}\n")
                         if "steps" in example:
-                            skill_section += "  Steps:\n"
+                            skill_section_parts.append("  Steps:\n")
                             for step in example["steps"]:
-                                skill_section += f"    - {step}\n"
-                system_parts.append(skill_section)
+                                skill_section_parts.append(f"    - {step}\n")
+                system_parts.append("".join(skill_section_parts))
 
         final_system = "\n".join(system_parts) if system_parts else None
 
@@ -260,7 +263,7 @@ class SkillsClient:
                 all_tools = await self._gantry.list_tools()
                 for tool_def in all_tools:
                     if tool_def.name in skill_tool_names:
-                        tools.append(tool_def.to_anthropic_schema())
+                        tools.append(tool_def.to_dialect("anthropic"))
             elif auto_retrieve_tools and query:
                 # Fall back to semantic retrieval
                 retrieval_result = await self._gantry.retrieve(
@@ -269,7 +272,7 @@ class SkillsClient:
                         limit=tool_limit,
                     )
                 )
-                tools = [t.tool.to_anthropic_schema() for t in retrieval_result.tools]
+                tools = [t.tool.to_dialect("anthropic") for t in retrieval_result.tools]
 
         # Build the request kwargs
         request_kwargs: dict[str, Any] = {
@@ -306,23 +309,36 @@ class SkillsClient:
         if not self._gantry:
             raise ValueError("AgentGantry instance required for tool execution")
 
-        tool_results = []
+        # Collect tools to execute and their IDs
+        tool_executions = []
+        tool_use_ids = []
+
         for block in response.content:
             if hasattr(block, "type") and block.type == "tool_use":
-                # Execute via Agent-Gantry
-                result = await self._gantry.execute(
-                    ToolCall(
-                        tool_name=block.name,
-                        arguments=block.input,
+                tool_use_ids.append(block.id)
+                tool_executions.append(
+                    self._gantry.execute(
+                        ToolCall(
+                            tool_name=block.name,
+                            arguments=block.input,
+                        )
                     )
                 )
 
-                # Format result for Anthropic
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": str(result.result) if result.status == "success" else f"Error: {result.error}",
-                })
+        if not tool_executions:
+            return []
+
+        # Execute all tools concurrently
+        results = await asyncio.gather(*tool_executions)
+
+        # Format results for Anthropic
+        tool_results = []
+        for block_id, result in zip(tool_use_ids, results):
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": block_id,
+                "content": str(result.result) if result.status == "success" else f"Error: {result.error}",
+            })
 
         return tool_results
 

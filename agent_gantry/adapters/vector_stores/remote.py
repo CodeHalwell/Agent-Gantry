@@ -742,45 +742,46 @@ class PGVectorStore:
             return 0
 
         async with self._pool.acquire() as conn:
+            records = []
             for tool, embedding in zip(tools, embeddings):
                 tool_id = f"{tool.namespace}.{tool.name}"
                 embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
+                records.append(
+                    (
+                        tool_id,
+                        tool.name,
+                        tool.namespace,
+                        tool.description,
+                        tool.model_dump_json(),
+                        embedding_str,
+                    )
+                )
 
-                if upsert:
-                    await conn.execute(
-                        f"""
-                        INSERT INTO {self._table_name}
-                        (id, name, namespace, description, tool_json, embedding, updated_at)
-                        VALUES ($1, $2, $3, $4, $5, $6, NOW())
-                        ON CONFLICT (id) DO UPDATE SET
-                            name = EXCLUDED.name,
-                            namespace = EXCLUDED.namespace,
-                            description = EXCLUDED.description,
-                            tool_json = EXCLUDED.tool_json,
-                            embedding = EXCLUDED.embedding,
-                            updated_at = NOW()
-                        """,
-                        tool_id,
-                        tool.name,
-                        tool.namespace,
-                        tool.description,
-                        tool.model_dump_json(),
-                        embedding_str,
-                    )
-                else:
-                    await conn.execute(
-                        f"""
-                        INSERT INTO {self._table_name}
-                        (id, name, namespace, description, tool_json, embedding)
-                        VALUES ($1, $2, $3, $4, $5, $6)
-                        """,
-                        tool_id,
-                        tool.name,
-                        tool.namespace,
-                        tool.description,
-                        tool.model_dump_json(),
-                        embedding_str,
-                    )
+            if upsert:
+                await conn.executemany(
+                    f"""
+                    INSERT INTO {self._table_name}
+                    (id, name, namespace, description, tool_json, embedding, updated_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, NOW())
+                    ON CONFLICT (id) DO UPDATE SET
+                        name = EXCLUDED.name,
+                        namespace = EXCLUDED.namespace,
+                        description = EXCLUDED.description,
+                        tool_json = EXCLUDED.tool_json,
+                        embedding = EXCLUDED.embedding,
+                        updated_at = NOW()
+                    """,
+                    records,
+                )
+            else:
+                await conn.executemany(
+                    f"""
+                    INSERT INTO {self._table_name}
+                    (id, name, namespace, description, tool_json, embedding)
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                    """,
+                    records,
+                )
 
         return len(tools)
 
