@@ -13,6 +13,7 @@ that Claude can reason about and use effectively.
 from __future__ import annotations
 
 import os
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -308,23 +309,36 @@ class SkillsClient:
         if not self._gantry:
             raise ValueError("AgentGantry instance required for tool execution")
 
-        tool_results = []
+        # Collect tools to execute and their IDs
+        tool_executions = []
+        tool_use_ids = []
+
         for block in response.content:
             if hasattr(block, "type") and block.type == "tool_use":
-                # Execute via Agent-Gantry
-                result = await self._gantry.execute(
-                    ToolCall(
-                        tool_name=block.name,
-                        arguments=block.input,
+                tool_use_ids.append(block.id)
+                tool_executions.append(
+                    self._gantry.execute(
+                        ToolCall(
+                            tool_name=block.name,
+                            arguments=block.input,
+                        )
                     )
                 )
 
-                # Format result for Anthropic
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": str(result.result) if result.status == "success" else f"Error: {result.error}",
-                })
+        if not tool_executions:
+            return []
+
+        # Execute all tools concurrently
+        results = await asyncio.gather(*tool_executions)
+
+        # Format results for Anthropic
+        tool_results = []
+        for block_id, result in zip(tool_use_ids, results):
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": block_id,
+                "content": str(result.result) if result.status == "success" else f"Error: {result.error}",
+            })
 
         return tool_results
 
