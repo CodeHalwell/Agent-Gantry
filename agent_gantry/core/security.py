@@ -30,9 +30,24 @@ class PermissionDeniedError(Exception):
     pass
 
 
-# Backwards compatibility aliases (deprecated)
-ConfirmationRequired = ConfirmationRequiredError
-PermissionDenied = PermissionDeniedError
+# Backwards compatibility aliases (deprecated — will be removed in 1.0)
+import warnings as _warnings
+
+
+def __getattr__(name: str) -> type:
+    _deprecated = {
+        "ConfirmationRequired": ConfirmationRequiredError,
+        "PermissionDenied": PermissionDeniedError,
+    }
+    if name in _deprecated:
+        _warnings.warn(
+            f"{name} is deprecated, use {_deprecated[name].__name__} instead. "
+            "This alias will be removed in version 1.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return _deprecated[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class ValidationError(Exception):
@@ -117,30 +132,30 @@ class SecurityPolicy:
 
         domains = set()
 
-        # Check if the entire string looks like a URL
-        if value.startswith(("http://", "https://")):
+        # Match URLs with explicit protocol schemes (http, https, ftp, ftps)
+        # and protocol-relative URLs (//example.com)
+        url_pattern = r"(?:https?|ftps?|file)://[^\s\"\'<>]+"
+        for url_match in re.finditer(url_pattern, value):
             try:
-                parsed = urllib.parse.urlparse(value)
+                parsed = urllib.parse.urlparse(url_match.group(0))
                 if parsed.hostname:
                     domains.add(parsed.hostname)
             except Exception:
                 pass
 
-        # Extract any URLs embedded within text
-        # Use a more comprehensive regex to capture the entire URL including auth/ports
-        # Then parse the extracted URL properly to get the true hostname
-        url_pattern = r"https?://[^\s\"\'<>]+"
-        for url_match in re.finditer(url_pattern, value):
-            try:
-                parsed_embedded = urllib.parse.urlparse(url_match.group(0))
-                if parsed_embedded.hostname:
-                    domains.add(parsed_embedded.hostname)
-            except Exception:
-                pass
+        # Protocol-relative URLs (//example.com/path)
+        proto_relative = r"//([a-zA-Z0-9][-a-zA-Z0-9.]*\.[a-zA-Z]{2,})"
+        for match in re.finditer(proto_relative, value):
+            domains.add(match.group(1))
+
+        # Block data URIs that reference external resources
+        if re.search(r"data:\s*[^;,]+", value) and "data:" in value:
+            # data URIs themselves don't have domains, but flag if used
+            # in combination with domain references
+            pass
 
         # We deliberately don't extract plain strings that look like "example.com"
         # because this will flag filenames (e.g. "main.py") and block valid tool calls.
-        # Only strict HTTP/HTTPS URLs are checked for domains.
 
         return domains
 

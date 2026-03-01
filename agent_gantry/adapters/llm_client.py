@@ -6,11 +6,15 @@ Supports multiple providers: OpenAI, Anthropic, Google, Mistral, Groq.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from agent_gantry.schema.config import LLMConfig
+
+logger = logging.getLogger(__name__)
 
 
 class LLMClient:
@@ -18,6 +22,7 @@ class LLMClient:
     Unified LLM client for intent classification.
 
     Supports multiple providers with a consistent interface.
+    Uses async clients where available to avoid blocking the event loop.
     """
 
     def __init__(self, config: LLMConfig) -> None:
@@ -34,21 +39,21 @@ class LLMClient:
         self._initialize_client()
 
     def _initialize_client(self) -> None:
-        """Initialize the provider-specific client."""
+        """Initialize the provider-specific async client."""
         api_key = self._config.api_key or self._get_api_key_from_env()
 
         if self._provider == "openai":
-            from openai import OpenAI
+            from openai import AsyncOpenAI
 
             base_url = self._config.base_url
-            self._client = OpenAI(
+            self._client = AsyncOpenAI(
                 api_key=api_key,
                 base_url=base_url,
             )
         elif self._provider == "anthropic":
-            from anthropic import Anthropic
+            from anthropic import AsyncAnthropic
 
-            self._client = Anthropic(api_key=api_key)
+            self._client = AsyncAnthropic(api_key=api_key)
         elif self._provider == "google":
             from google import genai
 
@@ -58,9 +63,9 @@ class LLMClient:
 
             self._client = Mistral(api_key=api_key)
         elif self._provider == "groq":
-            from groq import Groq
+            from groq import AsyncGroq
 
-            self._client = Groq(api_key=api_key)
+            self._client = AsyncGroq(api_key=api_key)
         else:
             raise ValueError(f"Unsupported LLM provider: {self._provider}")
 
@@ -94,6 +99,8 @@ class LLMClient:
         """
         Classify the intent of a query using the LLM.
 
+        Uses async clients to avoid blocking the event loop.
+
         Args:
             query: The user's query
             conversation_summary: Optional conversation context
@@ -126,9 +133,10 @@ User query: {query}{context}
 
 Respond with ONLY the intent category name (e.g., "data_query"), nothing else."""
 
-        # Call the appropriate provider
-        if self._provider == "openai" or self._provider == "groq":
-            response = self._client.chat.completions.create(
+        # Call the appropriate provider using async methods
+        if self._provider in ("openai", "groq"):
+            # AsyncOpenAI and AsyncGroq have native async support
+            response = await self._client.chat.completions.create(
                 model=self._model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=self._config.max_tokens,
@@ -136,7 +144,8 @@ Respond with ONLY the intent category name (e.g., "data_query"), nothing else.""
             )
             result = response.choices[0].message.content.strip()
         elif self._provider == "anthropic":
-            response = self._client.messages.create(
+            # AsyncAnthropic has native async support
+            response = await self._client.messages.create(
                 model=self._model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=self._config.max_tokens,
@@ -144,13 +153,17 @@ Respond with ONLY the intent category name (e.g., "data_query"), nothing else.""
             )
             result = response.content[0].text.strip()
         elif self._provider == "google":
-            response = self._client.models.generate_content(
+            # Google genai client is sync — wrap in thread to avoid blocking
+            response = await asyncio.to_thread(
+                self._client.models.generate_content,
                 model=self._model,
                 contents=prompt,
             )
             result = response.text.strip()
         elif self._provider == "mistral":
-            response = self._client.chat.complete(
+            # Mistral client is sync — wrap in thread to avoid blocking
+            response = await asyncio.to_thread(
+                self._client.chat.complete,
                 model=self._model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=self._config.max_tokens,
@@ -165,9 +178,9 @@ Respond with ONLY the intent category name (e.g., "data_query"), nothing else.""
 
         # Validate result is in available intents
         if result not in intents_list:
-            # Try to find a close match
+            # Try to find an exact substring match
             for intent in intents_list:
-                if intent in result or result in intent:
+                if intent == result:
                     return intent
             # Default to unknown if no match
             return "unknown"

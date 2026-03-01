@@ -21,6 +21,7 @@ from agent_gantry.schema.execution import (
 )
 
 if TYPE_CHECKING:
+    from agent_gantry.core.rate_limiter import RateLimiter
     from agent_gantry.core.registry import ToolRegistry
     from agent_gantry.core.security import SecurityPolicy
     from agent_gantry.observability.telemetry import TelemetryAdapter
@@ -49,6 +50,7 @@ class ExecutionEngine:
         circuit_breaker_timeout_s: int = 60,
         security_policy: SecurityPolicy | None = None,
         telemetry: TelemetryAdapter | None = None,
+        rate_limiter: RateLimiter | None = None,
     ) -> None:
         """
         Initialize the execution engine.
@@ -61,6 +63,7 @@ class ExecutionEngine:
             circuit_breaker_timeout_s: Seconds before attempting recovery
             security_policy: Security policy for permission checks
             telemetry: Telemetry adapter for observability
+            rate_limiter: Rate limiter for controlling execution throughput
         """
         self._registry = registry
         self._default_timeout = default_timeout_ms
@@ -69,6 +72,7 @@ class ExecutionEngine:
         self._cb_timeout = circuit_breaker_timeout_s
         self._security_policy = security_policy
         self._telemetry = telemetry
+        self._rate_limiter = rate_limiter
 
     async def execute(self, call: ToolCall) -> ToolResult:
         """
@@ -84,8 +88,8 @@ class ExecutionEngine:
         span_id = self._generate_span_id()
         queued_at = datetime.now(timezone.utc)
 
-        # Look up tool from registry (which has the mutable health state)
-        tool = self._registry.get_tool(call.tool_name)
+        # Look up tool from registry (search across all namespaces)
+        tool = self._registry.get_tool_by_name(call.tool_name)
         if not tool:
             return ToolResult(
                 tool_name=call.tool_name,
@@ -111,6 +115,13 @@ class ExecutionEngine:
         )
         if sp_result:
             return sp_result
+
+        # Rate limiting check
+        rl_result = await self._check_rate_limit(
+            tool, call, queued_at, trace_id, span_id
+        )
+        if rl_result:
+            return rl_result
 
         # Argument validation
         val_result = await self._validate_call_arguments(
@@ -150,10 +161,14 @@ class ExecutionEngine:
         if confirm_result:
             return confirm_result
 
-        # Execute with retries
-        return await self._execute_handler_with_retries(
-            tool, call, handler, queued_at, trace_id, span_id
-        )
+        # Execute with retries (release rate limiter slot when done)
+        try:
+            return await self._execute_handler_with_retries(
+                tool, call, handler, queued_at, trace_id, span_id
+            )
+        finally:
+            if self._rate_limiter:
+                await self._rate_limiter.release(call.tool_name, tool.namespace)
 
     async def execute_batch(self, batch: BatchToolCall) -> BatchToolResult:
         """
@@ -331,6 +346,36 @@ class ExecutionEngine:
                     tool_name=call.tool_name,
                     status=ExecutionStatus.PENDING_CONFIRMATION,
                     error="Tool requires human confirmation",
+                    queued_at=queued_at,
+                    completed_at=datetime.now(timezone.utc),
+                    trace_id=trace_id,
+                    span_id=span_id,
+                )
+                if self._telemetry:
+                    await self._telemetry.record_execution(call, result)
+                return result
+        return None
+
+    async def _check_rate_limit(
+        self,
+        tool: ToolDefinition,
+        call: ToolCall,
+        queued_at: datetime,
+        trace_id: str,
+        span_id: str,
+    ) -> ToolResult | None:
+        """Check rate limit and acquire execution slot."""
+        if self._rate_limiter:
+            from agent_gantry.core.rate_limiter import RateLimitExceeded
+
+            try:
+                await self._rate_limiter.acquire(call.tool_name, tool.namespace)
+            except RateLimitExceeded as e:
+                result = ToolResult(
+                    tool_name=call.tool_name,
+                    status=ExecutionStatus.FAILURE,
+                    error=str(e),
+                    error_type="RateLimitExceeded",
                     queued_at=queued_at,
                     completed_at=datetime.now(timezone.utc),
                     trace_id=trace_id,

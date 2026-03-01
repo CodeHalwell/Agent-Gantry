@@ -6,12 +6,17 @@ Intelligent tool selection using semantic search, intent classification, and con
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
+
+import numpy as np
+
+_logger = logging.getLogger(__name__)
 
 import numpy as np
 
@@ -162,9 +167,9 @@ async def classify_intent(
             for intent in TaskIntent:
                 if intent.value == result:
                     return intent
-        except Exception:
+        except Exception as e:
             # Fall back to UNKNOWN if LLM classification fails
-            pass
+            _logger.warning(f"LLM intent classification failed, falling back to UNKNOWN: {e}")
 
     return TaskIntent.UNKNOWN
 
@@ -444,8 +449,9 @@ class SemanticRouter:
             tool_texts = [tool.to_searchable_text() for tool, _ in scored_tools]
             embeddings = await self._embedder.embed_batch(tool_texts)
 
-        # Pre-compute norms
-        norms = [math.sqrt(sum(x * x for x in emb)) for emb in embeddings]
+        # Convert to numpy matrix for vectorized cosine similarity
+        emb_matrix = np.array(embeddings, dtype=np.float64)
+        norms = np.linalg.norm(emb_matrix, axis=1)
 
         selected: list[int] = []
         candidates = list(range(len(scored_tools)))
@@ -458,19 +464,14 @@ class SemanticRouter:
             mmr_scores: dict[int, float] = {}
 
             for idx in candidates:
-                # Calculate max similarity to any already selected item
                 max_sim = 0.0
-                vec_a = embeddings[idx]
-                norm_a = norms[idx]
-
-                if norm_a > 0:
+                if norms[idx] > 0:
                     for sel_idx in selected:
-                        vec_b = embeddings[sel_idx]
-                        norm_b = norms[sel_idx]
-
-                        if norm_b > 0:
-                            dot_product = sum(x * y for x, y in zip(vec_a, vec_b))
-                            sim = dot_product / (norm_a * norm_b)
+                        if norms[sel_idx] > 0:
+                            sim = float(
+                                np.dot(emb_matrix[idx], emb_matrix[sel_idx])
+                                / (norms[idx] * norms[sel_idx])
+                            )
                             if sim > max_sim:
                                 max_sim = sim
 
@@ -483,23 +484,6 @@ class SemanticRouter:
             candidates.remove(next_idx)
 
         return [scored_tools[i] for i in selected]
-
-    def _cosine_similarity(self, a: list[float], b: list[float]) -> float:
-        """Calculate cosine similarity between two vectors."""
-        if not a or not b or len(a) != len(b):
-            return 0.0
-
-        vec_a = np.array(a)
-        vec_b = np.array(b)
-
-        norm_a = np.linalg.norm(vec_a)
-        norm_b = np.linalg.norm(vec_b)
-
-        if norm_a == 0.0 or norm_b == 0.0:
-            return 0.0
-
-        dot_product = np.dot(vec_a, vec_b)
-        return float(dot_product / (norm_a * norm_b))
 
     def _contains_token(self, text: str, token: str) -> bool:
         """Return True if token appears as a standalone word in text."""
