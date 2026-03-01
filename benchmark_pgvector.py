@@ -15,16 +15,16 @@ async def main():
     store._pool = mock_pool
 
     # Generate mock tools
-    tools = []
-    embeddings = []
-    for i in range(100):
-        tools.append(ToolDefinition(
+    tools = [
+        ToolDefinition(
             name=f"tool_{i}",
             namespace="test",
             description=f"Test tool {i}",
             parameters_schema={"type": "object", "properties": {}},
-        ))
-        embeddings.append([0.1] * 1536)
+        )
+        for i in range(100)
+    ]
+    embeddings = [[0.1] * 1536 for _ in range(100)]
 
     # Simulate a small latency for db execution
     async def mock_execute(*args, **kwargs):
