@@ -392,19 +392,36 @@ class SemanticRouter:
         relevance_scores = [score for _, score in scored_tools]
 
         # Use cached embeddings if available, otherwise re-embed (fallback)
+        embeddings: list[list[float]] = []
         if cached_embeddings:
-            embeddings = []
-            for tool, _ in scored_tools:
+            # Need to collect embeddings in order of scored_tools
+            missing_indices: list[int] = []
+            missing_texts: list[str] = []
+
+            # Initialize with placeholders
+            embeddings = [[] for _ in scored_tools]
+
+            for i, (tool, _) in enumerate(scored_tools):
                 tool_key = f"{tool.namespace}.{tool.name}"
                 embedding = cached_embeddings.get(tool_key)
-                if embedding is None:
-                    # Fallback: re-embed this specific tool if not in cache
-                    embedding = await self._embedder.embed_text(tool.to_searchable_text())
-                embeddings.append(embedding)
+                if embedding is not None:
+                    embeddings[i] = embedding
+                else:
+                    missing_indices.append(i)
+                    missing_texts.append(tool.to_searchable_text())
+
+            # Batch embed missing
+            if missing_texts:
+                new_embeddings = await self._embedder.embed_batch(missing_texts)
+                for idx, emb in zip(missing_indices, new_embeddings):
+                    embeddings[idx] = emb
         else:
             # Fallback: re-embed all tools (old behavior for backward compatibility)
             tool_texts = [tool.to_searchable_text() for tool, _ in scored_tools]
             embeddings = await self._embedder.embed_batch(tool_texts)
+
+        # Pre-compute norms
+        norms = [math.sqrt(sum(x * x for x in emb)) for emb in embeddings]
 
         selected: list[int] = []
         candidates = list(range(len(scored_tools)))
@@ -415,14 +432,27 @@ class SemanticRouter:
 
         while candidates and len(selected) < limit:
             mmr_scores: dict[int, float] = {}
+
             for idx in candidates:
-                similarity_to_selected = max(
-                    (self._cosine_similarity(embeddings[idx], embeddings[sel]) for sel in selected),
-                    default=0.0,
-                )
+                # Calculate max similarity to any already selected item
+                max_sim = 0.0
+                vec_a = embeddings[idx]
+                norm_a = norms[idx]
+
+                if norm_a > 0:
+                    for sel_idx in selected:
+                        vec_b = embeddings[sel_idx]
+                        norm_b = norms[sel_idx]
+
+                        if norm_b > 0:
+                            dot_product = sum(x * y for x, y in zip(vec_a, vec_b))
+                            sim = dot_product / (norm_a * norm_b)
+                            if sim > max_sim:
+                                max_sim = sim
+
                 mmr_scores[idx] = lambda_param * relevance_scores[idx] - (
                     1.0 - lambda_param
-                ) * similarity_to_selected
+                ) * max_sim
 
             next_idx = max(mmr_scores, key=lambda k: mmr_scores[k])
             selected.append(next_idx)
