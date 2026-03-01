@@ -263,7 +263,7 @@ class MCPManager:
             logger.info(
                 f"Discovered {len(tools)} tools from MCP server: {namespace}.{server_name}"
             )
-            return len(tools), tools
+            return len(tools)
 
         except asyncio.TimeoutError:
             server = self._registry.get_server(server_name, namespace)
