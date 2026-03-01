@@ -120,9 +120,30 @@ async def demo_thinking_with_tools():
     @gantry.register
     def calculate(expression: str) -> float:
         """Evaluate a mathematical expression safely."""
-        # For demo purposes - in production use a safe evaluator
+        import ast
+        import operator
+
+        # Define safe operators
+        ops = {
+            ast.Add: operator.add,
+            ast.Sub: operator.sub,
+            ast.Mult: operator.mul,
+            ast.Div: operator.truediv,
+            ast.USub: operator.neg,
+            ast.UAdd: operator.pos,
+        }
+
+        def safe_eval(node):
+            if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+                return float(node.value)
+            elif isinstance(node, ast.BinOp):
+                return ops[type(node.op)](safe_eval(node.left), safe_eval(node.right))
+            elif isinstance(node, ast.UnaryOp):
+                return ops[type(node.op)](safe_eval(node.operand))
+            raise ValueError("Unsupported expression")
+
         try:
-            return eval(expression, {"__builtins__": {}}, {})
+            return safe_eval(ast.parse(expression, mode='eval').body)
         except Exception as e:
             return f"Error: {str(e)}"
 

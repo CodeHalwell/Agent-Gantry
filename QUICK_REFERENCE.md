@@ -34,7 +34,7 @@ embedder = SimpleEmbedder()
 gantry = AgentGantry(embedder=embedder)
 
 # New way - auto-configured!
-gantry = await AgentGantry.quick_start()
+gantry = AgentGantry.quick_start()
 # Automatically picks the best available embedder
 ```
 
@@ -104,7 +104,7 @@ result = await gantry.execute(call)
 ```python
 from agent_gantry import AgentGantry
 
-gantry = await AgentGantry.quick_start()
+gantry = AgentGantry.quick_start()
 
 @gantry.register
 def calculate_tax(amount: float) -> float:
@@ -133,7 +133,7 @@ All old code continues to work. You can adopt new patterns gradually:
 
 2. **Use quick_start()** when creating new code (1 minute)
    ```python
-   gantry = await AgentGantry.quick_start()
+   gantry = AgentGantry.quick_start()
    ```
 
 3. **Use search_and_execute()** for simple scripts (2 minutes)
