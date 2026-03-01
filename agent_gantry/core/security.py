@@ -97,6 +97,65 @@ class SecurityPolicy:
             if fnmatch.fnmatch(tool_name, pattern):
                 raise ConfirmationRequiredError(f"Tool {tool_name} requires human approval.")
 
+        # 2. Check allowed domains if they are configured
+        if self.allowed_domains:
+            for value in arguments.values():
+                if not isinstance(value, str):
+                    continue
+
+                domains = self._extract_domains(value)
+                for domain in domains:
+                    if not self._is_domain_allowed(domain):
+                        raise PermissionDeniedError(
+                            f"Execution denied: Domain '{domain}' is not in allowed_domains."
+                        )
+
+    def _extract_domains(self, value: str) -> set[str]:
+        """Extract potential domains from a string value."""
+        import re
+        import urllib.parse
+
+        domains = set()
+
+        # Check if the entire string looks like a URL
+        if value.startswith(("http://", "https://")):
+            try:
+                parsed = urllib.parse.urlparse(value)
+                if parsed.hostname:
+                    domains.add(parsed.hostname)
+            except Exception:
+                pass
+
+        # Extract any URLs embedded within text
+        # Use a more comprehensive regex to capture the entire URL including auth/ports
+        # Then parse the extracted URL properly to get the true hostname
+        url_pattern = r"https?://[^\s\"\'<>]+"
+        for url_match in re.finditer(url_pattern, value):
+            try:
+                parsed_embedded = urllib.parse.urlparse(url_match.group(0))
+                if parsed_embedded.hostname:
+                    domains.add(parsed_embedded.hostname)
+            except Exception:
+                pass
+
+        # We deliberately don't extract plain strings that look like "example.com"
+        # because this will flag filenames (e.g. "main.py") and block valid tool calls.
+        # Only strict HTTP/HTTPS URLs are checked for domains.
+
+        return domains
+
+    def _is_domain_allowed(self, domain: str) -> bool:
+        """Check if a domain matches the allowed list."""
+        for allowed in self.allowed_domains:
+            if allowed.startswith("*."):
+                suffix = allowed[2:]
+                # Match exactly the suffix or subdomains
+                if domain == suffix or domain.endswith("." + suffix):
+                    return True
+            elif domain == allowed:
+                return True
+        return False
+
 
 class PermissionChecker:
     """Enforce capability-based access control."""
