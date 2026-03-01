@@ -161,6 +161,21 @@ class TestSecurityPolicy:
         assert result.status == ExecutionStatus.PENDING_CONFIRMATION
 
     @pytest.mark.asyncio
+    async def test_security_policy_rate_limiting(self) -> None:
+        """Test that security policy enforces max_requests_per_minute."""
+        from agent_gantry.core.security import PermissionDeniedError
+
+        policy = SecurityPolicy(max_requests_per_minute=2)
+
+        # First two requests should pass
+        policy.check_permission("test_tool", {})
+        policy.check_permission("test_tool", {})
+
+        # Third request should fail
+        with pytest.raises(PermissionDeniedError, match="Rate limit exceeded: maximum 2 requests per minute allowed."):
+            policy.check_permission("test_tool", {})
+
+    @pytest.mark.asyncio
     async def test_security_policy_pattern_matching(self) -> None:
         """Test that security policy matches tool name patterns."""
         policy = SecurityPolicy(require_confirmation=["delete_*", "payment_*"])

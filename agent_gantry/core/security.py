@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import fnmatch
 import re
+import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -69,6 +70,7 @@ class SecurityPolicy:
         ]
         self.allowed_domains = allowed_domains or []
         self.max_requests_per_minute = max_requests_per_minute
+        self._request_timestamps: list[float] = []
 
     def check_permission(self, tool_name: str, arguments: dict[str, str]) -> None:
         """
@@ -82,6 +84,15 @@ class SecurityPolicy:
             tool_name: Name of the tool to execute
             arguments: Arguments for the tool
         """
+        if self.max_requests_per_minute > 0:
+            now = time.time()
+            self._request_timestamps = [t for t in self._request_timestamps if now - t < 60]
+            if len(self._request_timestamps) >= self.max_requests_per_minute:
+                raise PermissionDeniedError(
+                    f"Rate limit exceeded: maximum {self.max_requests_per_minute} requests per minute allowed."
+                )
+            self._request_timestamps.append(now)
+
         for pattern in self.require_confirmation:
             if fnmatch.fnmatch(tool_name, pattern):
                 raise ConfirmationRequiredError(f"Tool {tool_name} requires human approval.")
