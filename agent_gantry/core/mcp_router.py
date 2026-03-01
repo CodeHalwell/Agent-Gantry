@@ -91,18 +91,11 @@ class MCPRouter:
         query_embedding = await self._embedder.embed_text(query)
         query_embedding_time_ms = (perf_counter() - embed_start) * 1000
 
-        # Prepare filters
-        filters: dict[str, list[str]] | None = None
-        if namespaces:
-            filters = {"namespace": namespaces}
-
         # Search for relevant servers
         search_start = perf_counter()
         # Search the vector store for MCP server pseudo-tools
         # These are stored with namespace "__mcp_servers__" to distinguish from real tools
         mcp_namespace_filter: dict[str, list[str]] = {"namespace": ["__mcp_servers__"]}
-        if filters:
-            mcp_namespace_filter.update(filters)
 
         candidates = await self._vector_store.search(
             query_vector=query_embedding,
@@ -116,7 +109,10 @@ class MCPRouter:
         scored_servers: list[MCPServerScore] = []
 
         # Process candidates - they are pseudo-tools representing MCP servers
-        for candidate in candidates[:limit]:
+        for candidate in candidates:
+            if len(scored_servers) >= limit:
+                break
+
             # Extract tool and score from the tuple
             if len(candidate) >= 2:
                 pseudo_tool, score = candidate[0], candidate[1]
@@ -131,6 +127,10 @@ class MCPRouter:
                         continue
 
                     server_namespace = pseudo_tool.metadata.get("server_namespace", "default")
+
+                    # Apply user namespace filter
+                    if namespaces and server_namespace not in namespaces:
+                        continue
 
                     # Get the full server definition from the registry
                     server = await self._get_server_from_registry(server_name, server_namespace)

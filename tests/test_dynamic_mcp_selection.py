@@ -362,7 +362,7 @@ class TestAgentGantryMCPIntegration:
         # Mock the MCPClient to avoid actual connection
         with patch(
             "agent_gantry.core.mcp_registry.MCPClient"
-        ) as mock_client_class:
+        ):
             mock_client = AsyncMock()
 
             # Mock list_tools to return our test tools
@@ -402,7 +402,7 @@ class TestAgentGantryMCPIntegration:
 
         with patch(
             "agent_gantry.core.mcp_registry.MCPClient"
-        ) as mock_client_class:
+        ):
             mock_client = AsyncMock()
             mock_client.list_tools = AsyncMock(
                 side_effect=Exception("Connection failed")
@@ -497,3 +497,61 @@ class TestMCPWorkflow:
 
         # Step 4: Discover tools from selected server
         # (Already tested in other test cases)
+
+    @pytest.mark.asyncio
+    async def test_mcp_server_fingerprinting(self) -> None:
+        """Test that MCP servers are not re-embedded if fingerprints match."""
+        gantry = AgentGantry()
+
+        # Mock vector store so we can track calls to add_tools
+        mock_vector_store = AsyncMock()
+        mock_vector_store.dimension = 768
+        mock_vector_store.get_stored_fingerprints.return_value = {}
+        mock_vector_store.get_metadata.return_value = None
+        mock_vector_store.add_tools.return_value = 1
+
+        # Keep track of stored fingerprints in our mock
+        stored_fps = {}
+        def mock_add_tools(tools, embeddings, upsert=True):
+            from agent_gantry.utils.fingerprint import compute_tool_fingerprint
+            for tool in tools:
+                stored_fps[f"{tool.namespace}.{tool.name}"] = compute_tool_fingerprint(tool)
+            return len(tools)
+
+        mock_vector_store.add_tools.side_effect = mock_add_tools
+
+        # When get_stored_fingerprints is called, return our tracked ones
+        mock_vector_store.get_stored_fingerprints.side_effect = lambda: stored_fps.copy()
+
+        gantry._vector_store = mock_vector_store
+
+        # Mock embedder
+        mock_embedder = AsyncMock()
+        mock_embedder.embed_batch.return_value = [[0.1] * 768]
+        gantry._embedder = mock_embedder
+
+        # Register an MCP server
+        gantry.register_mcp_server(
+            name="test_server",
+            command=["test", "cmd"],
+            description="Test server for fingerprinting",
+            namespace="test_ns"
+        )
+
+        # First sync - should embed and return 1
+        count1 = await gantry.sync_mcp_servers()
+        assert count1 == 1
+        assert mock_embedder.embed_batch.call_count == 1
+        assert mock_vector_store.add_tools.call_count == 1
+
+        # Second sync - fingerprints match, should return 0 and not embed
+        count2 = await gantry.sync_mcp_servers()
+        assert count2 == 0
+        assert mock_embedder.embed_batch.call_count == 1  # Still 1
+        assert mock_vector_store.add_tools.call_count == 1  # Still 1
+
+        # Third sync with force=True - should embed again
+        count3 = await gantry.sync_mcp_servers(force=True)
+        assert count3 == 1
+        assert mock_embedder.embed_batch.call_count == 2
+        assert mock_vector_store.add_tools.call_count == 2

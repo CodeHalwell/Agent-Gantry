@@ -30,11 +30,11 @@ from openai import AsyncOpenAI
 
 load_dotenv()
 
-from agent_gantry.integrations.semantic_tools import with_semantic_tools
-from agent_gantry.schema.execution import ToolCall
-
 # Import our 50 tools - they're registered at import time
 from tools import tools
+
+from agent_gantry.integrations.semantic_tools import with_semantic_tools
+from agent_gantry.schema.execution import ToolCall
 
 
 async def main():
@@ -72,32 +72,32 @@ async def main():
 
     # Ask a question - everything happens automatically!
     query = "Calculate the mean of [10, 20, 30, 40, 50] and convert 100 meters to feet"
-    
+
     print(f"Query: {query}")
     print("-" * 60)
-    
+
     response = await chat(query)
-    
+
     # Process tool calls and execute them
     tool_results = []
     for item in response.output:
         if item.type == "function_call":
             tool_name = item.name
             arguments = json.loads(item.arguments)
-            
+
             print(f"Tool call: {tool_name}({arguments})")
-            
+
             # Execute the tool using Agent-Gantry
             call = ToolCall(tool_name=tool_name, arguments=arguments)
             result = await tools.execute(call)
-            
+
             print(f"  Result: {result.result}")
             tool_results.append({
                 "type": "function_call_output",
                 "call_id": item.call_id,
                 "output": str(result.result),
             })
-    
+
     # Send tool results back to get final response
     if tool_results:
         final_response = await client.responses.create(

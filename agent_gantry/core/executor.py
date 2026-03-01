@@ -99,56 +99,25 @@ class ExecutionEngine:
             )
 
         # Check circuit breaker
-        if tool.health.circuit_breaker_open and not self._should_attempt_recovery(tool):
-            result = ToolResult(
-                tool_name=call.tool_name,
-                status=ExecutionStatus.CIRCUIT_OPEN,
-                error="Circuit breaker is open due to repeated failures",
-                queued_at=queued_at,
-                completed_at=datetime.now(timezone.utc),
-                trace_id=trace_id,
-                span_id=span_id,
-            )
-            if self._telemetry:
-                await self._telemetry.record_execution(call, result)
-            return result
+        cb_result = await self._check_circuit_breaker(
+            tool, call, queued_at, trace_id, span_id
+        )
+        if cb_result:
+            return cb_result
 
         # Security policy check
-        if self._security_policy:
-            from agent_gantry.core.security import ConfirmationRequiredError
-
-            try:
-                self._security_policy.check_permission(call.tool_name, call.arguments)
-            except ConfirmationRequiredError:
-                result = ToolResult(
-                    tool_name=call.tool_name,
-                    status=ExecutionStatus.PENDING_CONFIRMATION,
-                    error="Tool requires human confirmation",
-                    queued_at=queued_at,
-                    completed_at=datetime.now(timezone.utc),
-                    trace_id=trace_id,
-                    span_id=span_id,
-                )
-                if self._telemetry:
-                    await self._telemetry.record_execution(call, result)
-                return result
+        sp_result = await self._check_security_policy(
+            call, queued_at, trace_id, span_id
+        )
+        if sp_result:
+            return sp_result
 
         # Argument validation
-        is_valid, validation_error = await self._validate_arguments(tool, call.arguments)
-        if not is_valid:
-            result = ToolResult(
-                tool_name=call.tool_name,
-                status=ExecutionStatus.FAILURE,
-                error=validation_error,
-                error_type="ValidationError",
-                queued_at=queued_at,
-                completed_at=datetime.now(timezone.utc),
-                trace_id=trace_id,
-                span_id=span_id,
-            )
-            if self._telemetry:
-                await self._telemetry.record_execution(call, result)
-            return result
+        val_result = await self._validate_call_arguments(
+            tool, call, queued_at, trace_id, span_id
+        )
+        if val_result:
+            return val_result
 
         # Check if this requires special execution (A2A, MCP, etc.)
         from agent_gantry.schema.tool import ToolSource
@@ -175,23 +144,82 @@ class ExecutionEngine:
             )
 
         # Check confirmation requirement
-        needs_confirm = call.require_confirmation
-        if needs_confirm is None:
-            needs_confirm = tool.requires_confirmation
-        if needs_confirm:
-            result = ToolResult(
-                tool_name=call.tool_name,
-                status=ExecutionStatus.PENDING_CONFIRMATION,
-                queued_at=queued_at,
-                completed_at=datetime.now(timezone.utc),
-                trace_id=trace_id,
-                span_id=span_id,
-            )
-            if self._telemetry:
-                await self._telemetry.record_execution(call, result)
-            return result
+        confirm_result = await self._check_confirmation_required(
+            tool, call, queued_at, trace_id, span_id
+        )
+        if confirm_result:
+            return confirm_result
 
         # Execute with retries
+        return await self._execute_handler_with_retries(
+            tool, call, handler, queued_at, trace_id, span_id
+        )
+
+    async def execute_batch(self, batch: BatchToolCall) -> BatchToolResult:
+        """
+        Execute multiple tool calls.
+
+        Args:
+            batch: The batch of tool calls
+
+        Returns:
+            Results of all executions
+        """
+        start_time = datetime.now(timezone.utc)
+        results: list[ToolResult] = []
+
+        if batch.execution_strategy == "sequential":
+            for call in batch.calls:
+                result = await self.execute(call)
+                results.append(result)
+                if batch.fail_fast and result.status != ExecutionStatus.SUCCESS:
+                    break
+        else:
+            # Parallel execution
+            tasks = [self.execute(call) for call in batch.calls]
+            results = list(await asyncio.gather(*tasks))
+
+        end_time = datetime.now(timezone.utc)
+        total_time_ms = (end_time - start_time).total_seconds() * 1000
+
+        successful = sum(1 for r in results if r.status == ExecutionStatus.SUCCESS)
+        failed = len(results) - successful
+
+        return BatchToolResult(
+            results=results,
+            total_time_ms=total_time_ms,
+            successful_count=successful,
+            failed_count=failed,
+        )
+
+    async def _execute_with_timeout(
+        self,
+        handler: Callable[..., Any],
+        arguments: dict[str, Any],
+        timeout_ms: int,
+    ) -> Any:
+        """Execute a handler with a timeout."""
+        timeout_s = timeout_ms / 1000
+
+        if asyncio.iscoroutinefunction(handler):
+            return await asyncio.wait_for(handler(**arguments), timeout=timeout_s)
+        else:
+            loop = asyncio.get_event_loop()
+            return await asyncio.wait_for(
+                loop.run_in_executor(None, lambda: handler(**arguments)),
+                timeout=timeout_s,
+            )
+
+    async def _execute_handler_with_retries(
+        self,
+        tool: ToolDefinition,
+        call: ToolCall,
+        handler: Callable[..., Any],
+        queued_at: datetime,
+        trace_id: str,
+        span_id: str,
+    ) -> ToolResult:
+        """Execute tool handler with retries."""
         max_attempts = (call.retry_count or self._max_retries) + 1
         last_error: str | None = None
         last_error_type: str | None = None
@@ -254,67 +282,116 @@ class ExecutionEngine:
             await self._telemetry.record_execution(call, result)
         return result
 
-    async def execute_batch(self, batch: BatchToolCall) -> BatchToolResult:
-        """
-        Execute multiple tool calls.
-
-        Args:
-            batch: The batch of tool calls
-
-        Returns:
-            Results of all executions
-        """
-        start_time = datetime.now(timezone.utc)
-        results: list[ToolResult] = []
-
-        if batch.execution_strategy == "sequential":
-            for call in batch.calls:
-                result = await self.execute(call)
-                results.append(result)
-                if batch.fail_fast and result.status != ExecutionStatus.SUCCESS:
-                    break
-        else:
-            # Parallel execution
-            tasks = [self.execute(call) for call in batch.calls]
-            results = list(await asyncio.gather(*tasks))
-
-        end_time = datetime.now(timezone.utc)
-        total_time_ms = (end_time - start_time).total_seconds() * 1000
-
-        successful = sum(1 for r in results if r.status == ExecutionStatus.SUCCESS)
-        failed = len(results) - successful
-
-        return BatchToolResult(
-            results=results,
-            total_time_ms=total_time_ms,
-            successful_count=successful,
-            failed_count=failed,
-        )
-
-    async def _execute_with_timeout(
-        self,
-        handler: Callable[..., Any],
-        arguments: dict[str, Any],
-        timeout_ms: int,
-    ) -> Any:
-        """Execute a handler with a timeout."""
-        timeout_s = timeout_ms / 1000
-
-        if asyncio.iscoroutinefunction(handler):
-            return await asyncio.wait_for(handler(**arguments), timeout=timeout_s)
-        else:
-            loop = asyncio.get_event_loop()
-            return await asyncio.wait_for(
-                loop.run_in_executor(None, lambda: handler(**arguments)),
-                timeout=timeout_s,
-            )
-
     def _should_attempt_recovery(self, tool: ToolDefinition) -> bool:
         """Check if we should attempt circuit breaker recovery."""
         if not tool.health.last_failure:
             return True
         elapsed = (datetime.now(timezone.utc) - tool.health.last_failure).total_seconds()
         return elapsed >= self._cb_timeout
+
+    async def _check_circuit_breaker(
+        self,
+        tool: ToolDefinition,
+        call: ToolCall,
+        queued_at: datetime,
+        trace_id: str,
+        span_id: str,
+    ) -> ToolResult | None:
+        """Check if circuit breaker is open."""
+        if tool.health.circuit_breaker_open and not self._should_attempt_recovery(tool):
+            result = ToolResult(
+                tool_name=call.tool_name,
+                status=ExecutionStatus.CIRCUIT_OPEN,
+                error="Circuit breaker is open due to repeated failures",
+                queued_at=queued_at,
+                completed_at=datetime.now(timezone.utc),
+                trace_id=trace_id,
+                span_id=span_id,
+            )
+            if self._telemetry:
+                await self._telemetry.record_execution(call, result)
+            return result
+        return None
+
+    async def _check_security_policy(
+        self,
+        call: ToolCall,
+        queued_at: datetime,
+        trace_id: str,
+        span_id: str,
+    ) -> ToolResult | None:
+        """Check security policy permissions."""
+        if self._security_policy:
+            from agent_gantry.core.security import ConfirmationRequiredError
+
+            try:
+                self._security_policy.check_permission(call.tool_name, call.arguments)
+            except ConfirmationRequiredError:
+                result = ToolResult(
+                    tool_name=call.tool_name,
+                    status=ExecutionStatus.PENDING_CONFIRMATION,
+                    error="Tool requires human confirmation",
+                    queued_at=queued_at,
+                    completed_at=datetime.now(timezone.utc),
+                    trace_id=trace_id,
+                    span_id=span_id,
+                )
+                if self._telemetry:
+                    await self._telemetry.record_execution(call, result)
+                return result
+        return None
+
+    async def _validate_call_arguments(
+        self,
+        tool: ToolDefinition,
+        call: ToolCall,
+        queued_at: datetime,
+        trace_id: str,
+        span_id: str,
+    ) -> ToolResult | None:
+        """Validate arguments and return ToolResult if invalid."""
+        is_valid, validation_error = await self._validate_arguments(tool, call.arguments)
+        if not is_valid:
+            result = ToolResult(
+                tool_name=call.tool_name,
+                status=ExecutionStatus.FAILURE,
+                error=validation_error,
+                error_type="ValidationError",
+                queued_at=queued_at,
+                completed_at=datetime.now(timezone.utc),
+                trace_id=trace_id,
+                span_id=span_id,
+            )
+            if self._telemetry:
+                await self._telemetry.record_execution(call, result)
+            return result
+        return None
+
+    async def _check_confirmation_required(
+        self,
+        tool: ToolDefinition,
+        call: ToolCall,
+        queued_at: datetime,
+        trace_id: str,
+        span_id: str,
+    ) -> ToolResult | None:
+        """Check if tool requires confirmation."""
+        needs_confirm = call.require_confirmation
+        if needs_confirm is None:
+            needs_confirm = tool.requires_confirmation
+        if needs_confirm:
+            result = ToolResult(
+                tool_name=call.tool_name,
+                status=ExecutionStatus.PENDING_CONFIRMATION,
+                queued_at=queued_at,
+                completed_at=datetime.now(timezone.utc),
+                trace_id=trace_id,
+                span_id=span_id,
+            )
+            if self._telemetry:
+                await self._telemetry.record_execution(call, result)
+            return result
+        return None
 
     async def _validate_arguments(
         self, tool: ToolDefinition, arguments: dict[str, Any]
@@ -333,7 +410,53 @@ class ExecutionEngine:
         properties = schema.get("properties", {})
         required = schema.get("required", [])
 
-        # Check required parameters
+        def _validate_value(value: Any, val_schema: dict[str, Any], path: str) -> tuple[bool, str | None]:
+            expected_type = val_schema.get("type")
+
+            if expected_type == "boolean":
+                if not isinstance(value, bool):
+                    return False, f"Parameter '{path}' must be a boolean"
+            elif expected_type == "integer":
+                if not isinstance(value, int) or isinstance(value, bool):
+                    return False, f"Parameter '{path}' must be an integer"
+            elif expected_type == "number":
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    return False, f"Parameter '{path}' must be a number"
+            elif expected_type == "string":
+                if not isinstance(value, str):
+                    return False, f"Parameter '{path}' must be a string"
+            elif expected_type == "array":
+                if not isinstance(value, list):
+                    return False, f"Parameter '{path}' must be an array"
+
+                item_schema = val_schema.get("items")
+                if item_schema:
+                    for i, item in enumerate(value):
+                        is_valid, err = _validate_value(item, item_schema, f"{path}[{i}]")
+                        if not is_valid:
+                            return False, err
+            elif expected_type == "object":
+                if not isinstance(value, dict):
+                    return False, f"Parameter '{path}' must be an object"
+
+                obj_properties = val_schema.get("properties", {})
+                obj_required = val_schema.get("required", [])
+
+                for req_prop in obj_required:
+                    if req_prop not in value:
+                        return False, f"Missing required parameter: {path}.{req_prop}"
+
+                for prop_name, prop_value in value.items():
+                    if prop_name not in obj_properties:
+                        return False, f"Unknown parameter: {path}.{prop_name}"
+
+                    is_valid, err = _validate_value(prop_value, obj_properties[prop_name], f"{path}.{prop_name}")
+                    if not is_valid:
+                        return False, err
+
+            return True, None
+
+        # Check top-level required parameters
         for param in required:
             if param not in arguments:
                 return False, f"Missing required parameter: {param}"
@@ -343,43 +466,9 @@ class ExecutionEngine:
             if param_name not in properties:
                 return False, f"Unknown parameter: {param_name}"
 
-            param_schema = properties[param_name]
-            expected_type = param_schema.get("type")
-
-            # Note: bool is a subclass of int in Python, so check bool first
-            if expected_type == "boolean":
-                if not isinstance(param_value, bool):
-                    return False, f"Parameter '{param_name}' must be a boolean"
-            elif expected_type == "integer":
-                if not isinstance(param_value, int) or isinstance(param_value, bool):
-                    return False, f"Parameter '{param_name}' must be an integer"
-            elif expected_type == "number":
-                if not isinstance(param_value, (int, float)) or isinstance(param_value, bool):
-                    return False, f"Parameter '{param_name}' must be a number"
-            elif expected_type == "string":
-                if not isinstance(param_value, str):
-                    return False, f"Parameter '{param_name}' must be a string"
-            elif expected_type == "array":
-                if not isinstance(param_value, list):
-                    return False, f"Parameter '{param_name}' must be an array"
-
-                # Optional: validate items if schema provided
-                item_schema = param_schema.get("items")
-                if item_schema:
-                    item_type = item_schema.get("type")
-                    for i, item in enumerate(param_value):
-                        if item_type == "number":
-                            if not isinstance(item, (int, float)) or isinstance(item, bool):
-                                return False, f"Item at index {i} in '{param_name}' must be a number"
-                        elif item_type == "integer":
-                            if not isinstance(item, int) or isinstance(item, bool):
-                                return False, f"Item at index {i} in '{param_name}' must be an integer"
-                        elif item_type == "string":
-                            if not isinstance(item, str):
-                                return False, f"Item at index {i} in '{param_name}' must be a string"
-                        elif item_type == "boolean":
-                            if not isinstance(item, bool):
-                                return False, f"Item at index {i} in '{param_name}' must be a boolean"
+            is_valid, err = _validate_value(param_value, properties[param_name], param_name)
+            if not is_valid:
+                return False, err
 
         return True, None
 
