@@ -2007,9 +2007,9 @@ def get_random_http_status_code() -> int:
     return random.choice(codes)
 
 @tools.register(tags=["misc"])
-def get_random_uuid_v1() -> str:
-    """Generate a random UUID (v1)."""
-    return str(uuid.uuid1())
+def get_random_uuid_v4() -> str:
+    """Generate a random UUID (v4)."""
+    return str(uuid.uuid4())
 
 @tools.register(tags=["misc"])
 def get_random_hex_string(length: int = 8) -> str:
