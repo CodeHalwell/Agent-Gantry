@@ -7,73 +7,24 @@ supporting both tools and skills collections for semantic retrieval.
 
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from agent_gantry.schema.skill import Skill
-from agent_gantry.schema.tool import ToolDefinition
-from agent_gantry.utils.fingerprint import compute_tool_fingerprint
+from agent_gantry.adapters.vector_stores.lancedb_mixins import (
+    LanceDBMetadataMixin,
+    LanceDBSkillsMixin,
+    LanceDBToolsMixin,
+    _escape_sql_string,
+    _validate_identifier,
+)
+
+__all__ = ["LanceDBVectorStore", "_escape_sql_string", "_validate_identifier"]
 
 logger = logging.getLogger(__name__)
 
 
-def _escape_sql_string(value: str) -> str:
-    """
-    Escape special characters in SQL strings to prevent injection.
-
-    This function provides SQL injection protection for LanceDB queries by:
-    1. Escaping backslashes (must be done first)
-    2. Escaping single quotes using SQL standard ('') escaping
-
-    Note: This is used in conjunction with _validate_identifier() which rejects
-    control characters and enforces length limits. LanceDB does not currently
-    support parameterized queries for WHERE clauses, so string escaping is
-    necessary. All user-provided values go through validation before escaping.
-
-    Security considerations:
-    - Only used for metadata key lookups (not arbitrary user input)
-    - Keys are validated by _validate_identifier() before escaping
-    - All test cases in test suite verify SQL injection attempts are blocked
-
-    Args:
-        value: The string value to escape
-
-    Returns:
-        Escaped string safe for SQL inclusion
-    """
-    # Escape backslashes first, then single quotes
-    return value.replace("\\", "\\\\").replace("'", "''")
-
-
-def _validate_identifier(value: str, field_name: str) -> None:
-    """
-    Validate that a value is safe to use in SQL queries.
-
-    This provides the first line of defense against SQL injection by:
-    1. Enforcing length limits (1-256 characters)
-    2. Rejecting null bytes and control characters (ASCII < 32)
-
-    This validation occurs before any SQL escaping is applied.
-
-    Args:
-        value: The value to validate
-        field_name: Name of the field (for error messages)
-
-    Raises:
-        ValueError: If validation fails
-    """
-    if not value or len(value) > 256:
-        raise ValueError(f"{field_name} must be 1-256 characters")
-    # Reject null bytes and other control characters
-    if any(ord(c) < 32 for c in value):
-        raise ValueError(f"{field_name} contains invalid characters")
-
-
-class LanceDBVectorStore:
+class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataMixin):
     """
     LanceDB vector store for on-device semantic indexing.
 
@@ -264,6 +215,72 @@ class LanceDBVectorStore:
 
         self._initialized = True
 
+    async def _add_items(
+        self,
+        items: list[Any],
+        embeddings: list[list[float]],
+        upsert: bool,
+        table: Any,
+        item_type_name: str,
+        to_record: Any,
+    ) -> int:
+        """
+        Generic method to add items with their embeddings.
+
+        Args:
+            items: List of items (tools or skills)
+            embeddings: List of embedding vectors
+            upsert: Whether to update existing items
+            table: The LanceDB table to add to
+            item_type_name: Name of the item type for error messages (e.g., "Tools")
+            to_record: Callable that converts an item and its embedding into a dictionary record
+
+        Returns:
+            Number of items added/updated
+        """
+        if not items:
+            return 0
+
+        # Validate inputs
+        if len(items) != len(embeddings):
+            raise ValueError(
+                f"{item_type_name} and embeddings must have same length: "
+                f"got {len(items)} {item_type_name.lower()} and {len(embeddings)} embeddings"
+            )
+
+        for i, emb in enumerate(embeddings):
+            if len(emb) != self._dimension:
+                raise ValueError(
+                    f"Embedding {i} has dimension {len(emb)}, "
+                    f"expected {self._dimension}"
+                )
+
+        await self._ensure_initialized()
+
+        now = datetime.now(timezone.utc).isoformat()
+        records = [to_record(item, embedding, now) for item, embedding in zip(items, embeddings)]
+
+        if upsert:
+            # Delete existing records with same IDs (escape for SQL safety)
+            ids = [_escape_sql_string(f"{item.namespace}.{item.name}") for item in items]
+            try:
+                if len(ids) > 1:
+                    escaped_ids = ", ".join(f"'{id_}'" for id_ in ids)
+                    table.delete(f"id IN ({escaped_ids})")
+                else:
+                    table.delete(f"id = '{ids[0]}'")
+            except RuntimeError as e:
+                # LanceDB raises RuntimeError when attempting to delete non-existent records
+                # This is expected during upsert when records don't exist yet
+                logger.debug(f"Delete during upsert (expected if records don't exist): {e}")
+            except Exception as e:
+                # Unexpected error during deletion
+                logger.warning(f"Unexpected error during upsert delete: {e}")
+                raise
+
+        table.add(records)
+        return len(records)
+
     async def add_tools(
         self,
         tools: list[ToolDefinition],
@@ -285,68 +302,27 @@ class LanceDBVectorStore:
             ValueError: If tools and embeddings have different lengths or
                        if embedding dimensions don't match configured dimension
         """
-        if not tools:
-            return 0
-
-        # Validate inputs
-        if len(tools) != len(embeddings):
-            raise ValueError(
-                f"Tools and embeddings must have same length: "
-                f"got {len(tools)} tools and {len(embeddings)} embeddings"
-            )
-
-        for i, emb in enumerate(embeddings):
-            if len(emb) != self._dimension:
-                raise ValueError(
-                    f"Embedding {i} has dimension {len(emb)}, "
-                    f"expected {self._dimension}"
-                )
-
-        await self._ensure_initialized()
-
-        now = datetime.now(timezone.utc).isoformat()
-        records = []
-
-        for tool, embedding in zip(tools, embeddings):
-            tool_id = f"{tool.namespace}.{tool.name}"
-            fingerprint = compute_tool_fingerprint(tool)
-            record = {
-                "id": tool_id,
+        def to_record(tool: ToolDefinition, embedding: list[float], now: str) -> dict[str, Any]:
+            return {
+                "id": f"{tool.namespace}.{tool.name}",
                 "name": tool.name,
                 "namespace": tool.namespace,
                 "description": tool.description,
                 "tool_json": tool.model_dump_json(),
-                "fingerprint": fingerprint,
+                "fingerprint": compute_tool_fingerprint(tool),
                 "vector": embedding,
                 "created_at": now,
                 "updated_at": now,
             }
-            records.append(record)
 
-        if upsert:
-            # Delete existing records with same IDs (escape for SQL safety)
-            ids = [_escape_sql_string(f"{t.namespace}.{t.name}") for t in tools]
-            try:
-                if len(ids) > 1:
-                    escaped_ids = ", ".join(f"'{id_}'" for id_ in ids)
-                    def _delete():
-                        self._tools_table.delete(f"id IN ({escaped_ids})")
-                    await asyncio.to_thread(_delete)
-                else:
-                    def _delete():
-                        self._tools_table.delete(f"id = '{ids[0]}'")
-                    await asyncio.to_thread(_delete)
-            except RuntimeError as e:
-                # LanceDB raises RuntimeError when attempting to delete non-existent records
-                # This is expected during upsert when records don't exist yet
-                logger.debug(f"Delete during upsert (expected if records don't exist): {e}")
-            except Exception as e:
-                # Unexpected error during deletion
-                logger.warning(f"Unexpected error during upsert delete: {e}")
-                raise
-
-        await asyncio.to_thread(self._tools_table.add, records)
-        return len(records)
+        return await self._add_items(
+            items=tools,
+            embeddings=embeddings,
+            upsert=upsert,
+            table=self._tools_table,
+            item_type_name="Tools",
+            to_record=to_record,
+        )
 
     async def add_skills(
         self,
@@ -369,32 +345,9 @@ class LanceDBVectorStore:
             ValueError: If skills and embeddings have different lengths or
                        if embedding dimensions don't match configured dimension
         """
-        if not skills:
-            return 0
-
-        # Validate inputs
-        if len(skills) != len(embeddings):
-            raise ValueError(
-                f"Skills and embeddings must have same length: "
-                f"got {len(skills)} skills and {len(embeddings)} embeddings"
-            )
-
-        for i, emb in enumerate(embeddings):
-            if len(emb) != self._dimension:
-                raise ValueError(
-                    f"Embedding {i} has dimension {len(emb)}, "
-                    f"expected {self._dimension}"
-                )
-
-        await self._ensure_initialized()
-
-        now = datetime.now(timezone.utc).isoformat()
-        records = []
-
-        for skill, embedding in zip(skills, embeddings):
-            skill_id = f"{skill.namespace}.{skill.name}"
-            record = {
-                "id": skill_id,
+        def to_record(skill: Skill, embedding: list[float], now: str) -> dict[str, Any]:
+            return {
+                "id": f"{skill.namespace}.{skill.name}",
                 "name": skill.name,
                 "namespace": skill.namespace,
                 "description": skill.description,
@@ -404,32 +357,15 @@ class LanceDBVectorStore:
                 "created_at": now,
                 "updated_at": now,
             }
-            records.append(record)
 
-        if upsert:
-            # Delete existing records with same IDs (escape for SQL safety)
-            ids = [_escape_sql_string(f"{s.namespace}.{s.name}") for s in skills]
-            try:
-                if len(ids) > 1:
-                    escaped_ids = ", ".join(f"'{id_}'" for id_ in ids)
-                    def _delete():
-                        self._skills_table.delete(f"id IN ({escaped_ids})")
-                    await asyncio.to_thread(_delete)
-                else:
-                    def _delete():
-                        self._skills_table.delete(f"id = '{ids[0]}'")
-                    await asyncio.to_thread(_delete)
-            except RuntimeError as e:
-                # LanceDB raises RuntimeError when attempting to delete non-existent records
-                # This is expected during upsert when records don't exist yet
-                logger.debug(f"Delete during upsert (expected if records don't exist): {e}")
-            except Exception as e:
-                # Unexpected error during deletion
-                logger.warning(f"Unexpected error during upsert delete: {e}")
-                raise
-
-        await asyncio.to_thread(self._skills_table.add, records)
-        return len(records)
+        return await self._add_items(
+            items=skills,
+            embeddings=embeddings,
+            upsert=upsert,
+            table=self._skills_table,
+            item_type_name="Skills",
+            to_record=to_record,
+        )
 
     async def search(
         self,
@@ -996,80 +932,6 @@ class LanceDBVectorStore:
         if not self._initialized:
             await self.initialize()
 
-    async def _migrate_tools_schema(self, target_schema: Any) -> None:
-        """
-        Migrate tools table schema if needed.
-
-        This handles adding missing columns to existing databases to support
-        new features like fingerprinting without losing data.
-
-        Args:
-            target_schema: The target PyArrow schema
-        """
-        try:
-            # Get current schema
-            current_schema = self._tools_table.schema
-            current_field_names = {field.name for field in current_schema}
-            target_field_names = {field.name for field in target_schema}
-
-            # Check if migration is needed
-            missing_fields = target_field_names - current_field_names
-            if not missing_fields:
-                return  # Schema is up to date
-
-            logger.info(f"Migrating tools table schema. Adding fields: {missing_fields}")
-
-            # LanceDB doesn't support ALTER TABLE, so we need to:
-            # 1. Read all existing data
-            # 2. Add missing columns with default values
-            # 3. Re-insert data
-
-            # Read existing data
-            table = self._tools_table.to_arrow()
-            records = table.to_pylist()
-
-            if not records:
-                # Empty table, just recreate with new schema
-                self._db.drop_table(self._tools_table_name)
-                self._tools_table = self._db.create_table(
-                    self._tools_table_name,
-                    schema=target_schema,
-                )
-                return
-
-            # Add missing fields with default values
-            now = datetime.now(timezone.utc).isoformat()
-            for record in records:
-                if "fingerprint" not in record and "fingerprint" in missing_fields:
-                    # Compute fingerprint for existing tools
-                    try:
-                        tool = ToolDefinition.model_validate_json(record["tool_json"])
-                        record["fingerprint"] = compute_tool_fingerprint(tool)
-                    except Exception as e:
-                        # Fallback to empty fingerprint if tool JSON is invalid
-                        logger.warning(f"Failed to compute fingerprint during migration: {e}")
-                        record["fingerprint"] = ""
-                if "created_at" not in record and "created_at" in missing_fields:
-                    record["created_at"] = now
-                if "updated_at" not in record and "updated_at" in missing_fields:
-                    record["updated_at"] = now
-
-            # Drop and recreate table with new schema
-            self._db.drop_table(self._tools_table_name)
-            self._tools_table = self._db.create_table(
-                self._tools_table_name,
-                schema=target_schema,
-            )
-
-            # Re-insert data
-            self._tools_table.add(records)
-            logger.info(f"Successfully migrated {len(records)} tools to new schema")
-
-        except Exception as e:
-            logger.error(f"Schema migration failed: {e}")
-            # Don't raise - allow system to continue with current schema
-            # This makes the migration non-breaking
-
     @property
     def db_path(self) -> str:
         """Return the database path."""
@@ -1080,170 +942,3 @@ class LanceDBVectorStore:
         """Return the vector dimension."""
         return self._dimension
 
-    # =========================================================================
-    # Metadata and Fingerprint Methods (for auto-sync support)
-    # =========================================================================
-
-    async def get_metadata(self, key: str) -> str | None:
-        """
-        Get a metadata value by key.
-
-        Args:
-            key: The metadata key
-
-        Returns:
-            The value if found, None otherwise
-        """
-        await self._ensure_initialized()
-
-        try:
-            escaped_key = _escape_sql_string(key)
-            results = self._metadata_table.search().where(f"key = '{escaped_key}'").limit(1).to_list()
-            if results and results[0].get("value") is not None:
-                value: str = results[0]["value"]
-                return value
-        except Exception as e:
-            logger.debug(f"get_metadata failed for key '{key}': {e}")
-        return None
-
-    async def set_metadata(self, key: str, value: str) -> None:
-        """
-        Set a metadata value.
-
-        Args:
-            key: The metadata key
-            value: The value to store
-        """
-        await self._ensure_initialized()
-
-        now = datetime.now(timezone.utc).isoformat()
-
-        # Delete existing record if present
-        try:
-            escaped_key = _escape_sql_string(key)
-            self._metadata_table.delete(f"key = '{escaped_key}'")
-        except RuntimeError:
-            # LanceDB raises RuntimeError when attempting to delete non-existent records
-            pass
-        except Exception as e:
-            logger.warning(f"Unexpected error deleting metadata key '{key}': {e}")
-            # Continue anyway - we'll try to add the new record
-
-        # Add new record
-        self._metadata_table.add([{
-            "key": key,
-            "value": value,
-            "updated_at": now,
-        }])
-
-    async def get_stored_fingerprints(self) -> dict[str, str]:
-        """
-        Get all stored tool fingerprints.
-
-        Returns:
-            Dictionary mapping tool_id to fingerprint
-        """
-        await self._ensure_initialized()
-
-        try:
-            table = self._tools_table.to_arrow()
-            records = table.to_pylist()
-            return {r["id"]: r.get("fingerprint", "") for r in records}
-        except Exception as e:
-            logger.debug(f"get_stored_fingerprints failed: {e}")
-            return {}
-
-    async def get_sync_status(self) -> dict[str, Any]:
-        """
-        Get the current sync status including metadata.
-
-        Returns:
-            Dictionary with sync status info:
-            - tool_count: Number of tools in database
-            - embedder_id: Identifier of embedder used
-            - dimension: Vector dimension
-            - last_sync: ISO timestamp of last sync
-        """
-        await self._ensure_initialized()
-
-        status: dict[str, Any] = {
-            "tool_count": await self.count(),
-            "dimension": self._dimension,
-        }
-
-        # Get metadata values
-        embedder_id = await self.get_metadata("embedder_id")
-        if embedder_id:
-            status["embedder_id"] = embedder_id
-
-        last_sync = await self.get_metadata("last_sync")
-        if last_sync:
-            status["last_sync"] = last_sync
-
-        stored_dimension = await self.get_metadata("dimension")
-        if stored_dimension:
-            status["stored_dimension"] = int(stored_dimension)
-
-        return status
-
-    async def update_sync_metadata(
-        self,
-        embedder_id: str,
-        dimension: int,
-    ) -> None:
-        """
-        Update sync metadata after a successful sync.
-
-        This method provides transaction-like semantics by updating all
-        metadata fields together. If any update fails, the entire operation
-        is considered failed and an attempt is made to rollback to previous state.
-
-        Rollback Limitations:
-            Due to LanceDB's lack of native transaction support, rollback is
-            best-effort only and may fail if:
-
-            - The metadata table becomes corrupted during updates
-            - A second concurrent process modifies metadata simultaneously
-            - The database connection is lost during rollback
-
-            If rollback fails, the metadata may be left in an inconsistent state
-            with some fields updated and others not. In this case:
-
-            - Check logs for "Rollback failed" error messages
-            - Manually verify metadata consistency with get_sync_status()
-            - Consider re-syncing all tools to restore consistency
-            - Use external locks (e.g., file locks) to prevent concurrent writes
-
-        Args:
-            embedder_id: Identifier for the embedder used
-            dimension: Vector dimension used
-
-        Raises:
-            Exception: If metadata update fails (with rollback attempted)
-        """
-        now = datetime.now(timezone.utc).isoformat()
-
-        # Store old values for rollback
-        old_embedder_id = await self.get_metadata("embedder_id")
-        old_dimension = await self.get_metadata("dimension")
-        old_last_sync = await self.get_metadata("last_sync")
-
-        try:
-            # Update all metadata fields
-            await self.set_metadata("embedder_id", embedder_id)
-            await self.set_metadata("dimension", str(dimension))
-            await self.set_metadata("last_sync", now)
-        except Exception as e:
-            # Attempt rollback on failure
-            logger.error(f"Sync metadata update failed: {e}. Attempting rollback...")
-            try:
-                if old_embedder_id is not None:
-                    await self.set_metadata("embedder_id", old_embedder_id)
-                if old_dimension is not None:
-                    await self.set_metadata("dimension", old_dimension)
-                if old_last_sync is not None:
-                    await self.set_metadata("last_sync", old_last_sync)
-                logger.info("Rollback completed successfully")
-            except Exception as rollback_error:
-                logger.error(f"Rollback failed: {rollback_error}")
-            raise  # Re-raise original exception
