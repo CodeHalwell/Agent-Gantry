@@ -6,13 +6,14 @@ Intelligent tool selection using semantic search, intent classification, and con
 
 from __future__ import annotations
 
-import math
 import re
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
+
+import numpy as np
 
 if TYPE_CHECKING:
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
@@ -487,12 +488,18 @@ class SemanticRouter:
         """Calculate cosine similarity between two vectors."""
         if not a or not b or len(a) != len(b):
             return 0.0
-        dot_product = sum(x * y for x, y in zip(a, b))
-        norm_a = math.sqrt(sum(x * x for x in a))
-        norm_b = math.sqrt(sum(y * y for y in b))
+
+        vec_a = np.array(a)
+        vec_b = np.array(b)
+
+        norm_a = np.linalg.norm(vec_a)
+        norm_b = np.linalg.norm(vec_b)
+
         if norm_a == 0.0 or norm_b == 0.0:
             return 0.0
-        return dot_product / (norm_a * norm_b)
+
+        dot_product = np.dot(vec_a, vec_b)
+        return float(dot_product / (norm_a * norm_b))
 
     def _contains_token(self, text: str, token: str) -> bool:
         """Return True if token appears as a standalone word in text."""

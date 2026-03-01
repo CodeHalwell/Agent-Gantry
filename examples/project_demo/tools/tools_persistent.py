@@ -126,13 +126,13 @@ DB_PATH = pathlib.Path(__file__).parent / ".tool_cache" / "lancedb"
 def create_persistent_gantry(dimension: int = 256) -> AgentGantry:
     """
     Create an AgentGantry with persistent LanceDB storage.
-    
+
     Embeddings are stored on disk, so tools only need to be embedded once.
     Subsequent runs load from disk instantly.
-    
+
     Args:
         dimension: Embedding dimension (256 for Nomic with Matryoshka)
-        
+
     Returns:
         AgentGantry configured with persistent storage
     """
@@ -955,10 +955,10 @@ def get_memory_info() -> dict[str, Any]:
 async def sync_tools() -> int:
     """
     Sync all registered tools to the persistent vector store.
-    
+
     This embeds all tools and saves them to disk. Only needs to be run once,
     or when tools are added/modified.
-    
+
     Returns:
         Number of tools synced
     """
@@ -971,7 +971,7 @@ async def sync_tools() -> int:
 async def check_sync_status() -> dict[str, Any]:
     """
     Check if tools are already synced to the persistent store.
-    
+
     Returns:
         Dict with sync status information
     """
