@@ -6,8 +6,11 @@ Connects to MCP servers and converts their tools to ToolDefinition.
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -180,7 +183,7 @@ class MCPClientPool:
                 all_tools.extend(tools)
             except Exception as e:
                 # Log error but continue with other servers
-                print(f"Error listing tools from {client.config.name}: {e}")
+                logger.error(f"Error listing tools from {client.config.name}: {e}")
         return all_tools
 
     def remove_server(self, name: str) -> bool:

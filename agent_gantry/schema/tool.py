@@ -151,24 +151,51 @@ class ToolDefinition(BaseModel):
         """
         Convert to OpenAI function calling format.
 
-        Deprecated: Use `to_dialect("openai")` instead.
+        .. deprecated::
+            Use ``to_dialect("openai")`` instead. Will be removed in 1.0.
         """
+        import warnings
+
+        warnings.warn(
+            "to_openai_schema() is deprecated, use to_dialect('openai') instead. "
+            "This method will be removed in version 1.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.to_dialect("openai")
 
     def to_anthropic_schema(self) -> dict[str, Any]:
         """
         Convert to Anthropic tool format.
 
-        Deprecated: Use `to_dialect("anthropic")` instead.
+        .. deprecated::
+            Use ``to_dialect("anthropic")`` instead. Will be removed in 1.0.
         """
+        import warnings
+
+        warnings.warn(
+            "to_anthropic_schema() is deprecated, use to_dialect('anthropic') instead. "
+            "This method will be removed in version 1.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.to_dialect("anthropic")
 
     def to_gemini_schema(self) -> dict[str, Any]:
         """
         Convert to Gemini function format.
 
-        Deprecated: Use `to_dialect("gemini")` instead.
+        .. deprecated::
+            Use ``to_dialect("gemini")`` instead. Will be removed in 1.0.
         """
+        import warnings
+
+        warnings.warn(
+            "to_gemini_schema() is deprecated, use to_dialect('gemini') instead. "
+            "This method will be removed in version 1.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.to_dialect("gemini")
 
     def to_dialect(self, dialect: SchemaDialect | str, **options: Any) -> dict[str, Any]:

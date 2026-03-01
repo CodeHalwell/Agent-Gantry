@@ -100,16 +100,45 @@ class AgentGantry:
         self._security_policy = security_policy or SecurityPolicy()
         self._registry = ToolRegistry()
 
-        # Initialize MCP registry and router for dynamic server selection
-        from agent_gantry.core.mcp_registry import MCPRegistry
-        from agent_gantry.core.mcp_router import MCPRouter
+        # Initialize MCP registry and router for dynamic server selection.
+        # These imports are kept inside __init__ to avoid requiring the 'mcp'
+        # package at module level (it's an optional dependency).
+        from agent_gantry.core.sync_manager import SyncManager
 
-        self._mcp_registry = MCPRegistry()
-        self._mcp_router = MCPRouter(
+        self._mcp_registry = None
+        self._mcp_router = None
+        self._mcp_manager = None
+
+        try:
+            from agent_gantry.core.mcp_manager import MCPManager
+            from agent_gantry.core.mcp_registry import MCPRegistry
+            from agent_gantry.core.mcp_router import MCPRouter
+
+            self._mcp_registry = MCPRegistry()
+            self._mcp_router = MCPRouter(
+                vector_store=self._vector_store,
+                embedder=self._embedder,
+                registry=self._mcp_registry,
+            )
+        except ImportError:
+            logger.debug("MCP support not available (install 'mcp' package to enable)")
+
+        # Managers for decomposed responsibilities
+        self._sync_manager = SyncManager(
             vector_store=self._vector_store,
             embedder=self._embedder,
-            registry=self._mcp_registry,
+            registry=self._registry,
         )
+        if self._mcp_registry and self._mcp_router:
+            from agent_gantry.core.mcp_manager import MCPManager
+
+            self._mcp_manager = MCPManager(
+                vector_store=self._vector_store,
+                embedder=self._embedder,
+                registry=self._mcp_registry,
+                router=self._mcp_router,
+                get_embedder_id=self._sync_manager.get_embedder_id,
+            )
 
         # Initialize LLM client for intent classification if enabled
         self._llm_client = None
@@ -129,6 +158,13 @@ class AgentGantry:
             llm_client=self._llm_client,
             use_llm_for_intent=self._config.routing.use_llm_for_intent,
         )
+        # Build rate limiter from config
+        from agent_gantry.core.rate_limiter import RateLimiter
+
+        self._rate_limiter: RateLimiter | None = None
+        if self._config.execution.rate_limit.enabled:
+            self._rate_limiter = RateLimiter(self._config.execution.rate_limit)
+
         self._executor = ExecutionEngine(
             registry=self._registry,
             default_timeout_ms=self._config.execution.default_timeout_ms,
@@ -137,6 +173,7 @@ class AgentGantry:
             circuit_breaker_timeout_s=self._config.execution.circuit_breaker_timeout_s,
             security_policy=self._security_policy,
             telemetry=self._telemetry,
+            rate_limiter=self._rate_limiter,
         )
         self._pending_tools: list[ToolDefinition] = []
         self._pending_mcp_servers: list[MCPServerDefinition] = []
@@ -153,6 +190,41 @@ class AgentGantry:
             # or use `AgentGantry.from_modules(...)` if available.
             self._modules = modules
             self._module_attr = module_attr
+
+    async def close(self) -> None:
+        """
+        Release all resources held by this AgentGantry instance.
+
+        Closes vector store connections, MCP clients, and any other resources.
+        Safe to call multiple times.
+        """
+        # Close vector store if it has a close method
+        close_method = getattr(self._vector_store, "close", None)
+        if close_method:
+            if asyncio.iscoroutinefunction(close_method):
+                await close_method()
+            else:
+                close_method()
+
+        # Close telemetry if it has a close method
+        if self._telemetry:
+            telemetry_close = getattr(self._telemetry, "close", None)
+            if telemetry_close:
+                if asyncio.iscoroutinefunction(telemetry_close):
+                    await telemetry_close()
+                else:
+                    telemetry_close()
+
+        self._initialized = False
+
+    async def __aenter__(self) -> AgentGantry:
+        """Enter async context manager."""
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        """Exit async context manager, releasing resources."""
+        await self.close()
+        return False
 
     @classmethod
     def from_config(cls, path: str) -> AgentGantry:
@@ -375,84 +447,12 @@ class AgentGantry:
             await self.sync()
 
     async def _detect_changes(self, all_tools: list[ToolDefinition], force: bool) -> list[ToolDefinition]:
-        """
-        Detect which tools need to be synced based on fingerprints and vector store state.
-
-        Args:
-            all_tools: List of all current tools
-            force: If True, force resync of all tools
-
-        Returns:
-            List of tools that need to be synced
-        """
-        current_fingerprints = {
-            f"{t.namespace}.{t.name}": compute_tool_fingerprint(t)
-            for t in all_tools
-        }
-
-        stored_fingerprints = await self._vector_store.get_stored_fingerprints()
-        embedder_id = self._get_embedder_id()
-        needs_full_resync = force
-
-        # Check if embedder or dimension changed
-        stored_embedder = await self._vector_store.get_metadata("embedder_id")
-        stored_dim = await self._vector_store.get_metadata("dimension")
-
-        if stored_embedder and stored_embedder != embedder_id:
-            logger.info(
-                f"Embedder changed from '{stored_embedder}' to '{embedder_id}'. "
-                "Full re-sync required."
-            )
-            needs_full_resync = True
-        elif stored_dim and int(stored_dim) != self._vector_store.dimension:
-            logger.info(
-                f"Dimension changed from {stored_dim} to {self._vector_store.dimension}. "
-                "Full re-sync required."
-            )
-            needs_full_resync = True
-
-        if needs_full_resync:
-            return all_tools
-
-        tools_to_sync = []
-        for tool in all_tools:
-            tool_id = f"{tool.namespace}.{tool.name}"
-            current_fp = current_fingerprints[tool_id]
-            stored_fp = stored_fingerprints.get(tool_id, "")
-
-            if current_fp != stored_fp:
-                tools_to_sync.append(tool)
-                if stored_fp:
-                    logger.debug(f"Tool '{tool_id}' changed, will re-embed")
-                else:
-                    logger.debug(f"Tool '{tool_id}' is new, will embed")
-
-        return tools_to_sync
+        """Detect which tools need to be synced. Delegates to SyncManager."""
+        return await self._sync_manager.detect_changes(all_tools, force)
 
     async def _sync_batches(self, tools_to_sync: list[ToolDefinition], batch_size: int) -> int:
-        """
-        Embed and save tools in batches.
-
-        Args:
-            tools_to_sync: Tools to embed and save
-            batch_size: Number of tools per batch
-
-        Returns:
-            Number of tools synced
-        """
-        total_synced = 0
-        for i in range(0, len(tools_to_sync), batch_size):
-            batch = tools_to_sync[i : i + batch_size]
-            texts = [t.to_searchable_text() for t in batch]
-            embeddings = await self._embedder.embed_batch(texts)
-            count = await self._vector_store.add_tools(batch, embeddings, upsert=True)
-
-            # Register tools in registry
-            for tool in batch:
-                self._registry.register_tool(tool)
-
-            total_synced += count
-        return total_synced
+        """Embed and save tools in batches. Delegates to SyncManager."""
+        return await self._sync_manager.sync_batches(tools_to_sync, batch_size)
 
     async def sync(self, batch_size: int = 100, force: bool = False) -> int:
         """
@@ -505,10 +505,7 @@ class AgentGantry:
         total_synced = await self._sync_batches(tools_to_sync, batch_size)
 
         # Update sync metadata (if supported)
-        await self._vector_store.update_sync_metadata(
-            embedder_id=self._get_embedder_id(),
-            dimension=self._vector_store.dimension,
-        )
+        await self._sync_manager.update_metadata()
 
         # Ensure all tools are registered (even those not synced)
         for tool in all_tools:
@@ -520,31 +517,8 @@ class AgentGantry:
         return total_synced
 
     def _get_embedder_id(self) -> str:
-        """
-        Get a unique identifier for the current embedder configuration.
-
-        Returns:
-            String identifier combining embedder class and key params
-        """
-        embedder_class = self._embedder.__class__.__name__
-
-        # Try to get dimension from embedder
-        dimension = getattr(self._embedder, "dimension", None)
-        if dimension is None:
-            dimension = getattr(self._embedder, "_dimension", None)
-
-        # Try to get model name
-        model = getattr(self._embedder, "model", None)
-        if model is None:
-            model = getattr(self._embedder, "_model_name", None)
-
-        parts = [embedder_class]
-        if model:
-            parts.append(str(model))
-        if dimension:
-            parts.append(f"dim{dimension}")
-
-        return "-".join(parts)
+        """Get a unique identifier for the current embedder configuration."""
+        return self._sync_manager.get_embedder_id()
 
     async def ensure_synced(self) -> None:
         """
@@ -579,6 +553,10 @@ class AgentGantry:
             Number of servers synced
         """
         await self._ensure_initialized()
+
+        if self._mcp_registry is None:
+            self._mcp_synced = True
+            return 0
 
         # Get all registered servers
         all_servers = self._mcp_registry.list_servers()
@@ -795,16 +773,11 @@ class AgentGantry:
             if query.enable_reranking is None:
                 query.enable_reranking = True
         # Use telemetry span if available, otherwise use a no-op async context manager
-        class _AsyncNoopContext:
-            async def __aenter__(self) -> _AsyncNoopContext:
-                return self
-
-            async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
-                return False
+        from agent_gantry.utils.async_utils import AsyncNoopContext
 
         span_cm = (
             self._telemetry.span("tool_retrieval", {"query": query.context.query})
-            if self._telemetry else _AsyncNoopContext()
+            if self._telemetry else AsyncNoopContext()
         )
         async with span_cm:
             routing_result = await self._router.route(query)
@@ -1458,6 +1431,21 @@ class AgentGantry:
                 dimension=config.dimension,
                 task_type=config.task_type or "search_document",
             )
+        if config.type == "sentence_transformers":
+            try:
+                import sentence_transformers as _st  # noqa: F401
+                from agent_gantry.adapters.embedders.sentence_transformers import (
+                    SentenceTransformersEmbedder,
+                )
+
+                return SentenceTransformersEmbedder(
+                    model=config.model or "all-MiniLM-L6-v2",
+                    dimension=config.dimension,
+                )
+            except ImportError:
+                logger.debug(
+                    "sentence-transformers not available, falling back to SimpleEmbedder"
+                )
         return SimpleEmbedder()
 
     def _build_reranker(self, config: RerankerConfig) -> RerankerAdapter | None:
@@ -1468,6 +1456,12 @@ class AgentGantry:
             from agent_gantry.adapters.rerankers.cohere import CohereReranker
 
             return CohereReranker(model=config.model)
+        if config.type == "cross_encoder":
+            from agent_gantry.adapters.rerankers.cross_encoder import CrossEncoderReranker
+
+            return CrossEncoderReranker(
+                model=config.model or "cross-encoder/ms-marco-MiniLM-L-6-v2",
+            )
         return None
 
     def _build_telemetry(self, config: TelemetryConfig) -> TelemetryAdapter:

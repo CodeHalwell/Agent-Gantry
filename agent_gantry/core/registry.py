@@ -110,6 +110,30 @@ class ToolRegistry:
         key = f"{namespace}.{name}"
         return self._tools.get(key)
 
+    def get_tool_by_name(self, name: str) -> ToolDefinition | None:
+        """
+        Get a tool by name, searching across all namespaces.
+
+        Returns the first match found. Useful when the caller doesn't know
+        which namespace a tool belongs to.
+
+        Args:
+            name: Tool name to search for
+
+        Returns:
+            The tool definition if found, None otherwise
+        """
+        # Try default namespace first for speed
+        default_key = f"default.{name}"
+        if default_key in self._tools:
+            return self._tools[default_key]
+
+        # Search all namespaces
+        for key, tool in self._tools.items():
+            if tool.name == name:
+                return tool
+        return None
+
     def get_handler(self, key: str) -> Callable[..., Any] | None:
         """
         Get the handler for a tool by its full key (namespace.name).

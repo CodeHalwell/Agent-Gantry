@@ -132,29 +132,32 @@ class RateLimiter:
         now = time.time()
         history = self._call_history[key]
 
-        # Remove calls older than 1 minute
-        minute_ago = now - 60
-        while history and history[0] < minute_ago:
-            history.popleft()
-
-        # Check minute limit
-        if len(history) >= self._config.max_calls_per_minute:
-            retry_after = 60 - (now - history[0])
-            raise RateLimitExceeded(
-                f"Rate limit exceeded: {len(history)}/{self._config.max_calls_per_minute} calls per minute",
-                retry_after=retry_after,
-            )
-
-        # Remove calls older than 1 hour
+        # Clean entries older than 1 hour (the max window we care about)
         hour_ago = now - 3600
         while history and history[0] < hour_ago:
             history.popleft()
 
-        # Check hour limit
+        # Check hour limit first (uses full history)
         if len(history) >= self._config.max_calls_per_hour:
             retry_after = 3600 - (now - history[0])
             raise RateLimitExceeded(
                 f"Rate limit exceeded: {len(history)}/{self._config.max_calls_per_hour} calls per hour",
+                retry_after=retry_after,
+            )
+
+        # Check minute limit (count only entries within the last 60 seconds)
+        minute_ago = now - 60
+        recent_count = sum(1 for t in history if t >= minute_ago)
+        if recent_count >= self._config.max_calls_per_minute:
+            # Find the oldest entry within the minute window for retry_after
+            for t in history:
+                if t >= minute_ago:
+                    retry_after = 60 - (now - t)
+                    break
+            else:
+                retry_after = 1.0
+            raise RateLimitExceeded(
+                f"Rate limit exceeded: {recent_count}/{self._config.max_calls_per_minute} calls per minute",
                 retry_after=retry_after,
             )
 
