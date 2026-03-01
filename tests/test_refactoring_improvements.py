@@ -22,14 +22,14 @@ class TestQuickStart:
     @pytest.mark.asyncio
     async def test_quick_start_auto_embedder(self):
         """Test quick_start with auto embedder selection."""
-        gantry = await AgentGantry.quick_start(embedder="auto")
+        gantry = AgentGantry.quick_start(embedder="auto")
         assert gantry is not None
         assert gantry._embedder is not None
 
     @pytest.mark.asyncio
     async def test_quick_start_simple_embedder(self):
         """Test quick_start with explicit simple embedder."""
-        gantry = await AgentGantry.quick_start(embedder="simple")
+        gantry = AgentGantry.quick_start(embedder="simple")
         assert gantry is not None
         from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 
@@ -39,12 +39,12 @@ class TestQuickStart:
     async def test_quick_start_openai_without_key(self):
         """Test quick_start raises error for OpenAI without API key."""
         with pytest.raises(ValueError, match="OpenAI embedder requires a valid API key"):
-            await AgentGantry.quick_start(embedder="openai")
+            AgentGantry.quick_start(embedder="openai")
 
     @pytest.mark.asyncio
     async def test_quick_start_with_tool_registration(self):
         """Test quick_start works with tool registration and sync."""
-        gantry = await AgentGantry.quick_start()
+        gantry = AgentGantry.quick_start()
 
         @gantry.register
         def test_tool(x: int) -> int:
@@ -63,7 +63,7 @@ class TestSearchAndExecute:
     @pytest.mark.asyncio
     async def test_search_and_execute_basic(self):
         """Test basic search and execute functionality."""
-        gantry = await AgentGantry.quick_start()
+        gantry = AgentGantry.quick_start()
 
         @gantry.register
         def calculate_tax(amount: float) -> float:
@@ -82,7 +82,7 @@ class TestSearchAndExecute:
     @pytest.mark.asyncio
     async def test_search_and_execute_no_tools_found(self):
         """Test search_and_execute raises error when no tools match."""
-        gantry = await AgentGantry.quick_start()
+        gantry = AgentGantry.quick_start()
 
         @gantry.register
         def unrelated_tool(x: int) -> int:
@@ -99,7 +99,7 @@ class TestSearchAndExecute:
     @pytest.mark.asyncio
     async def test_search_and_execute_with_namespace(self):
         """Test search_and_execute respects tool namespace."""
-        gantry = await AgentGantry.quick_start()
+        gantry = AgentGantry.quick_start()
 
         @gantry.register(namespace="default")
         def multiply(x: int, y: int) -> int:
@@ -121,7 +121,7 @@ class TestDefaultGantryDecorator:
     @pytest.mark.asyncio
     async def test_set_default_gantry(self):
         """Test setting and using default gantry."""
-        gantry = await AgentGantry.quick_start()
+        gantry = AgentGantry.quick_start()
 
         @gantry.register
         def get_weather(city: str) -> str:
@@ -158,7 +158,7 @@ class TestDefaultGantryDecorator:
     @pytest.mark.asyncio
     async def test_decorator_with_explicit_gantry_still_works(self):
         """Test decorator still works with explicit gantry parameter."""
-        gantry = await AgentGantry.quick_start()
+        gantry = AgentGantry.quick_start()
 
         @gantry.register
         def test_tool() -> str:

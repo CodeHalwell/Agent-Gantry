@@ -37,6 +37,23 @@ class BaseOpenAIEmbedder:
             config: Embedder configuration
             dimension: Optional output dimension for Matryoshka truncation
         """
+        try:
+            from openai import AsyncOpenAI
+        except ImportError as exc:
+            raise ImportError(
+                "OpenAI package is not installed. Install it with:\n"
+                "  pip install agent-gantry[openai]"
+            ) from exc
+
+        api_key = config.api_key or os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError(
+
+                    "OpenAI API key is required. Set it in config or "
+                    "OPENAI_API_KEY environment variable."
+
+            )
+
         self._config = config
         self._model = config.model or "text-embedding-3-small"
         self._batch_size = config.batch_size
