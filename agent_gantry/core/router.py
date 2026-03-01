@@ -18,9 +18,9 @@ import numpy as np
 
 _logger = logging.getLogger(__name__)
 
-import numpy as np
-
 if TYPE_CHECKING:
+    from agent_gantry.adapters.embedders.base import EmbeddingAdapter
+    from agent_gantry.adapters.llm_client import LLMClient
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
     from agent_gantry.adapters.llm_client import LLMClient
     from agent_gantry.adapters.rerankers.base import RerankerAdapter
