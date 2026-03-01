@@ -222,23 +222,25 @@ class SkillsClient:
         if selected_skills:
             system_parts.append("\n--- Skills ---\n")
             for skill in selected_skills:
-                skill_section = f"## {skill.name}\n"
-                skill_section += f"Description: {skill.description}\n\n"
-                skill_section += f"Instructions:\n{skill.instructions}\n"
+                skill_section_parts: list[str] = [
+                    f"## {skill.name}\n",
+                    f"Description: {skill.description}\n\n",
+                    f"Instructions:\n{skill.instructions}\n"
+                ]
                 if skill.tools:
-                    skill_section += f"\nAvailable tools: {', '.join(skill.tools)}\n"
+                    skill_section_parts.append(f"\nAvailable tools: {', '.join(skill.tools)}\n")
                 if skill.examples:
-                    skill_section += "\nExamples:\n"
+                    skill_section_parts.append("\nExamples:\n")
                     for example in skill.examples:
                         if "input" in example:
-                            skill_section += f"  Input: {example['input']}\n"
+                            skill_section_parts.append(f"  Input: {example['input']}\n")
                         if "output" in example:
-                            skill_section += f"  Output: {example['output']}\n"
+                            skill_section_parts.append(f"  Output: {example['output']}\n")
                         if "steps" in example:
-                            skill_section += "  Steps:\n"
+                            skill_section_parts.append("  Steps:\n")
                             for step in example["steps"]:
-                                skill_section += f"    - {step}\n"
-                system_parts.append(skill_section)
+                                skill_section_parts.append(f"    - {step}\n")
+                system_parts.append("".join(skill_section_parts))
 
         final_system = "\n".join(system_parts) if system_parts else None
 
