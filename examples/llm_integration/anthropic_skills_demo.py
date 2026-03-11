@@ -330,6 +330,7 @@ async def demo_skill_registry():
     print("📝 Anthropic Schema (first skill):")
     schema = client.skills.to_anthropic_schema()[0]
     import json
+
     print(json.dumps(schema, indent=2))
     print()
 
@@ -370,6 +371,7 @@ async def main():
     except Exception as e:
         print(f"\n❌ Error: {e}")
         import traceback
+
         traceback.print_exc()
 
 

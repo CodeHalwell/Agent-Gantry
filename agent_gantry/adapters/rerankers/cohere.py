@@ -139,4 +139,3 @@ class CohereReranker(RerankerAdapter):
             # Fall back to original scores on error
             logger.warning(f"Cohere rerank failed: {e}, using original scores")
             return sorted(tools, key=lambda x: x[1], reverse=True)[:top_k]
-

@@ -47,14 +47,40 @@ async def main() -> str:
     #    This is where token savings happen: instead of sending ALL tools to the
     #    LLM, Gantry's semantic router selects only the relevant subset.
     user_query = "What plan is user abc123 on?"
-    tools = await bridge.get_tools(user_query, limit=2)
+    tools = await gantry.retrieve_tools(user_query, limit=1, score_threshold=0.1)
 
-    # 4) Create and run the Agent Framework agent with semantically selected tools
-    client = OpenAIResponsesClient()
-    agent = client.as_agent(
-        name="SupportAgent",
-        instructions="You are a support assistant. Use the tools to fetch customer data.",
-        tools=tools,
+    # 3) Wrap Gantry tools for Microsoft Agent Framework
+    def make_tool_wrapper(tool_name: str, gantry_instance: AgentGantry):
+        """Factory function to properly bind tool name to wrapper."""
+
+        async def tool_wrapper(
+            user_id: Annotated[str, Field(description="The user ID to look up.")],
+        ) -> str:
+            result = await gantry_instance.execute(
+                ToolCall(tool_name=tool_name, arguments={"user_id": user_id})
+            )
+            return str(result.result) if result.status == "success" else str(result.error)
+
+        # Set wrapper metadata for better debuggability and framework compatibility.
+        tool_wrapper.__name__ = tool_name
+        tool_wrapper.__doc__ = (
+            f"Tool wrapper for Agent-Gantry tool '{tool_name}'. "
+            "Invokes the underlying tool with a user_id argument."
+        )
+        return tool_wrapper
+
+    agent_tools = []
+    for schema in tools:
+        name = schema["function"]["name"]
+
+        if name == "get_user_profile":
+            agent_tools.append(make_tool_wrapper(name, gantry))
+
+    # 4) Create and run the Agent Framework ChatAgent
+    chat_agent = ChatAgent(
+        chat_client=OpenAIChatClient(model_id="gpt-4o"),
+        instructions=("You are a support assistant. Use the tools to fetch customer data."),
+        tools=agent_tools,
     )
 
     print("--- Running Microsoft Agent Framework with Agent-Gantry ---")

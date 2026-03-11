@@ -44,9 +44,7 @@ class AgentCard(BaseModel):
     authentication: dict[str, Any] | None = Field(
         default=None, description="Authentication configuration"
     )
-    provider: dict[str, str] = Field(
-        default_factory=dict, description="Provider information"
-    )
+    provider: dict[str, str] = Field(default_factory=dict, description="Provider information")
 
 
 class TaskMessagePart(BaseModel):
@@ -61,21 +59,15 @@ class TaskMessage(BaseModel):
     """A message in a task request."""
 
     role: str = Field(..., description="Role (e.g., 'user', 'assistant')")
-    parts: list[TaskMessagePart] = Field(
-        default_factory=list, description="Message parts"
-    )
+    parts: list[TaskMessagePart] = Field(default_factory=list, description="Message parts")
 
 
 class TaskRequest(BaseModel):
     """Request to execute a task on an A2A agent."""
 
     skill_id: str = Field(..., description="ID of the skill to execute")
-    messages: list[TaskMessage] = Field(
-        default_factory=list, description="Conversation messages"
-    )
-    metadata: dict[str, Any] = Field(
-        default_factory=dict, description="Additional metadata"
-    )
+    messages: list[TaskMessage] = Field(default_factory=list, description="Conversation messages")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
 
 
 class TaskResponse(BaseModel):
@@ -84,6 +76,4 @@ class TaskResponse(BaseModel):
     status: str = Field(..., description="Status (success, error, etc.)")
     result: Any | None = Field(default=None, description="Task result")
     error: str | None = Field(default=None, description="Error message if failed")
-    metadata: dict[str, Any] = Field(
-        default_factory=dict, description="Response metadata"
-    )
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Response metadata")

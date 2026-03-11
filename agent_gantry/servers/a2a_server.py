@@ -136,7 +136,7 @@ def create_a2a_server(gantry: AgentGantry, base_url: str = "http://localhost:808
             if not query_text:
                 raise HTTPException(
                     status_code=400,
-                    detail="No text content found in message parts. Expected at least one message with a text part."
+                    detail="No text content found in message parts. Expected at least one message with a text part.",
                 )
 
             # Route to appropriate skill
@@ -192,9 +192,12 @@ async def handle_tool_discovery(gantry: AgentGantry, query: str) -> dict[str, An
 
     # Convert to serializable format (ensure all are dicts)
     tools = [
-        tool if isinstance(tool, dict)
-        else tool.model_dump() if hasattr(tool, "model_dump")
-        else dict(tool) if hasattr(tool, "__dict__")
+        tool
+        if isinstance(tool, dict)
+        else tool.model_dump()
+        if hasattr(tool, "model_dump")
+        else dict(tool)
+        if hasattr(tool, "__dict__")
         else tool
         for tool in tools_raw
     ]

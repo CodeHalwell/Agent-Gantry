@@ -12,9 +12,11 @@ from agent_gantry.schema.execution import ToolCall
 
 load_dotenv()
 
+
 # Define the state for our graph
 class AgentState(TypedDict):
     messages: Annotated[list[BaseMessage], lambda x, y: x + y]
+
 
 async def main():
     # 1. Initialize Agent-Gantry
@@ -33,7 +35,9 @@ async def main():
     # Use Gantry to fetch tools for the specific query
     user_query = "How does Agent-Gantry work?"
     # Lowering threshold for SimpleEmbedder compatibility in this example
-    tools_schema = await fetch_framework_tools(gantry, user_query, framework="langgraph", score_threshold=0.1)
+    tools_schema = await fetch_framework_tools(
+        gantry, user_query, framework="langgraph", score_threshold=0.1
+    )
     print(f"Gantry retrieved {len(tools_schema)} tools.")
 
     # Wrap Gantry execution for LangGraph
@@ -41,10 +45,12 @@ async def main():
 
     def make_langgraph_tool(tool_name: str, tool_desc: str, gantry_instance: AgentGantry):
         """Factory function to properly bind tool name to wrapper."""
+
         @tool
         async def tool_wrapper(**kwargs):
             result = await gantry_instance.execute(ToolCall(tool_name=tool_name, arguments=kwargs))
             return result.result if result.status == "success" else result.error
+
         tool_wrapper.__name__ = tool_name
         tool_wrapper.__doc__ = tool_desc
         return tool_wrapper
@@ -69,6 +75,7 @@ async def main():
     result = await agent.ainvoke(inputs)
 
     print(f"\nFinal Response: {result['messages'][-1].content}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

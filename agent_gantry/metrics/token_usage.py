@@ -64,12 +64,19 @@ class ProviderUsage:
 
         # Check for completion/output tokens (OpenAI, Anthropic, or Google naming)
         completion_raw: int | float | None = None
-        for key in ("completion_tokens", "output_tokens", "candidates_token_count", "completion_token_count"):
+        for key in (
+            "completion_tokens",
+            "output_tokens",
+            "candidates_token_count",
+            "completion_token_count",
+        ):
             if key in usage:
                 completion_raw = usage[key]
                 break
 
-        prompt = cls._coerce_token_value(prompt_raw, "prompt_tokens") if prompt_raw is not None else 0
+        prompt = (
+            cls._coerce_token_value(prompt_raw, "prompt_tokens") if prompt_raw is not None else 0
+        )
         completion = (
             cls._coerce_token_value(completion_raw, "completion_tokens")
             if completion_raw is not None
@@ -128,8 +135,12 @@ def calculate_token_savings(
     Returns:
         TokenSavings with raw and percentage savings.
     """
-    base_usage = baseline if isinstance(baseline, ProviderUsage) else ProviderUsage.from_usage(baseline)
-    opt_usage = optimized if isinstance(optimized, ProviderUsage) else ProviderUsage.from_usage(optimized)
+    base_usage = (
+        baseline if isinstance(baseline, ProviderUsage) else ProviderUsage.from_usage(baseline)
+    )
+    opt_usage = (
+        optimized if isinstance(optimized, ProviderUsage) else ProviderUsage.from_usage(optimized)
+    )
 
     saved_prompt = max(0, base_usage.prompt_tokens - opt_usage.prompt_tokens)
     saved_total = max(0, base_usage.total_tokens - opt_usage.total_tokens)

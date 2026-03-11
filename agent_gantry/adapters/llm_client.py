@@ -174,7 +174,7 @@ Respond with ONLY the intent category name (e.g., "data_query"), nothing else.""
             raise ValueError(f"Unsupported provider: {self._provider}")
 
         # Clean up the result (remove quotes, lowercase)
-        result = result.strip('"\'').lower().strip()
+        result = result.strip("\"'").lower().strip()
 
         # Validate result is in available intents
         if result not in intents_list:

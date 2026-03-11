@@ -39,9 +39,7 @@ class TelemetryAdapter(Protocol):
         yield
 
     @abstractmethod
-    async def record_retrieval(
-        self, query: ToolQuery, result: RetrievalResult
-    ) -> None:
+    async def record_retrieval(self, query: ToolQuery, result: RetrievalResult) -> None:
         """
         Record a retrieval event.
 
@@ -52,9 +50,7 @@ class TelemetryAdapter(Protocol):
         ...
 
     @abstractmethod
-    async def record_execution(
-        self, call: ToolCall, result: ToolResult
-    ) -> None:
+    async def record_execution(self, call: ToolCall, result: ToolResult) -> None:
         """
         Record an execution event.
 

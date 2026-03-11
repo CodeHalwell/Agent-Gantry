@@ -14,16 +14,14 @@ from pydantic import BaseModel, Field
 class VectorStoreConfig(BaseModel):
     """Configuration for vector store backend."""
 
-    type: Literal[
-        "memory", "qdrant", "chroma", "pgvector", "pinecone", "weaviate", "lancedb"
-    ] = "memory"
+    type: Literal["memory", "qdrant", "chroma", "pgvector", "pinecone", "weaviate", "lancedb"] = (
+        "memory"
+    )
     url: str | None = None
     api_key: str | None = None
     collection_name: str = "agent_gantry"
     dimension: int | None = None
-    db_path: str | None = Field(
-        default=None, description="Path to local database (for LanceDB)"
-    )
+    db_path: str | None = Field(default=None, description="Path to local database (for LanceDB)")
     options: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -36,17 +34,13 @@ class EmbedderConfig(BaseModel):
     model: str = "all-MiniLM-L6-v2"
     api_key: str | None = None
     api_base: str | None = None
-    api_version: str | None = Field(
-        default=None, description="API version (for Azure OpenAI)"
-    )
+    api_version: str | None = Field(default=None, description="API version (for Azure OpenAI)")
     batch_size: int = 100
     max_retries: int = 3
     dimension: int | None = Field(
         default=None, description="Output dimension (for Matryoshka truncation)"
     )
-    task_type: str | None = Field(
-        default=None, description="Task type for embeddings (for Nomic)"
-    )
+    task_type: str | None = Field(default=None, description="Task type for embeddings (for Nomic)")
 
 
 class RerankerConfig(BaseModel):
@@ -64,9 +58,7 @@ class LLMConfig(BaseModel):
     provider: Literal["openai", "anthropic", "google", "mistral", "groq"] = "openai"
     model: str = "gpt-4o-mini"
     api_key: str | None = None
-    base_url: str | None = Field(
-        default=None, description="Custom base URL (for OpenRouter, etc.)"
-    )
+    base_url: str | None = Field(default=None, description="Custom base URL (for OpenRouter, etc.)")
     max_tokens: int = 100
     temperature: float = 0.0
 
@@ -98,15 +90,9 @@ class RateLimitConfig(BaseModel):
     max_calls_per_minute: int = 60
     max_calls_per_hour: int = 1000
     max_concurrent: int = 10
-    burst_size: int | None = Field(
-        default=None, description="Burst size for token bucket strategy"
-    )
-    per_tool: bool = Field(
-        default=True, description="Rate limit per tool (vs. globally)"
-    )
-    per_namespace: bool = Field(
-        default=False, description="Rate limit per namespace"
-    )
+    burst_size: int | None = Field(default=None, description="Burst size for token bucket strategy")
+    per_tool: bool = Field(default=True, description="Rate limit per tool (vs. globally)")
+    per_namespace: bool = Field(default=False, description="Rate limit per namespace")
 
 
 class ExecutionConfig(BaseModel):

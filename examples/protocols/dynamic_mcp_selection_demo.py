@@ -155,9 +155,7 @@ async def demo_dynamic_mcp_selection():
     # count = await gantry.discover_tools_from_server("filesystem")
     # print(f"✅ Discovered {count} tools from filesystem server")
 
-    print(
-        "   (Note: Actual connection requires the MCP server to be running)\n"
-    )
+    print("   (Note: Actual connection requires the MCP server to be running)\n")
 
     # =========================================================================
     # Benefits of Dynamic Selection

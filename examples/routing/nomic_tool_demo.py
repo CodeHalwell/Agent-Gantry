@@ -9,6 +9,7 @@ async def main():
 
     try:
         from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+
         # Initialize with Nomic embedder
         # We use a smaller dimension (256) for speed, but Nomic supports up to 768
         embedder = NomicEmbedder(dimension=256)
@@ -92,7 +93,7 @@ async def main():
         "Schedule a meeting with Alice and Bob",
         "Search for customer data",
         "What time is it in Tokyo?",
-        "Join 'Hello' and 'World'"
+        "Join 'Hello' and 'World'",
     ]
 
     print("--- Semantic Retrieval Demo (Nomic) ---")
@@ -103,12 +104,13 @@ async def main():
 
         print(f"Query: '{query}'")
         if relevant_tools:
-            tool_name = relevant_tools[0]['function']['name']
-            description = relevant_tools[0]['function']['description']
+            tool_name = relevant_tools[0]["function"]["name"]
+            description = relevant_tools[0]["function"]["description"]
             print(f"  -> Top Match: {tool_name} ({description})")
         else:
             print("  -> No relevant tool found.")
         print("-" * 40)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

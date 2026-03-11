@@ -45,9 +45,7 @@ class TestMCPClient:
         assert mcp_client._connected is False
 
     @pytest.mark.asyncio
-    async def test_convert_tool(
-        self, mcp_client: MCPClient, mcp_config: MCPServerConfig
-    ) -> None:
+    async def test_convert_tool(self, mcp_client: MCPClient, mcp_config: MCPServerConfig) -> None:
         """Test converting MCP tool to ToolDefinition."""
         # Mock MCP tool
         mock_tool = MagicMock()
@@ -137,18 +135,14 @@ class TestMCPClientPool:
             namespace="ns2",
         )
 
-    def test_add_server(
-        self, pool: MCPClientPool, config1: MCPServerConfig
-    ) -> None:
+    def test_add_server(self, pool: MCPClientPool, config1: MCPServerConfig) -> None:
         """Test adding server to pool."""
         client = pool.add_server(config1)
         assert isinstance(client, MCPClient)
         assert client.config == config1
         assert pool.get_client("server1") == client
 
-    def test_get_client(
-        self, pool: MCPClientPool, config1: MCPServerConfig
-    ) -> None:
+    def test_get_client(self, pool: MCPClientPool, config1: MCPServerConfig) -> None:
         """Test getting client from pool."""
         pool.add_server(config1)
         client = pool.get_client("server1")
@@ -158,9 +152,7 @@ class TestMCPClientPool:
         # Non-existent server
         assert pool.get_client("nonexistent") is None
 
-    def test_remove_server(
-        self, pool: MCPClientPool, config1: MCPServerConfig
-    ) -> None:
+    def test_remove_server(self, pool: MCPClientPool, config1: MCPServerConfig) -> None:
         """Test removing server from pool."""
         pool.add_server(config1)
         assert pool.remove_server("server1") is True
@@ -244,9 +236,7 @@ class TestMCPServer:
         assert mcp_server_dynamic.server is not None
 
     @pytest.mark.asyncio
-    async def test_dynamic_mode_tools(
-        self, mcp_server_dynamic: MCPServer
-    ) -> None:
+    async def test_dynamic_mode_tools(self, mcp_server_dynamic: MCPServer) -> None:
         """Test that dynamic mode exposes meta-tools."""
         # Dynamic mode should provide meta-tools, not direct tools
         # We verify this by checking the _handle methods exist
@@ -261,9 +251,7 @@ class TestMCPServer:
         assert len(tools) > 0
 
     @pytest.mark.asyncio
-    async def test_static_mode_tools(
-        self, mcp_server_static: MCPServer
-    ) -> None:
+    async def test_static_mode_tools(self, mcp_server_static: MCPServer) -> None:
         """Test that static mode exposes all tools."""
         # In static mode, tools should be accessible through the gantry
         tools = await mcp_server_static.gantry.list_tools()
@@ -277,9 +265,7 @@ class TestMCPServer:
         assert mcp_server_static.mode == "static"
 
     @pytest.mark.asyncio
-    async def test_find_relevant_tools(
-        self, mcp_server_dynamic: MCPServer
-    ) -> None:
+    async def test_find_relevant_tools(self, mcp_server_dynamic: MCPServer) -> None:
         """Test find_relevant_tools meta-tool."""
         result = await mcp_server_dynamic._handle_find_relevant_tools(
             {"query": "add two numbers", "limit": 5}
@@ -310,9 +296,7 @@ class TestMCPServer:
         assert "8" in first_result["text"]
 
     @pytest.mark.asyncio
-    async def test_execute_tool_error(
-        self, mcp_server_dynamic: MCPServer
-    ) -> None:
+    async def test_execute_tool_error(self, mcp_server_dynamic: MCPServer) -> None:
         """Test execute_tool with non-existent tool."""
         result = await mcp_server_dynamic._handle_execute_tool(
             {"tool_name": "nonexistent_tool", "arguments": {}}
@@ -352,9 +336,7 @@ class TestAgentGantryMCPIntegration:
         )
 
         # Mock the MCPClient to avoid actual connection
-        with patch(
-            "agent_gantry.adapters.executors.mcp_client.MCPClient"
-        ) as mock_client_class:
+        with patch("agent_gantry.adapters.executors.mcp_client.MCPClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_tools = [
                 ToolDefinition(
@@ -378,9 +360,7 @@ class TestAgentGantryMCPIntegration:
     async def test_serve_mcp_dynamic(self, gantry: AgentGantry) -> None:
         """Test serving as MCP server in dynamic mode."""
         # Mock the server to avoid actually starting it
-        with patch(
-            "agent_gantry.servers.mcp_server.create_mcp_server"
-        ) as mock_create_server:
+        with patch("agent_gantry.servers.mcp_server.create_mcp_server") as mock_create_server:
             mock_server = AsyncMock()
             mock_server.run_stdio = AsyncMock()
             mock_create_server.return_value = mock_server
@@ -388,15 +368,11 @@ class TestAgentGantryMCPIntegration:
             # This would normally block, so we'll just verify it's called correctly
             await gantry.serve_mcp(transport="stdio", mode="dynamic")
 
-            mock_create_server.assert_called_once_with(
-                gantry, mode="dynamic", name="agent-gantry"
-            )
+            mock_create_server.assert_called_once_with(gantry, mode="dynamic", name="agent-gantry")
             mock_server.run_stdio.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_serve_mcp_invalid_transport(
-        self, gantry: AgentGantry
-    ) -> None:
+    async def test_serve_mcp_invalid_transport(self, gantry: AgentGantry) -> None:
         """Test that invalid transport raises error."""
         with pytest.raises(ValueError, match="Unsupported transport"):
             await gantry.serve_mcp(transport="invalid")
@@ -485,6 +461,7 @@ class TestMCPProtocolCompliance:
                 def tool_fn(x: int) -> int:
                     """Tool for testing context window minimization with many tools."""
                     return x + idx
+
                 return tool_fn
 
             make_tool(i)

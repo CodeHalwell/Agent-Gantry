@@ -76,7 +76,7 @@ async def main():
         "Schedule a meeting with Alice and Bob",
         "Search for customer data",
         "What time is it in Tokyo?",
-        "Join 'Hello' and 'World'"
+        "Join 'Hello' and 'World'",
     ]
 
     print("--- Semantic Retrieval Demo ---")
@@ -91,8 +91,8 @@ async def main():
 
         print(f"Query: '{query}'")
         if relevant_tools:
-            tool_name = relevant_tools[0]['function']['name']
-            description = relevant_tools[0]['function']['description']
+            tool_name = relevant_tools[0]["function"]["name"]
+            description = relevant_tools[0]["function"]["description"]
             print(f"  -> Top Match: {tool_name} ({description})")
         else:
             print("  -> No relevant tool found.")
@@ -101,11 +101,14 @@ async def main():
     # --- Execution Demo ---
     print("\n--- Execution Demo ---")
     print("Executing 'convert_currency'...")
-    result = await gantry.execute(ToolCall(
-        tool_name="convert_currency",
-        arguments={"amount": 100, "from_curr": "USD", "to_curr": "EUR"}
-    ))
+    result = await gantry.execute(
+        ToolCall(
+            tool_name="convert_currency",
+            arguments={"amount": 100, "from_curr": "USD", "to_curr": "EUR"},
+        )
+    )
     print(f"Result: {result.result}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

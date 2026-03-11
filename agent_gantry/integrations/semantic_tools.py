@@ -229,9 +229,7 @@ class SemanticToolSelector:
 
         return None
 
-    def wrap_async(
-        self, func: Callable[P, Awaitable[R]]
-    ) -> Callable[P, Awaitable[R]]:
+    def wrap_async(self, func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
         """
         Wrap an async function with semantic tool selection.
 
@@ -258,9 +256,7 @@ class SemanticToolSelector:
                         kwargs[self._tools_param] = tools
                 except Exception as e:
                     # If tool retrieval fails, call function without tools
-                    _logger.warning(
-                        "Tool retrieval failed, proceeding without tools: %s", e
-                    )
+                    _logger.warning("Tool retrieval failed, proceeding without tools: %s", e)
 
             return await func(*args, **kwargs)
 
@@ -311,9 +307,7 @@ class SemanticToolSelector:
                         import concurrent.futures
 
                         with concurrent.futures.ThreadPoolExecutor() as executor:
-                            future = executor.submit(
-                                asyncio.run, self._retrieve_tools(prompt)
-                            )
+                            future = executor.submit(asyncio.run, self._retrieve_tools(prompt))
                             tools = future.result()
                     except RuntimeError:
                         # No running loop, safe to use asyncio.run()
@@ -323,17 +317,13 @@ class SemanticToolSelector:
                         kwargs[self._tools_param] = tools
                 except Exception as e:
                     # If tool retrieval fails, call function without tools
-                    _logger.warning(
-                        "Tool retrieval failed, proceeding without tools: %s", e
-                    )
+                    _logger.warning("Tool retrieval failed, proceeding without tools: %s", e)
 
             return func(*args, **kwargs)
 
         return wrapper
 
-    def __call__(
-        self, func: Callable[..., Any]
-    ) -> Callable[..., Any]:
+    def __call__(self, func: Callable[..., Any]) -> Callable[..., Any]:
         """
         Wrap a function with semantic tool selection.
 

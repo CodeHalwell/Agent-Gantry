@@ -9,10 +9,7 @@ from agent_gantry.schema.query import ConversationContext, ToolQuery
 async def main():
     # Configure low threshold for circuit breaker
     config = AgentGantryConfig(
-        execution=ExecutionConfig(
-            circuit_breaker_threshold=2,
-            circuit_breaker_timeout_s=60
-        )
+        execution=ExecutionConfig(circuit_breaker_threshold=2, circuit_breaker_timeout_s=60)
     )
     gantry = AgentGantry(config=config)
 
@@ -63,6 +60,7 @@ async def main():
     print("\nTool Health Status:")
     print(f" - Failures: {tool_def.health.consecutive_failures}")
     print(f" - Circuit Open: {tool_def.health.circuit_breaker_open}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

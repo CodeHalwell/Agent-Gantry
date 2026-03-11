@@ -94,9 +94,9 @@ async def main():
 
     test_cases_llm = [
         "What's the system status?",  # Could be metrics or query
-        "Show me the trends",         # Analysis intent
-        "Reach out to the team",      # Communication intent
-        "Get me that information",    # Generic query
+        "Show me the trends",  # Analysis intent
+        "Reach out to the team",  # Communication intent
+        "Get me that information",  # Generic query
     ]
 
     for query in test_cases_llm:

@@ -57,7 +57,7 @@ async def main():
     gantry.register(
         service.multiply,
         name="service_multiply",  # Good practice to give unique names to methods
-        tags=["service", "math"]
+        tags=["service", "math"],
     )
 
     # --- Pattern 5: Renaming Tools ---
@@ -69,7 +69,6 @@ async def main():
 
     # Expose it as 'square' to the LLM
     gantry.register(complex_internal_function_name_v2, name="square", tags=["math"])
-
 
     # --- Sync and Verify ---
     print("\nSyncing tools to registry...")
@@ -108,6 +107,7 @@ async def main():
         print(f"Retrieved: {tools[0]['function']['name']}")
     else:
         print("No tools retrieved (check embedding model configuration)")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -7,6 +7,7 @@ from agent_gantry.observability.console import ConsoleTelemetryAdapter
 # Setup logging to see the console telemetry output
 logging.basicConfig(level=logging.INFO)
 
+
 async def test_multi_provider_metrics():
     telemetry = ConsoleTelemetryAdapter()
 
@@ -21,23 +22,27 @@ async def test_multi_provider_metrics():
     print(f"Anthropic Savings: {savings_anthropic.prompt_savings_pct:.1f}%")
 
     await telemetry.record_token_usage(
-        usage=savings_anthropic.optimized,
-        model_name="claude-3-5-sonnet",
-        savings=savings_anthropic
+        usage=savings_anthropic.optimized, model_name="claude-3-5-sonnet", savings=savings_anthropic
     )
 
     # 2. Google GenAI Format (prompt_token_count, candidates_token_count)
     print("\n--- Testing Google GenAI Format ---")
-    google_baseline = {"prompt_token_count": 2000, "candidates_token_count": 100, "total_token_count": 2100}
-    google_optimized = {"prompt_token_count": 200, "candidates_token_count": 110, "total_token_count": 310}
+    google_baseline = {
+        "prompt_token_count": 2000,
+        "candidates_token_count": 100,
+        "total_token_count": 2100,
+    }
+    google_optimized = {
+        "prompt_token_count": 200,
+        "candidates_token_count": 110,
+        "total_token_count": 310,
+    }
 
     savings_google = calculate_token_savings(google_baseline, google_optimized)
     print(f"Google Savings: {savings_google.prompt_savings_pct:.1f}%")
 
     await telemetry.record_token_usage(
-        usage=savings_google.optimized,
-        model_name="gemini-1.5-pro",
-        savings=savings_google
+        usage=savings_google.optimized, model_name="gemini-1.5-pro", savings=savings_google
     )
 
     # 3. OpenAI Format (prompt_tokens, completion_tokens)
@@ -49,12 +54,11 @@ async def test_multi_provider_metrics():
     print(f"OpenAI Savings: {savings_openai.prompt_savings_pct:.1f}%")
 
     await telemetry.record_token_usage(
-        usage=savings_openai.optimized,
-        model_name="gpt-4o",
-        savings=savings_openai
+        usage=savings_openai.optimized, model_name="gpt-4o", savings=savings_openai
     )
 
     print("\n✅ Multi-provider metrics test completed successfully!")
+
 
 if __name__ == "__main__":
     asyncio.run(test_multi_provider_metrics())

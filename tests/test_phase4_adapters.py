@@ -25,7 +25,11 @@ async def test_config_switches_adapters(tmp_path) -> None:
         yaml.safe_dump(
             {
                 "vector_store": {"type": "qdrant", "url": "http://localhost:6333"},
-                "embedder": {"type": "openai", "api_key": "test-key", "model": "text-embedding-3-small"},
+                "embedder": {
+                    "type": "openai",
+                    "api_key": "test-key",
+                    "model": "text-embedding-3-small",
+                },
                 "reranker": {"enabled": True, "type": "cohere", "model": "rerank-english-v3.0"},
                 "telemetry": {"type": "opentelemetry", "service_name": "agent_gantry_phase4"},
             }

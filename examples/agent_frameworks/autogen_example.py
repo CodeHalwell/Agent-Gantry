@@ -30,6 +30,7 @@ from agent_gantry.schema.execution import ToolCall
 
 load_dotenv()
 
+
 async def main():
     # 1. Initialize Agent-Gantry
     print("🚀 Initializing Agent-Gantry with AutoGen v0.4+ (AG2)...\n")
@@ -62,12 +63,11 @@ async def main():
 
         AutoGen v0.4+ requires async functions with proper metadata.
         """
+
         async def tool_wrapper() -> str:
             """Execute tool via Agent-Gantry."""
             try:
-                result = await gantry_instance.execute(
-                    ToolCall(tool_name=tool_name, arguments={})
-                )
+                result = await gantry_instance.execute(ToolCall(tool_name=tool_name, arguments={}))
                 if result.status == "success":
                     return str(result.result)
                 else:
@@ -94,15 +94,16 @@ async def main():
         name="assistant",
         model_client=model_client,
         tools=autogen_tools,
-        system_message="You are a helpful assistant. Use the available tools to answer questions accurately."
+        system_message="You are a helpful assistant. Use the available tools to answer questions accurately.",
     )
 
     # 5. Run Conversation with AutoGen v0.4+ streaming
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("🎯 Running AutoGen (AG2) Agent with Agent-Gantry")
-    print("="*60 + "\n")
+    print("=" * 60 + "\n")
 
     await Console(assistant.run_stream(task=user_query))
+
 
 if __name__ == "__main__":
     asyncio.run(main())

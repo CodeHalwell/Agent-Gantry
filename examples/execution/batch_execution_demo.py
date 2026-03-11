@@ -45,5 +45,6 @@ async def main():
     else:
         print(">>> Warning: Tasks ran sequentially.")
 
+
 if __name__ == "__main__":
     asyncio.run(main())

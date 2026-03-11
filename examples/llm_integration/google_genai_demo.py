@@ -10,6 +10,7 @@ from agent_gantry.schema.query import ConversationContext, ToolQuery
 # Load environment variables
 load_dotenv()
 
+
 async def main():
     print("=== Agent-Gantry + Google GenAI (Gemini) Integration Demo ===\n")
 
@@ -45,11 +46,9 @@ async def main():
     print(f"User Query: '{user_query}'")
 
     # A. Retrieve Tools
-    retrieval_result = await gantry.retrieve(ToolQuery(
-        context=ConversationContext(query=user_query),
-        limit=1,
-        score_threshold=0.1
-    ))
+    retrieval_result = await gantry.retrieve(
+        ToolQuery(context=ConversationContext(query=user_query), limit=1, score_threshold=0.1)
+    )
 
     # B. Convert to Gemini Schema
     # Agent-Gantry provides `to_gemini_schema()` which returns a dict compatible with FunctionDeclaration
@@ -59,9 +58,7 @@ async def main():
 
         # Create Gemini FunctionDeclaration object
         func_decl = types.FunctionDeclaration(
-            name=schema["name"],
-            description=schema["description"],
-            parameters=schema["parameters"]
+            name=schema["name"], description=schema["description"], parameters=schema["parameters"]
         )
         gemini_tools.append(func_decl)
 
@@ -77,9 +74,7 @@ async def main():
     # C. Call Gemini
     # Note: Gemini 2.0 Flash is a good default
     response = client.models.generate_content(
-        model='models/gemini-3-flash-preview',
-        contents=user_query,
-        config=config
+        model="models/gemini-3-flash-preview", contents=user_query, config=config
     )
 
     # Inspect response for function calls
@@ -89,10 +84,7 @@ async def main():
 
             # Execute securely via Gantry
             # Note: fn.args is a dict in the new SDK
-            result = await gantry.execute(ToolCall(
-                tool_name=fn.name,
-                arguments=fn.args
-            ))
+            result = await gantry.execute(ToolCall(tool_name=fn.name, arguments=fn.args))
             print(f"Execution Result: {result.result}")
 
     # --- Scenario: Using the Decorator ---
@@ -108,12 +100,14 @@ async def main():
             gemini_funcs = []
             for t in tools:
                 # t is {'type': 'function', 'function': {...}}
-                f_spec = t['function']
-                gemini_funcs.append(types.FunctionDeclaration(
-                    name=f_spec['name'],
-                    description=f_spec['description'],
-                    parameters=f_spec['parameters']
-                ))
+                f_spec = t["function"]
+                gemini_funcs.append(
+                    types.FunctionDeclaration(
+                        name=f_spec["name"],
+                        description=f_spec["description"],
+                        parameters=f_spec["parameters"],
+                    )
+                )
             toolbox = types.Tool(function_declarations=gemini_funcs)
             config = types.GenerateContentConfig(tools=[toolbox])
         else:
@@ -121,9 +115,7 @@ async def main():
             config = None
 
         return client.models.generate_content(
-            model='models/gemini-3-flash-preview',
-            contents=prompt,
-            config=config
+            model="models/gemini-3-flash-preview", contents=prompt, config=config
         )
 
     query_dec = "Find documents about project beta"
@@ -134,6 +126,7 @@ async def main():
     for part in response_dec.candidates[0].content.parts:
         if fn := part.function_call:
             print(f"Gemini decided to call: {fn.name}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -166,6 +166,7 @@ class TestAgentGantryModuleImport:
     @pytest.mark.asyncio
     async def test_collect_tools_from_modules_basic(self, gantry: AgentGantry) -> None:
         """Test collect_tools_from_modules adds tools to existing gantry."""
+
         # Register a tool first
         @gantry.register
         def existing_tool(x: int) -> int:
@@ -180,24 +181,19 @@ class TestAgentGantryModuleImport:
         assert gantry.tool_count == 3
 
     @pytest.mark.asyncio
-    async def test_collect_tools_from_modules_duplicate_handling(
-        self, gantry: AgentGantry
-    ) -> None:
+    async def test_collect_tools_from_modules_duplicate_handling(self, gantry: AgentGantry) -> None:
         """Test that duplicate tools within same batch are skipped."""
         # Import from module_a and module_c_duplicate in one call
         # module_c_duplicate has tool_a1 which duplicates module_a's tool_a1
-        count = await gantry.collect_tools_from_modules([
-            "tests.test_modules.module_a",
-            "tests.test_modules.module_c_duplicate"
-        ])
+        count = await gantry.collect_tools_from_modules(
+            ["tests.test_modules.module_a", "tests.test_modules.module_c_duplicate"]
+        )
         # Should import 2 from module_a, and skip the duplicate from module_c_duplicate
         assert count == 2
         assert gantry.tool_count == 2
 
     @pytest.mark.asyncio
-    async def test_collect_tools_from_modules_handlers(
-        self, gantry: AgentGantry
-    ) -> None:
+    async def test_collect_tools_from_modules_handlers(self, gantry: AgentGantry) -> None:
         """Test that tool handlers are properly registered."""
         await gantry.collect_tools_from_modules(["tests.test_modules.module_a"])
 
@@ -212,9 +208,7 @@ class TestAgentGantryModuleImport:
         assert result == 10
 
     @pytest.mark.asyncio
-    async def test_collect_tools_from_modules_custom_attr(
-        self, gantry: AgentGantry
-    ) -> None:
+    async def test_collect_tools_from_modules_custom_attr(self, gantry: AgentGantry) -> None:
         """Test collect_tools_from_modules with custom attribute name."""
         count = await gantry.collect_tools_from_modules(
             ["tests.test_modules.module_custom_attr"],
@@ -224,9 +218,7 @@ class TestAgentGantryModuleImport:
         assert gantry.tool_count == 1
 
     @pytest.mark.asyncio
-    async def test_collect_tools_from_modules_error_handling(
-        self, gantry: AgentGantry
-    ) -> None:
+    async def test_collect_tools_from_modules_error_handling(self, gantry: AgentGantry) -> None:
         """Test collect_tools_from_modules error handling."""
         with pytest.raises(ValueError, match="does not expose an AgentGantry instance"):
             await gantry.collect_tools_from_modules(["tests.test_modules.module_no_tools"])

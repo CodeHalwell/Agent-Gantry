@@ -134,8 +134,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
             import pyarrow as pa  # type: ignore[import-untyped]
         except ImportError as e:
             raise ImportError(
-                "lancedb and pyarrow are required. "
-                "Install with: pip install lancedb pyarrow"
+                "lancedb and pyarrow are required. Install with: pip install lancedb pyarrow"
             ) from e
 
         # Create database directory
@@ -146,37 +145,43 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
         self._db = lancedb.connect(str(db_dir))
 
         # Create tools table schema
-        tools_schema = pa.schema([
-            pa.field("id", pa.string()),
-            pa.field("name", pa.string()),
-            pa.field("namespace", pa.string()),
-            pa.field("description", pa.string()),
-            pa.field("tool_json", pa.string()),  # Full serialized ToolDefinition
-            pa.field("fingerprint", pa.string()),  # Hash of tool for change detection
-            pa.field("vector", pa.list_(pa.float32(), self._dimension)),
-            pa.field("created_at", pa.string()),
-            pa.field("updated_at", pa.string()),
-        ])
+        tools_schema = pa.schema(
+            [
+                pa.field("id", pa.string()),
+                pa.field("name", pa.string()),
+                pa.field("namespace", pa.string()),
+                pa.field("description", pa.string()),
+                pa.field("tool_json", pa.string()),  # Full serialized ToolDefinition
+                pa.field("fingerprint", pa.string()),  # Hash of tool for change detection
+                pa.field("vector", pa.list_(pa.float32(), self._dimension)),
+                pa.field("created_at", pa.string()),
+                pa.field("updated_at", pa.string()),
+            ]
+        )
 
         # Create skills table schema
-        skills_schema = pa.schema([
-            pa.field("id", pa.string()),
-            pa.field("name", pa.string()),
-            pa.field("namespace", pa.string()),
-            pa.field("description", pa.string()),
-            pa.field("category", pa.string()),
-            pa.field("skill_json", pa.string()),  # Full serialized Skill
-            pa.field("vector", pa.list_(pa.float32(), self._dimension)),
-            pa.field("created_at", pa.string()),
-            pa.field("updated_at", pa.string()),
-        ])
+        skills_schema = pa.schema(
+            [
+                pa.field("id", pa.string()),
+                pa.field("name", pa.string()),
+                pa.field("namespace", pa.string()),
+                pa.field("description", pa.string()),
+                pa.field("category", pa.string()),
+                pa.field("skill_json", pa.string()),  # Full serialized Skill
+                pa.field("vector", pa.list_(pa.float32(), self._dimension)),
+                pa.field("created_at", pa.string()),
+                pa.field("updated_at", pa.string()),
+            ]
+        )
 
         # Create metadata table schema (stores sync state)
-        metadata_schema = pa.schema([
-            pa.field("key", pa.string()),
-            pa.field("value", pa.string()),
-            pa.field("updated_at", pa.string()),
-        ])
+        metadata_schema = pa.schema(
+            [
+                pa.field("key", pa.string()),
+                pa.field("value", pa.string()),
+                pa.field("updated_at", pa.string()),
+            ]
+        )
 
         # Create or open tables
         # Note: list_tables() returns a TableListResult object with a 'tables' attribute
@@ -251,8 +256,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
         for i, emb in enumerate(embeddings):
             if len(emb) != self._dimension:
                 raise ValueError(
-                    f"Embedding {i} has dimension {len(emb)}, "
-                    f"expected {self._dimension}"
+                    f"Embedding {i} has dimension {len(emb)}, expected {self._dimension}"
                 )
 
         await self._ensure_initialized()
@@ -533,9 +537,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
 
         return output
 
-    async def get_by_name(
-        self, name: str, namespace: str = "default"
-    ) -> ToolDefinition | None:
+    async def get_by_name(self, name: str, namespace: str = "default") -> ToolDefinition | None:
         """
         Get a tool by name.
 
@@ -567,9 +569,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
             logger.debug(f"get_by_name lookup failed for {namespace}.{name}: {e}")
         return None
 
-    async def get_skill_by_name(
-        self, name: str, namespace: str = "default"
-    ) -> Skill | None:
+    async def get_skill_by_name(self, name: str, namespace: str = "default") -> Skill | None:
         """
         Get a skill by name.
 
@@ -874,8 +874,15 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
 
                 # Expected fields in current schema version
                 expected_fields = {
-                    "id", "name", "namespace", "description", "tool_json",
-                    "fingerprint", "vector", "created_at", "updated_at"
+                    "id",
+                    "name",
+                    "namespace",
+                    "description",
+                    "tool_json",
+                    "fingerprint",
+                    "vector",
+                    "created_at",
+                    "updated_at",
                 }
 
                 missing_fields = expected_fields - current_field_names
@@ -912,8 +919,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
                             )
                     except ValueError:
                         status["issues"].append(
-                            f"Invalid dimension metadata: '{stored_dimension}' "
-                            f"must be an integer"
+                            f"Invalid dimension metadata: '{stored_dimension}' must be an integer"
                         )
 
                 if embedder_id:

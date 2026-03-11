@@ -46,7 +46,7 @@ async def demo_interleaved_thinking():
         messages=[
             {
                 "role": "user",
-                "content": "If I have 3 apples and buy 2 more, then give away half, how many do I have?"
+                "content": "If I have 3 apples and buy 2 more, then give away half, how many do I have?",
             }
         ],
         max_tokens=1024,
@@ -92,7 +92,7 @@ async def demo_extended_thinking():
         messages=[
             {
                 "role": "user",
-                "content": "Design a distributed caching system that can handle 1M requests per second."
+                "content": "Design a distributed caching system that can handle 1M requests per second.",
             }
         ],
         max_tokens=2048,
@@ -167,7 +167,7 @@ async def demo_thinking_with_tools():
         messages=[
             {
                 "role": "user",
-                "content": "What's the weather in San Francisco, and calculate 15% tip on a $47.50 bill?"
+                "content": "What's the weather in San Francisco, and calculate 15% tip on a $47.50 bill?",
             }
         ],
         max_tokens=2048,

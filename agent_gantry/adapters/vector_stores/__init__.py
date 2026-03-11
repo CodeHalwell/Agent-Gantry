@@ -22,9 +22,6 @@ def __getattr__(name: str) -> type:
 
         return LanceDBVectorStore
     if name in ("QdrantVectorStore", "ChromaVectorStore", "PGVectorStore"):
-        module = __import__(
-            "agent_gantry.adapters.vector_stores.remote",
-            fromlist=[name]
-        )
+        module = __import__("agent_gantry.adapters.vector_stores.remote", fromlist=[name])
         return getattr(module, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

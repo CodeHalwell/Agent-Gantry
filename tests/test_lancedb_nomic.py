@@ -169,6 +169,7 @@ class TestLanceDBVectorStore:
         # Should resolve to some valid path containing the expected suffix
         # Use os.path normalization to handle Windows/Unix path differences
         import os
+
         expected_suffix = os.path.join(".agent_gantry", "lancedb")
         assert store.db_path is not None
         assert expected_suffix in store.db_path
@@ -222,9 +223,7 @@ class TestLanceDBVectorStore:
             assert 0 <= score <= 1, f"Score {score} should be between 0 and 1"
 
     @pytest.mark.asyncio
-    async def test_lancedb_add_and_search_skills(
-        self, tmp_path, sample_skill: Skill
-    ) -> None:
+    async def test_lancedb_add_and_search_skills(self, tmp_path, sample_skill: Skill) -> None:
         """Test adding skills and searching."""
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
@@ -246,13 +245,13 @@ class TestLanceDBVectorStore:
         results = await store.search_skills(query_vector, limit=3)
         assert len(results) >= 1, f"Expected at least 1 result, got {len(results)}"
         skill, score = results[0]
-        assert skill.name == "api_pagination", f"Expected skill name 'api_pagination', got '{skill.name}'"
+        assert skill.name == "api_pagination", (
+            f"Expected skill name 'api_pagination', got '{skill.name}'"
+        )
         assert 0 <= score <= 1, f"Score {score} should be between 0 and 1"
 
     @pytest.mark.asyncio
-    async def test_lancedb_get_by_name(
-        self, tmp_path, sample_tools: list[ToolDefinition]
-    ) -> None:
+    async def test_lancedb_get_by_name(self, tmp_path, sample_tools: list[ToolDefinition]) -> None:
         """Test retrieving tools by name."""
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
@@ -277,9 +276,7 @@ class TestLanceDBVectorStore:
         assert tool is None, "Expected None for non-existent tool"
 
     @pytest.mark.asyncio
-    async def test_lancedb_delete(
-        self, tmp_path, sample_tools: list[ToolDefinition]
-    ) -> None:
+    async def test_lancedb_delete(self, tmp_path, sample_tools: list[ToolDefinition]) -> None:
         """Test deleting tools."""
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
@@ -370,7 +367,9 @@ class TestLanceDBVectorStore:
         count2 = await store.count()
 
         # Count should remain the same (tools were updated, not duplicated)
-        assert count1 == count2, f"Expected count to remain {count1}, got {count2} (tools were duplicated)"
+        assert count1 == count2, (
+            f"Expected count to remain {count1}, got {count2} (tools were duplicated)"
+        )
         assert count1 == len(sample_tools), f"Expected {len(sample_tools)} tools, got {count1}"
 
     @pytest.mark.asyncio
@@ -405,9 +404,7 @@ class TestLanceDBVectorStore:
         assert isinstance(status["issues"], list)
 
     @pytest.mark.asyncio
-    async def test_lancedb_get_health_status_with_tools(
-        self, tmp_path, sample_tools: list
-    ) -> None:
+    async def test_lancedb_get_health_status_with_tools(self, tmp_path, sample_tools: list) -> None:
         """Test get_health_status reports correct counts."""
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
@@ -721,7 +718,6 @@ class TestSQLInjectionPrevention:
         # Metadata table should still exist
         healthy = await store.health_check()
         assert healthy is True
-
 
 
 class TestConfigIntegration:

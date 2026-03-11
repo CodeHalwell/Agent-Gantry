@@ -90,4 +90,3 @@ def parse_fingerprint(fingerprint: str) -> tuple[str, str]:
         raise ValueError(f"Invalid fingerprint format: {fingerprint}")
 
     return (parts[0], parts[1])
-

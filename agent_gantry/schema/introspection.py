@@ -97,6 +97,7 @@ def _type_to_json_schema(param_type: Any) -> dict[str, Any]:
     # Try to get the origin type for generic types (e.g., Optional[int], list[float])
     try:
         import typing
+
         origin = typing.get_origin(param_type)
         args = typing.get_args(param_type)
 
@@ -104,10 +105,7 @@ def _type_to_json_schema(param_type: Any) -> dict[str, Any]:
             # Handle list/Sequence/Iterable
             if origin in (list, typing.Sequence, typing.Iterable, list):
                 item_type = args[0] if args else str
-                return {
-                    "type": "array",
-                    "items": _type_to_json_schema(item_type)
-                }
+                return {"type": "array", "items": _type_to_json_schema(item_type)}
 
             # For Optional[T] or Union[T, None], get T
             if origin is typing.Union:
