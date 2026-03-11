@@ -1850,12 +1850,12 @@ def extract_text_from_pdf(pdf_path: str) -> str:
     """Extract all text from a PDF file."""
     import pypdf
 
-    text = ""
+    pages_text: list[str] = []
     with open(pdf_path, "rb") as f:
         reader = pypdf.PdfReader(f)
         for page in reader.pages:
-            text += page.extract_text() + "\n"
-    return text
+            pages_text.append(page.extract_text() or "")
+    return "\n".join(pages_text)
 
 
 @tools.register(tags=["document", "pdf"])
