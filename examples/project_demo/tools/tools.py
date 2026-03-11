@@ -9,6 +9,7 @@ import pathlib
 import platform
 import random
 import re
+import shlex
 import shutil
 import socket
 import statistics
@@ -808,10 +809,19 @@ def snake_to_camel(text: str) -> str:
 
 @tools.register(tags=["system"])
 def run_shell_command(command: str) -> dict[str, Any]:
-    """Run a shell command and return its output and exit code."""
+    """Run a shell command and return its output and exit code.
+
+    Warning: This command does not use a shell to execute, meaning
+    shell builtins, redirects, and pipes are not supported.
+    """
     try:
-        result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=30)
-        return {"stdout": result.stdout, "stderr": result.stderr, "exit_code": result.returncode}
+        command_list = shlex.split(command)
+        result = subprocess.run(command_list, shell=False, capture_output=True, text=True, timeout=30)
+        return {
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "exit_code": result.returncode
+        }
     except Exception as e:
         return {"error": str(e)}
 
@@ -2461,9 +2471,9 @@ def get_random_http_status_code() -> int:
 
 
 @tools.register(tags=["misc"])
-def get_random_uuid_v1() -> str:
-    """Generate a random UUID (v1)."""
-    return str(uuid.uuid1())
+def get_random_uuid_v4() -> str:
+    """Generate a random UUID (v4)."""
+    return str(uuid.uuid4())
 
 
 @tools.register(tags=["misc"])

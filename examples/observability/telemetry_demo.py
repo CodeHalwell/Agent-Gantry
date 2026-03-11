@@ -22,7 +22,7 @@ async def main():
 
     # 2. Perform Retrieval
     # This should trigger a 'tool_retrieval' span and record a retrieval event
-    tools = await gantry.retrieve_tools("calculate tax for $100")
+    await gantry.retrieve_tools("calculate tax for $100")
 
     # 3. Perform Execution
     # This should trigger a 'tool_execution' span and record an execution event

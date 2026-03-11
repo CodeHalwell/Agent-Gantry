@@ -457,211 +457,27 @@ class GeminiAdapter:
         }
 
 
-class MistralAdapter:
+class MistralAdapter(OpenAIAdapter):
     """
     Tool specification adapter for Mistral AI.
 
-    Mistral uses OpenAI-compatible function calling format:
-    {
-        "type": "function",
-        "function": {
-            "name": "...",
-            "description": "...",
-            "parameters": {...}
-        }
-    }
+    Mistral uses OpenAI-compatible function calling format,
+    so this inherits all behavior from OpenAIAdapter.
     """
 
     @property
     def dialect_name(self) -> str:
         return "mistral"
 
-    def to_provider_schema(
-        self,
-        tool: ToolDefinition,
-        **options: Any,
-    ) -> dict[str, Any]:
-        """
-        Convert ToolDefinition to Mistral function format.
 
-        Mistral uses OpenAI-compatible format.
-        """
-        return {
-            "type": "function",
-            "function": {
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": tool.parameters_schema,
-            },
-        }
-
-    def from_provider_payload(
-        self,
-        payload: dict[str, Any],
-    ) -> ToolCallPayload:
-        """
-        Parse a Mistral tool call from the API response.
-
-        Format is OpenAI-compatible:
-        {
-            "id": "...",
-            "type": "function",
-            "function": {
-                "name": "tool_name",
-                "arguments": "{\"arg\": \"value\"}"
-            }
-        }
-        """
-        tool_call_id = payload.get("id")
-        function_data = payload.get("function", {})
-        tool_name = function_data.get("name", "")
-
-        arguments = function_data.get("arguments", {})
-        if isinstance(arguments, str):
-            try:
-                arguments = json.loads(arguments)
-            except json.JSONDecodeError:
-                arguments = {}
-
-        return ToolCallPayload(
-            tool_name=tool_name,
-            tool_call_id=tool_call_id,
-            arguments=arguments,
-            raw_payload=payload,
-        )
-
-    def to_tool_call(
-        self,
-        payload: ToolCallPayload,
-        timeout_ms: int = 30000,
-        retry_count: int = 0,
-    ) -> ToolCall:
-        return ToolCall(
-            tool_name=payload.tool_name,
-            arguments=payload.arguments,
-            timeout_ms=timeout_ms,
-            retry_count=retry_count,
-            trace_id=payload.tool_call_id,
-        )
-
-    def format_tool_result(
-        self,
-        tool_name: str,
-        result: Any,
-        tool_call_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Format result for Mistral tool response."""
-        content = result if isinstance(result, str) else json.dumps(result)
-        response: dict[str, Any] = {
-            "role": "tool",
-            "content": content,
-            "name": tool_name,
-        }
-        if tool_call_id:
-            response["tool_call_id"] = tool_call_id
-        return response
-
-
-class GroqAdapter:
+class GroqAdapter(OpenAIAdapter):
     """
     Tool specification adapter for Groq.
 
-    Groq uses OpenAI-compatible function calling format:
-    {
-        "type": "function",
-        "function": {
-            "name": "...",
-            "description": "...",
-            "parameters": {...}
-        }
-    }
+    Groq uses OpenAI-compatible function calling format,
+    so this inherits all behavior from OpenAIAdapter.
     """
 
     @property
     def dialect_name(self) -> str:
         return "groq"
-
-    def to_provider_schema(
-        self,
-        tool: ToolDefinition,
-        **options: Any,
-    ) -> dict[str, Any]:
-        """
-        Convert ToolDefinition to Groq function format.
-
-        Groq uses OpenAI-compatible format.
-        """
-        return {
-            "type": "function",
-            "function": {
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": tool.parameters_schema,
-            },
-        }
-
-    def from_provider_payload(
-        self,
-        payload: dict[str, Any],
-    ) -> ToolCallPayload:
-        """
-        Parse a Groq tool call from the API response.
-
-        Format is OpenAI-compatible:
-        {
-            "id": "call_xxx",
-            "type": "function",
-            "function": {
-                "name": "tool_name",
-                "arguments": "{\"arg\": \"value\"}"
-            }
-        }
-        """
-        tool_call_id = payload.get("id")
-        function_data = payload.get("function", {})
-        tool_name = function_data.get("name", "")
-
-        arguments = function_data.get("arguments", {})
-        if isinstance(arguments, str):
-            try:
-                arguments = json.loads(arguments)
-            except json.JSONDecodeError:
-                arguments = {}
-
-        return ToolCallPayload(
-            tool_name=tool_name,
-            tool_call_id=tool_call_id,
-            arguments=arguments,
-            raw_payload=payload,
-        )
-
-    def to_tool_call(
-        self,
-        payload: ToolCallPayload,
-        timeout_ms: int = 30000,
-        retry_count: int = 0,
-    ) -> ToolCall:
-        return ToolCall(
-            tool_name=payload.tool_name,
-            arguments=payload.arguments,
-            timeout_ms=timeout_ms,
-            retry_count=retry_count,
-            trace_id=payload.tool_call_id,
-        )
-
-    def format_tool_result(
-        self,
-        tool_name: str,
-        result: Any,
-        tool_call_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Format result for Groq tool response."""
-        content = result if isinstance(result, str) else json.dumps(result)
-        response: dict[str, Any] = {
-            "role": "tool",
-            "content": content,
-            "name": tool_name,
-        }
-        if tool_call_id:
-            response["tool_call_id"] = tool_call_id
-        return response

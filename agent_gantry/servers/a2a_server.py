@@ -219,19 +219,61 @@ async def handle_tool_execution(gantry: AgentGantry, query: str) -> dict[str, An
 
     Returns:
         Dictionary with execution result
-
-    Note:
-        This is a simplified implementation. In production, you'd want
-        structured input for tool name and arguments.
     """
+    import json
+    from agent_gantry.schema.execution import ToolCall
 
-    # Simple parsing: expect format like "tool_name with arg1=value1, arg2=value2"
-    # For demo purposes, we'll just return a message about needing structured input
-    return {
-        "message": (
-            "Tool execution via A2A requires structured input. "
-            "Please use the tool_discovery skill first to find tools, "
-            "then call them directly with proper argument schemas."
-        ),
-        "query": query,
-    }
+    try:
+        # Try to parse query as JSON
+        data = json.loads(query)
+
+        if not isinstance(data, dict):
+            raise ValueError("Input must be a JSON object")
+
+        tool_name = data.get("tool_name")
+        if not tool_name:
+            # Fallback to older format or name if present
+            tool_name = data.get("name")
+
+        if not tool_name:
+            raise ValueError("Missing 'tool_name' in JSON input")
+
+        arguments = data.get("arguments", {})
+        if not isinstance(arguments, dict):
+            raise ValueError("'arguments' must be a JSON object")
+
+        call = ToolCall(
+            tool_name=tool_name,
+            arguments=arguments
+        )
+
+        result = await gantry.execute(call)
+
+        return {
+            "status": result.status.value,
+            "result": result.result,
+            "error": result.error,
+            "tool_name": result.tool_name,
+            "latency_ms": result.latency_ms,
+        }
+
+    except json.JSONDecodeError:
+        # Simple parsing fallback: expect format like "tool_name with arg1=value1, arg2=value2"
+        # Since this is tricky to parse safely and correctly for all cases,
+        # we'll return an error indicating structured JSON is required.
+        return {
+            "status": "error",
+            "error": "Invalid input format. Expected JSON object with 'tool_name' and 'arguments'.",
+            "message": (
+                "Tool execution via A2A requires structured JSON input. "
+                "Format: {\"tool_name\": \"name\", \"arguments\": {\"arg1\": \"value1\"}}"
+            ),
+            "query": query,
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "query": query,
+        }
+

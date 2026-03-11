@@ -51,7 +51,7 @@ async def demo_mcp_client():
     """Demo: Connect to external MCP servers as a client."""
     print("\n=== MCP Client Demo ===\n")
 
-    gantry = AgentGantry()
+    AgentGantry()
 
     # Example configuration for connecting to an external MCP server
     # Note: This requires an actual MCP server to be running

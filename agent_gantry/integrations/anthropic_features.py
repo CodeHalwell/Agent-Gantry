@@ -115,7 +115,7 @@ class AnthropicClient:
                     limit=tool_limit,
                 )
             )
-            tools = [t.tool.to_anthropic_schema() for t in retrieval_result.tools]
+            tools = [t.tool.to_dialect("anthropic") for t in retrieval_result.tools]
 
         # Add thinking budget for extended thinking
         if self._features.enable_extended_thinking and self._features.thinking_budget_tokens:

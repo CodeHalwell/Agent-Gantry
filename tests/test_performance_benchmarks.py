@@ -56,11 +56,13 @@ class MockEmbedder(EmbeddingAdapter):
         import hashlib
         self.embed_count += len(texts)
         await asyncio.sleep(self._latency_ms / 1000)
-        res = []
+        # Generate deterministic embedding based on text hash
+        import hashlib
+        results = []
         for text in texts:
             hash_val = int(hashlib.md5(text.encode()).hexdigest(), 16)
-            res.append([(hash_val % 1000) / 1000.0] * self._dimension)
-        return res
+            results.append([(hash_val % 1000) / 1000.0] * self._dimension)
+        return results
 
     async def health_check(self) -> bool:
         return True

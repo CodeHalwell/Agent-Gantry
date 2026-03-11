@@ -92,13 +92,11 @@ async def main():
             result = await tools.execute(call)
 
             print(f"  Result: {result.result}")
-            tool_results.append(
-                {
-                    "type": "function_call_output",
-                    "call_id": item.call_id,
-                    "output": str(result.result),
-                }
-            )
+            tool_results.append({
+                "type": "function_call_output",
+                "call_id": item.call_id,
+                "output": str(result.result),
+            })
 
     # Send tool results back to get final response
     if tool_results:

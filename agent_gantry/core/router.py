@@ -6,15 +6,21 @@ Intelligent tool selection using semantic search, intent classification, and con
 
 from __future__ import annotations
 
-import math
+import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
 from time import perf_counter
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+
+_logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from agent_gantry.adapters.embedders.base import EmbeddingAdapter
+    from agent_gantry.adapters.llm_client import LLMClient
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
     from agent_gantry.adapters.llm_client import LLMClient
     from agent_gantry.adapters.rerankers.base import RerankerAdapter
@@ -169,9 +175,9 @@ async def classify_intent(
             for intent in TaskIntent:
                 if intent.value == result:
                     return intent
-        except Exception:
+        except Exception as e:
             # Fall back to UNKNOWN if LLM classification fails
-            pass
+            _logger.warning(f"LLM intent classification failed, falling back to UNKNOWN: {e}")
 
     return TaskIntent.UNKNOWN
 
@@ -251,42 +257,12 @@ class SemanticRouter:
 
         intent = await self._resolve_intent(query)
 
-        # Store embeddings separately for MMR if they were included
-        tool_embeddings: dict[str, list[float]] = {}
-        scored_tools: list[tuple[ToolDefinition, float]] = []
-
-        for candidate in candidates:
-            if include_embeddings:
-                tool, semantic_score, embedding = candidate  # type: ignore
-                tool_key = f"{tool.namespace}.{tool.name}"
-                tool_embeddings[tool_key] = embedding
-            else:
-                tool, semantic_score = candidate  # type: ignore
-            if query.exclude_deprecated and tool.deprecated:
-                continue
-            if query.namespaces and tool.namespace not in query.namespaces:
-                continue
-            if query.required_capabilities and not all(
-                cap in tool.capabilities for cap in query.required_capabilities
-            ):
-                continue
-            if query.excluded_capabilities and any(
-                cap in tool.capabilities for cap in query.excluded_capabilities
-            ):
-                continue
-            if query.sources and tool.source not in query.sources:
-                continue
-            if query.exclude_unhealthy and tool.health.circuit_breaker_open:
-                continue
-
-            signals = self._compute_signals(
-                tool=tool,
-                semantic_score=semantic_score,
-                intent=intent,
-                query=query,
-            )
-            final_score = compute_final_score(signals, self._weights)
-            scored_tools.append((tool, final_score))
+        scored_tools, tool_embeddings = self._score_and_filter_candidates(
+            candidates=list(candidates),
+            query=query,
+            intent=intent,
+            include_embeddings=include_embeddings,
+        )
 
         scored_tools.sort(key=lambda x: x[1], reverse=True)
 
@@ -318,6 +294,59 @@ class SemanticRouter:
             candidate_count=len(candidates),
             filtered_count=len(scored_tools),
         )
+
+    def _score_and_filter_candidates(
+        self,
+        candidates: list[Any],
+        query: ToolQuery,
+        intent: TaskIntent,
+        include_embeddings: bool,
+    ) -> tuple[list[tuple[ToolDefinition, float]], dict[str, list[float]]]:
+        """Score and filter candidates from vector search."""
+        tool_embeddings: dict[str, list[float]] = {}
+        scored_tools: list[tuple[ToolDefinition, float]] = []
+
+        for candidate in candidates:
+            if include_embeddings:
+                tool, semantic_score, embedding = candidate  # type: ignore
+                tool_key = f"{tool.namespace}.{tool.name}"
+                tool_embeddings[tool_key] = embedding
+            else:
+                tool, semantic_score = candidate  # type: ignore
+
+            if not self._is_tool_allowed(tool, query):
+                continue
+
+            signals = self._compute_signals(
+                tool=tool,
+                semantic_score=semantic_score,
+                intent=intent,
+                query=query,
+            )
+            final_score = compute_final_score(signals, self._weights)
+            scored_tools.append((tool, final_score))
+
+        return scored_tools, tool_embeddings
+
+    def _is_tool_allowed(self, tool: ToolDefinition, query: ToolQuery) -> bool:
+        """Filter candidates based on query constraints."""
+        if query.exclude_deprecated and tool.deprecated:
+            return False
+        if query.namespaces and tool.namespace not in query.namespaces:
+            return False
+        if query.required_capabilities and not all(
+            cap in tool.capabilities for cap in query.required_capabilities
+        ):
+            return False
+        if query.excluded_capabilities and any(
+            cap in tool.capabilities for cap in query.excluded_capabilities
+        ):
+            return False
+        if query.sources and tool.source not in query.sources:
+            return False
+        if query.exclude_unhealthy and tool.health.circuit_breaker_open:
+            return False
+        return True
 
     async def _resolve_intent(self, query: ToolQuery) -> TaskIntent:
         """Resolve intent using context override or classification."""
@@ -402,30 +431,37 @@ class SemanticRouter:
         relevance_scores = [score for _, score in scored_tools]
 
         # Use cached embeddings if available, otherwise re-embed (fallback)
+        embeddings: list[list[float]] = []
         if cached_embeddings:
-            embeddings = []
-            missing_tools_indices = []
-            missing_tool_texts = []
+            # Need to collect embeddings in order of scored_tools
+            missing_indices: list[int] = []
+            missing_texts: list[str] = []
 
-            for idx, (tool, _) in enumerate(scored_tools):
+            # Initialize with placeholders
+            embeddings = [[] for _ in scored_tools]
+
+            for i, (tool, _) in enumerate(scored_tools):
                 tool_key = f"{tool.namespace}.{tool.name}"
                 embedding = cached_embeddings.get(tool_key)
-                if embedding is None:
-                    missing_tools_indices.append(idx)
-                    missing_tool_texts.append(tool.to_searchable_text())
-                    embeddings.append([])  # Placeholder
+                if embedding is not None:
+                    embeddings[i] = embedding
                 else:
-                    embeddings.append(embedding)
+                    missing_indices.append(i)
+                    missing_texts.append(tool.to_searchable_text())
 
-            if missing_tool_texts:
-                # Fallback: batch embed missing tools
-                missing_embeddings = await self._embedder.embed_batch(missing_tool_texts)
-                for idx, emb in zip(missing_tools_indices, missing_embeddings):
+            # Batch embed missing
+            if missing_texts:
+                new_embeddings = await self._embedder.embed_batch(missing_texts)
+                for idx, emb in zip(missing_indices, new_embeddings):
                     embeddings[idx] = emb
         else:
             # Fallback: re-embed all tools (old behavior for backward compatibility)
             tool_texts = [tool.to_searchable_text() for tool, _ in scored_tools]
             embeddings = await self._embedder.embed_batch(tool_texts)
+
+        # Convert to numpy matrix for vectorized cosine similarity
+        emb_matrix = np.array(embeddings, dtype=np.float64)
+        norms = np.linalg.norm(emb_matrix, axis=1)
 
         selected: list[int] = []
         candidates = list(range(len(scored_tools)))
@@ -436,32 +472,28 @@ class SemanticRouter:
 
         while candidates and len(selected) < limit:
             mmr_scores: dict[int, float] = {}
+
             for idx in candidates:
-                similarity_to_selected = max(
-                    (self._cosine_similarity(embeddings[idx], embeddings[sel]) for sel in selected),
-                    default=0.0,
-                )
-                mmr_scores[idx] = (
-                    lambda_param * relevance_scores[idx]
-                    - (1.0 - lambda_param) * similarity_to_selected
-                )
+                max_sim = 0.0
+                if norms[idx] > 0:
+                    for sel_idx in selected:
+                        if norms[sel_idx] > 0:
+                            sim = float(
+                                np.dot(emb_matrix[idx], emb_matrix[sel_idx])
+                                / (norms[idx] * norms[sel_idx])
+                            )
+                            if sim > max_sim:
+                                max_sim = sim
+
+                mmr_scores[idx] = lambda_param * relevance_scores[idx] - (
+                    1.0 - lambda_param
+                ) * max_sim
 
             next_idx = max(mmr_scores, key=lambda k: mmr_scores[k])
             selected.append(next_idx)
             candidates.remove(next_idx)
 
         return [scored_tools[i] for i in selected]
-
-    def _cosine_similarity(self, a: list[float], b: list[float]) -> float:
-        """Calculate cosine similarity between two vectors."""
-        if not a or not b or len(a) != len(b):
-            return 0.0
-        dot_product = sum(x * y for x, y in zip(a, b))
-        norm_a = math.sqrt(sum(x * x for x in a))
-        norm_b = math.sqrt(sum(y * y for y in b))
-        if norm_a == 0.0 or norm_b == 0.0:
-            return 0.0
-        return dot_product / (norm_a * norm_b)
 
     def _contains_token(self, text: str, token: str) -> bool:
         """Return True if token appears as a standalone word in text."""

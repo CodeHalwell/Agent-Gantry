@@ -260,6 +260,91 @@ class TestMCPRouter:
         mock_vector_store.search.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_route_with_candidates(
+        self,
+        router: MCPRouter,
+        mock_vector_store: MagicMock,
+    ) -> None:
+        """Test routing that returns pseudo-tool candidates."""
+        from agent_gantry.schema.tool import ToolDefinition
+
+        # Add a mock registry to the router
+        registry = MagicMock()
+        mock_server_def = MCPServerDefinition(
+            name="test_server",
+            description="A test server",
+            command=["test_cmd"]
+        )
+        registry.get_server.return_value = mock_server_def
+        router._registry = registry
+
+        # Create pseudo-tools
+        valid_pseudo_tool = ToolDefinition(
+            name="pseudo_test_server",
+            description="Pseudo tool for server",
+            parameters_schema={"type": "object"},
+            namespace="__mcp_servers__",
+            metadata={
+                "entity_type": "mcp_server",
+                "server_name": "test_server",
+                "server_namespace": "default"
+            }
+        )
+
+        invalid_pseudo_tool_no_name = ToolDefinition(
+            name="pseudo_test_server2",
+            description="Pseudo tool without server_name",
+            parameters_schema={"type": "object"},
+            namespace="__mcp_servers__",
+            metadata={
+                "entity_type": "mcp_server"
+            }
+        )
+
+        # Mock vector store returning candidates: [(tool, score)]
+        mock_vector_store.search.return_value = [
+            (valid_pseudo_tool, 0.95),
+            (invalid_pseudo_tool_no_name, 0.80),
+            # Missing tuple elements edge case
+            (valid_pseudo_tool,)
+        ]
+
+        result = await router.route("test query", limit=3, namespaces=["default"])
+
+        # Check vector store was called with correct filters including namespaces
+        mock_vector_store.search.assert_called_once()
+        call_kwargs = mock_vector_store.search.call_args.kwargs
+        assert "namespace" in call_kwargs["filters"]
+        # The routing currently overrides `__mcp_servers__` if namespaces are provided in `route` call
+        # because of `mcp_namespace_filter.update(filters)`. We assert what the behavior currently is.
+        assert "default" in call_kwargs["filters"]["namespace"]
+
+        # Only the valid candidate should be processed
+        assert len(result.servers) == 1
+        assert result.servers[0].server == mock_server_def
+        assert result.servers[0].score == 0.95
+
+    @pytest.mark.asyncio
+    async def test_get_server_from_registry(self, router: MCPRouter) -> None:
+        """Test _get_server_from_registry handles missing registry or server."""
+        # When no registry is configured
+        assert router._registry is None
+        assert await router._get_server_from_registry("test") is None
+
+        # When registry exists
+        mock_registry = MagicMock()
+        mock_server = MCPServerDefinition(
+            name="test",
+            description="Test server",
+            command=["cmd"]
+        )
+        mock_registry.get_server.return_value = mock_server
+        router._registry = mock_registry
+
+        assert await router._get_server_from_registry("test", "default") == mock_server
+        mock_registry.get_server.assert_called_once_with("test", "default")
+
+    @pytest.mark.asyncio
     async def test_filter_by_capabilities(self, router: MCPRouter) -> None:
         """Test filtering servers by capabilities."""
         servers = [
@@ -284,6 +369,10 @@ class TestMCPRouter:
 
         # Filter for servers with just read
         filtered = await router.filter_by_capabilities(servers, ["read"])
+        assert len(filtered) == 2
+
+        # Filter with empty required capabilities
+        filtered = await router.filter_by_capabilities(servers, [])
         assert len(filtered) == 2
 
     @pytest.mark.asyncio
@@ -352,7 +441,9 @@ class TestAgentGantryMCPIntegration:
         )
 
         # Mock the MCPClient to avoid actual connection
-        with patch("agent_gantry.core.mcp_registry.MCPClient") as mock_client_class:
+        with patch(
+            "agent_gantry.core.mcp_registry.MCPClient"
+        ):
             mock_client = AsyncMock()
 
             # Mock list_tools to return our test tools
@@ -388,7 +479,9 @@ class TestAgentGantryMCPIntegration:
             description="Server that will fail",
         )
 
-        with patch("agent_gantry.core.mcp_registry.MCPClient") as mock_client_class:
+        with patch(
+            "agent_gantry.core.mcp_registry.MCPClient"
+        ):
             mock_client = AsyncMock()
             mock_client.list_tools = AsyncMock(side_effect=Exception("Connection failed"))
 
@@ -477,3 +570,61 @@ class TestMCPWorkflow:
 
         # Step 4: Discover tools from selected server
         # (Already tested in other test cases)
+
+    @pytest.mark.asyncio
+    async def test_mcp_server_fingerprinting(self) -> None:
+        """Test that MCP servers are not re-embedded if fingerprints match."""
+        gantry = AgentGantry()
+
+        # Mock vector store so we can track calls to add_tools
+        mock_vector_store = AsyncMock()
+        mock_vector_store.dimension = 768
+        mock_vector_store.get_stored_fingerprints.return_value = {}
+        mock_vector_store.get_metadata.return_value = None
+        mock_vector_store.add_tools.return_value = 1
+
+        # Keep track of stored fingerprints in our mock
+        stored_fps = {}
+        def mock_add_tools(tools, embeddings, upsert=True):
+            from agent_gantry.utils.fingerprint import compute_tool_fingerprint
+            for tool in tools:
+                stored_fps[f"{tool.namespace}.{tool.name}"] = compute_tool_fingerprint(tool)
+            return len(tools)
+
+        mock_vector_store.add_tools.side_effect = mock_add_tools
+
+        # When get_stored_fingerprints is called, return our tracked ones
+        mock_vector_store.get_stored_fingerprints.side_effect = lambda: stored_fps.copy()
+
+        gantry._vector_store = mock_vector_store
+
+        # Mock embedder
+        mock_embedder = AsyncMock()
+        mock_embedder.embed_batch.return_value = [[0.1] * 768]
+        gantry._embedder = mock_embedder
+
+        # Register an MCP server
+        gantry.register_mcp_server(
+            name="test_server",
+            command=["test", "cmd"],
+            description="Test server for fingerprinting",
+            namespace="test_ns"
+        )
+
+        # First sync - should embed and return 1
+        count1 = await gantry.sync_mcp_servers()
+        assert count1 == 1
+        assert mock_embedder.embed_batch.call_count == 1
+        assert mock_vector_store.add_tools.call_count == 1
+
+        # Second sync - fingerprints match, should return 0 and not embed
+        count2 = await gantry.sync_mcp_servers()
+        assert count2 == 0
+        assert mock_embedder.embed_batch.call_count == 1  # Still 1
+        assert mock_vector_store.add_tools.call_count == 1  # Still 1
+
+        # Third sync with force=True - should embed again
+        count3 = await gantry.sync_mcp_servers(force=True)
+        assert count3 == 1
+        assert mock_embedder.embed_batch.call_count == 2
+        assert mock_vector_store.add_tools.call_count == 2

@@ -742,45 +742,46 @@ class PGVectorStore:
             return 0
 
         async with self._pool.acquire() as conn:
+            records = []
             for tool, embedding in zip(tools, embeddings):
                 tool_id = f"{tool.namespace}.{tool.name}"
                 embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
+                records.append(
+                    (
+                        tool_id,
+                        tool.name,
+                        tool.namespace,
+                        tool.description,
+                        tool.model_dump_json(),
+                        embedding_str,
+                    )
+                )
 
-                if upsert:
-                    await conn.execute(
-                        f"""
-                        INSERT INTO {self._table_name}
-                        (id, name, namespace, description, tool_json, embedding, updated_at)
-                        VALUES ($1, $2, $3, $4, $5, $6, NOW())
-                        ON CONFLICT (id) DO UPDATE SET
-                            name = EXCLUDED.name,
-                            namespace = EXCLUDED.namespace,
-                            description = EXCLUDED.description,
-                            tool_json = EXCLUDED.tool_json,
-                            embedding = EXCLUDED.embedding,
-                            updated_at = NOW()
-                        """,
-                        tool_id,
-                        tool.name,
-                        tool.namespace,
-                        tool.description,
-                        tool.model_dump_json(),
-                        embedding_str,
-                    )
-                else:
-                    await conn.execute(
-                        f"""
-                        INSERT INTO {self._table_name}
-                        (id, name, namespace, description, tool_json, embedding)
-                        VALUES ($1, $2, $3, $4, $5, $6)
-                        """,
-                        tool_id,
-                        tool.name,
-                        tool.namespace,
-                        tool.description,
-                        tool.model_dump_json(),
-                        embedding_str,
-                    )
+            if upsert:
+                await conn.executemany(
+                    f"""
+                    INSERT INTO {self._table_name}
+                    (id, name, namespace, description, tool_json, embedding, updated_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, NOW())
+                    ON CONFLICT (id) DO UPDATE SET
+                        name = EXCLUDED.name,
+                        namespace = EXCLUDED.namespace,
+                        description = EXCLUDED.description,
+                        tool_json = EXCLUDED.tool_json,
+                        embedding = EXCLUDED.embedding,
+                        updated_at = NOW()
+                    """,
+                    records,
+                )
+            else:
+                await conn.executemany(
+                    f"""
+                    INSERT INTO {self._table_name}
+                    (id, name, namespace, description, tool_json, embedding)
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                    """,
+                    records,
+                )
 
         return len(tools)
 
@@ -793,12 +794,6 @@ class PGVectorStore:
         include_embeddings: bool = False,
     ) -> list[tuple[ToolDefinition, float]] | list[tuple[ToolDefinition, float, list[float]]]:
         """Search for similar tools."""
-        if include_embeddings:
-            logger.warning(
-                "PGVectorStore does not support include_embeddings yet. "
-                "Returning without embeddings."
-            )
-
         await self.initialize()
 
         embedding_str = "[" + ",".join(str(x) for x in query_vector) + "]"
@@ -811,8 +806,12 @@ class PGVectorStore:
             namespace_clause = "WHERE namespace = $3"
             params.append(filters["namespace"])
 
+        select_cols = "tool_json, 1 - (embedding <=> $1::vector) AS similarity"
+        if include_embeddings:
+            select_cols += ", embedding"
+
         query = f"""
-            SELECT tool_json, 1 - (embedding <=> $1::vector) AS similarity
+            SELECT {select_cols}
             FROM {self._table_name}
             {namespace_clause}
             ORDER BY embedding <=> $1::vector
@@ -822,16 +821,40 @@ class PGVectorStore:
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(query, *params)
 
-            tools: list[tuple[ToolDefinition, float]] = []
-            for row in rows:
-                score = float(row["similarity"])
+            if include_embeddings:
+                tools_with_embeddings: list[tuple[ToolDefinition, float, list[float]]] = []
+                for row in rows:
+                    score = float(row["similarity"])
 
-                # Apply score threshold if specified
-                if score_threshold is None or score >= score_threshold:
-                    tool = ToolDefinition.model_validate_json(row["tool_json"])
-                    tools.append((tool, score))
+                    # Apply score threshold if specified
+                    if score_threshold is None or score >= score_threshold:
+                        tool = ToolDefinition.model_validate_json(row["tool_json"])
+                        # Parse embedding depending on asyncpg return type
+                        # It may be returned as a list-like type or a string, depending on type setup
+                        embedding_val = row["embedding"]
+                        if isinstance(embedding_val, str):
+                            # It's a string like "[1.0, 2.0, ...]"
+                            import json
 
-            return tools
+                            parsed_embedding = json.loads(embedding_val)
+                        else:
+                            # Try to coerce it to list (pgvector type returned by asyncpg/pgvector)
+                            parsed_embedding = list(embedding_val)
+
+                        tools_with_embeddings.append((tool, score, parsed_embedding))
+
+                return tools_with_embeddings
+            else:
+                tools: list[tuple[ToolDefinition, float]] = []
+                for row in rows:
+                    score = float(row["similarity"])
+
+                    # Apply score threshold if specified
+                    if score_threshold is None or score >= score_threshold:
+                        tool = ToolDefinition.model_validate_json(row["tool_json"])
+                        tools.append((tool, score))
+
+                return tools
 
     async def get_by_name(self, name: str, namespace: str = "default") -> ToolDefinition | None:
         """Get a tool by name."""
