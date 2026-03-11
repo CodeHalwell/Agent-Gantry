@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-03-11
+
+### Added
+- **Microsoft Agent Framework Integration** (PR #91): First-class support for Microsoft Agent Framework RC with `GantryToolBridge` for seamless tool bridging
+- **MCP Server Fingerprinting** (PR #73): Capability-aware fingerprinting for MCP servers including `requires_confirmation` in computation
+- **A2A Structured JSON Input Parsing** (PR #80): More reliable inter-agent communication via structured JSON input parsing
+- **PGVector `include_embeddings` Flag** (PR #88): Skip embedding retrieval for performance optimization in PGVector queries
+- **Comprehensive Code Quality Improvements** (PR #90): 17 tasks across 5 phases from code review plan
+
+### Fixed
+- **UUID Privacy Leak** (PR #63): Replaced UUIDv1 (which embeds MAC addresses) with privacy-safe alternatives
+- **Executor Argument Validation** (PR #70, #86): Recursive argument validation using `jsonschema`
+- **Example Code** (PR #91): Fixed examples to use `GantryToolBridge` instead of removed legacy code paths
+
+### Changed
+- **Slimmed Core Dependencies**: Moved example-only packages (matplotlib, pandas, scikit-learn, pillow, etc.) from core dependencies to `example-tools` optional extra, significantly reducing install size
+- **Removed `ty` from Dependencies**: Removed unused Astral type checker from runtime dependencies
+- **Refactored LanceDB into Domain Mixins** (PR #72): Split monolithic `LanceDBVectorStore` into focused mixins
+- **Unified Schema Conversions** (PR #87): Single source of truth for tool schema conversions
+- **Refactored OpenAI Embedders** (PR #75): Common base class reducing duplication
+- **Refactored SemanticRouter.route** (PR #66): Extracted signal computation and filtering into separate methods
+- **Refactored ExecutionEngine.execute** (PR #65): Simplified execution engine main method
+- **Refactored AgentGantry.sync** (PR #69): Broke down into focused helper methods
+- **Batch Embedding for MMR** (PR #89): `_apply_mmr` now uses batch embedding for missing cache entries
+
+### Security
+- **Command Injection Fix** (PR #77): Patched command injection vulnerability in `run_shell_command`
+- **Arbitrary Code Execution Fix** (PR #78): Removed unsafe `eval()` usage in demo script
+- **Enforced `allowed_domains` Policy** (PR #81): SecurityPolicy now properly enforces domain restrictions
+- **Enforced Rate Limiting** (PR #74): SecurityPolicy now properly enforces `max_requests_per_minute`
+
+### Performance
+- **Concurrent Anthropic Tool Execution** (PR #76): Tools executed concurrently when using Anthropic provider
+- **NumPy-Optimized Cosine Similarity** (PR #83): Replaced pure-Python with NumPy vector operations
+- **Async I/O for LanceDB** (PR #82): Blocking I/O calls optimized to async
+- **PGVector Batch Insert** (PR #71): Fixed N+1 query problem using `executemany`
+- **Anthropic String Concatenation** (PR #67): Optimized string building in skills loop
+
 ## [0.1.3] - 2026-01-02
 
 ### Added
@@ -118,7 +156,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.1.0...v0.1.2
 [0.1.0]: https://github.com/CodeHalwell/Agent-Gantry/releases/tag/v0.1.0
