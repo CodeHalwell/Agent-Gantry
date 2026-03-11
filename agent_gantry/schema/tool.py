@@ -24,6 +24,7 @@ class SchemaDialect(str, Enum):
     GEMINI = "gemini"
     MISTRAL = "mistral"
     GROQ = "groq"
+    AGENT_FRAMEWORK = "agent_framework"
     AUTO = "auto"
 
 

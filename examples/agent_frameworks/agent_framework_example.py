@@ -1,13 +1,20 @@
-import asyncio
-from typing import Annotated
+"""
+Microsoft Agent Framework (RC+) integration example.
 
-from agent_framework import ChatAgent
-from agent_framework.openai import OpenAIChatClient
+Demonstrates how Agent-Gantry's semantic routing reduces token usage in
+multi-agent systems by surfacing only the relevant tools per query.
+
+Uses GantryToolBridge for seamless wrapping of Gantry tools as AF-compatible
+Python callables, compatible with any AF chat client (OpenAI, Azure, Anthropic, etc.).
+"""
+
+import asyncio
+
+from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
-from pydantic import Field
 
 from agent_gantry import AgentGantry
-from agent_gantry.schema.execution import ToolCall
+from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
 
 load_dotenv()
 
@@ -18,51 +25,42 @@ async def main() -> str:
 
     @gantry.register
     def get_user_profile(user_id: str) -> dict[str, str]:
-        """Fetch a user's profile from the CRM."""
+        """Fetch a user's profile from the CRM system including plan and region."""
         return {"user_id": user_id, "plan": "pro", "region": "us-east"}
+
+    @gantry.register
+    def get_billing_info(user_id: str) -> dict[str, str]:
+        """Retrieve billing information for a customer account."""
+        return {"user_id": user_id, "balance": "$0.00", "next_invoice": "2026-04-01"}
+
+    @gantry.register
+    def search_knowledge_base(query: str) -> str:
+        """Search the internal knowledge base for support articles."""
+        return f"Found 3 articles matching '{query}'"
 
     await gantry.sync()
 
-    # 2) Retrieve relevant tools for this query (lower threshold for SimpleEmbedder demos)
+    # 2) Create the bridge - this is the key integration point
+    bridge = GantryToolBridge(gantry, score_threshold=0.1)
+
+    # 3) Retrieve only relevant tools for this specific query
+    #    This is where token savings happen: instead of sending ALL tools to the
+    #    LLM, Gantry's semantic router selects only the relevant subset.
     user_query = "What plan is user abc123 on?"
-    tools = await gantry.retrieve_tools(user_query, limit=1, score_threshold=0.1)
+    tools = await bridge.get_tools(user_query, limit=2)
 
-    # 3) Wrap Gantry tools for Microsoft Agent Framework
-    def make_tool_wrapper(tool_name: str, gantry_instance: AgentGantry):
-        """Factory function to properly bind tool name to wrapper."""
-
-        async def tool_wrapper(
-            user_id: Annotated[str, Field(description="The user ID to look up.")],
-        ) -> str:
-            result = await gantry_instance.execute(
-                ToolCall(tool_name=tool_name, arguments={"user_id": user_id})
-            )
-            return str(result.result) if result.status == "success" else str(result.error)
-
-        # Set wrapper metadata for better debuggability and framework compatibility.
-        tool_wrapper.__name__ = tool_name
-        tool_wrapper.__doc__ = (
-            f"Tool wrapper for Agent-Gantry tool '{tool_name}'. "
-            "Invokes the underlying tool with a user_id argument."
-        )
-        return tool_wrapper
-
-    agent_tools = []
-    for schema in tools:
-        name = schema["function"]["name"]
-
-        if name == "get_user_profile":
-            agent_tools.append(make_tool_wrapper(name, gantry))
-
-    # 4) Create and run the Agent Framework ChatAgent
-    chat_agent = ChatAgent(
-        chat_client=OpenAIChatClient(model_id="gpt-4o"),
-        instructions=("You are a support assistant. Use the tools to fetch customer data."),
-        tools=agent_tools,
+    # 4) Create and run the Agent Framework agent with semantically selected tools
+    client = OpenAIResponsesClient()
+    agent = client.as_agent(
+        name="SupportAgent",
+        instructions="You are a support assistant. Use the tools to fetch customer data.",
+        tools=tools,
     )
 
     print("--- Running Microsoft Agent Framework with Agent-Gantry ---")
-    response = await chat_agent.run(user_query)
+    print(f"Selected {len(tools)} tools (from {3} registered) for: '{user_query}'")
+
+    response = await agent.run(user_query)
     print(f"\nAgent Response: {response}")
     return str(response)
 

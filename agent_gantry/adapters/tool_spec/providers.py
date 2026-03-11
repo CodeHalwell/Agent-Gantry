@@ -2,12 +2,13 @@
 Provider-specific tool specification adapters.
 
 Implementations for OpenAI (Chat Completions & Responses API), Anthropic,
-Gemini, Mistral, and Groq.
+Gemini, Mistral, Groq, and Microsoft Agent Framework.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.adapters.tool_spec.base import ToolCallPayload
@@ -481,3 +482,84 @@ class GroqAdapter(OpenAIAdapter):
     @property
     def dialect_name(self) -> str:
         return "groq"
+
+
+_logger = logging.getLogger(__name__)
+
+
+class AgentFrameworkAdapter(OpenAIAdapter):
+    """
+    Tool specification adapter for Microsoft Agent Framework (RC+).
+
+    Microsoft Agent Framework uses OpenAI-compatible function calling format
+    for its tool schemas, so this inherits from ``OpenAIAdapter`` and adds:
+
+    - Optional ``include_metadata`` support for Gantry provenance info
+    - Simplified AF internal payload format (``{"name": ..., "arguments": ...}``)
+
+    For direct tool wrapping (Python callables), use the higher-level
+    ``agent_gantry.integrations.agent_framework_bridge`` module instead.
+    """
+
+    @property
+    def dialect_name(self) -> str:
+        return "agent_framework"
+
+    def to_provider_schema(
+        self,
+        tool: ToolDefinition,
+        **options: Any,
+    ) -> dict[str, Any]:
+        """
+        Convert ToolDefinition to Microsoft Agent Framework tool schema.
+
+        Delegates to OpenAIAdapter for the base schema and optionally appends
+        Gantry-specific metadata for provenance tracking.
+        """
+        schema = super().to_provider_schema(tool, **options)
+        if options.get("include_metadata", False):
+            schema["function"]["metadata"] = {
+                "namespace": tool.namespace,
+                "version": tool.version,
+                "source": tool.source.value if hasattr(tool.source, "value") else str(tool.source),
+            }
+        return schema
+
+    def from_provider_payload(
+        self,
+        payload: dict[str, Any],
+    ) -> ToolCallPayload:
+        """
+        Parse a Microsoft Agent Framework tool call payload.
+
+        Handles both the standard OpenAI-style format (via super()) and the
+        simplified format used by AF's internal dispatch:
+        ``{"name": "tool_name", "arguments": {"arg": "value"}}``
+        """
+        # Standard OpenAI format — delegate to parent
+        if "function" in payload:
+            return super().from_provider_payload(payload)
+
+        # Simplified AF internal format
+        tool_call_id = payload.get("id") or payload.get("call_id")
+        tool_name = payload.get("name", "")
+        arguments = payload.get("arguments", {})
+
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except json.JSONDecodeError:
+                _logger.warning(
+                    "AgentFrameworkAdapter: malformed JSON in tool arguments "
+                    "for '%s', defaulting to empty dict: %s",
+                    tool_name,
+                    arguments[:200] if isinstance(arguments, str) else arguments,
+                )
+                arguments = {}
+
+        return ToolCallPayload(
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            arguments=arguments,
+            raw_payload=payload,
+        )

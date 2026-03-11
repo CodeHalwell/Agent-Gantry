@@ -54,6 +54,7 @@ class DialectRegistry:
         """Register all built-in adapters."""
         # Import here to avoid circular imports
         from agent_gantry.adapters.tool_spec.providers import (
+            AgentFrameworkAdapter,
             AnthropicAdapter,
             GeminiAdapter,
             GroqAdapter,
@@ -68,6 +69,7 @@ class DialectRegistry:
         self.register(GeminiAdapter())
         self.register(MistralAdapter())
         self.register(GroqAdapter())
+        self.register(AgentFrameworkAdapter())
 
     def register(self, adapter: ToolSpecAdapter) -> None:
         """
