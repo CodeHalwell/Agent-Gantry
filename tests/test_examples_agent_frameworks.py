@@ -73,21 +73,23 @@ async def test_google_adk_example_runs_with_fakes(monkeypatch):
     from types import ModuleType
 
     # Stub google.adk modules so the example can import without them installed
+    # Always override with stub modules to avoid mutating real installed packages
     for mod_name in [
         "google", "google.adk", "google.adk.agents", "google.adk.runners",
         "google.adk.sessions", "google.adk.tools", "google.genai",
         "google.genai.types",
     ]:
-        if mod_name not in sys.modules:
-            monkeypatch.setitem(sys.modules, mod_name, ModuleType(mod_name))
+        stub_module = ModuleType(mod_name)
+        monkeypatch.setitem(sys.modules, mod_name, stub_module)
 
     google_mod = sys.modules["google"]
     adk_mod = sys.modules["google.adk"]
-    google_mod.adk = adk_mod  # type: ignore[attr-defined]
-    adk_mod.agents = sys.modules["google.adk.agents"]  # type: ignore[attr-defined]
-    adk_mod.runners = sys.modules["google.adk.runners"]  # type: ignore[attr-defined]
-    adk_mod.sessions = sys.modules["google.adk.sessions"]  # type: ignore[attr-defined]
-    adk_mod.tools = sys.modules["google.adk.tools"]  # type: ignore[attr-defined]
+    # Use monkeypatch.setattr for attribute injection to guarantee cleanup
+    monkeypatch.setattr(google_mod, "adk", adk_mod, raising=False)  # type: ignore[attr-defined]
+    monkeypatch.setattr(adk_mod, "agents", sys.modules["google.adk.agents"], raising=False)  # type: ignore[attr-defined]
+    monkeypatch.setattr(adk_mod, "runners", sys.modules["google.adk.runners"], raising=False)  # type: ignore[attr-defined]
+    monkeypatch.setattr(adk_mod, "sessions", sys.modules["google.adk.sessions"], raising=False)  # type: ignore[attr-defined]
+    monkeypatch.setattr(adk_mod, "tools", sys.modules["google.adk.tools"], raising=False)  # type: ignore[attr-defined]
 
     # Provide stub classes the example expects to import
     class StubAgent:
@@ -105,13 +107,13 @@ async def test_google_adk_example_runs_with_fakes(monkeypatch):
         def __init__(self, *args, **kwargs):
             pass
 
-    sys.modules["google.adk.agents"].Agent = StubAgent  # type: ignore[attr-defined]
-    sys.modules["google.adk.runners"].Runner = StubRunner  # type: ignore[attr-defined]
-    sys.modules["google.adk.sessions"].InMemorySessionService = StubInMemorySessionService  # type: ignore[attr-defined]
-    sys.modules["google.adk.tools"].FunctionTool = StubFunctionTool  # type: ignore[attr-defined]
-    sys.modules["google.genai"].types = sys.modules["google.genai.types"]  # type: ignore[attr-defined]
-    sys.modules["google.genai.types"].Content = StubContent  # type: ignore[attr-defined]
-    sys.modules["google.genai.types"].Part = StubPart  # type: ignore[attr-defined]
+    monkeypatch.setattr(sys.modules["google.adk.agents"], "Agent", StubAgent, raising=False)  # type: ignore[attr-defined]
+    monkeypatch.setattr(sys.modules["google.adk.runners"], "Runner", StubRunner, raising=False)  # type: ignore[attr-defined]
+    monkeypatch.setattr(sys.modules["google.adk.sessions"], "InMemorySessionService", StubInMemorySessionService, raising=False)  # type: ignore[attr-defined]
+    monkeypatch.setattr(sys.modules["google.adk.tools"], "FunctionTool", StubFunctionTool, raising=False)  # type: ignore[attr-defined]
+    monkeypatch.setattr(sys.modules["google.genai"], "types", sys.modules["google.genai.types"], raising=False)  # type: ignore[attr-defined]
+    monkeypatch.setattr(sys.modules["google.genai.types"], "Content", StubContent, raising=False)  # type: ignore[attr-defined]
+    monkeypatch.setattr(sys.modules["google.genai.types"], "Part", StubPart, raising=False)  # type: ignore[attr-defined]
 
     # Force reimport
     example_mod_name = "examples.agent_frameworks.google_adk_example"
