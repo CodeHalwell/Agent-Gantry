@@ -17,33 +17,50 @@ class _Result:
 
 @pytest.mark.asyncio
 async def test_agent_framework_example_runs_with_fakes(monkeypatch):
+    import sys
+    from types import ModuleType
+
+    # Stub the agent_framework package so the example can import without it installed
+    af_mod = ModuleType("agent_framework")
+    af_openai_mod = ModuleType("agent_framework.openai")
+
+    class StubOpenAIResponsesClient:
+        pass
+
+    af_openai_mod.OpenAIResponsesClient = StubOpenAIResponsesClient
+    af_mod.openai = af_openai_mod
+
+    monkeypatch.setitem(sys.modules, "agent_framework", af_mod)
+    monkeypatch.setitem(sys.modules, "agent_framework.openai", af_openai_mod)
+
+    # Force re-import of the example module
+    mod_name = "examples.agent_frameworks.agent_framework_example"
+    if mod_name in sys.modules:
+        del sys.modules[mod_name]
+
     from examples.agent_frameworks import agent_framework_example as mod
 
     captured_tools: list[Any] = []
 
-    class FakeOpenAIChatClient:
+    class FakeOpenAIResponsesClient:
         def __init__(self, *_, **__):
             pass
 
-    class FakeChatAgent:
-        def __init__(self, *, chat_client, instructions, tools):
-            self.chat_client = chat_client
-            self.instructions = instructions
+        def as_agent(self, *, name, instructions, tools):
+            return FakeAgent(tools=tools)
+
+    class FakeAgent:
+        def __init__(self, *, tools):
             self.tools = tools
             captured_tools.extend(tools)
 
         async def run(self, query: str) -> str:
-            # call the first tool to ensure wiring works
             if not self.tools:
                 return "no tools"
-            return await self.tools[0]("abc123")
+            # Call the first tool to verify wiring works
+            return await self.tools[0](user_id="abc123")
 
-    async def fake_execute(self, tool_call):
-        return _Result({"user_id": tool_call.arguments["user_id"], "plan": "pro"})
-
-    monkeypatch.setattr(mod, "OpenAIChatClient", FakeOpenAIChatClient)
-    monkeypatch.setattr(mod, "ChatAgent", FakeChatAgent)
-    monkeypatch.setattr(mod.AgentGantry, "execute", fake_execute, raising=False)
+    monkeypatch.setattr(mod, "OpenAIResponsesClient", FakeOpenAIResponsesClient)
 
     resp = await mod.main()
     assert captured_tools, "tool wrapping was not performed"
@@ -52,6 +69,55 @@ async def test_agent_framework_example_runs_with_fakes(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_google_adk_example_runs_with_fakes(monkeypatch):
+    import sys
+    from types import ModuleType
+
+    # Stub google.adk modules so the example can import without them installed
+    for mod_name in [
+        "google", "google.adk", "google.adk.agents", "google.adk.runners",
+        "google.adk.sessions", "google.adk.tools", "google.genai",
+        "google.genai.types",
+    ]:
+        if mod_name not in sys.modules:
+            monkeypatch.setitem(sys.modules, mod_name, ModuleType(mod_name))
+
+    google_mod = sys.modules["google"]
+    adk_mod = sys.modules["google.adk"]
+    google_mod.adk = adk_mod  # type: ignore[attr-defined]
+    adk_mod.agents = sys.modules["google.adk.agents"]  # type: ignore[attr-defined]
+    adk_mod.runners = sys.modules["google.adk.runners"]  # type: ignore[attr-defined]
+    adk_mod.sessions = sys.modules["google.adk.sessions"]  # type: ignore[attr-defined]
+    adk_mod.tools = sys.modules["google.adk.tools"]  # type: ignore[attr-defined]
+
+    # Provide stub classes the example expects to import
+    class StubAgent:
+        pass
+    class StubRunner:
+        pass
+    class StubInMemorySessionService:
+        pass
+    class StubFunctionTool:
+        pass
+    class StubContent:
+        def __init__(self, *args, **kwargs):
+            pass
+    class StubPart:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    sys.modules["google.adk.agents"].Agent = StubAgent  # type: ignore[attr-defined]
+    sys.modules["google.adk.runners"].Runner = StubRunner  # type: ignore[attr-defined]
+    sys.modules["google.adk.sessions"].InMemorySessionService = StubInMemorySessionService  # type: ignore[attr-defined]
+    sys.modules["google.adk.tools"].FunctionTool = StubFunctionTool  # type: ignore[attr-defined]
+    sys.modules["google.genai"].types = sys.modules["google.genai.types"]  # type: ignore[attr-defined]
+    sys.modules["google.genai.types"].Content = StubContent  # type: ignore[attr-defined]
+    sys.modules["google.genai.types"].Part = StubPart  # type: ignore[attr-defined]
+
+    # Force reimport
+    example_mod_name = "examples.agent_frameworks.google_adk_example"
+    if example_mod_name in sys.modules:
+        del sys.modules[example_mod_name]
+
     from examples.agent_frameworks import google_adk_example as mod
 
     class FakeFunctionTool:

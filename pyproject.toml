@@ -61,7 +61,7 @@ dev = [
     "python-dotenv>=1.0.0",
 ]
 agent-frameworks = [
-    "agent-framework>=1.0.0b251120",
+    "agent-framework>=1.0.0rc1",
     "autogen-agentchat>=0.7.5",
     "autogen-ext[openai]>=0.7.5",
     "crewai>=1.6.1",

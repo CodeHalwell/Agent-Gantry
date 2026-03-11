@@ -481,3 +481,140 @@ class GroqAdapter(OpenAIAdapter):
     @property
     def dialect_name(self) -> str:
         return "groq"
+
+
+class AgentFrameworkAdapter:
+    """
+    Tool specification adapter for Microsoft Agent Framework (RC+).
+
+    Microsoft Agent Framework uses OpenAI-compatible function calling format
+    for its tool schemas. Agents accept plain Python callables as tools, but
+    the underlying schema exchange with LLM providers follows the OpenAI
+    function calling convention.
+
+    This adapter provides:
+    - Schema conversion matching AF's internal expectations
+    - Tool call payload parsing from AF's function invocation results
+    - Result formatting compatible with AF's tool result protocol
+
+    For direct tool wrapping (Python callables), use the higher-level
+    ``agent_gantry.integrations.agent_framework_bridge`` module instead.
+    """
+
+    @property
+    def dialect_name(self) -> str:
+        return "agent_framework"
+
+    def to_provider_schema(
+        self,
+        tool: ToolDefinition,
+        **options: Any,
+    ) -> dict[str, Any]:
+        """
+        Convert ToolDefinition to Microsoft Agent Framework tool schema.
+
+        AF uses OpenAI-style function schemas internally. The schema includes
+        an additional ``metadata`` key for Gantry-specific provenance info
+        that AF ignores but is useful for round-tripping.
+
+        Args:
+            tool: The tool definition to convert
+            **options: Additional options (e.g., include_metadata=True)
+
+        Returns:
+            Agent Framework compatible tool schema
+        """
+        schema: dict[str, Any] = {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters_schema,
+            },
+        }
+        if options.get("include_metadata", False):
+            schema["function"]["metadata"] = {
+                "namespace": tool.namespace,
+                "version": tool.version,
+                "source": tool.source.value if hasattr(tool.source, "value") else str(tool.source),
+            }
+        return schema
+
+    def from_provider_payload(
+        self,
+        payload: dict[str, Any],
+    ) -> ToolCallPayload:
+        """
+        Parse a Microsoft Agent Framework tool call payload.
+
+        AF emits tool calls in OpenAI-compatible format:
+        {
+            "id": "call_xxx",
+            "type": "function",
+            "function": {
+                "name": "tool_name",
+                "arguments": "{\"arg\": \"value\"}"
+            }
+        }
+
+        Also supports the simplified format used by AF's internal dispatch:
+        {
+            "name": "tool_name",
+            "arguments": {"arg": "value"}
+        }
+        """
+        # Handle full OpenAI-style format
+        if "function" in payload:
+            tool_call_id = payload.get("id")
+            function_data = payload["function"]
+            tool_name = function_data.get("name", "")
+            arguments = function_data.get("arguments", {})
+        else:
+            # Simplified AF internal format
+            tool_call_id = payload.get("id") or payload.get("call_id")
+            tool_name = payload.get("name", "")
+            arguments = payload.get("arguments", {})
+
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except json.JSONDecodeError:
+                arguments = {}
+
+        return ToolCallPayload(
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            arguments=arguments,
+            raw_payload=payload,
+        )
+
+    def to_tool_call(
+        self,
+        payload: ToolCallPayload,
+        timeout_ms: int = 30000,
+        retry_count: int = 0,
+    ) -> ToolCall:
+        return ToolCall(
+            tool_name=payload.tool_name,
+            arguments=payload.arguments,
+            timeout_ms=timeout_ms,
+            retry_count=retry_count,
+            trace_id=payload.tool_call_id,
+        )
+
+    def format_tool_result(
+        self,
+        tool_name: str,
+        result: Any,
+        tool_call_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Format result for Microsoft Agent Framework tool response."""
+        content = result if isinstance(result, str) else json.dumps(result)
+        response: dict[str, Any] = {
+            "role": "tool",
+            "content": content,
+            "name": tool_name,
+        }
+        if tool_call_id:
+            response["tool_call_id"] = tool_call_id
+        return response

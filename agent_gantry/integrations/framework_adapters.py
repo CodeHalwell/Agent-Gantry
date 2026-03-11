@@ -3,7 +3,7 @@ Thin, dependency-free adapters for popular agent frameworks.
 
 These helpers translate Agent-Gantry retrieval results into the schema shapes
 expected by common frameworks (LangGraph, Semantic Kernel, CrewAI, Google ADK,
-and Strands) while preserving dynamic top-k surfacing.
+Strands, and Microsoft Agent Framework) while preserving dynamic top-k surfacing.
 """
 
 from __future__ import annotations
@@ -13,7 +13,14 @@ from typing import Any, Literal
 from agent_gantry.core.gantry import AgentGantry
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 
-FrameworkName = Literal["langgraph", "semantic-kernel", "crew_ai", "google_adk", "strands"]
+FrameworkName = Literal[
+    "langgraph",
+    "semantic-kernel",
+    "crew_ai",
+    "google_adk",
+    "strands",
+    "agent_framework",
+]
 
 _SUPPORTED_FRAMEWORKS: set[FrameworkName] = {
     "langgraph",
@@ -21,6 +28,7 @@ _SUPPORTED_FRAMEWORKS: set[FrameworkName] = {
     "crew_ai",
     "google_adk",
     "strands",
+    "agent_framework",
 }
 
 
@@ -40,6 +48,11 @@ async def fetch_framework_tools(
     frameworks accept OpenAI-style tool/function schemas, so that shape is
     returned; the framework parameter is validated to fail fast and reserved
     for future per-framework tweaks.
+
+    For Microsoft Agent Framework, use the ``agent_framework`` dialect which
+    produces OpenAI-compatible schemas that AF's tool infrastructure expects.
+    For higher-level integration (wrapping tools as Python callables for AF
+    agents), see ``agent_gantry.integrations.agent_framework_bridge``.
     """
     if framework not in _SUPPORTED_FRAMEWORKS:
         raise ValueError(f"Unsupported framework: {framework}")
@@ -51,6 +64,9 @@ async def fetch_framework_tools(
             score_threshold=score_threshold,
         )
     )
+
+    if framework == "agent_framework":
+        return result.to_dialect("agent_framework")
 
     # LangGraph, Semantic Kernel, CrewAI, Google ADK, and Strands all accept
     # OpenAI-style tool/function schemas today, so default to that shape.
