@@ -32,7 +32,6 @@ Usage:
 
 from __future__ import annotations
 
-import functools
 import inspect
 import json
 import logging
@@ -44,6 +43,7 @@ from agent_gantry.schema.execution import ToolCall
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
+    from agent_gantry.schema.query import RetrievalResult
     from agent_gantry.schema.tool import ToolDefinition
 
 logger = logging.getLogger(__name__)
@@ -126,15 +126,11 @@ def _build_callable_for_tool(
                     default=default,
                 )
             )
-        new_params.append(
-            inspect.Parameter("kwargs", inspect.Parameter.VAR_KEYWORD)
-        )
         wrapper.__signature__ = inspect.Signature(parameters=new_params)  # type: ignore[attr-defined]
 
     wrapper.__name__ = tool_name
     wrapper.__qualname__ = tool_name
     wrapper.__doc__ = tool_desc
-    functools.update_wrapper(wrapper, wrapper)
 
     return wrapper
 
@@ -203,6 +199,48 @@ class GantryToolBridge:
         self._score_threshold = score_threshold
         self._tool_cache: dict[str, Any] = {}
 
+    async def _retrieve(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        score_threshold: float | None = None,
+        **query_kwargs: Any,
+    ) -> RetrievalResult:
+        """Shared retrieval logic for get_tools and get_tools_with_scores."""
+        from agent_gantry.schema.query import ConversationContext, ToolQuery
+
+        threshold = score_threshold if score_threshold is not None else self._score_threshold
+
+        # Separate context-level kwargs from query-level kwargs
+        context_fields = set(ConversationContext.model_fields.keys()) - {"query"}
+        context_kwargs = {k: v for k, v in query_kwargs.items() if k in context_fields}
+        tool_query_fields = set(ToolQuery.model_fields.keys()) - {"context", "limit", "score_threshold"}
+        tq_kwargs = {k: v for k, v in query_kwargs.items() if k in tool_query_fields}
+
+        return await self._gantry.retrieve(
+            ToolQuery(
+                context=ConversationContext(query=query, **context_kwargs),
+                limit=limit,
+                score_threshold=threshold,
+                **tq_kwargs,
+            )
+        )
+
+    def _get_or_build(
+        self,
+        tool_def: ToolDefinition,
+        cache: bool,
+    ) -> Any:
+        """Look up a cached wrapper or build a new one."""
+        key = _cache_key(tool_def)
+        if cache and key in self._tool_cache:
+            return self._tool_cache[key]
+        wrapper = _build_callable_for_tool(tool_def, self._gantry)
+        if cache:
+            self._tool_cache[key] = wrapper
+        return wrapper
+
     async def get_tools(
         self,
         query: str,
@@ -235,49 +273,25 @@ class GantryToolBridge:
         Returns:
             List of async callables suitable for AF agent ``tools=[...]``.
         """
-        from agent_gantry.schema.query import ConversationContext, ToolQuery
-
-        threshold = score_threshold if score_threshold is not None else self._score_threshold
-
-        # Separate context-level kwargs from query-level kwargs
-        context_fields = set(ConversationContext.model_fields.keys()) - {"query"}
-        context_kwargs = {k: v for k, v in query_kwargs.items() if k in context_fields}
-        tool_query_fields = set(ToolQuery.model_fields.keys()) - {"context", "limit", "score_threshold"}
-        tq_kwargs = {k: v for k, v in query_kwargs.items() if k in tool_query_fields}
-
-        result = await self._gantry.retrieve(
-            ToolQuery(
-                context=ConversationContext(query=query, **context_kwargs),
-                limit=limit,
-                score_threshold=threshold,
-                **tq_kwargs,
-            )
+        result = await self._retrieve(
+            query, limit=limit, score_threshold=score_threshold, **query_kwargs
         )
 
-        tools = []
-        for scored_tool in result.tools:
-            tool_def = scored_tool.tool
-            key = _cache_key(tool_def)
-            if cache and key in self._tool_cache:
-                tools.append(self._tool_cache[key])
-            else:
-                wrapper = _build_callable_for_tool(tool_def, self._gantry)
-                if cache:
-                    self._tool_cache[key] = wrapper
-                tools.append(wrapper)
+        tools = [self._get_or_build(st.tool, cache) for st in result.tools]
 
         logger.debug(
-            "GantryToolBridge: selected %d/%d tools for query '%s' (threshold=%.2f)",
+            "GantryToolBridge: selected %d/%d tools for query '%s'",
             len(tools),
             result.candidate_count,
             query[:50],
-            threshold,
         )
         return tools
 
     def wrap_tools(
         self,
         tool_definitions: list[ToolDefinition],
+        *,
+        cache: bool = True,
     ) -> list[Any]:
         """
         Wrap specific Gantry tool definitions as AF-compatible callables.
@@ -287,20 +301,12 @@ class GantryToolBridge:
 
         Args:
             tool_definitions: List of ToolDefinition objects to wrap.
+            cache: Whether to cache/reuse wrappers (default: True).
 
         Returns:
             List of async callables suitable for AF agent ``tools=[...]``.
         """
-        tools = []
-        for tool_def in tool_definitions:
-            key = _cache_key(tool_def)
-            if key in self._tool_cache:
-                tools.append(self._tool_cache[key])
-            else:
-                wrapper = _build_callable_for_tool(tool_def, self._gantry)
-                self._tool_cache[key] = wrapper
-                tools.append(wrapper)
-        return tools
+        return [self._get_or_build(td, cache) for td in tool_definitions]
 
     def wrap_single(self, tool_def: ToolDefinition) -> Any:
         """
@@ -312,12 +318,7 @@ class GantryToolBridge:
         Returns:
             An async callable suitable for AF agent ``tools=[...]``.
         """
-        key = _cache_key(tool_def)
-        if key in self._tool_cache:
-            return self._tool_cache[key]
-        wrapper = _build_callable_for_tool(tool_def, self._gantry)
-        self._tool_cache[key] = wrapper
-        return wrapper
+        return self._get_or_build(tool_def, cache=True)
 
     def clear_cache(self) -> None:
         """Clear the cached tool wrappers."""
@@ -350,34 +351,11 @@ class GantryToolBridge:
         Returns:
             List of (callable, score) tuples.
         """
-        from agent_gantry.schema.query import ConversationContext, ToolQuery
-
-        threshold = score_threshold if score_threshold is not None else self._score_threshold
-
-        context_fields = set(ConversationContext.model_fields.keys()) - {"query"}
-        context_kwargs = {k: v for k, v in query_kwargs.items() if k in context_fields}
-        tool_query_fields = set(ToolQuery.model_fields.keys()) - {"context", "limit", "score_threshold"}
-        tq_kwargs = {k: v for k, v in query_kwargs.items() if k in tool_query_fields}
-
-        result = await self._gantry.retrieve(
-            ToolQuery(
-                context=ConversationContext(query=query, **context_kwargs),
-                limit=limit,
-                score_threshold=threshold,
-                **tq_kwargs,
-            )
+        result = await self._retrieve(
+            query, limit=limit, score_threshold=score_threshold, **query_kwargs
         )
 
-        tools_with_scores = []
-        for scored_tool in result.tools:
-            tool_def = scored_tool.tool
-            key = _cache_key(tool_def)
-            if cache and key in self._tool_cache:
-                wrapper = self._tool_cache[key]
-            else:
-                wrapper = _build_callable_for_tool(tool_def, self._gantry)
-                if cache:
-                    self._tool_cache[key] = wrapper
-            tools_with_scores.append((wrapper, scored_tool.final_score))
-
-        return tools_with_scores
+        return [
+            (self._get_or_build(st.tool, cache), st.final_score)
+            for st in result.tools
+        ]

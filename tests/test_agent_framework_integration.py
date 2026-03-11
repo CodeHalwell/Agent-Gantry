@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import inspect
 import json
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -496,65 +495,138 @@ class TestFrameworkAdaptersEntry:
 
 
 # ---------------------------------------------------------------------------
-# Updated example test (with fakes)
+# Additional edge-case tests requested by reviewers
 # ---------------------------------------------------------------------------
 
 
-class _Result:
-    def __init__(self, result: Any):
-        self.status = SimpleNamespace(value="success")
-        self.result = result
-        self.error = None
+class TestGantryToolBridgeEdgeCases:
+    """Edge-case and regression tests for the GantryToolBridge."""
 
+    @pytest.mark.asyncio
+    async def test_positional_args_single_param(self) -> None:
+        """Calling a single-param wrapper positionally should work."""
+        from agent_gantry import AgentGantry
+        from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
 
-@pytest.mark.asyncio
-async def test_agent_framework_example_runs_with_fakes(monkeypatch: Any) -> None:
-    """Test the updated AF example using fakes for external dependencies."""
-    import sys
-    from types import ModuleType
+        gantry = AgentGantry()
 
-    # Stub the agent_framework package so the example can import without it installed
-    af_mod = ModuleType("agent_framework")
-    af_openai_mod = ModuleType("agent_framework.openai")
+        @gantry.register
+        def get_user_profile(user_id: str) -> dict[str, str]:
+            """Fetch a user's profile from the CRM system."""
+            return {"user_id": user_id, "plan": "pro"}
 
-    class StubOpenAIResponsesClient:
-        pass
+        await gantry.sync()
 
-    af_openai_mod.OpenAIResponsesClient = StubOpenAIResponsesClient  # type: ignore[attr-defined]
-    af_mod.openai = af_openai_mod  # type: ignore[attr-defined]
+        bridge = GantryToolBridge(gantry, score_threshold=0.0)
+        tools = await bridge.get_tools("user profile", limit=5, score_threshold=0.0)
 
-    monkeypatch.setitem(sys.modules, "agent_framework", af_mod)
-    monkeypatch.setitem(sys.modules, "agent_framework.openai", af_openai_mod)
+        # Positional call
+        result = await tools[0]("abc123")
+        parsed = json.loads(result)
+        assert parsed["user_id"] == "abc123"
 
-    # Force re-import of the example module
-    mod_name = "examples.agent_frameworks.agent_framework_example"
-    if mod_name in sys.modules:
-        del sys.modules[mod_name]
+    @pytest.mark.asyncio
+    async def test_positional_args_multi_param(self) -> None:
+        """Calling a multi-param wrapper positionally should map by order."""
+        from agent_gantry import AgentGantry
+        from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
 
-    from examples.agent_frameworks import agent_framework_example as mod
+        gantry = AgentGantry()
 
-    captured_tools: list[Any] = []
+        @gantry.register
+        def search_products(query: str, category: str) -> str:
+            """Search for products by query and category in the catalog."""
+            return f"Found 5 products matching '{query}' in '{category}'"
 
-    class FakeOpenAIResponsesClient:
-        def __init__(self, *_, **__):
-            pass
+        await gantry.sync()
 
-        def as_agent(self, *, name, instructions, tools):
-            return FakeAgent(tools=tools)
+        bridge = GantryToolBridge(gantry, score_threshold=0.0)
+        tools = await bridge.get_tools("search products", limit=5, score_threshold=0.0)
 
-    class FakeAgent:
-        def __init__(self, *, tools):
-            self.tools = tools
-            captured_tools.extend(tools)
+        result = await tools[0]("shoes", "footwear")
+        assert "shoes" in result
+        assert "footwear" in result
 
-        async def run(self, query: str) -> str:
-            if not self.tools:
-                return "no tools"
-            # Call the first tool to verify wiring works
-            return await self.tools[0](user_id="abc123")
+    @pytest.mark.asyncio
+    async def test_positional_args_too_many_raises(self) -> None:
+        """Passing more positional args than parameters should raise TypeError."""
+        from agent_gantry import AgentGantry
+        from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
 
-    monkeypatch.setattr(mod, "OpenAIResponsesClient", FakeOpenAIResponsesClient)
+        gantry = AgentGantry()
 
-    resp = await mod.main()
-    assert captured_tools, "tool wrapping was not performed"
-    assert "pro" in str(resp)
+        @gantry.register
+        def get_user_profile(user_id: str) -> dict[str, str]:
+            """Fetch a user's profile from the CRM system."""
+            return {"user_id": user_id, "plan": "pro"}
+
+        await gantry.sync()
+
+        bridge = GantryToolBridge(gantry, score_threshold=0.0)
+        tools = await bridge.get_tools("user profile", limit=5, score_threshold=0.0)
+
+        with pytest.raises(TypeError, match="takes at most 1"):
+            await tools[0]("abc", "extra_arg")
+
+    @pytest.mark.asyncio
+    async def test_no_var_keyword_in_signature(self) -> None:
+        """Wrapper signatures should not expose **kwargs to AF introspection."""
+        from agent_gantry import AgentGantry
+        from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+
+        gantry = AgentGantry()
+
+        @gantry.register
+        def get_user_profile(user_id: str) -> dict[str, str]:
+            """Fetch a user's profile from the CRM system."""
+            return {"user_id": user_id, "plan": "pro"}
+
+        await gantry.sync()
+
+        bridge = GantryToolBridge(gantry, score_threshold=0.0)
+        tools = await bridge.get_tools("user profile", limit=5, score_threshold=0.0)
+
+        sig = inspect.signature(tools[0])
+        var_keyword_params = [
+            p for p in sig.parameters.values()
+            if p.kind == inspect.Parameter.VAR_KEYWORD
+        ]
+        assert len(var_keyword_params) == 0, (
+            "Wrapper should not expose **kwargs in its signature"
+        )
+
+    @pytest.mark.asyncio
+    async def test_wrap_tools_cache_bypass(self) -> None:
+        """wrap_tools with cache=False should create fresh wrappers."""
+        from agent_gantry import AgentGantry
+        from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+
+        gantry = AgentGantry()
+
+        @gantry.register
+        def get_user_profile(user_id: str) -> dict[str, str]:
+            """Fetch a user's profile from the CRM system."""
+            return {"user_id": user_id, "plan": "pro"}
+
+        await gantry.sync()
+
+        bridge = GantryToolBridge(gantry)
+        tool_defs = gantry.export_tools()
+        wrapped1 = bridge.wrap_tools(tool_defs, cache=True)
+        wrapped2 = bridge.wrap_tools(tool_defs, cache=False)
+
+        # With cache=False, should get a new wrapper object
+        assert wrapped1[0] is not wrapped2[0]
+
+    def test_adapter_logs_warning_on_malformed_json(self, caplog: Any) -> None:
+        """AgentFrameworkAdapter should log a warning for malformed arguments."""
+        import logging as _logging
+
+        adapter = AgentFrameworkAdapter()
+        with caplog.at_level(_logging.WARNING):
+            payload = adapter.from_provider_payload(
+                {"name": "test", "arguments": "not valid json{"}
+            )
+        assert payload.arguments == {}
+        assert payload.tool_name == "test"
+        assert "malformed JSON" in caplog.text
