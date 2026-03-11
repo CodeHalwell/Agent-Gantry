@@ -80,9 +80,7 @@ class VectorStoreAdapter(Protocol):
         ...
 
     @abstractmethod
-    async def get_by_name(
-        self, name: str, namespace: str = "default"
-    ) -> ToolDefinition | None:
+    async def get_by_name(self, name: str, namespace: str = "default") -> ToolDefinition | None:
         """
         Get a tool by name.
 

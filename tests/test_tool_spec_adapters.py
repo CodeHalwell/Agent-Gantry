@@ -105,14 +105,16 @@ class TestOpenAIAdapter:
     def test_from_provider_payload(self) -> None:
         """Test parsing OpenAI tool call payload."""
         adapter = OpenAIAdapter()
-        payload = adapter.from_provider_payload({
-            "id": "call_abc123",
-            "type": "function",
-            "function": {
-                "name": "get_weather",
-                "arguments": '{"city": "London"}',
-            },
-        })
+        payload = adapter.from_provider_payload(
+            {
+                "id": "call_abc123",
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "arguments": '{"city": "London"}',
+                },
+            }
+        )
 
         assert payload.tool_name == "get_weather"
         assert payload.tool_call_id == "call_abc123"
@@ -121,14 +123,16 @@ class TestOpenAIAdapter:
     def test_from_provider_payload_invalid_json(self) -> None:
         """Test parsing payload with invalid JSON arguments."""
         adapter = OpenAIAdapter()
-        payload = adapter.from_provider_payload({
-            "id": "call_abc123",
-            "type": "function",
-            "function": {
-                "name": "get_weather",
-                "arguments": "invalid json",
-            },
-        })
+        payload = adapter.from_provider_payload(
+            {
+                "id": "call_abc123",
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "arguments": "invalid json",
+                },
+            }
+        )
 
         assert payload.tool_name == "get_weather"
         assert payload.arguments == {}
@@ -194,12 +198,14 @@ class TestOpenAIResponsesAdapter:
     def test_from_provider_payload(self) -> None:
         """Test parsing OpenAI Responses API function_call payload."""
         adapter = OpenAIResponsesAdapter()
-        payload = adapter.from_provider_payload({
-            "type": "function_call",
-            "call_id": "call_abc123",
-            "name": "get_weather",
-            "arguments": '{"city": "London"}',
-        })
+        payload = adapter.from_provider_payload(
+            {
+                "type": "function_call",
+                "call_id": "call_abc123",
+                "name": "get_weather",
+                "arguments": '{"city": "London"}',
+            }
+        )
 
         assert payload.tool_name == "get_weather"
         assert payload.tool_call_id == "call_abc123"
@@ -208,12 +214,14 @@ class TestOpenAIResponsesAdapter:
     def test_from_provider_payload_invalid_json(self) -> None:
         """Test parsing payload with invalid JSON arguments."""
         adapter = OpenAIResponsesAdapter()
-        payload = adapter.from_provider_payload({
-            "type": "function_call",
-            "call_id": "call_abc123",
-            "name": "get_weather",
-            "arguments": "invalid json",
-        })
+        payload = adapter.from_provider_payload(
+            {
+                "type": "function_call",
+                "call_id": "call_abc123",
+                "name": "get_weather",
+                "arguments": "invalid json",
+            }
+        )
 
         assert payload.tool_name == "get_weather"
         assert payload.arguments == {}
@@ -280,12 +288,14 @@ class TestAnthropicAdapter:
     def test_from_provider_payload(self) -> None:
         """Test parsing Anthropic tool_use block."""
         adapter = AnthropicAdapter()
-        payload = adapter.from_provider_payload({
-            "type": "tool_use",
-            "id": "toolu_abc123",
-            "name": "get_weather",
-            "input": {"city": "Paris"},
-        })
+        payload = adapter.from_provider_payload(
+            {
+                "type": "tool_use",
+                "id": "toolu_abc123",
+                "name": "get_weather",
+                "input": {"city": "Paris"},
+            }
+        )
 
         assert payload.tool_name == "get_weather"
         assert payload.tool_call_id == "toolu_abc123"
@@ -325,10 +335,12 @@ class TestGeminiAdapter:
     def test_from_provider_payload(self) -> None:
         """Test parsing Gemini function call."""
         adapter = GeminiAdapter()
-        payload = adapter.from_provider_payload({
-            "name": "get_weather",
-            "args": {"city": "Tokyo"},
-        })
+        payload = adapter.from_provider_payload(
+            {
+                "name": "get_weather",
+                "args": {"city": "Tokyo"},
+            }
+        )
 
         assert payload.tool_name == "get_weather"
         assert payload.tool_call_id is None  # Gemini doesn't provide call IDs
@@ -367,14 +379,16 @@ class TestMistralAdapter:
     def test_from_provider_payload(self) -> None:
         """Test parsing Mistral tool call."""
         adapter = MistralAdapter()
-        payload = adapter.from_provider_payload({
-            "id": "call_123",
-            "type": "function",
-            "function": {
-                "name": "get_weather",
-                "arguments": '{"city": "Berlin"}',
-            },
-        })
+        payload = adapter.from_provider_payload(
+            {
+                "id": "call_123",
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "arguments": '{"city": "Berlin"}',
+                },
+            }
+        )
 
         assert payload.tool_name == "get_weather"
         assert payload.arguments == {"city": "Berlin"}
@@ -400,14 +414,16 @@ class TestGroqAdapter:
     def test_from_provider_payload(self) -> None:
         """Test parsing Groq tool call."""
         adapter = GroqAdapter()
-        payload = adapter.from_provider_payload({
-            "id": "call_groq_123",
-            "type": "function",
-            "function": {
-                "name": "get_weather",
-                "arguments": '{"city": "Sydney"}',
-            },
-        })
+        payload = adapter.from_provider_payload(
+            {
+                "id": "call_groq_123",
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "arguments": '{"city": "Sydney"}',
+                },
+            }
+        )
 
         assert payload.tool_name == "get_weather"
         assert payload.arguments == {"city": "Sydney"}
@@ -640,9 +656,7 @@ class TestRetrievalResultToDialect:
 
         await gantry.sync()
 
-        result = await gantry.retrieve_tools(
-            "send email", limit=1, dialect="openai_responses"
-        )
+        result = await gantry.retrieve_tools("send email", limit=1, dialect="openai_responses")
 
         assert len(result) >= 1
         # Responses API format has name at top level

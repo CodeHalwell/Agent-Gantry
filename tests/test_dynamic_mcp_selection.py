@@ -157,9 +157,7 @@ class TestMCPRegistry:
         assert len(ns1_servers) == 1
         assert ns1_servers[0].name == "server1"
 
-    def test_delete_server(
-        self, registry: MCPRegistry, sample_server: MCPServerDefinition
-    ) -> None:
+    def test_delete_server(self, registry: MCPRegistry, sample_server: MCPServerDefinition) -> None:
         """Test server deletion."""
         registry.register_server(sample_server)
         assert registry.server_count == 1
@@ -184,9 +182,7 @@ class TestMCPRegistry:
         registry.clear_pending()
         assert len(registry.get_pending()) == 0
 
-    def test_update_health(
-        self, registry: MCPRegistry, sample_server: MCPServerDefinition
-    ) -> None:
+    def test_update_health(self, registry: MCPRegistry, sample_server: MCPServerDefinition) -> None:
         """Test updating server health."""
         registry.register_server(sample_server)
 
@@ -203,9 +199,7 @@ class TestMCPRegistry:
         assert server.health.available is False
         assert server.health.consecutive_failures == 3
 
-    def test_get_client(
-        self, registry: MCPRegistry, sample_server: MCPServerDefinition
-    ) -> None:
+    def test_get_client(self, registry: MCPRegistry, sample_server: MCPServerDefinition) -> None:
         """Test lazy client instantiation."""
         registry.register_server(sample_server)
 
@@ -237,9 +231,7 @@ class TestMCPRouter:
         return embedder
 
     @pytest.fixture
-    def router(
-        self, mock_vector_store: MagicMock, mock_embedder: MagicMock
-    ) -> MCPRouter:
+    def router(self, mock_vector_store: MagicMock, mock_embedder: MagicMock) -> MCPRouter:
         """Create an MCP router with mocks."""
         return MCPRouter(
             vector_store=mock_vector_store,
@@ -479,9 +471,7 @@ class TestAgentGantryMCPIntegration:
             assert server.health.available is True
 
     @pytest.mark.asyncio
-    async def test_discover_tools_failure_updates_health(
-        self, gantry: AgentGantry
-    ) -> None:
+    async def test_discover_tools_failure_updates_health(self, gantry: AgentGantry) -> None:
         """Test that tool discovery failure updates server health."""
         gantry.register_mcp_server(
             name="failing_server",
@@ -493,9 +483,7 @@ class TestAgentGantryMCPIntegration:
             "agent_gantry.core.mcp_registry.MCPClient"
         ):
             mock_client = AsyncMock()
-            mock_client.list_tools = AsyncMock(
-                side_effect=Exception("Connection failed")
-            )
+            mock_client.list_tools = AsyncMock(side_effect=Exception("Connection failed"))
 
             gantry._mcp_registry._clients["default.failing_server"] = mock_client
 
@@ -510,9 +498,7 @@ class TestAgentGantryMCPIntegration:
             assert server.health.consecutive_failures == 1
 
     @pytest.mark.asyncio
-    async def test_backward_compatibility_add_mcp_server(
-        self, gantry: AgentGantry
-    ) -> None:
+    async def test_backward_compatibility_add_mcp_server(self, gantry: AgentGantry) -> None:
         """Test that add_mcp_server() still works as before."""
         from agent_gantry.schema.config import MCPServerConfig
 
@@ -522,9 +508,7 @@ class TestAgentGantryMCPIntegration:
             namespace="default",
         )
 
-        with patch(
-            "agent_gantry.adapters.executors.mcp_client.MCPClient"
-        ) as mock_client_class:
+        with patch("agent_gantry.adapters.executors.mcp_client.MCPClient") as mock_client_class:
             mock_client = AsyncMock()
             from agent_gantry.schema.tool import ToolDefinition
 

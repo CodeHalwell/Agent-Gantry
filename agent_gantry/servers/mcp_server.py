@@ -72,9 +72,7 @@ class MCPServer:
                 return await self._handle_execute_tool(arguments)
             else:
                 # Direct tool execution (static mode)
-                return await self._handle_execute_tool(
-                    {"tool_name": name, "arguments": arguments}
-                )
+                return await self._handle_execute_tool({"tool_name": name, "arguments": arguments})
 
     def _get_meta_tools(self) -> list[Tool]:
         """Return the meta-tools for dynamic tool discovery."""
@@ -140,9 +138,7 @@ class MCPServer:
             inputSchema=tool_def.parameters_schema,
         )
 
-    async def _handle_find_relevant_tools(
-        self, arguments: dict[str, Any]
-    ) -> list[dict[str, Any]]:
+    async def _handle_find_relevant_tools(self, arguments: dict[str, Any]) -> list[dict[str, Any]]:
         """
         Handle find_relevant_tools meta-tool.
 
@@ -178,9 +174,7 @@ class MCPServer:
 
         return tools_info
 
-    async def _handle_execute_tool(
-        self, arguments: dict[str, Any]
-    ) -> list[dict[str, Any]]:
+    async def _handle_execute_tool(self, arguments: dict[str, Any]) -> list[dict[str, Any]]:
         """
         Handle execute_tool meta-tool or direct tool execution.
 

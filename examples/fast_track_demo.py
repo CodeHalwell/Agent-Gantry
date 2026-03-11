@@ -4,11 +4,13 @@ Fast Track Demo: Upgrade vanilla OpenAI to semantic tools in ~10 lines
 This example shows how to take a basic OpenAI chat completion call and
 upgrade it to use Agent-Gantry's semantic tool routing with minimal changes.
 """
+
 import asyncio
 import os
 
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
     pass  # dotenv is optional
@@ -103,17 +105,17 @@ response = await chat("What's the weather in Tokyo?")
         # Register tools
         @gantry.register
         def get_weather(city: str) -> str:
-            '''Get current weather for a city.'''
+            """Get current weather for a city."""
             return f"Weather in {city}: Sunny, 72°F"
 
         @gantry.register
         def get_stock_price(symbol: str) -> str:
-            '''Get current stock price for a symbol.'''
+            """Get current stock price for a symbol."""
             return f"{symbol}: $150.00"
 
         @gantry.register
         def send_email(to: str, subject: str) -> str:
-            '''Send an email.'''
+            """Send an email."""
             return f"Email sent to {to}"
 
         # Add decorator
@@ -123,9 +125,7 @@ response = await chat("What's the weather in Tokyo?")
             if tools:
                 print(f"   [Agent-Gantry] Tools: {[t['function']['name'] for t in tools]}")
             return await client.chat.completions.create(
-                model="gpt-4o",
-                messages=[{"role": "user", "content": prompt}],
-                tools=tools
+                model="gpt-4o", messages=[{"role": "user", "content": prompt}], tools=tools
             )
 
         # Test queries
@@ -149,9 +149,9 @@ response = await chat("What's the weather in Tokyo?")
     # ============================================================================
     # Summary
     # ============================================================================
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("📊 Summary: What You Get")
-    print("="*70)
+    print("=" * 70)
     print("""
 ✅ Semantic Tool Selection: Only relevant tools sent to LLM
 ✅ Token Cost Reduction: ~79% fewer tokens (benchmark proven)
@@ -166,7 +166,9 @@ Total Lines Added: ~10 lines (3 imports, 1 init, 3 tool registrations, 1 decorat
 
     print("\n🔗 Next Steps:")
     print("   - See examples/llm_integration/ for provider-specific examples")
-    print("   - Run examples/basics/plug_and_play_semantic_filter.py to import tools from a module with one decorator")
+    print(
+        "   - Run examples/basics/plug_and_play_semantic_filter.py to import tools from a module with one decorator"
+    )
     print("   - Read docs/semantic_tool_decorator.md for advanced usage")
     print("   - Try examples/agent_frameworks/ for LangChain, AutoGen, CrewAI")
 

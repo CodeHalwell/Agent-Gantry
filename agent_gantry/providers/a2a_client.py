@@ -66,9 +66,7 @@ class A2AClient:
                 )
                 return self._agent_card
         except Exception as e:
-            raise RuntimeError(
-                f"Failed to discover A2A agent at {self._base_url}: {e}"
-            ) from e
+            raise RuntimeError(f"Failed to discover A2A agent at {self._base_url}: {e}") from e
 
     def _generate_tool_name(self, skill_id: str) -> str:
         """
@@ -203,6 +201,4 @@ class A2AClient:
                 return task_result
 
         except Exception as e:
-            raise RuntimeError(
-                f"Failed to send task to A2A agent {self.config.name}: {e}"
-            ) from e
+            raise RuntimeError(f"Failed to send task to A2A agent {self.config.name}: {e}") from e

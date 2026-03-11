@@ -70,9 +70,7 @@ class NomicEmbedder(EmbeddingAdapter):
 
         # Validate dimension
         if dim < 1 or dim > self.FULL_DIMENSION:
-            raise ValueError(
-                f"dimension must be between 1 and {self.FULL_DIMENSION}, got {dim}"
-            )
+            raise ValueError(f"dimension must be between 1 and {self.FULL_DIMENSION}, got {dim}")
         if dim not in self.MATRYOSHKA_DIMS:
             import warnings
 
@@ -175,8 +173,7 @@ class NomicEmbedder(EmbeddingAdapter):
         # Generate embedding (run in thread pool to avoid blocking event loop)
         loop = asyncio.get_event_loop()
         embedding = await loop.run_in_executor(
-            None,
-            lambda: self._model.encode([prefixed_text], normalize_embeddings=True)
+            None, lambda: self._model.encode([prefixed_text], normalize_embeddings=True)
         )
         result = embedding.tolist()
 
@@ -216,8 +213,7 @@ class NomicEmbedder(EmbeddingAdapter):
 
         loop = asyncio.get_event_loop()
         embeddings = await loop.run_in_executor(
-            None,
-            lambda: self._model.encode(prefixed_texts, **kwargs)
+            None, lambda: self._model.encode(prefixed_texts, **kwargs)
         )
         result = embeddings.tolist()
 
@@ -248,8 +244,7 @@ class NomicEmbedder(EmbeddingAdapter):
         # Generate embedding (run in thread pool to avoid blocking event loop)
         loop = asyncio.get_event_loop()
         embedding = await loop.run_in_executor(
-            None,
-            lambda: self._model.encode([prefixed_query], normalize_embeddings=True)
+            None, lambda: self._model.encode([prefixed_query], normalize_embeddings=True)
         )
         result = embedding.tolist()
 
@@ -270,8 +265,7 @@ class NomicEmbedder(EmbeddingAdapter):
             # Quick sanity check (run in thread pool to avoid blocking event loop)
             loop = asyncio.get_event_loop()
             test_embedding = await loop.run_in_executor(
-                None,
-                lambda: self._model.encode(["test"], normalize_embeddings=True)
+                None, lambda: self._model.encode(["test"], normalize_embeddings=True)
             )
             return len(test_embedding[0]) > 0
         except Exception:

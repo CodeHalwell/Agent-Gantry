@@ -11,6 +11,7 @@ from agent_gantry.schema.execution import ToolCall
 
 load_dotenv()
 
+
 async def main():
     # 1. Initialize Agent-Gantry
     gantry = AgentGantry()
@@ -44,14 +45,15 @@ async def main():
     # 4. Register Gantry tools as Semantic Kernel functions
     class GantryPlugin:
         @kernel_function(
-            name="calculate_roi",
-            description="Calculate the Return on Investment (ROI) percentage."
+            name="calculate_roi", description="Calculate the Return on Investment (ROI) percentage."
         )
         async def calculate_roi(self, investment: float, return_amount: float) -> float:
-            result = await gantry.execute(ToolCall(
-                tool_name="calculate_roi",
-                arguments={"investment": investment, "return_amount": return_amount}
-            ))
+            result = await gantry.execute(
+                ToolCall(
+                    tool_name="calculate_roi",
+                    arguments={"investment": investment, "return_amount": return_amount},
+                )
+            )
             return result.result
 
     kernel.add_plugin(GantryPlugin(), plugin_name="Gantry")
@@ -65,12 +67,10 @@ async def main():
     settings = OpenAIChatPromptExecutionSettings(service_id=service_id)
     settings.function_choice_behavior = FunctionChoiceBehavior.Auto()
 
-    result = await kernel.invoke_prompt(
-        prompt=user_query,
-        settings=settings
-    )
+    result = await kernel.invoke_prompt(prompt=user_query, settings=settings)
 
     print(f"\nResult: {result}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

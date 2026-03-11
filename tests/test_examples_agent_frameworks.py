@@ -71,9 +71,7 @@ async def test_google_adk_example_runs_with_fakes(monkeypatch):
             self.app_name = app_name
             self.session_service = session_service
 
-        def run_async(
-            self, *, user_id: str, session_id: str, new_message: Any
-        ) -> Any:
+        def run_async(self, *, user_id: str, session_id: str, new_message: Any) -> Any:
             async def _aiter():
                 # Execute the first tool to simulate ADK calling it
                 tool = self.agent.tools[0]

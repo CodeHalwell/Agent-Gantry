@@ -13,9 +13,11 @@ load_dotenv()
 # Try to import OpenAI, but we'll provide a mock fallback if no API key is present
 try:
     from openai import AsyncOpenAI
+
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
+
 
 async def main():
     print("=== Agent-Gantry LLM Integration Demo ===\n")
@@ -24,6 +26,7 @@ async def main():
     print("1. Initializing AgentGantry with Nomic Embeddings...")
     try:
         from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+
         embedder = NomicEmbedder(dimension=256)
         gantry = AgentGantry(embedder=embedder)
     except ImportError:
@@ -70,7 +73,9 @@ async def main():
         # We limit to 2 tools to demonstrate strict context filtering
         relevant_tools = await gantry.retrieve_tools(user_query, limit=2, score_threshold=0.4)
 
-        print(f"   [Gantry] Context Reduction: {gantry.tool_count} total -> {len(relevant_tools)} relevant")
+        print(
+            f"   [Gantry] Context Reduction: {gantry.tool_count} total -> {len(relevant_tools)} relevant"
+        )
         for t in relevant_tools:
             print(f"   [Gantry] Selected: {t['function']['name']}")
 
@@ -88,10 +93,10 @@ async def main():
 
             # Pass the filtered list of tools to the LLM
             response = await client.chat.completions.create(
-                model="gpt-4o", # or gpt-3.5-turbo
+                model="gpt-4o",  # or gpt-3.5-turbo
                 messages=messages,
                 tools=relevant_tools if relevant_tools else None,
-                tool_choice="auto" if relevant_tools else None
+                tool_choice="auto" if relevant_tools else None,
             )
 
             message = response.choices[0].message
@@ -101,24 +106,34 @@ async def main():
             print("   [LLM] Mocking LLM response (Set OPENAI_API_KEY to use real LLM)...")
             # Simple mock logic for demonstration purposes
             tool_calls = []
-            if "50 + 20" in user_query and any(t['function']['name'] == 'add_numbers' for t in relevant_tools):
+            if "50 + 20" in user_query and any(
+                t["function"]["name"] == "add_numbers" for t in relevant_tools
+            ):
                 # Mock a tool call object structure similar to OpenAI's
                 class MockToolCall:
                     def __init__(self, name, args):
                         self.id = "call_123"
-                        self.function = type('obj', (object,), {'name': name, 'arguments': json.dumps(args)})
-                        self.type = 'function'
+                        self.function = type(
+                            "obj", (object,), {"name": name, "arguments": json.dumps(args)}
+                        )
+                        self.type = "function"
 
                 tool_calls = [MockToolCall("add_numbers", {"a": 50, "b": 20})]
                 print("   [LLM] Generated tool call: add_numbers(a=50, b=20)")
-            elif "weather" in user_query.lower() and any(t['function']['name'] == 'get_weather' for t in relevant_tools):
-                 class MockToolCall:
+            elif "weather" in user_query.lower() and any(
+                t["function"]["name"] == "get_weather" for t in relevant_tools
+            ):
+
+                class MockToolCall:
                     def __init__(self, name, args):
                         self.id = "call_456"
-                        self.function = type('obj', (object,), {'name': name, 'arguments': json.dumps(args)})
-                        self.type = 'function'
-                 tool_calls = [MockToolCall("get_weather", {"city": "London"})]
-                 print("   [LLM] Generated tool call: get_weather(city='London')")
+                        self.function = type(
+                            "obj", (object,), {"name": name, "arguments": json.dumps(args)}
+                        )
+                        self.type = "function"
+
+                tool_calls = [MockToolCall("get_weather", {"city": "London"})]
+                print("   [LLM] Generated tool call: get_weather(city='London')")
 
         # C. EXECUTION: Execute the tool calls securely via Gantry
         if tool_calls:
@@ -129,10 +144,7 @@ async def main():
                 print(f"   [Gantry] Executing tool: {fn_name}")
 
                 # Execute using AgentGantry's secure executor
-                result = await gantry.execute(ToolCall(
-                    tool_name=fn_name,
-                    arguments=fn_args
-                ))
+                result = await gantry.execute(ToolCall(tool_name=fn_name, arguments=fn_args))
 
                 print(f"   [Result] {result.result}")
         else:
@@ -143,7 +155,10 @@ async def main():
     # 4. Run scenarios
     await process_user_query("What is 50 + 20?")
     await process_user_query("What's the weather in London?")
-    await process_user_query("Tell me a joke.") # Should retrieve no tools or irrelevant ones, LLM handles it
+    await process_user_query(
+        "Tell me a joke."
+    )  # Should retrieve no tools or irrelevant ones, LLM handles it
+
 
 if __name__ == "__main__":
     asyncio.run(main())

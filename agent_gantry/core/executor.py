@@ -528,9 +528,7 @@ class ExecutionEngine:
 
         # Update average latency
         n = tool.health.total_calls
-        tool.health.avg_latency_ms = (
-            (tool.health.avg_latency_ms * (n - 1) + latency_ms) / n
-        )
+        tool.health.avg_latency_ms = (tool.health.avg_latency_ms * (n - 1) + latency_ms) / n
 
         # Update success rate
         tool.health.success_rate = (tool.health.success_rate * (n - 1) + 1) / n

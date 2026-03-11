@@ -52,7 +52,17 @@ INTENT_TAG_MAPPING: dict[TaskIntent, list[str]] = {
     TaskIntent.DATA_QUERY: ["query", "search", "get", "list", "fetch", "read"],
     TaskIntent.DATA_MUTATION: ["create", "update", "delete", "write", "modify"],
     TaskIntent.ANALYSIS: ["analyze", "compute", "aggregate", "calculate", "report"],
-    TaskIntent.COMMUNICATION: ["email", "message", "notify", "send", "chat", "dm", "teams", "discord", "communicate"],
+    TaskIntent.COMMUNICATION: [
+        "email",
+        "message",
+        "notify",
+        "send",
+        "chat",
+        "dm",
+        "teams",
+        "discord",
+        "communicate",
+    ],
     TaskIntent.FILE_OPERATIONS: ["file", "upload", "download", "convert", "export"],
     TaskIntent.CUSTOMER_SUPPORT: ["ticket", "refund", "support", "customer"],
     TaskIntent.ADMIN: ["user", "permission", "setting", "config", "admin"],
@@ -115,9 +125,7 @@ def compute_final_score(signals: RoutingSignals, weights: RoutingWeights) -> flo
         + signals.cost_score * weights.cost
     )
     penalties = (
-        signals.already_used_penalty
-        + signals.already_failed_penalty
-        + signals.deprecated_penalty
+        signals.already_used_penalty + signals.already_failed_penalty + signals.deprecated_penalty
     )
     return max(0.0, base_score - penalties)
 
@@ -366,7 +374,9 @@ class SemanticRouter:
         intent_match = 0.0
         if intent != TaskIntent.UNKNOWN:
             intent_keywords = INTENT_TAG_MAPPING.get(intent, [])
-            tool_text = f"{tool.name.lower()} {tool.description.lower()} {' '.join(tool.tags).lower()}"
+            tool_text = (
+                f"{tool.name.lower()} {tool.description.lower()} {' '.join(tool.tags).lower()}"
+            )
             if any(kw in tool_text for kw in intent_keywords):
                 intent_match = 1.0
 

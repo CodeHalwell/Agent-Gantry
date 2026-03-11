@@ -13,6 +13,7 @@ load_dotenv()
 # Try to import OpenAI
 try:
     from openai import AsyncOpenAI
+
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
@@ -20,9 +21,11 @@ except ImportError:
 # Try to import tiktoken for exact token counting
 try:
     import tiktoken
+
     TIKTOKEN_AVAILABLE = True
 except ImportError:
     TIKTOKEN_AVAILABLE = False
+
 
 def count_tokens(tools: list[dict[str, Any]], model: str = "gpt-3.5-turbo") -> int:
     """
@@ -39,8 +42,9 @@ def count_tokens(tools: list[dict[str, Any]], model: str = "gpt-3.5-turbo") -> i
         encoding = tiktoken.get_encoding("cl100k_base")
 
     # Use compact separators to match API behavior closer
-    json_str = json.dumps(tools, separators=(',', ':'))
+    json_str = json.dumps(tools, separators=(",", ":"))
     return len(encoding.encode(json_str))
+
 
 def estimate_tokens(tools: list[dict[str, Any]]) -> int:
     """
@@ -49,6 +53,7 @@ def estimate_tokens(tools: list[dict[str, Any]]) -> int:
     """
     return count_tokens(tools)
 
+
 async def main():
     print("=== Agent-Gantry Token Savings Demo ===\n")
 
@@ -56,6 +61,7 @@ async def main():
     print("1. Initializing AgentGantry...")
     try:
         from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+
         embedder = NomicEmbedder(dimension=256)
         gantry = AgentGantry(embedder=embedder)
         print("   Using Nomic Embeddings (High Accuracy)")
@@ -194,7 +200,7 @@ async def main():
                 model="gpt-3.5-turbo",
                 messages=[{"role": "user", "content": user_query}],
                 tools=all_tools_schema,
-                tool_choice="auto"
+                tool_choice="auto",
             )
             usage_a = response_a.usage.prompt_tokens
             print(f"   [Actual API Usage] Total Prompt Tokens: {usage_a}")
@@ -205,7 +211,7 @@ async def main():
 
         except Exception as e:
             print(f"   [API Error] {e}")
-            usage_a = est_tokens_all # Fallback for comparison
+            usage_a = est_tokens_all  # Fallback for comparison
     else:
         print("   [Skipping API Call] OPENAI_API_KEY not found or openai not installed.")
         usage_a = est_tokens_all
@@ -216,7 +222,9 @@ async def main():
     print("--- Scenario B: Using Agent Gantry (Top 2 Tools) ---")
 
     # Retrieve only relevant tools
-    relevant_tools_schema = await gantry.retrieve_tools(user_query, limit=2, score_threshold=threshold)
+    relevant_tools_schema = await gantry.retrieve_tools(
+        user_query, limit=2, score_threshold=threshold
+    )
 
     est_tokens_filtered = count_tokens(relevant_tools_schema)
     print(f"   Tools passed: {len(relevant_tools_schema)}")
@@ -230,7 +238,7 @@ async def main():
                 model="gpt-3.5-turbo",
                 messages=[{"role": "user", "content": user_query}],
                 tools=relevant_tools_schema,
-                tool_choice="auto"
+                tool_choice="auto",
             )
             usage_b = response_b.usage.prompt_tokens
             print(f"   [Actual API Usage] Total Prompt Tokens: {usage_b}")
@@ -251,6 +259,7 @@ async def main():
         savings = usage_a - est_tokens_filtered
         percent = (savings / usage_a) * 100 if usage_a > 0 else 0
         print(f"\n   >>> ESTIMATED SAVINGS: ~{savings} tokens ({percent:.1f}%) <<<")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -144,6 +144,7 @@ class AgentGantry:
         self._llm_client = None
         if self._config.routing.use_llm_for_intent:
             from agent_gantry.adapters.llm_client import LLMClient
+
             try:
                 self._llm_client = LLMClient(self._config.routing.llm)
             except Exception as e:
@@ -284,6 +285,7 @@ class AgentGantry:
                 import sentence_transformers  # noqa: F401
 
                 from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+
                 embedder_instance = NomicEmbedder(dimension=dimension)
             except ImportError:
                 warnings.warn(
@@ -471,7 +473,9 @@ class AgentGantry:
         """
         # If modules were provided in constructor but not yet loaded, load them now
         if self._modules is not None:
-            await self.collect_tools_from_modules(self._modules, module_attr=self._module_attr or "tools")
+            await self.collect_tools_from_modules(
+                self._modules, module_attr=self._module_attr or "tools"
+            )
             self._modules = None
             self._module_attr = None
 
@@ -772,6 +776,7 @@ class AgentGantry:
         if self._config.reranker.enabled and self._reranker is not None:
             if query.enable_reranking is None:
                 query.enable_reranking = True
+
         # Use telemetry span if available, otherwise use a no-op async context manager
         from agent_gantry.utils.async_utils import AsyncNoopContext
 
@@ -912,9 +917,7 @@ class AgentGantry:
             arguments = {}
 
         # Execute the tool
-        return await self.execute(
-            ToolCall(tool_name=tool_name, arguments=arguments)
-        )
+        return await self.execute(ToolCall(tool_name=tool_name, arguments=arguments))
 
     async def execute_batch(self, batch: BatchToolCall) -> BatchToolResult:
         """
@@ -1113,10 +1116,7 @@ class AgentGantry:
 
         try:
             # Discover tools from the server with timeout protection
-            tools = await asyncio.wait_for(
-                client.list_tools(),
-                timeout=timeout
-            )
+            tools = await asyncio.wait_for(client.list_tools(), timeout=timeout)
 
             # Add tools to the gantry
             for tool in tools:
@@ -1131,9 +1131,7 @@ class AgentGantry:
                 consecutive_failures=0,
             )
 
-            logger.info(
-                f"Discovered {len(tools)} tools from MCP server: {namespace}.{server_name}"
-            )
+            logger.info(f"Discovered {len(tools)} tools from MCP server: {namespace}.{server_name}")
             return len(tools)
 
         except asyncio.TimeoutError:
@@ -1170,9 +1168,7 @@ class AgentGantry:
                 consecutive_failures=consecutive_failures,
             )
 
-            logger.error(
-                f"Failed to discover tools from MCP server {namespace}.{server_name}: {e}"
-            )
+            logger.error(f"Failed to discover tools from MCP server {namespace}.{server_name}: {e}")
             raise
 
     async def serve_mcp(
@@ -1260,9 +1256,7 @@ class AgentGantry:
         """Return the number of registered tools."""
         return len(self._tool_handlers)
 
-    async def get_tool(
-        self, name: str, namespace: str = "default"
-    ) -> ToolDefinition | None:
+    async def get_tool(self, name: str, namespace: str = "default") -> ToolDefinition | None:
         """
         Get a tool by name.
 

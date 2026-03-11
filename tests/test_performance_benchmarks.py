@@ -41,6 +41,7 @@ class MockEmbedder(EmbeddingAdapter):
         await asyncio.sleep(self._latency_ms / 1000)
         # Generate deterministic embedding based on text hash
         import hashlib
+
         hash_val = int(hashlib.md5(text.encode()).hexdigest(), 16)
         return [(hash_val % 1000) / 1000.0] * self._dimension
 
@@ -50,6 +51,9 @@ class MockEmbedder(EmbeddingAdapter):
         batch_size: int | None = None,
     ) -> list[list[float]]:
         """Simulate batch embedding."""
+        # Note: calling self.embed_text will sleep again and increment count again
+        # We need to compute embeddings directly to properly simulate batching
+        import hashlib
         self.embed_count += len(texts)
         await asyncio.sleep(self._latency_ms / 1000)
         # Generate deterministic embedding based on text hash
@@ -74,6 +78,7 @@ async def gantry_with_tools():
 
     # Register 50 tools with diverse descriptions
     for i in range(50):
+
         @gantry.register(namespace="test")
         def tool_func(x: int = i) -> str:
             return f"Result from tool {x}"
@@ -105,23 +110,24 @@ async def test_concurrent_retrieval_throughput(gantry_with_tools):
 
     # Test 2: Concurrent retrievals (should be much faster if non-blocking)
     start = time.time()
-    tasks = [
-        gantry.retrieve_tools(f"query {i}", limit=5)
-        for i in range(num_requests)
-    ]
+    tasks = [gantry.retrieve_tools(f"query {i}", limit=5) for i in range(num_requests)]
     await asyncio.gather(*tasks)
     concurrent_duration = time.time() - start
 
     # Calculate speedup
     speedup = sequential_duration / concurrent_duration
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Concurrent Retrieval Throughput Benchmark")
-    print(f"{'='*60}")
-    print(f"Sequential: {sequential_duration:.2f}s ({num_requests/sequential_duration:.1f} req/s)")
-    print(f"Concurrent: {concurrent_duration:.2f}s ({num_requests/concurrent_duration:.1f} req/s)")
+    print(f"{'=' * 60}")
+    print(
+        f"Sequential: {sequential_duration:.2f}s ({num_requests / sequential_duration:.1f} req/s)"
+    )
+    print(
+        f"Concurrent: {concurrent_duration:.2f}s ({num_requests / concurrent_duration:.1f} req/s)"
+    )
     print(f"Speedup: {speedup:.1f}x")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     # If event loop is not blocked, concurrent should be at least 5x faster
     # With proper async, we should see near-linear scaling up to thread pool size
@@ -146,9 +152,11 @@ async def test_mmr_embedding_caching():
 
     # Register tools
     for i in range(10):
+
         @gantry.register
         def tool_func(x: int = i) -> str:
             return f"Result {x}"
+
         tool_func.__name__ = f"diverse_tool_{i}"
         tool_func.__doc__ = f"Tool for task type {i}"
 
@@ -168,13 +176,13 @@ async def test_mmr_embedding_caching():
     # Calculate how many embeddings were generated during retrieval
     retrieval_embeds = embed_count_after - initial_embed_count
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("MMR Embedding Caching Benchmark")
-    print(f"{'='*60}")
-    print(f"Duration: {duration*1000:.1f}ms")
+    print(f"{'=' * 60}")
+    print(f"Duration: {duration * 1000:.1f}ms")
     print(f"Embeddings generated during retrieval: {retrieval_embeds}")
     print(f"Total embed calls: {embed_count_after}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     # With caching, we should only embed the query (1 embedding)
     # Without caching, we would embed: query + top candidates for MMR (>10 embeddings)
@@ -204,13 +212,15 @@ async def test_embedding_latency():
     await embedder.embed_batch(texts)
     batch_duration = time.time() - start
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Embedding Latency Benchmark")
-    print(f"{'='*60}")
-    print(f"Single embedding: {single_duration*1000:.1f}ms")
-    print(f"Batch (10 texts): {batch_duration*1000:.1f}ms ({batch_duration*100:.1f}ms per text)")
-    print(f"Batch efficiency: {single_duration*10/batch_duration:.1f}x faster than individual")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}")
+    print(f"Single embedding: {single_duration * 1000:.1f}ms")
+    print(
+        f"Batch (10 texts): {batch_duration * 1000:.1f}ms ({batch_duration * 100:.1f}ms per text)"
+    )
+    print(f"Batch efficiency: {single_duration * 10 / batch_duration:.1f}x faster than individual")
+    print(f"{'=' * 60}\n")
 
     # Batch should be more efficient than individual embeddings
     assert batch_duration < single_duration * 5, "Batch embedding not efficient"
@@ -239,14 +249,14 @@ async def test_vector_search_performance(gantry_with_tools):
     duration = time.time() - start
     avg_latency = (duration / iterations) * 1000
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Vector Search Performance Benchmark")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Total searches: {iterations}")
     print(f"Total duration: {duration:.2f}s")
     print(f"Average latency: {avg_latency:.2f}ms")
-    print(f"Throughput: {iterations/duration:.0f} searches/sec")
-    print(f"{'='*60}\n")
+    print(f"Throughput: {iterations / duration:.0f} searches/sec")
+    print(f"{'=' * 60}\n")
 
     # In-memory search should be very fast (<5ms per search)
     assert avg_latency < 5.0, f"Vector search too slow: {avg_latency:.2f}ms"
@@ -285,16 +295,16 @@ async def test_end_to_end_retrieval_latency(gantry_with_tools):
     p50 = sorted(latencies)[len(latencies) // 2]
     p95 = sorted(latencies)[int(len(latencies) * 0.95)]
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("End-to-End Retrieval Latency Benchmark")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Iterations: {iterations}")
     print(f"Average: {avg_latency:.1f}ms")
     print(f"Min: {min_latency:.1f}ms")
     print(f"Max: {max_latency:.1f}ms")
     print(f"P50: {p50:.1f}ms")
     print(f"P95: {p95:.1f}ms")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     # With mock embedder at 10ms latency, total should be <50ms
     assert avg_latency < 50.0, f"Retrieval too slow: {avg_latency:.1f}ms"
@@ -314,9 +324,11 @@ async def test_concurrent_execution_scalability():
 
     # Register tools
     for i in range(30):
+
         @gantry.register
         def tool_func(x: int = i) -> str:
             return f"Result {x}"
+
         tool_func.__name__ = f"scale_tool_{i}"
         tool_func.__doc__ = f"Scalability test tool {i}"
 
@@ -328,10 +340,7 @@ async def test_concurrent_execution_scalability():
 
     for concurrency in concurrency_levels:
         start = time.time()
-        tasks = [
-            gantry.retrieve_tools(f"query {i}", limit=5)
-            for i in range(concurrency)
-        ]
+        tasks = [gantry.retrieve_tools(f"query {i}", limit=5) for i in range(concurrency)]
         await asyncio.gather(*tasks)
         duration = time.time() - start
         throughput = concurrency / duration
@@ -341,13 +350,15 @@ async def test_concurrent_execution_scalability():
             "throughput": throughput,
         }
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Concurrent Execution Scalability Benchmark")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     for concurrency, metrics in results.items():
-        print(f"Concurrency {concurrency:2d}: {metrics['duration']:.2f}s, "
-              f"{metrics['throughput']:.1f} req/s")
-    print(f"{'='*60}\n")
+        print(
+            f"Concurrency {concurrency:2d}: {metrics['duration']:.2f}s, "
+            f"{metrics['throughput']:.1f} req/s"
+        )
+    print(f"{'=' * 60}\n")
 
     # Throughput should increase with concurrency (if non-blocking)
     assert results[20]["throughput"] > results[1]["throughput"] * 2, (
@@ -357,6 +368,4 @@ async def test_concurrent_execution_scalability():
 
 if __name__ == "__main__":
     # Run benchmarks directly
-    asyncio.run(test_concurrent_retrieval_throughput(
-        asyncio.run(gantry_with_tools())
-    ))
+    asyncio.run(test_concurrent_retrieval_throughput(asyncio.run(gantry_with_tools())))

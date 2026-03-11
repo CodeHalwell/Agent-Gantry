@@ -14,6 +14,7 @@ load_dotenv()
 
 client = AsyncOpenAI()
 
+
 @with_semantic_tools(gantry, limit=3, score_threshold=0.6, dialect="openai_responses")
 async def generate_response(prompt: str, tools: list | None = None):
     """LLM call that gets semantic tools injected."""
@@ -41,11 +42,13 @@ async def generate_response(prompt: str, tools: list | None = None):
                 ToolCall(tool_name=tc.name, arguments=json.loads(tc.arguments))
             )
             tool_results.append(result)
-            function_call_outputs.append({
-                "type": "function_call_output",
-                "call_id": tc.call_id,
-                "output": json.dumps(result.result),
-            })
+            function_call_outputs.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": tc.call_id,
+                    "output": json.dumps(result.result),
+                }
+            )
 
         # Follow up with tool results
         follow_up = await client.responses.create(

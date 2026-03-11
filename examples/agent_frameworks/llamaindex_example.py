@@ -9,6 +9,7 @@ from agent_gantry.schema.execution import ToolCall
 
 load_dotenv()
 
+
 async def main():
     # 1. Initialize Agent-Gantry
     gantry = AgentGantry()
@@ -28,9 +29,13 @@ async def main():
     # 3. Convert Gantry tools to LlamaIndex tools
     def make_llama_tool(tool_name: str, tool_desc: str, gantry_instance: AgentGantry):
         """Factory function to properly bind tool name to LlamaIndex tool wrapper."""
+
         async def tool_wrapper(user_id: str):
-            result = await gantry_instance.execute(ToolCall(tool_name=tool_name, arguments={"user_id": user_id}))
+            result = await gantry_instance.execute(
+                ToolCall(tool_name=tool_name, arguments={"user_id": user_id})
+            )
             return str(result.result) if result.status == "success" else result.error
+
         tool_wrapper.__doc__ = tool_desc
         tool_wrapper.__name__ = tool_name
         return FunctionTool.from_defaults(async_fn=tool_wrapper)
@@ -45,6 +50,7 @@ async def main():
 
     # 4. Setup LlamaIndex Agent
     from llama_index.core.agent.workflow import ReActAgent
+
     llm = OpenAI(model="gpt-4o")
     agent = ReActAgent(tools=llama_tools, llm=llm)
 
@@ -52,6 +58,7 @@ async def main():
     print("--- Running LlamaIndex Agent with Agent-Gantry ---")
     response = await agent.run(user_msg=user_query)
     print(f"\nFinal Response: {response}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

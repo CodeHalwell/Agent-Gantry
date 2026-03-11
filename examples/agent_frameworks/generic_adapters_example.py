@@ -7,6 +7,7 @@ from agent_gantry.integrations.framework_adapters import fetch_framework_tools
 
 load_dotenv()
 
+
 async def main():
     # 1. Initialize Agent-Gantry
     gantry = AgentGantry()
@@ -25,18 +26,10 @@ async def main():
     # This helper returns the schema shape expected by the framework
     # (Currently OpenAI-style function calling for all supported frameworks)
     google_adk_tools = await fetch_framework_tools(
-        gantry,
-        user_query,
-        framework="google_adk",
-        limit=3
+        gantry, user_query, framework="google_adk", limit=3
     )
 
-    strands_tools = await fetch_framework_tools(
-        gantry,
-        user_query,
-        framework="strands",
-        limit=3
-    )
+    strands_tools = await fetch_framework_tools(gantry, user_query, framework="strands", limit=3)
 
     print(f"Retrieved {len(google_adk_tools)} tools for Google ADK")
     print(f"Retrieved {len(strands_tools)} tools for Strands")
@@ -49,6 +42,7 @@ async def main():
 
         # The framework would then call back to Gantry for execution:
         # result = await gantry.execute(ToolCall(tool_name=name, arguments=args))
+
 
 if __name__ == "__main__":
     asyncio.run(main())

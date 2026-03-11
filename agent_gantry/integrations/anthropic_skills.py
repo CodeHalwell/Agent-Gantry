@@ -151,9 +151,7 @@ class SkillsClient:
 
         self._api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
         if not self._api_key:
-            raise ValueError(
-                "API key required. Set ANTHROPIC_API_KEY or pass api_key parameter."
-            )
+            raise ValueError("API key required. Set ANTHROPIC_API_KEY or pass api_key parameter.")
 
         self._gantry = gantry
         self._skills = skill_registry or SkillRegistry()

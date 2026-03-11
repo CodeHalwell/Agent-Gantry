@@ -26,7 +26,7 @@ from agent_gantry.integrations.anthropic_skills import (
 # Create mock anthropic module
 mock_anthropic = Mock()
 mock_anthropic.AsyncAnthropic = MagicMock
-sys.modules['anthropic'] = mock_anthropic
+sys.modules["anthropic"] = mock_anthropic
 
 
 class TestSkill:

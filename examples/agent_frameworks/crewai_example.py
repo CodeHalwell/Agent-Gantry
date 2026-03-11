@@ -10,6 +10,7 @@ from agent_gantry.schema.execution import ToolCall
 
 load_dotenv()
 
+
 async def main():
     # 1. Initialize Agent-Gantry
     gantry = AgentGantry()
@@ -24,17 +25,21 @@ async def main():
     # 2. Fetch tools for the task
     user_query = "Get info for customer john@example.com"
     # Lowering threshold for SimpleEmbedder compatibility in this example
-    tools_schema = await fetch_framework_tools(gantry, user_query, framework="crew_ai", score_threshold=0.1)
+    tools_schema = await fetch_framework_tools(
+        gantry, user_query, framework="crew_ai", score_threshold=0.1
+    )
 
     # 3. Wrap Gantry tools for CrewAI
     from crewai.tools import tool
 
     def make_crew_tool(tool_name: str, tool_desc: str, gantry_instance: AgentGantry):
         """Factory function to properly bind tool name to CrewAI tool wrapper."""
+
         @tool(tool_name)
         async def tool_wrapper(**kwargs):
             result = await gantry_instance.execute(ToolCall(tool_name=tool_name, arguments=kwargs))
             return result.result if result.status == "success" else result.error
+
         tool_wrapper.__doc__ = tool_desc
         return tool_wrapper
 
@@ -50,31 +55,28 @@ async def main():
     llm = ChatOpenAI(model="gpt-4o")
 
     researcher = Agent(
-        role='Customer Success Researcher',
-        goal='Find and analyze customer information',
-        backstory='You are an expert in CRM systems and customer data.',
+        role="Customer Success Researcher",
+        goal="Find and analyze customer information",
+        backstory="You are an expert in CRM systems and customer data.",
         tools=crew_tools,
         llm=llm,
-        verbose=True
+        verbose=True,
     )
 
     # 5. Define Task
     task = Task(
         description=f"Research the customer with query: {user_query}",
         expected_output="A summary of the customer's profile and tier.",
-        agent=researcher
+        agent=researcher,
     )
 
     # 6. Run Crew
-    crew = Crew(
-        agents=[researcher],
-        tasks=[task],
-        process=Process.sequential
-    )
+    crew = Crew(agents=[researcher], tasks=[task], process=Process.sequential)
 
     print("--- Starting CrewAI with Agent-Gantry ---")
     result = await crew.kickoff_async()
     print(f"\nCrewAI Result: {result}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

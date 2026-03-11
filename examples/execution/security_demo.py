@@ -31,6 +31,7 @@ async def main():
     try:
         # We manually construct the call for demonstration
         from agent_gantry.schema.execution import ToolCall
+
         call = ToolCall(tool_name="read_database", arguments={"db_name": "users"})
         result = await gantry.execute(call)
         print(f"Result: {result.result}")
@@ -43,11 +44,12 @@ async def main():
     result = await gantry.execute(call)
 
     if result.status == "pending_confirmation":
-         print("Security Policy Triggered: Confirmation required for 'delete_database'!")
+        print("Security Policy Triggered: Confirmation required for 'delete_database'!")
     elif result.status == "success":
-         print(f"Result: {result.result}")
+        print(f"Result: {result.result}")
     else:
-         print(f"Execution Failed: {result.error}")
+        print(f"Execution Failed: {result.error}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

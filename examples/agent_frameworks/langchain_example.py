@@ -11,6 +11,7 @@ from agent_gantry.schema.execution import ToolCall
 
 load_dotenv()
 
+
 async def main():
     # 1. Initialize Agent-Gantry
     gantry = AgentGantry()
@@ -42,10 +43,12 @@ async def main():
     # We wrap the Gantry execution so LangChain can call it
     def make_langchain_tool(tool_name: str, tool_desc: str, gantry_instance: AgentGantry):
         """Factory function to properly bind tool name to LangChain tool wrapper."""
+
         @tool
         async def tool_wrapper(**kwargs):
             result = await gantry_instance.execute(ToolCall(tool_name=tool_name, arguments=kwargs))
             return result.result if result.status == "success" else result.error
+
         tool_wrapper.__name__ = tool_name
         tool_wrapper.__doc__ = tool_desc
         return tool_wrapper
@@ -69,13 +72,12 @@ async def main():
     # 7. Run the agent
     print("\n--- Running LangChain Agent ---")
     # The new agent.invoke pattern uses a messages list
-    response = await agent.ainvoke({
-        "messages": [HumanMessage(content=user_query)]
-    })
+    response = await agent.ainvoke({"messages": [HumanMessage(content=user_query)]})
 
     # Extract the final message content
     final_message = response["messages"][-1]
     print(f"\nFinal Response: {final_message.content}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -90,7 +90,9 @@ def test_token_savings_edge_cases() -> None:
     assert savings_negative.saved_total_tokens == 0
 
     # Raw dicts vs ProviderUsage objects mixed
-    baseline = ProviderUsage.from_usage({"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10})
+    baseline = ProviderUsage.from_usage(
+        {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10}
+    )
     savings_mixed = calculate_token_savings(
         baseline,
         {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
