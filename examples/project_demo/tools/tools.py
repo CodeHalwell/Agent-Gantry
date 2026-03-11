@@ -1842,17 +1842,17 @@ def generate_thumbnail(
     return f"Thumbnail saved to {output_path}"
 
 
-# --- Document Processing Tools (Requires PyPDF2, python-docx) ---
+# --- Document Processing Tools (Requires pypdf, python-docx) ---
 
 
 @tools.register(tags=["document", "pdf"])
 def extract_text_from_pdf(pdf_path: str) -> str:
     """Extract all text from a PDF file."""
-    import PyPDF2
+    import pypdf
 
     text = ""
     with open(pdf_path, "rb") as f:
-        reader = PyPDF2.PdfReader(f)
+        reader = pypdf.PdfReader(f)
         for page in reader.pages:
             text += page.extract_text() + "\n"
     return text
@@ -1861,10 +1861,10 @@ def extract_text_from_pdf(pdf_path: str) -> str:
 @tools.register(tags=["document", "pdf"])
 def get_pdf_page_count(pdf_path: str) -> int:
     """Get the number of pages in a PDF file."""
-    import PyPDF2
+    import pypdf
 
     with open(pdf_path, "rb") as f:
-        reader = PyPDF2.PdfReader(f)
+        reader = pypdf.PdfReader(f)
         return len(reader.pages)
 
 
