@@ -135,3 +135,63 @@ def test_framework_adapter_unsupported_framework_raises(gantry) -> None:
                 framework="unsupported",  # type: ignore[arg-type]
             )
         )
+
+
+def test_provider_usage_coerce_float_error() -> None:
+    """Test that _coerce_token_value raises ValueError on non-integer floats."""
+    with pytest.raises(ValueError, match="must be an integer token count, got non-integer float"):
+        ProviderUsage._coerce_token_value(3.14, "prompt_tokens")
+
+
+def test_provider_usage_anthropic_naming() -> None:
+    """Test that Anthropic-style usage blocks are properly parsed."""
+    usage = ProviderUsage.from_usage(
+        {
+            "input_tokens": 150,
+            "output_tokens": 50,
+        }
+    )
+    assert usage.prompt_tokens == 150
+    assert usage.completion_tokens == 50
+    assert usage.total_tokens == 200
+
+
+def test_provider_usage_google_naming() -> None:
+    """Test that Google-style usage blocks are properly parsed."""
+    usage = ProviderUsage.from_usage(
+        {
+            "prompt_token_count": 100,
+            "candidates_token_count": 25,
+            "total_token_count": 125,
+        }
+    )
+    assert usage.prompt_tokens == 100
+    assert usage.completion_tokens == 25
+    assert usage.total_tokens == 125
+
+
+def test_provider_usage_derived_total() -> None:
+    """Test that total_tokens is properly derived if missing."""
+    usage = ProviderUsage.from_usage(
+        {
+            "prompt_tokens": 80,
+            "completion_tokens": 20,
+        }
+    )
+    assert usage.prompt_tokens == 80
+    assert usage.completion_tokens == 20
+    assert usage.total_tokens == 100
+
+
+def test_provider_usage_explicit_zero_total() -> None:
+    """Test that explicitly provided total_tokens of 0 is preserved."""
+    usage = ProviderUsage.from_usage(
+        {
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "total_tokens": 0,
+        }
+    )
+    assert usage.prompt_tokens == 10
+    assert usage.completion_tokens == 5
+    assert usage.total_tokens == 0
