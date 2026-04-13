@@ -174,11 +174,30 @@ class TestMCPRegistry:
         self, registry: MCPRegistry, sample_server: MCPServerDefinition
     ) -> None:
         """Test pending servers management."""
+        # Test sequential appends
         registry.add_pending(sample_server)
-        pending = registry.get_pending()
-        assert len(pending) == 1
-        assert pending[0].name == "filesystem"
 
+        server2 = MCPServerDefinition(
+            name="database",
+            command=["mcp-database"],
+            description="Database tools"
+        )
+        registry.add_pending(server2)
+
+        pending = registry.get_pending()
+        assert len(pending) == 2
+        assert pending[0].name == "filesystem"
+        assert pending[1].name == "database"
+
+        # Test defensive copying (encapsulation)
+        # Modifying the returned list should not affect the internal queue
+        pending.clear()
+        assert len(pending) == 0
+
+        internal_pending = registry.get_pending()
+        assert len(internal_pending) == 2
+
+        # Test explicit clearing
         registry.clear_pending()
         assert len(registry.get_pending()) == 0
 
