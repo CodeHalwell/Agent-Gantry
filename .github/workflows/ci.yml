@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
   pull_request:
-    branches: [ main, develop ]
+    branches: [main, develop]
 
 permissions:
   contents: read
@@ -15,24 +15,22 @@ jobs:
     permissions:
       contents: read
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
-        
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install ruff mypy
-        pip install -e ".[dev,nomic,lancedb,agent-frameworks,example-tools]"
-        
-    - name: Run ruff
-      run: ruff check agent_gantry/
-      
-    - name: Run mypy
-      run: mypy agent_gantry/
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --extra dev --extra nomic --extra lancedb --extra agent-frameworks --extra example-tools
+
+      - name: Run ruff
+        run: uv run ruff check agent_gantry/
+
+      - name: Run mypy
+        run: uv run mypy agent_gantry/
 
   test:
     runs-on: ${{ matrix.os }}
@@ -41,35 +39,51 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ['3.10', '3.11', '3.12']
-        
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-        
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -e ".[dev,nomic,lancedb,agent-frameworks,example-tools]"
-        
-    - name: Run tests
-      run: |
-        pytest --ignore=tests/test_phase5_mcp.py --ignore=tests/test_phase6_a2a.py -v
-        
-    - name: Run tests with coverage (Ubuntu only)
-      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.10'
-      run: |
-        pytest --cov=agent_gantry --cov-report=xml --ignore=tests/test_phase5_mcp.py --ignore=tests/test_phase6_a2a.py
-        
-    - name: Upload coverage to Codecov (Ubuntu only)
-      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.10'
-      uses: codecov/codecov-action@v4
-      with:
-        file: ./coverage.xml
-        fail_ci_if_error: false
+      - uses: actions/checkout@v4
 
-  
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --python ${{ matrix.python-version }} --extra dev --extra nomic --extra lancedb --extra agent-frameworks --extra example-tools
+
+      - name: Run tests
+        run: |
+          uv run pytest --ignore=tests/test_phase5_mcp.py --ignore=tests/test_phase6_a2a.py -v
+
+      - name: Run tests with coverage (Ubuntu only)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: |
+          uv run pytest --cov=agent_gantry --cov-report=xml --ignore=tests/test_phase5_mcp.py --ignore=tests/test_phase6_a2a.py
+
+      - name: Upload coverage to Codecov (Ubuntu only)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false
+
+  build:
+    name: Verify package builds
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Build package
+        run: uv build
+
+      - name: Check distribution
+        run: uv tool run twine check dist/*
