@@ -10,10 +10,6 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
-import time
-from unittest.mock import AsyncMock, MagicMock, patch
-
 import pytest
 
 from agent_gantry import AgentGantry
@@ -25,9 +21,8 @@ from agent_gantry.adapters.tool_spec.providers import (
 )
 from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
 from agent_gantry.core.executor import ExecutionEngine
-from agent_gantry.core.rate_limiter import RateLimitExceeded, RateLimiter
+from agent_gantry.core.rate_limiter import RateLimiter, RateLimitExceeded
 from agent_gantry.core.registry import ToolRegistry
-from agent_gantry.core.router import SemanticRouter
 from agent_gantry.core.security import PermissionDeniedError, SecurityPolicy
 from agent_gantry.core.sync_manager import SyncManager
 from agent_gantry.schema.config import RateLimitConfig
@@ -35,7 +30,6 @@ from agent_gantry.schema.execution import ToolCall
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 from agent_gantry.schema.tool import ToolDefinition
 from agent_gantry.utils.async_utils import AsyncNoopContext
-
 
 # ---------------------------------------------------------------------------
 # Phase 1: MMR with diversity_factor > 0

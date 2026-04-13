@@ -1428,6 +1428,7 @@ class AgentGantry:
         if config.type == "sentence_transformers":
             try:
                 import sentence_transformers as _st  # noqa: F401
+
                 from agent_gantry.adapters.embedders.sentence_transformers import (
                     SentenceTransformersEmbedder,
                 )

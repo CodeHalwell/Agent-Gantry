@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 from agent_gantry.adapters.vector_stores.remote import PGVectorStore
 from agent_gantry.schema.tool import ToolDefinition
 
+
 async def main():
     store = PGVectorStore("postgresql://dummy:dummy@localhost/dummy", table_name="test_tools")
     store._initialized = True

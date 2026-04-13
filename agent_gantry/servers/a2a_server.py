@@ -221,6 +221,7 @@ async def handle_tool_execution(gantry: AgentGantry, query: str) -> dict[str, An
         Dictionary with execution result
     """
     import json
+
     from agent_gantry.schema.execution import ToolCall
 
     try:
