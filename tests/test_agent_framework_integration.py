@@ -17,7 +17,6 @@ from agent_gantry.adapters.tool_spec import DialectRegistry, ToolCallPayload, ge
 from agent_gantry.adapters.tool_spec.providers import AgentFrameworkAdapter
 from agent_gantry.schema.tool import SchemaDialect, ToolDefinition
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

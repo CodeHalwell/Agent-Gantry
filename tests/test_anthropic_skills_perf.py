@@ -1,11 +1,12 @@
 import asyncio
 import time
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from agent_gantry import AgentGantry
 from agent_gantry.integrations.anthropic_skills import SkillsClient
+
 
 @pytest.mark.asyncio
 async def test_execute_tool_calls_performance():

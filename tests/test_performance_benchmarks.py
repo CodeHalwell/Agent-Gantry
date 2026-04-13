@@ -57,7 +57,6 @@ class MockEmbedder(EmbeddingAdapter):
         self.embed_count += len(texts)
         await asyncio.sleep(self._latency_ms / 1000)
         # Generate deterministic embedding based on text hash
-        import hashlib
         results = []
         for text in texts:
             hash_val = int(hashlib.md5(text.encode()).hexdigest(), 16)

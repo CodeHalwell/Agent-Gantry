@@ -21,8 +21,6 @@ _logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
     from agent_gantry.adapters.llm_client import LLMClient
-    from agent_gantry.adapters.embedders.base import EmbeddingAdapter
-    from agent_gantry.adapters.llm_client import LLMClient
     from agent_gantry.adapters.rerankers.base import RerankerAdapter
     from agent_gantry.adapters.vector_stores.base import VectorStoreAdapter
     from agent_gantry.schema.query import ToolQuery

@@ -1,10 +1,8 @@
-import os
 
 filepath = 'tests/test_performance_benchmarks.py'
-with open(filepath, 'r') as f:
+with open(filepath) as f:
     content = f.read()
 
-import re
 
 search_block = """    async def embed_batch(
         self,

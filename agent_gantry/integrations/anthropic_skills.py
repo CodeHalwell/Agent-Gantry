@@ -12,8 +12,8 @@ that Claude can reason about and use effectively.
 
 from __future__ import annotations
 
-import os
 import asyncio
+import os
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
