@@ -461,6 +461,11 @@ class SemanticRouter:
         emb_matrix = np.array(embeddings, dtype=np.float64)
         norms = np.linalg.norm(emb_matrix, axis=1)
 
+        # Pre-normalize embeddings to simplify cosine similarity to dot product
+        with np.errstate(divide="ignore", invalid="ignore"):
+            normed_emb = emb_matrix / norms[:, np.newaxis]
+            normed_emb[np.isnan(normed_emb)] = 0.0
+
         selected: list[int] = []
         candidates = list(range(len(scored_tools)))
 
@@ -468,24 +473,26 @@ class SemanticRouter:
         selected.append(first_idx)
         candidates.remove(first_idx)
 
+        # Track maximum similarity to any selected item for each candidate
+        max_sims = {idx: 0.0 for idx in candidates}
+
         while candidates and len(selected) < limit:
+            last_selected = selected[-1]
+            last_emb = normed_emb[last_selected]
+
+            # Vectorized dot product of all remaining candidates with the last selected item
+            all_sims = np.dot(normed_emb, last_emb)
+
             mmr_scores: dict[int, float] = {}
 
             for idx in candidates:
-                max_sim = 0.0
-                if norms[idx] > 0:
-                    for sel_idx in selected:
-                        if norms[sel_idx] > 0:
-                            sim = float(
-                                np.dot(emb_matrix[idx], emb_matrix[sel_idx])
-                                / (norms[idx] * norms[sel_idx])
-                            )
-                            if sim > max_sim:
-                                max_sim = sim
+                sim = float(all_sims[idx])
+                if sim > max_sims[idx]:
+                    max_sims[idx] = sim
 
                 mmr_scores[idx] = lambda_param * relevance_scores[idx] - (
                     1.0 - lambda_param
-                ) * max_sim
+                ) * max_sims[idx]
 
             next_idx = max(mmr_scores, key=lambda k: mmr_scores[k])
             selected.append(next_idx)
