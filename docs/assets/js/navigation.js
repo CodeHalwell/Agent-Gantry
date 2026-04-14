@@ -229,10 +229,16 @@
         if (!link.querySelector('.external-icon')) {
           const icon = document.createElement('span');
           icon.className = 'external-icon';
+          icon.setAttribute('aria-hidden', 'true');
           icon.innerHTML = ' ↗';
           icon.style.fontSize = '0.8em';
           icon.style.opacity = '0.6';
           link.appendChild(icon);
+
+          const srText = document.createElement('span');
+          srText.className = 'sr-only';
+          srText.textContent = ' (opens in a new tab)';
+          link.appendChild(srText);
         }
       }
     });
