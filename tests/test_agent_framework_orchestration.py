@@ -586,6 +586,11 @@ async def test_approval_middleware_denies_by_domain(bridge: GantryToolBridge) ->
 async def test_observability_middleware_records_invocations(
     bridge: GantryToolBridge, gantry_with_tools: AgentGantry
 ) -> None:
+    """The observability middleware should wrap ``call_next`` in a Gantry
+    telemetry span so AF tool invocations show up alongside other
+    Gantry-traced operations."""
+    import asyncio
+
     mw = GantryObservabilityMiddleware(gantry_with_tools)
 
     class _FakeFn:
@@ -597,13 +602,33 @@ async def test_observability_middleware_records_invocations(
         result = None
         metadata: dict[str, Any] = {}
 
-    import time as _time
+    # Capture telemetry spans opened by the middleware so we can assert the
+    # real observability API (telemetry.span(...)) is exercised.
+    telemetry = getattr(gantry_with_tools, "_telemetry", None)
+    opened_spans: list[tuple[str, dict[str, Any]]] = []
+    if telemetry is not None:
+        original_span = telemetry.span
 
-    async def _slow_call():
-        _time.sleep(0.005)
+        def _tracking_span(name: str, attrs: dict[str, Any]) -> Any:
+            opened_spans.append((name, attrs))
+            return original_span(name, attrs)
+
+        telemetry.span = _tracking_span  # type: ignore[assignment]
+
+    calls: list[str] = []
+
+    async def _slow_call() -> None:
+        # Non-blocking sleep so we don't stall the event loop in tests.
+        await asyncio.sleep(0.005)
+        calls.append("ran")
 
     await mw.process(_Ctx(), _slow_call)
-    # Nothing raised — middleware is best-effort.
+    assert calls == ["ran"], "call_next must be invoked inside the span"
+    if telemetry is not None:
+        assert opened_spans, "telemetry.span was not opened"
+        span_name, span_attrs = opened_spans[0]
+        assert span_name == "af_function_invocation"
+        assert span_attrs.get("tool_name") == "get_weather"
 
 
 # ---------------------------------------------------------------------------

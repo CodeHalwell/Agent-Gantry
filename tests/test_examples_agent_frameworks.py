@@ -53,9 +53,11 @@ async def test_agent_framework_example_runs_with_fakes(monkeypatch):
     monkeypatch.setitem(sys.modules, "agent_framework", af_mod)
     monkeypatch.setitem(sys.modules, "agent_framework.openai", af_openai_mod)
 
-    # The example module imports the middleware module at top level, which
-    # caches the _build_middleware_classes() result on first instantiation.
-    # Force a fresh import so it sees the stubs above.
+    # The example module imports the middleware integration at top level,
+    # and the middleware module caches its AF-subclass construction via
+    # lru_cache. Force a fresh import so those modules pick up the stubs
+    # registered above instead of any previously imported agent_framework
+    # objects (and so the lru_cache starts empty for this test).
     for m in [
         "agent_gantry.integrations.agent_framework_middleware",
         "agent_gantry.integrations.agent_framework_bridge",

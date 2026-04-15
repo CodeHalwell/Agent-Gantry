@@ -13,9 +13,9 @@ Available middleware:
   ``MiddlewareTermination`` for tools that require human approval and
   ``PermissionDeniedError`` for tools that are outright disallowed.
 - :class:`GantryObservabilityMiddleware` — records every function
-  invocation onto Gantry's telemetry span so token savings, latency, and
-  success rate are captured uniformly whether the tool runs inside AF or
-  directly through ``gantry.execute``.
+  invocation onto Gantry's telemetry via ``telemetry.span(...)`` so token
+  savings, latency, and success rate are captured uniformly whether the
+  tool runs inside AF or directly through ``gantry.execute``.
 
 The middlewares are defined without a hard import of ``agent_framework``
 so the module can be imported (and type-checked) in environments where AF
@@ -26,7 +26,7 @@ requires the package.
 from __future__ import annotations
 
 import logging
-import time
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.core.security import (
@@ -56,61 +56,29 @@ def _import_af_middleware_bits() -> tuple[Any, Any]:
     return FunctionMiddleware, MiddlewareTermination
 
 
+@lru_cache(maxsize=1)
 def _build_middleware_classes() -> tuple[type, type]:
-    """Construct the middleware subclasses lazily against the installed AF."""
-    FunctionMiddleware, MiddlewareTermination = _import_af_middleware_bits()
+    """Build the middleware subclasses once per process.
 
-    class _GantryApprovalMiddleware(FunctionMiddleware):  # type: ignore[misc,valid-type]
+    AF's ``FunctionMiddleware`` is only importable when the extra is
+    installed, so we can't subclass at module import time without making
+    ``agent-framework`` a hard dependency. ``lru_cache`` makes this a
+    module-level singleton: the classes are constructed on the first call
+    and reused thereafter, preserving type identity across
+    ``isinstance`` checks and eliminating per-instantiation overhead.
+    """
+    function_middleware, middleware_termination = _import_af_middleware_bits()
+
+    class GantryApprovalMiddlewareImpl(function_middleware):  # type: ignore[misc,valid-type]
         """AF function middleware that enforces Gantry's SecurityPolicy.
 
-        The middleware intercepts every Gantry-bridged tool call, applies
-        :meth:`SecurityPolicy.check_permission` to its name+arguments, and:
-
-        * lets execution proceed via ``await call_next()`` if the policy
-          is satisfied;
-        * raises :class:`~agent_gantry.core.security.PermissionDeniedError`
-          if the call is outright denied (domain policy, rate limit);
-        * raises ``agent_framework.MiddlewareTermination`` when the tool
-          matches a ``require_confirmation`` pattern, so the agent surfaces
-          the approval request rather than silently executing. AF presents
-          a ``FunctionApprovalRequestContent`` to the caller in this case.
-
-        Example:
-            .. code-block:: python
-
-                from agent_gantry.integrations.agent_framework_bridge import (
-                    GantryToolBridge,
-                )
-                from agent_gantry.integrations.agent_framework_middleware import (
-                    GantryApprovalMiddleware,
-                )
-                from agent_gantry.core.security import SecurityPolicy
-
-                policy = SecurityPolicy(
-                    require_confirmation=["delete_*", "refund_*"],
-                    allowed_domains=["example.com"],
-                )
-                bridge = GantryToolBridge(gantry)
-                agent = await bridge.build_agent(
-                    client,
-                    query,
-                    name="SupportAgent",
-                    instructions="...",
-                    middleware=[GantryApprovalMiddleware(policy)],
-                )
+        See :class:`GantryApprovalMiddleware` for the public entry point
+        and full docstring.
         """
 
-        def __init__(
-            self,
-            policy: SecurityPolicy,
-            *,
-            gantry: AgentGantry | None = None,
-            deny_on_missing_capabilities: bool = False,
-        ) -> None:
+        def __init__(self, policy: SecurityPolicy) -> None:
             super().__init__()
             self._policy = policy
-            self._gantry = gantry
-            self._deny_on_missing_capabilities = deny_on_missing_capabilities
 
         async def process(self, context: Any, call_next: Any) -> None:  # noqa: D401
             """Run the SecurityPolicy gate, then delegate to ``call_next``."""
@@ -118,10 +86,10 @@ def _build_middleware_classes() -> tuple[type, type]:
             name = getattr(function, "name", getattr(function, "__name__", "?"))
             args = context.arguments or {}
             try:
-                self._policy.check_permission(
-                    name,
-                    {k: str(v) for k, v in args.items()},
-                )
+                # Pass raw arguments through: SecurityPolicy type-checks per
+                # value, and downstream policies may rely on numeric/boolean
+                # typing rather than stringified values.
+                self._policy.check_permission(name, args)
             except ConfirmationRequiredError as err:
                 logger.info(
                     "GantryApprovalMiddleware: '%s' requires human approval (%s)",
@@ -129,7 +97,7 @@ def _build_middleware_classes() -> tuple[type, type]:
                     err,
                 )
                 # Surface the approval request to AF's native approval flow.
-                raise MiddlewareTermination(str(err)) from err
+                raise middleware_termination(str(err)) from err
             except PermissionDeniedError:
                 logger.warning(
                     "GantryApprovalMiddleware: denied execution of '%s'", name
@@ -138,8 +106,8 @@ def _build_middleware_classes() -> tuple[type, type]:
 
             await call_next()
 
-    class _GantryObservabilityMiddleware(FunctionMiddleware):  # type: ignore[misc,valid-type]
-        """Record timing + success signals onto Gantry's telemetry."""
+    class GantryObservabilityMiddlewareImpl(function_middleware):  # type: ignore[misc,valid-type]
+        """Record timing + success signals onto Gantry's telemetry span."""
 
         def __init__(self, gantry: AgentGantry) -> None:
             super().__init__()
@@ -149,34 +117,31 @@ def _build_middleware_classes() -> tuple[type, type]:
             name = getattr(
                 context.function, "name", getattr(context.function, "__name__", "?")
             )
-            start = time.perf_counter()
-            try:
+            telemetry = getattr(self._gantry, "_telemetry", None)
+            if telemetry is None:
                 await call_next()
-            finally:
-                elapsed_ms = (time.perf_counter() - start) * 1000.0
-                telemetry = getattr(self._gantry, "_telemetry", None)
-                if telemetry is not None:
-                    try:
-                        telemetry.record(
-                            "af_function_invocation",
-                            {
-                                "tool_name": name,
-                                "duration_ms": elapsed_ms,
-                                "has_result": context.result is not None,
-                            },
-                        )
-                    except Exception:  # pragma: no cover - telemetry best-effort
-                        logger.debug(
-                            "GantryObservabilityMiddleware: telemetry.record failed",
-                            exc_info=True,
-                        )
-                logger.debug(
-                    "GantryObservabilityMiddleware: '%s' took %.2fms",
-                    name,
-                    elapsed_ms,
-                )
+                return
 
-    return _GantryApprovalMiddleware, _GantryObservabilityMiddleware
+            # Wrap the downstream call in a Gantry telemetry span so AF
+            # tool invocations appear alongside every other Gantry-traced
+            # operation. Adapters like the OpenTelemetry and console
+            # adapters all implement ``span`` as an async context manager.
+            try:
+                span_cm = telemetry.span(
+                    "af_function_invocation", {"tool_name": name}
+                )
+            except Exception:  # pragma: no cover - telemetry best-effort
+                logger.debug(
+                    "GantryObservabilityMiddleware: telemetry.span failed",
+                    exc_info=True,
+                )
+                await call_next()
+                return
+
+            async with span_cm:
+                await call_next()
+
+    return GantryApprovalMiddlewareImpl, GantryObservabilityMiddlewareImpl
 
 
 class GantryApprovalMiddleware:
@@ -186,21 +151,35 @@ class GantryApprovalMiddleware:
     import time, which keeps the package importable in environments that
     don't need AF. Instantiation fails loudly with an actionable
     ``ImportError`` when AF is missing.
+
+    Example:
+        .. code-block:: python
+
+            from agent_gantry.integrations.agent_framework_bridge import (
+                GantryToolBridge,
+            )
+            from agent_gantry.integrations.agent_framework_middleware import (
+                GantryApprovalMiddleware,
+            )
+            from agent_gantry.core.security import SecurityPolicy
+
+            policy = SecurityPolicy(
+                require_confirmation=["delete_*", "refund_*"],
+                allowed_domains=["example.com"],
+            )
+            bridge = GantryToolBridge(gantry)
+            agent = await bridge.build_agent(
+                client,
+                query,
+                name="SupportAgent",
+                instructions="...",
+                middleware=[GantryApprovalMiddleware(policy)],
+            )
     """
 
-    def __new__(
-        cls,
-        policy: SecurityPolicy,
-        *,
-        gantry: AgentGantry | None = None,
-        deny_on_missing_capabilities: bool = False,
-    ) -> Any:
-        ApprovalCls, _ = _build_middleware_classes()
-        return ApprovalCls(
-            policy,
-            gantry=gantry,
-            deny_on_missing_capabilities=deny_on_missing_capabilities,
-        )
+    def __new__(cls, policy: SecurityPolicy) -> Any:
+        approval_cls, _ = _build_middleware_classes()
+        return approval_cls(policy)
 
 
 class GantryObservabilityMiddleware:
@@ -208,8 +187,8 @@ class GantryObservabilityMiddleware:
     :class:`GantryApprovalMiddleware` for the rationale."""
 
     def __new__(cls, gantry: AgentGantry) -> Any:
-        _, ObservabilityCls = _build_middleware_classes()
-        return ObservabilityCls(gantry)
+        _, observability_cls = _build_middleware_classes()
+        return observability_cls(gantry)
 
 
 __all__ = [
