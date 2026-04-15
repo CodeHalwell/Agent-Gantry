@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 def _import_af_middleware_bits() -> tuple[Any, Any]:
     """Lazy import of AF symbols; raises a helpful ImportError otherwise."""
     try:
-        from agent_framework import (  # type: ignore[import-not-found]
+        from agent_framework import (
             FunctionMiddleware,
             MiddlewareTermination,
         )

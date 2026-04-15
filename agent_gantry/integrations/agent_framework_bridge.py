@@ -76,7 +76,7 @@ def _try_import_af_tool() -> Any | None:
     and other GA-only metadata flow through to the agent.
     """
     try:
-        from agent_framework import tool as af_tool  # type: ignore[import-not-found]
+        from agent_framework import tool as af_tool
 
         return af_tool
     except Exception:  # pragma: no cover - exercised in environments without AF
