@@ -24,10 +24,10 @@ async def test_agent_framework_example_runs_with_fakes(monkeypatch):
     af_mod = ModuleType("agent_framework")
     af_openai_mod = ModuleType("agent_framework.openai")
 
-    class StubOpenAIResponsesClient:
+    class StubOpenAIChatClient:
         pass
 
-    af_openai_mod.OpenAIResponsesClient = StubOpenAIResponsesClient
+    af_openai_mod.OpenAIChatClient = StubOpenAIChatClient
     af_mod.openai = af_openai_mod
 
     monkeypatch.setitem(sys.modules, "agent_framework", af_mod)
@@ -42,7 +42,7 @@ async def test_agent_framework_example_runs_with_fakes(monkeypatch):
 
     captured_tools: list[Any] = []
 
-    class FakeOpenAIResponsesClient:
+    class FakeOpenAIChatClient:
         def __init__(self, *_, **__):
             pass
 
@@ -60,7 +60,7 @@ async def test_agent_framework_example_runs_with_fakes(monkeypatch):
             # Call the first tool to verify wiring works
             return await self.tools[0](user_id="abc123")
 
-    monkeypatch.setattr(mod, "OpenAIResponsesClient", FakeOpenAIResponsesClient)
+    monkeypatch.setattr(mod, "OpenAIChatClient", FakeOpenAIChatClient)
 
     resp = await mod.main()
     assert captured_tools, "tool wrapping was not performed"

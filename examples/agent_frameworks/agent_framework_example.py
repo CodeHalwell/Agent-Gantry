@@ -1,5 +1,5 @@
 """
-Microsoft Agent Framework (RC+) integration example.
+Microsoft Agent Framework (1.0 GA) integration example.
 
 Demonstrates how Agent-Gantry's semantic routing reduces token usage in
 multi-agent systems by surfacing only the relevant tools per query.
@@ -10,7 +10,7 @@ Python callables, compatible with any AF chat client (OpenAI, Azure, Anthropic, 
 
 import asyncio
 
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 
 from agent_gantry import AgentGantry
@@ -50,7 +50,10 @@ async def main() -> str:
     tools = await bridge.get_tools(user_query, limit=2)
 
     # 4) Create and run the Agent Framework agent with semantically selected tools
-    client = OpenAIResponsesClient()
+    # In Agent Framework 1.0 GA, `OpenAIChatClient` replaces the old
+    # `OpenAIResponsesClient`; the RC-era `OpenAIChatClient` is now
+    # `OpenAIChatCompletionClient`. See the 1.0 upgrade guide.
+    client = OpenAIChatClient()
     agent = client.as_agent(
         name="SupportAgent",
         instructions="You are a support assistant. Use the tools to fetch customer data.",

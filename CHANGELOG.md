@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Agent Framework 1.0 GA support**: Bumped minimum `agent-framework` to `>=1.0.0` and updated integration example to use the renamed `OpenAIChatClient` (the RC-era `OpenAIResponsesClient` was renamed to `OpenAIChatClient` in 1.0 GA; the old `OpenAIChatClient` is now `OpenAIChatCompletionClient`). Docstrings and adapter class docs refer to "1.0 GA" instead of "RC+".
+
+### Performance
+- **Vectorized MMR** (PR #97): Replaced the pure-Python nested loop in `SemanticRouter._apply_mmr` with a vectorized `numpy` implementation using pre-normalized embeddings and matrix-vector dot products, drastically reducing CPU overhead during tool reranking.
+
+### Fixed
+- **External link a11y** (PR #99 + follow-up on `navigation.js`): Added `aria-hidden="true"` to decorative SVGs and visually-hidden "(opens in a new tab)" text for screen readers.
+
 ## [0.1.4] - 2026-03-11
 
 ### Added

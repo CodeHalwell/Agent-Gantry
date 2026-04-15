@@ -489,7 +489,7 @@ _logger = logging.getLogger(__name__)
 
 class AgentFrameworkAdapter(OpenAIAdapter):
     """
-    Tool specification adapter for Microsoft Agent Framework (RC+).
+    Tool specification adapter for Microsoft Agent Framework (1.0 GA).
 
     Microsoft Agent Framework uses OpenAI-compatible function calling format
     for its tool schemas, so this inherits from ``OpenAIAdapter`` and adds:
