@@ -1,5 +1,5 @@
 """
-Microsoft Agent Framework (RC+) integration example.
+Microsoft Agent Framework (GA 1.0+) integration example.
 
 Demonstrates how Agent-Gantry's semantic routing reduces token usage in
 multi-agent systems by surfacing only the relevant tools per query.

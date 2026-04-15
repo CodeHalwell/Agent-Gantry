@@ -54,8 +54,10 @@ async def run_query(query: str) -> str:
             adk_tools.append(make_adk_tool(name, desc, gantry))
 
     # 4) Build ADK agent and runner
+    # Uses gemini-2.5-flash; gemini-2.0-flash is legacy/deprecated and scheduled
+    # for shutdown. See https://ai.google.dev/gemini-api/docs/models
     adk_agent = Agent(
-        model="gemini-2.0-flash",
+        model="gemini-2.5-flash",
         name="gantry_adk_agent",
         instruction="You are a helpful agent that can look up order statuses via tools.",
         tools=adk_tools,

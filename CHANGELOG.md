@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Agent Framework Dependency Refresh**: Bumped minimum versions in the
+  `agent-frameworks` optional extra to track latest stable releases:
+  `agent-framework>=1.0.1` (GA, previously `>=1.0.0rc1`),
+  `langchain>=1.2.15`, `langchain-openai>=1.1.13`, `langgraph>=1.1.6`,
+  `llama-index-core>=0.14.20`, `llama-index-llms-openai>=0.7.5`.
+  `crewai` (`>=1.6.1`), `google-adk` (`>=1.14.1`) and
+  `semantic-kernel` (`>=1.30.0`) are intentionally left on broader
+  ranges because their latest releases narrow shared transitive
+  dependencies (`opentelemetry-api` for CrewAI/ADK, `azure-ai-projects`
+  for Semantic Kernel) below what `agent-framework` 1.0.1 requires; the
+  resolver is left free to pick a compatible version until the upstream
+  SDKs re-align.
+- **Dropped `pyautogen` Dependency**: Removed the deprecated `pyautogen`
+  proxy package from the `agent-frameworks` extra; `autogen-agentchat` /
+  `autogen-ext[openai]` (AutoGen v0.4+) remain the supported path.
+- **Google ADK Example**: Updated from the soon-to-be-retired
+  `gemini-2.0-flash` model to `gemini-2.5-flash`.
+- **Docs & Comments**: Updated Microsoft Agent Framework references from
+  "RC+" to "GA 1.0+" now that Microsoft Agent Framework has shipped 1.0.
+
 ## [0.1.4] - 2026-03-11
 
 ### Added
