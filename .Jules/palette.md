@@ -1,0 +1,3 @@
+## 2026-04-15 - [External Link & Decorative Icon Accessibility]
+**Learning:** Decorative icons placed next to external links (or inside interactive buttons) shouldn't be read out by screen readers as it creates a redundant or confusing user experience. Additionally, when a link opens in a new tab (`target="_blank"`), the visual UI alone might not be enough context for a screen reader user.
+**Action:** Always add `aria-hidden="true"` to purely decorative SVGs/icons. When linking to an external resource in a new tab, use a visually hidden text block like `<span class="sr-only"> (opens in a new tab)</span>` immediately after the link text to inform assistive technologies.
