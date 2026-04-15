@@ -30,8 +30,39 @@ async def test_agent_framework_example_runs_with_fakes(monkeypatch):
     af_openai_mod.OpenAIChatClient = StubOpenAIChatClient
     af_mod.openai = af_openai_mod
 
+    # The example now also imports middleware primitives from agent_framework
+    # at runtime (via GantryApprovalMiddleware/GantryObservabilityMiddleware).
+    # Provide minimal stubs so the example module is fully exercisable.
+    class _StubMiddlewareTermination(Exception):
+        pass
+
+    class _StubFunctionMiddleware:  # noqa: D401
+        async def process(self, context, call_next):  # pragma: no cover - stub
+            await call_next()
+
+    def _stub_tool(func=None, **_kw):  # noqa: ANN001
+        """Stand-in for agent_framework.tool decorator."""
+        if func is None:
+            return lambda f: f
+        return func
+
+    af_mod.FunctionMiddleware = _StubFunctionMiddleware
+    af_mod.MiddlewareTermination = _StubMiddlewareTermination
+    af_mod.tool = _stub_tool
+
     monkeypatch.setitem(sys.modules, "agent_framework", af_mod)
     monkeypatch.setitem(sys.modules, "agent_framework.openai", af_openai_mod)
+
+    # The example module imports the middleware module at top level, which
+    # caches the _build_middleware_classes() result on first instantiation.
+    # Force a fresh import so it sees the stubs above.
+    for m in [
+        "agent_gantry.integrations.agent_framework_middleware",
+        "agent_gantry.integrations.agent_framework_bridge",
+        "agent_gantry.integrations",
+    ]:
+        if m in sys.modules:
+            del sys.modules[m]
 
     # Force re-import of the example module
     mod_name = "examples.agent_frameworks.agent_framework_example"
@@ -46,12 +77,16 @@ async def test_agent_framework_example_runs_with_fakes(monkeypatch):
         def __init__(self, *_, **__):
             pass
 
-        def as_agent(self, *, name, instructions, tools):
-            return FakeAgent(tools=tools)
+        def as_agent(self, *, name, instructions, tools, middleware=None):
+            return FakeAgent(tools=tools, middleware=middleware)
 
     class FakeAgent:
-        def __init__(self, *, tools):
+        def __init__(self, *, tools, middleware=None):
             self.tools = tools
+            self.middleware = middleware
+            # Mirror AF's public shape so example code that reads
+            # ``agent.default_options["tools"]`` keeps working.
+            self.default_options = {"tools": tools}
             captured_tools.extend(tools)
 
         async def run(self, query: str) -> str:

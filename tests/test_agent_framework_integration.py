@@ -256,7 +256,10 @@ class TestGantryToolBridge:
 
         await gantry.sync()
 
-        bridge = GantryToolBridge(gantry, score_threshold=0.0)
+        # as_function_tool=False preserves the bare-callable shape that these
+        # tests exercise. The new default (FunctionTool wrapping) is covered
+        # by tests/test_agent_framework_orchestration.py.
+        bridge = GantryToolBridge(gantry, score_threshold=0.0, as_function_tool=False)
         tools = await bridge.get_tools("user profile", limit=5, score_threshold=0.0)
 
         assert len(tools) >= 1
@@ -279,7 +282,10 @@ class TestGantryToolBridge:
 
         await gantry.sync()
 
-        bridge = GantryToolBridge(gantry, score_threshold=0.0)
+        # as_function_tool=False preserves the bare-callable shape that these
+        # tests exercise. The new default (FunctionTool wrapping) is covered
+        # by tests/test_agent_framework_orchestration.py.
+        bridge = GantryToolBridge(gantry, score_threshold=0.0, as_function_tool=False)
         tools = await bridge.get_tools("user profile", limit=5, score_threshold=0.0)
 
         # Execute the wrapped tool
@@ -302,7 +308,10 @@ class TestGantryToolBridge:
 
         await gantry.sync()
 
-        bridge = GantryToolBridge(gantry, score_threshold=0.0)
+        # as_function_tool=False preserves the bare-callable shape that these
+        # tests exercise. The new default (FunctionTool wrapping) is covered
+        # by tests/test_agent_framework_orchestration.py.
+        bridge = GantryToolBridge(gantry, score_threshold=0.0, as_function_tool=False)
         tools = await bridge.get_tools("search products", limit=5, score_threshold=0.0)
 
         assert len(tools) >= 1
@@ -329,7 +338,10 @@ class TestGantryToolBridge:
 
         await gantry.sync()
 
-        bridge = GantryToolBridge(gantry, score_threshold=0.0)
+        # as_function_tool=False preserves the bare-callable shape that these
+        # tests exercise. The new default (FunctionTool wrapping) is covered
+        # by tests/test_agent_framework_orchestration.py.
+        bridge = GantryToolBridge(gantry, score_threshold=0.0, as_function_tool=False)
         tools = await bridge.get_tools("system status", limit=5, score_threshold=0.0)
 
         assert len(tools) >= 1
@@ -350,7 +362,10 @@ class TestGantryToolBridge:
 
         await gantry.sync()
 
-        bridge = GantryToolBridge(gantry, score_threshold=0.0)
+        # as_function_tool=False preserves the bare-callable shape that these
+        # tests exercise. The new default (FunctionTool wrapping) is covered
+        # by tests/test_agent_framework_orchestration.py.
+        bridge = GantryToolBridge(gantry, score_threshold=0.0, as_function_tool=False)
         tools1 = await bridge.get_tools("user profile", limit=5, score_threshold=0.0)
         tools2 = await bridge.get_tools("user profile", limit=5, score_threshold=0.0)
 
@@ -371,7 +386,10 @@ class TestGantryToolBridge:
 
         await gantry.sync()
 
-        bridge = GantryToolBridge(gantry, score_threshold=0.0)
+        # as_function_tool=False preserves the bare-callable shape that these
+        # tests exercise. The new default (FunctionTool wrapping) is covered
+        # by tests/test_agent_framework_orchestration.py.
+        bridge = GantryToolBridge(gantry, score_threshold=0.0, as_function_tool=False)
         tools1 = await bridge.get_tools("user profile", limit=5, score_threshold=0.0)
         bridge.clear_cache()
         tools2 = await bridge.get_tools("user profile", limit=5, score_threshold=0.0)
@@ -393,7 +411,7 @@ class TestGantryToolBridge:
 
         await gantry.sync()
 
-        bridge = GantryToolBridge(gantry)
+        bridge = GantryToolBridge(gantry, as_function_tool=False)
         tool_defs = gantry.export_tools()
         wrapped = bridge.wrap_tools(tool_defs)
 
@@ -414,7 +432,7 @@ class TestGantryToolBridge:
 
         await gantry.sync()
 
-        bridge = GantryToolBridge(gantry)
+        bridge = GantryToolBridge(gantry, as_function_tool=False)
         tool_def = gantry.export_tools()[0]
         wrapped = bridge.wrap_single(tool_def)
 
@@ -435,7 +453,10 @@ class TestGantryToolBridge:
 
         await gantry.sync()
 
-        bridge = GantryToolBridge(gantry, score_threshold=0.0)
+        # as_function_tool=False preserves the bare-callable shape that these
+        # tests exercise. The new default (FunctionTool wrapping) is covered
+        # by tests/test_agent_framework_orchestration.py.
+        bridge = GantryToolBridge(gantry, score_threshold=0.0, as_function_tool=False)
         results = await bridge.get_tools_with_scores(
             "user profile", limit=5, score_threshold=0.0
         )
@@ -516,7 +537,10 @@ class TestGantryToolBridgeEdgeCases:
 
         await gantry.sync()
 
-        bridge = GantryToolBridge(gantry, score_threshold=0.0)
+        # as_function_tool=False preserves the bare-callable shape that these
+        # tests exercise. The new default (FunctionTool wrapping) is covered
+        # by tests/test_agent_framework_orchestration.py.
+        bridge = GantryToolBridge(gantry, score_threshold=0.0, as_function_tool=False)
         tools = await bridge.get_tools("user profile", limit=5, score_threshold=0.0)
 
         # Positional call
@@ -539,7 +563,10 @@ class TestGantryToolBridgeEdgeCases:
 
         await gantry.sync()
 
-        bridge = GantryToolBridge(gantry, score_threshold=0.0)
+        # as_function_tool=False preserves the bare-callable shape that these
+        # tests exercise. The new default (FunctionTool wrapping) is covered
+        # by tests/test_agent_framework_orchestration.py.
+        bridge = GantryToolBridge(gantry, score_threshold=0.0, as_function_tool=False)
         tools = await bridge.get_tools("search products", limit=5, score_threshold=0.0)
 
         result = await tools[0]("shoes", "footwear")
@@ -561,7 +588,10 @@ class TestGantryToolBridgeEdgeCases:
 
         await gantry.sync()
 
-        bridge = GantryToolBridge(gantry, score_threshold=0.0)
+        # as_function_tool=False preserves the bare-callable shape that these
+        # tests exercise. The new default (FunctionTool wrapping) is covered
+        # by tests/test_agent_framework_orchestration.py.
+        bridge = GantryToolBridge(gantry, score_threshold=0.0, as_function_tool=False)
         tools = await bridge.get_tools("user profile", limit=5, score_threshold=0.0)
 
         with pytest.raises(TypeError, match="takes at most 1"):
@@ -582,7 +612,10 @@ class TestGantryToolBridgeEdgeCases:
 
         await gantry.sync()
 
-        bridge = GantryToolBridge(gantry, score_threshold=0.0)
+        # as_function_tool=False preserves the bare-callable shape that these
+        # tests exercise. The new default (FunctionTool wrapping) is covered
+        # by tests/test_agent_framework_orchestration.py.
+        bridge = GantryToolBridge(gantry, score_threshold=0.0, as_function_tool=False)
         tools = await bridge.get_tools("user profile", limit=5, score_threshold=0.0)
 
         sig = inspect.signature(tools[0])
@@ -609,7 +642,7 @@ class TestGantryToolBridgeEdgeCases:
 
         await gantry.sync()
 
-        bridge = GantryToolBridge(gantry)
+        bridge = GantryToolBridge(gantry, as_function_tool=False)
         tool_defs = gantry.export_tools()
         wrapped1 = bridge.wrap_tools(tool_defs, cache=True)
         wrapped2 = bridge.wrap_tools(tool_defs, cache=False)

@@ -14,7 +14,8 @@ The general pattern is:
 
 ## Examples Included
 
-- `agent_framework_example.py`: Microsoft Agent Framework **1.0 GA** integration using `OpenAIChatClient.as_agent(...)` and the `GantryToolBridge`.
+- `agent_framework_example.py`: Microsoft Agent Framework **1.0 GA** single-agent integration using `OpenAIChatClient`, the `GantryToolBridge` (emits real `FunctionTool`s with `approval_mode` derived from Gantry capabilities), and the new `GantryApprovalMiddleware` + `GantryObservabilityMiddleware`.
+- `agent_framework_orchestration_example.py`: Multi-agent orchestration patterns (Sequential / Concurrent / Handoff) from AF 1.0 GA, each participating agent receiving its own semantically selected Gantry tool slice.
 - `google_adk_example.py`: Google Agent Development Kit (ADK) integration using `Agent` + `Runner`.
 - `langchain_example.py`: Using Gantry with LangChain 0.3+ `create_agent`.
 - `langgraph_example.py`: Integrating Gantry into a LangGraph workflow.
