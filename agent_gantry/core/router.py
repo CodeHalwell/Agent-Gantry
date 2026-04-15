@@ -461,6 +461,11 @@ class SemanticRouter:
         emb_matrix = np.array(embeddings, dtype=np.float64)
         norms = np.linalg.norm(emb_matrix, axis=1)
 
+        # ⚡ OPTIMIZATION: Pre-normalize embeddings to avoid repeated division
+        # Reduces O(N^2) normalizations to O(N) operations
+        norms_safe = np.where(norms == 0, 1.0, norms)
+        normalized_embs = emb_matrix / norms_safe[:, np.newaxis]
+
         selected: list[int] = []
         candidates = list(range(len(scored_tools)))
 
@@ -468,28 +473,35 @@ class SemanticRouter:
         selected.append(first_idx)
         candidates.remove(first_idx)
 
+        # ⚡ OPTIMIZATION: Track max similarity to already selected tools incrementally
+        # Avoids recalculating pairwise similarities for all selected candidates each iteration
+        # Reduces MMR calculation from O(N^2 * M) to O(N * M) where N=candidates, M=selected
+        max_sims: dict[int, float] = {idx: 0.0 for idx in candidates}
+
+        # Initialize max_sims with the first selected item
+        for idx in candidates:
+            if norms[idx] > 0 and norms[first_idx] > 0:
+                max_sims[idx] = float(np.dot(normalized_embs[idx], normalized_embs[first_idx]))
+
         while candidates and len(selected) < limit:
             mmr_scores: dict[int, float] = {}
 
             for idx in candidates:
-                max_sim = 0.0
-                if norms[idx] > 0:
-                    for sel_idx in selected:
-                        if norms[sel_idx] > 0:
-                            sim = float(
-                                np.dot(emb_matrix[idx], emb_matrix[sel_idx])
-                                / (norms[idx] * norms[sel_idx])
-                            )
-                            if sim > max_sim:
-                                max_sim = sim
-
-                mmr_scores[idx] = lambda_param * relevance_scores[idx] - (
-                    1.0 - lambda_param
-                ) * max_sim
+                mmr_scores[idx] = (
+                    lambda_param * relevance_scores[idx] - (1.0 - lambda_param) * max_sims[idx]
+                )
 
             next_idx = max(mmr_scores, key=lambda k: mmr_scores[k])
             selected.append(next_idx)
             candidates.remove(next_idx)
+
+            # Update max_sims incrementally with the newly selected item
+            if candidates:
+                for idx in candidates:
+                    if norms[idx] > 0 and norms[next_idx] > 0:
+                        sim = float(np.dot(normalized_embs[idx], normalized_embs[next_idx]))
+                        if sim > max_sims[idx]:
+                            max_sims[idx] = sim
 
         return [scored_tools[i] for i in selected]
 

@@ -1,0 +1,3 @@
+## 2024-04-15 - Vector Operations Optimization
+**Learning:** Pure Python nested loops for vector operations (like cosine similarity) in semantic routers cause significant performance bottlenecks, especially during Maximal Marginal Relevance (MMR) calculations. Pre-normalizing embeddings and maintaining incremental state dictionaries for maximum similarities avoids redundant O(N^2) dot product computations.
+**Action:** Always utilize NumPy for vectorized operations and pre-normalize vector arrays. Ensure to cache or incrementally update distance/similarity matrix states in tight loops instead of recomputing pairwise metrics.
