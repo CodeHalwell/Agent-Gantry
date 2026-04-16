@@ -2,7 +2,7 @@
 Microsoft Agent Framework bridge for Agent-Gantry.
 
 Provides seamless integration between Agent-Gantry's semantic tool routing
-and Microsoft Agent Framework (RC+) agents. The bridge converts Gantry
+and Microsoft Agent Framework (1.0+) agents. The bridge converts Gantry
 tool definitions into Python callables that AF agents can invoke directly,
 enabling dynamic tool selection that reduces token usage in multi-agent systems.
 

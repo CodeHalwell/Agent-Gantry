@@ -111,7 +111,7 @@ anthropic_tools = [t.tool.to_anthropic_schema() for t in retrieval.tools]
 
 client = Anthropic(api_key="sk-ant-...")
 message = client.messages.create(
-    model="claude-3.7-sonnet-async",
+    model="claude-sonnet-4-5-20250514",
     messages=[{"role": "user", "content": "Summarize Q1 revenue and compute the tax."}],
     tools=anthropic_tools,
 )

@@ -1,8 +1,7 @@
 import asyncio
 
-from crewai import Agent, Crew, Process, Task
+from crewai import Agent, Crew, LLM, Process, Task
 from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
 
 from agent_gantry import AgentGantry
 from agent_gantry.integrations.framework_adapters import fetch_framework_tools
@@ -51,8 +50,8 @@ async def main():
         if name == "get_customer_info":
             crew_tools.append(make_crew_tool(name, desc, gantry))
 
-    # 4. Define CrewAI Agent
-    llm = ChatOpenAI(model="gpt-4o")
+    # 4. Define CrewAI Agent (using CrewAI's native LLM class)
+    llm = LLM(model="gpt-4o")
 
     researcher = Agent(
         role="Customer Success Researcher",

@@ -1,6 +1,6 @@
-# LLM SDK Compatibility Guide (Late 2025)
+# LLM SDK Compatibility Guide (2026)
 
-This document details Agent-Gantry's compatibility with major Python LLM SDKs as of late 2025.
+This document details Agent-Gantry's compatibility with major Python LLM SDKs as of 2026.
 
 ## Overview
 

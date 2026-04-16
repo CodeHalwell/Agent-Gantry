@@ -22,7 +22,7 @@ async def test_multi_provider_metrics():
     print(f"Anthropic Savings: {savings_anthropic.prompt_savings_pct:.1f}%")
 
     await telemetry.record_token_usage(
-        usage=savings_anthropic.optimized, model_name="claude-3-5-sonnet", savings=savings_anthropic
+        usage=savings_anthropic.optimized, model_name="claude-sonnet-4-5", savings=savings_anthropic
     )
 
     # 2. Google GenAI Format (prompt_token_count, candidates_token_count)

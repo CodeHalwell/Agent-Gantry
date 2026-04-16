@@ -1,5 +1,5 @@
 """
-Tests for LLM SDK compatibility (Late 2025).
+Tests for LLM SDK compatibility (2026).
 
 These tests verify that Agent-Gantry is compatible with major Python LLM SDKs.
 Tests cover SDK imports, client initialization patterns, and key endpoint methods.

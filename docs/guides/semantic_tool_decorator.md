@@ -133,7 +133,7 @@ client = Anthropic()
 async def claude_chat(messages: list[dict], *, tools: list | None = None):
     """Chat with Claude using automatic tool selection."""
     return client.messages.create(
-        model="claude-3-opus-20240229",
+        model="claude-sonnet-4-5-20250514",
         messages=messages,
         tools=tools,  # Tools are in Anthropic format
     )

@@ -14,7 +14,7 @@ The general pattern is:
 
 ## Examples Included
 
-- `agent_framework_example.py`: Microsoft Agent Framework integration using `ChatAgent`.
+- `agent_framework_example.py`: Microsoft Agent Framework (1.0+) integration using `GantryToolBridge`.
 - `google_adk_example.py`: Google Agent Development Kit (ADK) integration using `Agent` + `Runner`.
 - `langchain_example.py`: Using Gantry with LangChain 0.3+ `create_agent`.
 - `langgraph_example.py`: Integrating Gantry into a LangGraph workflow.
