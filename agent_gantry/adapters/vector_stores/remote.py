@@ -741,11 +741,14 @@ class PGVectorStore:
         if not tools or not embeddings:
             return 0
 
+        import json
+
         async with self._pool.acquire() as conn:
             records = []
             for tool, embedding in zip(tools, embeddings):
                 tool_id = f"{tool.namespace}.{tool.name}"
-                embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
+                # Optimize string formatting for embeddings
+                embedding_str = json.dumps(embedding)
                 records.append(
                     (
                         tool_id,
@@ -794,9 +797,11 @@ class PGVectorStore:
         include_embeddings: bool = False,
     ) -> list[tuple[ToolDefinition, float]] | list[tuple[ToolDefinition, float, list[float]]]:
         """Search for similar tools."""
+        import json
         await self.initialize()
 
-        embedding_str = "[" + ",".join(str(x) for x in query_vector) + "]"
+        # Optimize string formatting for embeddings
+        embedding_str = json.dumps(query_vector)
 
         # Build query with optional namespace filter
         namespace_clause = ""
