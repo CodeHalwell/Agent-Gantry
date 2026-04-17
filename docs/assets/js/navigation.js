@@ -232,6 +232,9 @@
 
         // Add visual indicator
         if (!link.querySelector(".external-icon")) {
+          // Store text content before modifying link
+          const originalText = link.textContent.trim();
+
           const icon = document.createElement("span");
           icon.className = "external-icon";
           icon.setAttribute("aria-hidden", "true");
@@ -240,10 +243,19 @@
           icon.style.opacity = "0.6";
           link.appendChild(icon);
 
-          const srText = document.createElement("span");
-          srText.className = "sr-only";
-          srText.textContent = " (opens in a new tab)";
-          link.appendChild(srText);
+          // Provide screen reader context via aria-label (preferred)
+          // or a visually hidden sr-only span as a fallback.
+          if (!link.hasAttribute("aria-label")) {
+            link.setAttribute(
+              "aria-label",
+              originalText + " (opens in a new tab)",
+            );
+          } else {
+            const srText = document.createElement("span");
+            srText.className = "sr-only";
+            srText.textContent = " (opens in a new tab)";
+            link.appendChild(srText);
+          }
         }
       }
     });
