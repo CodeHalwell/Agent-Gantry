@@ -51,7 +51,7 @@ async def main():
 
     # Call Mistral
     # Mistral's `tools` parameter accepts the same JSON schema structure
-    response = client.chat.complete(
+    response = await client.chat.complete_async(
         model="mistral-large-latest",
         messages=[{"role": "user", "content": query}],
         tools=tools,
@@ -87,7 +87,7 @@ async def main():
         """
         print(f"Decorator injected {len(tools) if tools else 0} tools")
 
-        response = client.chat.complete(
+        response = await client.chat.complete_async(
             model="mistral-large-latest",
             messages=[{"role": "user", "content": user_query}],
             tools=tools,

@@ -50,11 +50,10 @@ async def main():
         ToolQuery(context=ConversationContext(query=user_query), limit=1, score_threshold=0.1)
     )
 
-    # B. Convert to Gemini Schema
-    # Agent-Gantry provides `to_gemini_schema()` which returns a dict compatible with FunctionDeclaration
+    # B. Convert to Gemini Schema using to_dialect("gemini")
     gemini_tools = []
     for t in retrieval_result.tools:
-        schema = t.tool.to_gemini_schema()
+        schema = t.tool.to_dialect("gemini")
 
         # Create Gemini FunctionDeclaration object
         func_decl = types.FunctionDeclaration(
@@ -71,51 +70,49 @@ async def main():
 
     print(f"Gantry retrieved {len(gemini_tools)} tool(s)")
 
-    # C. Call Gemini
-    # Note: Gemini 2.0 Flash is a good default
-    response = client.models.generate_content(
-        model="models/gemini-3-flash-preview", contents=user_query, config=config
+    # C. Call Gemini asynchronously via client.aio
+    response = await client.aio.models.generate_content(
+        model="gemini-2.0-flash", contents=user_query, config=config
     )
 
     # Inspect response for function calls
-    for part in response.candidates[0].content.parts:
-        if fn := part.function_call:
+    if response.function_calls:
+        for fn in response.function_calls:
             print(f"Gemini decided to call: {fn.name}({fn.args})")
 
             # Execute securely via Gantry
-            # Note: fn.args is a dict in the new SDK
-            result = await gantry.execute(ToolCall(tool_name=fn.name, arguments=fn.args))
+            result = await gantry.execute(ToolCall(tool_name=fn.name, arguments=dict(fn.args)))
             print(f"Execution Result: {result.result}")
 
     # --- Scenario: Using the Decorator ---
     print("\n--- Scenario: Using @with_semantic_tools Decorator (RECOMMENDED) ---")
 
     # The decorator uses the default gantry set above and automatically
-    # converts tools to Gemini format via dialect="gemini"
+    # converts tools to Gemini format via dialect="gemini".
+    # With dialect="gemini", each injected tool dict has the shape:
+    #   {"name": "...", "description": "...", "parameters": {...}}
     @with_semantic_tools(limit=1, score_threshold=0.1, dialect="gemini")
     async def chat_with_gemini(prompt: str, tools: list = None):
-        # Convert the injected 'tools' (list of dicts) to Gemini Tool objects
         if tools:
             print(f"   [Decorator] Injected {len(tools)} tools")
             gemini_funcs = []
             for t in tools:
-                # t is {'type': 'function', 'function': {...}}
-                f_spec = t["function"]
+                # t is a Gemini function declaration dict: {"name": "...", "description": "...", "parameters": {...}}
                 gemini_funcs.append(
                     types.FunctionDeclaration(
-                        name=f_spec["name"],
-                        description=f_spec["description"],
-                        parameters=f_spec["parameters"],
+                        name=t["name"],
+                        description=t["description"],
+                        parameters=t["parameters"],
                     )
                 )
             toolbox = types.Tool(function_declarations=gemini_funcs)
-            config = types.GenerateContentConfig(tools=[toolbox])
+            cfg = types.GenerateContentConfig(tools=[toolbox])
         else:
             print("   [Decorator] No tools injected")
-            config = None
+            cfg = None
 
-        return client.models.generate_content(
-            model="models/gemini-3-flash-preview", contents=prompt, config=config
+        return await client.aio.models.generate_content(
+            model="gemini-2.0-flash", contents=prompt, config=cfg
         )
 
     query_dec = "Find documents about project beta"
@@ -123,8 +120,8 @@ async def main():
 
     response_dec = await chat_with_gemini(prompt=query_dec)
 
-    for part in response_dec.candidates[0].content.parts:
-        if fn := part.function_call:
+    if response_dec.function_calls:
+        for fn in response_dec.function_calls:
             print(f"Gemini decided to call: {fn.name}")
 
 

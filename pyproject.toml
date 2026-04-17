@@ -90,7 +90,7 @@ embeddings = [
     "sentence-transformers>=2.2.0",
 ]
 openai = [
-    "openai>=1.0.0",
+    "openai>=2.0.0",
 ]
 cohere = [
     "cohere>=5.0.0",
@@ -142,7 +142,7 @@ mistral = [
     "mistralai>=1.0.0",
 ]
 groq = [
-    "groq>=0.13.0",
+    "groq>=1.0.0",
 ]
 # Combined LLM provider dependencies
 llm-providers = [

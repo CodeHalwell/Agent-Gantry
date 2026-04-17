@@ -100,7 +100,7 @@ async def main() -> None:
     # --- Scenario B: Static Tool List (Small Toolsets) ---
     print("\n--- Scenario B: Static Tool List (For small toolsets) ---")
     # If you have < 10 tools, you might just want to pass them all
-    all_tools = [t.to_openai_schema() for t in await gantry.list_tools()]
+    all_tools = [t.to_dialect("openai") for t in await gantry.list_tools()]
     print(f"Passing all {len(all_tools)} tools to LLM...")
 
     # (The rest of the LLM call is the same, just passing `tools=all_tools`)

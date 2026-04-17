@@ -68,8 +68,7 @@ async def main() -> None:
     )
 
     # B. Convert to Anthropic Schema
-    # Agent-Gantry provides a helper method `to_anthropic_schema()` on ToolDefinition
-    anthropic_tools = [t.tool.to_anthropic_schema() for t in retrieval_result.tools]
+    anthropic_tools = [t.tool.to_dialect("anthropic") for t in retrieval_result.tools]
 
     print(f"Gantry retrieved {len(anthropic_tools)} tool(s)")
     # print(json.dumps(anthropic_tools, indent=2)) # Uncomment to see schema

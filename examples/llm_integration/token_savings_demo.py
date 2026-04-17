@@ -188,7 +188,7 @@ async def main():
 
     # Get all tools as OpenAI schemas
     all_tool_defs = await gantry.list_tools()
-    all_tools_schema = [t.to_openai_schema() for t in all_tool_defs]
+    all_tools_schema = [t.to_dialect("openai") for t in all_tool_defs]
 
     est_tokens_all = count_tokens(all_tools_schema)
     print(f"   Tools passed: {len(all_tools_schema)}")

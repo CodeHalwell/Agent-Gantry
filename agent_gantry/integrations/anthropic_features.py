@@ -260,7 +260,7 @@ async def create_anthropic_client(
         ...     enable_thinking="interleaved",
         ... )
         >>> response, thinking = await client.chat_with_thinking(
-        ...     model="claude-3-5-sonnet-20241022",
+        ...     model="claude-sonnet-4-5",
         ...     messages=[{"role": "user", "content": "Explain quantum computing"}],
         ... )
     """
