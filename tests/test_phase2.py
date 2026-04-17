@@ -145,6 +145,13 @@ class TestRetryAndTimeout:
 class TestSecurityPolicy:
     """Tests for security policy enforcement."""
 
+    def test_extract_domains_protocol_relative_auth_bypass(self) -> None:
+        """Phase 4.3: SecurityPolicy should not allow authentication bypasses in protocol-relative URLs."""
+        policy = SecurityPolicy()
+        domains = policy._extract_domains("//github.com@evil.com/path")
+        assert "evil.com" in domains
+        assert "github.com" not in domains
+
     @pytest.mark.asyncio
     async def test_destructive_tool_requires_confirmation(self, gantry: AgentGantry) -> None:
         """Test that destructive tools require confirmation."""
@@ -173,7 +180,10 @@ class TestSecurityPolicy:
         policy.check_permission("test_tool", {})
 
         # Third request should fail
-        with pytest.raises(PermissionDeniedError, match="Rate limit exceeded: maximum 2 requests per minute allowed."):
+        with pytest.raises(
+            PermissionDeniedError,
+            match="Rate limit exceeded: maximum 2 requests per minute allowed.",
+        ):
             policy.check_permission("test_tool", {})
 
     @pytest.mark.asyncio
@@ -232,7 +242,9 @@ class TestSecurityPolicy:
             policy.check_permission("fetch_data", {"url": "http://github.com@evil.com/"})
 
         with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
-            policy.check_permission("fetch_data", {"text": "check out http://github.com:password@evil.com/"})
+            policy.check_permission(
+                "fetch_data", {"text": "check out http://github.com:password@evil.com/"}
+            )
 
         # Empty allowed_domains should allow everything
         open_policy = SecurityPolicy(allowed_domains=[])
@@ -415,9 +427,7 @@ class TestArgumentValidation:
         assert "must be an integer" in result.error.lower()
 
         # Int where bool expected
-        result = await gantry.execute(
-            ToolCall(tool_name="process_bool", arguments={"flag": 1})
-        )
+        result = await gantry.execute(ToolCall(tool_name="process_bool", arguments={"flag": 1}))
         assert result.status == ExecutionStatus.FAILURE
         assert "must be a boolean" in result.error.lower()
 
@@ -440,17 +450,15 @@ class TestArgumentValidation:
                     "properties": {
                         "inner": {
                             "type": "object",
-                            "properties": {
-                                "active": {"type": "boolean"}
-                            },
-                            "required": ["active"]
+                            "properties": {"active": {"type": "boolean"}},
+                            "required": ["active"],
                         },
-                        "name": {"type": "string"}
+                        "name": {"type": "string"},
                     },
-                    "required": ["inner", "name"]
+                    "required": ["inner", "name"],
                 }
             },
-            "required": ["data"]
+            "required": ["data"],
         }
 
         await gantry.sync()
@@ -459,27 +467,21 @@ class TestArgumentValidation:
         result = await gantry.execute(
             ToolCall(
                 tool_name="process_model",
-                arguments={"data": {"inner": {"active": True}, "name": "test"}}
+                arguments={"data": {"inner": {"active": True}, "name": "test"}},
             )
         )
         assert result.status == ExecutionStatus.SUCCESS
 
         # Invalid top-level type
         result = await gantry.execute(
-            ToolCall(
-                tool_name="process_model",
-                arguments={"data": "not_an_object"}
-            )
+            ToolCall(tool_name="process_model", arguments={"data": "not_an_object"})
         )
         assert result.status == ExecutionStatus.FAILURE
         assert "must be an object" in result.error.lower()
 
         # Missing required property in nested object
         result = await gantry.execute(
-            ToolCall(
-                tool_name="process_model",
-                arguments={"data": {"inner": {}, "name": "test"}}
-            )
+            ToolCall(tool_name="process_model", arguments={"data": {"inner": {}, "name": "test"}})
         )
         assert result.status == ExecutionStatus.FAILURE
         assert "missing required parameter" in result.error.lower()
@@ -488,7 +490,7 @@ class TestArgumentValidation:
         result = await gantry.execute(
             ToolCall(
                 tool_name="process_model",
-                arguments={"data": {"inner": {"active": "yes"}, "name": "test"}}
+                arguments={"data": {"inner": {"active": "yes"}, "name": "test"}},
             )
         )
         assert result.status == ExecutionStatus.FAILURE

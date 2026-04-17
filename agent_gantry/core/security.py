@@ -133,8 +133,9 @@ class SecurityPolicy:
         domains = set()
 
         # Match URLs with explicit protocol schemes (http, https, ftp, ftps)
-        # and protocol-relative URLs (//example.com)
-        url_pattern = r"(?:https?|ftps?|file)://[^\s\"\'<>]+"
+        # and protocol-relative URLs (//example.com/path) securely,
+        # avoiding matching inline comments
+        url_pattern = r"(?:https?|ftps?|file)://[^\s\"\'<>]+|//(?:[a-zA-Z0-9][-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}|localhost)\b[-a-zA-Z0-9()@:%_\+.~#?&//=]*"
         for url_match in re.finditer(url_pattern, value):
             try:
                 parsed = urllib.parse.urlparse(url_match.group(0))
@@ -142,11 +143,6 @@ class SecurityPolicy:
                     domains.add(parsed.hostname)
             except Exception:
                 pass
-
-        # Protocol-relative URLs (//example.com/path)
-        proto_relative = r"//([a-zA-Z0-9][-a-zA-Z0-9.]*\.[a-zA-Z]{2,})"
-        for match in re.finditer(proto_relative, value):
-            domains.add(match.group(1))
 
         # Block data URIs that reference external resources
         if re.search(r"data:\s*[^;,]+", value) and "data:" in value:
