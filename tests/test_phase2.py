@@ -145,6 +145,13 @@ class TestRetryAndTimeout:
 class TestSecurityPolicy:
     """Tests for security policy enforcement."""
 
+    def test_extract_domains_protocol_relative_auth_bypass(self) -> None:
+        """Phase 4.3: SecurityPolicy should not allow authentication bypasses in protocol-relative URLs."""
+        policy = SecurityPolicy()
+        domains = policy._extract_domains("//github.com@evil.com/path")
+        assert "evil.com" in domains
+        assert "github.com" not in domains
+
     @pytest.mark.asyncio
     async def test_destructive_tool_requires_confirmation(self, gantry: AgentGantry) -> None:
         """Test that destructive tools require confirmation."""
