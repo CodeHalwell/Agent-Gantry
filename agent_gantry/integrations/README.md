@@ -200,8 +200,44 @@ agent = Agent(
 
 ## Modules
 
-- `decorator.py`: Core `with_semantic_tools` decorator and `SemanticToolSelector` class for automatic tool injection
+- `semantic_tools.py`: Core `with_semantic_tools` decorator and `SemanticToolSelector` class for automatic tool injection
 - `framework_adapters.py`: Helpers for converting tools to framework-specific formats (LangGraph, Semantic Kernel, CrewAI, Google ADK, Strands)
+- `agent_framework_bridge.py`: Microsoft Agent Framework 1.0 GA bridge — `GantryToolBridge` wraps Gantry tools as AF `FunctionTool`s with `approval_mode` auto-derived from Gantry `ToolCapability`. Exposes `build_agent(...)` one-liner for single-query agent construction.
+- `agent_framework_middleware.py`: Function middleware for AF 1.0 GA — `GantryApprovalMiddleware` (routes tool execution through Gantry's `SecurityPolicy`, raising `MiddlewareTermination` for `require_confirmation` patterns and `PermissionDeniedError` for policy-denied calls) and `GantryObservabilityMiddleware` (records per-invocation timing onto Gantry's telemetry).
+
+### Microsoft Agent Framework 1.0 GA quickstart
+
+```python
+from agent_framework.openai import OpenAIChatClient
+from agent_gantry import AgentGantry
+from agent_gantry.core.security import SecurityPolicy
+from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+from agent_gantry.integrations.agent_framework_middleware import (
+    GantryApprovalMiddleware,
+    GantryObservabilityMiddleware,
+)
+
+gantry = AgentGantry()
+# ... register tools ...
+await gantry.sync()
+
+bridge = GantryToolBridge(gantry)
+policy = SecurityPolicy(require_confirmation=["delete_*", "refund_*"])
+
+agent = await bridge.build_agent(
+    client=OpenAIChatClient(),
+    query="What's the weather in London?",
+    name="WeatherAgent",
+    instructions="Use tools to answer weather questions.",
+    middleware=[
+        GantryApprovalMiddleware(policy),
+        GantryObservabilityMiddleware(gantry),
+    ],
+)
+response = await agent.run("What's the weather in London?")
+```
+
+For multi-agent orchestration (Sequential, Concurrent, Handoff, Group Chat), see `examples/agent_frameworks/agent_framework_orchestration_example.py`.
 
 ## Advanced Usage
 

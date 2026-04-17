@@ -7,7 +7,9 @@ supporting both tools and skills collections for semantic retrieval.
 
 from __future__ import annotations
 
+import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,9 @@ from agent_gantry.adapters.vector_stores.lancedb_mixins import (
     _escape_sql_string,
     _validate_identifier,
 )
+from agent_gantry.schema.skill import Skill
+from agent_gantry.schema.tool import ToolDefinition
+from agent_gantry.utils.fingerprint import compute_tool_fingerprint
 
 __all__ = ["LanceDBVectorStore", "_escape_sql_string", "_validate_identifier"]
 

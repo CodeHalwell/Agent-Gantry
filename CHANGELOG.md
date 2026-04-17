@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Full Microsoft Agent Framework 1.0 GA integration**:
+  - `GantryToolBridge` now emits real `agent_framework.FunctionTool` instances
+    via the GA `@tool` decorator. Gantry's `ToolCapability` set is auto-mapped
+    to AF's `approval_mode`: destructive caps (`DELETE_DATA`, `WRITE_DATA`,
+    `EXECUTE_CODE`, `FINANCIAL`, `PII_ACCESS`) elevate the tool to
+    `"always_require"`; read-only tools stay on AF's default. Bridge accepts
+    a new `as_function_tool` constructor flag to preserve bare-callable
+    behaviour when needed.
+  - `GantryToolBridge.build_agent(client, query, *, name, instructions, ...)`
+    — one-liner that semantically retrieves tools for a query and constructs
+    an AF agent via `client.as_agent(...)` with optional middleware.
+  - New `agent_gantry.integrations.agent_framework_middleware` module with
+    `GantryApprovalMiddleware` (routes AF tool execution through Gantry's
+    `SecurityPolicy`, raising `MiddlewareTermination` for `require_confirmation`
+    patterns and `PermissionDeniedError` for policy-denied calls) and
+    `GantryObservabilityMiddleware` (records per-invocation timing onto Gantry
+    telemetry).
+  - New example `examples/agent_frameworks/agent_framework_orchestration_example.py`
+    demonstrating Sequential, Concurrent, and Handoff orchestration patterns
+    with each participant agent receiving a distinct Gantry-selected tool slice.
+  - 15 new orchestration tests in `tests/test_agent_framework_orchestration.py`
+    driving the real `agent-framework` package against a scripted chat client
+    to verify single-turn, multi-turn, sequential, concurrent, handoff,
+    group-chat, agent-as-tool, workflow, and middleware approval flows all
+    execute Gantry-bridged tools correctly.
+
+### Changed
+- **Agent Framework 1.0 GA support**: Bumped minimum `agent-framework` to `>=1.0.0` and updated integration example to use the renamed `OpenAIChatClient` (the RC-era `OpenAIResponsesClient` was renamed to `OpenAIChatClient` in 1.0 GA; the old `OpenAIChatClient` is now `OpenAIChatCompletionClient`). Docstrings and adapter class docs refer to "1.0 GA" instead of "RC+".
+
+### Performance
+- **Vectorized MMR** (PR #97): Replaced the pure-Python nested loop in `SemanticRouter._apply_mmr` with a vectorized `numpy` implementation using pre-normalized embeddings and matrix-vector dot products, drastically reducing CPU overhead during tool reranking.
+
+### Fixed
+- **External link a11y** (PR #99 + follow-up on `navigation.js`): Added `aria-hidden="true"` to decorative SVGs and visually-hidden "(opens in a new tab)" text for screen readers.
+
 ## [0.1.4] - 2026-03-11
 
 ### Added

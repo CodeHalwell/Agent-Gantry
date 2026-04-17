@@ -38,7 +38,7 @@ class BaseOpenAIEmbedder:
             dimension: Optional output dimension for Matryoshka truncation
         """
         try:
-            from openai import AsyncOpenAI
+            from openai import AsyncOpenAI  # noqa: F401 - availability probe for optional extra
         except ImportError as exc:
             raise ImportError(
                 "OpenAI package is not installed. Install it with:\n"
@@ -186,7 +186,7 @@ class OpenAIEmbedder(BaseOpenAIEmbedder):
         """
         super().__init__(config, dimension=dimension)
         try:
-            from openai import AsyncOpenAI
+            from openai import AsyncOpenAI  # noqa: F401 - availability probe for optional extra
         except ImportError as exc:
             raise ImportError(
                 "OpenAI package is not installed. Install it with:\n"

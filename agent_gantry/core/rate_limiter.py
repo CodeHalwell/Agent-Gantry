@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from agent_gantry.schema.config import RateLimitConfig
 
 
-class RateLimitExceeded(Exception):
+class RateLimitExceeded(Exception):  # noqa: N818 - public API name, stable across releases
     """Raised when rate limit is exceeded."""
 
     def __init__(self, message: str, retry_after: float | None = None) -> None:

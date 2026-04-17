@@ -2,7 +2,7 @@
 Microsoft Agent Framework bridge for Agent-Gantry.
 
 Provides seamless integration between Agent-Gantry's semantic tool routing
-and Microsoft Agent Framework (RC+) agents. The bridge converts Gantry
+and Microsoft Agent Framework (1.0 GA) agents. The bridge converts Gantry
 tool definitions into Python callables that AF agents can invoke directly,
 enabling dynamic tool selection that reduces token usage in multi-agent systems.
 
@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 from pydantic import Field
 
 from agent_gantry.schema.execution import ToolCall
+from agent_gantry.schema.tool import ToolCapability
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
@@ -49,9 +50,57 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Capabilities that indicate a tool is potentially destructive / requires
+# explicit human approval in production. Mapped to AF's
+# ``approval_mode="always_require"`` so that AF surfaces an approval event
+# before the tool actually runs.
+_APPROVAL_REQUIRED_CAPS: frozenset[ToolCapability] = frozenset(
+    {
+        ToolCapability.WRITE_DATA,
+        ToolCapability.DELETE_DATA,
+        ToolCapability.EXECUTE_CODE,
+        ToolCapability.FINANCIAL,
+        ToolCapability.PII_ACCESS,
+    }
+)
+
+
+def _try_import_af_tool() -> Any | None:
+    """Return ``agent_framework.tool`` if the package is installed, else None.
+
+    The bridge degrades gracefully: when AF is not installed (unit tests,
+    LangChain-only users, etc.) ``_build_callable_for_tool`` returns a bare
+    typed Python callable, which AF 1.0 still auto-wraps into a FunctionTool
+    when passed into ``Agent(tools=[...])``. When AF *is* installed we return
+    a genuine ``FunctionTool`` so that ``approval_mode``, ``max_invocations``
+    and other GA-only metadata flow through to the agent.
+    """
+    try:
+        from agent_framework import tool as af_tool
+
+        return af_tool
+    except Exception:  # pragma: no cover - exercised in environments without AF
+        return None
+
+
+def _tool_approval_mode(tool_def: ToolDefinition) -> str | None:
+    """Map Gantry ``ToolCapability`` set to AF ``approval_mode``.
+
+    Destructive / sensitive capabilities elevate the tool to
+    ``"always_require"`` so AF pauses for human approval before invocation.
+    Everything else returns ``None`` (AF defaults to ``"never_require"``).
+    """
+    caps = set(tool_def.capabilities)
+    if caps & _APPROVAL_REQUIRED_CAPS:
+        return "always_require"
+    return None
+
+
 def _build_callable_for_tool(
     tool_def: ToolDefinition,
     gantry: AgentGantry,
+    *,
+    as_function_tool: bool | None = None,
 ) -> Any:
     """
     Build a Python callable wrapping a Gantry tool for Microsoft Agent Framework.
@@ -61,12 +110,23 @@ def _build_callable_for_tool(
     schema for the LLM. This avoids sending raw JSON schemas and lets AF's
     native function-tool infrastructure handle serialisation.
 
+    When ``agent-framework`` is importable and ``as_function_tool`` is not
+    ``False``, the callable is wrapped with ``@agent_framework.tool`` so AF
+    receives a real ``FunctionTool`` with full GA metadata
+    (``approval_mode`` derived from Gantry capabilities, description,
+    name). When AF is not installed, a plain typed async callable is
+    returned; AF 1.0 still auto-wraps those at agent construction time.
+
     Args:
         tool_def: The Gantry ToolDefinition to wrap.
         gantry: The AgentGantry instance for execution.
+        as_function_tool: If ``True``, always wrap with ``@agent_framework.tool``
+            (raises ImportError when AF isn't available). If ``False``, always
+            return a bare callable. ``None`` (default) auto-detects.
 
     Returns:
-        An async callable suitable for passing to AF agent ``tools=[...]``.
+        Either an ``agent_framework.FunctionTool`` or a bare async callable,
+        both accepted by ``Agent(tools=[...])``.
     """
     tool_name = tool_def.name
     tool_desc = tool_def.description
@@ -132,7 +192,30 @@ def _build_callable_for_tool(
     wrapper.__qualname__ = tool_name
     wrapper.__doc__ = tool_desc
 
-    return wrapper
+    # Optionally upgrade to a real AF FunctionTool so approval_mode and the
+    # rest of the GA metadata flows through. AF 1.0 also accepts bare
+    # callables (it auto-wraps them at Agent(tools=...) time), so the
+    # fallback path remains fully functional for environments without AF.
+    if as_function_tool is False:
+        return wrapper
+
+    af_tool = _try_import_af_tool()
+    if af_tool is None:
+        if as_function_tool is True:
+            raise ImportError(
+                "as_function_tool=True requires the 'agent-framework' package. "
+                "Install with: pip install 'agent-gantry[agent-frameworks]'"
+            )
+        return wrapper
+
+    approval_mode = _tool_approval_mode(tool_def)
+    decorated = af_tool(
+        wrapper,
+        name=tool_name,
+        description=tool_desc,
+        approval_mode=approval_mode,
+    )
+    return decorated
 
 
 def _json_type_to_python(json_type: str) -> type:
@@ -194,9 +277,23 @@ class GantryToolBridge:
         gantry: AgentGantry,
         *,
         score_threshold: float = 0.3,
+        as_function_tool: bool | None = None,
     ) -> None:
+        """Initialize the bridge.
+
+        Args:
+            gantry: The AgentGantry instance providing tool retrieval and execution.
+            score_threshold: Minimum relevance score for tool selection (default: 0.3).
+            as_function_tool: Whether wrapped tools should be elevated to
+                ``agent_framework.FunctionTool`` via the ``@tool`` decorator.
+                ``None`` (default) = auto-detect (wrap if AF is importable);
+                ``True`` = force wrapping (raise if AF is missing);
+                ``False`` = always return bare callables. Defaults produce the
+                most idiomatic AF behaviour without introducing a hard dep.
+        """
         self._gantry = gantry
         self._score_threshold = score_threshold
+        self._as_function_tool = as_function_tool
         self._tool_cache: dict[str, Any] = {}
 
     async def _retrieve(
@@ -236,7 +333,11 @@ class GantryToolBridge:
         key = _cache_key(tool_def)
         if cache and key in self._tool_cache:
             return self._tool_cache[key]
-        wrapper = _build_callable_for_tool(tool_def, self._gantry)
+        wrapper = _build_callable_for_tool(
+            tool_def,
+            self._gantry,
+            as_function_tool=self._as_function_tool,
+        )
         if cache:
             self._tool_cache[key] = wrapper
         return wrapper
@@ -359,3 +460,77 @@ class GantryToolBridge:
             (self._get_or_build(st.tool, cache), st.final_score)
             for st in result.tools
         ]
+
+    # ------------------------------------------------------------------
+    # Agent construction helpers
+    # ------------------------------------------------------------------
+
+    async def build_agent(
+        self,
+        client: Any,
+        query: str,
+        *,
+        name: str,
+        instructions: str,
+        limit: int = 5,
+        score_threshold: float | None = None,
+        middleware: Any = None,
+        cache: bool = True,
+        extra_tools: list[Any] | None = None,
+        **query_kwargs: Any,
+    ) -> Any:
+        """Retrieve relevant tools and construct an AF ``Agent`` in one call.
+
+        This is the idiomatic one-liner for single-agent flows where the
+        tool set is determined by a single query (for example, the first
+        user turn). For multi-turn conversations, use ``get_tools`` and
+        keep the resulting agent across turns, or re-run this helper per
+        turn if you want tools to adapt to the latest user message.
+
+        Args:
+            client: Any AF chat client exposing ``as_agent(...)`` (e.g.
+                ``OpenAIChatClient``, ``AzureOpenAIChatClient``,
+                ``AnthropicChatClient``).
+            query: The user query whose tools will be retrieved.
+            name: Name to give the constructed agent.
+            instructions: System instructions for the agent.
+            limit: Top-K tools to retrieve from Gantry.
+            score_threshold: Override the bridge-level threshold.
+            middleware: Optional AF middleware sequence forwarded to
+                ``as_agent``. Accepts ``GantryApprovalMiddleware`` and any
+                AF-native middleware; useful for layering approval gates
+                or observability on top of semantically selected tools.
+            cache: Whether to reuse cached wrappers.
+            extra_tools: Additional static tools (AF ``FunctionTool``,
+                ``MCPStreamableHTTPTool``, bare callables, …) to append
+                after the Gantry-selected tools.
+            **query_kwargs: Forwarded to ``ToolQuery`` / ``ConversationContext``.
+
+        Returns:
+            An AF agent constructed via ``client.as_agent(...)``.
+        """
+        tools = await self.get_tools(
+            query,
+            limit=limit,
+            score_threshold=score_threshold,
+            cache=cache,
+            **query_kwargs,
+        )
+        if extra_tools:
+            tools = tools + list(extra_tools)
+
+        kwargs: dict[str, Any] = {
+            "name": name,
+            "instructions": instructions,
+            "tools": tools,
+        }
+        if middleware is not None:
+            kwargs["middleware"] = middleware
+        return client.as_agent(**kwargs)
+
+    def as_tool_list(self, tool_defs: list[ToolDefinition]) -> list[Any]:
+        """Alias for :meth:`wrap_tools` with a name that reads naturally in
+        orchestration code where the returned list will be spread across
+        multiple agents (e.g. ``Agent(tools=bridge.as_tool_list([...]))``).
+        """
+        return self.wrap_tools(tool_defs)

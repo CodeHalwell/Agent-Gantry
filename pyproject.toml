@@ -48,7 +48,7 @@ dev = [
     "python-dotenv>=1.0.0",
 ]
 agent-frameworks = [
-    "agent-framework>=1.0.0rc1,<2.0.0",
+    "agent-framework>=1.0.0,<2.0.0",
     "autogen-agentchat>=0.7.5",
     "autogen-ext[openai]>=0.7.5",
     "crewai>=1.6.1",
@@ -176,6 +176,15 @@ testpaths = ["tests"]
 
 [tool.uv]
 prerelease = "if-necessary-or-explicit"
+# Force an onnxruntime version that ships cp310 wheels. onnxruntime >=1.24.0
+# dropped Python 3.10 support (only cp311/cp312/cp313 wheels are published),
+# but the resolver still picks it because the sdist metadata advertises
+# Python 3.10 compatibility. Pin to the 1.23.x series for 3.10 so uv sync
+# on the CI matrix entry `test (ubuntu-latest, 3.10)` actually has a wheel
+# to install.
+override-dependencies = [
+    "onnxruntime<1.24 ; python_version < '3.11'",
+]
 
 [tool.mypy]
 python_version = "3.10"

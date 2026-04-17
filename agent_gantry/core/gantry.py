@@ -827,7 +827,8 @@ class AgentGantry:
             query: The natural language query
             limit: Maximum number of tools to return
             dialect: Target dialect/provider name (default: 'openai')
-                Supported: 'openai', 'anthropic', 'gemini', 'mistral', 'groq', 'auto'
+                Supported: 'openai', 'openai_responses', 'anthropic', 'gemini',
+                'mistral', 'groq', 'agent_framework', 'auto'
             **kwargs: Additional query parameters (e.g., score_threshold)
 
         Returns:
