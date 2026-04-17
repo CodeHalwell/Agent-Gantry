@@ -50,7 +50,7 @@ async def main():
 
     # --- Baseline: Send ALL tools ---
     print("Step 1: Running Baseline (Sending ALL 30 tools to OpenAI)...")
-    all_tools = [t.to_openai_schema() for t in await gantry.list_tools()]
+    all_tools = [t.to_dialect("openai") for t in await gantry.list_tools()]
 
     baseline_response = await client.chat.completions.create(
         model="gpt-4o",

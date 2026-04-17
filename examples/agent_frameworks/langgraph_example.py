@@ -1,21 +1,15 @@
 import asyncio
-from typing import Annotated, TypedDict
 
 from dotenv import load_dotenv
-from langchain.agents import create_agent
-from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
+from langgraph.prebuilt import create_react_agent
 
 from agent_gantry import AgentGantry
 from agent_gantry.integrations.framework_adapters import fetch_framework_tools
 from agent_gantry.schema.execution import ToolCall
 
 load_dotenv()
-
-
-# Define the state for our graph
-class AgentState(TypedDict):
-    messages: Annotated[list[BaseMessage], lambda x, y: x + y]
 
 
 async def main():
@@ -63,15 +57,13 @@ async def main():
         if name == "search_docs":
             gantry_tools.append(make_langgraph_tool(name, desc, gantry))
 
-    # 3. Build the Agent using the new create_agent pattern
-    # This returns a compiled graph that handles tool calling
-    agent = create_agent(llm, tools=gantry_tools)
+    # 3. Build the Agent using LangGraph's create_react_agent (LangGraph 1.x)
+    agent = create_react_agent(llm, tools=gantry_tools)
 
     # 4. Run the Agent
     print("--- Running LangGraph Agent with Gantry-sourced tools ---")
     inputs = {"messages": [HumanMessage(content=user_query)]}
 
-    # The agent created by create_agent is already a compiled graph
     result = await agent.ainvoke(inputs)
 
     print(f"\nFinal Response: {result['messages'][-1].content}")

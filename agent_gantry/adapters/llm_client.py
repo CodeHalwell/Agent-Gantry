@@ -6,7 +6,6 @@ Supports multiple providers: OpenAI, Anthropic, Google, Mistral, Groq.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 from typing import TYPE_CHECKING, Any
@@ -153,17 +152,15 @@ Respond with ONLY the intent category name (e.g., "data_query"), nothing else.""
             )
             result = response.content[0].text.strip()
         elif self._provider == "google":
-            # Google genai client is sync — wrap in thread to avoid blocking
-            response = await asyncio.to_thread(
-                self._client.models.generate_content,
+            # google-genai >= 1.0 exposes a native async interface via client.aio
+            response = await self._client.aio.models.generate_content(
                 model=self._model,
                 contents=prompt,
             )
             result = response.text.strip()
         elif self._provider == "mistral":
-            # Mistral client is sync — wrap in thread to avoid blocking
-            response = await asyncio.to_thread(
-                self._client.chat.complete,
+            # mistralai >= 1.0 exposes a native async method: chat.complete_async()
+            response = await self._client.chat.complete_async(
                 model=self._model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=self._config.max_tokens,
