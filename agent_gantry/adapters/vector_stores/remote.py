@@ -8,6 +8,7 @@ collection management, filtering, and error handling.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import uuid
@@ -745,7 +746,8 @@ class PGVectorStore:
             records = []
             for tool, embedding in zip(tools, embeddings):
                 tool_id = f"{tool.namespace}.{tool.name}"
-                embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
+                # Using json.dumps is faster than generator expression for large lists of floats
+                embedding_str = json.dumps(embedding)
                 records.append(
                     (
                         tool_id,
@@ -796,7 +798,8 @@ class PGVectorStore:
         """Search for similar tools."""
         await self.initialize()
 
-        embedding_str = "[" + ",".join(str(x) for x in query_vector) + "]"
+        # Using json.dumps is faster than generator expression for large lists of floats
+        embedding_str = json.dumps(query_vector)
 
         # Build query with optional namespace filter
         namespace_clause = ""
@@ -834,8 +837,6 @@ class PGVectorStore:
                         embedding_val = row["embedding"]
                         if isinstance(embedding_val, str):
                             # It's a string like "[1.0, 2.0, ...]"
-                            import json
-
                             parsed_embedding = json.loads(embedding_val)
                         else:
                             # Try to coerce it to list (pgvector type returned by asyncpg/pgvector)
