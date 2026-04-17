@@ -173,7 +173,10 @@ class TestSecurityPolicy:
         policy.check_permission("test_tool", {})
 
         # Third request should fail
-        with pytest.raises(PermissionDeniedError, match="Rate limit exceeded: maximum 2 requests per minute allowed."):
+        with pytest.raises(
+            PermissionDeniedError,
+            match="Rate limit exceeded: maximum 2 requests per minute allowed.",
+        ):
             policy.check_permission("test_tool", {})
 
     @pytest.mark.asyncio
@@ -232,11 +235,31 @@ class TestSecurityPolicy:
             policy.check_permission("fetch_data", {"url": "http://github.com@evil.com/"})
 
         with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
-            policy.check_permission("fetch_data", {"text": "check out http://github.com:password@evil.com/"})
+            policy.check_permission(
+                "fetch_data", {"text": "check out http://github.com:password@evil.com/"}
+            )
 
         # Empty allowed_domains should allow everything
         open_policy = SecurityPolicy(allowed_domains=[])
         open_policy.check_permission("fetch_data", {"url": "https://evil.com/payload"})
+
+    @pytest.mark.asyncio
+    async def test_security_policy_nested_domain_check(self) -> None:
+        """Test that security policy extracts domains from nested data structures."""
+        policy = SecurityPolicy(allowed_domains=["api.github.com"])
+
+        # Should not raise for allowed domains in nested structures
+        policy.check_permission("fetch_data", {"urls": ["https://api.github.com/v1/users"]})
+        policy.check_permission(
+            "fetch_data", {"config": {"url": "https://api.github.com/v1/users"}}
+        )
+
+        # Should raise for disallowed domains in nested structures
+        with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
+            policy.check_permission("fetch_data", {"urls": ["https://evil.com/payload"]})
+
+        with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
+            policy.check_permission("fetch_data", {"config": {"url": "https://evil.com/payload"}})
 
 
 class TestPermissionChecker:
@@ -415,9 +438,7 @@ class TestArgumentValidation:
         assert "must be an integer" in result.error.lower()
 
         # Int where bool expected
-        result = await gantry.execute(
-            ToolCall(tool_name="process_bool", arguments={"flag": 1})
-        )
+        result = await gantry.execute(ToolCall(tool_name="process_bool", arguments={"flag": 1}))
         assert result.status == ExecutionStatus.FAILURE
         assert "must be a boolean" in result.error.lower()
 
@@ -440,17 +461,15 @@ class TestArgumentValidation:
                     "properties": {
                         "inner": {
                             "type": "object",
-                            "properties": {
-                                "active": {"type": "boolean"}
-                            },
-                            "required": ["active"]
+                            "properties": {"active": {"type": "boolean"}},
+                            "required": ["active"],
                         },
-                        "name": {"type": "string"}
+                        "name": {"type": "string"},
                     },
-                    "required": ["inner", "name"]
+                    "required": ["inner", "name"],
                 }
             },
-            "required": ["data"]
+            "required": ["data"],
         }
 
         await gantry.sync()
@@ -459,27 +478,21 @@ class TestArgumentValidation:
         result = await gantry.execute(
             ToolCall(
                 tool_name="process_model",
-                arguments={"data": {"inner": {"active": True}, "name": "test"}}
+                arguments={"data": {"inner": {"active": True}, "name": "test"}},
             )
         )
         assert result.status == ExecutionStatus.SUCCESS
 
         # Invalid top-level type
         result = await gantry.execute(
-            ToolCall(
-                tool_name="process_model",
-                arguments={"data": "not_an_object"}
-            )
+            ToolCall(tool_name="process_model", arguments={"data": "not_an_object"})
         )
         assert result.status == ExecutionStatus.FAILURE
         assert "must be an object" in result.error.lower()
 
         # Missing required property in nested object
         result = await gantry.execute(
-            ToolCall(
-                tool_name="process_model",
-                arguments={"data": {"inner": {}, "name": "test"}}
-            )
+            ToolCall(tool_name="process_model", arguments={"data": {"inner": {}, "name": "test"}})
         )
         assert result.status == ExecutionStatus.FAILURE
         assert "missing required parameter" in result.error.lower()
@@ -488,7 +501,7 @@ class TestArgumentValidation:
         result = await gantry.execute(
             ToolCall(
                 tool_name="process_model",
-                arguments={"data": {"inner": {"active": "yes"}, "name": "test"}}
+                arguments={"data": {"inner": {"active": "yes"}, "name": "test"}},
             )
         )
         assert result.status == ExecutionStatus.FAILURE

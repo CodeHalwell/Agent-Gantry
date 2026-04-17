@@ -12,6 +12,7 @@ from __future__ import annotations
 import fnmatch
 import re
 import time
+import typing
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -114,16 +115,24 @@ class SecurityPolicy:
 
         # 2. Check allowed domains if they are configured
         if self.allowed_domains:
-            for value in arguments.values():
-                if not isinstance(value, str):
-                    continue
-
-                domains = self._extract_domains(value)
+            for str_val in self._extract_all_strings(arguments):
+                domains = self._extract_domains(str_val)
                 for domain in domains:
                     if not self._is_domain_allowed(domain):
                         raise PermissionDeniedError(
                             f"Execution denied: Domain '{domain}' is not in allowed_domains."
                         )
+
+    def _extract_all_strings(self, data: typing.Any) -> typing.Iterator[str]:
+        """Recursively extract all string values from a data structure."""
+        if isinstance(data, str):
+            yield data
+        elif isinstance(data, dict):
+            for value in data.values():
+                yield from self._extract_all_strings(value)
+        elif isinstance(data, list) or isinstance(data, tuple):
+            for item in data:
+                yield from self._extract_all_strings(item)
 
     def _extract_domains(self, value: str) -> set[str]:
         """Extract potential domains from a string value."""
