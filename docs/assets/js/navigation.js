@@ -227,12 +227,21 @@
 
         // Add visual indicator
         if (!link.querySelector('.external-icon')) {
+          // Store text content before modifying link
+          const originalText = link.textContent.trim();
+
           const icon = document.createElement('span');
           icon.className = 'external-icon';
           icon.innerHTML = ' ↗';
           icon.style.fontSize = '0.8em';
           icon.style.opacity = '0.6';
+          icon.setAttribute('aria-hidden', 'true');
           link.appendChild(icon);
+
+          // Update screen reader text via aria-label
+          if (!link.hasAttribute('aria-label')) {
+            link.setAttribute('aria-label', originalText + ' (opens in a new tab)');
+          }
         }
       }
     });
