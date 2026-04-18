@@ -382,7 +382,7 @@ class TestSDKVersionCompatibility:
         version = openai.__version__
         parts = version.split(".")
         major = int(parts[0])
-        assert major >= 1, f"OpenAI SDK version {version} is below minimum 1.0.0"
+        assert major >= 2, f"OpenAI SDK version {version} is below minimum 2.0.0"
 
     def test_anthropic_minimum_version(self) -> None:
         """Test Anthropic SDK meets minimum version."""

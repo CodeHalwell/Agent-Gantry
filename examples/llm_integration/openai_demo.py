@@ -1,10 +1,10 @@
 """
 OpenAI + Agent-Gantry integration demo.
 
-Demonstrates three scenarios for using Agent-Gantry with OpenAI's chat completions API:
-A. Dynamic tool retrieval (context window optimization)
-B. Static tool list (for small toolsets)
-C. Decorator-based automatic injection (recommended)
+Demonstrates three scenarios for using Agent-Gantry with OpenAI's APIs:
+A. Responses API (primary - OpenAI's recommended interface for agentic apps)
+B. Chat Completions API (also supported; used in legacy integrations)
+C. Decorator-based automatic injection (recommended for new projects)
 """
 
 import asyncio
@@ -33,7 +33,6 @@ async def main() -> None:
         return
 
     # 2. Initialize Gantry
-    # We use Nomic embeddings for better retrieval if available, else simple
     try:
         from agent_gantry.adapters.embedders.nomic import NomicEmbedder
 
@@ -65,31 +64,53 @@ async def main() -> None:
 
     client = AsyncOpenAI(api_key=api_key)
 
-    # --- Scenario A: Dynamic Retrieval (The Gantry Way) ---
-    print("--- Scenario A: Dynamic Retrieval (Context Window Optimization) ---")
+    # Note: score_threshold=0.1 for SimpleEmbedder, use 0.5 (default) for Nomic/OpenAI
+    score_threshold = 0.1 if isinstance(gantry._embedder, SimpleEmbedder) else 0.5
+
+    # --- Scenario A: Responses API (Primary - OpenAI's recommended direction) ---
+    print("--- Scenario A: Responses API (OpenAI's recommended agentic interface) ---")
     query = "What's the weather in Tokyo?"
     print(f"User Query: '{query}'")
 
-    # Retrieve only relevant tools (OpenAI format by default)
-    # Note: score_threshold=0.1 for SimpleEmbedder, use 0.5 (default) for Nomic/OpenAI
-    score_threshold = 0.1 if isinstance(gantry._embedder, SimpleEmbedder) else 0.5
-    tools = await gantry.retrieve_tools(query, limit=1, score_threshold=score_threshold)
-    print(f"Gantry retrieved {len(tools)} tool(s): {[t['function']['name'] for t in tools]}")
+    # Retrieve tools in Responses API format (flat schema, no nested 'function' key)
+    tools_responses = await gantry.retrieve_tools(
+        query, limit=1, score_threshold=score_threshold, dialect="openai_responses"
+    )
+    print(f"Gantry retrieved {len(tools_responses)} tool(s): {[t['name'] for t in tools_responses]}")
 
-    # Call LLM
-    response = await client.chat.completions.create(
+    response = await client.responses.create(
+        model="gpt-4.1",
+        input=[{"role": "user", "content": query}],
+        tools=tools_responses,
+    )
+
+    for item in response.output:
+        if item.type == "function_call":
+            fn_args = json.loads(item.arguments) if isinstance(item.arguments, str) else item.arguments
+            print(f"LLM decided to call: {item.name}({item.arguments})")
+            result = await gantry.execute(ToolCall(tool_name=item.name, arguments=fn_args))
+            print(f"Execution Result: {result.result}")
+
+    # --- Scenario B: Chat Completions API (also supported) ---
+    print("\n--- Scenario B: Chat Completions API (still fully supported) ---")
+    query_b = "What's the weather in London?"
+    print(f"User Query: '{query_b}'")
+
+    # Default dialect produces Chat Completions format (nested 'function' key)
+    tools_chat = await gantry.retrieve_tools(query_b, limit=1, score_threshold=score_threshold)
+    print(f"Gantry retrieved {len(tools_chat)} tool(s): {[t['function']['name'] for t in tools_chat]}")
+
+    response_b = await client.chat.completions.create(
         model="gpt-4o",
-        messages=[{"role": "user", "content": query}],
-        tools=tools,
+        messages=[{"role": "user", "content": query_b}],
+        tools=tools_chat,
         tool_choice="auto",
     )
 
-    tool_calls = response.choices[0].message.tool_calls
+    tool_calls = response_b.choices[0].message.tool_calls
     if tool_calls:
         for tc in tool_calls:
             print(f"LLM decided to call: {tc.function.name}({tc.function.arguments})")
-
-            # Execute securely via Gantry
             result = await gantry.execute(
                 ToolCall(tool_name=tc.function.name, arguments=json.loads(tc.function.arguments))
             )
@@ -97,37 +118,21 @@ async def main() -> None:
     else:
         print("LLM did not call any tools.")
 
-    # --- Scenario B: Static Tool List (Small Toolsets) ---
-    print("\n--- Scenario B: Static Tool List (For small toolsets) ---")
-    # If you have < 10 tools, you might just want to pass them all
-    all_tools = [t.to_dialect("openai") for t in await gantry.list_tools()]
-    print(f"Passing all {len(all_tools)} tools to LLM...")
-
-    # (The rest of the LLM call is the same, just passing `tools=all_tools`)
-
-    # --- Scenario C: Using the Decorator (Automatic Injection) - RECOMMENDED ---
+    # --- Scenario C: Using the Decorator (RECOMMENDED) ---
     print("\n--- Scenario C: Using @with_semantic_tools Decorator (RECOMMENDED) ---")
 
-    # Set default gantry for decorator usage
     set_default_gantry(gantry)
 
-    # Wrap a function that calls the LLM. The decorator will:
-    # 1. Extract the prompt from 'messages'
-    # 2. Retrieve relevant tools
-    # 3. Inject them into the 'tools' argument
-    #
-    # Note: score_threshold=0.1 is used here because we may be using SimpleEmbedder.
-    # With Nomic or OpenAI embeddings, you can use the default (0.5).
-    @with_semantic_tools(limit=1, score_threshold=0.1, dialect="openai")
+    # dialect="openai_responses" injects tools in Responses API format
+    @with_semantic_tools(limit=1, score_threshold=0.1, dialect="openai_responses")
     async def chat_with_tools(
         messages: list[dict[str, str]], tools: list[dict[str, Any]] | None = None
     ):
-        print(f"   [Decorator] Injected {len(tools) if tools else 0} tools")
-        return await client.chat.completions.create(
-            model="gpt-4o",
-            messages=messages,
+        print(f"   [Decorator] Injected {len(tools) if tools else 0} tools (Responses API format)")
+        return await client.responses.create(
+            model="gpt-4.1",
+            input=messages,
             tools=tools,
-            tool_choice="auto" if tools else None,
         )
 
     query_c = "What is the stock price of AAPL?"
@@ -135,11 +140,12 @@ async def main() -> None:
 
     response_c = await chat_with_tools(messages=[{"role": "user", "content": query_c}])
 
-    tool_calls_c = response_c.choices[0].message.tool_calls
-    if tool_calls_c:
-        print(f"LLM decided to call: {tool_calls_c[0].function.name}")
-    else:
-        print("LLM did not call any tools.")
+    for item in response_c.output:
+        if item.type == "function_call":
+            print(f"LLM decided to call: {item.name}")
+        elif hasattr(response_c, "output_text") and response_c.output_text:
+            print(f"Response: {response_c.output_text}")
+            break
 
 
 if __name__ == "__main__":

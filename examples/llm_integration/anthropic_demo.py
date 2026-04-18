@@ -75,7 +75,7 @@ async def main() -> None:
 
     # C. Call Claude
     response = await client.messages.create(
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-4-5-20250929",
         max_tokens=1024,
         messages=[{"role": "user", "content": query}],
         tools=anthropic_tools,
@@ -107,7 +107,7 @@ async def main() -> None:
     ):
         print(f"   [Decorator] Injected {len(tools) if tools else 0} tools (Anthropic format)")
         return await client.messages.create(
-            model="claude-sonnet-4-5", max_tokens=1024, messages=messages, tools=tools
+            model="claude-sonnet-4-5-20250929", max_tokens=1024, messages=messages, tools=tools
         )
 
     query_dec = "Check staging status"

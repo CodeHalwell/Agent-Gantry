@@ -1,10 +1,10 @@
 import asyncio
 
 from dotenv import load_dotenv
-from langchain.agents import create_agent
-from langchain.tools import tool
 from langchain_core.messages import HumanMessage
+from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
+from langgraph.prebuilt import create_react_agent
 
 from agent_gantry import AgentGantry
 from agent_gantry.schema.execution import ToolCall
@@ -33,14 +33,12 @@ async def main():
     user_query = "What's the weather in London and the stock price for AAPL?"
 
     # 4. Use Agent-Gantry to retrieve only relevant tools
-    # This reduces the prompt size by only sending what's needed
     # Lowering threshold for SimpleEmbedder compatibility in this example
     retrieved_tools = await gantry.retrieve_tools(user_query, limit=2, score_threshold=0.1)
 
     print(f"Gantry retrieved {len(retrieved_tools)} tools.")
 
     # 5. Convert Gantry tools to LangChain tools
-    # We wrap the Gantry execution so LangChain can call it
     def make_langchain_tool(tool_name: str, tool_desc: str, gantry_instance: AgentGantry):
         """Factory function to properly bind tool name to LangChain tool wrapper."""
 
@@ -63,15 +61,13 @@ async def main():
         elif name == "get_stock_price":
             langchain_tools.append(make_langchain_tool(name, desc, gantry))
 
-    # 6. Setup LangChain Agent
-    # In the latest LangChain, create_agent is the preferred way to build agents
+    # 6. Setup LangGraph React Agent (LangGraph 1.x preferred over legacy AgentExecutor)
     llm = ChatOpenAI(model="gpt-4o", temperature=0)
 
-    agent = create_agent(llm, tools=langchain_tools)
+    agent = create_react_agent(llm, tools=langchain_tools)
 
     # 7. Run the agent
-    print("\n--- Running LangChain Agent ---")
-    # The new agent.invoke pattern uses a messages list
+    print("\n--- Running LangGraph React Agent ---")
     response = await agent.ainvoke({"messages": [HumanMessage(content=user_query)]})
 
     # Extract the final message content
