@@ -443,6 +443,7 @@ class GeminiAdapter:
             arguments=payload.arguments,
             timeout_ms=timeout_ms,
             retry_count=retry_count,
+            trace_id=payload.tool_call_id,
         )
 
     def format_tool_result(

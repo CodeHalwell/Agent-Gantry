@@ -213,7 +213,7 @@ tools = create_persistent_gantry()
 @tools.register(tags=["chemistry", "molecular"])
 def get_molecular_weight(smiles: str) -> float:
     """Calculate the molecular weight of a compound given its SMILES representation."""
-    Chem, Descriptors = _get_rdkit()
+    Chem, Descriptors = _get_rdkit()  # noqa: N806
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         raise ValueError("Invalid SMILES string.")
@@ -249,7 +249,7 @@ def get_smiles_from_name(name: str) -> str:
 @tools.register(tags=["chemistry"])
 def calculate_logp(smiles: str) -> float:
     """Calculate the Octanol-Water Partition Coefficient (LogP) from SMILES."""
-    Chem, Descriptors = _get_rdkit()
+    Chem, Descriptors = _get_rdkit()  # noqa: N806
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         raise ValueError("Invalid SMILES string.")
@@ -259,7 +259,7 @@ def calculate_logp(smiles: str) -> float:
 @tools.register(tags=["chemistry"])
 def is_valid_smiles(smiles: str) -> bool:
     """Check if a SMILES string is valid."""
-    Chem, _ = _get_rdkit()
+    Chem, _ = _get_rdkit()  # noqa: N806
     return Chem.MolFromSmiles(smiles) is not None
 
 

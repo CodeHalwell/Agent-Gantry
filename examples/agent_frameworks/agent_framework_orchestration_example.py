@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import asyncio
 
-from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.orchestrations import (
     ConcurrentBuilder,
