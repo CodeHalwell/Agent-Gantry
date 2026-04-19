@@ -1757,8 +1757,8 @@ def train_simple_linear_regression(x: list[float], y: list[float]) -> dict[str, 
     import numpy as np
     from sklearn.linear_model import LinearRegression
 
-    X = np.array(x).reshape(-1, 1)
-    Y = np.array(y)
+    X = np.array(x).reshape(-1, 1)  # noqa: N806
+    Y = np.array(y)  # noqa: N806
     model = LinearRegression().fit(X, Y)
     return {"coefficient": float(model.coef_[0]), "intercept": float(model.intercept_)}
 
@@ -1769,7 +1769,7 @@ def cluster_data_kmeans(data: list[list[float]], n_clusters: int = 3) -> list[in
     import numpy as np
     from sklearn.cluster import KMeans
 
-    X = np.array(data)
+    X = np.array(data)  # noqa: N806
     kmeans = KMeans(n_clusters=n_clusters, n_init="auto").fit(X)
     return kmeans.labels_.tolist()
 
@@ -2137,7 +2137,7 @@ def generate_barcode_base64(data: str) -> str:
     import barcode
     from barcode.writer import ImageWriter
 
-    EAN = barcode.get_generator("code128")
+    EAN = barcode.get_generator("code128")  # noqa: N806
     ean = EAN(data, writer=ImageWriter())
     buf = io.BytesIO()
     ean.write(buf)
@@ -2649,7 +2649,7 @@ def generate_slug(text: str) -> str:
 @tools.register(tags=["math"])
 def calculate_haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Calculate the great-circle distance between two points on Earth in km."""
-    R = 6371.0  # Earth radius in km
+    R = 6371.0  # noqa: N806 — Earth radius in km (conventional uppercase)
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
     a = (

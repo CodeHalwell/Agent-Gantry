@@ -33,7 +33,7 @@ async def test_agent_framework_example_runs_with_fakes(monkeypatch):
     # The example now also imports middleware primitives from agent_framework
     # at runtime (via GantryApprovalMiddleware/GantryObservabilityMiddleware).
     # Provide minimal stubs so the example module is fully exercisable.
-    class _StubMiddlewareTermination(Exception):
+    class _StubMiddlewareTerminationError(Exception):
         pass
 
     class _StubFunctionMiddleware:  # noqa: D401
@@ -47,7 +47,7 @@ async def test_agent_framework_example_runs_with_fakes(monkeypatch):
         return func
 
     af_mod.FunctionMiddleware = _StubFunctionMiddleware
-    af_mod.MiddlewareTermination = _StubMiddlewareTermination
+    af_mod.MiddlewareTermination = _StubMiddlewareTerminationError
     af_mod.tool = _stub_tool
 
     monkeypatch.setitem(sys.modules, "agent_framework", af_mod)

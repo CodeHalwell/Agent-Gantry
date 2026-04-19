@@ -54,7 +54,7 @@ agent-frameworks = [
     "crewai>=1.6.1",
     "langchain>=1.2.0",
     "langchain-openai>=1.1.14",
-    "langgraph>=1.0.5",
+    "langgraph>=1.1.0",
     "llama-index-core>=0.14.10",
     "llama-index-llms-openai>=0.6.12",
     "pyautogen>=0.10.0",
@@ -128,9 +128,9 @@ a2a = [
     "fastapi>=0.104.0",
     "uvicorn>=0.24.0",
 ]
-# LLM Provider SDK dependencies (Late 2025 compatible)
+# LLM provider SDK dependencies
 anthropic = [
-    "anthropic>=0.40.0",
+    "anthropic>=0.87.0",
 ]
 google-genai = [
     "google-genai>=1.0.0",

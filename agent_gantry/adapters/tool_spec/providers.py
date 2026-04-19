@@ -416,15 +416,18 @@ class GeminiAdapter:
         Expected format (from functionCall):
         {
             "name": "tool_name",
-            "args": {"arg": "value"}
+            "args": {"arg": "value"},
+            "id": "..."   # present in google-genai >= 1.x when parallel calls are made
         }
         """
         tool_name = payload.get("name", "")
         arguments = payload.get("args", {})
+        # google-genai >= 1.x includes an "id" on parallel function calls
+        tool_call_id = payload.get("id")
 
         return ToolCallPayload(
             tool_name=tool_name,
-            tool_call_id=None,  # Gemini doesn't provide call IDs
+            tool_call_id=tool_call_id,
             arguments=arguments if isinstance(arguments, dict) else {},
             raw_payload=payload,
         )
@@ -440,6 +443,7 @@ class GeminiAdapter:
             arguments=payload.arguments,
             timeout_ms=timeout_ms,
             retry_count=retry_count,
+            trace_id=payload.tool_call_id,
         )
 
     def format_tool_result(
@@ -450,12 +454,16 @@ class GeminiAdapter:
     ) -> dict[str, Any]:
         """Format result for Gemini function response."""
         response_content = result if isinstance(result, dict) else {"result": result}
-        return {
+        payload: dict[str, Any] = {
             "functionResponse": {
                 "name": tool_name,
                 "response": response_content,
             }
         }
+        # Round-trip the call ID when present (google-genai >= 1.x parallel calls)
+        if tool_call_id:
+            payload["functionResponse"]["id"] = tool_call_id
+        return payload
 
 
 class MistralAdapter(OpenAIAdapter):

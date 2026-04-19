@@ -23,7 +23,8 @@ CI environments that don't pull the optional extra still pass.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Sequence
+from collections.abc import Sequence
+from typing import Any, ClassVar
 
 import pytest
 
@@ -36,7 +37,6 @@ from agent_framework import (  # noqa: E402
     ChatResponse,
     Content,
     FunctionInvocationLayer,
-    FunctionMiddleware,
     FunctionTool,
     Message,
     MiddlewareTermination,
@@ -50,7 +50,6 @@ from agent_framework.orchestrations import (  # noqa: E402
 
 from agent_gantry import AgentGantry  # noqa: E402
 from agent_gantry.core.security import (  # noqa: E402
-    ConfirmationRequiredError,
     PermissionDeniedError,
     SecurityPolicy,
 )

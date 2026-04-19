@@ -1,10 +1,15 @@
 """
 OpenAI + Agent-Gantry integration demo.
 
-Demonstrates three scenarios for using Agent-Gantry with OpenAI's chat completions API:
-A. Dynamic tool retrieval (context window optimization)
-B. Static tool list (for small toolsets)
-C. Decorator-based automatic injection (recommended)
+Demonstrates four scenarios:
+A. Responses API – recommended for agentic workloads (OpenAI's primary surface)
+B. Dynamic retrieval via Chat Completions (still supported)
+C. Static tool list (small toolsets)
+D. Decorator-based automatic injection (recommended for wrappers)
+
+OpenAI positioned the Responses API as the forward direction for agents and
+published a sunset timeline for the Assistants API (August 2026). Scenario A
+shows the current preferred pattern using client.responses.create().
 """
 
 import asyncio
@@ -18,22 +23,18 @@ from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 from agent_gantry.schema.execution import ToolCall
 
-# Load environment variables
 load_dotenv()
 
 
 async def main() -> None:
     print("=== Agent-Gantry + OpenAI Integration Demo ===\n")
 
-    # 1. Check for API Key
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         print("❌ Error: OPENAI_API_KEY not found in environment.")
         print("   Please set it in your .env file.")
         return
 
-    # 2. Initialize Gantry
-    # We use Nomic embeddings for better retrieval if available, else simple
     try:
         from agent_gantry.adapters.embedders.nomic import NomicEmbedder
 
@@ -46,7 +47,6 @@ async def main() -> None:
             "(Install 'agent-gantry[nomic]' for better results)"
         )
 
-    # 3. Register Tools
     @gantry.register(tags=["weather"])
     def get_weather(location: str, unit: str = "celsius") -> str:
         """Get the current weather for a location."""
@@ -60,36 +60,76 @@ async def main() -> None:
     await gantry.sync()
     print(f"✅ Registered {gantry.tool_count} tools\n")
 
-    # 4. Initialize OpenAI Client
     from openai import AsyncOpenAI
 
     client = AsyncOpenAI(api_key=api_key)
 
-    # --- Scenario A: Dynamic Retrieval (The Gantry Way) ---
-    print("--- Scenario A: Dynamic Retrieval (Context Window Optimization) ---")
-    query = "What's the weather in Tokyo?"
-    print(f"User Query: '{query}'")
-
-    # Retrieve only relevant tools (OpenAI format by default)
-    # Note: score_threshold=0.1 for SimpleEmbedder, use 0.5 (default) for Nomic/OpenAI
     score_threshold = 0.1 if isinstance(gantry._embedder, SimpleEmbedder) else 0.5
-    tools = await gantry.retrieve_tools(query, limit=1, score_threshold=score_threshold)
-    print(f"Gantry retrieved {len(tools)} tool(s): {[t['function']['name'] for t in tools]}")
 
-    # Call LLM
-    response = await client.chat.completions.create(
+    # --- Scenario A: Responses API (RECOMMENDED for agentic workloads) ---
+    # The Responses API is OpenAI's primary surface for agents. It uses a flat
+    # tool schema and returns output items rather than choices[].message.
+    # Migrate from Assistants API before its August 2026 sunset.
+    print("--- Scenario A: Responses API (recommended for agentic workloads) ---")
+    query_a = "What's the weather in Tokyo?"
+    print(f"User Query: '{query_a}'")
+
+    # Retrieve tools in openai_responses dialect (flat schema)
+    tools_responses = await gantry.retrieve_tools(
+        query_a, limit=1, score_threshold=score_threshold, dialect="openai_responses"
+    )
+    print(f"Gantry retrieved {len(tools_responses)} tool(s): {[t['name'] for t in tools_responses]}")
+
+    response_a = await client.responses.create(
+        model="gpt-4.1",
+        input=[{"role": "user", "content": query_a}],
+        tools=tools_responses,
+    )
+
+    function_calls = [item for item in response_a.output if item.type == "function_call"]
+    if not function_calls:
+        # Model answered directly — print the text output
+        print(f"Direct answer: {response_a.output_text}")
+    for item in function_calls:
+        print(f"LLM decided to call: {item.name}({item.arguments})")
+        args = json.loads(item.arguments) if isinstance(item.arguments, str) else item.arguments
+        result = await gantry.execute(ToolCall(tool_name=item.name, arguments=args))
+        print(f"Execution Result: {result.result}")
+
+        # Send tool result back using previous_response_id — avoids resending
+        # the full conversation and reduces token usage.
+        followup = await client.responses.create(
+            model="gpt-4.1",
+            previous_response_id=response_a.id,
+            input=[
+                {
+                    "type": "function_call_output",
+                    "call_id": item.call_id,
+                    "output": str(result.result),
+                }
+            ],
+        )
+        print(f"Final answer: {followup.output_text}")
+
+    # --- Scenario B: Chat Completions (dynamic retrieval) ---
+    print("\n--- Scenario B: Chat Completions API (dynamic retrieval) ---")
+    query_b = "What's the weather in Tokyo?"
+    print(f"User Query: '{query_b}'")
+
+    tools_cc = await gantry.retrieve_tools(query_b, limit=1, score_threshold=score_threshold)
+    print(f"Gantry retrieved {len(tools_cc)} tool(s): {[t['function']['name'] for t in tools_cc]}")
+
+    response_b = await client.chat.completions.create(
         model="gpt-4o",
-        messages=[{"role": "user", "content": query}],
-        tools=tools,
+        messages=[{"role": "user", "content": query_b}],
+        tools=tools_cc,
         tool_choice="auto",
     )
 
-    tool_calls = response.choices[0].message.tool_calls
+    tool_calls = response_b.choices[0].message.tool_calls
     if tool_calls:
         for tc in tool_calls:
             print(f"LLM decided to call: {tc.function.name}({tc.function.arguments})")
-
-            # Execute securely via Gantry
             result = await gantry.execute(
                 ToolCall(tool_name=tc.function.name, arguments=json.loads(tc.function.arguments))
             )
@@ -97,27 +137,16 @@ async def main() -> None:
     else:
         print("LLM did not call any tools.")
 
-    # --- Scenario B: Static Tool List (Small Toolsets) ---
-    print("\n--- Scenario B: Static Tool List (For small toolsets) ---")
-    # If you have < 10 tools, you might just want to pass them all
+    # --- Scenario C: Static Tool List (small toolsets) ---
+    print("\n--- Scenario C: Static Tool List (for small toolsets) ---")
     all_tools = [t.to_dialect("openai") for t in await gantry.list_tools()]
     print(f"Passing all {len(all_tools)} tools to LLM...")
 
-    # (The rest of the LLM call is the same, just passing `tools=all_tools`)
+    # --- Scenario D: Decorator-based automatic injection (RECOMMENDED for wrappers) ---
+    print("\n--- Scenario D: @with_semantic_tools Decorator (RECOMMENDED) ---")
 
-    # --- Scenario C: Using the Decorator (Automatic Injection) - RECOMMENDED ---
-    print("\n--- Scenario C: Using @with_semantic_tools Decorator (RECOMMENDED) ---")
-
-    # Set default gantry for decorator usage
     set_default_gantry(gantry)
 
-    # Wrap a function that calls the LLM. The decorator will:
-    # 1. Extract the prompt from 'messages'
-    # 2. Retrieve relevant tools
-    # 3. Inject them into the 'tools' argument
-    #
-    # Note: score_threshold=0.1 is used here because we may be using SimpleEmbedder.
-    # With Nomic or OpenAI embeddings, you can use the default (0.5).
     @with_semantic_tools(limit=1, score_threshold=0.1, dialect="openai")
     async def chat_with_tools(
         messages: list[dict[str, str]], tools: list[dict[str, Any]] | None = None
@@ -130,14 +159,14 @@ async def main() -> None:
             tool_choice="auto" if tools else None,
         )
 
-    query_c = "What is the stock price of AAPL?"
-    print(f"User Query: '{query_c}'")
+    query_d = "What is the stock price of AAPL?"
+    print(f"User Query: '{query_d}'")
 
-    response_c = await chat_with_tools(messages=[{"role": "user", "content": query_c}])
+    response_d = await chat_with_tools(messages=[{"role": "user", "content": query_d}])
 
-    tool_calls_c = response_c.choices[0].message.tool_calls
-    if tool_calls_c:
-        print(f"LLM decided to call: {tool_calls_c[0].function.name}")
+    tool_calls_d = response_d.choices[0].message.tool_calls
+    if tool_calls_d:
+        print(f"LLM decided to call: {tool_calls_d[0].function.name}")
     else:
         print("LLM did not call any tools.")
 

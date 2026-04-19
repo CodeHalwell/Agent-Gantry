@@ -33,7 +33,7 @@ async def main():
     for _ in range(3):
         try:
             await gantry.execute(call)
-        except:
+        except Exception:
             pass
 
     # 2. Query with exclude_unhealthy=False

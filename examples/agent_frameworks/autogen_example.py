@@ -47,7 +47,7 @@ async def main():
         return "Memory Usage: 45%"
 
     await gantry.sync()
-    print(f"✅ Registered {await gantry.count_tools()} tools in Agent-Gantry\n")
+    print(f"✅ Registered {gantry.tool_count} tools in Agent-Gantry\n")
 
     # 2. Retrieve tools from Gantry using semantic search
     user_query = "Check the system load and report back."
