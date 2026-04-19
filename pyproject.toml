@@ -51,7 +51,7 @@ agent-frameworks = [
     "agent-framework>=1.0.0,<2.0.0",
     "autogen-agentchat>=0.7.5",
     "autogen-ext[openai]>=0.7.5",
-    "crewai>=1.14.0",
+    "crewai>=1.6.1",
     "langchain>=1.2.0",
     "langchain-openai>=1.1.14",
     "langgraph>=1.1.0",
@@ -128,7 +128,7 @@ a2a = [
     "fastapi>=0.104.0",
     "uvicorn>=0.24.0",
 ]
-# LLM Provider SDK dependencies (Late 2025 compatible)
+# LLM provider SDK dependencies
 anthropic = [
     "anthropic>=0.87.0",
 ]

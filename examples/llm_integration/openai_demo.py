@@ -86,32 +86,30 @@ async def main() -> None:
         tools=tools_responses,
     )
 
-    for item in response_a.output:
-        if item.type == "function_call":
-            print(f"LLM decided to call: {item.name}({item.arguments})")
-            args = json.loads(item.arguments) if isinstance(item.arguments, str) else item.arguments
-            result = await gantry.execute(ToolCall(tool_name=item.name, arguments=args))
-            print(f"Execution Result: {result.result}")
+    function_calls = [item for item in response_a.output if item.type == "function_call"]
+    if not function_calls:
+        # Model answered directly — print the text output
+        print(f"Direct answer: {response_a.output_text}")
+    for item in function_calls:
+        print(f"LLM decided to call: {item.name}({item.arguments})")
+        args = json.loads(item.arguments) if isinstance(item.arguments, str) else item.arguments
+        result = await gantry.execute(ToolCall(tool_name=item.name, arguments=args))
+        print(f"Execution Result: {result.result}")
 
-            # Send tool result back to continue the conversation
-            followup = await client.responses.create(
-                model="gpt-4.1",
-                input=[
-                    {"role": "user", "content": query_a},
-                    item.model_dump(),  # the function_call output item
-                    {
-                        "type": "function_call_output",
-                        "call_id": item.call_id,
-                        "output": str(result.result),
-                    },
-                ],
-                tools=tools_responses,
-            )
-            for out in followup.output:
-                if hasattr(out, "content"):
-                    for c in out.content:
-                        if hasattr(c, "text"):
-                            print(f"Final answer: {c.text}")
+        # Send tool result back using previous_response_id — avoids resending
+        # the full conversation and reduces token usage.
+        followup = await client.responses.create(
+            model="gpt-4.1",
+            previous_response_id=response_a.id,
+            input=[
+                {
+                    "type": "function_call_output",
+                    "call_id": item.call_id,
+                    "output": str(result.result),
+                }
+            ],
+        )
+        print(f"Final answer: {followup.output_text}")
 
     # --- Scenario B: Chat Completions (dynamic retrieval) ---
     print("\n--- Scenario B: Chat Completions API (dynamic retrieval) ---")
