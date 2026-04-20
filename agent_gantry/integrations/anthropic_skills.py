@@ -393,7 +393,7 @@ async def create_skills_client(
         ...     tools=["get_order", "process_refund", "send_email"],
         ... )
         >>> response = await client.create_message(
-        ...     model="claude-3-5-sonnet-20241022",
+        ...     model="claude-sonnet-4-6",
         ...     messages=[{"role": "user", "content": "I need a refund for order #12345"}],
         ...     skills=["customer_support"],
         ... )

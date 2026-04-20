@@ -86,7 +86,7 @@ class AnthropicClient:
         Create a message with optional tool retrieval.
 
         Args:
-            model: Model identifier (e.g., "claude-3-5-sonnet-20241022")
+            model: Model identifier (e.g., "claude-sonnet-4-6")
             messages: Message history
             max_tokens: Maximum tokens to generate
             query: Query for tool retrieval (defaults to last user message)
@@ -260,7 +260,7 @@ async def create_anthropic_client(
         ...     enable_thinking="interleaved",
         ... )
         >>> response, thinking = await client.chat_with_thinking(
-        ...     model="claude-sonnet-4-5",
+        ...     model="claude-sonnet-4-6",
         ...     messages=[{"role": "user", "content": "Explain quantum computing"}],
         ... )
     """

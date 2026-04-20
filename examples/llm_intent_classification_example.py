@@ -169,12 +169,12 @@ async def demo_providers():
         },
         "Anthropic": {
             "provider": "anthropic",
-            "model": "claude-3-5-haiku-20241022",
+            "model": "claude-haiku-4-5-20251001",
             "api_key_env": "ANTHROPIC_API_KEY",
         },
         "Google GenAI": {
             "provider": "google",
-            "model": "gemini-2.0-flash-exp",
+            "model": "gemini-2.5-flash",
             "api_key_env": "GOOGLE_API_KEY",
         },
         "Mistral": {
