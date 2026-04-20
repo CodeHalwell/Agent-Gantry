@@ -30,23 +30,26 @@ import pytest
 
 pytest.importorskip("agent_framework", reason="agent-framework not installed")
 
-from agent_framework import (  # noqa: E402
-    Agent,
-    BaseChatClient,
-    ChatMiddlewareLayer,
-    ChatResponse,
-    Content,
-    FunctionInvocationLayer,
-    FunctionTool,
-    Message,
-    MiddlewareTermination,
-)
-from agent_framework.orchestrations import (  # noqa: E402
-    ConcurrentBuilder,
-    GroupChatBuilder,
-    HandoffBuilder,
-    SequentialBuilder,
-)
+try:
+    from agent_framework import (  # noqa: E402
+        Agent,
+        BaseChatClient,
+        ChatMiddlewareLayer,
+        ChatResponse,
+        Content,
+        FunctionInvocationLayer,
+        FunctionTool,
+        Message,
+        MiddlewareTermination,
+    )
+    from agent_framework.orchestrations import (  # noqa: E402
+        ConcurrentBuilder,
+        GroupChatBuilder,
+        HandoffBuilder,
+        SequentialBuilder,
+    )
+except ImportError as _af_import_err:
+    pytest.skip(f"agent_framework missing required export: {_af_import_err}", allow_module_level=True)
 
 from agent_gantry import AgentGantry  # noqa: E402
 from agent_gantry.core.security import (  # noqa: E402
