@@ -29,8 +29,8 @@ jobs:
       - name: Run ruff
         run: uv run ruff check agent_gantry/
 
-      - name: Run mypy
-        run: uv run mypy agent_gantry/
+      - name: Run ty
+        run: uvx ty check agent_gantry/
 
   test:
     runs-on: ${{ matrix.os }}

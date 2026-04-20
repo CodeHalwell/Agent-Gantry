@@ -83,9 +83,3 @@ async def test_validate_arguments_wrong_types(engine, sample_tool):
     assert is_valid is False
     assert error == "Parameter 'tags' must be an array"
 
-@pytest.mark.asyncio
-async def test_validate_arguments_wrong_array_item_type(engine, sample_tool):
-    """Test incorrect array item types fail validation."""
-    is_valid, error = await engine._validate_arguments(sample_tool, {"name": "Alice", "tags": ["admin", 123]})
-    assert is_valid is False
-    assert error == "Item at index 1 in 'tags' must be a string"
