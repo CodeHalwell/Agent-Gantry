@@ -18,7 +18,7 @@ async def test_retrieve_ranks_relevant_tool(sample_tools) -> None:
     for tool in sample_tools:
         await gantry.add_tool(tool)
 
-    query = ToolQuery(context=ConversationContext(query="Please send an email to the customer"))
+    query = ToolQuery(context=ConversationContext(query="Please send an email to the customer"), score_threshold=0.0)
     result = await gantry.retrieve(query)
 
     assert result.tools

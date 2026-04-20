@@ -66,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "search":
         context = ConversationContext(query=args.query)
-        query = ToolQuery(context=context, limit=args.limit)
+        query = ToolQuery(context=context, limit=args.limit, score_threshold=0.0)
         result = asyncio.run(gantry.retrieve(query))
         if not result.tools:
             print("No tools found.")
