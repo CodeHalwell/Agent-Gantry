@@ -592,7 +592,7 @@ class TestRetrievalResultToDialect:
 
         await gantry.sync()
 
-        result = await gantry.retrieve_tools("test", limit=1, dialect="anthropic")
+        result = await gantry.retrieve_tools("test", limit=1, dialect="anthropic", score_threshold=0.0)
 
         assert len(result) >= 1
         # Anthropic format has 'name' and 'input_schema'

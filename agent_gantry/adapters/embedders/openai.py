@@ -259,11 +259,11 @@ class AzureOpenAIEmbedder(BaseOpenAIEmbedder):
         if not api_base:
             raise ValueError("Azure OpenAI api_base (endpoint) is required in config.")
 
-        # Azure API version - use config, env var, or latest stable default
+        # Azure API version - use config, env var, or latest preview default
         api_version = (
             config.api_version
             or os.getenv("AZURE_OPENAI_API_VERSION")
-            or "2024-10-01-preview"  # Latest stable as of Dec 2025
+            or "2025-01-01-preview"  # Latest preview version as of Apr 2026
         )
 
         # Initialize Azure client with retry logic

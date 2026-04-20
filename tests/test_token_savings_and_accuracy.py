@@ -58,7 +58,7 @@ async def test_retrieval_topk_accuracy(sample_tools) -> None:
     hits = 0
     for prompt, expected_tool in queries.items():
         result = await gantry.retrieve(
-            ToolQuery(context=ConversationContext(query=prompt), limit=2)
+            ToolQuery(context=ConversationContext(query=prompt), limit=2, score_threshold=0.0)
         )
         retrieved_names = [scored.tool.name for scored in result.tools]
         if expected_tool in retrieved_names:
@@ -120,6 +120,7 @@ async def test_framework_adapter_returns_top_k(sample_tools) -> None:
             "send a quick email",
             framework=framework,
             limit=1,
+            score_threshold=0.0,
         )
 
         assert len(tools) == 1

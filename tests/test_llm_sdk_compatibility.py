@@ -386,14 +386,16 @@ class TestSDKVersionCompatibility:
 
     def test_anthropic_minimum_version(self) -> None:
         """Test Anthropic SDK meets minimum version."""
+        from packaging.version import Version
+
         anthropic = pytest.importorskip("anthropic")
-        version = anthropic.__version__
-        parts = version.split(".")
-        major = int(parts[0])
-        minor = int(parts[1])
-        # Version 0.40.0 or higher
-        assert (major == 0 and minor >= 40) or major > 0, (
-            f"Anthropic SDK version {version} is below minimum 0.40.0"
+        # test_anthropic_features.py replaces sys.modules["anthropic"] with a
+        # Mock at module scope; if run first the version attribute is absent.
+        version = getattr(anthropic, "__version__", None)
+        if version is None:
+            pytest.skip("anthropic module is mocked in this test session")
+        assert Version(version) >= Version("0.94.0"), (
+            f"Anthropic SDK version {version} is below minimum 0.94.0"
         )
 
     def test_groq_minimum_version(self) -> None:

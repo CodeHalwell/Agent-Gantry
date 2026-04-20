@@ -35,6 +35,7 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Annotated, Any
 
 from pydantic import Field
@@ -146,29 +147,32 @@ def _build_callable_for_tool(
         return json.dumps({"error": result.error or "Tool execution failed"})
 
     # Build the wrapper with proper annotations for AF
-    # AF inspects __name__, __doc__, and __annotations__ to generate schemas
-    if len(properties) == 0:
-        # No-arg tool
-        async def wrapper() -> str:
-            return await _execute()
-    else:
-        # Tool with one or more arguments: support both positional and keyword args
+    # AF inspects __name__, __doc__, and __annotations__ to generate schemas.
+    # Two separate named functions avoid the mypy "conditional function variant"
+    # error that arises when the same name is assigned in both if/else branches
+    # with incompatible signatures.
+    async def _wrapper_no_args() -> str:
+        return await _execute()
+
+    async def _wrapper_with_args(*args: Any, **kwargs: Any) -> str:
         param_names = list(properties.keys())
+        if args:
+            if len(args) > len(param_names):
+                raise TypeError(
+                    f"{tool_name}() takes at most {len(param_names)} positional "
+                    f"arguments but {len(args)} were given"
+                )
+            for idx, value in enumerate(args):
+                p_name = param_names[idx]
+                if p_name not in kwargs:
+                    kwargs[p_name] = value
+        return await _execute(**kwargs)
 
-        async def wrapper(*args: Any, **kwargs: Any) -> str:
-            # Map positional arguments to parameter names based on JSON schema order
-            if args:
-                if len(args) > len(param_names):
-                    raise TypeError(
-                        f"{tool_name}() takes at most {len(param_names)} positional "
-                        f"arguments but {len(args)} were given"
-                    )
-                for idx, value in enumerate(args):
-                    p_name = param_names[idx]
-                    if p_name not in kwargs:
-                        kwargs[p_name] = value
-            return await _execute(**kwargs)
-
+    wrapper: Callable[..., Awaitable[str]]
+    if len(properties) == 0:
+        wrapper = _wrapper_no_args
+    else:
+        wrapper = _wrapper_with_args
         new_params = []
         for p_name, p_info in properties.items():
             p_desc = p_info.get("description", f"Parameter: {p_name}")
@@ -527,6 +531,218 @@ class GantryToolBridge:
         if middleware is not None:
             kwargs["middleware"] = middleware
         return client.as_agent(**kwargs)
+
+    async def as_agent(
+        self,
+        client: Any,
+        query: str,
+        *,
+        name: str,
+        instructions: str,
+        limit: int = 5,
+        score_threshold: float | None = None,
+        middleware: Any = None,
+        cache: bool = True,
+        extra_tools: list[Any] | None = None,
+        query_kwargs: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Retrieve relevant tools and construct a bare AF ``Agent(client, ...)`` directly.
+
+        Unlike :meth:`build_agent` which uses ``client.as_agent()``, this
+        constructs ``Agent`` via its constructor so the result is a first-class
+        ``Agent`` object suitable for direct use with ``WorkflowBuilder``,
+        ``WorkflowAgent``, and other multi-agent orchestration patterns.
+
+        .. code-block:: python
+
+            from agent_framework import WorkflowBuilder, WorkflowAgent
+            from agent_framework.openai import OpenAIChatClient
+
+            client = OpenAIChatClient()
+            bridge = GantryToolBridge(gantry)
+
+            triage  = await bridge.as_agent(client, "triage",   name="Triage",   instructions="Route the request.")
+            billing = await bridge.as_agent(client, "billing",  name="Billing",  instructions="Handle billing questions.")
+            support = await bridge.as_agent(client, "support",  name="Support",  instructions="Handle support tickets.")
+
+            workflow = (
+                WorkflowBuilder(start_executor=triage)
+                .add_edge(triage, billing,  condition=lambda ctx: "invoice" in str(ctx).lower())
+                .add_edge(triage, support)
+                .build()
+            )
+            agent = WorkflowAgent(workflow, name="CustomerService")
+            result = await agent.run("I need help with my invoice")
+
+        Args:
+            client: Any AF chat client (``OpenAIChatClient``, ``AzureOpenAIChatClient``,
+                ``AnthropicChatClient``, …).
+            query: The user query used to semantically select tools.
+            name: Name for the agent.
+            instructions: System instructions for the agent.
+            limit: Top-K tools to retrieve from Gantry.
+            score_threshold: Override the bridge-level threshold.
+            middleware: Optional AF middleware sequence.
+            cache: Whether to reuse cached tool wrappers.
+            extra_tools: Additional static tools to append after Gantry-selected tools.
+            query_kwargs: Extra keyword arguments forwarded to :meth:`get_tools`
+                (e.g. ``conversation_context``, ``namespace``).
+            **kwargs: Additional keyword arguments forwarded to ``Agent()``.
+
+        Returns:
+            A bare ``agent_framework.Agent`` instance.
+        """
+        try:
+            from agent_framework import Agent
+        except ImportError as exc:
+            raise ImportError(
+                "as_agent() requires the 'agent-framework' package. "
+                "Install with: pip install 'agent-gantry[agent-frameworks]'"
+            ) from exc
+
+        tools = await self.get_tools(
+            query,
+            limit=limit,
+            score_threshold=score_threshold,
+            cache=cache,
+            **(query_kwargs or {}),
+        )
+        if extra_tools:
+            tools = tools + list(extra_tools)
+
+        agent_kwargs: dict[str, Any] = {
+            "name": name,
+            "tools": tools,
+            **kwargs,
+        }
+        if middleware is not None:
+            agent_kwargs["middleware"] = middleware
+
+        return Agent(client, instructions, **agent_kwargs)
+
+    async def build_workflow(
+        self,
+        agent_specs: list[dict[str, Any]],
+        *,
+        edges: list[tuple[str, str]] | list[tuple[str, str, Any]] | None = None,
+        chain: bool = False,
+        workflow_name: str | None = None,
+        cache: bool = True,
+    ) -> Any:
+        """Build a multi-agent ``WorkflowAgent`` from Gantry-equipped agent specs.
+
+        Constructs each agent via :meth:`as_agent`, then wires them together
+        with ``WorkflowBuilder`` using the supplied edge list or a linear chain.
+        The result is a ``WorkflowAgent`` that can be run like any single agent.
+
+        .. code-block:: python
+
+            from agent_framework.openai import OpenAIChatClient
+
+            client = OpenAIChatClient()
+            bridge  = GantryToolBridge(gantry)
+
+            # Fan-out: triage routes to billing or support based on a condition
+            wa = await bridge.build_workflow(
+                agent_specs=[
+                    dict(client=client, query="triage customer",     name="Triage",   instructions="Route the customer."),
+                    dict(client=client, query="billing invoices",     name="Billing",  instructions="Handle billing."),
+                    dict(client=client, query="support tickets bugs", name="Support",  instructions="Handle support."),
+                ],
+                edges=[
+                    ("Triage", "Billing",  lambda ctx: "invoice" in str(ctx).lower()),
+                    ("Triage", "Support"),
+                ],
+            )
+            result = await wa.run("My last invoice was wrong")
+
+        Linear chain shortcut:
+
+        .. code-block:: python
+
+            wa = await bridge.build_workflow(
+                agent_specs=[
+                    dict(client=client, query="gather info",    name="Gather",    instructions="Collect user details."),
+                    dict(client=client, query="resolve issue",  name="Resolver",  instructions="Resolve the issue."),
+                    dict(client=client, query="send summary",   name="Summarise", instructions="Summarise the outcome."),
+                ],
+                chain=True,
+            )
+
+        Args:
+            agent_specs: List of dicts passed as keyword arguments to :meth:`as_agent`.
+                Required keys: ``client``, ``query``, ``name``, ``instructions``.
+                Optional keys: ``limit``, ``score_threshold``, ``middleware``,
+                ``extra_tools``, plus any extra ``Agent()`` kwargs.
+            edges: List of ``(source_name, target_name)`` or
+                ``(source_name, target_name, condition)`` tuples.
+                ``condition`` is an optional callable
+                ``(context: Any) -> bool | Awaitable[bool]``.
+                Ignored when ``chain=True``.
+            chain: If ``True``, wire all agents in the order given as a linear
+                chain (``WorkflowBuilder.add_chain``). Overrides ``edges``.
+            workflow_name: Optional name for the produced ``WorkflowAgent``.
+            cache: Whether to reuse cached tool wrappers.
+
+        Returns:
+            A ``WorkflowAgent`` wrapping the constructed ``Workflow``.
+        """
+        try:
+            from agent_framework import WorkflowAgent, WorkflowBuilder
+        except ImportError as exc:
+            raise ImportError(
+                "build_workflow() requires the 'agent-framework' package. "
+                "Install with: pip install 'agent-gantry[agent-frameworks]'"
+            ) from exc
+
+        # Build each agent and keep a name → agent mapping for edge resolution
+        built: dict[str, Any] = {}
+        ordered: list[Any] = []
+        for spec in agent_specs:
+            spec = dict(spec)
+            agent_name: str = spec["name"]
+            agent = await self.as_agent(cache=cache, **spec)
+            built[agent_name] = agent
+            ordered.append(agent)
+
+        if not ordered:
+            raise ValueError("agent_specs must contain at least one agent.")
+
+        # Validate edge names up front so users get a clear error instead of KeyError.
+        if not chain and edges:
+            unknown = {
+                name
+                for edge in edges
+                for name in (edge[0], edge[1])
+                if name not in built
+            }
+            if unknown:
+                raise ValueError(
+                    f"build_workflow() edges reference unknown agent name(s): "
+                    f"{sorted(unknown)}. Known names: {sorted(built)}"
+                )
+
+        builder = WorkflowBuilder(start_executor=ordered[0])
+
+        if chain:
+            builder.add_chain(ordered)
+        else:
+            for edge in (edges or []):
+                source_name, target_name = edge[0], edge[1]
+                condition = edge[2] if len(edge) > 2 else None
+                source_agent = built[source_name]
+                target_agent = built[target_name]
+                if condition is not None:
+                    builder.add_edge(source_agent, target_agent, condition=condition)
+                else:
+                    builder.add_edge(source_agent, target_agent)
+
+        workflow = builder.build()
+        wa_kwargs: dict[str, Any] = {}
+        if workflow_name is not None:
+            wa_kwargs["name"] = workflow_name
+        return WorkflowAgent(workflow, **wa_kwargs)
 
     def as_tool_list(self, tool_defs: list[ToolDefinition]) -> list[Any]:
         """Alias for :meth:`wrap_tools` with a name that reads naturally in

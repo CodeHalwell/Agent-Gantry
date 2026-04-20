@@ -202,7 +202,10 @@ agent = Agent(
 
 - `semantic_tools.py`: Core `with_semantic_tools` decorator and `SemanticToolSelector` class for automatic tool injection
 - `framework_adapters.py`: Helpers for converting tools to framework-specific formats (LangGraph, Semantic Kernel, CrewAI, Google ADK, Strands)
-- `agent_framework_bridge.py`: Microsoft Agent Framework 1.0 GA bridge — `GantryToolBridge` wraps Gantry tools as AF `FunctionTool`s with `approval_mode` auto-derived from Gantry `ToolCapability`. Exposes `build_agent(...)` one-liner for single-query agent construction.
+- `agent_framework_bridge.py`: Microsoft Agent Framework 1.0 GA bridge — `GantryToolBridge` wraps Gantry tools as AF `FunctionTool`s with `approval_mode` auto-derived from Gantry `ToolCapability`. Exposes three agent construction helpers:
+  - `build_agent(client, query, ...)` — one-liner using `client.as_agent()`, fine for single-agent flows.
+  - `as_agent(client, query, ...)` — direct `Agent(client, ...)` construction; preferred when the result feeds `WorkflowBuilder`.
+  - `build_workflow([specs], edges=[...])` — assembles a `WorkflowAgent` from multiple Gantry-equipped agents; each agent receives its own semantically-selected tool subset via a per-spec `query`.
 - `agent_framework_middleware.py`: Function middleware for AF 1.0 GA — `GantryApprovalMiddleware` (routes tool execution through Gantry's `SecurityPolicy`, raising `MiddlewareTermination` for `require_confirmation` patterns and `PermissionDeniedError` for policy-denied calls) and `GantryObservabilityMiddleware` (records per-invocation timing onto Gantry's telemetry).
 
 ### Microsoft Agent Framework 1.0 GA quickstart
@@ -237,7 +240,27 @@ agent = await bridge.build_agent(
 response = await agent.run("What's the weather in London?")
 ```
 
-For multi-agent orchestration (Sequential, Concurrent, Handoff, Group Chat), see `examples/agent_frameworks/agent_framework_orchestration_example.py`.
+For multi-agent workflows use `bridge.as_agent()` to build first-class `Agent` objects and wire them with `WorkflowBuilder`:
+
+```python
+from agent_framework import WorkflowAgent, WorkflowBuilder
+
+triage  = await bridge.as_agent(client, "triage classify",    name="Triage",  instructions="Route.")
+billing = await bridge.as_agent(client, "billing invoices",   name="Billing", instructions="Handle billing.")
+support = await bridge.as_agent(client, "support tickets",    name="Support", instructions="Handle support.")
+
+workflow = (
+    WorkflowBuilder(start_executor=triage)
+    .add_edge(triage, billing, condition=lambda ctx: "invoice" in str(ctx).lower())
+    .add_edge(triage, support)
+    .build()
+)
+agent = WorkflowAgent(workflow, name="CustomerService")
+```
+
+Or use the `bridge.build_workflow()` convenience helper to do the same in one call.
+
+For Sequential, Concurrent, Handoff, and Group Chat patterns see `examples/agent_frameworks/`.
 
 ## Advanced Usage
 

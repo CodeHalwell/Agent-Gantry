@@ -184,7 +184,7 @@ class SkillsClient:
         2. Including tools associated with skills
 
         Args:
-            model: Model identifier (e.g., "claude-sonnet-4-5")
+            model: Model identifier (e.g., "claude-sonnet-4-6")
             messages: Message history
             max_tokens: Maximum tokens to generate
             skills: List of skill names to enable, "all" for all skills, or None
@@ -393,7 +393,7 @@ async def create_skills_client(
         ...     tools=["get_order", "process_refund", "send_email"],
         ... )
         >>> response = await client.create_message(
-        ...     model="claude-3-5-sonnet-20241022",
+        ...     model="claude-sonnet-4-6",
         ...     messages=[{"role": "user", "content": "I need a refund for order #12345"}],
         ...     skills=["customer_support"],
         ... )

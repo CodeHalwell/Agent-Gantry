@@ -93,7 +93,7 @@ async def main():
 
             # Pass the filtered list of tools to the LLM
             response = await client.chat.completions.create(
-                model="gpt-4o",  # or gpt-3.5-turbo
+                model="gpt-4o",  # or gpt-4o-mini for a cost-efficient option
                 messages=messages,
                 tools=relevant_tools if relevant_tools else None,
                 tool_choice="auto" if relevant_tools else None,
