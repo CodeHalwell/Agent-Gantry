@@ -35,6 +35,7 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Annotated, Any
 
 from pydantic import Field
@@ -146,29 +147,32 @@ def _build_callable_for_tool(
         return json.dumps({"error": result.error or "Tool execution failed"})
 
     # Build the wrapper with proper annotations for AF
-    # AF inspects __name__, __doc__, and __annotations__ to generate schemas
-    if len(properties) == 0:
-        # No-arg tool
-        async def wrapper() -> str:
-            return await _execute()
-    else:
-        # Tool with one or more arguments: support both positional and keyword args
+    # AF inspects __name__, __doc__, and __annotations__ to generate schemas.
+    # Two separate named functions avoid the mypy "conditional function variant"
+    # error that arises when the same name is assigned in both if/else branches
+    # with incompatible signatures.
+    async def _wrapper_no_args() -> str:
+        return await _execute()
+
+    async def _wrapper_with_args(*args: Any, **kwargs: Any) -> str:
         param_names = list(properties.keys())
+        if args:
+            if len(args) > len(param_names):
+                raise TypeError(
+                    f"{tool_name}() takes at most {len(param_names)} positional "
+                    f"arguments but {len(args)} were given"
+                )
+            for idx, value in enumerate(args):
+                p_name = param_names[idx]
+                if p_name not in kwargs:
+                    kwargs[p_name] = value
+        return await _execute(**kwargs)
 
-        async def wrapper(*args: Any, **kwargs: Any) -> str:  # type: ignore[misc]
-            # Map positional arguments to parameter names based on JSON schema order
-            if args:
-                if len(args) > len(param_names):
-                    raise TypeError(
-                        f"{tool_name}() takes at most {len(param_names)} positional "
-                        f"arguments but {len(args)} were given"
-                    )
-                for idx, value in enumerate(args):
-                    p_name = param_names[idx]
-                    if p_name not in kwargs:
-                        kwargs[p_name] = value
-            return await _execute(**kwargs)
-
+    wrapper: Callable[..., Awaitable[str]]
+    if len(properties) == 0:
+        wrapper = _wrapper_no_args
+    else:
+        wrapper = _wrapper_with_args
         new_params = []
         for p_name, p_info in properties.items():
             p_desc = p_info.get("description", f"Parameter: {p_name}")
@@ -540,6 +544,7 @@ class GantryToolBridge:
         middleware: Any = None,
         cache: bool = True,
         extra_tools: list[Any] | None = None,
+        query_kwargs: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> Any:
         """Retrieve relevant tools and construct a bare AF ``Agent(client, ...)`` directly.
@@ -551,7 +556,7 @@ class GantryToolBridge:
 
         .. code-block:: python
 
-            from agent_framework import Agent, WorkflowBuilder, WorkflowAgent
+            from agent_framework import WorkflowBuilder, WorkflowAgent
             from agent_framework.openai import OpenAIChatClient
 
             client = OpenAIChatClient()
@@ -562,7 +567,7 @@ class GantryToolBridge:
             support = await bridge.as_agent(client, "support",  name="Support",  instructions="Handle support tickets.")
 
             workflow = (
-                WorkflowBuilder()
+                WorkflowBuilder(start_executor=triage)
                 .add_edge(triage, billing,  condition=lambda ctx: "invoice" in str(ctx).lower())
                 .add_edge(triage, support)
                 .build()
@@ -581,6 +586,8 @@ class GantryToolBridge:
             middleware: Optional AF middleware sequence.
             cache: Whether to reuse cached tool wrappers.
             extra_tools: Additional static tools to append after Gantry-selected tools.
+            query_kwargs: Extra keyword arguments forwarded to :meth:`get_tools`
+                (e.g. ``conversation_context``, ``namespace``).
             **kwargs: Additional keyword arguments forwarded to ``Agent()``.
 
         Returns:
@@ -599,6 +606,7 @@ class GantryToolBridge:
             limit=limit,
             score_threshold=score_threshold,
             cache=cache,
+            **(query_kwargs or {}),
         )
         if extra_tools:
             tools = tools + list(extra_tools)
@@ -700,6 +708,20 @@ class GantryToolBridge:
 
         if not ordered:
             raise ValueError("agent_specs must contain at least one agent.")
+
+        # Validate edge names up front so users get a clear error instead of KeyError.
+        if not chain and edges:
+            unknown = {
+                name
+                for edge in edges
+                for name in (edge[0], edge[1])
+                if name not in built
+            }
+            if unknown:
+                raise ValueError(
+                    f"build_workflow() edges reference unknown agent name(s): "
+                    f"{sorted(unknown)}. Known names: {sorted(built)}"
+                )
 
         builder = WorkflowBuilder(start_executor=ordered[0])
 

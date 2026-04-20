@@ -20,6 +20,9 @@ async def test_agent_framework_example_runs_with_fakes(monkeypatch):
     import sys
     from types import ModuleType
 
+    # Define early so stub classes below can reference it via closure.
+    captured_tools: list[Any] = []
+
     # Stub the agent_framework package so the example can import without it installed
     af_mod = ModuleType("agent_framework")
     af_openai_mod = ModuleType("agent_framework.openai")
@@ -46,9 +49,49 @@ async def test_agent_framework_example_runs_with_fakes(monkeypatch):
             return lambda f: f
         return func
 
+    # The updated example directly imports Agent / WorkflowAgent / WorkflowBuilder.
+    class _StubAgent:
+        def __init__(self, client: Any, instructions: str, *, name: str = "", tools: Any = None, middleware: Any = None, **kwargs: Any) -> None:
+            self.name = name
+            self.tools = list(tools or [])
+            self.middleware = middleware
+            self.default_options = {"tools": self.tools}
+            captured_tools.extend(self.tools)
+
+        async def run(self, query: str, **kwargs: Any) -> Any:
+            if self.tools:
+                return await self.tools[0](user_id="abc123")
+            return "no tools"
+
+    class _StubWorkflow:
+        pass
+
+    class _StubWorkflowBuilder:
+        def __init__(self, *, start_executor: Any = None, **kwargs: Any) -> None:
+            pass
+
+        def add_chain(self, agents: Any) -> "_StubWorkflowBuilder":
+            return self
+
+        def add_edge(self, source: Any, target: Any, condition: Any = None) -> "_StubWorkflowBuilder":
+            return self
+
+        def build(self) -> _StubWorkflow:
+            return _StubWorkflow()
+
+    class _StubWorkflowAgent:
+        def __init__(self, workflow: Any, *, name: str | None = None, **kwargs: Any) -> None:
+            self.name = name or "WorkflowAgent"
+
+        async def run(self, query: str, **kwargs: Any) -> str:
+            return "Customer is on the pro plan; invoice query routed to billing."
+
     af_mod.FunctionMiddleware = _StubFunctionMiddleware
     af_mod.MiddlewareTermination = _StubMiddlewareTerminationError
     af_mod.tool = _stub_tool
+    af_mod.Agent = _StubAgent
+    af_mod.WorkflowAgent = _StubWorkflowAgent
+    af_mod.WorkflowBuilder = _StubWorkflowBuilder
 
     monkeypatch.setitem(sys.modules, "agent_framework", af_mod)
     monkeypatch.setitem(sys.modules, "agent_framework.openai", af_openai_mod)
@@ -73,17 +116,16 @@ async def test_agent_framework_example_runs_with_fakes(monkeypatch):
 
     from examples.agent_frameworks import agent_framework_example as mod
 
-    captured_tools: list[Any] = []
-
     class FakeOpenAIChatClient:
         def __init__(self, *_, **__):
             pass
 
         def as_agent(self, *, name, instructions, tools, middleware=None):
-            return FakeAgent(tools=tools, middleware=middleware)
+            return FakeAgent(name=name, tools=tools, middleware=middleware)
 
     class FakeAgent:
-        def __init__(self, *, tools, middleware=None):
+        def __init__(self, *, name="", tools, middleware=None):
+            self.name = name
             self.tools = tools
             self.middleware = middleware
             # Mirror AF's public shape so example code that reads

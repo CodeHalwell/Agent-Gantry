@@ -689,3 +689,139 @@ async def test_approval_mode_maps_from_gantry_capabilities(bridge: GantryToolBri
     # Read-only tools default to never_require
     assert by_name["get_weather"].approval_mode == "never_require"
     assert by_name["lookup_order"].approval_mode == "never_require"
+
+# ---------------------------------------------------------------------------
+# 14. as_agent() — direct Agent construction
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_as_agent_constructs_agent_with_tools(bridge: GantryToolBridge) -> None:
+    """bridge.as_agent() should return a plain Agent with semantically-selected tools."""
+    client = ScriptedChatClient(
+        script=[
+            [_fc("get_weather", {"city": "Vienna"}, "aa0")],
+            [Content.from_text("Vienna is sunny.")],
+        ]
+    )
+    agent = await bridge.as_agent(
+        client,
+        query="weather forecast",
+        name="WeatherAgent",
+        instructions="Answer weather questions.",
+        limit=5,
+        score_threshold=0.0,
+    )
+
+    assert isinstance(agent, Agent)
+    assert agent.name == "WeatherAgent"
+    tools = (agent.default_options or {}).get("tools") or []
+    assert tools, "as_agent should attach Gantry tools"
+    assert any(getattr(t, "name", None) == "get_weather" for t in tools)
+
+    resp = await agent.run("Weather in Vienna?")
+    assert "sunny" in resp.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_as_agent_query_kwargs_forwarded(bridge: GantryToolBridge) -> None:
+    """query_kwargs passed to as_agent are forwarded to get_tools."""
+    client = ScriptedChatClient(script=[[Content.from_text("done")]])
+    # score_threshold via query_kwargs should not raise; limit 0 returns no tools
+    agent = await bridge.as_agent(
+        client,
+        query="weather",
+        name="A",
+        instructions="",
+        limit=5,
+        score_threshold=0.0,
+        query_kwargs={},
+    )
+    assert isinstance(agent, Agent)
+
+
+# ---------------------------------------------------------------------------
+# 15. build_workflow() — multi-agent WorkflowAgent construction
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_build_workflow_chain(bridge: GantryToolBridge) -> None:
+    """build_workflow(chain=True) wires agents in order and each gets its own tools."""
+    from agent_framework import WorkflowAgent
+
+    client_a = ScriptedChatClient(
+        script=[
+            [_fc("get_weather", {"city": "Oslo"}, "bw0")],
+            [Content.from_text("Oslo is sunny.")],
+        ]
+    )
+    client_b = ScriptedChatClient(
+        script=[
+            [_fc("lookup_order", {"order_id": "ORD-5"}, "bw1")],
+            [Content.from_text("Order ORD-5 is shipped.")],
+        ]
+    )
+
+    wa = await bridge.build_workflow(
+        agent_specs=[
+            dict(client=client_a, query="weather city", name="WeatherStep",
+                 instructions="Get weather.", limit=5, score_threshold=0.0),
+            dict(client=client_b, query="order lookup", name="OrderStep",
+                 instructions="Look up orders.", limit=5, score_threshold=0.0),
+        ],
+        chain=True,
+        workflow_name="WeatherThenOrder",
+    )
+
+    assert isinstance(wa, WorkflowAgent)
+    assert wa.name == "WeatherThenOrder"
+
+
+@pytest.mark.asyncio
+async def test_build_workflow_edge_routing(bridge: GantryToolBridge) -> None:
+    """build_workflow with edges wires conditional handoffs."""
+    from agent_framework import WorkflowAgent
+
+    client_triage = ScriptedChatClient(script=[[Content.from_text("route")]])
+    client_order = ScriptedChatClient(
+        script=[
+            [_fc("lookup_order", {"order_id": "ORD-1"}, "bwe0")],
+            [Content.from_text("Order shipped.")],
+        ]
+    )
+
+    wa = await bridge.build_workflow(
+        agent_specs=[
+            dict(client=client_triage, query="triage classify", name="Triage",
+                 instructions="Route.", limit=5, score_threshold=0.0),
+            dict(client=client_order, query="order lookup", name="Orders",
+                 instructions="Handle orders.", limit=5, score_threshold=0.0),
+        ],
+        edges=[("Triage", "Orders")],
+        workflow_name="TriageWorkflow",
+    )
+
+    assert isinstance(wa, WorkflowAgent)
+    assert wa.name == "TriageWorkflow"
+
+
+@pytest.mark.asyncio
+async def test_build_workflow_unknown_edge_name_raises(bridge: GantryToolBridge) -> None:
+    """build_workflow should raise ValueError for edges referencing unknown agent names."""
+    client = ScriptedChatClient(script=[[Content.from_text("done")]])
+    with pytest.raises(ValueError, match="unknown agent name"):
+        await bridge.build_workflow(
+            agent_specs=[
+                dict(client=client, query="weather", name="WeatherAgent",
+                     instructions="", limit=5, score_threshold=0.0),
+            ],
+            edges=[("WeatherAgent", "NonExistent")],
+        )
+
+
+@pytest.mark.asyncio
+async def test_build_workflow_empty_specs_raises(bridge: GantryToolBridge) -> None:
+    """build_workflow with no specs should raise ValueError."""
+    with pytest.raises(ValueError, match="at least one agent"):
+        await bridge.build_workflow(agent_specs=[])

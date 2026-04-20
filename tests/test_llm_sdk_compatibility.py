@@ -386,13 +386,11 @@ class TestSDKVersionCompatibility:
 
     def test_anthropic_minimum_version(self) -> None:
         """Test Anthropic SDK meets minimum version."""
+        from packaging.version import Version
+
         anthropic = pytest.importorskip("anthropic")
         version = anthropic.__version__
-        parts = version.split(".")
-        major = int(parts[0])
-        minor = int(parts[1])
-        # Version 0.94.0 or higher (matches pyproject.toml anthropic>=0.94.0)
-        assert (major == 0 and minor >= 94) or major > 0, (
+        assert Version(version) >= Version("0.94.0"), (
             f"Anthropic SDK version {version} is below minimum 0.94.0"
         )
 

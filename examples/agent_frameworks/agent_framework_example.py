@@ -20,7 +20,7 @@ Covers three construction patterns:
 
 import asyncio
 
-from agent_framework import Agent, WorkflowAgent, WorkflowBuilder
+from agent_framework import WorkflowAgent, WorkflowBuilder
 from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 
@@ -36,7 +36,7 @@ from agent_gantry.schema.tool import ToolCapability
 load_dotenv()
 
 
-async def main() -> None:
+async def main() -> str:
     # -----------------------------------------------------------------------
     # 1. Register tools with Agent-Gantry
     # -----------------------------------------------------------------------
@@ -181,6 +181,7 @@ async def main() -> None:
     user_query = "My last invoice has an incorrect charge."
     response = await workflow_agent.run(user_query)
     print(f"Response: {response}")
+    return str(response)
 
 
 if __name__ == "__main__":
