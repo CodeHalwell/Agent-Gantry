@@ -184,7 +184,7 @@ class SkillsClient:
         2. Including tools associated with skills
 
         Args:
-            model: Model identifier (e.g., "claude-sonnet-4-5")
+            model: Model identifier (e.g., "claude-sonnet-4-6")
             messages: Message history
             max_tokens: Maximum tokens to generate
             skills: List of skill names to enable, "all" for all skills, or None

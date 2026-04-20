@@ -391,9 +391,9 @@ class TestSDKVersionCompatibility:
         parts = version.split(".")
         major = int(parts[0])
         minor = int(parts[1])
-        # Version 0.40.0 or higher
-        assert (major == 0 and minor >= 40) or major > 0, (
-            f"Anthropic SDK version {version} is below minimum 0.40.0"
+        # Version 0.94.0 or higher (matches pyproject.toml anthropic>=0.94.0)
+        assert (major == 0 and minor >= 94) or major > 0, (
+            f"Anthropic SDK version {version} is below minimum 0.94.0"
         )
 
     def test_groq_minimum_version(self) -> None:

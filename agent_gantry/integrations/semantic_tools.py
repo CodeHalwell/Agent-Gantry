@@ -15,11 +15,12 @@ Example:
     @with_semantic_tools(gantry)
     async def generate(prompt: str, *, tools: list | None = None) -> str:
         # Your LLM client logic here
-        return await client.chat.completions.create(
+        response = await client.chat.completions.create(
             model="gpt-4o",
             messages=[{"role": "user", "content": prompt}],
             tools=tools,
         )
+        return response.choices[0].message.content
 """
 
 from __future__ import annotations

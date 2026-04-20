@@ -263,7 +263,7 @@ class AzureOpenAIEmbedder(BaseOpenAIEmbedder):
         api_version = (
             config.api_version
             or os.getenv("AZURE_OPENAI_API_VERSION")
-            or "2025-01-01-preview"  # Latest stable as of Apr 2026
+            or "2025-01-01-preview"  # Latest preview version as of Apr 2026
         )
 
         # Initialize Azure client with retry logic
