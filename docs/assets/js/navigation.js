@@ -251,10 +251,11 @@
               originalText + " (opens in a new tab)",
             );
           } else {
-            const srText = document.createElement("span");
-            srText.className = "sr-only";
-            srText.textContent = " (opens in a new tab)";
-            link.appendChild(srText);
+            const currentLabel = link.getAttribute("aria-label");
+            link.setAttribute(
+              "aria-label",
+              currentLabel + " (opens in a new tab)",
+            );
           }
         }
       }
