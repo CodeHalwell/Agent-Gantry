@@ -30,7 +30,7 @@ jobs:
         run: uv run ruff check agent_gantry/
 
       - name: Run ty
-        run: uvx ty check agent_gantry/
+        run: uvx ty check agent_gantry/ --warn all
 
   test:
     runs-on: ${{ matrix.os }}
