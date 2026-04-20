@@ -389,7 +389,11 @@ class TestSDKVersionCompatibility:
         from packaging.version import Version
 
         anthropic = pytest.importorskip("anthropic")
-        version = anthropic.__version__
+        # test_anthropic_features.py replaces sys.modules["anthropic"] with a
+        # Mock at module scope; if run first the version attribute is absent.
+        version = getattr(anthropic, "__version__", None)
+        if version is None:
+            pytest.skip("anthropic module is mocked in this test session")
         assert Version(version) >= Version("0.94.0"), (
             f"Anthropic SDK version {version} is below minimum 0.94.0"
         )
