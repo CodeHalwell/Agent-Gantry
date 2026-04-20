@@ -1,9 +1,5 @@
-## 2024-05-10 - [Security Bypass]
-**Vulnerability:** The SecurityPolicy.check_permission method iterates through the top-level values of the arguments dictionary, skipping them if they are not strings. This allows bypassing the allowed_domains check by passing a domain in a list or nested dictionary.
-**Learning:** Argument validation must recursively check all values in the arguments structure (lists, dicts, etc.) instead of only checking the top-level string values. This is especially important for tools that might accept lists of URLs or objects with nested properties.
-**Prevention:** Implement a recursive extraction method to traverse the entire argument structure when searching for domains, ensuring deep objects and arrays are fully evaluated against the policy.
+## 2025-04-20 - Fix Newline Bypass Vulnerability in Regex Validation
 
-## 2024-04-17 - Fix URL parsing bypass in domain extraction
-**Vulnerability:** The `_extract_domains` function improperly parsed protocol-relative URLs using a regex `//([a-zA-Z0-9][-a-zA-Z0-9.]*\.[a-zA-Z]{2,})`. This allowed basic authentication payloads like `//github.com@evil.com` to extract the `github.com` username instead of the `evil.com` host, bypassing domain restrictions.
-**Learning:** Always use standard URL parsing libraries (`urllib.parse`) instead of custom regex to extract hostnames from URLs.
-**Prevention:** Use a regex to match the full URL string, then pass it to `urllib.parse.urlparse` to handle authentication components securely.
+**Vulnerability:** Regular expressions used for validating SQL identifiers (table names) and tool names used `$` to match the end of the string. In Python's `re` module, `$` matches either the end of the string OR just before a trailing newline. This allowed a bypass where an identifier like `my_table\n` would pass validation but could potentially break logic or allow injection if concatenated directly.
+**Learning:** Python's `re.match` and `re.search` default behavior for `$` is often misunderstood as strictly end-of-string.
+**Prevention:** Always use `\Z` instead of `$` when you require a strict end-of-string match in Python regular expressions to prevent newline bypass attacks.

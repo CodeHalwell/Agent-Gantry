@@ -34,7 +34,7 @@ def _validate_sql_identifier(value: str, field_name: str) -> None:
         raise ValueError(f"{field_name} must be 1-63 characters")
 
     # Must start with letter or underscore, contain only alphanumeric and underscores
-    if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", value):
+    if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*\Z", value):
         raise ValueError(
             f"{field_name} must start with a letter or underscore and contain only "
             "alphanumeric characters and underscores"
@@ -701,7 +701,7 @@ class PGVectorStore:
 
             # Create table
             await conn.execute(f"""
-                CREATE TABLE IF NOT EXISTS {self._table_name} (
+                CREATE TABLE IF NOT EXISTS "{self._table_name}" (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
                     namespace TEXT NOT NULL,
@@ -715,16 +715,16 @@ class PGVectorStore:
 
             # Create IVFFlat index for fast vector search
             await conn.execute(f"""
-                CREATE INDEX IF NOT EXISTS {self._table_name}_embedding_idx
-                ON {self._table_name}
+                CREATE INDEX IF NOT EXISTS "{self._table_name}_embedding_idx"
+                ON "{self._table_name}"
                 USING ivfflat (embedding vector_cosine_ops)
                 WITH (lists = 100)
             """)
 
             # Create namespace index for filtering
             await conn.execute(f"""
-                CREATE INDEX IF NOT EXISTS {self._table_name}_namespace_idx
-                ON {self._table_name} (namespace)
+                CREATE INDEX IF NOT EXISTS "{self._table_name}_namespace_idx"
+                ON "{self._table_name}" (namespace)
             """)
 
         self._initialized = True
@@ -761,7 +761,7 @@ class PGVectorStore:
             if upsert:
                 await conn.executemany(
                     f"""
-                    INSERT INTO {self._table_name}
+                    INSERT INTO "{self._table_name}"
                     (id, name, namespace, description, tool_json, embedding, updated_at)
                     VALUES ($1, $2, $3, $4, $5, $6, NOW())
                     ON CONFLICT (id) DO UPDATE SET
@@ -777,7 +777,7 @@ class PGVectorStore:
             else:
                 await conn.executemany(
                     f"""
-                    INSERT INTO {self._table_name}
+                    INSERT INTO "{self._table_name}"
                     (id, name, namespace, description, tool_json, embedding)
                     VALUES ($1, $2, $3, $4, $5, $6)
                     """,
@@ -813,7 +813,7 @@ class PGVectorStore:
 
         query = f"""
             SELECT {select_cols}
-            FROM {self._table_name}
+            FROM "{self._table_name}"
             {namespace_clause}
             ORDER BY embedding <=> $1::vector
             LIMIT $2
@@ -863,7 +863,7 @@ class PGVectorStore:
 
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
-                f"SELECT tool_json FROM {self._table_name} WHERE id = $1",
+                f"SELECT tool_json FROM \"{self._table_name}\" WHERE id = $1",
                 tool_id,
             )
 
@@ -880,7 +880,7 @@ class PGVectorStore:
 
         async with self._pool.acquire() as conn:
             result = await conn.execute(
-                f"DELETE FROM {self._table_name} WHERE id = $1",
+                f"DELETE FROM \"{self._table_name}\" WHERE id = $1",
                 tool_id,
             )
 
@@ -904,7 +904,7 @@ class PGVectorStore:
             params.append(namespace)
 
         query = f"""
-            SELECT tool_json FROM {self._table_name}
+            SELECT tool_json FROM "{self._table_name}"
             {namespace_clause}
             ORDER BY created_at DESC
             LIMIT $1 OFFSET $2
@@ -930,7 +930,7 @@ class PGVectorStore:
             namespace_clause = "WHERE namespace = $1"
             params.append(namespace)
 
-        query = f"SELECT COUNT(*) FROM {self._table_name} {namespace_clause}"
+        query = f"SELECT COUNT(*) FROM \"{self._table_name}\" {namespace_clause}"
 
         async with self._pool.acquire() as conn:
             result = await conn.fetchval(query, *params)
