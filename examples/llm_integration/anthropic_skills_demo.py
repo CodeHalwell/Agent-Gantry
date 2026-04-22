@@ -90,7 +90,7 @@ async def demo_basic_skills():
     print()
 
     response = await client.create_message(
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-4-6",
         messages=[
             {
                 "role": "user",
@@ -184,7 +184,7 @@ async def demo_multi_skill_workflow():
     print()
 
     response = await client.create_message(
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-4-6",
         messages=[
             {
                 "role": "user",
@@ -258,7 +258,7 @@ async def demo_skill_from_gantry_tools():
     print()
 
     response = await client.create_message(
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-4-6",
         messages=[
             {
                 "role": "user",

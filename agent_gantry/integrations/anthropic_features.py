@@ -2,8 +2,13 @@
 Anthropic-specific features and helpers.
 
 Provides easy access to Anthropic's beta features including:
-- Interleaved thinking (shows model's reasoning process)
-- Extended thinking (skills API)
+- Interleaved thinking (between tool calls, enabled via ``interleaved-thinking-2025-05-14`` beta
+  header — deprecated and silently ignored on Opus 4.6+, Sonnet 4.6+, and Opus 4.7, where
+  adaptive thinking supersedes it automatically)
+- Extended thinking (chain-of-thought reasoning, enabled via ``thinking={type: "enabled",
+  budget_tokens: N}`` in the request body — no beta header required)
+- Adaptive thinking (recommended for Opus 4.6+, Sonnet 4.6+, Opus 4.7: pass
+  ``thinking={type: "adaptive", effort: "medium"}`` for the model to self-regulate)
 - Tool use integration with Agent-Gantry
 """
 
@@ -32,8 +37,11 @@ class AnthropicClient:
     Enhanced Anthropic client with Agent-Gantry integration.
 
     Supports:
-    - Interleaved thinking (beta: interleaved-thinking-2025-05-14)
-    - Extended thinking (beta: skills-2025-10-02)
+    - Interleaved thinking (``interleaved-thinking-2025-05-14`` beta header; required for
+      Opus 4.5 / Sonnet 4.5 and earlier Claude 4 models; silently ignored on Opus 4.6+,
+      Sonnet 4.6+, and Opus 4.7 where adaptive thinking is automatic)
+    - Extended thinking (controlled by ``thinking={type: "enabled", budget_tokens: N}`` in
+      the request body; no beta header required on any current model)
     - Automatic tool retrieval and execution
     """
 
@@ -60,12 +68,14 @@ class AnthropicClient:
         self._gantry = gantry
         self._features = features or AnthropicFeatures()
 
-        # Initialize client with beta headers if needed
+        # The interleaved-thinking beta header is required for Opus 4.5 / Sonnet 4.5 and
+        # earlier Claude 4 models. On Opus 4.6+, Sonnet 4.6+, and Opus 4.7 the header is
+        # deprecated and silently ignored — adaptive thinking is automatic on those models.
+        # Extended thinking does NOT need a beta header; it is activated via the `thinking`
+        # parameter in each create_message() call (see below).
         extra_headers = {}
         if self._features.enable_interleaved_thinking:
             extra_headers["anthropic-beta"] = "interleaved-thinking-2025-05-14"
-        elif self._features.enable_extended_thinking:
-            extra_headers["anthropic-beta"] = "skills-2025-10-02"
 
         self._client = AsyncAnthropic(
             api_key=self._api_key,

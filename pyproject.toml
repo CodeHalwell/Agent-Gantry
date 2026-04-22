@@ -47,18 +47,17 @@ dev = [
     "python-dotenv>=1.0.0",
 ]
 agent-frameworks = [
-    "agent-framework>=1.0.0,<2.0.0",
+    "agent-framework>=1.1.0,<2.0.0",
     "autogen-agentchat>=0.7.5",
     "autogen-ext[openai]>=0.7.5",
-    "crewai>=1.6.1",
+    "crewai>=1.14.0",
     "langchain>=1.2.0",
     "langchain-openai>=1.1.14",
-    "langgraph>=1.1.0",
+    "langgraph>=1.1.9",
     "llama-index-core>=0.14.10",
     "llama-index-llms-openai>=0.6.12",
-    "pyautogen>=0.10.0",
-    "semantic-kernel>=1.30.0",
-    "google-adk>=1.14.1",
+    "semantic-kernel>=1.41.0",
+    "google-adk>=1.31.0",
 ]
 example-tools = [
     "beautifulsoup4>=4.12.0",
@@ -129,7 +128,7 @@ a2a = [
 ]
 # LLM provider SDK dependencies
 anthropic = [
-    "anthropic>=0.94.0",
+    "anthropic>=0.96.0",
 ]
 google-genai = [
     "google-genai>=1.0.0",

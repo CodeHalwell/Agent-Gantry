@@ -16,7 +16,7 @@ Example:
     async def generate(prompt: str, *, tools: list | None = None) -> str:
         # Your LLM client logic here
         response = await client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4.1",
             messages=[{"role": "user", "content": prompt}],
             tools=tools,
         )

@@ -42,7 +42,7 @@ async def test_multi_provider_metrics():
     print(f"Google Savings: {savings_google.prompt_savings_pct:.1f}%")
 
     await telemetry.record_token_usage(
-        usage=savings_google.optimized, model_name="gemini-1.5-pro", savings=savings_google
+        usage=savings_google.optimized, model_name="gemini-2.5-flash", savings=savings_google
     )
 
     # 3. OpenAI Format (prompt_tokens, completion_tokens)
