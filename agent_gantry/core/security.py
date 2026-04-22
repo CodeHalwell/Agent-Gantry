@@ -228,7 +228,7 @@ def validate_tool_name(name: str) -> tuple[bool, str | None]:
     Returns:
         Tuple of (is_valid, error_message)
     """
-    if not re.match(r"^[a-z][a-z0-9_]{0,127}$", name):
+    if not re.match(r"^[a-z][a-z0-9_]{0,127}\Z", name):
         return False, "Name must be lowercase alphanumeric with underscores, 1-128 chars"
     return True, None
 
