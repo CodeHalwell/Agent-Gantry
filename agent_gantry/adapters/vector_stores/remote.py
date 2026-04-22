@@ -34,7 +34,7 @@ def _validate_sql_identifier(value: str, field_name: str) -> None:
         raise ValueError(f"{field_name} must be 1-63 characters")
 
     # Must start with letter or underscore, contain only alphanumeric and underscores
-    if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", value):
+    if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*\Z", value):
         raise ValueError(
             f"{field_name} must start with a letter or underscore and contain only "
             "alphanumeric characters and underscores"
