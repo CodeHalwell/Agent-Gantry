@@ -243,18 +243,20 @@
           icon.style.opacity = "0.6";
           link.appendChild(icon);
 
-          // Provide screen reader context via aria-label (preferred)
-          // or a visually hidden sr-only span as a fallback.
+          // Provide screen reader context via aria-label
           if (!link.hasAttribute("aria-label")) {
             link.setAttribute(
               "aria-label",
               originalText + " (opens in a new tab)",
             );
           } else {
-            const srText = document.createElement("span");
-            srText.className = "sr-only";
-            srText.textContent = " (opens in a new tab)";
-            link.appendChild(srText);
+            const currentLabel = link.getAttribute("aria-label");
+            if (!currentLabel.includes("(opens in a new tab)")) {
+              link.setAttribute(
+                "aria-label",
+                currentLabel + " (opens in a new tab)",
+              );
+            }
           }
         }
       }
