@@ -490,9 +490,9 @@ class SemanticRouter:
                 if sim > max_sims[idx]:
                     max_sims[idx] = sim
 
-                mmr_scores[idx] = lambda_param * relevance_scores[idx] - (
-                    1.0 - lambda_param
-                ) * max_sims[idx]
+                mmr_scores[idx] = (
+                    lambda_param * relevance_scores[idx] - (1.0 - lambda_param) * max_sims[idx]
+                )
 
             next_idx = max(mmr_scores, key=lambda k: mmr_scores[k])
             selected.append(next_idx)
@@ -503,5 +503,7 @@ class SemanticRouter:
     def _contains_token(self, text: str, token: str) -> bool:
         """Return True if token appears as a standalone word in text."""
         if not token:
+            return False
+        if token not in text:
             return False
         return _get_token_pattern(token).search(text) is not None
