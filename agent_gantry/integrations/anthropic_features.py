@@ -2,8 +2,13 @@
 Anthropic-specific features and helpers.
 
 Provides easy access to Anthropic's beta features including:
-- Interleaved thinking (shows model's reasoning process)
-- Extended thinking (skills API)
+- Interleaved thinking (between tool calls, enabled via ``interleaved-thinking-2025-05-14`` beta
+  header — deprecated and silently ignored on Opus 4.6+, Sonnet 4.6+, and Opus 4.7, where
+  adaptive thinking supersedes it automatically)
+- Extended thinking (chain-of-thought reasoning, enabled via ``thinking={type: "enabled",
+  budget_tokens: N}`` in the request body — no beta header required)
+- Adaptive thinking (recommended for Opus 4.6+, Sonnet 4.6+, Opus 4.7: pass
+  ``thinking={type: "adaptive", effort: "medium"}`` for the model to self-regulate)
 - Tool use integration with Agent-Gantry
 """
 
@@ -25,6 +30,9 @@ class AnthropicFeatures:
     enable_interleaved_thinking: bool = False
     enable_extended_thinking: bool = False
     thinking_budget_tokens: int | None = None
+    # Adaptive thinking: model self-regulates depth; recommended for Opus 4.6+, Sonnet 4.6+,
+    # Opus 4.7. Mutually exclusive with enable_extended_thinking.
+    adaptive_thinking_effort: Literal["low", "medium", "high"] | None = None
 
 
 class AnthropicClient:
@@ -32,8 +40,15 @@ class AnthropicClient:
     Enhanced Anthropic client with Agent-Gantry integration.
 
     Supports:
-    - Interleaved thinking (beta: interleaved-thinking-2025-05-14)
-    - Extended thinking (beta: skills-2025-10-02)
+    - Interleaved thinking (``interleaved-thinking-2025-05-14`` beta header; required for
+      Opus 4.5 / Sonnet 4.5 and earlier Claude 4 models; silently ignored on Opus 4.6+,
+      Sonnet 4.6+, and Opus 4.7 where adaptive thinking is automatic)
+    - Extended thinking (``thinking={type: "enabled", budget_tokens: N}`` in the request
+      body; no beta header required on any current model)
+    - Adaptive thinking (``thinking={type: "adaptive", effort: "medium"}``; recommended
+      for Opus 4.6+, Sonnet 4.6+, Opus 4.7; set ``adaptive_thinking_effort`` in
+      ``AnthropicFeatures`` or use ``enable_thinking="adaptive"`` in
+      ``create_anthropic_client``)
     - Automatic tool retrieval and execution
     """
 
@@ -60,12 +75,14 @@ class AnthropicClient:
         self._gantry = gantry
         self._features = features or AnthropicFeatures()
 
-        # Initialize client with beta headers if needed
+        # The interleaved-thinking beta header is required for Opus 4.5 / Sonnet 4.5 and
+        # earlier Claude 4 models. On Opus 4.6+, Sonnet 4.6+, and Opus 4.7 the header is
+        # deprecated and silently ignored — adaptive thinking is automatic on those models.
+        # Extended thinking does NOT need a beta header; it is activated via the `thinking`
+        # parameter in each create_message() call (see below).
         extra_headers = {}
         if self._features.enable_interleaved_thinking:
             extra_headers["anthropic-beta"] = "interleaved-thinking-2025-05-14"
-        elif self._features.enable_extended_thinking:
-            extra_headers["anthropic-beta"] = "skills-2025-10-02"
 
         self._client = AsyncAnthropic(
             api_key=self._api_key,
@@ -117,12 +134,18 @@ class AnthropicClient:
             )
             tools = [t.tool.to_dialect("anthropic") for t in retrieval_result.tools]
 
-        # Add thinking budget for extended thinking
-        if self._features.enable_extended_thinking and self._features.thinking_budget_tokens:
+        # Build thinking payload — adaptive takes precedence over extended when both are set
+        if self._features.adaptive_thinking_effort and "thinking" not in kwargs:
             kwargs["thinking"] = {
-                "type": "enabled",
-                "budget_tokens": self._features.thinking_budget_tokens,
+                "type": "adaptive",
+                "effort": self._features.adaptive_thinking_effort,
             }
+        elif self._features.enable_extended_thinking and self._features.thinking_budget_tokens:
+            if "thinking" not in kwargs:
+                kwargs["thinking"] = {
+                    "type": "enabled",
+                    "budget_tokens": self._features.thinking_budget_tokens,
+                }
 
         # Create message
         response = await self._client.messages.create(
@@ -239,8 +262,9 @@ class AnthropicClient:
 async def create_anthropic_client(
     api_key: str | None = None,
     gantry: AgentGantry | None = None,
-    enable_thinking: Literal["interleaved", "extended", None] = None,
+    enable_thinking: Literal["interleaved", "extended", "adaptive", None] = None,
     thinking_budget_tokens: int | None = None,
+    adaptive_effort: Literal["low", "medium", "high"] = "medium",
 ) -> AnthropicClient:
     """
     Convenience function to create an Anthropic client with features.
@@ -248,8 +272,13 @@ async def create_anthropic_client(
     Args:
         api_key: Anthropic API key
         gantry: AgentGantry instance
-        enable_thinking: Type of thinking to enable
-        thinking_budget_tokens: Budget for extended thinking
+        enable_thinking: Type of thinking to enable — ``"interleaved"`` (beta header, pre-4.6
+            models), ``"extended"`` (fixed budget via ``thinking_budget_tokens``), or
+            ``"adaptive"`` (model self-regulates depth; recommended for Opus 4.6+, Sonnet 4.6+,
+            Opus 4.7)
+        thinking_budget_tokens: Budget for extended thinking (ignored for other modes)
+        adaptive_effort: Effort level for adaptive thinking — ``"low"``, ``"medium"`` (default),
+            or ``"high"`` (ignored unless ``enable_thinking="adaptive"``)
 
     Returns:
         Configured AnthropicClient
@@ -257,9 +286,10 @@ async def create_anthropic_client(
     Example:
         >>> client = await create_anthropic_client(
         ...     gantry=gantry,
-        ...     enable_thinking="interleaved",
+        ...     enable_thinking="adaptive",
+        ...     adaptive_effort="medium",
         ... )
-        >>> response, thinking = await client.chat_with_thinking(
+        >>> response, _ = await client.chat_with_thinking(
         ...     model="claude-sonnet-4-6",
         ...     messages=[{"role": "user", "content": "Explain quantum computing"}],
         ... )
@@ -268,6 +298,7 @@ async def create_anthropic_client(
         enable_interleaved_thinking=(enable_thinking == "interleaved"),
         enable_extended_thinking=(enable_thinking == "extended"),
         thinking_budget_tokens=thinking_budget_tokens,
+        adaptive_thinking_effort=adaptive_effort if enable_thinking == "adaptive" else None,
     )
 
     return AnthropicClient(

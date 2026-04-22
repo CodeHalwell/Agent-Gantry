@@ -72,7 +72,7 @@ async def main():
 
     # C. Call Gemini asynchronously via client.aio
     response = await client.aio.models.generate_content(
-        model="gemini-2.0-flash", contents=user_query, config=config
+        model="gemini-2.5-flash", contents=user_query, config=config
     )
 
     # Inspect response for function calls
@@ -112,7 +112,7 @@ async def main():
             cfg = None
 
         return await client.aio.models.generate_content(
-            model="gemini-2.0-flash", contents=prompt, config=cfg
+            model="gemini-2.5-flash", contents=prompt, config=cfg
         )
 
     query_dec = "Find documents about project beta"
