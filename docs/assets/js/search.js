@@ -195,7 +195,8 @@
         border-bottom: none;
       }
 
-      .search-result-item:hover {
+      .search-result-item:hover,
+      .search-result-item.active {
         background-color: var(--bg-secondary);
         text-decoration: none;
       }
