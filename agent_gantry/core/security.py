@@ -147,7 +147,32 @@ class SecurityPolicy:
         url_pattern = r"(?:https?|ftps?|file)://[^\s\"\'<>]+|//(?:[a-zA-Z0-9][-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}|localhost)\b[-a-zA-Z0-9()@:%_\+.~#?&//=]*"
         for url_match in re.finditer(url_pattern, value):
             try:
-                parsed = urllib.parse.urlparse(url_match.group(0))
+                url = url_match.group(0)
+                # Repeatedly unquote to handle double/triple encoding bypasses
+                prev_url = ""
+                for _ in range(5):
+                    if url == prev_url:
+                        break
+                    prev_url = url
+                    url = urllib.parse.unquote(url)
+
+                # Normalize backslashes to forward slashes to prevent SSRF bypasses
+                # (e.g. evil.com\@example.com)
+                url = url.replace("\\", "/")
+
+                parsed = urllib.parse.urlparse(url)
+
+                try:
+                    # Accessing port triggers parsing that catches invalid ports
+                    # like http://example.com:evil.com
+                    _ = parsed.port
+                except ValueError:
+                    # Invalid port, treat netloc as the domain, stripping userinfo if present
+                    if parsed.netloc:
+                        netloc = parsed.netloc.split("@")[-1]
+                        domains.add(netloc)
+                        continue
+
                 if parsed.hostname:
                     domains.add(parsed.hostname)
             except Exception:
