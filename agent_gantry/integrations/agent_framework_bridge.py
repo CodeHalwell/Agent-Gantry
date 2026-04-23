@@ -494,7 +494,7 @@ class GantryToolBridge:
         Args:
             client: Any AF chat client exposing ``as_agent(...)`` (e.g.
                 ``OpenAIChatClient``, ``AzureOpenAIChatClient``,
-                ``AnthropicChatClient``).
+                ``AnthropicChatClient``, ``GeminiChatClient`` — new in AF 1.1.0).
             query: The user query whose tools will be retrieved.
             name: Name to give the constructed agent.
             instructions: System instructions for the agent.
@@ -577,7 +577,7 @@ class GantryToolBridge:
 
         Args:
             client: Any AF chat client (``OpenAIChatClient``, ``AzureOpenAIChatClient``,
-                ``AnthropicChatClient``, …).
+                ``AnthropicChatClient``, ``GeminiChatClient`` — new in AF 1.1.0, …).
             query: The user query used to semantically select tools.
             name: Name for the agent.
             instructions: System instructions for the agent.

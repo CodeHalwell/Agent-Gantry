@@ -131,13 +131,13 @@ anthropic = [
     "anthropic>=0.96.0",
 ]
 google-genai = [
-    "google-genai>=1.0.0",
+    "google-genai>=1.0.0,<2.0.0",
 ]
 google-vertexai = [
     "google-cloud-aiplatform>=1.70.0",
 ]
 mistral = [
-    "mistralai>=1.0.0",
+    "mistralai>=1.0.0,<2.0.0",
 ]
 groq = [
     "groq>=1.0.0",
