@@ -9,3 +9,7 @@
 ## 2026-04-21 - [Screen Reader Swallowing ARIA Labels]
 **Learning:** Screen readers completely ignore an element's inner text if an `aria-label` is present. Therefore, if a link has existing text and you want to add contextual information for screen readers (like "(opens in a new tab)"), you must include the original text inside the `aria-label` instead of just appending context via a `.sr-only` span or using `aria-label` on a child element if that behavior could lead to confusing nesting. For `aria-label` appended dynamically, ensure you preserve the original `textContent`.
 **Action:** Consistently set or append contextual string like "(opens in a new tab)" directly to the main element's `aria-label` attribute (incorporating its original text) rather than appending visually hidden child text nodes.
+
+## 2026-04-23 - [Screen Reader Announcements for Dynamic Content]
+**Learning:** For screen readers to announce dynamic content like search results when focus remains in an input field, you must use an `aria-live` region. Additionally, when using arrow keys to navigate a custom dropdown, you must manually update the `aria-live` region with the active item's text.
+**Action:** Inject a visually hidden `aria-live="polite"` element and update its `textContent` when dynamic UI regions change state or list navigation occurs.
