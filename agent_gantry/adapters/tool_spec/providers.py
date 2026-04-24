@@ -460,9 +460,13 @@ class GeminiAdapter:
                 "response": response_content,
             }
         }
-        # Round-trip the call ID when present (google-genai >= 1.x parallel calls)
+        # Round-trip the call ID when present (google-genai >= 1.x parallel calls).
+        # The id must sit at the Part level (alongside "functionResponse"), not
+        # nested inside "functionResponse" — mirrors types.Part.from_function_response
+        # which exposes `id` as a top-level field on the Part object.
+        # Source: https://ai.google.dev/gemini-api/docs/function-calling
         if tool_call_id:
-            payload["functionResponse"]["id"] = tool_call_id
+            payload["id"] = tool_call_id
         return payload
 
 

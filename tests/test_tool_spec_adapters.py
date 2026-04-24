@@ -333,7 +333,7 @@ class TestGeminiAdapter:
         assert "parameters" in schema
 
     def test_from_provider_payload(self) -> None:
-        """Test parsing Gemini function call."""
+        """Test parsing Gemini function call without parallel-call id."""
         adapter = GeminiAdapter()
         payload = adapter.from_provider_payload(
             {
@@ -343,11 +343,26 @@ class TestGeminiAdapter:
         )
 
         assert payload.tool_name == "get_weather"
-        assert payload.tool_call_id is None  # Gemini doesn't provide call IDs
+        assert payload.tool_call_id is None
+        assert payload.arguments == {"city": "Tokyo"}
+
+    def test_from_provider_payload_with_id(self) -> None:
+        """Test parsing Gemini function call that includes a parallel-call id."""
+        adapter = GeminiAdapter()
+        payload = adapter.from_provider_payload(
+            {
+                "name": "get_weather",
+                "args": {"city": "Tokyo"},
+                "id": "8f2b1a3c",
+            }
+        )
+
+        assert payload.tool_name == "get_weather"
+        assert payload.tool_call_id == "8f2b1a3c"
         assert payload.arguments == {"city": "Tokyo"}
 
     def test_format_tool_result(self) -> None:
-        """Test formatting tool result for Gemini."""
+        """Test formatting tool result for Gemini without call id."""
         adapter = GeminiAdapter()
         result = adapter.format_tool_result(
             tool_name="get_weather",
@@ -357,6 +372,28 @@ class TestGeminiAdapter:
         assert "functionResponse" in result
         assert result["functionResponse"]["name"] == "get_weather"
         assert result["functionResponse"]["response"] == {"temperature": 18}
+        assert "id" not in result
+
+    def test_format_tool_result_with_call_id(self) -> None:
+        """Test that format_tool_result places the call id at the Part level.
+
+        The google-genai SDK exposes id as a top-level Part field via
+        types.Part.from_function_response(name=..., response=..., id=...).
+        The id must NOT be nested inside functionResponse.
+        Ref: https://ai.google.dev/gemini-api/docs/function-calling
+        """
+        adapter = GeminiAdapter()
+        result = adapter.format_tool_result(
+            tool_name="get_weather",
+            result={"temperature": 18},
+            tool_call_id="8f2b1a3c",
+        )
+
+        assert "functionResponse" in result
+        assert result["functionResponse"]["name"] == "get_weather"
+        # id must be at the Part (top-level dict) not inside functionResponse
+        assert result["id"] == "8f2b1a3c"
+        assert "id" not in result["functionResponse"]
 
 
 class TestMistralAdapter:
