@@ -268,20 +268,41 @@
   function initCollapsibleSections() {
     const collapsibles = document.querySelectorAll(".collapsible");
 
-    collapsibles.forEach((section) => {
+    collapsibles.forEach((section, index) => {
       const header = section.querySelector(".collapsible-header");
       const content = section.querySelector(".collapsible-content");
 
       if (header && content) {
-        header.addEventListener("click", function () {
+        // Add accessibility attributes
+        const contentId = `collapsible-content-${index}`;
+        header.setAttribute("role", "button");
+        header.setAttribute("tabindex", "0");
+        header.setAttribute(
+          "aria-expanded",
+          section.classList.contains("open") ? "true" : "false",
+        );
+        header.setAttribute("aria-controls", contentId);
+        content.id = contentId;
+
+        const toggleCollapsible = () => {
           const isOpen = section.classList.contains("open");
           section.classList.toggle("open");
+          header.setAttribute("aria-expanded", !isOpen);
 
           // Animate height
           if (isOpen) {
             content.style.maxHeight = null;
           } else {
             content.style.maxHeight = content.scrollHeight + "px";
+          }
+        };
+
+        header.addEventListener("click", toggleCollapsible);
+
+        header.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            toggleCollapsible();
           }
         });
       }
