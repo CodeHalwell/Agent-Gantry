@@ -13,3 +13,7 @@
 ## 2026-04-23 - [Screen Reader Announcements for Dynamic Content]
 **Learning:** For screen readers to announce dynamic content like search results when focus remains in an input field, you must use an `aria-live` region. Additionally, when using arrow keys to navigate a custom dropdown, you must manually update the `aria-live` region with the active item's text.
 **Action:** Inject a visually hidden `aria-live="polite"` element and update its `textContent` when dynamic UI regions change state or list navigation occurs.
+
+## 2024-04-24 - Accessibility for Custom Interactive Elements
+**Learning:** Collapsible sections in `docs/assets/js/navigation.js` were built using standard `<div>` elements with only `click` event listeners. This entirely broke keyboard navigation and screen reader support, as non-semantic tags lack focusability (`tabindex="0"`) and default keyboard activation (`Enter`/`Space`).
+**Action:** When building custom interactive components like collapsibles or dropdowns with non-interactive HTML elements (div/span), always explicitly add `role="button"`, `tabindex="0"`, `aria-expanded` state, and listen to `keydown` events for `Enter` and `Space` keys to restore native behavior.
