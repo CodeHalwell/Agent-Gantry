@@ -373,13 +373,15 @@ class TestGeminiAdapter:
         assert result["functionResponse"]["name"] == "get_weather"
         assert result["functionResponse"]["response"] == {"temperature": 18}
         assert "id" not in result
+        assert "id" not in result["functionResponse"]
 
     def test_format_tool_result_with_call_id(self) -> None:
-        """Test that format_tool_result places the call id at the Part level.
+        """Test that format_tool_result places the call id inside functionResponse.
 
-        The google-genai SDK exposes id as a top-level Part field via
-        types.Part.from_function_response(name=..., response=..., id=...).
-        The id must NOT be nested inside functionResponse.
+        FunctionResponse is a proto message that carries its own `id` field
+        ("The id of the function call this response is for"). The Part class
+        itself has no id field, so id must be nested inside functionResponse,
+        not at the Part level.
         Ref: https://ai.google.dev/gemini-api/docs/function-calling
         """
         adapter = GeminiAdapter()
@@ -391,9 +393,10 @@ class TestGeminiAdapter:
 
         assert "functionResponse" in result
         assert result["functionResponse"]["name"] == "get_weather"
-        # id must be at the Part (top-level dict) not inside functionResponse
-        assert result["id"] == "8f2b1a3c"
-        assert "id" not in result["functionResponse"]
+        # id must be inside functionResponse (FunctionResponse proto field),
+        # NOT at the top-level Part dict (Part has no id field)
+        assert result["functionResponse"]["id"] == "8f2b1a3c"
+        assert "id" not in result
 
 
 class TestMistralAdapter:
