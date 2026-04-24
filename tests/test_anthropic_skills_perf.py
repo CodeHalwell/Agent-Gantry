@@ -24,7 +24,7 @@ async def test_execute_tool_calls_performance():
 
     client = SkillsClient(api_key="test-key", gantry=gantry)
 
-    # Mock response with multiple tool uses
+    # Build a mock response with 10 tool-use blocks
     response = MagicMock()
     blocks = []
     for i in range(10):
@@ -34,18 +34,34 @@ async def test_execute_tool_calls_performance():
         tool_block.name = "test_tool"
         tool_block.input = {"arg": "value"}
         blocks.append(tool_block)
-
     response.content = blocks
 
-    start_time = time.time()
-    tool_results = await client.execute_tool_calls(response)
-    end_time = time.time()
+    # Measure sequential baseline: call gantry.execute 10 times in series
+    seq_start = time.time()
+    for block in blocks:
+        await gantry.execute(block.name, block.input)
+    sequential_time = time.time() - seq_start
 
-    execution_time = end_time - start_time
-    print(f"\nExecution time for 10 tools: {execution_time:.2f} seconds")
+    # Reset the mock call count so concurrent run starts fresh
+    gantry.execute.reset_mock()
+
+    # Measure concurrent execution via execute_tool_calls
+    conc_start = time.time()
+    tool_results = await client.execute_tool_calls(response)
+    concurrent_time = time.time() - conc_start
+
+    print(f"\nSequential time  (10 tools): {sequential_time:.2f}s")
+    print(f"Concurrent time  (10 tools): {concurrent_time:.2f}s")
+    print(f"Speedup: {sequential_time / concurrent_time:.1f}x")
 
     assert len(tool_results) == 10
 
-    # If done sequentially, it should take ~1.0 seconds
-    # If done concurrently with gather, it should take ~0.1 seconds
-    assert execution_time < 0.2, f"Execution was too slow: {execution_time:.2f}s. Expected < 0.2s"
+    # Concurrent execution must be at least 5x faster than sequential.
+    # This is hardware-agnostic: if the runner is slow, sequential is slow too,
+    # so the ratio remains meaningful regardless of CI runner speed.
+    speedup = sequential_time / concurrent_time
+    assert speedup >= 5.0, (
+        f"Concurrent ({concurrent_time:.2f}s) only {speedup:.1f}x faster than "
+        f"sequential ({sequential_time:.2f}s). Expected >=5x speedup — "
+        f"execute_tool_calls should use asyncio.gather for parallel execution."
+    )

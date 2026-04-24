@@ -460,7 +460,13 @@ class GeminiAdapter:
                 "response": response_content,
             }
         }
-        # Round-trip the call ID when present (google-genai >= 1.x parallel calls)
+        # The id field belongs inside functionResponse (it is a field on the
+        # FunctionResponse proto message, not on Part itself — Part has no id
+        # field). Echo back the call id so the model can correlate parallel
+        # function calls with their results.
+        # Source: google-genai types.py — FunctionResponse.id field description:
+        # "The id of the function call this response is for"
+        # https://ai.google.dev/gemini-api/docs/function-calling
         if tool_call_id:
             payload["functionResponse"]["id"] = tool_call_id
         return payload
