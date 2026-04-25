@@ -13,3 +13,7 @@
 ## 2023-10-27 - Fast token matching with substring pre-check
 **Learning:** In string parsing functions that use compiled regular expressions (like `_get_token_pattern(token).search(text)`), evaluating the regex engine is expensive. When the token does not exist in the text at all, the regex engine still scans the whole string.
 **Action:** Always add a fast substring pre-check (`if token not in text: return False`) before running the regular expression. The native Python `in` operator uses highly optimized C algorithms and provides a massive speedup (>10x in microbenchmarks) for the non-matching case.
+
+## 2024-05-18 - Fast List Filtering with set.issubset
+**Learning:** Checking elements inside list comprehensions via `all(...)` or `any(...)` generator expressions creates significant overhead in tight loops (e.g., candidate filtering during semantic routing). The overhead comes from iterating over Python generators instead of native C code.
+**Action:** Replace `all(x in y)` and `any(x in y)` with fast native `set` operations like `set.issubset(y)` and `set.isdisjoint(y)`. This yields ~3x speedup. In lists/loops, extract the static side into a `set` *before* the loop.

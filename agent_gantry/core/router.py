@@ -304,6 +304,9 @@ class SemanticRouter:
         tool_embeddings: dict[str, list[float]] = {}
         scored_tools: list[tuple[ToolDefinition, float]] = []
 
+        req_caps = set(query.required_capabilities) if query.required_capabilities else None
+        exc_caps = set(query.excluded_capabilities) if query.excluded_capabilities else None
+
         for candidate in candidates:
             if include_embeddings:
                 tool, semantic_score, embedding = candidate  # type: ignore
@@ -312,7 +315,7 @@ class SemanticRouter:
             else:
                 tool, semantic_score = candidate  # type: ignore
 
-            if not self._is_tool_allowed(tool, query):
+            if not self._is_tool_allowed(tool, query, req_caps, exc_caps):
                 continue
 
             signals = self._compute_signals(
@@ -326,20 +329,26 @@ class SemanticRouter:
 
         return scored_tools, tool_embeddings
 
-    def _is_tool_allowed(self, tool: ToolDefinition, query: ToolQuery) -> bool:
+    def _is_tool_allowed(
+        self,
+        tool: ToolDefinition,
+        query: ToolQuery,
+        req_caps: set[str] | None = None,
+        exc_caps: set[str] | None = None,
+    ) -> bool:
         """Filter candidates based on query constraints."""
         if query.exclude_deprecated and tool.deprecated:
             return False
         if query.namespaces and tool.namespace not in query.namespaces:
             return False
-        if query.required_capabilities and not all(
-            cap in tool.capabilities for cap in query.required_capabilities
-        ):
-            return False
-        if query.excluded_capabilities and any(
-            cap in tool.capabilities for cap in query.excluded_capabilities
-        ):
-            return False
+
+        if req_caps or exc_caps:
+            tool_caps = set(tool.capabilities)
+            if req_caps and not req_caps.issubset(tool_caps):
+                return False
+            if exc_caps and not exc_caps.isdisjoint(tool_caps):
+                return False
+
         if query.sources and tool.source not in query.sources:
             return False
         if query.exclude_unhealthy and tool.health.circuit_breaker_open:

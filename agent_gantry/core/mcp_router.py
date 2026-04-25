@@ -165,10 +165,11 @@ class MCPRouter:
         if not required_capabilities:
             return servers
 
+        req_caps = set(required_capabilities)
         return [
             server
             for server in servers
-            if all(cap in server.capabilities for cap in required_capabilities)
+            if req_caps.issubset(server.capabilities)
         ]
 
     async def filter_by_health(
