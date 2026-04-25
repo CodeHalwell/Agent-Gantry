@@ -42,9 +42,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Dependency lower bounds bumped** (non-breaking for existing installs):
-  - `agent-framework>=1.2.0` (was `>=1.0.0`)
+  - `agent-framework>=1.0.0,<2.0.0` (retained at `>=1.0.0`; a bump to `>=1.2.0` was
+    reverted because `agent-framework-core==1.2.0` pins `opentelemetry-api>=1.39.0,<2`
+    which conflicts irreconcilably with `crewai>=1.6.1`'s `opentelemetry-api<1.35`
+    upper bound. All new helpers — `build_sequential_workflow()`,
+    `build_handoff_workflow()` — are available in `agent-framework==1.0.x`.)
   - `anthropic>=0.97.0` (was `>=0.96.0`)
-  - `crewai>=1.14.3` (was `>=1.6.1`)
+  - `crewai>=1.6.1` (retained at `>=1.6.1`; `>=1.14.3` reverted for same
+    `opentelemetry-api` conflict reason above)
   - `groq>=1.2.0` (was `>=1.0.0`)
   - `langchain-openai>=1.2.1` (was `>=1.1.14`)
 - **`mistralai` upper bound retained at `<2.0.0`**: mistralai 2.x changes the
