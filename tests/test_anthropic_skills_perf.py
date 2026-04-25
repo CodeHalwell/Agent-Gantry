@@ -12,9 +12,10 @@ from agent_gantry.integrations.anthropic_skills import SkillsClient
 async def test_execute_tool_calls_performance():
     gantry = MagicMock(spec=AgentGantry)
 
-    # Simulate a delay in tool execution to represent a real-world scenario (e.g., API call, DB lookup)
+    # Simulate a delay in tool execution (0.5s makes scheduling overhead negligible
+    # relative to task duration, keeping the speedup ratio stable on slow runners).
     async def slow_execute(*args, **kwargs):
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.5)
         mock_result = MagicMock()
         mock_result.status = "success"
         mock_result.result = "Tool executed"
