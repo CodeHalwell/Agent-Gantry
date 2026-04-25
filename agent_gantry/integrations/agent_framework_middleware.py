@@ -58,7 +58,9 @@ def _import_af_middleware_bits() -> tuple[Any, Any]:
         try:
             from agent_framework import FunctionMiddleware as _MiddlewareBase
         except ImportError:
-            from agent_framework import ChatMiddlewareLayer as _MiddlewareBase  # type: ignore[assignment]
+            from agent_framework import (
+                ChatMiddlewareLayer as _MiddlewareBase,  # type: ignore[assignment]
+            )
     except Exception as exc:  # pragma: no cover - depends on install
         raise ImportError(
             "Agent-Framework middleware requires the 'agent-framework' package. "

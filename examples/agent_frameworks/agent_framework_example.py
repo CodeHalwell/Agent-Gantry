@@ -21,7 +21,6 @@ Covers three construction patterns:
 
 import asyncio
 
-from agent_framework import AgentExecutor, WorkflowAgent, WorkflowBuilder
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.orchestrations import SequentialBuilder
 from dotenv import load_dotenv
