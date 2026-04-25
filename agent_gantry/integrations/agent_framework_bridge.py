@@ -26,7 +26,8 @@ Usage:
     tools = await bridge.get_tools("What's the weather?", limit=3)
 
     # Pass directly to any AF agent:
-    agent = client.as_agent(name="Assistant", instructions="...", tools=tools)
+    from agent_framework import Agent
+    agent = Agent(client, "...", name="Assistant", tools=tools)
     result = await agent.run("What's the weather in London?")
 """
 
@@ -64,6 +65,17 @@ _APPROVAL_REQUIRED_CAPS: frozenset[ToolCapability] = frozenset(
         ToolCapability.PII_ACCESS,
     }
 )
+
+
+def _require_af_installed(caller: str) -> None:
+    """Raise a descriptive ImportError when agent-framework is not installed."""
+    try:
+        import agent_framework as _  # noqa: F401
+    except ImportError as exc:
+        raise ImportError(
+            f"{caller}() requires the 'agent-framework' package. "
+            "Install with: pip install 'agent-gantry[agent-frameworks]'"
+        ) from exc
 
 
 def _try_import_af_tool() -> Any | None:
@@ -509,13 +521,8 @@ class GantryToolBridge:
         Returns:
             An ``agent_framework.Agent`` instance.
         """
-        try:
-            from agent_framework import Agent
-        except ImportError as exc:
-            raise ImportError(
-                "build_agent() requires the 'agent-framework' package. "
-                "Install with: pip install 'agent-gantry[agent-frameworks]'"
-            ) from exc
+        _require_af_installed("build_agent")
+        from agent_framework import Agent
 
         tools = await self.get_tools(
             query,
@@ -597,13 +604,8 @@ class GantryToolBridge:
         Returns:
             A bare ``agent_framework.Agent`` instance.
         """
-        try:
-            from agent_framework import Agent
-        except ImportError as exc:
-            raise ImportError(
-                "as_agent() requires the 'agent-framework' package. "
-                "Install with: pip install 'agent-gantry[agent-frameworks]'"
-            ) from exc
+        _require_af_installed("as_agent")
+        from agent_framework import Agent
 
         tools = await self.get_tools(
             query,
@@ -629,7 +631,6 @@ class GantryToolBridge:
         self,
         agent_specs: list[dict[str, Any]],
         *,
-        workflow_name: str | None = None,
         cache: bool = True,
     ) -> Any:
         """Build a sequential multi-agent workflow from Gantry-equipped agent specs.
@@ -662,20 +663,13 @@ class GantryToolBridge:
                 Required keys: ``client``, ``query``, ``name``, ``instructions``.
                 Optional keys: ``limit``, ``score_threshold``, ``middleware``,
                 ``extra_tools``, plus any extra ``Agent()`` kwargs.
-            workflow_name: Ignored (reserved for future use; ``SequentialBuilder``
-                does not accept a name parameter in AF 1.x).
             cache: Whether to reuse cached tool wrappers.
 
         Returns:
             The workflow object produced by ``SequentialBuilder.build()``.
         """
-        try:
-            from agent_framework.orchestrations import SequentialBuilder
-        except ImportError as exc:
-            raise ImportError(
-                "build_sequential_workflow() requires the 'agent-framework' package. "
-                "Install with: pip install 'agent-gantry[agent-frameworks]'"
-            ) from exc
+        _require_af_installed("build_sequential_workflow")
+        from agent_framework.orchestrations import SequentialBuilder
 
         ordered: list[Any] = []
         for spec in agent_specs:
@@ -737,13 +731,8 @@ class GantryToolBridge:
         Returns:
             The workflow object produced by ``HandoffBuilder.build()``.
         """
-        try:
-            from agent_framework.orchestrations import HandoffBuilder
-        except ImportError as exc:
-            raise ImportError(
-                "build_handoff_workflow() requires the 'agent-framework' package. "
-                "Install with: pip install 'agent-gantry[agent-frameworks]'"
-            ) from exc
+        _require_af_installed("build_handoff_workflow")
+        from agent_framework.orchestrations import HandoffBuilder
 
         built: dict[str, Any] = {}
         ordered: list[Any] = []
@@ -792,7 +781,7 @@ class GantryToolBridge:
         self,
         agent_specs: list[dict[str, Any]],
         *,
-        edges: list[tuple[str, str]] | None = None,
+        edges: list[tuple[str, str] | tuple[str, str, Any]] | None = None,
         chain: bool = False,
         workflow_name: str | None = None,
         cache: bool = True,
@@ -836,7 +825,10 @@ class GantryToolBridge:
         Args:
             agent_specs: List of dicts passed as keyword arguments to :meth:`as_agent`.
                 Required keys: ``client``, ``query``, ``name``, ``instructions``.
-            edges: List of ``(source_name, target_name)`` tuples. Ignored when
+            edges: List of ``(source_name, target_name)`` or
+                ``(source_name, target_name, condition)`` tuples. The optional
+                third element is forwarded to ``WorkflowBuilder.add_edge()`` as
+                ``condition``, enabling logic-based routing. Ignored when
                 ``chain=True``.
             chain: If ``True``, wire all agents as a linear chain. Overrides
                 ``edges``.
@@ -846,13 +838,8 @@ class GantryToolBridge:
         Returns:
             A ``WorkflowAgent`` wrapping the constructed ``Workflow``.
         """
-        try:
-            from agent_framework import AgentExecutor, WorkflowAgent, WorkflowBuilder
-        except ImportError as exc:
-            raise ImportError(
-                "build_workflow() requires the 'agent-framework' package. "
-                "Install with: pip install 'agent-gantry[agent-frameworks]'"
-            ) from exc
+        _require_af_installed("build_workflow")
+        from agent_framework import AgentExecutor, WorkflowAgent, WorkflowBuilder
 
         built_agents: dict[str, Any] = {}
         ordered_agents: list[Any] = []
@@ -894,7 +881,12 @@ class GantryToolBridge:
         else:
             for edge in (edges or []):
                 source_name, target_name = edge[0], edge[1]
-                builder.add_edge(built_executors[source_name], built_executors[target_name])
+                condition = edge[2] if len(edge) > 2 else None  # type: ignore[misc]
+                builder.add_edge(
+                    built_executors[source_name],
+                    built_executors[target_name],
+                    condition=condition,
+                )
 
         workflow = builder.build()
         wa_kwargs: dict[str, Any] = {}

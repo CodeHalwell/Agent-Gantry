@@ -165,7 +165,14 @@ async def main() -> str:
             ),
         ],
         edges=[
-            ("Triage", "Billing"),
+            (
+                "Triage",
+                "Billing",
+                lambda ctx: any(
+                    kw in str(ctx).lower()
+                    for kw in ("invoice", "billing", "payment", "charge")
+                ),
+            ),
             ("Triage", "Support"),
         ],
         workflow_name="CustomerServiceWorkflow",
