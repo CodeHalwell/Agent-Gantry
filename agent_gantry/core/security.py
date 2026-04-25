@@ -274,6 +274,6 @@ def validate_description(desc: str) -> tuple[bool, str | None]:
         r"javascript:",
     ]
     for pattern in suspicious_patterns:
-        if re.search(pattern, desc, re.IGNORECASE):
+        if re.search(pattern, desc, re.IGNORECASE | re.DOTALL):
             return False, "Description contains suspicious pattern"
     return True, None
