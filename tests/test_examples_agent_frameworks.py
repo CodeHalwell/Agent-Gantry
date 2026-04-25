@@ -86,15 +86,39 @@ async def test_agent_framework_example_runs_with_fakes(monkeypatch):
         async def run(self, query: str, **kwargs: Any) -> str:
             return "Customer is on the pro plan; invoice query routed to billing."
 
+    class _StubAgentExecutor:
+        """Stub for agent_framework.AgentExecutor (wraps Agent for WorkflowBuilder)."""
+
+        def __init__(self, agent: Any, *, id: str = "") -> None:
+            self._agent = agent
+            self.id = id
+
+    class _StubSequentialBuilder:
+        def __init__(self, *, participants: Any = None, **kwargs: Any) -> None:
+            self._participants = participants or []
+
+        def build(self) -> "_StubWorkflow":
+            return _StubWorkflow()
+
+    af_orchestrations_mod = ModuleType("agent_framework.orchestrations")
+    af_orchestrations_mod.SequentialBuilder = _StubSequentialBuilder
+    af_orchestrations_mod.ConcurrentBuilder = _StubSequentialBuilder
+    af_orchestrations_mod.HandoffBuilder = _StubSequentialBuilder
+    af_orchestrations_mod.GroupChatBuilder = _StubSequentialBuilder
+
     af_mod.FunctionMiddleware = _StubFunctionMiddleware
+    af_mod.ChatMiddlewareLayer = _StubFunctionMiddleware
     af_mod.MiddlewareTermination = _StubMiddlewareTerminationError
     af_mod.tool = _stub_tool
     af_mod.Agent = _StubAgent
+    af_mod.AgentExecutor = _StubAgentExecutor
     af_mod.WorkflowAgent = _StubWorkflowAgent
     af_mod.WorkflowBuilder = _StubWorkflowBuilder
+    af_mod.orchestrations = af_orchestrations_mod
 
     monkeypatch.setitem(sys.modules, "agent_framework", af_mod)
     monkeypatch.setitem(sys.modules, "agent_framework.openai", af_openai_mod)
+    monkeypatch.setitem(sys.modules, "agent_framework.orchestrations", af_orchestrations_mod)
 
     # The example module imports the middleware integration at top level,
     # and the middleware module caches its AF-subclass construction via

@@ -7,21 +7,23 @@ multi-agent systems by surfacing only the relevant tools per query.
 Covers three construction patterns:
 
 1. ``bridge.build_agent(client, query, ...)``
-   Convenience one-liner using ``client.as_agent()`` — fine for single-agent flows.
+   Convenience one-liner: constructs ``Agent(client, instructions, ...)`` for
+   single-agent flows.
 
 2. ``bridge.as_agent(client, query, ...)``
-   Constructs ``Agent(client, ...)`` directly; the preferred form when you need
-   the result as a first-class ``Agent`` for ``WorkflowBuilder``.
+   Same as Pattern 1, preferred when you need a first-class ``Agent`` to feed
+   directly into ``HandoffBuilder`` or ``SequentialBuilder``.
 
 3. ``bridge.build_workflow([specs], edges=[...])``
    Assembles a ``WorkflowAgent`` from multiple Gantry-equipped agents wired
-   together with ``WorkflowBuilder`` edges (fan-out / handoff / chain patterns).
+   together via ``AgentExecutor`` nodes and ``WorkflowBuilder`` edges.
 """
 
 import asyncio
 
-from agent_framework import WorkflowAgent, WorkflowBuilder
+from agent_framework import AgentExecutor, WorkflowAgent, WorkflowBuilder
 from agent_framework.openai import OpenAIChatClient
+from agent_framework.orchestrations import SequentialBuilder
 from dotenv import load_dotenv
 
 from agent_gantry import AgentGantry
@@ -83,7 +85,9 @@ async def main() -> str:
     ]
 
     # -----------------------------------------------------------------------
-    # Pattern 1: build_agent — convenience one-liner (uses client.as_agent)
+    # Pattern 1: build_agent — convenience one-liner
+    #
+    # Constructs Agent(client, instructions, ...) internally.
     # -----------------------------------------------------------------------
     print("=== Pattern 1: build_agent ===")
     agent1 = await bridge.build_agent(
@@ -99,8 +103,8 @@ async def main() -> str:
     # -----------------------------------------------------------------------
     # Pattern 2: as_agent — direct Agent(client, ...) construction
     #
-    # This is the preferred form for WorkflowBuilder because it hands back a
-    # plain Agent object without wrapping it in an extra factory call.
+    # Returns a first-class Agent suitable for feeding into SequentialBuilder,
+    # HandoffBuilder, or WorkflowBuilder.
     # -----------------------------------------------------------------------
     print("\n=== Pattern 2: as_agent (direct Agent construction) ===")
     billing_agent = await bridge.as_agent(
@@ -120,20 +124,18 @@ async def main() -> str:
         middleware=middleware,
     )
 
-    # Use the agents directly with WorkflowBuilder — simple linear handoff
-    handoff_workflow = (
-        WorkflowBuilder(start_executor=billing_agent)
-        .add_chain([billing_agent, support_agent])
-        .build()
-    )
-    chained_agent = WorkflowAgent(handoff_workflow, name="BillingThenSupport")
-    print(f"Built WorkflowAgent via add_chain: {chained_agent.name}")
+    # Wire agents in sequence using SequentialBuilder (no AgentExecutor needed).
+    sequential_workflow = SequentialBuilder(
+        participants=[billing_agent, support_agent]
+    ).build()
+    print(f"Built sequential workflow with {type(sequential_workflow).__name__}")
 
     # -----------------------------------------------------------------------
-    # Pattern 3: build_workflow — fan-out routing with conditional edges
+    # Pattern 3: build_workflow — fan-out routing with WorkflowBuilder edges
     #
-    # A triage agent inspects the query and routes to Billing or Support based
-    # on a condition. This is the "Handoff / Magentic" pattern.
+    # build_workflow() wraps each Agent in AgentExecutor automatically before
+    # passing it to WorkflowBuilder. Use edges= for explicit routing topology.
+    # For conditional hand-off routing use build_handoff_workflow() instead.
     # -----------------------------------------------------------------------
     print("\n=== Pattern 3: build_workflow (fan-out / handoff) ===")
     workflow_agent = await bridge.build_workflow(
@@ -163,11 +165,7 @@ async def main() -> str:
             ),
         ],
         edges=[
-            # Conditional handoff: route to Billing when billing keywords present
-            ("Triage", "Billing", lambda ctx: any(
-                kw in str(ctx).lower() for kw in ("invoice", "billing", "payment", "charge")
-            )),
-            # Default fallback edge to Support
+            ("Triage", "Billing"),
             ("Triage", "Support"),
         ],
         workflow_name="CustomerServiceWorkflow",

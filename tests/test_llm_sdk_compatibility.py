@@ -394,8 +394,8 @@ class TestSDKVersionCompatibility:
         version = getattr(anthropic, "__version__", None)
         if version is None:
             pytest.skip("anthropic module is mocked in this test session")
-        assert Version(version) >= Version("0.94.0"), (
-            f"Anthropic SDK version {version} is below minimum 0.94.0"
+        assert Version(version) >= Version("0.97.0"), (
+            f"Anthropic SDK version {version} is below minimum 0.97.0"
         )
 
     def test_groq_minimum_version(self) -> None:

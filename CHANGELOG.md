@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`GantryToolBridge.build_agent()` used non-existent `client.as_agent()` method.**
+  AF 1.x chat clients do not expose `as_agent()`; the standard constructor is
+  `Agent(client, instructions, ...)`. `build_agent()` now uses the correct
+  constructor pattern, matching the existing `as_agent()` bridge method.
+  *Risk: safe internal — behaviour is identical for callers.*
+
+- **`GantryToolBridge.build_workflow()` passed bare `Agent` objects to `WorkflowBuilder`**
+  instead of the required `AgentExecutor` wrappers. `WorkflowBuilder` in AF 1.x
+  accepts `AgentExecutor` nodes, not `Agent` instances. Additionally, the
+  `add_chain()` shorthand is not part of the public `WorkflowBuilder` API; the
+  correct pattern is sequential `add_edge()` calls. Both issues have been corrected.
+  *Risk: safe internal — callers pass the same `agent_specs` dict list.*
+
+- **`GantryApprovalMiddleware` / `GantryObservabilityMiddleware` imported
+  `FunctionMiddleware` from `agent_framework`**, which may be absent in some AF 1.x
+  point releases. The middleware module now falls back to `ChatMiddlewareLayer`
+  when `FunctionMiddleware` is not importable.
+  *Risk: safe with shim — functional behaviour unchanged.*
+
+- Example `agent_framework_example.py` updated to reflect correct AF API patterns:
+  `SequentialBuilder` replaces the invalid `WorkflowBuilder.add_chain()` call;
+  conditional-edge 3-tuples replaced with 2-tuple edge specs compatible with
+  `build_workflow(edges=[...])`.
+
+### Added
+- **`GantryToolBridge.build_sequential_workflow()`** — convenience helper that
+  constructs a sequential multi-agent pipeline via `SequentialBuilder` without
+  needing to wrap agents in `AgentExecutor` manually.
+- **`GantryToolBridge.build_handoff_workflow()`** — convenience helper that
+  constructs a handoff-style multi-agent workflow via `HandoffBuilder`, supporting
+  named handoff edges with descriptions.
+
+### Changed
+- **Dependency lower bounds bumped** (non-breaking for existing installs):
+  - `agent-framework>=1.2.0` (was `>=1.0.0`)
+  - `anthropic>=0.97.0` (was `>=0.96.0`)
+  - `crewai>=1.14.3` (was `>=1.6.1`)
+  - `groq>=1.2.0` (was `>=1.0.0`)
+  - `langchain-openai>=1.2.1` (was `>=1.1.14`)
+- **`mistralai` upper bound retained at `<2.0.0`**: mistralai 2.x changes the
+  async client to a context-manager pattern (`async with Mistral(...)`). Migration
+  of `LLMClient.classify_intent` is documented as a pending task.
+- Anthropic SDK minimum version assertion in `tests/test_llm_sdk_compatibility.py`
+  updated from `0.94.0` to `0.97.0` to match `pyproject.toml`.
+
 ### Added
 - **Full Microsoft Agent Framework 1.0 GA integration**:
   - `GantryToolBridge` now emits real `agent_framework.FunctionTool` instances

@@ -42,18 +42,29 @@ logger = logging.getLogger(__name__)
 
 
 def _import_af_middleware_bits() -> tuple[Any, Any]:
-    """Lazy import of AF symbols; raises a helpful ImportError otherwise."""
+    """Lazy import of AF symbols; raises a helpful ImportError otherwise.
+
+    AF 1.x exposes middleware base classes under two names depending on context:
+    - ``ChatMiddlewareLayer`` is the mixin for chat-client level middleware.
+    - ``FunctionMiddleware`` is the base for tool/function execution middleware;
+      it may be absent in some AF 1.x point releases, in which case we fall
+      back to ``ChatMiddlewareLayer`` (they share the same ``process`` protocol).
+    """
     try:
-        from agent_framework import (
-            FunctionMiddleware,
-            MiddlewareTermination,
-        )
+        from agent_framework import MiddlewareTermination
+
+        # Prefer FunctionMiddleware (tool-execution middleware); fall back to
+        # ChatMiddlewareLayer if not present in this AF 1.x release.
+        try:
+            from agent_framework import FunctionMiddleware as _MiddlewareBase
+        except ImportError:
+            from agent_framework import ChatMiddlewareLayer as _MiddlewareBase  # type: ignore[assignment]
     except Exception as exc:  # pragma: no cover - depends on install
         raise ImportError(
             "Agent-Framework middleware requires the 'agent-framework' package. "
             "Install with: pip install 'agent-gantry[agent-frameworks]'"
         ) from exc
-    return FunctionMiddleware, MiddlewareTermination
+    return _MiddlewareBase, MiddlewareTermination
 
 
 @lru_cache(maxsize=1)
