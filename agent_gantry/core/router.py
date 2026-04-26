@@ -332,12 +332,12 @@ class SemanticRouter:
             return False
         if query.namespaces and tool.namespace not in query.namespaces:
             return False
-        if query.required_capabilities and not all(
-            cap in tool.capabilities for cap in query.required_capabilities
+        if query.required_capabilities and not set(query.required_capabilities).issubset(
+            tool.capabilities
         ):
             return False
-        if query.excluded_capabilities and any(
-            cap in tool.capabilities for cap in query.excluded_capabilities
+        if query.excluded_capabilities and not set(query.excluded_capabilities).isdisjoint(
+            tool.capabilities
         ):
             return False
         if query.sources and tool.source not in query.sources:
