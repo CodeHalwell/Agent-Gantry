@@ -17,3 +17,7 @@
 ## 2024-04-24 - Accessibility for Custom Interactive Elements
 **Learning:** Collapsible sections in `docs/assets/js/navigation.js` were built using standard `<div>` elements with only `click` event listeners. This entirely broke keyboard navigation and screen reader support, as non-semantic tags lack focusability (`tabindex="0"`) and default keyboard activation (`Enter`/`Space`).
 **Action:** When building custom interactive components like collapsibles or dropdowns with non-interactive HTML elements (div/span), always explicitly add `role="button"`, `tabindex="0"`, `aria-expanded` state, and listen to `keydown` events for `Enter` and `Space` keys to restore native behavior.
+
+## 2024-05-18 - [Heading Anchor Link Accessibility]
+**Learning:** Heading anchor links dynamically made visible via `mouseenter` and `mouseleave` can be hidden from keyboard users tab navigation. Also, screen readers might only announce a symbol-only link as its symbol.
+**Action:** When creating anchor links, add `focus` and `blur` listeners to match the hover behavior, and always add an informative `aria-label` to the link tag so screen readers read a descriptive label instead of just a symbol.
