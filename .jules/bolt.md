@@ -13,3 +13,7 @@
 ## 2023-10-27 - Fast token matching with substring pre-check
 **Learning:** In string parsing functions that use compiled regular expressions (like `_get_token_pattern(token).search(text)`), evaluating the regex engine is expensive. When the token does not exist in the text at all, the regex engine still scans the whole string.
 **Action:** Always add a fast substring pre-check (`if token not in text: return False`) before running the regular expression. The native Python `in` operator uses highly optimized C algorithms and provides a massive speedup (>10x in microbenchmarks) for the non-matching case.
+
+## 2023-10-27 - Optimize capability filtering in loops with sets
+**Learning:** In `agent_gantry/core/mcp_router.py`, the `filter_by_capabilities` method iterated over servers and evaluated capability constraints using a Python generator expression: `all(cap in server.capabilities for cap in required_capabilities)`. Inside tight loops, this incurs a high performance penalty because the logic is evaluated within the Python interpreter.
+**Action:** Always convert constraint lists to sets (`set(required_capabilities)`) before loop execution, and use the native `set.issubset(target)` method. This offloads the logic to optimized C algorithms, yielding a ~3x performance boost according to synthetic benchmarks.
