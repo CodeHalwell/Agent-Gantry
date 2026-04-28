@@ -337,6 +337,11 @@
         color: var(--text-muted);
       `;
 
+      anchor.setAttribute(
+        "aria-label",
+        "Link to section: " + heading.textContent,
+      );
+
       heading.appendChild(anchor);
 
       heading.addEventListener("mouseenter", function () {
@@ -344,6 +349,14 @@
       });
 
       heading.addEventListener("mouseleave", function () {
+        anchor.style.opacity = "0";
+      });
+
+      anchor.addEventListener("focus", function () {
+        anchor.style.opacity = "1";
+      });
+
+      anchor.addEventListener("blur", function () {
         anchor.style.opacity = "0";
       });
     });
