@@ -329,6 +329,7 @@
       anchor.href = "#" + heading.id;
       anchor.innerHTML = "#";
       anchor.title = "Link to this section";
+      anchor.setAttribute("aria-label", "Link to section: " + heading.textContent);
       anchor.style.cssText = `
         margin-left: 8px;
         opacity: 0;
@@ -344,6 +345,14 @@
       });
 
       heading.addEventListener("mouseleave", function () {
+        anchor.style.opacity = "0";
+      });
+
+      anchor.addEventListener("focus", function () {
+        anchor.style.opacity = "1";
+      });
+
+      anchor.addEventListener("blur", function () {
         anchor.style.opacity = "0";
       });
     });
