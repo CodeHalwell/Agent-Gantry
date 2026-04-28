@@ -52,7 +52,7 @@ agent-frameworks = [
     "autogen-ext[openai]>=0.7.5",
     "crewai>=1.6.1",
     "langchain>=1.2.0",
-    "langchain-openai>=1.1.14",
+    "langchain-openai>=1.2.1",
     "langgraph>=1.1.9",
     "llama-index-core>=0.14.10",
     "llama-index-llms-openai>=0.6.12",
@@ -128,7 +128,7 @@ a2a = [
 ]
 # LLM provider SDK dependencies
 anthropic = [
-    "anthropic>=0.96.0",
+    "anthropic>=0.97.0",
 ]
 google-genai = [
     "google-genai>=1.0.0",
@@ -137,10 +137,14 @@ google-vertexai = [
     "google-cloud-aiplatform>=1.70.0",
 ]
 mistral = [
+    # mistralai 2.x introduces breaking changes (async context-manager client).
+    # Upgrade to >=2.0.0 requires updating LLMClient.classify_intent (Mistral
+    # branch) to use `async with Mistral(...) as client`. Keep <2.0.0 until
+    # that migration is complete.
     "mistralai>=1.0.0,<2.0.0",
 ]
 groq = [
-    "groq>=1.0.0",
+    "groq>=1.2.0",
 ]
 # Combined LLM provider dependencies
 llm-providers = [

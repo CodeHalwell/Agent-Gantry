@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     behaviour when needed.
   - `GantryToolBridge.build_agent(client, query, *, name, instructions, ...)`
     — one-liner that semantically retrieves tools for a query and constructs
-    an AF agent via `client.as_agent(...)` with optional middleware.
+    an AF `Agent(client, instructions, ...)` with optional middleware.
   - New `agent_gantry.integrations.agent_framework_middleware` module with
     `GantryApprovalMiddleware` (routes AF tool execution through Gantry's
     `SecurityPolicy`, raising `MiddlewareTermination` for `require_confirmation`
@@ -33,14 +33,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     to verify single-turn, multi-turn, sequential, concurrent, handoff,
     group-chat, agent-as-tool, workflow, and middleware approval flows all
     execute Gantry-bridged tools correctly.
+- **`GantryToolBridge.build_sequential_workflow()`** — convenience helper that
+  constructs a sequential multi-agent pipeline via `SequentialBuilder` without
+  needing to wrap agents in `AgentExecutor` manually.
+- **`GantryToolBridge.build_handoff_workflow()`** — convenience helper that
+  constructs a handoff-style multi-agent workflow via `HandoffBuilder`, supporting
+  named handoff edges with descriptions.
+- **`_require_af_installed()` private helper** extracts the repeated
+  `ImportError`-with-guidance pattern from five bridge methods into a single
+  module-level function, reducing maintenance surface.
+
+### Fixed
+- **`GantryToolBridge.build_agent()` used non-existent `client.as_agent()` method.**
+  AF 1.x chat clients do not expose `as_agent()`; the standard constructor is
+  `Agent(client, instructions, ...)`. `build_agent()` now uses the correct
+  constructor pattern, matching the existing `as_agent()` bridge method.
+  *Risk: safe internal — behaviour is identical for callers.*
+
+- **`GantryToolBridge.build_workflow()` passed bare `Agent` objects to `WorkflowBuilder`**
+  instead of the required `AgentExecutor` wrappers. `WorkflowBuilder` in AF 1.x
+  accepts `AgentExecutor` nodes, not `Agent` instances. Additionally, the
+  `add_chain()` shorthand is not part of the public `WorkflowBuilder` API; the
+  correct pattern is sequential `add_edge()` calls. Both issues have been corrected.
+  *Risk: safe internal — callers pass the same `agent_specs` dict list.*
+
+- **`GantryToolBridge.build_workflow()` silently dropped conditional edge conditions.**
+  3-tuple edges `(source, target, condition)` were accepted by the type system but
+  the condition was never forwarded to `WorkflowBuilder.add_edge()`, causing all
+  routes to behave as unconditional fan-out. The condition is now passed through
+  when present. The type signature is updated to `list[tuple[str, str] | tuple[str, str, Any]]`.
+  *Risk: safe — existing 2-tuple callers are unaffected; 3-tuple callers now work correctly.*
+
+- **`GantryApprovalMiddleware` / `GantryObservabilityMiddleware` imported
+  `FunctionMiddleware` from `agent_framework`**, which may be absent in some AF 1.x
+  point releases. The middleware module now falls back to `ChatMiddlewareLayer`
+  when `FunctionMiddleware` is not importable.
+  *Risk: safe with shim — functional behaviour unchanged.*
+
+- Example `agent_framework_example.py` updated to reflect correct AF API patterns:
+  `SequentialBuilder` replaces the invalid `WorkflowBuilder.add_chain()` call;
+  conditional-edge 3-tuples restored in `build_workflow(edges=[...])` example.
 
 ### Changed
 - **Agent Framework 1.0 GA support**: Bumped minimum `agent-framework` to `>=1.0.0` and updated integration example to use the renamed `OpenAIChatClient` (the RC-era `OpenAIResponsesClient` was renamed to `OpenAIChatClient` in 1.0 GA; the old `OpenAIChatClient` is now `OpenAIChatCompletionClient`). Docstrings and adapter class docs refer to "1.0 GA" instead of "RC+".
+- **Dependency lower bounds bumped** (non-breaking for existing installs):
+  - `agent-framework>=1.0.0,<2.0.0` (retained at `>=1.0.0`; a bump to `>=1.2.0` was
+    reverted because `agent-framework-core==1.2.0` pins `opentelemetry-api>=1.39.0,<2`
+    which conflicts irreconcilably with `crewai>=1.6.1`'s `opentelemetry-api<1.35`
+    upper bound. All new helpers — `build_sequential_workflow()`,
+    `build_handoff_workflow()` — are available in `agent-framework==1.0.x`.)
+  - `anthropic>=0.97.0` (was `>=0.96.0`)
+  - `crewai>=1.6.1` (retained at `>=1.6.1`; `>=1.14.3` reverted for same
+    `opentelemetry-api` conflict reason above)
+  - `groq>=1.2.0` (was `>=1.0.0`)
+  - `langchain-openai>=1.2.1` (was `>=1.1.14`)
+- **`mistralai` upper bound retained at `<2.0.0`**: mistralai 2.x changes the
+  async client to a context-manager pattern (`async with Mistral(...)`). Migration
+  of `LLMClient.classify_intent` is documented as a pending task.
+- **`build_sequential_workflow()` `workflow_name` parameter removed**: `SequentialBuilder`
+  in AF 1.x does not accept a name argument; the parameter was ignored and has been
+  removed from the signature to avoid misleading callers.
+- Anthropic SDK minimum version assertion in `tests/test_llm_sdk_compatibility.py`
+  updated from `0.94.0` to `0.97.0` to match `pyproject.toml`.
 
 ### Performance
 - **Vectorized MMR** (PR #97): Replaced the pure-Python nested loop in `SemanticRouter._apply_mmr` with a vectorized `numpy` implementation using pre-normalized embeddings and matrix-vector dot products, drastically reducing CPU overhead during tool reranking.
 
-### Fixed
+### Fixed (accessibility)
 - **External link a11y** (PR #99 + follow-up on `navigation.js`): Added `aria-hidden="true"` to decorative SVGs and visually-hidden "(opens in a new tab)" text for screen readers.
 
 ## [0.1.4] - 2026-03-11

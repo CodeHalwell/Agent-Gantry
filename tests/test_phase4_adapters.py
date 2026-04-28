@@ -11,8 +11,6 @@ from agent_gantry import AgentGantry
 from agent_gantry.observability.opentelemetry_adapter import PrometheusTelemetryAdapter
 
 
-
-
 @pytest.mark.asyncio
 async def test_prometheus_metrics_and_health(tmp_path) -> None:
     """Prometheus adapter should emit metrics and report healthy."""
