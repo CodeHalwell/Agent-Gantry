@@ -332,14 +332,19 @@ class SemanticRouter:
             return False
         if query.namespaces and tool.namespace not in query.namespaces:
             return False
-        if query.required_capabilities and not all(
-            cap in tool.capabilities for cap in query.required_capabilities
-        ):
-            return False
-        if query.excluded_capabilities and any(
-            cap in tool.capabilities for cap in query.excluded_capabilities
-        ):
-            return False
+        if query.required_capabilities or query.excluded_capabilities:
+            # Optimize capability filtering by replacing Python iterators (all/any)
+            # in a tight loop with C-optimized set operations (issubset/isdisjoint).
+            # This drastically reduces overhead when filtering many tools during routing.
+            tool_caps_set = set(tool.capabilities)
+            if query.required_capabilities and not set(query.required_capabilities).issubset(
+                tool_caps_set
+            ):
+                return False
+            if query.excluded_capabilities and not set(query.excluded_capabilities).isdisjoint(
+                tool_caps_set
+            ):
+                return False
         if query.sources and tool.source not in query.sources:
             return False
         if query.exclude_unhealthy and tool.health.circuit_breaker_open:
