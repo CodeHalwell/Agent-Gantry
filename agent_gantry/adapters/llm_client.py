@@ -33,6 +33,7 @@ class LLMClient:
         """
         self._config = config
         self._client: Any = None
+        self._mistral_api_key: str | None = None
         self._provider = config.provider
         self._model = config.model
         self._initialize_client()

@@ -214,6 +214,17 @@ class TestMistralCompatibility:
         assert hasattr(client, "agents")
         assert hasattr(client.agents, "complete")
 
+    @pytest.mark.asyncio
+    async def test_mistral_async_context_manager(self) -> None:
+        """Test that Mistral client works as an async context manager (2.x requirement)."""
+        pytest.importorskip("mistralai")
+        from mistralai.client import Mistral
+
+        async with Mistral(api_key="test-key") as client:
+            assert client is not None
+            assert hasattr(client, "chat")
+            assert hasattr(client.chat, "complete_async")
+
 
 class TestGroqCompatibility:
     """Tests for Groq SDK compatibility."""
