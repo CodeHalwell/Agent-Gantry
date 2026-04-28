@@ -181,16 +181,16 @@ class TestMistralCompatibility:
     """Tests for Mistral SDK compatibility."""
 
     def test_mistral_import(self) -> None:
-        """Test that Mistral SDK can be imported."""
+        """Test that Mistral SDK can be imported (2.x canonical path)."""
         pytest.importorskip("mistralai")
-        from mistralai import Mistral
+        from mistralai.client import Mistral
 
         assert Mistral is not None
 
     def test_mistral_client_initialization(self) -> None:
         """Test Mistral client initialization pattern."""
         pytest.importorskip("mistralai")
-        from mistralai import Mistral
+        from mistralai.client import Mistral
 
         client = Mistral(api_key="test-key")
         assert client is not None
@@ -199,7 +199,7 @@ class TestMistralCompatibility:
     def test_mistral_has_required_endpoints(self) -> None:
         """Test Mistral client has required endpoint methods."""
         pytest.importorskip("mistralai")
-        from mistralai import Mistral
+        from mistralai.client import Mistral
 
         client = Mistral(api_key="test-key")
 
@@ -382,7 +382,7 @@ class TestSDKVersionCompatibility:
         version = openai.__version__
         parts = version.split(".")
         major = int(parts[0])
-        assert major >= 1, f"OpenAI SDK version {version} is below minimum 1.0.0"
+        assert major >= 2, f"OpenAI SDK version {version} is below minimum 2.0.0"
 
     def test_anthropic_minimum_version(self) -> None:
         """Test Anthropic SDK meets minimum version."""
@@ -425,4 +425,4 @@ class TestSDKVersionCompatibility:
                 pytest.skip("Could not determine mistralai version")
         parts = version.split(".")
         major = int(parts[0])
-        assert major >= 1, f"Mistral SDK version {version} is below minimum 1.0.0"
+        assert major >= 2, f"Mistral SDK version {version} is below minimum 2.0.0"

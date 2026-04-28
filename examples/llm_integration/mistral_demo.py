@@ -36,9 +36,9 @@ async def main():
     print(f"✅ Registered {gantry.tool_count} tools\n")
 
     # 4. Initialize Mistral Client
-    from mistralai import Mistral
-
-    client = Mistral(api_key=api_key)
+    # Mistral 2.x uses an async context-manager lifecycle for proper HTTP session
+    # cleanup. Import from mistralai.client (the canonical 2.x location).
+    from mistralai.client import Mistral
 
     # --- Scenario: Dynamic Retrieval ---
     print("--- Scenario: Dynamic Retrieval ---")
@@ -49,14 +49,14 @@ async def main():
     tools = await gantry.retrieve_tools(query, limit=1, score_threshold=0.1)
     print(f"Gantry retrieved {len(tools)} tool(s)")
 
-    # Call Mistral
-    # Mistral's `tools` parameter accepts the same JSON schema structure
-    response = await client.chat.complete_async(
-        model="mistral-large-latest",
-        messages=[{"role": "user", "content": query}],
-        tools=tools,
-        tool_choice="auto",
-    )
+    # Call Mistral — use async context manager as required by Mistral 2.x SDK.
+    async with Mistral(api_key=api_key) as client:
+        response = await client.chat.complete_async(
+            model="mistral-large-latest",
+            messages=[{"role": "user", "content": query}],
+            tools=tools,
+            tool_choice="auto",
+        )
 
     tool_calls = response.choices[0].message.tool_calls
     if tool_calls:
@@ -87,12 +87,13 @@ async def main():
         """
         print(f"Decorator injected {len(tools) if tools else 0} tools")
 
-        response = await client.chat.complete_async(
-            model="mistral-large-latest",
-            messages=[{"role": "user", "content": user_query}],
-            tools=tools,
-            tool_choice="auto",
-        )
+        async with Mistral(api_key=api_key) as _client:
+            response = await _client.chat.complete_async(
+                model="mistral-large-latest",
+                messages=[{"role": "user", "content": user_query}],
+                tools=tools,
+                tool_choice="auto",
+            )
 
         if response.choices[0].message.tool_calls:
             tc = response.choices[0].message.tool_calls[0]
