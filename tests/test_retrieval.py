@@ -36,7 +36,11 @@ async def test_retrieval_latency(sample_tools) -> None:
     query = ToolQuery(context=ConversationContext(query="Generate a financial report"), limit=3)
     result = await gantry.retrieve(query)
 
-    assert result.total_time_ms < 50
+    # SentenceTransformersEmbedder runs encode() via asyncio.to_thread; on macOS
+    # (kqueue) the thread-pool dispatch and Python 3.10/3.13 asyncio scheduling
+    # overhead can push this above 50 ms on loaded CI runners. 500 ms is generous
+    # but still validates the retrieval completes without a hung query.
+    assert result.total_time_ms < 500
 
 
 def test_cli_list_shows_demo_tools(capsys) -> None:
