@@ -17,3 +17,7 @@
 ## 2023-10-27 - Optimize capability filtering in loops with sets
 **Learning:** In `agent_gantry/core/mcp_router.py`, the `filter_by_capabilities` method iterated over servers and evaluated capability constraints using a Python generator expression: `all(cap in server.capabilities for cap in required_capabilities)`. Inside tight loops, this incurs a high performance penalty because the logic is evaluated within the Python interpreter.
 **Action:** Always convert constraint lists to sets (`set(required_capabilities)`) before loop execution, and use the native `set.issubset(target)` method. This offloads the logic to optimized C algorithms, yielding a ~3x performance boost according to synthetic benchmarks.
+
+## 2023-10-27 - Set-based filtering optimizations merged
+**Learning:** A proposed PR to optimize capability filtering in `mcp_router.py` using `set.issubset()` was closed as a duplicate because this optimization was already merged simultaneously for both `router.py` and `mcp_router.py` in PR #130.
+**Action:** When finding optimization opportunities like `all()` generator expressions, I should check whether there are multiple files sharing similar logic (like `router.py` alongside `mcp_router.py`) and ensure I optimize both to avoid duplicated effort across PRs.
