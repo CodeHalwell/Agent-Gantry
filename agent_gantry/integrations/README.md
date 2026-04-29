@@ -151,7 +151,7 @@ and LangGraph (``langgraph.prebuilt.create_react_agent``).
 ```python
 from agent_gantry import AgentGantry
 from agent_gantry.core.security import SecurityPolicy
-from agent_gantry.integrations.langchain_bridge import GantryToolBridge
+from agent_gantry.integrations import LangChainToolBridge
 
 gantry = AgentGantry()
 # Register tools...
@@ -163,7 +163,7 @@ async def approve(tool_def, arguments) -> bool:
     # Plug your approval UI / Slack ping here.
     return True
 
-bridge = GantryToolBridge(
+bridge = LangChainToolBridge(
     gantry,
     security_policy=policy,
     approval_callback=approve,

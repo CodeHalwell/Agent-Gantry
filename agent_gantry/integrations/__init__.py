@@ -29,12 +29,12 @@ GantryToolBridge = AgentFrameworkToolBridge
 
 __all__: list[str] = [
     "AgentFrameworkToolBridge",
+    "fetch_framework_tools",
     "GantryApprovalMiddleware",
     "GantryObservabilityMiddleware",
     "GantryToolBridge",
     "LangChainToolBridge",
     "SemanticToolSelector",
     "SemanticToolsDecorator",
-    "fetch_framework_tools",
     "with_semantic_tools",
 ]
