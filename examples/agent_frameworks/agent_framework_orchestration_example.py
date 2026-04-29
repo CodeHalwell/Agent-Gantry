@@ -1,8 +1,8 @@
 """
-Microsoft Agent Framework 1.0 GA — multi-agent orchestration with Agent-Gantry.
+Microsoft Agent Framework 1.2 — multi-agent orchestration with Agent-Gantry.
 
-Demonstrates three production orchestration patterns from AF 1.0 GA, each
-powered by Gantry's semantic tool routing:
+Demonstrates three production orchestration patterns, each powered by Gantry's
+semantic tool routing:
 
 1. **Sequential**: a research agent pipes its answer into a writer agent.
 2. **Concurrent**: two analyst agents fan out on the same brief and their
@@ -13,6 +13,11 @@ powered by Gantry's semantic tool routing:
 Each participating agent uses a distinct, semantically selected subset of
 the Gantry tool registry, so the LLM only sees the tools relevant to that
 agent's role (i.e. the token-saving benefit compounds across participants).
+
+AF 1.1.0 added ``GeminiChatClient`` (``from agent_framework.gemini import
+GeminiChatClient``). Pass it as ``client`` to any bridge helper to run
+agents on Gemini models. Set ``GOOGLE_API_KEY`` and swap ``OpenAIChatClient``
+for ``GeminiChatClient`` to try it.
 
 Run:
 
