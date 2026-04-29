@@ -482,6 +482,79 @@ async def test_build_agent_passes_tools_to_create_agent(
 
 
 @pytest.mark.asyncio
+async def test_optional_param_with_concrete_default_is_not_nullable() -> None:
+    """Optional parameters with non-None defaults must not be typed as ``T | None``.
+
+    Widening the type to nullable advertises a spurious ``null`` shape to the
+    LLM and can confuse downstream tools that don't accept ``None``.
+    """
+    from agent_gantry.integrations.langchain_bridge import GantryToolBridge
+
+    gantry = AgentGantry()
+    weather_def = await _populate_gantry(gantry)  # ``units`` defaults to "celsius"
+    bridge = GantryToolBridge(gantry)
+    tool = bridge.wrap_tool(weather_def)
+
+    units_field = tool.args_schema.model_fields["units"]
+    # The field accepts ``str``, not ``str | None``: pydantic's runtime
+    # ``annotation`` is the resolved type with no ``Optional`` wrapper.
+    assert units_field.annotation is str
+    assert units_field.default == "celsius"
+
+
+@pytest.mark.asyncio
+async def test_optional_param_without_default_is_nullable() -> None:
+    """Optional parameters with no default keep ``T | None`` so callers can omit them."""
+    from agent_gantry.integrations.langchain_bridge import GantryToolBridge
+
+    gantry = AgentGantry()
+    no_default_def = ToolDefinition(
+        name="search",
+        description="Search docs.",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Query"},
+                "limit": {"type": "integer", "description": "Max results"},
+            },
+            "required": ["query"],
+        },
+    )
+    await gantry.add_tool(no_default_def)
+
+    bridge = GantryToolBridge(gantry)
+    tool = bridge.wrap_tool(no_default_def)
+
+    limit_field = tool.args_schema.model_fields["limit"]
+    # ``int | None`` resolves to a Union annotation at runtime
+    assert limit_field.annotation is not int
+    assert limit_field.default is None
+
+
+def test_public_api_aliases_resolve_to_correct_bridges() -> None:
+    """``LangChainToolBridge`` and ``GantryToolBridge`` exports must point at
+    the right bridge classes so the public API contract can't regress.
+    """
+    from agent_gantry.integrations import (
+        AgentFrameworkToolBridge,
+        GantryToolBridge,
+        LangChainToolBridge,
+    )
+    from agent_gantry.integrations.agent_framework_bridge import (
+        GantryToolBridge as _AFBridge,
+    )
+    from agent_gantry.integrations.langchain_bridge import (
+        GantryToolBridge as _LCBridge,
+    )
+
+    assert LangChainToolBridge is _LCBridge
+    assert AgentFrameworkToolBridge is _AFBridge
+    # Back-compat alias still points at the AF bridge so existing imports
+    # of ``GantryToolBridge`` from ``agent_gantry.integrations`` keep working.
+    assert GantryToolBridge is _AFBridge
+
+
+@pytest.mark.asyncio
 async def test_get_tools_with_scores_returns_pairs() -> None:
     from agent_gantry.integrations.langchain_bridge import GantryToolBridge
 

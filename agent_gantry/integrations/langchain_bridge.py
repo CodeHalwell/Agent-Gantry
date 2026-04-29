@@ -118,20 +118,38 @@ def _build_args_schema(tool_def: ToolDefinition) -> type[BaseModel]:
     Building it dynamically from Gantry's ``parameters_schema`` keeps the
     field names, descriptions, and required/optional state in sync with the
     underlying tool registration.
+
+    Optional parameters are typed as ``py_type | None`` only when the
+    schema either omits a default or explicitly defaults to ``None`` —
+    surfacing ``None`` as a valid value to LangChain. Optional parameters
+    with concrete defaults (e.g. ``{"default": "celsius"}``) keep their
+    declared type so the generated schema doesn't advertise a spurious
+    ``null`` shape that could confuse the model or downstream tools.
     """
     params_schema = tool_def.parameters_schema or {}
     properties: dict[str, dict[str, Any]] = params_schema.get("properties", {})
     required: set[str] = set(params_schema.get("required", []))
 
+    _missing = object()
     fields: dict[str, tuple[Any, Any]] = {}
     for name, info in properties.items():
         py_type = _json_type_to_python(info.get("type", "string"))
         description = info.get("description") or f"Parameter: {name}"
         if name in required:
             fields[name] = (py_type, Field(..., description=description))
+            continue
+
+        default = info.get("default", _missing)
+        # Allow None only when the schema either omits a default or
+        # explicitly defaults to null. Concrete defaults keep their
+        # declared type so the LLM-facing schema isn't widened to nullable.
+        if default is _missing or default is None:
+            field_type = py_type | None
+            field_default = None
         else:
-            default = info.get("default", None)
-            fields[name] = (py_type | None, Field(default=default, description=description))
+            field_type = py_type
+            field_default = default
+        fields[name] = (field_type, Field(default=field_default, description=description))
 
     # Pydantic refuses to build empty models with create_model; use a sentinel
     # field-less subclass so StructuredTool still has a valid args_schema.
@@ -459,15 +477,23 @@ class GantryToolBridge:
             **create_agent_kwargs: Forwarded to ``create_agent``.
 
         Raises:
-            ImportError: If ``langchain`` is not installed.
+            ModuleNotFoundError: If ``langchain`` is not installed.
+            ImportError: If ``langchain`` is installed but ``create_agent``
+                cannot be imported (e.g. an older release without that
+                symbol). The original error is propagated unchanged so the
+                version-mismatch hint is visible.
         """
         try:
             from langchain.agents import create_agent
-        except ImportError as exc:  # pragma: no cover - surfaced via tests
-            raise ImportError(
+        except ModuleNotFoundError as exc:  # pragma: no cover - surfaced via tests
+            raise ModuleNotFoundError(
                 "build_agent() requires the 'langchain' package. "
                 "Install with: pip install 'agent-gantry[agent-frameworks]'"
             ) from exc
+        # Any other ImportError (e.g. "cannot import name 'create_agent' from
+        # 'langchain.agents'" on older LangChain releases) propagates with its
+        # original message — that is more actionable than a synthesised
+        # "package not installed" hint.
 
         tools = await self.get_tools(
             query, limit=limit, score_threshold=score_threshold
