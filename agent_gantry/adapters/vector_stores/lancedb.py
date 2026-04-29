@@ -431,6 +431,12 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
 
         # Process results
         output: list[tuple[ToolDefinition, float]] = []
+
+        # Pre-calculate required tags for faster set operations
+        required_tags: set[str] = set()
+        if filters and "tags" in filters:
+            required_tags = set(filters["tags"])
+
         for row in results:
             # LanceDB returns distance (lower is better), convert to similarity
             distance = row.get("_distance", 0)
@@ -441,14 +447,14 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
                 continue
 
             # Filter by tags if specified
-            if filters and "tags" in filters:
+            if required_tags:
                 tool_json_str = row.get("tool_json")
                 if not tool_json_str:
                     logger.warning("Skipping row with missing tool_json field")
                     continue
                 tool_json = json.loads(tool_json_str)
                 tool_tags = tool_json.get("tags", [])
-                if not any(tag in tool_tags for tag in filters["tags"]):
+                if required_tags.isdisjoint(tool_tags):
                     continue
 
             # Deserialize tool

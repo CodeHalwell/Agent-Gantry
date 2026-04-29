@@ -78,6 +78,11 @@ class InMemoryVectorStore:
         """Search for similar tools using cosine similarity."""
         results: list[tuple[ToolDefinition, float, list[float]]] = []
 
+        # Extract tag filters for faster set operations
+        required_tags: set[str] = set()
+        if filters and "tags" in filters:
+            required_tags = set(filters["tags"])
+
         for key, tool in self._tools.items():
             embedding = self._embeddings.get(key)
             if embedding is None:
@@ -92,8 +97,8 @@ class InMemoryVectorStore:
                             continue
                     elif tool.namespace != ns_filter:
                         continue
-                if "tags" in filters:
-                    if not any(tag in tool.tags for tag in filters["tags"]):
+                if required_tags:
+                    if required_tags.isdisjoint(tool.tags):
                         continue
 
             # Calculate cosine similarity
