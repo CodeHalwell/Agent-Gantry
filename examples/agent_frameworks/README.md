@@ -43,7 +43,7 @@ pip install agent-gantry strands-agents
 
 # Option 3: If using uv for project dependency management
 uv add langchain langchain-openai langgraph crewai \
-	agent-framework google-adk pydantic-ai strands-agents
+  agent-framework google-adk pydantic-ai strands-agents
 ```
 
 **Note on Python Version:** These examples are verified on **Python 3.13**, but should work on any supported Agent-Gantry version (**Python 3.10+**).
