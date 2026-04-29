@@ -53,9 +53,10 @@ agent-frameworks = [
     "autogen-agentchat>=0.7.5",
     "autogen-ext[openai]>=0.7.5",
     # crewai>=1.12.0 pins opentelemetry-api<1.35, which conflicts with
-    # agent-framework>=1.2.1 (requires opentelemetry-api>=1.39.0). These two
-    # packages cannot be co-installed; install each in a separate environment.
-    # When agent-framework is NOT present, crewai can be upgraded to >=1.12.0.
+    # agent-framework>=1.2.1 (requires opentelemetry-api>=1.39.0). crewai==1.6.1
+    # co-installs fine with agent-framework>=1.2.1 — it is crewai>=1.12.0 that
+    # introduces the incompatibility. To use crewai>=1.12.0, install it in a
+    # separate environment without agent-framework.
     "crewai>=1.6.1",
     "langchain>=1.2.15",
     "langchain-openai>=1.2.1",

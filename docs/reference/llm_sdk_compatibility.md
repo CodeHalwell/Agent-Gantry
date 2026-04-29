@@ -300,6 +300,7 @@ response = client.messages.create(
 ```python
 from anthropic import Anthropic
 from agent_gantry import AgentGantry
+from agent_gantry.schema.query import ConversationContext, ToolQuery
 
 client = Anthropic()
 gantry = AgentGantry()
@@ -311,7 +312,7 @@ def search_database(query: str) -> str:
 
 await gantry.sync()
 
-# Retrieve tools directly in Anthropic format via the dialect parameter.
+# Retrieve tools and convert to Anthropic format via to_dialect("anthropic").
 # This avoids manual field-mapping and keeps conversion logic centralised.
 retrieval = await gantry.retrieve(
     ToolQuery(context=ConversationContext(query="search for data"), limit=5)
@@ -373,6 +374,7 @@ for chunk in client.models.generate_content_stream(
 ```python
 from google import genai
 from agent_gantry import AgentGantry
+from agent_gantry.schema.query import ConversationContext, ToolQuery
 
 client = genai.Client()
 gantry = AgentGantry()
