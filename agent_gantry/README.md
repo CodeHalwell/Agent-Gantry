@@ -13,9 +13,9 @@ throughout the examples and tests.
   backends. These are the plug points that let you swap provider SDKs or storage engines.
 - `cli/`: Entrypoint and helpers for the `agent-gantry` command-line tool.
 - `core/`: The orchestration layer (facade, registry, router, executor, and security policy).
-- `integrations/`: Helpers for plugging Agent-Gantry into higher-level agent frameworks (LangChain,
-  AutoGen, LlamaIndex, CrewAI). The decorator helper in this folder powers the semantic tool
-  injection demos.
+- `integrations/`: Helpers for plugging Agent-Gantry into higher-level agent frameworks (Microsoft
+  Agent Framework, LangChain, LangGraph, Google ADK, Pydantic AI, CrewAI, Strands). The decorator
+  helper in this folder powers the semantic tool injection demos.
 - `observability/`: Telemetry adapters (console, OpenTelemetry, Prometheus) and tracing hooks.
 - `providers/`: Clients that pull external tools/skills into the registry (e.g., A2A agents).
 - `schema/`: Pydantic models that define tools, configs, queries, events, and execution payloads.

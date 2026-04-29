@@ -170,7 +170,7 @@ Total Lines Added: ~10 lines (3 imports, 1 init, 3 tool registrations, 1 decorat
         "   - Run examples/basics/plug_and_play_semantic_filter.py to import tools from a module with one decorator"
     )
     print("   - Read docs/semantic_tool_decorator.md for advanced usage")
-    print("   - Try examples/agent_frameworks/ for LangChain, AutoGen, CrewAI")
+    print("   - Try examples/agent_frameworks/ for LangChain, LangGraph, Agent Framework, CrewAI")
 
 
 if __name__ == "__main__":

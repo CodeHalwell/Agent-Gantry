@@ -19,7 +19,7 @@ Agent-Gantry follows a layered architecture with clear separation of concerns:
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        APPLICATION LAYER                        │
-│         (Your Agent / LangChain / AutoGen / CrewAI)             │
+│       (Your Agent / LangChain / Agent Framework / CrewAI)       │
 └─────────────────────────┬───────────────────────────────────────┘
                           │
                           ▼

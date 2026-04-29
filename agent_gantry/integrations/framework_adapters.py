@@ -2,8 +2,9 @@
 Thin, dependency-free adapters for popular agent frameworks.
 
 These helpers translate Agent-Gantry retrieval results into the schema shapes
-expected by common frameworks (LangGraph, Semantic Kernel, CrewAI, Google ADK,
-Strands, and Microsoft Agent Framework) while preserving dynamic top-k surfacing.
+expected by common frameworks (LangGraph, LangChain, CrewAI, Google ADK,
+Strands, Pydantic AI, and Microsoft Agent Framework) while preserving dynamic
+top-k surfacing.
 """
 
 from __future__ import annotations
@@ -15,19 +16,21 @@ from agent_gantry.schema.query import ConversationContext, ToolQuery
 
 FrameworkName = Literal[
     "langgraph",
-    "semantic-kernel",
+    "langchain",
     "crew_ai",
     "google_adk",
     "strands",
+    "pydantic_ai",
     "agent_framework",
 ]
 
 _SUPPORTED_FRAMEWORKS: set[FrameworkName] = {
     "langgraph",
-    "semantic-kernel",
+    "langchain",
     "crew_ai",
     "google_adk",
     "strands",
+    "pydantic_ai",
     "agent_framework",
 }
 
@@ -68,6 +71,6 @@ async def fetch_framework_tools(
     if framework == "agent_framework":
         return result.to_dialect("agent_framework")
 
-    # LangGraph, Semantic Kernel, CrewAI, Google ADK, and Strands all accept
-    # OpenAI-style tool/function schemas today, so default to that shape.
+    # LangGraph, LangChain, CrewAI, Google ADK, Strands, and Pydantic AI all
+    # accept OpenAI-style tool/function schemas today, so default to that shape.
     return result.to_openai_tools()

@@ -133,7 +133,7 @@ def send_email(to: str, body: str) -> str:
 tools = await fetch_framework_tools(
     gantry,
     "send a follow-up email",
-    framework="langgraph",  # or "autogen", "crewai", etc.
+    framework="langgraph",  # or "crew_ai", "google_adk", "pydantic_ai", etc.
     limit=2,
 )
 # Pass tools directly to your framework
@@ -154,25 +154,6 @@ async def chat_with_langchain(prompt: str, *, tools=None):
     llm = ChatOpenAI(model="gpt-4o")
     # Convert to LangChain tools and use with your agent
     # See examples/agent_frameworks/langchain_example.py for details
-```
-
-### AutoGen Integration
-
-```python
-from autogen_agentchat import ConversableAgent
-from agent_gantry import AgentGantry
-
-gantry = AgentGantry()
-# Register tools...
-
-# Retrieve relevant tools
-tools = await gantry.retrieve_tools("task description", limit=3)
-
-# Pass to AutoGen agent
-agent = ConversableAgent(
-    name="assistant",
-    llm_config={"model": "gpt-4o", "tools": tools}
-)
 ```
 
 ### CrewAI Integration
@@ -201,7 +182,7 @@ agent = Agent(
 ## Modules
 
 - `semantic_tools.py`: Core `with_semantic_tools` decorator and `SemanticToolSelector` class for automatic tool injection
-- `framework_adapters.py`: Helpers for converting tools to framework-specific formats (LangGraph, Semantic Kernel, CrewAI, Google ADK, Strands)
+- `framework_adapters.py`: Helpers for converting tools to framework-specific formats (LangGraph, LangChain, CrewAI, Google ADK, Strands, Pydantic AI)
 - `agent_framework_bridge.py`: Microsoft Agent Framework 1.0 GA bridge — `GantryToolBridge` wraps Gantry tools as AF `FunctionTool`s with `approval_mode` auto-derived from Gantry `ToolCapability`. Exposes three agent construction helpers:
   - `build_agent(client, query, ...)` — one-liner using `client.as_agent()`, fine for single-agent flows.
   - `as_agent(client, query, ...)` — direct `Agent(client, ...)` construction; preferred when the result feeds `WorkflowBuilder`.
@@ -321,8 +302,10 @@ See `examples/llm_integration/` for complete end-to-end examples:
 - `groq_demo.py`: Groq integration
 
 See `examples/agent_frameworks/` for framework-specific examples:
+- `agent_framework_example.py`: Microsoft Agent Framework 1.0 GA integration
 - `langchain_example.py`: LangChain agent integration
-- `autogen_example.py`: AutoGen agent integration
+- `langgraph_example.py`: LangGraph workflow integration
+- `google_adk_example.py`: Google ADK integration
 - `crewai_example.py`: CrewAI agent integration
 
 ## See Also

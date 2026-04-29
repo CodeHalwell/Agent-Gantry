@@ -23,9 +23,6 @@ The general pattern is:
 - `langchain_example.py`: Using Gantry with LangChain 0.3+ `create_agent`.
 - `langgraph_example.py`: Integrating Gantry into a LangGraph workflow.
 - `crewai_example.py`: Using Gantry to provide dynamic tools to a CrewAI Agent (using `kickoff_async`).
-- `autogen_example.py`: Registering Gantry tools for an AutoGen (AG2) `AssistantAgent`.
-- `llamaindex_example.py`: Using Gantry with LlamaIndex's new `AgentWorkflow` based `ReActAgent`.
-- `semantic_kernel_example.py`: Registering Gantry tools as Semantic Kernel plugins with auto-function calling.
 
 ## Installation Requirements
 
@@ -38,12 +35,15 @@ pip install "agent-gantry[agent-frameworks]"
 # Option 2: Install individual frameworks with pip
 pip install agent-gantry langchain langchain-openai langgraph
 pip install agent-gantry crewai
-pip install agent-gantry autogen-agentchat autogen-ext[openai]
+pip install agent-gantry agent-framework
+pip install agent-gantry google-adk
+pip install agent-gantry pydantic-ai
+pip install agent-gantry strands-agents
 # etc.
 
 # Option 3: If using uv for project dependency management
-uv add langchain langchain-openai langgraph crewai autogen-agentchat autogen-ext[openai] \
-	llama-index-core llama-index-llms-openai semantic-kernel agent-framework google-adk
+uv add langchain langchain-openai langgraph crewai \
+	agent-framework google-adk pydantic-ai strands-agents
 ```
 
 **Note on Python Version:** These examples are verified on **Python 3.13**, but should work on any supported Agent-Gantry version (**Python 3.10+**).

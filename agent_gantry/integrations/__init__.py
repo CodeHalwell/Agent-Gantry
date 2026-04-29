@@ -1,8 +1,8 @@
 """
 Framework integrations for Agent-Gantry.
 
-Integrations with LangChain, AutoGen, LlamaIndex, CrewAI,
-Microsoft Agent Framework, etc.
+Integrations with Microsoft Agent Framework, LangChain, LangGraph,
+Google ADK, Pydantic AI, CrewAI, and Strands.
 """
 
 from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge

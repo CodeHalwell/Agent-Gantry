@@ -22,7 +22,7 @@ This demo shows the "before and after" of adding Agent-Gantry to a basic LLM cal
 - `execution/`: Circuit breakers, batch execution, and security policy enforcement.
 - `llm_integration/`: End-to-end loops with OpenAI/Anthropic/Google/Groq/Mistral plus the semantic
   tool decorator. **All examples use the `@with_semantic_tools` decorator** for consistent "Plug & Play" experience.
-- `agent_frameworks/`: Integration with LangChain, AutoGen, CrewAI, LlamaIndex, Semantic Kernel, and more.
+- `agent_frameworks/`: Integration with Microsoft Agent Framework, LangChain, LangGraph, Google ADK, Pydantic AI, CrewAI, and Strands.
 - `observability/`: Console telemetry demonstration and token savings analysis.
 - `protocols/`: MCP and A2A integration demos (including Claude Desktop config).
 - `testing_limits/`: Stress tests for token savings and accuracy with large toolsets (100 tools).

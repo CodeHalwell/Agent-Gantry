@@ -48,16 +48,13 @@ dev = [
 ]
 agent-frameworks = [
     "agent-framework>=1.0.0,<2.0.0",
-    "autogen-agentchat>=0.7.5",
-    "autogen-ext[openai]>=0.7.5",
     "crewai>=1.6.1",
     "langchain>=1.2.0",
     "langchain-openai>=1.2.1",
     "langgraph>=1.1.9",
-    "llama-index-core>=0.14.10",
-    "llama-index-llms-openai>=0.6.12",
-    "semantic-kernel>=1.30.0",
     "google-adk>=1.14.1",
+    "pydantic-ai>=0.0.13",
+    "strands-agents>=0.1.0",
 ]
 example-tools = [
     "beautifulsoup4>=4.12.0",

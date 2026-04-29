@@ -55,7 +55,7 @@ See [docs/llm_sdk_compatibility.md](docs/llm_sdk_compatibility.md) for detailed 
 - **Vector stores**: `pip install agent-gantry[vector-stores]` (Qdrant/Chroma stubs)
 - **Local persistence (LanceDB)**: `pip install agent-gantry[lancedb]`
 - **Local embeddings (Nomic Matryoshka)**: `pip install agent-gantry[nomic]`
-- **Agent framework integrations**: `pip install agent-gantry[agent-frameworks]` (LangChain, AutoGen, CrewAI, LlamaIndex, Semantic Kernel, etc.)
+- **Agent framework integrations**: `pip install agent-gantry[agent-frameworks]` (Microsoft Agent Framework, LangChain, LangGraph, Google ADK, Pydantic AI, CrewAI, Strands)
 - **Example extras**: `pip install agent-gantry[example-tools]` for optional libraries used by the example scripts
 - **Protocols**: `pip install agent-gantry[mcp]` and `pip install agent-gantry[a2a]`
 
@@ -335,7 +335,7 @@ with a warning so shared modules can be safely combined.
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        AGENT LAYER                              │
-│  (LangChain / AutoGen / LlamaIndex / CrewAI / Custom Agents)    │
+│  (LangChain / LangGraph / Agent Framework / CrewAI / Custom)    │
 └─────────────────────────┬───────────────────────────────────────┘
                           │
                           ▼
@@ -427,7 +427,7 @@ agent_gantry/
 │   └── executors/        # Direct, Sandbox, MCP, HTTP, A2A
 ├── providers/            # Tool import from various sources
 ├── servers/              # MCP and A2A server implementations
-├── integrations/         # LangChain, AutoGen, LlamaIndex, CrewAI
+├── integrations/         # LangChain, LangGraph, Agent Framework, CrewAI
 ├── observability/        # Telemetry, metrics, logging
 └── cli/                  # Command-line interface
 ```
@@ -678,7 +678,7 @@ It boots with demo tools and an in-memory embedder. For details and customizatio
 - **Phase 4**: ✅ Production Adapters - Qdrant, Chroma, OpenAI embeddings
 - **Phase 5**: ✅ MCP Integration - MCP client and server, dynamic tool discovery
 - **Phase 6**: ✅ A2A Integration - Agent-to-Agent protocol, Agent Card, skill mapping
-- **Phase 7**: ✅ Framework Integrations - LangChain, AutoGen, CrewAI, LlamaIndex, Semantic Kernel
+- **Phase 7**: ✅ Framework Integrations - Microsoft Agent Framework, LangChain, LangGraph, Google ADK, Pydantic AI, CrewAI, Strands
 - **Phase 8**: ✅ Documentation & Quality - Professional docs site, type safety, comprehensive examples
 
 ## License

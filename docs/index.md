@@ -129,11 +129,13 @@ Native support for:
 
 ### Framework Agnostic
 Works seamlessly with:
+- Microsoft Agent Framework
 - LangChain
-- AutoGen
+- LangGraph
+- Google ADK
+- Pydantic AI
 - CrewAI
-- LlamaIndex
-- Semantic Kernel
+- Strands
 - Custom agents
 
 ## What's New in v0.1.2

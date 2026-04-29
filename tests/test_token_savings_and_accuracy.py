@@ -110,10 +110,11 @@ async def test_framework_adapter_returns_top_k(sample_tools) -> None:
 
     for framework in [
         "langgraph",
-        "semantic-kernel",
+        "langchain",
         "crew_ai",
         "google_adk",
         "strands",
+        "pydantic_ai",
     ]:
         tools = await fetch_framework_tools(
             gantry,
