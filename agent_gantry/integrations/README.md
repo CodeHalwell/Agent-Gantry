@@ -139,22 +139,51 @@ tools = await fetch_framework_tools(
 # Pass tools directly to your framework
 ```
 
-### LangChain Integration
+### LangChain / LangGraph Integration (first-class bridge)
+
+The :class:`LangChainToolBridge` wraps Gantry tools as native LangChain
+``StructuredTool`` instances. Each invocation flows through Gantry's
+executor, so retries, circuit breakers, telemetry, and an optional
+``SecurityPolicy`` + approval callback all apply uniformly. The same
+``StructuredTool`` works in both LangChain (``langchain.agents.create_agent``)
+and LangGraph (``langgraph.prebuilt.create_react_agent``).
 
 ```python
-from langchain_openai import ChatOpenAI
-from agent_gantry import AgentGantry, with_semantic_tools
+from agent_gantry import AgentGantry
+from agent_gantry.core.security import SecurityPolicy
+from agent_gantry.integrations.langchain_bridge import GantryToolBridge
 
 gantry = AgentGantry()
 # Register tools...
+await gantry.sync()
 
-# Use decorator with LangChain
-@with_semantic_tools(gantry, limit=3)
-async def chat_with_langchain(prompt: str, *, tools=None):
-    llm = ChatOpenAI(model="gpt-4o")
-    # Convert to LangChain tools and use with your agent
-    # See examples/agent_frameworks/langchain_example.py for details
+policy = SecurityPolicy(require_confirmation=["delete_*", "refund_*"])
+
+async def approve(tool_def, arguments) -> bool:
+    # Plug your approval UI / Slack ping here.
+    return True
+
+bridge = GantryToolBridge(
+    gantry,
+    security_policy=policy,
+    approval_callback=approve,
+)
+
+# Top-k retrieval as native LangChain tools
+tools = await bridge.get_tools("send a follow-up email", limit=3)
+
+# Convenience: build a ready-to-run LangChain agent in one call
+agent = await bridge.build_agent(
+    "openai:gpt-4o", "send a follow-up email", limit=3
+)
 ```
+
+Tools whose ``ToolCapability`` set includes destructive entries
+(``WRITE_DATA``, ``DELETE_DATA``, ``EXECUTE_CODE``, ``FINANCIAL``,
+``PII_ACCESS``) are automatically gated by ``approval_callback`` even when
+no ``security_policy`` pattern matches — mirroring the Microsoft Agent
+Framework bridge's ``approval_mode="always_require"`` behaviour. Set
+``capability_approval=False`` to opt out.
 
 ### CrewAI Integration
 
@@ -183,6 +212,7 @@ agent = Agent(
 
 - `semantic_tools.py`: Core `with_semantic_tools` decorator and `SemanticToolSelector` class for automatic tool injection
 - `framework_adapters.py`: Helpers for converting tools to framework-specific formats (LangGraph, LangChain, CrewAI, Google ADK, Strands, Pydantic AI)
+- `langchain_bridge.py`: LangChain / LangGraph bridge — `LangChainToolBridge` wraps Gantry tools as `StructuredTool`s with security-policy + approval-callback enforcement, and exposes `get_tools()`, `wrap_tool()`, `wrap_tools()`, and `build_agent()` helpers.
 - `agent_framework_bridge.py`: Microsoft Agent Framework 1.0 GA bridge — `GantryToolBridge` wraps Gantry tools as AF `FunctionTool`s with `approval_mode` auto-derived from Gantry `ToolCapability`. Exposes three agent construction helpers:
   - `build_agent(client, query, ...)` — one-liner using `client.as_agent()`, fine for single-agent flows.
   - `as_agent(client, query, ...)` — direct `Agent(client, ...)` construction; preferred when the result feeds `WorkflowBuilder`.
