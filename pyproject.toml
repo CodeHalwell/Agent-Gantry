@@ -41,22 +41,37 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
-    "pytest-asyncio>=0.21.0",
+    # pytest-asyncio 1.x changed event-loop lifecycle on macOS (kqueue) + Python
+    # 3.10/3.12, causing CI failures. Pin to the stable 0.x series until the
+    # upstream compatibility issue is resolved.
+    "pytest-asyncio>=0.21.0,<1.0.0",
     "pytest-cov>=4.0.0",
     "ruff>=0.1.0",
     "python-dotenv>=1.0.0",
 ]
 agent-frameworks = [
-    "agent-framework>=1.0.0,<2.0.0",
+    # Bump to 1.2.1: picks up GeminiChatClient (1.1.0), HandoffBuilder fixes (1.1.1),
+    # functional workflow API and AF→A2A bridge (1.2.0).
+    "agent-framework>=1.2.1,<2.0.0",
     "autogen-agentchat>=0.7.5",
     "autogen-ext[openai]>=0.7.5",
+    # crewai>=1.12.0 pins opentelemetry-api<1.35, which conflicts with
+    # agent-framework>=1.2.1 (requires opentelemetry-api>=1.39.0). crewai==1.6.1
+    # co-installs fine with agent-framework>=1.2.1 — it is crewai>=1.12.0 that
+    # introduces the incompatibility. To use crewai>=1.12.0, install it in a
+    # separate environment without agent-framework.
     "crewai>=1.6.1",
-    "langchain>=1.2.0",
+    "langchain>=1.2.15",
     "langchain-openai>=1.2.1",
-    "langgraph>=1.1.9",
-    "llama-index-core>=0.14.10",
-    "llama-index-llms-openai>=0.6.12",
+    "langgraph>=1.1.10",
+    "llama-index-core>=0.14.21",
+    "llama-index-llms-openai>=0.7.7",
+    # semantic-kernel>=1.41.3 conflicts with agent-framework>=1.2.1 on some
+    # Python versions due to opentelemetry-api version incompatibility.
+    # Upgrade semantic-kernel in a standalone environment without agent-framework.
     "semantic-kernel>=1.30.0",
+    # google-adk 1.31.1 conflicts with agent-framework>=1.2.1 on Python 3.13/Windows;
+    # bump this floor in a standalone (no agent-framework) environment.
     "google-adk>=1.14.1",
 ]
 example-tools = [
@@ -88,7 +103,7 @@ embeddings = [
     "sentence-transformers>=2.2.0",
 ]
 openai = [
-    "openai>=2.0.0",
+    "openai>=2.33.0",
 ]
 cohere = [
     "cohere>=5.0.0",
@@ -174,6 +189,7 @@ ignore = ["E501", "E402"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 
 [tool.uv]

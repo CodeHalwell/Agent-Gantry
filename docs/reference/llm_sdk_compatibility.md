@@ -50,7 +50,7 @@ pip install agent-gantry[all]
 
 ### Package
 ```bash
-pip install openai>=1.0.0
+pip install openai>=2.33.0
 ```
 
 ### Client Initialization
@@ -158,7 +158,7 @@ response = client.responses.create(
 
 ### Package
 ```bash
-pip install openai>=1.0.0
+pip install openai>=2.33.0
 ```
 
 ### Client Initialization
@@ -251,7 +251,7 @@ response = client.chat.completions.create(
 
 ### Package
 ```bash
-pip install anthropic>=0.40.0
+pip install anthropic>=0.97.0
 ```
 
 ### Client Initialization
@@ -270,7 +270,7 @@ client = Anthropic()
 #### Messages
 ```python
 response = client.messages.create(
-    model="claude-sonnet-4-20250514",
+    model="claude-sonnet-4-6",
     max_tokens=1024,
     messages=[
         {"role": "user", "content": "Hello, Claude!"}
@@ -279,11 +279,12 @@ response = client.messages.create(
 print(response.content[0].text)
 ```
 
-#### Prompt Caching (Beta)
+#### Prompt Caching
 ```python
-# Cache long system prompts for efficiency
-response = client.beta.prompt_caching.messages.create(
-    model="claude-sonnet-4-20250514",
+# Cache long system prompts for efficiency using cache_control in the standard API.
+# The beta.prompt_caching namespace is deprecated in favour of this approach.
+response = client.messages.create(
+    model="claude-sonnet-4-6",
     max_tokens=1024,
     system=[{
         "type": "text",
@@ -299,6 +300,7 @@ response = client.beta.prompt_caching.messages.create(
 ```python
 from anthropic import Anthropic
 from agent_gantry import AgentGantry
+from agent_gantry.schema.query import ConversationContext, ToolQuery
 
 client = Anthropic()
 gantry = AgentGantry()
@@ -310,21 +312,15 @@ def search_database(query: str) -> str:
 
 await gantry.sync()
 
-# Convert tools to Anthropic format
-openai_tools = await gantry.retrieve_tools("search for data")
-
-# Transform OpenAI format to Anthropic format
-anthropic_tools = [
-    {
-        "name": tool["function"]["name"],
-        "description": tool["function"]["description"],
-        "input_schema": tool["function"]["parameters"]
-    }
-    for tool in openai_tools
-]
+# Retrieve tools and convert to Anthropic format via to_dialect("anthropic").
+# This avoids manual field-mapping and keeps conversion logic centralised.
+retrieval = await gantry.retrieve(
+    ToolQuery(context=ConversationContext(query="search for data"), limit=5)
+)
+anthropic_tools = [t.tool.to_dialect("anthropic") for t in retrieval.tools]
 
 response = client.messages.create(
-    model="claude-sonnet-4-20250514",
+    model="claude-sonnet-4-6",
     max_tokens=1024,
     tools=anthropic_tools,
     messages=[{"role": "user", "content": "Search for user data"}]
@@ -358,7 +354,7 @@ client = genai.Client()
 #### Generate Content
 ```python
 response = client.models.generate_content(
-    model="gemini-2.0-flash",
+    model="gemini-2.5-flash",
     contents="Hello, Gemini!"
 )
 print(response.text)
@@ -367,7 +363,7 @@ print(response.text)
 #### Streaming
 ```python
 for chunk in client.models.generate_content_stream(
-    model="gemini-2.0-flash",
+    model="gemini-2.5-flash",
     contents="Write a story about a robot."
 ):
     print(chunk.text, end="")
@@ -378,6 +374,7 @@ for chunk in client.models.generate_content_stream(
 ```python
 from google import genai
 from agent_gantry import AgentGantry
+from agent_gantry.schema.query import ConversationContext, ToolQuery
 
 client = genai.Client()
 gantry = AgentGantry()
@@ -397,14 +394,22 @@ def calculate(a: float, b: float, operation: str) -> str:
 
 await gantry.sync()
 
-# Get tools and use with Gemini
-tools = await gantry.retrieve_tools("calculate something")
+# Retrieve tools in Gemini format and wrap as FunctionDeclaration objects.
+from google.genai import types
 
-# Use Gemini's function calling (format transformation may be needed)
-response = client.models.generate_content(
-    model="gemini-2.0-flash",
+retrieval = await gantry.retrieve(
+    ToolQuery(context=ConversationContext(query="calculate something"), limit=5)
+)
+gemini_funcs = [
+    types.FunctionDeclaration(**t.tool.to_dialect("gemini"))
+    for t in retrieval.tools
+]
+tool_config = types.GenerateContentConfig(tools=[types.Tool(function_declarations=gemini_funcs)])
+
+response = await client.aio.models.generate_content(
+    model="gemini-2.5-flash",
     contents="What is 2 + 2?",
-    tools=tools  # May require format transformation
+    config=tool_config,
 )
 ```
 
@@ -435,7 +440,7 @@ vertexai.init(
 
 #### Generate Content
 ```python
-model = GenerativeModel("gemini-2.0-flash")
+model = GenerativeModel("gemini-2.5-flash")
 
 response = model.generate_content("Hello, Vertex AI!")
 print(response.text)
@@ -443,7 +448,7 @@ print(response.text)
 
 #### Chat Sessions
 ```python
-model = GenerativeModel("gemini-2.0-flash")
+model = GenerativeModel("gemini-2.5-flash")
 chat = model.start_chat()
 
 response = chat.send_message("What's the weather like?")
@@ -486,7 +491,7 @@ vertex_functions = [
 ]
 
 model = GenerativeModel(
-    "gemini-2.0-flash",
+    "gemini-2.5-flash",
     tools=[Tool(function_declarations=vertex_functions)]
 )
 
@@ -577,7 +582,7 @@ response = client.chat.complete(
 
 ### Package
 ```bash
-pip install groq>=0.13.0
+pip install groq>=1.2.0
 ```
 
 ### Client Initialization

@@ -77,19 +77,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Agent Framework 1.0 GA support**: Bumped minimum `agent-framework` to `>=1.0.0` and updated integration example to use the renamed `OpenAIChatClient` (the RC-era `OpenAIResponsesClient` was renamed to `OpenAIChatClient` in 1.0 GA; the old `OpenAIChatClient` is now `OpenAIChatCompletionClient`). Docstrings and adapter class docs refer to "1.0 GA" instead of "RC+".
 - **Dependency lower bounds bumped** (non-breaking for existing installs):
-  - `agent-framework>=1.0.0,<2.0.0` (retained at `>=1.0.0`; a bump to `>=1.2.0` was
-    reverted because `agent-framework-core==1.2.0` pins `opentelemetry-api>=1.39.0,<2`
-    which conflicts irreconcilably with `crewai>=1.6.1`'s `opentelemetry-api<1.35`
-    upper bound. All new helpers — `build_sequential_workflow()`,
-    `build_handoff_workflow()` — are available in `agent-framework==1.0.x`.)
+  - `agent-framework>=1.2.1,<2.0.0` (was `>=1.0.0,<2.0.0`): picks up
+    `GeminiChatClient` (1.1.0), `HandoffBuilder` fixes (1.1.1), functional
+    workflow API and AF→A2A bridge (1.2.0). Compatible with `crewai==1.6.1`
+    (the current lock); `crewai>=1.12.0` introduces `opentelemetry-api<1.35`
+    which conflicts with `agent-framework>=1.2.1` (`>=1.39.0`) — see the
+    comment in `pyproject.toml` for the standalone-environment workaround.
+  - `openai>=2.33.0` (was `>=2.0.0`): latest stable; both Chat Completions and
+    Responses API remain fully supported.
+  - `langchain>=1.2.15` (was `>=1.2.0`), `langgraph>=1.1.10` (was `>=1.1.9`)
+  - `llama-index-core>=0.14.21` (was `>=0.14.10`),
+    `llama-index-llms-openai>=0.7.7` (was `>=0.6.12`)
   - `anthropic>=0.97.0` (was `>=0.96.0`)
-  - `crewai>=1.6.1` (retained at `>=1.6.1`; `>=1.14.3` reverted for same
-    `opentelemetry-api` conflict reason above)
+  - `crewai>=1.6.1` (retained; `>=1.12.0` conflicts with agent-framework opentelemetry)
   - `groq>=1.2.0` (was `>=1.0.0`)
   - `langchain-openai>=1.2.1` (was `>=1.1.14`)
 - **`mistralai` upper bound retained at `<2.0.0`**: mistralai 2.x changes the
   async client to a context-manager pattern (`async with Mistral(...)`). Migration
-  of `LLMClient.classify_intent` is documented as a pending task.
+  of `LLMClient.classify_intent` is documented as a pending task; a code comment
+  has been added to `agent_gantry/adapters/llm_client.py` to guide the migration.
+- **Documentation** (`docs/reference/llm_sdk_compatibility.md`):
+  - Anthropic model corrected to `claude-sonnet-4-6` (was `claude-sonnet-4-20250514`).
+  - Gemini model corrected to `gemini-2.5-flash` (was `gemini-2.0-flash`, ×6).
+  - Install pins updated: `anthropic>=0.97.0`, `openai>=2.33.0`, `groq>=1.2.0`.
+  - Prompt caching migrated from `client.beta.prompt_caching.messages.create()`
+    to the standard `client.messages.create()` with `cache_control`.
+  - Anthropic integration example now uses `to_dialect("anthropic")` instead of
+    manual field-mapping from OpenAI format.
+  - Gemini integration example now uses `to_dialect("gemini")` + `FunctionDeclaration`.
+- **`GeminiChatClient` (AF 1.1.0)** documented in `GantryToolBridge.build_agent()`
+  and `as_agent()` docstrings. Orchestration example updated to reference AF 1.2.
 - **`build_sequential_workflow()` `workflow_name` parameter removed**: `SequentialBuilder`
   in AF 1.x does not accept a name argument; the parameter was ignored and has been
   removed from the signature to avoid misleading callers.

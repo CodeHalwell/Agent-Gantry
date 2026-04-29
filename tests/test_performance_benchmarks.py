@@ -71,7 +71,7 @@ class MockEmbedder(EmbeddingAdapter):
 async def gantry_with_tools():
     """Create a gantry instance with multiple tools for testing."""
     gantry = AgentGantry(
-        embedder=MockEmbedder(latency_ms=10),
+        embedder=MockEmbedder(latency_ms=50),
         vector_store=InMemoryVectorStore(),
     )
 
@@ -129,13 +129,12 @@ async def test_concurrent_retrieval_throughput(gantry_with_tools):
     print(f"{'=' * 60}\n")
 
     # Verify that concurrent requests are faster than sequential.
-    # retrieve_tools has both an async IO component (embed_text sleep) and a
-    # CPU-bound component (pure-Python cosine similarity search). Under the GIL
-    # the CPU work serializes, so the theoretical maximum speedup is:
-    #   sequential_time / (io_time + n * cpu_time)
-    # On slow macOS runners the CPU component can dominate, pushing the ratio
-    # close to 1.0x. Use 1.2x as the floor — enough to confirm the event loop
-    # is not fully blocked, without requiring near-linear scaling.
+    # retrieve_tools has both an async IO component (embed_text sleep at 50ms)
+    # and a CPU-bound component (pure-Python cosine similarity over 50 tools).
+    # Under the GIL the CPU work serialises across concurrent tasks, so the
+    # theoretical speedup = sequential_time / (io_time + n * cpu_time).
+    # The 50ms IO floor ensures this ratio stays well above 1.2x even on the
+    # slowest macOS CI runners regardless of Python version.
     assert speedup > 1.2, (
         f"Concurrent requests only {speedup:.1f}x faster than sequential. "
         f"Expected >1.2x speedup. This suggests event loop blocking."
@@ -313,7 +312,7 @@ async def test_end_to_end_retrieval_latency(gantry_with_tools):
     print(f"P95: {p95:.1f}ms")
     print(f"{'=' * 60}\n")
 
-    # With mock embedder at 10ms latency, total should be <200ms.
+    # With mock embedder at 50ms latency, total should be <200ms.
     # macOS kqueue adds significant per-await overhead on loaded CI runners,
     # making the 50ms bound flaky even though actual computation is ~15ms.
     assert avg_latency < 200.0, f"Retrieval too slow: {avg_latency:.1f}ms"
@@ -327,7 +326,7 @@ async def test_concurrent_execution_scalability():
     Measures throughput at different concurrency levels.
     """
     gantry = AgentGantry(
-        embedder=MockEmbedder(latency_ms=20),
+        embedder=MockEmbedder(latency_ms=50),
         vector_store=InMemoryVectorStore(),
     )
 
@@ -370,10 +369,10 @@ async def test_concurrent_execution_scalability():
     print(f"{'=' * 60}\n")
 
     # Throughput should increase with concurrency (if non-blocking).
-    # Use 1.2x as a conservative lower bound — macOS kqueue and Python 3.10's
-    # slower asyncio task scheduling can push the ratio below 1.5x on loaded CI
-    # runners even though the event loop is non-blocking. 1.2x still confirms
-    # meaningful concurrency benefit without being flaky on macOS/py3.10.
+    # With 50ms IO latency per task, concurrent throughput should be well above
+    # 1.2x the single-task throughput. The 50ms floor ensures IO dominates the
+    # GIL-serialised CPU component (pure-Python cosine similarity), making
+    # this ratio stable across slow macOS CI runners and all Python versions.
     assert results[20]["throughput"] > results[1]["throughput"] * 1.2, (
         "System doesn't scale with concurrency - possible event loop blocking"
     )

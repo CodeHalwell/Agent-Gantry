@@ -60,6 +60,11 @@ class LLMClient:
         elif self._provider == "mistral":
             from mistralai import Mistral
 
+            # mistralai 2.x requires `async with Mistral(...) as client:` for proper
+            # resource cleanup.  Migrating to 2.x means restructuring this class so
+            # that the context manager wraps each call instead of storing a long-lived
+            # client.  Until that work is done, mistralai is pinned to <2.0.0 in
+            # pyproject.toml.  See the migration note in the project CHANGELOG.
             self._client = Mistral(api_key=api_key)
         elif self._provider == "groq":
             from groq import AsyncGroq
