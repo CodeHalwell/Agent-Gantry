@@ -393,6 +393,52 @@ async def test_capability_approval_can_be_disabled(
 
 
 @pytest.mark.asyncio
+async def test_approval_callback_invoked_once_when_both_gates_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tools matching both policy patterns and destructive caps must only prompt once."""
+    from agent_gantry.integrations.langchain_bridge import GantryToolBridge
+
+    gantry = AgentGantry()
+    # ``delete_account`` matches both ``delete_*`` policy patterns AND the
+    # destructive ``DELETE_DATA`` capability gate.
+    delete_def = await _populate_destructive_gantry(gantry)
+
+    class _Status:
+        value = "success"
+
+    class _OK:
+        status = _Status()
+        result = "deleted"
+        error = None
+
+    async def fake_execute(self: AgentGantry, call: Any) -> Any:
+        return _OK()
+
+    monkeypatch.setattr(AgentGantry, "execute", fake_execute, raising=False)
+
+    call_count = 0
+
+    async def approve(td: ToolDefinition, args: dict[str, Any]) -> bool:
+        nonlocal call_count
+        call_count += 1
+        return True
+
+    policy = SecurityPolicy(require_confirmation=["delete_*"])
+    bridge = GantryToolBridge(
+        gantry, security_policy=policy, approval_callback=approve
+    )
+    tool = bridge.wrap_tool(delete_def)
+
+    output = await tool.coroutine(user_id="abc")
+    assert output == "deleted"
+    assert call_count == 1, (
+        "approval_callback should be invoked exactly once, "
+        f"but was invoked {call_count} times"
+    )
+
+
+@pytest.mark.asyncio
 async def test_build_agent_passes_tools_to_create_agent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -253,7 +253,15 @@ class GantryToolBridge:
     async def _gate(
         self, tool_def: ToolDefinition, arguments: dict[str, Any]
     ) -> None:
-        """Run security-policy + capability-approval checks before execution."""
+        """Run security-policy + capability-approval checks before execution.
+
+        A single tool invocation triggers at most one approval prompt even
+        when both gates apply: the policy check runs first, and if it
+        already consulted the approval callback we skip the capability
+        check rather than asking the human a second time for the same call.
+        """
+        approval_consulted = False
+
         if self._security_policy is not None:
             try:
                 self._security_policy.check_permission(tool_def.name, arguments)
@@ -264,6 +272,7 @@ class GantryToolBridge:
                     err,
                 )
                 await self._consult_approval(tool_def, arguments, "policy match")
+                approval_consulted = True
             except PermissionDeniedError:
                 logger.warning(
                     "GantryToolBridge: denied execution of '%s' by policy",
@@ -271,7 +280,11 @@ class GantryToolBridge:
                 )
                 raise
 
-        if self._capability_approval and _tool_requires_approval(tool_def):
+        if (
+            not approval_consulted
+            and self._capability_approval
+            and _tool_requires_approval(tool_def)
+        ):
             await self._consult_approval(
                 tool_def, arguments, "destructive capability"
             )
