@@ -21,3 +21,7 @@
 ## 2026-04-25 - [Keyboard Accessibility for JavaScript-Toggled Visibility]
 **Learning:** Elements (like heading anchors) that are only made visible on `mouseenter` become invisible traps for keyboard navigators, who cannot see what element has currently received focus when tabbing. Additionally, symbols like "#" used as links are announced poorly (e.g., "number") by screen readers unless given contextual `aria-label`s.
 **Action:** Always provide corresponding `focus` and `blur` event handlers on focusable elements if their visibility is dynamically toggled via `mouseenter`/`mouseleave`. Furthermore, ensure symbol-only links are given descriptive `aria-label`s capturing their functional context (e.g., "Link to section: [heading text]").
+
+## 2026-04-29 - [Keyboard Focus Management with Programmatic Scrolling]
+**Learning:** Intercepting anchor clicks (like "Skip to main content") with `e.preventDefault()` to apply smooth scrolling breaks native focus movement. If focus remains on the clicked link, subsequent `Tab` presses will not start from the target element, rendering the skip link ineffective for keyboard users.
+**Action:** Always manually move focus to the target element (`target.focus({ preventScroll: true })`) and ensure it's focusable by temporarily setting `tabindex="-1"` when implementing programmatic smooth scrolling for in-page anchors.

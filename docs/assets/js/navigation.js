@@ -89,6 +89,10 @@
 
           // Update URL without triggering scroll
           history.pushState(null, "", href);
+
+          // Update focus for accessibility
+          target.setAttribute("tabindex", "-1");
+          target.focus({ preventScroll: true });
         }
       });
     });
@@ -329,7 +333,10 @@
       anchor.href = "#" + heading.id;
       anchor.innerHTML = "#";
       anchor.title = "Link to this section";
-      anchor.setAttribute("aria-label", "Link to section: " + heading.textContent);
+      anchor.setAttribute(
+        "aria-label",
+        "Link to section: " + heading.textContent,
+      );
       anchor.style.cssText = `
         margin-left: 8px;
         opacity: 0;
