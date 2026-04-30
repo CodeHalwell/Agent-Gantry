@@ -329,14 +329,21 @@ class SkillsClient:
         # Execute all tools concurrently
         results = await asyncio.gather(*tool_executions)
 
-        # Format results for Anthropic
+        # Format results for Anthropic.
+        # is_error signals model-level tool failure so the model can distinguish
+        # error content from normal tool output.
+        # Source: https://platform.claude.com/docs/en/api/messages (tool_result)
         tool_results = []
         for block_id, result in zip(tool_use_ids, results):
-            tool_results.append({
+            is_error = result.status != "success"
+            tool_result: dict[str, Any] = {
                 "type": "tool_result",
                 "tool_use_id": block_id,
-                "content": str(result.result) if result.status == "success" else f"Error: {result.error}",
-            })
+                "content": str(result.result) if not is_error else f"Error: {result.error}",
+            }
+            if is_error:
+                tool_result["is_error"] = True
+            tool_results.append(tool_result)
 
         return tool_results
 

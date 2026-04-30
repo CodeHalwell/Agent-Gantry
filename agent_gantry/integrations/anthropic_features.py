@@ -33,6 +33,11 @@ class AnthropicFeatures:
     # Adaptive thinking: model self-regulates depth; recommended for Opus 4.6+, Sonnet 4.6+,
     # Opus 4.7. Mutually exclusive with enable_extended_thinking.
     adaptive_thinking_effort: Literal["low", "medium", "high"] | None = None
+    # Controls whether thinking blocks appear in the response content.
+    # "summarized" — thinking is condensed; "omitted" — thinking is hidden but its
+    # signature is still returned for multi-turn continuity.
+    # Source: https://platform.claude.com/docs/en/api/messages (thinking parameter)
+    thinking_display: Literal["summarized", "omitted"] | None = None
 
 
 class AnthropicClient:
@@ -136,16 +141,22 @@ class AnthropicClient:
 
         # Build thinking payload — adaptive takes precedence over extended when both are set
         if self._features.adaptive_thinking_effort and "thinking" not in kwargs:
-            kwargs["thinking"] = {
+            thinking_block: dict[str, Any] = {
                 "type": "adaptive",
                 "effort": self._features.adaptive_thinking_effort,
             }
+            if self._features.thinking_display:
+                thinking_block["display"] = self._features.thinking_display
+            kwargs["thinking"] = thinking_block
         elif self._features.enable_extended_thinking and self._features.thinking_budget_tokens:
             if "thinking" not in kwargs:
-                kwargs["thinking"] = {
+                thinking_block = {
                     "type": "enabled",
                     "budget_tokens": self._features.thinking_budget_tokens,
                 }
+                if self._features.thinking_display:
+                    thinking_block["display"] = self._features.thinking_display
+                kwargs["thinking"] = thinking_block
 
         # Create message
         response = await self._client.messages.create(
@@ -185,16 +196,19 @@ class AnthropicClient:
                     )
                 )
 
-                # Format result for Anthropic
-                tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": str(result.result)
-                        if result.status == "success"
-                        else f"Error: {result.error}",
-                    }
-                )
+                # Format result for Anthropic.
+                # is_error signals model-level tool failure; omitting it when the
+                # tool succeeded avoids unnecessary noise.
+                # Source: https://platform.claude.com/docs/en/api/messages (tool_result)
+                is_error = result.status != "success"
+                tool_result: dict[str, Any] = {
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": str(result.result) if not is_error else f"Error: {result.error}",
+                }
+                if is_error:
+                    tool_result["is_error"] = True
+                tool_results.append(tool_result)
 
         return tool_results
 
@@ -265,6 +279,7 @@ async def create_anthropic_client(
     enable_thinking: Literal["interleaved", "extended", "adaptive", None] = None,
     thinking_budget_tokens: int | None = None,
     adaptive_effort: Literal["low", "medium", "high"] = "medium",
+    thinking_display: Literal["summarized", "omitted"] | None = None,
 ) -> AnthropicClient:
     """
     Convenience function to create an Anthropic client with features.
@@ -279,6 +294,9 @@ async def create_anthropic_client(
         thinking_budget_tokens: Budget for extended thinking (ignored for other modes)
         adaptive_effort: Effort level for adaptive thinking — ``"low"``, ``"medium"`` (default),
             or ``"high"`` (ignored unless ``enable_thinking="adaptive"``)
+        thinking_display: Controls thinking visibility in the response. ``"summarized"``
+            condenses the thinking block; ``"omitted"`` hides it but preserves the
+            signature for multi-turn continuity. ``None`` (default) shows full thinking.
 
     Returns:
         Configured AnthropicClient
@@ -299,6 +317,7 @@ async def create_anthropic_client(
         enable_extended_thinking=(enable_thinking == "extended"),
         thinking_budget_tokens=thinking_budget_tokens,
         adaptive_thinking_effort=adaptive_effort if enable_thinking == "adaptive" else None,
+        thinking_display=thinking_display,
     )
 
     return AnthropicClient(

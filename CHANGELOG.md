@@ -8,6 +8,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+- **`AnthropicFeatures.thinking_display`** — new optional field (`"summarized"` | `"omitted"`)
+  that controls thinking visibility in the response. `"summarized"` condenses the thinking
+  block; `"omitted"` hides it but preserves the signature for multi-turn continuity.
+  Exposed through `create_anthropic_client(thinking_display=...)`.
+  *Source: https://platform.claude.com/docs/en/api/messages (thinking parameter)*
+  *Risk: safe additive — existing code unaffected; default is None (full thinking shown).*
+
+### Fixed
+
+- **`AnthropicAdapter.format_tool_result` now accepts `is_error: bool = False`** — when
+  `True`, the `"is_error": true` field is included in the `tool_result` block so the
+  model can distinguish error content from a normal tool result.
+  *Source: https://platform.claude.com/docs/en/api/messages (tool_result block)*
+  *Risk: safe additive — callers that do not pass `is_error` see no change.*
+
+- **`AnthropicClient.execute_tool_calls` and `SkillsClient.execute_tool_calls` now set
+  `"is_error": true` on tool result blocks when execution fails** — previously, failed
+  tool calls were represented only by an `"Error: …"` content string with no API-level
+  error flag, preventing the model from reliably distinguishing tool errors from tool
+  output that happens to mention errors.
+  *Risk: safe with shim — callers that re-send the tool results array to `messages.create`
+  will now include the `is_error` field; this is additive and backward-compatible.*
+
+### Changed
+
+- **Dependency: `agent-framework` bumped to `>=1.2.2,<2.0.0`** (was `>=1.2.1,<2.0.0`).
+  Picks up the observability span-nesting fix during streaming and full conversation-history
+  propagation for hosted workflow agents. **Breaking in AF 1.2.2**: sequential-approval and
+  concurrent workflow terminal outputs now return as `AgentResponse` rather than a plain
+  string. Calling code that does `str(result)` or `print(result)` continues to work; code
+  that pattern-matches on the raw string type must be updated.
+  *Source: https://pypi.org/pypi/agent-framework/1.2.2/json*
+  *Risk: safe with shim — `AgentResponse` is str-coercible; bare-string assumptions break.*
+
+- **Dependency: `langchain` bumped to `>=1.2.16`** (was `>=1.2.15`). Minor patch release.
+  *Risk: safe internal.*
+
+- **Docs: `docs/reference/llm_sdk_compatibility.md` header updated from "Late 2025" to
+  "April 2026"** — reflects the actual date of the most recent compatibility review.
+
 - **Full Microsoft Agent Framework 1.0 GA integration**:
   - `GantryToolBridge` now emits real `agent_framework.FunctionTool` instances
     via the GA `@tool` decorator. Gantry's `ToolCapability` set is auto-mapped

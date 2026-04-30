@@ -50,9 +50,13 @@ dev = [
     "python-dotenv>=1.0.0",
 ]
 agent-frameworks = [
-    # Bump to 1.2.1: picks up GeminiChatClient (1.1.0), HandoffBuilder fixes (1.1.1),
-    # functional workflow API and AF→A2A bridge (1.2.0).
-    "agent-framework>=1.2.1,<2.0.0",
+    # Bump to 1.2.2: picks up GeminiChatClient (1.1.0), HandoffBuilder fixes (1.1.1),
+    # functional workflow API and AF→A2A bridge (1.2.0), observability span-nesting fix
+    # and hosted-workflow conversation-history propagation (1.2.2). Note the 1.2.2
+    # breaking change: sequential-approval and concurrent workflow terminal outputs now
+    # return as AgentResponse instead of a plain string — callers should use str() or
+    # .content to extract text.
+    "agent-framework>=1.2.2,<2.0.0",
     "autogen-agentchat>=0.7.5",
     "autogen-ext[openai]>=0.7.5",
     # crewai>=1.12.0 pins opentelemetry-api<1.35, which conflicts with
@@ -61,7 +65,7 @@ agent-frameworks = [
     # introduces the incompatibility. To use crewai>=1.12.0, install it in a
     # separate environment without agent-framework.
     "crewai>=1.6.1",
-    "langchain>=1.2.15",
+    "langchain>=1.2.16",
     "langchain-openai>=1.2.1",
     "langgraph>=1.1.10",
     "llama-index-core>=0.14.21",
