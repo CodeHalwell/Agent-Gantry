@@ -25,3 +25,7 @@
 ## 2026-04-29 - [Keyboard Focus Management with Programmatic Scrolling]
 **Learning:** Intercepting anchor clicks (like "Skip to main content") with `e.preventDefault()` to apply smooth scrolling breaks native focus movement. If focus remains on the clicked link, subsequent `Tab` presses will not start from the target element, rendering the skip link ineffective for keyboard users.
 **Action:** Always manually move focus to the target element (`target.focus({ preventScroll: true })`) and ensure it's focusable by temporarily setting `tabindex="-1"` when implementing programmatic smooth scrolling for in-page anchors.
+
+## 2026-04-30 - [Keyboard Accessibility for Custom Dropdowns]
+**Learning:** Custom dropdowns (like search results) that rely on `click` outside to close will remain open when a keyboard user presses `Tab` to navigate away from the input or container. This can leave floating content visible and obscure other parts of the page.
+**Action:** When implementing custom dropdowns, always include a `document.addEventListener("focusin", ...)` listener to check if the newly focused element is outside the dropdown container, and if so, close the dropdown to maintain a clean UI for keyboard users.
