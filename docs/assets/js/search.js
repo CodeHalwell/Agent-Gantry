@@ -325,6 +325,18 @@
       }
     });
 
+    // Close search results when focus leaves the search area
+    document.addEventListener("focusin", function (e) {
+      if (
+        searchInput &&
+        searchResults &&
+        !searchInput.contains(e.target) &&
+        !searchResults.contains(e.target)
+      ) {
+        hideResults();
+      }
+    });
+
     setupSearchAnnouncer();
 
     // Build search index
