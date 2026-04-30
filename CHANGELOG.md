@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`ToolSpecAdapter.format_tool_result` protocol extended with `is_error: bool = False`** — all
+  concrete adapters (`OpenAIAdapter`, `OpenAIResponsesAdapter`, `AnthropicAdapter`,
+  `GeminiAdapter`) now accept the optional keyword argument so callers typed against the
+  protocol can pass `is_error` without casting. Non-Anthropic adapters accept and ignore the
+  flag; `AnthropicAdapter` uses it to emit the Anthropic `"is_error"` field.
+  *Risk: safe additive — default is `False`, backward-compatible.*
+
+- **Unit tests for `is_error` semantics** — added to `TestAnthropicAdapter` in
+  `test_tool_spec_adapters.py`, to `TestAnthropicClient` in `test_anthropic_features.py`,
+  and to `TestSkillsClient` in `test_anthropic_skills.py`. Each test pair asserts that
+  `is_error: true` is present on failure and absent on success, and that dict results are
+  JSON-serialised rather than `str()`-coerced.
+
+- **Unit tests for `thinking_display` payload injection** — added three focused tests in
+  `TestAnthropicClient` verifying that `create_message()` passes `thinking.display` to
+  `AsyncAnthropic.messages.create()` for adaptive mode, extended mode, and that the key is
+  absent when `thinking_display=None`.
+
 - **`AnthropicFeatures.thinking_display`** — new optional field (`"summarized"` | `"omitted"`)
   that controls thinking visibility in the response. `"summarized"` condenses the thinking
   block; `"omitted"` hides it but preserves the signature for multi-turn continuity.
@@ -31,6 +49,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   output that happens to mention errors.
   *Risk: safe with shim — callers that re-send the tool results array to `messages.create`
   will now include the `is_error` field; this is additive and backward-compatible.*
+
+- **`AnthropicClient.execute_tool_calls` and `SkillsClient.execute_tool_calls` now use
+  `json.dumps()` for non-string tool results** — previously `str()` was used, which
+  produces Python repr notation (e.g. `{'key': 'val'}` with single quotes) rather than
+  valid JSON, causing downstream parse failures when the model or the caller attempted to
+  deserialise the content.
+  *Risk: safe correctness fix — `str` results pass through unchanged; dict/list results are
+  now JSON-serialised consistently with `AnthropicAdapter.format_tool_result`.*
+
+- **`ExecutionStatus.SUCCESS` used for status comparisons in `AnthropicClient` and
+  `SkillsClient`** — replaced bare `!= "success"` string literals with
+  `!= ExecutionStatus.SUCCESS` for type-safety and consistency with the rest of the
+  codebase (e.g. `agent_gantry/servers/mcp_server.py`).
+  *Risk: none — `ExecutionStatus` inherits from `str` so the comparison is equivalent.*
 
 ### Changed
 

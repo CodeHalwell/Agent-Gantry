@@ -124,6 +124,8 @@ class OpenAIAdapter:
         tool_name: str,
         result: Any,
         tool_call_id: str | None = None,
+        *,
+        is_error: bool = False,
     ) -> dict[str, Any]:
         """Format result for OpenAI tool_outputs."""
         content = result if isinstance(result, str) else json.dumps(result)
@@ -254,6 +256,8 @@ class OpenAIResponsesAdapter:
         tool_name: str,
         result: Any,
         tool_call_id: str | None = None,
+        *,
+        is_error: bool = False,
     ) -> dict[str, Any]:
         """
         Format result for OpenAI Responses API function_call_output.
@@ -460,6 +464,8 @@ class GeminiAdapter:
         tool_name: str,
         result: Any,
         tool_call_id: str | None = None,
+        *,
+        is_error: bool = False,
     ) -> dict[str, Any]:
         """Format result for Gemini function response."""
         response_content = result if isinstance(result, dict) else {"result": result}

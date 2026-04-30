@@ -14,12 +14,13 @@ Provides easy access to Anthropic's beta features including:
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from agent_gantry import AgentGantry
-from agent_gantry.schema.execution import ToolCall
+from agent_gantry.schema.execution import ExecutionStatus, ToolCall
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 
 
@@ -139,21 +140,21 @@ class AnthropicClient:
             )
             tools = [t.tool.to_dialect("anthropic") for t in retrieval_result.tools]
 
-        # Build thinking payload — adaptive takes precedence over extended when both are set
-        if self._features.adaptive_thinking_effort and "thinking" not in kwargs:
-            thinking_block: dict[str, Any] = {
-                "type": "adaptive",
-                "effort": self._features.adaptive_thinking_effort,
-            }
-            if self._features.thinking_display:
-                thinking_block["display"] = self._features.thinking_display
-            kwargs["thinking"] = thinking_block
-        elif self._features.enable_extended_thinking and self._features.thinking_budget_tokens:
-            if "thinking" not in kwargs:
+        # Build thinking payload — adaptive takes precedence over extended when both are set.
+        # Display key and kwargs assignment happen once after the block is constructed.
+        if "thinking" not in kwargs:
+            thinking_block: dict[str, Any] | None = None
+            if self._features.adaptive_thinking_effort:
+                thinking_block = {
+                    "type": "adaptive",
+                    "effort": self._features.adaptive_thinking_effort,
+                }
+            elif self._features.enable_extended_thinking and self._features.thinking_budget_tokens:
                 thinking_block = {
                     "type": "enabled",
                     "budget_tokens": self._features.thinking_budget_tokens,
                 }
+            if thinking_block is not None:
                 if self._features.thinking_display:
                     thinking_block["display"] = self._features.thinking_display
                 kwargs["thinking"] = thinking_block
@@ -200,11 +201,16 @@ class AnthropicClient:
                 # is_error signals model-level tool failure; omitting it when the
                 # tool succeeded avoids unnecessary noise.
                 # Source: https://platform.claude.com/docs/en/api/messages (tool_result)
-                is_error = result.status != "success"
+                is_error = result.status != ExecutionStatus.SUCCESS
+                content: str
+                if is_error:
+                    content = f"Error: {result.error}"
+                else:
+                    content = result.result if isinstance(result.result, str) else json.dumps(result.result)
                 tool_result: dict[str, Any] = {
                     "type": "tool_result",
                     "tool_use_id": block.id,
-                    "content": str(result.result) if not is_error else f"Error: {result.error}",
+                    "content": content,
                 }
                 if is_error:
                     tool_result["is_error"] = True
