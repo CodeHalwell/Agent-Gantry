@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-01
+
+### Changed
+
+- **PyPI publish workflow now uses `pypa/gh-action-pypi-publish@release/v1`** for both
+  PyPI and TestPyPI. The previous `uv publish --publish-url https://test.pypi.org/simple/`
+  invocation pointed at the install index instead of the upload endpoint
+  (`https://test.pypi.org/legacy/`), which made TestPyPI publishes silently fail. The PyPA
+  action handles OIDC trusted publishing and the correct upload URLs natively.
+- **`test-install` job uses the venv interpreter directly** instead of `uv run`, which
+  expects a project context the job didn't provide. Install + import verification are now
+  a single step that prints the installed version and location.
+- **`environment.url` set on both `publish-pypi` and `publish-testpypi`** for clearer
+  deployment links in the GitHub Actions UI.
+
 ### Added
 
 - **`ToolSpecAdapter.format_tool_result` protocol extended with `is_error: bool = False`** — all
@@ -341,7 +356,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.1.0...v0.1.2

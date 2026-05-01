@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-gantry"
-version = "0.1.4"
+version = "0.2.0"
 description = "Universal Tool Orchestration Platform - Intelligent, secure tool orchestration for LLM-based agent systems"
 readme = "README.md"
 license = "MIT"
@@ -206,5 +206,15 @@ prerelease = "if-necessary-or-explicit"
 # to install.
 override-dependencies = [
     "onnxruntime<1.24 ; python_version < '3.11'",
+    # agent-framework-azure-ai-search==0.0.0a1 is a 2.3 KB stub wheel that ships
+    # an empty agent_framework/__init__.py and clobbers the real one from
+    # agent-framework-core when both install into the shared namespace. Force
+    # selection of the 1.0.0bYYMMDD beta line, which packages correctly. The
+    # azure-search-documents override is required because the beta transitively
+    # depends on a pre-release of that package, which uv won't pick up under the
+    # project's "if-necessary-or-explicit" prerelease policy without an explicit
+    # version constraint here.
+    "agent-framework-azure-ai-search>=1.0.0b1",
+    "azure-search-documents>=11.7.0b2",
 ]
 
