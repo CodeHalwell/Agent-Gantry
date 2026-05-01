@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Cross-event-loop failures with `DurableAIAgentWorker` and similar
+  worker-thread loops.** When a gantry was constructed in one context
+  (often module import time) and then driven from a different event
+  loop on a worker thread, contended access to the rate limiter's
+  ``asyncio.Lock`` raised ``RuntimeError: ... is bound to a different
+  event loop`` because ``asyncio`` synchronisation primitives bind to
+  the loop they were first awaited on. Symptoms in the wild: every
+  tool execution returning ``"Error: Function failed."`` (Agent
+  Framework's opaque catch-all) once the durable worker took over.
+  ``RateLimiter`` now keeps one lock per running loop, lazily
+  constructed on first use; closed loops are pruned opportunistically.
+  Bounded leak: one entry per distinct loop ever used, typically
+  1–2 per process.
+- **Sync tool handlers no longer use the deprecated
+  ``asyncio.get_event_loop()``** in
+  ``ExecutionEngine._execute_with_timeout``. Replaced with
+  ``asyncio.to_thread(...)``, which always binds to the running loop
+  and removes another cross-loop hazard for worker-thread setups.
+- **Bridge wrapper now surfaces the underlying exception** instead of
+  letting it propagate up to Agent Framework's tool runner — which
+  rewrites every exception as the unhelpful ``"Error: Function
+  failed."`` string when ``include_detailed_errors`` is off.
+  Wrappers built by ``GantryToolBridge`` (and therefore by
+  ``GantryContextProvider``) catch any exception from
+  ``gantry.execute(...)`` and return a structured
+  ``{"error": "<ExcType>: <message>"}`` JSON string. Failed
+  ``ToolResult``s also include ``error_type`` in the surfaced text.
+- **New cross-loop test suite** (``tests/test_executor_cross_loop.py``)
+  reproduces the durable-worker scenario: gantry built on one loop,
+  driven from a worker-thread loop, with genuine lock contention to
+  force the binding path. The suite also covers exception surfacing
+  for both handler-level and executor-level failures.
+
 ### Added
 
 - **`agent_gantry.query` module** — built-in deterministic query-generation

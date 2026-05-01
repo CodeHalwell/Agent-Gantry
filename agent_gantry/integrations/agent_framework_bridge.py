@@ -150,13 +150,34 @@ def _build_callable_for_tool(
     required_params = set(params_schema.get("required", []))
 
     async def _execute(**kwargs: Any) -> str:
-        result = await gantry.execute(
-            ToolCall(tool_name=tool_name, arguments=kwargs)
-        )
+        # Surface any underlying exception as a structured error string. If
+        # ``gantry.execute`` itself raises (e.g. a cross-event-loop
+        # asyncio.Lock blowup, a connection error, an unexpected validation
+        # error in the executor) the exception would otherwise propagate
+        # into Agent Framework's tool runner, which replaces it with the
+        # opaque ``"Error: Function failed."`` string when
+        # ``include_detailed_errors`` is off (the default). That makes
+        # debugging extremely hard for integrators. We convert any exception
+        # into a JSON ``{"error": "..."}`` payload so the model — and the
+        # human reading the trace — sees the real root cause.
+        try:
+            result = await gantry.execute(
+                ToolCall(tool_name=tool_name, arguments=kwargs)
+            )
+        except Exception as exc:
+            return json.dumps(
+                {"error": f"{type(exc).__name__}: {exc}"}
+            )
         if result.status.value == "success":
             val = result.result
             return val if isinstance(val, str) else json.dumps(val)
-        return json.dumps({"error": result.error or "Tool execution failed"})
+        # Failed ToolResult: prefer the recorded error/error_type, otherwise
+        # fall back to a clear default — never the ambiguous original
+        # "Tool execution failed" with no context.
+        error_text = result.error or "tool execution failed (no error message)"
+        if result.error_type and result.error_type not in error_text:
+            error_text = f"{result.error_type}: {error_text}"
+        return json.dumps({"error": error_text})
 
     # Build the wrapper with proper annotations for AF
     # AF inspects __name__, __doc__, and __annotations__ to generate schemas.
