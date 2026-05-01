@@ -96,7 +96,9 @@ async def sequential_pipeline(
     workflow = SequentialBuilder(participants=[researcher, writer]).build()
     print(f"\n[sequential] workflow built with {2} participants")
     result = await workflow.run(query)
-    print(f"[sequential] result:\n{result}")
+    # AF 1.2.2: orchestration .run() may return AgentResponse; access .value for text.
+    output = getattr(result, "value", None) or getattr(result, "text", None) or str(result)
+    print(f"[sequential] result:\n{output}")
 
 
 async def concurrent_analysts(
@@ -122,7 +124,8 @@ async def concurrent_analysts(
     ).build()
     print(f"\n[concurrent] workflow built with {2} participants")
     result = await workflow.run(brief)
-    print(f"[concurrent] result:\n{result}")
+    output = getattr(result, "value", None) or getattr(result, "text", None) or str(result)
+    print(f"[concurrent] result:\n{output}")
 
 
 async def handoff_triage(
@@ -167,7 +170,8 @@ async def handoff_triage(
     )
     print("\n[handoff] workflow built")
     result = await workflow.run(query)
-    print(f"[handoff] result:\n{result}")
+    output = getattr(result, "value", None) or getattr(result, "text", None) or str(result)
+    print(f"[handoff] result:\n{output}")
 
 
 async def main() -> None:

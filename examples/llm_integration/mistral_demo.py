@@ -36,9 +36,9 @@ async def main():
     print(f"✅ Registered {gantry.tool_count} tools\n")
 
     # 4. Initialize Mistral Client
+    # mistralai 2.x uses an async context-manager client.  Build it fresh for
+    # each request (or wrap multiple calls inside a single `async with` block).
     from mistralai import Mistral
-
-    client = Mistral(api_key=api_key)
 
     # --- Scenario: Dynamic Retrieval ---
     print("--- Scenario: Dynamic Retrieval ---")
@@ -49,14 +49,14 @@ async def main():
     tools = await gantry.retrieve_tools(query, limit=1, score_threshold=0.1)
     print(f"Gantry retrieved {len(tools)} tool(s)")
 
-    # Call Mistral
-    # Mistral's `tools` parameter accepts the same JSON schema structure
-    response = await client.chat.complete_async(
-        model="mistral-large-latest",
-        messages=[{"role": "user", "content": query}],
-        tools=tools,
-        tool_choice="auto",
-    )
+    # Call Mistral — mistralai 2.x: use `async with` for the client lifetime.
+    async with Mistral(api_key=api_key) as client:
+        response = await client.chat.complete_async(
+            model="mistral-large-latest",
+            messages=[{"role": "user", "content": query}],
+            tools=tools,
+            tool_choice="auto",
+        )
 
     tool_calls = response.choices[0].message.tool_calls
     if tool_calls:
@@ -77,25 +77,23 @@ async def main():
     # --- Scenario: Using @with_semantic_tools Decorator (RECOMMENDED) ---
     print("\n--- Scenario: Using @with_semantic_tools Decorator (RECOMMENDED) ---")
 
-    # The decorator uses the default gantry set above
-    # Mistral uses OpenAI-compatible format, so no dialect parameter needed
+    # The decorator uses the default gantry set above.
+    # Mistral uses OpenAI-compatible format, so no dialect parameter needed.
     @with_semantic_tools(limit=1, score_threshold=0.1, prompt_param="user_query")
     async def chat_with_mistral(user_query: str, tools: list[dict[str, Any]] = None):
-        """
-        This function automatically gets relevant tools injected into the 'tools' argument
-        based on the user_query.
-        """
+        """Automatically gets relevant tools injected via the decorator."""
         print(f"Decorator injected {len(tools) if tools else 0} tools")
 
-        response = await client.chat.complete_async(
-            model="mistral-large-latest",
-            messages=[{"role": "user", "content": user_query}],
-            tools=tools,
-            tool_choice="auto",
-        )
+        async with Mistral(api_key=api_key) as _client:
+            _response = await _client.chat.complete_async(
+                model="mistral-large-latest",
+                messages=[{"role": "user", "content": user_query}],
+                tools=tools,
+                tool_choice="auto",
+            )
 
-        if response.choices[0].message.tool_calls:
-            tc = response.choices[0].message.tool_calls[0]
+        if _response.choices[0].message.tool_calls:
+            tc = _response.choices[0].message.tool_calls[0]
             print(f"Mistral (via decorator) called: {tc.function.name}")
             return tc.function.name
         return "No tool called"

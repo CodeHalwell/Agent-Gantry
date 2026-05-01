@@ -504,49 +504,58 @@ response = model.generate_content("What's AAPL stock price?")
 
 ### Package
 ```bash
-pip install mistralai>=1.0.0
+pip install mistralai>=2.0.0
 ```
 
 ### Client Initialization
+
+mistralai 2.x uses an **async context-manager** client.  Use `async with` for all
+call sites — the SDK manages connection-pool lifecycle automatically.
+
 ```python
 from mistralai import Mistral
 
-client = Mistral(api_key="your-api-key")
+# Async usage (recommended — use async with for proper resource cleanup)
+async with Mistral(api_key="your-api-key") as client:
+    response = await client.chat.complete_async(
+        model="mistral-large-latest",
+        messages=[{"role": "user", "content": "Hello, Mistral!"}]
+    )
+    print(response.choices[0].message.content)
 ```
 
 ### Key Methods
 
-#### Chat Complete
+#### Chat Complete (async)
 ```python
-response = client.chat.complete(
-    model="mistral-large-latest",
-    messages=[
-        {"role": "user", "content": "Hello, Mistral!"}
-    ]
-)
-print(response.choices[0].message.content)
+async with Mistral(api_key="your-api-key") as client:
+    response = await client.chat.complete_async(
+        model="mistral-large-latest",
+        messages=[
+            {"role": "user", "content": "Hello, Mistral!"}
+        ]
+    )
+    print(response.choices[0].message.content)
 ```
 
 #### Fill-in-the-Middle (FIM)
 ```python
-# Code completion
-response = client.fim.complete(
-    model="codestral-latest",
-    prompt="def fibonacci(n):",
-    suffix="    return result"
-)
-print(response.choices[0].message.content)
+async with Mistral(api_key="your-api-key") as client:
+    response = await client.fim.complete_async(
+        model="codestral-latest",
+        prompt="def fibonacci(n):",
+        suffix="    return result"
+    )
+    print(response.choices[0].message.content)
 ```
 
 #### Agents
 ```python
-# Using Mistral's agent capabilities
-response = client.agents.complete(
-    agent_id="your-agent-id",
-    messages=[
-        {"role": "user", "content": "Help me with a task"}
-    ]
-)
+async with Mistral(api_key="your-api-key") as client:
+    response = await client.agents.complete_async(
+        agent_id="your-agent-id",
+        messages=[{"role": "user", "content": "Help me with a task"}]
+    )
 ```
 
 ### Agent-Gantry Integration
@@ -555,7 +564,6 @@ response = client.agents.complete(
 from mistralai import Mistral
 from agent_gantry import AgentGantry
 
-client = Mistral(api_key="your-key")
 gantry = AgentGantry()
 
 @gantry.register
@@ -565,15 +573,17 @@ def send_notification(message: str, channel: str) -> str:
 
 await gantry.sync()
 
-# Get tools in OpenAI-compatible format
+# Get tools in OpenAI-compatible format (Mistral accepts the same schema)
 tools = await gantry.retrieve_tools("send notification")
 
-# Use with Mistral (OpenAI-compatible format)
-response = client.chat.complete(
-    model="mistral-large-latest",
-    messages=[{"role": "user", "content": "Notify the team"}],
-    tools=tools
-)
+# Use with Mistral 2.x async context-manager client
+async with Mistral(api_key="your-key") as client:
+    response = await client.chat.complete_async(
+        model="mistral-large-latest",
+        messages=[{"role": "user", "content": "Notify the team"}],
+        tools=tools,
+        tool_choice="auto",
+    )
 ```
 
 ---

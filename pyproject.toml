@@ -50,27 +50,30 @@ dev = [
     "python-dotenv>=1.0.0",
 ]
 agent-frameworks = [
-    # Bump to 1.2.1: picks up GeminiChatClient (1.1.0), HandoffBuilder fixes (1.1.1),
-    # functional workflow API and AF→A2A bridge (1.2.0).
-    "agent-framework>=1.2.1,<2.0.0",
+    # Bump to 1.2.2: picks up GeminiChatClient (1.1.0), HandoffBuilder fixes (1.1.1),
+    # functional workflow API and AF→A2A bridge (1.2.0), hosted durable workflow
+    # support and AgentResponse terminal-output standardisation (1.2.2).
+    # Breaking change in 1.2.2: Workflow.as_agent().run() now returns AgentResponse;
+    # access response.value for the text output (see agent_framework_bridge.py docs).
+    "agent-framework>=1.2.2,<2.0.0",
     "autogen-agentchat>=0.7.5",
     "autogen-ext[openai]>=0.7.5",
     # crewai>=1.12.0 pins opentelemetry-api<1.35, which conflicts with
-    # agent-framework>=1.2.1 (requires opentelemetry-api>=1.39.0). crewai==1.6.1
-    # co-installs fine with agent-framework>=1.2.1 — it is crewai>=1.12.0 that
-    # introduces the incompatibility. To use crewai>=1.12.0, install it in a
-    # separate environment without agent-framework.
+    # agent-framework>=1.2.2 (requires opentelemetry-api>=1.39.0). crewai==1.6.1
+    # co-installs fine with agent-framework>=1.2.2 — it is crewai>=1.12.0 that
+    # introduces the incompatibility. Latest crewai is 1.14.4; to use it, install
+    # in a separate environment without agent-framework.
     "crewai>=1.6.1",
-    "langchain>=1.2.15",
+    "langchain>=1.2.17",
     "langchain-openai>=1.2.1",
     "langgraph>=1.1.10",
     "llama-index-core>=0.14.21",
     "llama-index-llms-openai>=0.7.7",
-    # semantic-kernel>=1.41.3 conflicts with agent-framework>=1.2.1 on some
+    # semantic-kernel>=1.41.3 conflicts with agent-framework>=1.2.2 on some
     # Python versions due to opentelemetry-api version incompatibility.
     # Upgrade semantic-kernel in a standalone environment without agent-framework.
     "semantic-kernel>=1.30.0",
-    # google-adk 1.31.1 conflicts with agent-framework>=1.2.1 on Python 3.13/Windows;
+    # google-adk 1.32.0 conflicts with agent-framework>=1.2.2 on Python 3.13/Windows;
     # bump this floor in a standalone (no agent-framework) environment.
     "google-adk>=1.14.1",
 ]
@@ -134,7 +137,7 @@ nomic = [
     "einops>=0.8.1",
 ]
 mcp = [
-    "mcp>=1.0.0",
+    "mcp>=1.27.0",
 ]
 a2a = [
     "httpx>=0.24.0",
@@ -152,11 +155,10 @@ google-vertexai = [
     "google-cloud-aiplatform>=1.70.0",
 ]
 mistral = [
-    # mistralai 2.x introduces breaking changes (async context-manager client).
-    # Upgrade to >=2.0.0 requires updating LLMClient.classify_intent (Mistral
-    # branch) to use `async with Mistral(...) as client`. Keep <2.0.0 until
-    # that migration is complete.
-    "mistralai>=1.0.0,<2.0.0",
+    # mistralai 2.x (current stable: 2.4.4) requires async context-manager
+    # client: `async with Mistral(...) as client:`. LLMClient.classify_intent
+    # has been migrated to this pattern (api_key stored, client built per-call).
+    "mistralai>=2.0.0",
 ]
 groq = [
     "groq>=1.2.0",

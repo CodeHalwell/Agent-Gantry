@@ -184,8 +184,12 @@ async def main() -> str:
     print("\n--- Running fan-out WorkflowAgent ---")
     user_query = "My last invoice has an incorrect charge."
     response = await workflow_agent.run(user_query)
-    print(f"Response: {response}")
-    return str(response)
+    # AF 1.2.2: WorkflowAgent.run() (Workflow.as_agent()) returns AgentResponse.
+    # Access .value for the text output; fall back to .text or str() for
+    # compatibility with earlier AF 1.x releases.
+    output = getattr(response, "value", None) or getattr(response, "text", None) or str(response)
+    print(f"Response: {output}")
+    return output
 
 
 if __name__ == "__main__":

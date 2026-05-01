@@ -58,14 +58,11 @@ class LLMClient:
 
             self._client = genai.Client(api_key=api_key)
         elif self._provider == "mistral":
-            from mistralai import Mistral
-
-            # mistralai 2.x requires `async with Mistral(...) as client:` for proper
-            # resource cleanup.  Migrating to 2.x means restructuring this class so
-            # that the context manager wraps each call instead of storing a long-lived
-            # client.  Until that work is done, mistralai is pinned to <2.0.0 in
-            # pyproject.toml.  See the migration note in the project CHANGELOG.
-            self._client = Mistral(api_key=api_key)
+            # mistralai 2.x dropped the long-lived client pattern in favour of
+            # `async with Mistral(...) as client:`.  Store only the api_key here;
+            # classify_intent() builds and tears down the client per invocation
+            # via the async context manager.  See the mistral branch below.
+            self._mistral_api_key = api_key
         elif self._provider == "groq":
             from groq import AsyncGroq
 
@@ -164,13 +161,17 @@ Respond with ONLY the intent category name (e.g., "data_query"), nothing else.""
             )
             result = response.text.strip()
         elif self._provider == "mistral":
-            # mistralai >= 1.0 exposes a native async method: chat.complete_async()
-            response = await self._client.chat.complete_async(
-                model=self._model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=self._config.max_tokens,
-                temperature=self._config.temperature,
-            )
+            # mistralai 2.x: client is an async context manager; build and
+            # tear down per invocation to respect the new resource model.
+            from mistralai import Mistral
+
+            async with Mistral(api_key=self._mistral_api_key) as _mistral:
+                response = await _mistral.chat.complete_async(
+                    model=self._model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=self._config.max_tokens,
+                    temperature=self._config.temperature,
+                )
             result = response.choices[0].message.content.strip()
         else:
             raise ValueError(f"Unsupported provider: {self._provider}")
@@ -196,4 +197,6 @@ Respond with ONLY the intent category name (e.g., "data_query"), nothing else.""
         Returns:
             True if the client is initialized and ready
         """
+        if self._provider == "mistral":
+            return hasattr(self, "_mistral_api_key") and bool(self._mistral_api_key)
         return self._client is not None
