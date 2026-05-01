@@ -263,3 +263,61 @@ async def test_bridge_wrapper_surfaces_executor_failure_as_json(
     assert "error" in payload
     assert "simulated cross-loop failure" in payload["error"]
     assert "RuntimeError" in payload["error"]
+
+
+# ---------------------------------------------------------------------------
+# High-fidelity DurableAIAgentWorker simulation:
+# ``agent_framework_durabletask.DurableAIAgentWorker`` calls
+# ``asyncio.run(self._agent_entity.run(request))`` per inbound request, which
+# constructs and tears down a fresh event loop every time. A module-level
+# gantry therefore sees N distinct loops over its lifetime — the exact
+# scenario where eager ``asyncio.Lock`` binding fails.
+# ---------------------------------------------------------------------------
+
+
+def test_module_level_gantry_survives_asyncio_run_per_request():
+    """Smoke-test ``DurableAIAgentWorker``'s per-request ``asyncio.run``
+    pattern: ``DurableAIAgentWorker.process_request`` calls
+    ``asyncio.run(self._agent_entity.run(request))`` per inbound request,
+    constructing and tearing down a fresh event loop every time.
+
+    A single ``AgentGantry`` is constructed at "module load" (no running
+    loop), then driven via ``asyncio.run`` repeatedly. This exercises
+    the full wrapper → executor → rate-limiter path on N distinct loops.
+
+    Note: in Python 3.11 ``asyncio.Lock`` only binds to a loop on the
+    contended slow path (``_get_loop().create_future()``), so this smoke
+    test alone does not reliably reproduce the cross-loop bug — see
+    :func:`test_rate_limiter_lock_is_bound_to_running_loop_under_contention`
+    for the targeted regression test. This one guards against new
+    cross-loop primitives sneaking into the per-request path.
+    """
+    gantry = _build_gantry_no_loop()
+    bridge = GantryToolBridge(gantry, as_function_tool=False)
+    sync_wrapper = bridge.wrap_single(
+        next(t for t in gantry.list_tools_sync() if t.name == "constant_tool")
+    )
+    async_wrapper = bridge.wrap_single(
+        next(t for t in gantry.list_tools_sync() if t.name == "async_constant_tool")
+    )
+
+    async def _one_request(seed: int) -> list[str]:
+        # Three concurrent invocations within a single request force
+        # contention on the rate limiter's lock — the slow path that
+        # actually binds ``asyncio.Lock`` to the current loop.
+        outs = await asyncio.gather(
+            sync_wrapper(seed=seed),
+            async_wrapper(seed=seed),
+            sync_wrapper(seed=seed + 1),
+        )
+        return list(outs)
+
+    for i in range(5):
+        results = asyncio.run(_one_request(i))
+        # No JSON-error envelopes — every wrapper call must succeed cleanly.
+        for r in results:
+            assert not r.startswith("{") or '"error"' not in r, (
+                f"iteration {i}: wrapper surfaced an error: {r}"
+            )
+        assert any(f"ok-{i}" in r for r in results)
+        assert any(f"async-ok-{i}" in r for r in results)

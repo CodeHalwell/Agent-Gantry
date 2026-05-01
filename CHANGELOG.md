@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ``ExecutionEngine._execute_with_timeout``. Replaced with
   ``asyncio.to_thread(...)``, which always binds to the running loop
   and removes another cross-loop hazard for worker-thread setups.
+- **``NomicEmbedder`` no longer uses ``asyncio.get_event_loop()``** in
+  ``embed_text``, ``embed_batch``, ``embed_query``, and ``health_check``.
+  Replaced all four with ``asyncio.to_thread(...)``. The previous code
+  warned under ``-W error::DeprecationWarning`` on 3.10+ and would have
+  picked up the wrong loop in ``DurableAIAgentWorker``-style setups.
 - **Bridge wrapper now surfaces the underlying exception** instead of
   letting it propagate up to Agent Framework's tool runner — which
   rewrites every exception as the unhelpful ``"Error: Function
