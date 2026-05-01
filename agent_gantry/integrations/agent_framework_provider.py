@@ -68,10 +68,10 @@ primitive (``WorkflowBuilder``, ``SequentialBuilder``, ``HandoffBuilder``,
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 import logging
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
 from agent_gantry.query import last_user_text as _default_query_generator

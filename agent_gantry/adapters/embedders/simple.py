@@ -15,7 +15,6 @@ import hashlib
 import logging
 import math
 import re
-import warnings
 from collections.abc import Iterable
 
 from agent_gantry.adapters.embedders.base import EmbeddingAdapter
