@@ -12,14 +12,11 @@ Cohere) and pass a non-zero ``score_threshold`` only with those.
 from __future__ import annotations
 
 import hashlib
-import logging
 import math
 import re
 from collections.abc import Iterable
 
 from agent_gantry.adapters.embedders.base import EmbeddingAdapter
-
-logger = logging.getLogger(__name__)
 
 
 class SimpleEmbedder(EmbeddingAdapter):

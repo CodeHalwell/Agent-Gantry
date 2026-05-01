@@ -17,8 +17,9 @@ from typing import Any
 def _msg_text(msg: Any) -> str:
     """Pull plain text out of a message-like object.
 
-    Tries ``.text`` first (AF native), falls back to ``.content`` (OpenAI
-    dialect), then ``str()``. Returns the empty string if nothing is found.
+    Tries ``.text`` first (AF native), then ``.content`` (OpenAI dialect),
+    and for dict-shaped messages checks ``"text"`` and ``"content"``.
+    Returns the empty string if no non-empty string content is found.
     """
     text = getattr(msg, "text", None)
     if isinstance(text, str) and text.strip():

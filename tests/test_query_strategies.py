@@ -169,7 +169,10 @@ async def test_simple_embedder_warning_on_threshold():
 
     SimpleEmbedder._warned_about_threshold = False  # reset test-local
 
-    g = AgentGantry()
+    # Pin SimpleEmbedder explicitly: without this the default config selects
+    # ``sentence_transformers`` whenever that extra is installed, which
+    # bypasses the SimpleEmbedder-specific warning code path.
+    g = AgentGantry(embedder=SimpleEmbedder())
 
     @g.register
     def some_tool(x: int) -> int:

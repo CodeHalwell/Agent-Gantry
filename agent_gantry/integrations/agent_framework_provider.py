@@ -256,20 +256,11 @@ class GantryContextProvider:
         query_generator = query_generator or _default_query_generator
 
         if required:
-            registry = getattr(gantry, "_registry", None)
-            missing = []
-            for name in required:
-                tool_def = None
-                if registry is not None:
-                    lookup = getattr(registry, "get_tool_by_name", None)
-                    if callable(lookup):
-                        tool_def = lookup(name)
-                    if tool_def is None:
-                        lookup = getattr(registry, "get_tool", None)
-                        if callable(lookup):
-                            tool_def = lookup(name)
-                if tool_def is None:
-                    missing.append(name)
+            known = gantry.list_tools_sync()
+            available = {t.name for t in known} | {
+                f"{t.namespace}.{t.name}" for t in known
+            }
+            missing = [name for name in required if name not in available]
             if missing:
                 raise MissingRequiredToolError(
                     f"GantryContextProvider: required tool(s) not found in gantry: "
@@ -345,7 +336,7 @@ class GantryContextProvider:
                 # retrieval per LLM round; we still inject always_include /
                 # skill tools at run-start so they are present even if the
                 # middleware is not attached.
-                tools, seen = await self._collect_tools(
+                tools, _ = await self._collect_tools(
                     context.input_messages,
                     include_dynamic=(self._query_strategy == "per_run"),
                 )
@@ -388,28 +379,39 @@ class GantryContextProvider:
                 return _per_call_retrieval
 
             async def _refresh_tools_on_chat_context(self, context: Any) -> None:
-                """Mutate ``context.options['tools']`` for the current round."""
+                """Mutate ``context.options['tools']`` for the current round.
+
+                Strategy: drop **all** tools whose names are known to the
+                gantry registry (these are tools we — or another provider
+                bridging the same gantry — could have injected). Anything
+                else in ``existing`` is foreign (skills from another
+                provider, AF-native tools added at construction time) and
+                is preserved. Then append the freshly retrieved top-k plus
+                always_include / skill pins. This guarantees the per-round
+                top-k stays bounded and stale dynamic selections from
+                earlier rounds do not accumulate.
+                """
                 options = getattr(context, "options", None)
                 existing = []
                 if isinstance(options, dict):
                     existing = list(options.get("tools") or [])
 
-                # Preserve tools contributed by other providers / static tools.
-                # We only swap out the slice we previously injected, recognised
-                # by name match against everything we'd produce now.
                 messages = (
                     getattr(context, "messages", None)
                     or getattr(context, "input_messages", None)
                     or []
                 )
-                fresh, seen = await self._collect_tools(messages, include_dynamic=True)
-                fresh_names = {_tool_name(t) for t in fresh if _tool_name(t)}
+                fresh, _ = await self._collect_tools(
+                    messages, include_dynamic=True
+                )
+                gantry_names = self._all_known_tool_names()
 
-                # Preserve everything that wasn't ours; replace ours with fresh.
                 preserved = []
+                dropped = 0
                 for t in existing:
                     name = _tool_name(t)
-                    if name and name in fresh_names:
+                    if name and name in gantry_names:
+                        dropped += 1
                         continue
                     preserved.append(t)
 
@@ -436,11 +438,31 @@ class GantryContextProvider:
 
                 logger.debug(
                     "GantryContextProvider: refreshed tools per-call "
-                    "(%d preserved + %d gantry = %d total)",
+                    "(%d preserved + %d gantry, %d stale dropped, %d total)",
                     len(preserved),
                     len(fresh),
+                    dropped,
                     len(combined),
                 )
+
+            def _all_known_tool_names(self) -> set[str]:
+                """Return every tool name registered in the gantry.
+
+                Used to identify which entries in ``context.options['tools']``
+                were produced by this gantry (or any other provider sharing
+                it) so they can be dropped before re-injecting the fresh
+                per-round selection.
+                """
+                registry = getattr(self._gantry, "_registry", None)
+                if registry is None:
+                    return set()
+                lister = getattr(registry, "list_tools", None)
+                if not callable(lister):
+                    return set()
+                try:
+                    return {t.name for t in lister() if getattr(t, "name", None)}
+                except Exception:
+                    return set()
 
             # ----- Tool assembly -----------------------------------------
             async def _collect_tools(
