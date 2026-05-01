@@ -202,7 +202,7 @@ client = AsyncAnthropic()
 @with_semantic_tools(dialect="anthropic", limit=3)
 async def chat(messages, *, tools=None):
     return await client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         messages=messages,
         tools=tools,  # Automatically converted to Anthropic format
         max_tokens=1024
@@ -219,7 +219,7 @@ client = genai.Client()
 @with_semantic_tools(dialect="gemini", limit=3)
 async def chat(prompt, *, tools=None):
     return client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-2.5-flash",
         contents=prompt,
         tools=tools  # Automatically converted to Gemini format
     )
