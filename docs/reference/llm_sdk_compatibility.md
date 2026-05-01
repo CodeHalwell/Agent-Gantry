@@ -477,17 +477,15 @@ def get_stock_price(symbol: str) -> str:
 
 await gantry.sync()
 
-# Retrieve tools and convert for Vertex AI
-openai_tools = await gantry.retrieve_tools("stock price")
+# Retrieve tools in Gemini format and unpack directly into FunctionDeclaration.
+from agent_gantry.schema.query import ConversationContext, ToolQuery
 
-# Convert to Vertex AI FunctionDeclaration format
+retrieval = await gantry.retrieve(
+    ToolQuery(context=ConversationContext(query="stock price"), limit=5)
+)
 vertex_functions = [
-    FunctionDeclaration(
-        name=tool["function"]["name"],
-        description=tool["function"]["description"],
-        parameters=tool["function"]["parameters"]
-    )
-    for tool in openai_tools
+    FunctionDeclaration(**t.tool.to_dialect("gemini"))
+    for t in retrieval.tools
 ]
 
 model = GenerativeModel(
@@ -643,7 +641,7 @@ OpenRouter and other OpenAI-compatible providers (DeepSeek, Perplexity, Together
 
 ### Package
 ```bash
-pip install openai>=1.0.0
+pip install openai>=2.33.0
 ```
 
 ### Client Initialization
@@ -767,30 +765,30 @@ tools = await gantry.retrieve_tools("query", dialect="openai_responses")
 
 ### Anthropic Format
 ```python
-def to_anthropic_tools(openai_tools):
-    return [
-        {
-            "name": tool["function"]["name"],
-            "description": tool["function"]["description"],
-            "input_schema": tool["function"]["parameters"]
-        }
-        for tool in openai_tools
-    ]
+# Use Agent-Gantry's built-in dialect converter — avoids manual field-mapping errors.
+from agent_gantry.schema.query import ConversationContext, ToolQuery
+
+retrieval = await gantry.retrieve(
+    ToolQuery(context=ConversationContext(query="your query"), limit=5)
+)
+anthropic_tools = [t.tool.to_dialect("anthropic") for t in retrieval.tools]
+# Each entry: {"name": "...", "description": "...", "input_schema": {...}}
 ```
 
 ### Vertex AI Format
 ```python
 from vertexai.generative_models import FunctionDeclaration
+from agent_gantry.schema.query import ConversationContext, ToolQuery
 
-def to_vertex_functions(openai_tools):
-    return [
-        FunctionDeclaration(
-            name=tool["function"]["name"],
-            description=tool["function"]["description"],
-            parameters=tool["function"]["parameters"]
-        )
-        for tool in openai_tools
-    ]
+retrieval = await gantry.retrieve(
+    ToolQuery(context=ConversationContext(query="your query"), limit=5)
+)
+# to_dialect("gemini") returns {"name": ..., "description": ..., "parameters": ...}
+# which maps directly onto FunctionDeclaration's constructor.
+vertex_functions = [
+    FunctionDeclaration(**t.tool.to_dialect("gemini"))
+    for t in retrieval.tools
+]
 ```
 
 ---

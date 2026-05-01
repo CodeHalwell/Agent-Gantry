@@ -65,7 +65,7 @@ agent-frameworks = [
     # introduces the incompatibility. To use crewai>=1.12.0, install it in a
     # separate environment without agent-framework.
     "crewai>=1.6.1",
-    "langchain>=1.2.16",
+    "langchain>=1.2.17",
     "langchain-openai>=1.2.1",
     "langgraph>=1.1.10",
     "llama-index-core>=0.14.21",
@@ -150,7 +150,7 @@ anthropic = [
     "anthropic>=0.97.0",
 ]
 google-genai = [
-    "google-genai>=1.0.0",
+    "google-genai>=1.74.0",
 ]
 google-vertexai = [
     "google-cloud-aiplatform>=1.70.0",

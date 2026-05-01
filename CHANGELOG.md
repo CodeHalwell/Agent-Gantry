@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (May 2026 Modernisation Audit)
+
+- **`README.md`**: Updated deprecated model identifiers in quick-start examples:
+  `claude-sonnet-4-20250514` → `claude-sonnet-4-6` (retiring 15 June 2026);
+  `gemini-2.0-flash` → `gemini-2.5-flash` (deprecated; service shutdown imminent).
+  *Source: https://platform.claude.com/docs/en/docs/about-claude/models,
+  https://ai.google.dev/gemini-api/docs/models*
+  *Risk: none — documentation only.*
+
+- **`docs/reference/llm_sdk_compatibility.md`**:
+  - OpenRouter section: corrected `pip install openai>=1.0.0` → `>=2.33.0` (missed
+    in April 2026 audit).
+  - Tool Format Conversion → Anthropic: replaced deprecated manual
+    `to_anthropic_tools()` helper with the canonical `to_dialect("anthropic")`
+    pattern (appendix section was missed in April 2026 audit).
+  - Tool Format Conversion → Vertex AI and the Vertex AI integration example:
+    now use `to_dialect("gemini")` + `**`-unpacking into `FunctionDeclaration`,
+    eliminating the indirect two-step conversion from OpenAI format.
+
+### Changed (May 2026 Modernisation Audit)
+
+- **Dependency: `google-genai` floor bumped to `>=1.74.0`** (was `>=1.0.0`). The
+  previous floor was 74 minor versions behind the latest stable release (1.74.0).
+  Bumping ensures constrained resolver environments select a supported SDK version.
+  The `client.aio.models.generate_content` API used by `LLMClient` is stable.
+  *Risk: safe internal — no API changes required.*
+
+- **Dependency: `langchain` floor bumped to `>=1.2.17`** (was `>=1.2.16`). Minor
+  patch release. *Risk: safe internal.*
+
+### Documentation (May 2026 Modernisation Audit)
+
+- **`agent_gantry/integrations/anthropic_features.py`**: Clarified that
+  `claude-opus-4-7` does **not** support extended thinking (only adaptive thinking).
+  Updated `AnthropicFeatures`, `AnthropicClient`, and `create_anthropic_client`
+  docstrings accordingly.
+  *Source: https://platform.claude.com/docs/en/docs/about-claude/models*
+
 ### Fixed
 
 - **Cross-event-loop failures with `DurableAIAgentWorker` and similar
