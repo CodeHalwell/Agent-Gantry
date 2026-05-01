@@ -7,6 +7,117 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Cross-event-loop failures with `DurableAIAgentWorker` and similar
+  worker-thread loops.** When a gantry was constructed in one context
+  (often module import time) and then driven from a different event
+  loop on a worker thread, contended access to the rate limiter's
+  ``asyncio.Lock`` raised ``RuntimeError: ... is bound to a different
+  event loop`` because ``asyncio`` synchronisation primitives bind to
+  the loop they were first awaited on. Symptoms in the wild: every
+  tool execution returning ``"Error: Function failed."`` (Agent
+  Framework's opaque catch-all) once the durable worker took over.
+  ``RateLimiter`` now keeps one lock per running loop, lazily
+  constructed on first use; closed loops are pruned opportunistically.
+  Bounded leak: one entry per distinct loop ever used, typically
+  1–2 per process.
+- **Sync tool handlers no longer use the deprecated
+  ``asyncio.get_event_loop()``** in
+  ``ExecutionEngine._execute_with_timeout``. Replaced with
+  ``asyncio.to_thread(...)``, which always binds to the running loop
+  and removes another cross-loop hazard for worker-thread setups.
+- **``NomicEmbedder`` no longer uses ``asyncio.get_event_loop()``** in
+  ``embed_text``, ``embed_batch``, ``embed_query``, and ``health_check``.
+  Replaced all four with ``asyncio.to_thread(...)``. The previous code
+  warned under ``-W error::DeprecationWarning`` on 3.10+ and would have
+  picked up the wrong loop in ``DurableAIAgentWorker``-style setups.
+- **Bridge wrapper now surfaces the underlying exception** instead of
+  letting it propagate up to Agent Framework's tool runner — which
+  rewrites every exception as the unhelpful ``"Error: Function
+  failed."`` string when ``include_detailed_errors`` is off.
+  Wrappers built by ``GantryToolBridge`` (and therefore by
+  ``GantryContextProvider``) catch any exception from
+  ``gantry.execute(...)`` and return a structured
+  ``{"error": "<ExcType>: <message>"}`` JSON string. Failed
+  ``ToolResult``s also include ``error_type`` in the surfaced text.
+- **New cross-loop test suite** (``tests/test_executor_cross_loop.py``)
+  reproduces the durable-worker scenario: gantry built on one loop,
+  driven from a worker-thread loop, with genuine lock contention to
+  force the binding path. The suite also covers exception surfacing
+  for both handler-level and executor-level failures.
+- **New durable-worker integration test**
+  (``tests/test_durable_worker_integration.py``) drives a real
+  :class:`agent_framework.RawAgent` with a ``BaseChatClient`` subclass
+  that emits one or more ``function_call`` items, then runs each
+  request via ``asyncio.run`` — the exact loop topology used by
+  :class:`agent_framework_durabletask.DurableAIAgentWorker`. Covers:
+  sequential ``asyncio.run`` requests with sync handlers; parallel
+  function-call dispatch with async handlers (real lock contention);
+  worker-thread execution; and worker-thread → main-thread
+  sequencing. Tools are pre-resolved once at "module load" via
+  :class:`GantryToolBridge`, mirroring the integrator pattern.
+
+### Added
+
+- **`agent_gantry.query` module** — built-in deterministic query-generation
+  strategies for semantic retrieval: `last_user_text` (default),
+  `last_assistant_text`, `last_tool_result`, `concatenate_recent`, and
+  `fallback_chain`. Strategies operate on AF messages, dicts, or anything
+  exposing `role` + `text`/`content`.
+- **`GantryContextProvider` per-call retrieval** — new
+  `query_strategy="per_call"` (default `"per_run"` is back-compat) plus
+  `query_generator=...` parameter for per-chat-round semantic refresh.
+  `provider.as_chat_middleware()` returns the AF chat middleware that wires
+  the per-round refresh into `Agent(middleware=[...])`. Solves the
+  "tool selection is fixed for the whole `agent.run()`" limitation flagged
+  by integrators of multi-step workflows.
+- **`required=[...]` parameter on `GantryContextProvider`** — hard pins a
+  set of tools and raises `MissingRequiredToolError` at construction time
+  if any are missing from the gantry. Catches typos / dropped registrations
+  earlier than runtime agent failure.
+- **Public read-only properties on `GantryContextProvider`** — `top_k`,
+  `score_threshold`, `query_strategy`, `always_include`, `required`,
+  `gantry`, `bridge`. External observability code can read configuration
+  without poking at private attributes.
+- **`AgentGantry.preview(query, ...)`** — read-only ranking helper that
+  returns `(qualified_name, score)` pairs, useful for calibrating
+  `score_threshold` without spinning up an agent.
+- **`AgentGantry.list_tools_sync()`** — sync, in-memory inspection of
+  registered tools (no `await`, no vector store round-trip). Complements
+  the existing async `list_tools()`.
+- **`agent_gantry.adapters.embedders` re-exports `SentenceTransformersEmbedder`,
+  `OpenAIEmbedder`, `AzureOpenAIEmbedder`** alongside `NomicEmbedder` and
+  `SimpleEmbedder`, all behind lazy imports — you can write
+  `from agent_gantry.adapters.embedders import SentenceTransformersEmbedder`
+  without knowing the deep submodule path. Same pattern applied to
+  `agent_gantry.adapters.rerankers` (`CohereReranker`, `CrossEncoderReranker`).
+- **Tests** — `tests/test_query_strategies.py` covers the new query module,
+  `preview`, `list_tools_sync`, the `SimpleEmbedder` warning, FunctionTool
+  registration, and adapter re-exports.
+
+### Changed
+
+- **`AgentGantry.register()` now accepts `agent_framework.tool`-decorated
+  FunctionTool objects** (or any wrapper exposing `.name` / `.func`).
+  Previously raised `AttributeError: 'FunctionTool' object has no attribute
+  '__name__'`. Bare callables continue to work unchanged.
+- **`SimpleEmbedder` warns when paired with `score_threshold > 0.0`** —
+  hash-based similarity scores cluster tightly regardless of relevance, so
+  a non-zero threshold typically returns 0 tools silently. The first
+  retrieval call now emits a `UserWarning` recommending a real embedder.
+- **`SimpleEmbedder` docstring** updated to lead with "for testing only —
+  produces near-uniform similarity scores", to make its non-production
+  nature obvious from `help(SimpleEmbedder)`.
+- **`EmbeddingAdapter` docstring** corrected: lists actual implementations
+  (`SimpleEmbedder`, `NomicEmbedder`, `SentenceTransformersEmbedder`,
+  `OpenAIEmbedder`, `AzureOpenAIEmbedder`) instead of the old typo'd
+  `SentenceTransformerEmbedder` (singular).
+- **`SentenceTransformersEmbedder` no longer triggers a `FutureWarning`**
+  on first init — calls `get_embedding_dimension()` when available and
+  falls back to the deprecated `get_sentence_embedding_dimension()` only
+  on older releases.
+
 ## [0.2.0] - 2026-05-01
 
 ### Changed

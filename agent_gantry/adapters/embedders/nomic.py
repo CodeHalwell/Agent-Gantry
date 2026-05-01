@@ -171,9 +171,8 @@ class NomicEmbedder(EmbeddingAdapter):
         prefixed_text = f"{self._task_prefix}{text}"
 
         # Generate embedding (run in thread pool to avoid blocking event loop)
-        loop = asyncio.get_event_loop()
-        embedding = await loop.run_in_executor(
-            None, lambda: self._model.encode([prefixed_text], normalize_embeddings=True)
+        embedding = await asyncio.to_thread(
+            lambda: self._model.encode([prefixed_text], normalize_embeddings=True)
         )
         result = embedding.tolist()
 
@@ -211,9 +210,8 @@ class NomicEmbedder(EmbeddingAdapter):
         if batch_size is not None:
             kwargs["batch_size"] = batch_size
 
-        loop = asyncio.get_event_loop()
-        embeddings = await loop.run_in_executor(
-            None, lambda: self._model.encode(prefixed_texts, **kwargs)
+        embeddings = await asyncio.to_thread(
+            lambda: self._model.encode(prefixed_texts, **kwargs)
         )
         result = embeddings.tolist()
 
@@ -242,9 +240,8 @@ class NomicEmbedder(EmbeddingAdapter):
         prefixed_query = f"search_query: {query}"
 
         # Generate embedding (run in thread pool to avoid blocking event loop)
-        loop = asyncio.get_event_loop()
-        embedding = await loop.run_in_executor(
-            None, lambda: self._model.encode([prefixed_query], normalize_embeddings=True)
+        embedding = await asyncio.to_thread(
+            lambda: self._model.encode([prefixed_query], normalize_embeddings=True)
         )
         result = embedding.tolist()
 
@@ -263,9 +260,8 @@ class NomicEmbedder(EmbeddingAdapter):
         try:
             self._ensure_initialized()
             # Quick sanity check (run in thread pool to avoid blocking event loop)
-            loop = asyncio.get_event_loop()
-            test_embedding = await loop.run_in_executor(
-                None, lambda: self._model.encode(["test"], normalize_embeddings=True)
+            test_embedding = await asyncio.to_thread(
+                lambda: self._model.encode(["test"], normalize_embeddings=True)
             )
             return len(test_embedding[0]) > 0
         except Exception:

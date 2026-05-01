@@ -2,12 +2,23 @@
 Rate limiting for tool execution.
 
 Provides rate limiting capabilities to prevent abuse and manage resource consumption.
+
+asyncio synchronisation primitives (``asyncio.Lock`` etc.) bind to the event
+loop they are first awaited on. Constructing a single ``asyncio.Lock`` inside
+``RateLimiter.__init__`` and reusing it across multiple loops — for example a
+gantry built at import time and then driven from a worker-thread loop owned by
+``DurableAIAgentWorker`` — produces ``RuntimeError: ... is bound to a
+different event loop`` on the second loop. To stay correct in those setups we
+keep one ``asyncio.Lock`` per running loop, lazily constructed via
+:func:`_lock_for_running_loop`. Each loop sees its own lock and concurrent
+counters remain consistent within that loop.
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
+import weakref
 from collections import defaultdict, deque
 from typing import TYPE_CHECKING, Any
 
@@ -57,7 +68,36 @@ class RateLimiter:
 
         # Concurrent execution tracking
         self._concurrent: dict[str, int] = defaultdict(int)
-        self._concurrent_lock = asyncio.Lock()
+        # One Lock per running event loop — see module docstring. The
+        # entries leak at the rate of one lock per distinct loop ever used,
+        # which is a bounded constant in practice (typically 1–2 loops per
+        # process). Closed loops are pruned lazily on lookup.
+        self._loop_locks: dict[int, tuple[weakref.ref[asyncio.AbstractEventLoop], asyncio.Lock]] = {}
+
+    def _lock_for_running_loop(self) -> asyncio.Lock:
+        """Return a per-running-loop ``asyncio.Lock``.
+
+        Construction happens with a running loop so the lock binds
+        correctly. Callers are inside ``async def`` methods, so this is
+        guaranteed.
+        """
+        loop = asyncio.get_running_loop()
+        key = id(loop)
+        existing = self._loop_locks.get(key)
+        if existing is not None:
+            existing_loop_ref, existing_lock = existing
+            existing_loop = existing_loop_ref()
+            if existing_loop is loop:
+                return existing_lock
+            # id collision after a loop was GC'd — fall through and rebuild.
+        lock = asyncio.Lock()
+        self._loop_locks[key] = (weakref.ref(loop), lock)
+        # Opportunistic cleanup of stale entries (closed loops).
+        for stale_key in [
+            k for k, (ref, _l) in self._loop_locks.items() if ref() is None
+        ]:
+            self._loop_locks.pop(stale_key, None)
+        return lock
 
     def _get_key(self, tool_name: str, namespace: str = "default") -> str:
         """Get rate limit key based on configuration."""
@@ -89,7 +129,7 @@ class RateLimiter:
         key = self._get_key(tool_name, namespace)
 
         # Check concurrent limit
-        async with self._concurrent_lock:
+        async with self._lock_for_running_loop():
             if self._concurrent[key] >= self._config.max_concurrent:
                 raise RateLimitExceeded(
                     f"Concurrent execution limit ({self._config.max_concurrent}) exceeded for {key}",
@@ -105,7 +145,7 @@ class RateLimiter:
             await self._fixed_window_check(key)
 
         # Increment concurrent counter
-        async with self._concurrent_lock:
+        async with self._lock_for_running_loop():
             self._concurrent[key] += 1
 
     async def release(
@@ -126,7 +166,7 @@ class RateLimiter:
         key = self._get_key(tool_name, namespace)
 
         # Decrement concurrent counter
-        async with self._concurrent_lock:
+        async with self._lock_for_running_loop():
             self._concurrent[key] = max(0, self._concurrent[key] - 1)
 
     async def _sliding_window_check(self, key: str) -> None:
@@ -263,7 +303,7 @@ class RateLimiter:
             self._last_refill[key] = time.time()
             self._window_calls[key] = 0
             self._window_start[key] = time.time()
-            async with self._concurrent_lock:
+            async with self._lock_for_running_loop():
                 self._concurrent[key] = 0
         else:
             self._call_history.clear()
@@ -271,5 +311,5 @@ class RateLimiter:
             self._last_refill.clear()
             self._window_calls.clear()
             self._window_start.clear()
-            async with self._concurrent_lock:
+            async with self._lock_for_running_loop():
                 self._concurrent.clear()

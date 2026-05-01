@@ -213,17 +213,24 @@ class ExecutionEngine:
         arguments: dict[str, Any],
         timeout_ms: int,
     ) -> Any:
-        """Execute a handler with a timeout."""
+        """Execute a handler with a timeout.
+
+        Sync handlers are dispatched via :func:`asyncio.to_thread`, which
+        binds correctly to the *running* loop. ``asyncio.get_event_loop()``
+        is deprecated in 3.10+ when there is no running loop, and in worker-
+        thread contexts (e.g. ``DurableAIAgentWorker``) it can return a
+        different loop from the one currently running, surfacing as cross-
+        loop runtime errors when the executor is driven from a loop other
+        than the one the gantry was constructed on.
+        """
         timeout_s = timeout_ms / 1000
 
         if asyncio.iscoroutinefunction(handler):
             return await asyncio.wait_for(handler(**arguments), timeout=timeout_s)
-        else:
-            loop = asyncio.get_event_loop()
-            return await asyncio.wait_for(
-                loop.run_in_executor(None, lambda: handler(**arguments)),
-                timeout=timeout_s,
-            )
+        return await asyncio.wait_for(
+            asyncio.to_thread(handler, **arguments),
+            timeout=timeout_s,
+        )
 
     async def _execute_handler_with_retries(
         self,

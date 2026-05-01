@@ -70,7 +70,15 @@ class SentenceTransformersEmbedder(EmbeddingAdapter):
             kwargs["device"] = self._device
 
         self._model = SentenceTransformer(self._model_name, **kwargs)
-        self._native_dimension = self._model.get_sentence_embedding_dimension()
+        # ``get_sentence_embedding_dimension`` was renamed to
+        # ``get_embedding_dimension`` in newer sentence-transformers releases;
+        # call the new name when available and fall back to the old one
+        # silently to remain compatible across versions.
+        get_dim = (
+            getattr(self._model, "get_embedding_dimension", None)
+            or self._model.get_sentence_embedding_dimension
+        )
+        self._native_dimension = get_dim()
 
         if self._requested_dimension and self._requested_dimension > self._native_dimension:
             warnings.warn(

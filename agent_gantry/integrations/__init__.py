@@ -12,6 +12,7 @@ from agent_gantry.integrations.agent_framework_middleware import (
 )
 from agent_gantry.integrations.agent_framework_provider import (
     GantryContextProvider,
+    MissingRequiredToolError,
 )
 from agent_gantry.integrations.framework_adapters import fetch_framework_tools
 from agent_gantry.integrations.semantic_tools import (
@@ -25,6 +26,7 @@ __all__: list[str] = [
     "GantryContextProvider",
     "GantryObservabilityMiddleware",
     "GantryToolBridge",
+    "MissingRequiredToolError",
     "SemanticToolSelector",
     "SemanticToolsDecorator",
     "with_semantic_tools",

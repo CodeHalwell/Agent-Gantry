@@ -12,8 +12,8 @@ class EmbeddingAdapter(Protocol):
     """
     Text embedding abstraction.
 
-    Implementations: OpenAIEmbedder, AzureOpenAIEmbedder, CohereEmbedder,
-                     HuggingFaceEmbedder, SentenceTransformerEmbedder, OllamaEmbedder.
+    Implementations: SimpleEmbedder, NomicEmbedder, SentenceTransformersEmbedder,
+                     OpenAIEmbedder, AzureOpenAIEmbedder.
     """
 
     @property
