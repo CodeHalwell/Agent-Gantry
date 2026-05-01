@@ -14,7 +14,8 @@ The general pattern is:
 
 ## Examples Included
 
-- `agent_framework_example.py`: Microsoft Agent Framework **1.0 GA** integration demonstrating three construction patterns:
+- `agent_framework_provider_example.py` — **recommended**: AF-native integration via `GantryContextProvider`. The provider plugs into `Agent(context_providers=[...])` and dynamically injects the top-k tools for each `agent.run(...)` — no pre-baking, coexists with `SkillsProvider`, and flows through every workflow builder unchanged. Includes a `skills=True` flag for always-on skill-bound tools and an `always_include` pin list.
+- `agent_framework_example.py`: Microsoft Agent Framework **1.0 GA** integration via `GantryToolBridge` (still useful when the tool set is *static* and known at agent-construction time). Demonstrates three construction patterns:
   1. `bridge.build_agent(client, query, ...)` — convenience one-liner via `client.as_agent()`.
   2. `bridge.as_agent(client, query, ...)` — direct `Agent(client, ...)` construction; preferred for `WorkflowBuilder` because the result is a first-class `Agent`.
   3. `bridge.build_workflow([specs], edges=[...])` — fan-out/handoff routing where each participating agent receives its own semantically-selected Gantry tool subset.

@@ -10,6 +10,9 @@ from agent_gantry.integrations.agent_framework_middleware import (
     GantryApprovalMiddleware,
     GantryObservabilityMiddleware,
 )
+from agent_gantry.integrations.agent_framework_provider import (
+    GantryContextProvider,
+)
 from agent_gantry.integrations.framework_adapters import fetch_framework_tools
 from agent_gantry.integrations.semantic_tools import (
     SemanticToolsDecorator,
@@ -19,6 +22,7 @@ from agent_gantry.integrations.semantic_tools import (
 
 __all__: list[str] = [
     "GantryApprovalMiddleware",
+    "GantryContextProvider",
     "GantryObservabilityMiddleware",
     "GantryToolBridge",
     "SemanticToolSelector",
