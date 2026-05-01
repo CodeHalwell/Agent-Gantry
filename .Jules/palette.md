@@ -29,3 +29,7 @@
 ## 2026-04-30 - [Keyboard Accessibility for Custom Dropdowns]
 **Learning:** Custom dropdowns (like search results) that rely on `click` outside to close will remain open when a keyboard user presses `Tab` to navigate away from the input or container. This can leave floating content visible and obscure other parts of the page.
 **Action:** When implementing custom dropdowns, always include a `document.addEventListener("focusin", ...)` listener to check if the newly focused element is outside the dropdown container, and if so, close the dropdown to maintain a clean UI for keyboard users.
+
+## 2026-05-01 - [Semantic Context for Dynamic Navigation Links]
+**Learning:** Dynamically applying visual `.active` classes to navigation items via client-side JavaScript leaves screen readers oblivious to the active state. Users relying on assistive technology will not know which link represents their current page if only visual classes are modified.
+**Action:** When conditionally applying an `.active` class to indicate the current page or step, consistently apply `link.setAttribute("aria-current", "page")` simultaneously, and ensure you `removeAttribute("aria-current")` when the active state is removed.
