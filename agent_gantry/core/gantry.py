@@ -400,11 +400,42 @@ class AgentGantry:
         """
 
         def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
-            tool_name = name or fn.__name__
-            tool_description = fn.__doc__ or f"Tool: {tool_name}"
+            # Accept agent_framework FunctionTool (or any tool-spec wrapper
+            # exposing .name + .func). AF's @tool decorator produces an
+            # object without ``__name__``, which would otherwise break the
+            # legacy ``fn.__name__`` lookup. Unwrap to the bare callable
+            # while remembering the original wrapper so the decorator's
+            # return value still matches what the caller passed in.
+            original = fn
+            wrapper_name = getattr(fn, "name", None)
+            wrapper_func = getattr(fn, "func", None)
+            wrapper_desc = getattr(fn, "description", None)
+            if wrapper_func is not None and callable(wrapper_func):
+                underlying = wrapper_func
+            else:
+                underlying = fn
 
-            # Build parameters schema from function signature
-            parameters_schema = build_parameters_schema(fn)
+            tool_name = (
+                name
+                or wrapper_name
+                or getattr(underlying, "__name__", None)
+                or getattr(original, "__name__", None)
+            )
+            if not tool_name:
+                raise TypeError(
+                    "AgentGantry.register() could not determine a tool name. "
+                    "Pass `name=...` explicitly, or supply a callable with a "
+                    "__name__ (or an agent_framework FunctionTool with .name)."
+                )
+
+            tool_description = (
+                (underlying.__doc__ if hasattr(underlying, "__doc__") else None)
+                or wrapper_desc
+                or f"Tool: {tool_name}"
+            )
+
+            # Build parameters schema from the underlying callable's signature.
+            parameters_schema = build_parameters_schema(underlying)
 
             tool = ToolDefinition(
                 name=tool_name,
@@ -418,14 +449,14 @@ class AgentGantry:
             )
 
             self._pending_tools.append(tool)
-            self._tool_handlers[tool_name] = fn
+            self._tool_handlers[tool_name] = underlying
 
             # Register both tool definition and handler in the registry
             key = f"{namespace}.{tool_name}"
             self._registry.register_tool(tool)
-            self._registry.register_handler(key, fn)
+            self._registry.register_handler(key, underlying)
 
-            return fn
+            return original
 
         if func is not None:
             return decorator(func)
@@ -771,6 +802,28 @@ class AgentGantry:
 
         # Auto-sync with smart change detection
         await self.ensure_synced()
+
+        # SimpleEmbedder produces hash-based scores that cluster tightly
+        # regardless of semantic relevance. Pairing it with a non-zero
+        # score_threshold typically results in "0 tools surfaced" silently
+        # (which integrators report as a frustrating first-day failure).
+        # Warn loudly on the first such retrieval call.
+        if isinstance(self._embedder, SimpleEmbedder) and not SimpleEmbedder._warned_about_threshold:
+            threshold = getattr(query, "score_threshold", None) or 0.0
+            if threshold > 0.0:
+                SimpleEmbedder._warned_about_threshold = True
+                import warnings as _warnings
+
+                _warnings.warn(
+                    "SimpleEmbedder produces hash-based similarity scores with "
+                    "no semantic understanding; pairing it with "
+                    f"score_threshold={threshold} will likely filter all "
+                    "tools out. Set score_threshold=0.0 for SimpleEmbedder, "
+                    "or install a real embedder: "
+                    "pip install agent-gantry[nomic]",
+                    UserWarning,
+                    stacklevel=3,
+                )
 
         overall_start = perf_counter()
         if self._config.reranker.enabled and self._reranker is not None:
@@ -1288,6 +1341,93 @@ class AgentGantry:
         await self._ensure_initialized()
         await self.ensure_synced()
         return await self._vector_store.list_all(namespace=namespace)
+
+    def list_tools_sync(
+        self,
+        namespace: str | None = None,
+    ) -> list[ToolDefinition]:
+        """
+        Synchronously list locally-registered tools.
+
+        Reads from the in-memory registry only — does not hit the vector
+        store and does not trigger sync. This is the natural API for
+        read-only inspection (telemetry, debug printers, validators) where
+        going through ``await`` is awkward and the in-memory view is
+        sufficient.
+
+        Args:
+            namespace: Filter by namespace.
+
+        Returns:
+            List of tool definitions known to the registry.
+        """
+        registered = self._registry.list_tools()
+        pending = self._pending_tools
+
+        seen: set[str] = set()
+        out: list[ToolDefinition] = []
+        for tool in (*registered, *pending):
+            key = f"{tool.namespace}.{tool.name}"
+            if key in seen:
+                continue
+            if namespace is not None and tool.namespace != namespace:
+                continue
+            seen.add(key)
+            out.append(tool)
+        return out
+
+    async def preview(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        score_threshold: float | None = None,
+        **query_kwargs: Any,
+    ) -> list[tuple[str, float]]:
+        """
+        Preview which tools would surface for a given query.
+
+        Read-only helper for calibrating ``score_threshold`` and ``top_k``
+        without spinning up the full agent. Returns ``(tool_name, score)``
+        pairs sorted by descending score.
+
+        Args:
+            query: Natural-language query to retrieve against.
+            limit: Maximum number of candidates to return (default 10).
+            score_threshold: Override the score threshold. ``None`` uses
+                the configured default of ``0.0`` so you can see the full
+                ranking, including tools that would be filtered out.
+            **query_kwargs: Forwarded to :class:`ToolQuery` /
+                :class:`ConversationContext` (``namespaces``, etc.).
+
+        Returns:
+            List of ``(qualified_name, semantic_score)`` tuples sorted
+            descending by score. Qualified name is ``namespace.name``.
+
+        Example:
+            >>> ranked = await gantry.preview(
+            ...     "find boundaries in OCR text",
+            ...     limit=10,
+            ...     score_threshold=0.0,
+            ... )
+            >>> for name, score in ranked:
+            ...     print(f"{score:.3f}  {name}")
+        """
+        from agent_gantry.schema.query import ConversationContext, ToolQuery
+
+        threshold = 0.0 if score_threshold is None else score_threshold
+        context = ConversationContext(query=query)
+        tool_query = ToolQuery(
+            context=context,
+            limit=limit,
+            score_threshold=threshold,
+            **query_kwargs,
+        )
+        result = await self.retrieve(tool_query)
+        return [
+            (f"{st.tool.namespace}.{st.tool.name}", st.semantic_score)
+            for st in result.tools
+        ]
 
     def export_tools(self) -> list[ToolDefinition]:
         """

@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`agent_gantry.query` module** — built-in deterministic query-generation
+  strategies for semantic retrieval: `last_user_text` (default),
+  `last_assistant_text`, `last_tool_result`, `concatenate_recent`, and
+  `fallback_chain`. Strategies operate on AF messages, dicts, or anything
+  exposing `role` + `text`/`content`.
+- **`GantryContextProvider` per-call retrieval** — new
+  `query_strategy="per_call"` (default `"per_run"` is back-compat) plus
+  `query_generator=...` parameter for per-chat-round semantic refresh.
+  `provider.as_chat_middleware()` returns the AF chat middleware that wires
+  the per-round refresh into `Agent(middleware=[...])`. Solves the
+  "tool selection is fixed for the whole `agent.run()`" limitation flagged
+  by integrators of multi-step workflows.
+- **`required=[...]` parameter on `GantryContextProvider`** — hard pins a
+  set of tools and raises `MissingRequiredToolError` at construction time
+  if any are missing from the gantry. Catches typos / dropped registrations
+  earlier than runtime agent failure.
+- **Public read-only properties on `GantryContextProvider`** — `top_k`,
+  `score_threshold`, `query_strategy`, `always_include`, `required`,
+  `gantry`, `bridge`. External observability code can read configuration
+  without poking at private attributes.
+- **`AgentGantry.preview(query, ...)`** — read-only ranking helper that
+  returns `(qualified_name, score)` pairs, useful for calibrating
+  `score_threshold` without spinning up an agent.
+- **`AgentGantry.list_tools_sync()`** — sync, in-memory inspection of
+  registered tools (no `await`, no vector store round-trip). Complements
+  the existing async `list_tools()`.
+- **`agent_gantry.adapters.embedders` re-exports `SentenceTransformersEmbedder`,
+  `OpenAIEmbedder`, `AzureOpenAIEmbedder`** alongside `NomicEmbedder` and
+  `SimpleEmbedder`, all behind lazy imports — you can write
+  `from agent_gantry.adapters.embedders import SentenceTransformersEmbedder`
+  without knowing the deep submodule path. Same pattern applied to
+  `agent_gantry.adapters.rerankers` (`CohereReranker`, `CrossEncoderReranker`).
+- **Tests** — `tests/test_query_strategies.py` covers the new query module,
+  `preview`, `list_tools_sync`, the `SimpleEmbedder` warning, FunctionTool
+  registration, and adapter re-exports.
+
+### Changed
+
+- **`AgentGantry.register()` now accepts `agent_framework.tool`-decorated
+  FunctionTool objects** (or any wrapper exposing `.name` / `.func`).
+  Previously raised `AttributeError: 'FunctionTool' object has no attribute
+  '__name__'`. Bare callables continue to work unchanged.
+- **`SimpleEmbedder` warns when paired with `score_threshold > 0.0`** —
+  hash-based similarity scores cluster tightly regardless of relevance, so
+  a non-zero threshold typically returns 0 tools silently. The first
+  retrieval call now emits a `UserWarning` recommending a real embedder.
+- **`SimpleEmbedder` docstring** updated to lead with "for testing only —
+  produces near-uniform similarity scores", to make its non-production
+  nature obvious from `help(SimpleEmbedder)`.
+- **`EmbeddingAdapter` docstring** corrected: lists actual implementations
+  (`SimpleEmbedder`, `NomicEmbedder`, `SentenceTransformersEmbedder`,
+  `OpenAIEmbedder`, `AzureOpenAIEmbedder`) instead of the old typo'd
+  `SentenceTransformerEmbedder` (singular).
+- **`SentenceTransformersEmbedder` no longer triggers a `FutureWarning`**
+  on first init — calls `get_embedding_dimension()` when available and
+  falls back to the deprecated `get_sentence_embedding_dimension()` only
+  on older releases.
+
 ## [0.2.0] - 2026-05-01
 
 ### Changed
