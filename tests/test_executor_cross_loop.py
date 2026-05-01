@@ -159,15 +159,16 @@ def test_rate_limiter_lock_is_bound_to_running_loop_under_contention():
         await waiter_task
         return "loop-ok"
 
-    # Loop A: bind the loop A lock under contention.
-    a = asyncio.new_event_loop()
-    try:
-        a_result = a.run_until_complete(_force_contention())
-    finally:
-        a.close()
+    # Loop A: bind the loop A lock under contention. Run in a worker
+    # thread (with its own fresh loop) rather than constructing a loop on
+    # the main thread, because pytest-asyncio's auto-managed policy on
+    # macOS + Python 3.10 + kqueue gets confused if we manipulate the main
+    # thread's event loop directly. The semantics are identical — we just
+    # need *some* distinct loop to bind the lock to.
+    a_result = _run_in_worker_loop(_force_contention)
     assert a_result == "loop-ok"
 
-    # Loop B in a worker thread — different loop, same RateLimiter
+    # Loop B in another worker thread — different loop, same RateLimiter
     # instance. With the old code this raises on the first contended
     # acquire because the single eager lock is still bound to (the
     # now-closed) loop A. With the per-loop fix loop B gets its own lock.
@@ -191,13 +192,10 @@ def test_rate_limiter_full_acquire_release_works_across_loops():
         return "loop-ok"
 
     # Loop A first (no contention here — just establishes prior usage).
-    a = asyncio.new_event_loop()
-    try:
-        assert a.run_until_complete(_do()) == "loop-ok"
-    finally:
-        a.close()
+    # Worker thread keeps the main thread's pytest-asyncio policy clean.
+    assert _run_in_worker_loop(_do) == "loop-ok"
 
-    # Loop B from a worker thread.
+    # Loop B from a separate worker thread → distinct loop.
     assert _run_in_worker_loop(_do) == "loop-ok"
 
 
@@ -313,7 +311,11 @@ def test_module_level_gantry_survives_asyncio_run_per_request():
         return list(outs)
 
     for i in range(5):
-        results = asyncio.run(_one_request(i))
+        # Run each "request" on a fresh worker-thread loop. This mirrors
+        # ``DurableAIAgentWorker`` more faithfully than calling
+        # ``asyncio.run`` on the main thread, and avoids tripping
+        # pytest-asyncio's loop policy on macOS + Python 3.10.
+        results = _run_in_worker_loop(lambda i=i: _one_request(i))
         # No JSON-error envelopes — every wrapper call must succeed cleanly.
         for r in results:
             assert not r.startswith("{") or '"error"' not in r, (

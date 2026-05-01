@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from typing import Any
+from typing import Any, Callable, Coroutine
 
 import pytest
 
@@ -40,6 +40,40 @@ af = pytest.importorskip("agent_framework")
 from agent_gantry import AgentGantry
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+
+
+def _run_on_worker_loop(coro_factory: Callable[[], Coroutine[Any, Any, Any]]) -> Any:
+    """Run ``coro_factory()`` on a fresh event loop inside a worker thread.
+
+    All loop creation and teardown happens off the main thread for two
+    reasons. (1) pytest-asyncio's auto-managed loop policy on the main
+    thread can collide with our own ``asyncio.run`` calls, especially on
+    macOS + Python 3.10 where the kqueue selector's lifecycle is fragile.
+    (2) ``DurableAIAgentWorker`` actually executes its
+    ``asyncio.run(self._agent_entity.run(request))`` calls on a thread-
+    pool worker, not on the main thread — so this is also more faithful
+    to the integration we're testing.
+    """
+    box: dict[str, Any] = {}
+
+    def _runner() -> None:
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            try:
+                box["result"] = loop.run_until_complete(coro_factory())
+            except BaseException as exc:  # noqa: BLE001 - propagate to test
+                box["error"] = exc
+        finally:
+            loop.close()
+
+    t = threading.Thread(target=_runner, daemon=True)
+    t.start()
+    t.join(timeout=60.0)
+    assert not t.is_alive(), "worker thread hung"
+    if "error" in box:
+        raise box["error"]
+    return box["result"]
 
 
 class _FakeChatClient(af.FunctionInvocationLayer, af.BaseChatClient):  # type: ignore[misc]
@@ -115,7 +149,7 @@ def module_gantry() -> AgentGantry:
         await asyncio.sleep(0.01)
         return x + 1
 
-    asyncio.run(g.sync())
+    _run_on_worker_loop(g.sync)
     return g
 
 
@@ -125,7 +159,10 @@ def function_tools(module_gantry: AgentGantry) -> list[Any]:
     would (e.g. fetched at startup or via a context provider's
     ``before_run`` hook)."""
     bridge = GantryToolBridge(module_gantry, as_function_tool=True)
-    return list(asyncio.run(bridge.get_tools("add", limit=2, score_threshold=0.0)))
+    tools = _run_on_worker_loop(
+        lambda: bridge.get_tools("add", limit=2, score_threshold=0.0)
+    )
+    return list(tools)
 
 
 def _extract_tool_results(resp: Any) -> list[Any]:
@@ -143,11 +180,9 @@ def _run_agent_request(
     function_tools: list[Any],
 ) -> list[Any]:
     """One DurableAIAgentWorker-style request: build the agent fresh,
-    drive it via the fake client, return the tool results.
-
-    Wrapped in an ``async def`` so the *caller* picks the loop policy
-    (``asyncio.run`` for the in-process case, fresh loop in a thread for
-    the worker-pool case).
+    drive it via the fake client, return the tool results. Each call
+    constructs a fresh event loop on a worker thread — exactly how
+    ``DurableAIAgentWorker._handle_request`` runs each request.
     """
     client = _FakeChatClient(tool_name, arguments_per_call)
     agent = af.RawAgent(
@@ -158,7 +193,7 @@ def _run_agent_request(
         resp = await agent.run("please call the tool")
         return _extract_tool_results(resp)
 
-    return asyncio.run(_go())
+    return _run_on_worker_loop(_go)
 
 
 # ---------------------------------------------------------------------------
@@ -204,53 +239,34 @@ def test_async_tool_with_parallel_calls_across_loops(
 
 def test_request_runs_in_worker_thread(function_tools: list[Any]) -> None:
     """``DurableAIAgentWorker`` runs requests on a thread-pool worker.
-    Mirror that: spin up a worker thread, give it a fresh event loop,
-    run the request via ``asyncio.run``. The module-level gantry — built
-    on the main thread with no running loop — must work cleanly.
+    Confirm the smoke test: ``_run_agent_request`` (which already uses a
+    fresh worker-thread loop) returns the expected results.
     """
-    box: dict[str, Any] = {}
-
-    def _runner() -> None:
-        try:
-            box["results"] = _run_agent_request(
-                "slow_add",
-                [{"x": 7}, {"x": 8}, {"x": 9}],
-                function_tools=function_tools,
-            )
-        except BaseException as exc:  # noqa: BLE001
-            box["error"] = exc
-
-    t = threading.Thread(target=_runner, daemon=True)
-    t.start()
-    t.join(timeout=30.0)
-    assert not t.is_alive(), "worker thread hung"
-    assert "error" not in box, f"worker raised: {box.get('error')!r}"
-    assert box["results"] == ["8", "9", "10"], box["results"]
+    results = _run_agent_request(
+        "slow_add",
+        [{"x": 7}, {"x": 8}, {"x": 9}],
+        function_tools=function_tools,
+    )
+    assert results == ["8", "9", "10"], results
 
 
-def test_worker_thread_followed_by_main_thread(function_tools: list[Any]) -> None:
-    """Cross-thread, cross-loop sequencing: run a request from a worker
-    thread first (binding any cross-loop primitives to that loop), then
-    run another from the main thread. Both must succeed.
+def test_sequential_requests_get_distinct_loops(
+    function_tools: list[Any],
+) -> None:
+    """Cross-loop sequencing: each ``_run_agent_request`` constructs and
+    closes its own worker-thread loop. Run two back-to-back; both must
+    succeed. With the old per-Lock-eager code this was the canonical
+    failure shape.
     """
-    # Worker thread first.
-    box: dict[str, Any] = {}
+    first = _run_agent_request(
+        "slow_add", [{"x": 1}, {"x": 2}], function_tools=function_tools
+    )
+    assert first == ["2", "3"]
 
-    def _runner() -> None:
-        box["worker"] = _run_agent_request(
-            "slow_add", [{"x": 1}, {"x": 2}], function_tools=function_tools
-        )
-
-    t = threading.Thread(target=_runner, daemon=True)
-    t.start()
-    t.join(timeout=30.0)
-    assert box.get("worker") == ["2", "3"]
-
-    # Main thread immediately after — separate ``asyncio.run`` = separate loop.
-    main_results = _run_agent_request(
+    second = _run_agent_request(
         "slow_add", [{"x": 10}, {"x": 11}], function_tools=function_tools
     )
-    assert main_results == ["11", "12"]
+    assert second == ["11", "12"]
 
 
 def test_no_function_failed_envelope_in_results(function_tools: list[Any]) -> None:
