@@ -48,6 +48,7 @@
       // Exact match or starts with for sub-pages
       if (currentPath === linkPath || currentPath.startsWith(linkPath + "/")) {
         link.classList.add("active");
+        link.setAttribute("aria-current", "page");
 
         // Expand parent section if in submenu
         const parentMenu = link.closest(".nav-submenu");
@@ -59,6 +60,7 @@
         }
       } else {
         link.classList.remove("active");
+        link.removeAttribute("aria-current");
       }
     });
   }
