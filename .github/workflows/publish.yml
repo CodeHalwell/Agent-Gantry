@@ -64,7 +64,7 @@ jobs:
         run: |
           uv venv --python ${{ matrix.python-version }} .venv
           uv pip install --python .venv/bin/python dist/*.whl
-          .venv/bin/python -c "import agent_gantry; from agent_gantry.core.tool_registry import ToolRegistry; from agent_gantry.core.schema import ToolParameter, ToolSchema; print(f'agent-gantry {agent_gantry.__version__} installed at {agent_gantry.__file__}')"
+          .venv/bin/python -c "import agent_gantry; from agent_gantry import AgentGantry, ToolDefinition; print(f'agent-gantry {agent_gantry.__version__} installed at {agent_gantry.__file__}')"
 
   publish-testpypi:
     name: Publish to TestPyPI
