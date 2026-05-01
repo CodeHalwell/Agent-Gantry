@@ -46,6 +46,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   driven from a worker-thread loop, with genuine lock contention to
   force the binding path. The suite also covers exception surfacing
   for both handler-level and executor-level failures.
+- **New durable-worker integration test**
+  (``tests/test_durable_worker_integration.py``) drives a real
+  :class:`agent_framework.RawAgent` with a ``BaseChatClient`` subclass
+  that emits one or more ``function_call`` items, then runs each
+  request via ``asyncio.run`` — the exact loop topology used by
+  :class:`agent_framework_durabletask.DurableAIAgentWorker`. Covers:
+  sequential ``asyncio.run`` requests with sync handlers; parallel
+  function-call dispatch with async handlers (real lock contention);
+  worker-thread execution; and worker-thread → main-thread
+  sequencing. Tools are pre-resolved once at "module load" via
+  :class:`GantryToolBridge`, mirroring the integrator pattern.
 
 ### Added
 
