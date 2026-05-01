@@ -313,6 +313,33 @@ class TestAnthropicAdapter:
         assert result["type"] == "tool_result"
         assert result["tool_use_id"] == "toolu_abc123"
         assert "content" in result
+        assert "is_error" not in result
+
+    def test_format_tool_result_is_error(self) -> None:
+        """Test that is_error=True sets the is_error flag in the result."""
+        adapter = AnthropicAdapter()
+        result = adapter.format_tool_result(
+            tool_name="get_weather",
+            result="something went wrong",
+            tool_call_id="toolu_abc123",
+            is_error=True,
+        )
+
+        assert result["type"] == "tool_result"
+        assert result["is_error"] is True
+        assert result["content"] == "something went wrong"
+
+    def test_format_tool_result_no_is_error_on_success(self) -> None:
+        """Test that is_error key is absent when is_error=False (default)."""
+        adapter = AnthropicAdapter()
+        result = adapter.format_tool_result(
+            tool_name="get_weather",
+            result={"temp": 25, "condition": "sunny"},
+            tool_call_id="toolu_xyz",
+        )
+
+        assert "is_error" not in result
+        assert result["content"] == '{"temp": 25, "condition": "sunny"}'
 
 
 class TestGeminiAdapter:

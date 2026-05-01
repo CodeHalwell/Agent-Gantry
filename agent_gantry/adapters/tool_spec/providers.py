@@ -124,6 +124,8 @@ class OpenAIAdapter:
         tool_name: str,
         result: Any,
         tool_call_id: str | None = None,
+        *,
+        is_error: bool = False,
     ) -> dict[str, Any]:
         """Format result for OpenAI tool_outputs."""
         content = result if isinstance(result, str) else json.dumps(result)
@@ -254,6 +256,8 @@ class OpenAIResponsesAdapter:
         tool_name: str,
         result: Any,
         tool_call_id: str | None = None,
+        *,
+        is_error: bool = False,
     ) -> dict[str, Any]:
         """
         Format result for OpenAI Responses API function_call_output.
@@ -357,13 +361,22 @@ class AnthropicAdapter:
         tool_name: str,
         result: Any,
         tool_call_id: str | None = None,
+        *,
+        is_error: bool = False,
     ) -> dict[str, Any]:
-        """Format result for Anthropic tool_result."""
+        """Format result for Anthropic tool_result.
+
+        Pass ``is_error=True`` when the tool execution failed so the model can
+        distinguish error content from normal tool output.
+        Source: https://platform.claude.com/docs/en/api/messages (tool_result block)
+        """
         content = result if isinstance(result, str) else json.dumps(result)
         response: dict[str, Any] = {
             "type": "tool_result",
             "content": content,
         }
+        if is_error:
+            response["is_error"] = True
         if tool_call_id:
             response["tool_use_id"] = tool_call_id
         return response
@@ -451,6 +464,8 @@ class GeminiAdapter:
         tool_name: str,
         result: Any,
         tool_call_id: str | None = None,
+        *,
+        is_error: bool = False,
     ) -> dict[str, Any]:
         """Format result for Gemini function response."""
         response_content = result if isinstance(result, dict) else {"result": result}

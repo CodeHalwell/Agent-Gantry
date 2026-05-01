@@ -8,6 +8,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+- **`ToolSpecAdapter.format_tool_result` protocol extended with `is_error: bool = False`** — all
+  concrete adapters (`OpenAIAdapter`, `OpenAIResponsesAdapter`, `AnthropicAdapter`,
+  `GeminiAdapter`) now accept the optional keyword argument so callers typed against the
+  protocol can pass `is_error` without casting. Non-Anthropic adapters accept and ignore the
+  flag; `AnthropicAdapter` uses it to emit the Anthropic `"is_error"` field.
+  *Risk: safe additive — default is `False`, backward-compatible.*
+
+- **Unit tests for `is_error` semantics** — added to `TestAnthropicAdapter` in
+  `test_tool_spec_adapters.py`, to `TestAnthropicClient` in `test_anthropic_features.py`,
+  and to `TestSkillsClient` in `test_anthropic_skills.py`. Each test pair asserts that
+  `is_error: true` is present on failure and absent on success, and that dict results are
+  JSON-serialised rather than `str()`-coerced.
+
+- **Unit tests for `thinking_display` payload injection** — added three focused tests in
+  `TestAnthropicClient` verifying that `create_message()` passes `thinking.display` to
+  `AsyncAnthropic.messages.create()` for adaptive mode, extended mode, and that the key is
+  absent when `thinking_display=None`.
+
+- **`AnthropicFeatures.thinking_display`** — new optional field (`"summarized"` | `"omitted"`)
+  that controls thinking visibility in the response. `"summarized"` condenses the thinking
+  block; `"omitted"` hides it but preserves the signature for multi-turn continuity.
+  Exposed through `create_anthropic_client(thinking_display=...)`.
+  *Source: https://platform.claude.com/docs/en/api/messages (thinking parameter)*
+  *Risk: safe additive — existing code unaffected; default is None (full thinking shown).*
+
+### Fixed
+
+- **`AnthropicAdapter.format_tool_result` now accepts `is_error: bool = False`** — when
+  `True`, the `"is_error": true` field is included in the `tool_result` block so the
+  model can distinguish error content from a normal tool result.
+  *Source: https://platform.claude.com/docs/en/api/messages (tool_result block)*
+  *Risk: safe additive — callers that do not pass `is_error` see no change.*
+
+- **`AnthropicClient.execute_tool_calls` and `SkillsClient.execute_tool_calls` now set
+  `"is_error": true` on tool result blocks when execution fails** — previously, failed
+  tool calls were represented only by an `"Error: …"` content string with no API-level
+  error flag, preventing the model from reliably distinguishing tool errors from tool
+  output that happens to mention errors.
+  *Risk: safe with shim — callers that re-send the tool results array to `messages.create`
+  will now include the `is_error` field; this is additive and backward-compatible.*
+
+- **`AnthropicClient.execute_tool_calls` and `SkillsClient.execute_tool_calls` now use
+  `json.dumps()` for non-string tool results** — previously `str()` was used, which
+  produces Python repr notation (e.g. `{'key': 'val'}` with single quotes) rather than
+  valid JSON, causing downstream parse failures when the model or the caller attempted to
+  deserialise the content.
+  *Risk: safe correctness fix — `str` results pass through unchanged; dict/list results are
+  now JSON-serialised consistently with `AnthropicAdapter.format_tool_result`.*
+
+- **`ExecutionStatus.SUCCESS` used for status comparisons in `AnthropicClient` and
+  `SkillsClient`** — replaced bare `!= "success"` string literals with
+  `!= ExecutionStatus.SUCCESS` for type-safety and consistency with the rest of the
+  codebase (e.g. `agent_gantry/servers/mcp_server.py`).
+  *Risk: none — `ExecutionStatus` inherits from `str` so the comparison is equivalent.*
+
+### Changed
+
+- **Dependency: `agent-framework` bumped to `>=1.2.2,<2.0.0`** (was `>=1.2.1,<2.0.0`).
+  Picks up the observability span-nesting fix during streaming and full conversation-history
+  propagation for hosted workflow agents. **Breaking in AF 1.2.2**: sequential-approval and
+  concurrent workflow terminal outputs now return as `AgentResponse` rather than a plain
+  string. Calling code that does `str(result)` or `print(result)` continues to work; code
+  that pattern-matches on the raw string type must be updated.
+  *Source: https://pypi.org/pypi/agent-framework/1.2.2/json*
+  *Risk: safe with shim — `AgentResponse` is str-coercible; bare-string assumptions break.*
+
+- **Dependency: `langchain` bumped to `>=1.2.16`** (was `>=1.2.15`). Minor patch release.
+  *Risk: safe internal.*
+
+- **Docs: `docs/reference/llm_sdk_compatibility.md` header updated from "Late 2025" to
+  "April 2026"** — reflects the actual date of the most recent compatibility review.
+
 - **Full Microsoft Agent Framework 1.0 GA integration**:
   - `GantryToolBridge` now emits real `agent_framework.FunctionTool` instances
     via the GA `@tool` decorator. Gantry's `ToolCapability` set is auto-mapped

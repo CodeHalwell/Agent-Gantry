@@ -13,12 +13,13 @@ that Claude can reason about and use effectively.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from agent_gantry import AgentGantry
-from agent_gantry.schema.execution import ToolCall
+from agent_gantry.schema.execution import ExecutionStatus, ToolCall
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 
 
@@ -329,14 +330,26 @@ class SkillsClient:
         # Execute all tools concurrently
         results = await asyncio.gather(*tool_executions)
 
-        # Format results for Anthropic
+        # Format results for Anthropic.
+        # is_error signals model-level tool failure so the model can distinguish
+        # error content from normal tool output.
+        # Source: https://platform.claude.com/docs/en/api/messages (tool_result)
         tool_results = []
         for block_id, result in zip(tool_use_ids, results):
-            tool_results.append({
+            is_error = result.status != ExecutionStatus.SUCCESS
+            content: str
+            if is_error:
+                content = f"Error: {result.error}"
+            else:
+                content = result.result if isinstance(result.result, str) else json.dumps(result.result)
+            tool_result: dict[str, Any] = {
                 "type": "tool_result",
                 "tool_use_id": block_id,
-                "content": str(result.result) if result.status == "success" else f"Error: {result.error}",
-            })
+                "content": content,
+            }
+            if is_error:
+                tool_result["is_error"] = True
+            tool_results.append(tool_result)
 
         return tool_results
 

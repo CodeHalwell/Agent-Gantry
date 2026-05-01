@@ -238,6 +238,56 @@ class TestSkillsClient:
         assert "Tool executed" in tool_results[0]["content"]
 
     @pytest.mark.asyncio
+    async def test_execute_tool_calls_failure_sets_is_error(self):
+        """Test that a failed tool execution sets is_error=True."""
+        gantry = MagicMock(spec=AgentGantry)
+        mock_result = MagicMock()
+        mock_result.status = "failure"
+        mock_result.error = "Downstream service unavailable"
+        gantry.execute = AsyncMock(return_value=mock_result)
+
+        client = SkillsClient(api_key="test-key", gantry=gantry)
+
+        response = MagicMock()
+        tool_block = MagicMock()
+        tool_block.type = "tool_use"
+        tool_block.id = "tool_err_1"
+        tool_block.name = "failing_tool"
+        tool_block.input = {}
+        response.content = [tool_block]
+
+        tool_results = await client.execute_tool_calls(response)
+
+        assert len(tool_results) == 1
+        assert tool_results[0]["is_error"] is True
+        assert "Downstream service unavailable" in tool_results[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_calls_success_omits_is_error(self):
+        """Test that a successful tool execution omits is_error."""
+        gantry = MagicMock(spec=AgentGantry)
+        mock_result = MagicMock()
+        mock_result.status = "success"
+        mock_result.result = {"order_id": "ORD-42", "status": "shipped"}
+        gantry.execute = AsyncMock(return_value=mock_result)
+
+        client = SkillsClient(api_key="test-key", gantry=gantry)
+
+        response = MagicMock()
+        tool_block = MagicMock()
+        tool_block.type = "tool_use"
+        tool_block.id = "tool_ok_1"
+        tool_block.name = "get_order"
+        tool_block.input = {"order_id": "ORD-42"}
+        response.content = [tool_block]
+
+        tool_results = await client.execute_tool_calls(response)
+
+        assert len(tool_results) == 1
+        assert "is_error" not in tool_results[0]
+        assert tool_results[0]["content"] == '{"order_id": "ORD-42", "status": "shipped"}'
+
+    @pytest.mark.asyncio
     async def test_execute_tool_calls_without_gantry(self):
         """Test that execute_tool_calls requires gantry."""
         client = SkillsClient(api_key="test-key")

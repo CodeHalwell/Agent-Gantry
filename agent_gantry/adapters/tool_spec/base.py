@@ -123,6 +123,8 @@ class ToolSpecAdapter(Protocol):
         tool_name: str,
         result: Any,
         tool_call_id: str | None = None,
+        *,
+        is_error: bool = False,
     ) -> dict[str, Any]:
         """
         Format a tool result for sending back to the provider.
@@ -131,6 +133,9 @@ class ToolSpecAdapter(Protocol):
             tool_name: Name of the executed tool
             result: Result from tool execution
             tool_call_id: Provider-specific tool call identifier
+            is_error: Whether the tool execution failed (Anthropic uses this
+                to set ``is_error`` on the tool_result block; other providers
+                may ignore it)
 
         Returns:
             Provider-formatted tool result
