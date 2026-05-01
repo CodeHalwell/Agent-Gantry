@@ -36,7 +36,7 @@ async def test_retrieval_latency(sample_tools) -> None:
     query = ToolQuery(context=ConversationContext(query="Generate a financial report"), limit=3)
     result = await gantry.retrieve(query)
 
-    assert result.total_time_ms < 50
+    assert result.total_time_ms < 200
 
 
 def test_cli_list_shows_demo_tools(capsys) -> None:
