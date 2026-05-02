@@ -314,7 +314,7 @@ async def main():
     @with_semantic_tools(limit=3)
     async def generate(prompt: str, *, tools=None):
         return await client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-4o",
             messages=[{"role": "user", "content": prompt}],
             tools=tools,
         )
