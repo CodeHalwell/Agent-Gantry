@@ -33,3 +33,7 @@
 ## 2026-05-01 - [Semantic Context for Dynamic Navigation Links]
 **Learning:** Dynamically applying visual `.active` classes to navigation items via client-side JavaScript leaves screen readers oblivious to the active state. Users relying on assistive technology will not know which link represents their current page if only visual classes are modified.
 **Action:** When conditionally applying an `.active` class to indicate the current page or step, consistently apply `link.setAttribute("aria-current", "page")` simultaneously, and ensure you `removeAttribute("aria-current")` when the active state is removed.
+
+## 2026-05-02 - [Keyboard Shortcuts Accessibility & OS Awareness]
+**Learning:** Displaying hardcoded OS-specific keyboard shortcuts (like "Ctrl+K") in placeholders confuses Mac users, who expect "⌘K". Additionally, mapping common single-key shortcuts like "/" for search focus requires careful event handling to avoid intercepting the key when the user is already typing in an input field.
+**Action:** When adding keyboard shortcuts for quick focus or actions, dynamically update visual hints (like placeholders) based on `navigator.userAgent.includes("Mac")`. Furthermore, always check `e.target.tagName` against `"INPUT"`, `"TEXTAREA"`, and `e.target.isContentEditable` before intercepting single-key shortcuts like "/".
