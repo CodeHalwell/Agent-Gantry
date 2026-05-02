@@ -211,11 +211,25 @@
   // ==================== Keyboard Shortcuts ====================
 
   function initKeyboardShortcuts() {
+    const searchInput = document.querySelector(".search-input");
+
+    // Update placeholder with OS-aware shortcut
+    if (searchInput) {
+      const isMac = navigator.userAgent.includes("Mac");
+      searchInput.placeholder = `Search documentation... (${isMac ? "⌘" : "Ctrl+"}K)`;
+    }
+
     document.addEventListener("keydown", function (e) {
-      // Cmd/Ctrl + K to focus search
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      // Cmd/Ctrl + K or / to focus search
+      const isFocusShortcut = ((e.metaKey || e.ctrlKey) && e.key === "k") || e.key === "/";
+
+      if (isFocusShortcut) {
+        // Prevent '/' from being intercepted if user is already typing in an input
+        if (e.key === "/" && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable)) {
+          return;
+        }
+
         e.preventDefault();
-        const searchInput = document.querySelector(".search-input");
         if (searchInput) {
           searchInput.focus();
         }
