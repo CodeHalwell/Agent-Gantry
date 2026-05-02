@@ -335,7 +335,7 @@ response = client.messages.create(
 
 ### Package
 ```bash
-pip install google-genai>=1.0.0
+pip install google-genai>=1.74.0
 ```
 
 ### Client Initialization
@@ -502,7 +502,7 @@ response = model.generate_content("What's AAPL stock price?")
 
 ### Package
 ```bash
-pip install mistralai>=1.0.0
+pip install mistralai>=1.0.0,<2.0.0
 ```
 
 ### Client Initialization
