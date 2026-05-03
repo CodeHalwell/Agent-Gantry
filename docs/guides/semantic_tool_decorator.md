@@ -40,7 +40,7 @@ client = OpenAI()
 async def generate(prompt: str, *, tools: list | None = None):
     """Generate a response with automatically selected tools."""
     return client.chat.completions.create(
-        model="gpt-4",
+        model="gpt-4o",
         messages=[{"role": "user", "content": prompt}],
         tools=tools,
     )
@@ -92,7 +92,7 @@ client = OpenAI()
 async def generate(prompt: str, *, tools: list | None = None):
     """Generate a response with automatically selected tools."""
     return client.chat.completions.create(
-        model="gpt-4",
+        model="gpt-4o",
         messages=[{"role": "user", "content": prompt}],
         tools=tools,
     )
@@ -109,7 +109,7 @@ response = await generate("What's the weather in Paris?")
 async def chat(messages: list[dict], *, tools: list | None = None):
     """Chat with automatic tool selection."""
     return client.chat.completions.create(
-        model="gpt-4",
+        model="gpt-4o",
         messages=messages,
         tools=tools,
     )
@@ -133,7 +133,7 @@ client = Anthropic()
 async def claude_chat(messages: list[dict], *, tools: list | None = None):
     """Chat with Claude using automatic tool selection."""
     return client.messages.create(
-        model="claude-3-opus-20240229",
+        model="claude-sonnet-4-6",
         messages=messages,
         tools=tools,  # Tools are in Anthropic format
     )

@@ -671,7 +671,7 @@ client = OpenAI(
 ```python
 # Standard OpenAI-compatible chat completions
 response = client.chat.completions.create(
-    model="anthropic/claude-sonnet-4",  # OpenRouter model format
+    model="anthropic/claude-sonnet-4.6",  # OpenRouter model format
     messages=[
         {"role": "user", "content": "Hello!"}
     ]

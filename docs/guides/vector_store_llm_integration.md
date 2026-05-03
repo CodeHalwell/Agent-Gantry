@@ -72,7 +72,7 @@ each SDK.
 ```python
 from openai import OpenAI
 
-tools = [t.tool.to_openai_schema() for t in retrieval.tools]
+tools = [t.tool.to_dialect("openai") for t in retrieval.tools]
 
 client = OpenAI(api_key="sk-...")
 response = client.chat.completions.create(
@@ -91,14 +91,16 @@ from google import genai
 from google.genai import types
 
 gemini_tools = [
-    types.Tool(function_declarations=[t.tool.to_gemini_schema() for t in retrieval.tools])
+    types.Tool(function_declarations=[
+        types.FunctionDeclaration(**t.tool.to_dialect("gemini")) for t in retrieval.tools
+    ])
 ]
 
-client = genai.Client(api_key="...")  # genai SDK >= 0.8.0
+client = genai.Client(api_key="...")  # google-genai SDK >= 1.74.0
 result = client.models.generate_content(
-    model="gemini-1.5-pro",
+    model="gemini-2.5-flash",
     contents="Summarize Q1 revenue and compute the tax.",
-    tools=gemini_tools,
+    config=types.GenerateContentConfig(tools=gemini_tools),
 )
 ```
 
@@ -107,11 +109,11 @@ result = client.models.generate_content(
 ```python
 from anthropic import Anthropic
 
-anthropic_tools = [t.tool.to_anthropic_schema() for t in retrieval.tools]
+anthropic_tools = [t.tool.to_dialect("anthropic") for t in retrieval.tools]
 
 client = Anthropic(api_key="sk-ant-...")
 message = client.messages.create(
-    model="claude-3.7-sonnet-async",
+    model="claude-sonnet-4-6",
     messages=[{"role": "user", "content": "Summarize Q1 revenue and compute the tax."}],
     tools=anthropic_tools,
 )

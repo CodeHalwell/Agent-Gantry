@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`docs/guides/vector_store_llm_integration.md`**:
+  - Section 3 (OpenAI): replaced deprecated `to_openai_schema()` with
+    `to_dialect("openai")`.
+  - Section 4 (Gemini): replaced deprecated `to_gemini_schema()` with
+    `to_dialect("gemini")` + `FunctionDeclaration(**...)` unpacking; corrected
+    `tools=` top-level kwarg to `config=GenerateContentConfig(tools=...)` per
+    google-genai >= 1.0; updated stale `model="gemini-1.5-pro"` →
+    `"gemini-2.5-flash"` (1.5 series superseded by 2.5).
+  - Section 5 (Anthropic): replaced deprecated `to_anthropic_schema()` with
+    `to_dialect("anthropic")`; replaced non-existent
+    `model="claude-3.7-sonnet-async"` with `"claude-sonnet-4-6"`.
+  *Risk: corrects a runtime-breaking `TypeError` in the Gemini snippet and an
+  invalid model ID that would have caused an immediate API error.*
+
+- **`docs/guides/semantic_tool_decorator.md`**: Updated all three OpenAI
+  examples from `model="gpt-4"` (legacy) to `"gpt-4o"`; updated Anthropic
+  example from `model="claude-3-opus-20240229"` (Claude 3 Opus, two model
+  generations old) to `"claude-sonnet-4-6"`.
+  *Risk: documentation only.*
+
+- **`docs/reference/llm_sdk_compatibility.md`**: Updated OpenRouter example
+  from `model="anthropic/claude-sonnet-4"` to `"anthropic/claude-sonnet-4.6"`.
+  The old slug maps to `claude-sonnet-4-20250514`, which Anthropic has
+  deprecated and is retiring **15 June 2026**; the new slug is the current
+  OpenRouter identifier for Claude Sonnet 4.6.
+  *Risk: prevents imminent service interruption for users following the example.*
+
+### Changed
+
+- **`pyproject.toml`**: Bumped `semantic-kernel` minimum from `>=1.30.0` to
+  `>=1.36.0`, matching the version already resolved by `uv.lock`. Full upgrade
+  to 1.41.3 remains blocked by `opentelemetry-api` version conflict with
+  `agent-framework` on some Python/platform combinations; the comment in
+  `pyproject.toml` has been updated to reflect this.
+  *Risk: safe internal — does not change the installed version.*
+
 ### Added
 
 - **`agent_gantry.query` module** — built-in deterministic query-generation
