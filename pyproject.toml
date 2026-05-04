@@ -158,11 +158,7 @@ google-vertexai = [
     "google-cloud-aiplatform>=1.70.0",
 ]
 mistral = [
-    # mistralai 2.x introduces breaking changes (async context-manager client).
-    # Upgrade to >=2.0.0 requires updating LLMClient.classify_intent (Mistral
-    # branch) to use `async with Mistral(...) as client`. Keep <2.0.0 until
-    # that migration is complete.
-    "mistralai>=1.0.0,<2.0.0",
+    "mistralai>=2.0.0",
 ]
 groq = [
     "groq>=1.2.0",

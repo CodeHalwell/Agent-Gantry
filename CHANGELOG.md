@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`agent_gantry/adapters/llm_client.py`**: Migrated Mistral provider from the
+  `mistralai < 2.0` long-lived client pattern to the `mistralai >= 2.0` per-call
+  async context-manager pattern (`async with Mistral(...) as client:`). The
+  `LLMClient._initialize_client()` now stores only the API key for the Mistral
+  provider; `classify_intent()` opens a fresh context-manager per request so HTTP
+  connections are properly released. `health_check()` uses `_mistral_api_key is not
+  None` rather than `_client is not None` for the Mistral branch.
+  *Risk: safe with shim — no public API change; callers using `LLMConfig(provider="mistral")` are unaffected.*
+
+- **`pyproject.toml`**: Removed `<2.0.0` upper bound on `mistralai`; floor updated
+  to `>=2.0.0`. After running `uv lock`, the lock will resolve `mistralai` 2.4.4
+  (latest stable). The comment block explaining the migration blocker has been
+  removed now that the migration is complete.
+  *Risk: safe internal — the lower-bound bump is the only semantic change.*
+
+- **`docs/reference/llm_sdk_compatibility.md`**:
+  - Responses API example: `model="gpt-4o"` → `"gpt-4.1"` (the currently
+    recommended model for agentic / Responses API workloads), bringing the guide
+    into parity with `examples/llm_integration/openai_demo.py`.
+  - Mistral install command updated from `>=1.0.0,<2.0.0` to `>=2.0.0`.
+  - All Mistral key-methods and Agent-Gantry integration examples rewritten to
+    use the `async with Mistral(...) as client:` context-manager pattern required
+    by `mistralai >= 2.0`.
+  *Risk: documentation only.*
+
 ### Fixed
 
 - **`docs/guides/vector_store_llm_integration.md`**:
