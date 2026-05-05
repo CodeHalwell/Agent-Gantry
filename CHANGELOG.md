@@ -38,8 +38,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Install guide `pip install` snippets updated to match new pyproject floors: `openai>=2.34.0`, `anthropic>=0.98.1`, `google-genai>=1.75.0`.
   *Risk: documentation only.*
 
-### Changed
-
 - **`agent_gantry/adapters/llm_client.py`**: Migrated Mistral provider from the
   `mistralai < 2.0` long-lived client pattern to the `mistralai >= 2.0` per-call
   async context-manager pattern (`async with Mistral(...) as client:`). The
