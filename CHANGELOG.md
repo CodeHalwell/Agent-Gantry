@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`agent_gantry/adapters/tool_spec/providers.py`** — `AnthropicAdapter.to_provider_schema()` now accepts `strict=False` (default, backwards-compatible) or `strict=True`. When `True`, the output schema includes `"strict": true` at the tool-definition top level, enabling Anthropic's grammar-constrained sampling so Claude's tool `input` always matches `input_schema` exactly.
+  *Risk: safe internal — purely additive; default preserves all existing behaviour.*  
+  Source: https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use
+
+- **`tests/test_tool_spec_adapters.py`** — Two new tests: `TestAnthropicAdapter::test_to_provider_schema_strict_mode` and `TestToolDefinitionToDialect::test_to_dialect_anthropic_strict`, verifying the new `strict=True` option.
+
+### Changed
+
+- **`pyproject.toml`** — Bumped dependency floors:
+  - `openai>=2.33.0` → `>=2.34.0` (latest stable 2026-05-05).
+  - `anthropic>=0.97.0` → `>=0.98.1` (latest stable 2026-05-05).
+  - `google-genai>=1.74.0` → `>=1.75.0` (latest stable 2026-05-05).
+  - `mcp>=1.0.0` → `>=1.27.0` (26 minor releases behind; latest stable 2026-04-02).
+  *Risk: safe internal — floor bumps only; no upper bounds changed.*
+
+- **`uv.lock`** — Refreshed via `uv lock`. Key resolved-version changes:
+  - `mistralai` 1.12.4 → 2.4.4 (corrects stale lock from the 4 May audit's pyproject change).
+  - `openai` 2.33.0 → 2.34.0.
+  - `anthropic` 0.97.0 → 0.98.1.
+  - `google-genai` 1.74.0 → 1.75.0.
+  - `opentelemetry-*` 1.41.0 → 1.39.1 (side effect of mcp 1.27.0 transitive resolution; still satisfies `agent-framework>=1.2.2`'s `>=1.39.0` requirement).
+  - `jsonpath-python` 1.1.5 added (new transitive dep of mcp 1.27.0).
+  - `invoke` 2.2.1 removed (dropped by transitive deps).
+
+- **`docs/reference/llm_sdk_compatibility.md`**:
+  - Azure OpenAI Responses API example: `model="gpt-4o"` → `"gpt-4.1"` (two occurrences), bringing the Azure section into parity with the non-Azure example and `examples/llm_integration/openai_demo.py`. (`gpt-4.1` is the currently recommended model for agentic / Responses API workloads.)
+  - Install guide `pip install` snippets updated to match new pyproject floors: `openai>=2.34.0`, `anthropic>=0.98.1`, `google-genai>=1.75.0`.
+  *Risk: documentation only.*
+
 ### Changed
 
 - **`agent_gantry/adapters/llm_client.py`**: Migrated Mistral provider from the

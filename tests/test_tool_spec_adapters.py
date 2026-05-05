@@ -301,6 +301,15 @@ class TestAnthropicAdapter:
         assert payload.tool_call_id == "toolu_abc123"
         assert payload.arguments == {"city": "Paris"}
 
+    def test_to_provider_schema_strict_mode(self, sample_tool: ToolDefinition) -> None:
+        """Test converting with strict mode enabled."""
+        adapter = AnthropicAdapter()
+        schema = adapter.to_provider_schema(sample_tool, strict=True)
+
+        assert schema["strict"] is True
+        assert schema["name"] == "get_weather"
+        assert "input_schema" in schema
+
     def test_format_tool_result(self) -> None:
         """Test formatting tool result for Anthropic."""
         adapter = AnthropicAdapter()
@@ -599,6 +608,13 @@ class TestToolDefinitionToDialect:
         schema = sample_tool.to_dialect(SchemaDialect.ANTHROPIC)
         assert schema["name"] == "get_weather"
         assert "input_schema" in schema
+
+    def test_to_dialect_anthropic_strict(self, sample_tool: ToolDefinition) -> None:
+        """Test to_dialect with Anthropic dialect and strict mode."""
+        schema = sample_tool.to_dialect(SchemaDialect.ANTHROPIC, strict=True)
+        assert schema["name"] == "get_weather"
+        assert "input_schema" in schema
+        assert schema["strict"] is True
 
     def test_to_dialect_gemini(self, sample_tool: ToolDefinition) -> None:
         """Test to_dialect with Gemini dialect."""
