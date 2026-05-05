@@ -298,6 +298,8 @@ class AnthropicAdapter:
     def to_provider_schema(
         self,
         tool: ToolDefinition,
+        *,
+        strict: bool = False,
         **options: Any,
     ) -> dict[str, Any]:
         """
@@ -305,16 +307,24 @@ class AnthropicAdapter:
 
         Args:
             tool: The tool definition to convert
+            strict: Enable Anthropic strict tool use — uses grammar-constrained
+                sampling so Claude's ``input`` always matches ``input_schema``
+                exactly. Requires ``additionalProperties: false`` on the
+                ``input_schema`` when used in production. Defaults to False.
+                Source: https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use
             **options: Additional provider-specific options
 
         Returns:
             Anthropic-compatible tool schema
         """
-        return {
+        schema: dict[str, Any] = {
             "name": tool.name,
             "description": tool.description,
             "input_schema": tool.parameters_schema,
         }
+        if strict:
+            schema["strict"] = True
+        return schema
 
     def from_provider_payload(
         self,

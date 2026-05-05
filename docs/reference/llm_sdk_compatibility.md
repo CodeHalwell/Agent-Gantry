@@ -50,7 +50,7 @@ pip install agent-gantry[all]
 
 ### Package
 ```bash
-pip install openai>=2.33.0
+pip install openai>=2.34.0
 ```
 
 ### Client Initialization
@@ -159,7 +159,7 @@ response = client.responses.create(
 
 ### Package
 ```bash
-pip install openai>=2.33.0
+pip install openai>=2.34.0
 ```
 
 ### Client Initialization
@@ -187,10 +187,11 @@ response = client.chat.completions.create(
 
 #### Responses API
 ```python
-# The Responses API uses a different format for tools and responses
+# The Responses API uses a different format for tools and responses.
+# Use gpt-4.1 for agentic / Responses API workloads (recommended over gpt-4o).
 response = client.responses.create(
-    model="gpt-4o",  # Your deployment name
-    input="Analyze this document and extract key points",
+    model="gpt-4.1",  # Your deployment name; gpt-4.1 recommended for Responses API
+    input="Analyse this document and extract key points",
     tools=[
         {
             "type": "function",
@@ -214,7 +215,7 @@ for output in response.output:
         print(f"Arguments: {output.arguments}")
         # Execute tool and send result back
         result = client.responses.create(
-            model="gpt-4o",
+            model="gpt-4.1",
             previous_response_id=response.id,
             input=[{
                 "type": "function_call_output",
@@ -252,7 +253,7 @@ response = client.chat.completions.create(
 
 ### Package
 ```bash
-pip install anthropic>=0.97.0
+pip install anthropic>=0.98.1
 ```
 
 ### Client Initialization
@@ -336,7 +337,7 @@ response = client.messages.create(
 
 ### Package
 ```bash
-pip install google-genai>=1.74.0
+pip install google-genai>=1.75.0
 ```
 
 ### Client Initialization
@@ -646,7 +647,7 @@ OpenRouter and other OpenAI-compatible providers (DeepSeek, Perplexity, Together
 
 ### Package
 ```bash
-pip install openai>=2.33.0
+pip install openai>=2.34.0
 ```
 
 ### Client Initialization
