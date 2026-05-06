@@ -70,14 +70,19 @@ agent-frameworks = [
     "langgraph>=1.1.10",
     "llama-index-core>=0.14.21",
     "llama-index-llms-openai>=0.7.7",
-    # semantic-kernel>=1.41.3 conflicts with agent-framework>=1.2.1 on some
-    # Python versions due to opentelemetry-api version incompatibility.
+    # semantic-kernel>=1.41.3 is incompatible with agent-framework>=1.2.2:
+    # semantic-kernel 1.41.3 requires azure-ai-projects>=1.0.0b12,<1.1.dev0,
+    # while agent-framework 1.2.2 requires azure-ai-projects>=2.0.0,<3.0.
     # Upgrade semantic-kernel in a standalone environment without agent-framework.
-    # Floor bumped to >=1.36.0 to match the uv.lock-resolved version; full
-    # upgrade to 1.41.3 requires standalone testing without agent-framework.
     "semantic-kernel>=1.36.0",
-    # google-adk 1.31.1 conflicts with agent-framework>=1.2.1 on Python 3.13/Windows;
-    # bump this floor in a standalone (no agent-framework) environment.
+    # google-adk>=1.32.0 is blocked by a three-way conflict:
+    # (a) google-adk 1.32.0 requires pydantic>=2.12
+    # (b) semantic-kernel>=1.36.0,<1.41.2 requires pydantic<2.12
+    # (c) semantic-kernel>=1.39.0 additionally conflicts with agent-framework>=1.2.2
+    #     because semantic-kernel 1.39.x requires azure-ai-projects<1.1.dev0,
+    #     while agent-framework 1.2.2 requires azure-ai-projects>=2.0.0,<3.0.
+    # Resolution: upgrade google-adk in a standalone environment without
+    # agent-framework and semantic-kernel together.
     "google-adk>=1.14.1",
 ]
 example-tools = [
@@ -149,7 +154,7 @@ a2a = [
 ]
 # LLM provider SDK dependencies
 anthropic = [
-    "anthropic>=0.98.1",
+    "anthropic>=0.99.0",
 ]
 google-genai = [
     "google-genai>=1.75.0",

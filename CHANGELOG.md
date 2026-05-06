@@ -13,6 +13,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   *Risk: safe internal — purely additive; default preserves all existing behaviour.*  
   Source: https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use
 
+### Changed
+
+- **`pyproject.toml`** — Bumped `anthropic` floor `>=0.98.1` → `>=0.99.0` (latest stable 2026-05-05; adds OIDC federation token exchange workspace targeting — no Messages API or tool-use surface changes for existing callers).
+  *Risk: safe internal — floor bump only.*
+
+- **`uv.lock`** — Refreshed via `uv lock`. `anthropic` resolved 0.98.1 → 0.99.0. All other packages unchanged.
+
+- **`pyproject.toml`** — Updated hold comments for `semantic-kernel` and `google-adk` to document the precise blocker chain, correcting the prior claim that the semantic-kernel conflict was opentelemetry-related. The actual blockers are:
+  - `semantic-kernel>=1.39.0` requires `azure-ai-projects>=1.0.0b12,<1.1.dev0`; `agent-framework 1.2.2` requires `azure-ai-projects>=2.0.0,<3.0`. Incompatible.
+  - `google-adk 1.32.0` requires `pydantic>=2.12`; `semantic-kernel>=1.36.0,<1.41.2` requires `pydantic<2.12`. Blocked until the semantic-kernel/azure-ai-projects conflict is resolved upstream.
+  *Risk: informational only — no functional code changes.*
+
+- **`docs/reference/llm_sdk_compatibility.md`** — Anthropic install snippet updated: `pip install anthropic>=0.98.1` → `>=0.99.0`.
+  *Risk: documentation only.*
+
 - **`tests/test_tool_spec_adapters.py`** — Two new tests: `TestAnthropicAdapter::test_to_provider_schema_strict_mode` and `TestToolDefinitionToDialect::test_to_dialect_anthropic_strict`, verifying the new `strict=True` option.
 
 ### Changed
