@@ -109,7 +109,7 @@ embeddings = [
     "sentence-transformers>=2.2.0",
 ]
 openai = [
-    "openai>=2.34.0",
+    "openai>=2.35.1",
 ]
 cohere = [
     "cohere>=5.0.0",
@@ -149,7 +149,7 @@ a2a = [
 ]
 # LLM provider SDK dependencies
 anthropic = [
-    "anthropic>=0.98.1",
+    "anthropic>=0.100.0",
 ]
 google-genai = [
     "google-genai>=1.75.0",

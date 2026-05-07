@@ -12,97 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`agent_gantry/adapters/tool_spec/providers.py`** — `AnthropicAdapter.to_provider_schema()` now accepts `strict=False` (default, backwards-compatible) or `strict=True`. When `True`, the output schema includes `"strict": true` at the tool-definition top level, enabling Anthropic's grammar-constrained sampling so Claude's tool `input` always matches `input_schema` exactly.
   *Risk: safe internal — purely additive; default preserves all existing behaviour.*  
   Source: https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use
-
 - **`tests/test_tool_spec_adapters.py`** — Two new tests: `TestAnthropicAdapter::test_to_provider_schema_strict_mode` and `TestToolDefinitionToDialect::test_to_dialect_anthropic_strict`, verifying the new `strict=True` option.
-
-### Changed
-
-- **`pyproject.toml`** — Bumped dependency floors:
-  - `openai>=2.33.0` → `>=2.34.0` (latest stable 2026-05-05).
-  - `anthropic>=0.97.0` → `>=0.98.1` (latest stable 2026-05-05).
-  - `google-genai>=1.74.0` → `>=1.75.0` (latest stable 2026-05-05).
-  - `mcp>=1.0.0` → `>=1.27.0` (26 minor releases behind; latest stable 2026-04-02).
-  *Risk: safe internal — floor bumps only; no upper bounds changed.*
-
-- **`uv.lock`** — Refreshed via `uv lock`. Key resolved-version changes:
-  - `mistralai` 1.12.4 → 2.4.4 (corrects stale lock from the 4 May audit's pyproject change).
-  - `openai` 2.33.0 → 2.34.0.
-  - `anthropic` 0.97.0 → 0.98.1.
-  - `google-genai` 1.74.0 → 1.75.0.
-  - `opentelemetry-*` 1.41.0 → 1.39.1 (side effect of mcp 1.27.0 transitive resolution; still satisfies `agent-framework>=1.2.2`'s `>=1.39.0` requirement).
-  - `jsonpath-python` 1.1.5 added (new transitive dep of mcp 1.27.0).
-  - `invoke` 2.2.1 removed (dropped by transitive deps).
-
-- **`docs/reference/llm_sdk_compatibility.md`**:
-  - Azure OpenAI Responses API example: `model="gpt-4o"` → `"gpt-4.1"` (two occurrences), bringing the Azure section into parity with the non-Azure example and `examples/llm_integration/openai_demo.py`. (`gpt-4.1` is the currently recommended model for agentic / Responses API workloads.)
-  - Install guide `pip install` snippets updated to match new pyproject floors: `openai>=2.34.0`, `anthropic>=0.98.1`, `google-genai>=1.75.0`.
-  *Risk: documentation only.*
-
-- **`agent_gantry/adapters/llm_client.py`**: Migrated Mistral provider from the
-  `mistralai < 2.0` long-lived client pattern to the `mistralai >= 2.0` per-call
-  async context-manager pattern (`async with Mistral(...) as client:`). The
-  `LLMClient._initialize_client()` now stores only the API key for the Mistral
-  provider; `classify_intent()` opens a fresh context-manager per request so HTTP
-  connections are properly released. `health_check()` uses `_mistral_api_key is not
-  None` rather than `_client is not None` for the Mistral branch.
-  *Risk: safe with shim — no public API change; callers using `LLMConfig(provider="mistral")` are unaffected.*
-
-- **`pyproject.toml`**: Removed `<2.0.0` upper bound on `mistralai`; floor updated
-  to `>=2.0.0`. After running `uv lock`, the lock will resolve `mistralai` 2.4.4
-  (latest stable). The comment block explaining the migration blocker has been
-  removed now that the migration is complete.
-  *Risk: safe internal — the lower-bound bump is the only semantic change.*
-
-- **`docs/reference/llm_sdk_compatibility.md`**:
-  - Responses API example: `model="gpt-4o"` → `"gpt-4.1"` (the currently
-    recommended model for agentic / Responses API workloads), bringing the guide
-    into parity with `examples/llm_integration/openai_demo.py`.
-  - Mistral install command updated from `>=1.0.0,<2.0.0` to `>=2.0.0`.
-  - All Mistral key-methods and Agent-Gantry integration examples rewritten to
-    use the `async with Mistral(...) as client:` context-manager pattern required
-    by `mistralai >= 2.0`.
-  *Risk: documentation only.*
-
-### Fixed
-
-- **`docs/guides/vector_store_llm_integration.md`**:
-  - Section 3 (OpenAI): replaced deprecated `to_openai_schema()` with
-    `to_dialect("openai")`.
-  - Section 4 (Gemini): replaced deprecated `to_gemini_schema()` with
-    `to_dialect("gemini")` + `FunctionDeclaration(**...)` unpacking; corrected
-    `tools=` top-level kwarg to `config=GenerateContentConfig(tools=...)` per
-    google-genai >= 1.0; updated stale `model="gemini-1.5-pro"` →
-    `"gemini-2.5-flash"` (1.5 series superseded by 2.5).
-  - Section 5 (Anthropic): replaced deprecated `to_anthropic_schema()` with
-    `to_dialect("anthropic")`; replaced non-existent
-    `model="claude-3.7-sonnet-async"` with `"claude-sonnet-4-6"`.
-  *Risk: corrects a runtime-breaking `TypeError` in the Gemini snippet and an
-  invalid model ID that would have caused an immediate API error.*
-
-- **`docs/guides/semantic_tool_decorator.md`**: Updated all three OpenAI
-  examples from `model="gpt-4"` (legacy) to `"gpt-4o"`; updated Anthropic
-  example from `model="claude-3-opus-20240229"` (Claude 3 Opus, two model
-  generations old) to `"claude-sonnet-4-6"`.
-  *Risk: documentation only.*
-
-- **`docs/reference/llm_sdk_compatibility.md`**: Updated OpenRouter example
-  from `model="anthropic/claude-sonnet-4"` to `"anthropic/claude-sonnet-4.6"`.
-  The old slug maps to `claude-sonnet-4-20250514`, which Anthropic has
-  deprecated and is retiring **15 June 2026**; the new slug is the current
-  OpenRouter identifier for Claude Sonnet 4.6.
-  *Risk: prevents imminent service interruption for users following the example.*
-
-### Changed
-
-- **`pyproject.toml`**: Bumped `semantic-kernel` minimum from `>=1.30.0` to
-  `>=1.36.0`, matching the version already resolved by `uv.lock`. Full upgrade
-  to 1.41.3 remains blocked by `opentelemetry-api` version conflict with
-  `agent-framework` on some Python/platform combinations; the comment in
-  `pyproject.toml` has been updated to reflect this.
-  *Risk: safe internal — does not change the installed version.*
-
-### Added
-
 - **`agent_gantry.query` module** — built-in deterministic query-generation
   strategies for semantic retrieval: `last_user_text` (default),
   `last_assistant_text`, `last_tool_result`, `concatenate_recent`, and
@@ -141,10 +51,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Dependency: `openai` floor bumped to `>=2.35.1`** (was `>=2.34.0`). Version 2.35.1 fixes an image-generation `size` enum regression introduced in 2.35.0 and removes deprecated CLI tooling. No API surface changes for Gantry's Chat Completions or Responses API call sites.
+  *Risk: safe internal — floor bump only.*  
+  Source: https://github.com/openai/openai-python/releases
+- **Dependency: `anthropic` floor bumped to `>=0.100.0`** (was `>=0.98.1`). Versions 0.99.0 and 0.100.0 add OIDC federation token exchange, Managed Agents beta (multiagents + outcomes), webhook support, and vault validation. All additive; no breaking changes to `client.messages.create`, tool-use, or thinking APIs.
+  *Risk: safe internal — floor bump only.*  
+  Source: https://github.com/anthropics/anthropic-sdk-python/releases
+- **`pyproject.toml`** — Bumped dependency floors (5 May audit):
+  - `openai>=2.33.0` → `>=2.34.0`.
+  - `anthropic>=0.97.0` → `>=0.98.1`.
+  - `google-genai>=1.74.0` → `>=1.75.0`.
+  - `mcp>=1.0.0` → `>=1.27.0` (26 minor releases behind; latest stable 2026-04-02).
+  *Risk: safe internal — floor bumps only; no upper bounds changed.*
+- **`uv.lock`** — Refreshed cumulatively. Key resolved-version changes across recent audits:
+  - `openai` 2.34.0 → 2.35.1 (7 May audit).
+  - `anthropic` 0.98.1 → 0.100.0 (7 May audit).
+  - `mistralai` 1.12.4 → 2.4.4 (5 May audit; corrects stale lock from 4 May pyproject change).
+  - `opentelemetry-*` 1.41.0 → 1.39.1 (side effect of mcp 1.27.0 transitive resolution; still satisfies `agent-framework>=1.2.2`'s `>=1.39.0` requirement).
+  - `jsonpath-python` 1.1.5 added (new transitive dep of mcp 1.27.0).
+  - `invoke` 2.2.1 removed (dropped by transitive deps).
+- **`docs/reference/llm_sdk_compatibility.md`** — Install guide `pip install` snippets updated across audits: `openai>=2.35.1`, `anthropic>=0.100.0`, `google-genai>=1.75.0`; Azure OpenAI Responses API examples updated from `gpt-4o` to `gpt-4.1`; Mistral install command updated from `>=1.0.0,<2.0.0` to `>=2.0.0`; Mistral key-methods and integration examples rewritten for `mistralai >= 2.0` async context-manager pattern.
+  *Risk: documentation only.*
+- **`agent_gantry/adapters/llm_client.py`**: Migrated Mistral provider from the
+  `mistralai < 2.0` long-lived client pattern to the `mistralai >= 2.0` per-call
+  async context-manager pattern (`async with Mistral(...) as client:`). The
+  `LLMClient._initialize_client()` now stores only the API key for the Mistral
+  provider; `classify_intent()` opens a fresh context-manager per request so HTTP
+  connections are properly released. `health_check()` uses `_mistral_api_key is not
+  None` rather than `_client is not None` for the Mistral branch.
+  *Risk: safe with shim — no public API change; callers using `LLMConfig(provider="mistral")` are unaffected.*
+- **`pyproject.toml`**: Removed `<2.0.0` upper bound on `mistralai`; floor updated
+  to `>=2.0.0`. The comment block explaining the migration blocker has been
+  removed now that the migration is complete.
+  *Risk: safe internal — the lower-bound bump is the only semantic change.*
+- **`pyproject.toml`**: Bumped `semantic-kernel` minimum from `>=1.30.0` to
+  `>=1.36.0`, matching the version already resolved by `uv.lock`. Full upgrade
+  to 1.41.3 remains blocked by `opentelemetry-api` version conflict with
+  `agent-framework` on some Python/platform combinations.
+  *Risk: safe internal — does not change the installed version.*
 - **Dependency: `google-genai` floor bumped to `>=1.74.0`** (was `>=1.0.0`). The
   previous floor was 74 minor versions behind the latest stable release (1.74.0).
   Bumping ensures constrained resolver environments select a supported SDK version.
-  The `client.aio.models.generate_content` API used by `LLMClient` is stable.
   *Risk: safe internal — no API changes required.*
 - **Dependency: `langchain` floor bumped to `>=1.2.17`** (was `>=1.2.16`). Minor
   patch release. *Risk: safe internal.*
