@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Dependency: `openai` floor bumped to `>=2.35.1`** (was `>=2.34.0`). Version 2.35.1 fixes an image-generation `size` enum regression introduced in 2.35.0 and removes deprecated CLI tooling. No API surface changes for Gantry's Chat Completions or Responses API call sites.
+  *Risk: safe internal — floor bump only.*  
+  Source: https://github.com/openai/openai-python/releases
+
+- **Dependency: `anthropic` floor bumped to `>=0.100.0`** (was `>=0.98.1`). Versions 0.99.0 and 0.100.0 add OIDC federation token exchange, Managed Agents beta (multiagents + outcomes), webhook support, and vault validation. All additive; no breaking changes to `client.messages.create`, tool-use, or thinking APIs.
+  *Risk: safe internal — floor bump only.*  
+  Source: https://github.com/anthropics/anthropic-sdk-python/releases
+
+- **`uv.lock`** — Refreshed via `uv lock`. Key resolved-version changes:
+  - `openai` 2.34.0 → 2.35.1.
+  - `anthropic` 0.98.1 → 0.100.0.
+  No other packages changed.
+
+- **`docs/reference/llm_sdk_compatibility.md`** — Install guide `pip install` snippets updated to match new pyproject floors: `openai>=2.35.1` (3 occurrences: OpenAI, Azure OpenAI, OpenRouter sections), `anthropic>=0.100.0` (1 occurrence: Anthropic section).
+  *Risk: documentation only.*
+
 ### Added
 
 - **`agent_gantry/adapters/tool_spec/providers.py`** — `AnthropicAdapter.to_provider_schema()` now accepts `strict=False` (default, backwards-compatible) or `strict=True`. When `True`, the output schema includes `"strict": true` at the tool-definition top level, enabling Anthropic's grammar-constrained sampling so Claude's tool `input` always matches `input_schema` exactly.
