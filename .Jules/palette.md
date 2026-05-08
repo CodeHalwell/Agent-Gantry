@@ -37,3 +37,7 @@
 ## 2026-05-02 - [Keyboard Shortcuts Accessibility & OS Awareness]
 **Learning:** Displaying hardcoded OS-specific keyboard shortcuts (like "Ctrl+K") in placeholders confuses Mac users, who expect "⌘K". Additionally, mapping common single-key shortcuts like "/" for search focus requires careful event handling to avoid intercepting the key when the user is already typing in an input field.
 **Action:** When adding keyboard shortcuts for quick focus or actions, dynamically update visual hints (like placeholders) based on `navigator.userAgent.includes("Mac")`. Furthermore, always check `e.target.tagName` against `"INPUT"`, `"TEXTAREA"`, and `e.target.isContentEditable` before intercepting single-key shortcuts like "/".
+
+## 2026-05-08 - [Keyboard Accessibility for Modal Drawer Menus]
+**Learning:** Mobile "hamburger" menus that slide in (like `.sidebar`) act as modal drawers. If they only close on `click` outside, keyboard users are left with no standard way to dismiss them (`Escape` key) and can accidentally tab out of the menu into the obscured main content, breaking the logical focus flow.
+**Action:** When implementing modal drawer menus or sidebars, always add a `keydown` listener for the `Escape` key (and return focus to the toggle button), as well as a `focusin` listener to auto-close the menu if the user tabs out of its container.
