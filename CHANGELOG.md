@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Dependency: `openai` floor bumped to `>=2.36.0`** (was `>=2.35.1`). Version 2.36.0 adds Realtime API v2 support and general API refinements. No breaking changes for Gantry's Chat Completions or Responses API call sites.
+  *Risk: safe internal — floor bump only.*  
+  Source: https://pypi.org/pypi/openai/json
+- **`docs/reference/llm_sdk_compatibility.md`** — Install guide `pip install "openai>=2.35.1"` updated to `"openai>=2.36.0"` (3 occurrences: OpenAI, Azure OpenAI, OpenRouter sections).
+  *Risk: documentation only.*
+- **`uv.lock`** — Refreshed. Key resolved-version changes: `openai` 2.35.1 → 2.36.0; `agent-framework` 1.2.2 → 1.3.0 (auto-picked-up by `>=1.2.2,<2.0.0`); `mistralai` 2.4.4 → 2.4.5 (auto-picked-up by `>=2.0.0`; breaking changes to workflow streaming APIs are outside AG's Mistral code paths).
+
 ### Added
 
 - **`agent_gantry/adapters/tool_spec/providers.py`** — `AnthropicAdapter.to_provider_schema()` now accepts `strict=False` (default, backwards-compatible) or `strict=True`. When `True`, the output schema includes `"strict": true` at the tool-definition top level, enabling Anthropic's grammar-constrained sampling so Claude's tool `input` always matches `input_schema` exactly.
