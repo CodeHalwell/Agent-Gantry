@@ -33,6 +33,29 @@
           toggleButton.setAttribute("aria-expanded", "false");
         }
       });
+
+      // Close sidebar on Escape key
+      document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape" && sidebar.classList.contains("open")) {
+          sidebar.classList.remove("open");
+          toggleButton.setAttribute("aria-expanded", "false");
+          toggleButton.focus();
+        }
+      });
+
+      // Close sidebar when focus moves outside on mobile
+      document.addEventListener("focusin", function (event) {
+        const isMobile = window.innerWidth <= 768;
+        if (
+          isMobile &&
+          !sidebar.contains(event.target) &&
+          !toggleButton.contains(event.target) &&
+          sidebar.classList.contains("open")
+        ) {
+          sidebar.classList.remove("open");
+          toggleButton.setAttribute("aria-expanded", "false");
+        }
+      });
     }
   }
 
@@ -221,11 +244,17 @@
 
     document.addEventListener("keydown", function (e) {
       // Cmd/Ctrl + K or / to focus search
-      const isFocusShortcut = ((e.metaKey || e.ctrlKey) && e.key === "k") || e.key === "/";
+      const isFocusShortcut =
+        ((e.metaKey || e.ctrlKey) && e.key === "k") || e.key === "/";
 
       if (isFocusShortcut) {
         // Prevent '/' from being intercepted if user is already typing in an input
-        if (e.key === "/" && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable)) {
+        if (
+          e.key === "/" &&
+          (e.target.tagName === "INPUT" ||
+            e.target.tagName === "TEXTAREA" ||
+            e.target.isContentEditable)
+        ) {
           return;
         }
 
