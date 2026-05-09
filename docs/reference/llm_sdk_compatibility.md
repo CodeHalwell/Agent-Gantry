@@ -50,7 +50,7 @@ pip install agent-gantry[all]
 
 ### Package
 ```bash
-pip install "openai>=2.35.1"
+pip install "openai>=2.36.0"
 ```
 
 ### Client Initialization
@@ -159,7 +159,7 @@ response = client.responses.create(
 
 ### Package
 ```bash
-pip install "openai>=2.35.1"
+pip install "openai>=2.36.0"
 ```
 
 ### Client Initialization
@@ -334,10 +334,12 @@ response = client.messages.create(
 ## Google GenAI
 
 > **Note**: For production workloads, use Vertex AI instead. Google GenAI is recommended for prototyping.
+>
+> **v2.0 compatibility note (May 2026)**: `google-genai` 2.0.0 (released 2026-05-07) introduced breaking changes *only* in the Interactions API (SSE event renames, `response_format` field restructuring). The `GenerateContent` and function-calling surfaces Gantry uses are entirely unaffected. However, `google-adk` (the Google Agent Development Kit, included in `agent-gantry[agent-frameworks]`) requires `google-genai<2.0.0` across all current versions. If you need `google-genai 2.x`, install without `google-adk` (`pip install agent-gantry[google-genai]`). See [official migration notes](https://ai.google.dev/gemini-api/docs/interactions-breaking-changes-may-2026).
 
 ### Package
 ```bash
-pip install google-genai>=1.75.0
+pip install "google-genai>=1.75.0"
 ```
 
 ### Client Initialization
@@ -647,7 +649,7 @@ OpenRouter and other OpenAI-compatible providers (DeepSeek, Perplexity, Together
 
 ### Package
 ```bash
-pip install "openai>=2.35.1"
+pip install "openai>=2.36.0"
 ```
 
 ### Client Initialization
