@@ -50,13 +50,15 @@ dev = [
     "python-dotenv>=1.0.0",
 ]
 agent-frameworks = [
-    # Bump to 1.2.2: picks up GeminiChatClient (1.1.0), HandoffBuilder fixes (1.1.1),
-    # functional workflow API and AF→A2A bridge (1.2.0), observability span-nesting fix
-    # and hosted-workflow conversation-history propagation (1.2.2). Note the 1.2.2
-    # breaking change: sequential-approval and concurrent workflow terminal outputs now
-    # return as AgentResponse instead of a plain string — callers should use str() or
-    # .content to extract text.
-    "agent-framework>=1.2.2,<2.0.0",
+    # Bump to 1.3.0 (released 2026-05-08): picks up ClassSkill for class-based skill
+    # definitions, allowed_tools support for OpenAI and Gemini tool-choice, experimental
+    # session/todo-list/memory context providers, and function approval flow in Foundry
+    # hosted agents. Two breaking changes in 1.3.0: (1) skills multi-source architecture
+    # restructuring (only affects the experimental skills API, not used by Gantry);
+    # (2) removal of bespoke Foundry toolbox helpers in favour of MCP (not used by
+    # Gantry). Prior 1.2.2 note retained: sequential-approval and concurrent workflow
+    # terminal outputs return as AgentResponse — use str() or .content to extract text.
+    "agent-framework>=1.3.0,<2.0.0",
     "autogen-agentchat>=0.7.5",
     "autogen-ext[openai]>=0.7.5",
     # crewai>=1.12.0 pins opentelemetry-api<1.35, which conflicts with
@@ -109,7 +111,7 @@ embeddings = [
     "sentence-transformers>=2.2.0",
 ]
 openai = [
-    "openai>=2.35.1",
+    "openai>=2.36.0",
 ]
 cohere = [
     "cohere>=5.0.0",
@@ -140,7 +142,7 @@ nomic = [
     "einops>=0.8.1",
 ]
 mcp = [
-    "mcp>=1.27.0",
+    "mcp>=1.27.1",
 ]
 a2a = [
     "httpx>=0.24.0",
@@ -152,6 +154,14 @@ anthropic = [
     "anthropic>=0.100.0",
 ]
 google-genai = [
+    # google-genai 2.0.0 (released 2026-05-07) and 2.0.1 (2026-05-09) introduce
+    # breaking changes *only* in the Interactions API. GenerateContent and function
+    # calling are entirely unaffected, so upgrading to 2.x is safe for Gantry's
+    # call sites. However, google-adk>=1.14.1 (in the agent-frameworks extra) requires
+    # google-genai<2.0.0 across all its versions up to 1.33.0 — the same opentelemetry
+    # pattern as crewai/semantic-kernel. The floor stays at 1.75.0 so the all[] extra
+    # remains installable. To run with google-genai 2.x, use a standalone environment
+    # without google-adk (pip install agent-gantry[google-genai]).
     "google-genai>=1.75.0",
 ]
 google-vertexai = [
