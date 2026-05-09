@@ -130,10 +130,18 @@
     searchResults.innerHTML = "";
 
     if (results.length === 0) {
-      searchResults.innerHTML =
-        '<div class="search-no-results">No results found</div>';
+      searchResults.innerHTML = `
+        <div class="search-no-results">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-bottom: 12px; color: var(--text-muted); opacity: 0.5;">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <div class="search-no-results-title">No results found</div>
+          <div class="search-no-results-message">Try adjusting your search terms.</div>
+        </div>
+      `;
       searchResults.style.display = "block";
-      announceSearch("No results found");
+      announceSearch("No results found. Try adjusting your search terms.");
       return;
     }
 
@@ -242,9 +250,22 @@
       }
 
       .search-no-results {
-        padding: 16px;
+        padding: 32px 16px;
         text-align: center;
         color: var(--text-muted);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .search-no-results-title {
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 4px;
+      }
+
+      .search-no-results-message {
+        font-size: 0.875rem;
       }
     `;
     document.head.appendChild(style);

@@ -41,3 +41,7 @@
 ## 2026-05-08 - [Keyboard Accessibility for Modal Drawer Menus]
 **Learning:** Mobile "hamburger" menus that slide in (like `.sidebar`) act as modal drawers. If they only close on `click` outside, keyboard users are left with no standard way to dismiss them (`Escape` key) and can accidentally tab out of the menu into the obscured main content, breaking the logical focus flow.
 **Action:** When implementing modal drawer menus or sidebars, always add a `keydown` listener for the `Escape` key (and return focus to the toggle button), as well as a `focusin` listener to auto-close the menu if the user tabs out of its container.
+
+## 2026-05-09 - [Search Empty States as Dead Ends]
+**Learning:** A generic "No results found" message is a UX dead end. Users experiencing an empty state often abandon the action because they feel stuck and receive no actionable guidance. Adding visual comfort (like an icon) and explicit suggestions ("Try adjusting your search terms") significantly improves the recovery rate from zero-result states.
+**Action:** When designing or implementing search components or filtered lists, never use a plain text string for an empty state. Always provide a structured empty state with visual feedback (icon/illustration) and actionable guidance for the user's next step.
