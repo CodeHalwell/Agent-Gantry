@@ -186,10 +186,12 @@
           await navigator.clipboard.writeText(block.textContent);
           button.textContent = "Copied!";
           button.classList.add("copied");
+          button.setAttribute("aria-label", "Code copied to clipboard");
 
           setTimeout(() => {
             button.textContent = "Copy";
             button.classList.remove("copied");
+            button.setAttribute("aria-label", "Copy code to clipboard");
           }, 2000);
         } catch (err) {
           console.error("Failed to copy code:", err);
