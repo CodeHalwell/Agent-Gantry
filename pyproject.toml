@@ -67,7 +67,7 @@ agent-frameworks = [
     # introduces the incompatibility. To use crewai>=1.12.0, install it in a
     # separate environment without agent-framework.
     "crewai>=1.6.1",
-    "langchain>=1.2.17",
+    "langchain>=1.2.18",
     "langchain-openai>=1.2.1",
     "langgraph>=1.1.10",
     "llama-index-core>=0.14.21",
