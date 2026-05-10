@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -15,11 +16,13 @@ from agent_gantry.utils.fingerprint import compute_tool_fingerprint
 
 logger = logging.getLogger(__name__)
 
+_CONTROL_CHAR_PATTERN = re.compile(r"[\x00-\x1f]")
 
 # We define protocols or assume the mixins will be mixed into a class that has these attributes.
 # In Python, mixins typically just use `self._attr` directly, but for type checkers, it's
 # helpful to declare them or rely on duck typing. Since `LanceDBVectorStore` will inherit these,
 # we just use the attributes.
+
 
 def _escape_sql_string(value: str) -> str:
     """
@@ -69,7 +72,7 @@ def _validate_identifier(value: str, field_name: str) -> None:
     if not value or len(value) > 256:
         raise ValueError(f"{field_name} must be 1-256 characters")
     # Reject null bytes and other control characters
-    if any(ord(c) < 32 for c in value):
+    if _CONTROL_CHAR_PATTERN.search(value):
         raise ValueError(f"{field_name} contains invalid characters")
 
 
@@ -110,8 +113,7 @@ class LanceDBToolsMixin:
         for i, emb in enumerate(embeddings):
             if len(emb) != self._dimension:  # type: ignore
                 raise ValueError(
-                    f"Embedding {i} has dimension {len(emb)}, "
-                    f"expected {self._dimension}"  # type: ignore
+                    f"Embedding {i} has dimension {len(emb)}, expected {self._dimension}"  # type: ignore
                 )
 
         await self._ensure_initialized()  # type: ignore
@@ -256,9 +258,7 @@ class LanceDBToolsMixin:
 
         return output
 
-    async def get_by_name(
-        self, name: str, namespace: str = "default"
-    ) -> ToolDefinition | None:
+    async def get_by_name(self, name: str, namespace: str = "default") -> ToolDefinition | None:
         """
         Get a tool by name.
 
@@ -499,8 +499,7 @@ class LanceDBSkillsMixin:
         for i, emb in enumerate(embeddings):
             if len(emb) != self._dimension:  # type: ignore
                 raise ValueError(
-                    f"Embedding {i} has dimension {len(emb)}, "
-                    f"expected {self._dimension}"  # type: ignore
+                    f"Embedding {i} has dimension {len(emb)}, expected {self._dimension}"  # type: ignore
                 )
 
         await self._ensure_initialized()  # type: ignore
@@ -616,9 +615,7 @@ class LanceDBSkillsMixin:
 
         return output
 
-    async def get_skill_by_name(
-        self, name: str, namespace: str = "default"
-    ) -> Skill | None:
+    async def get_skill_by_name(self, name: str, namespace: str = "default") -> Skill | None:
         """
         Get a skill by name.
 
@@ -768,7 +765,9 @@ class LanceDBMetadataMixin:
 
         try:
             escaped_key = _escape_sql_string(key)
-            results = self._metadata_table.search().where(f"key = '{escaped_key}'").limit(1).to_list()  # type: ignore
+            results = (
+                self._metadata_table.search().where(f"key = '{escaped_key}'").limit(1).to_list()
+            )  # type: ignore
             if results and results[0].get("value") is not None:
                 value: str = results[0]["value"]
                 return value
@@ -800,11 +799,15 @@ class LanceDBMetadataMixin:
             # Continue anyway - we'll try to add the new record
 
         # Add new record
-        self._metadata_table.add([{  # type: ignore
-            "key": key,
-            "value": value,
-            "updated_at": now,
-        }])
+        self._metadata_table.add(
+            [
+                {  # type: ignore
+                    "key": key,
+                    "value": value,
+                    "updated_at": now,
+                }
+            ]
+        )
 
     async def get_stored_fingerprints(self) -> dict[str, str]:
         """

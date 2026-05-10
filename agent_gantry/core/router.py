@@ -66,6 +66,11 @@ INTENT_TAG_MAPPING: dict[TaskIntent, list[str]] = {
     TaskIntent.ADMIN: ["user", "permission", "setting", "config", "admin"],
 }
 
+_INTENT_REGEX_MAPPING: dict[TaskIntent, re.Pattern[str]] = {
+    intent: re.compile("|".join(re.escape(kw) for kw in keywords))
+    for intent, keywords in INTENT_TAG_MAPPING.items()
+}
+
 
 @dataclass
 class RoutingSignals:
@@ -380,11 +385,11 @@ class SemanticRouter:
         # Intent match
         intent_match = 0.0
         if intent != TaskIntent.UNKNOWN:
-            intent_keywords = INTENT_TAG_MAPPING.get(intent, [])
+            intent_pattern = _INTENT_REGEX_MAPPING.get(intent)
             tool_text = (
                 f"{tool.name.lower()} {tool.description.lower()} {' '.join(tool.tags).lower()}"
             )
-            if any(kw in tool_text for kw in intent_keywords):
+            if intent_pattern and intent_pattern.search(tool_text):
                 intent_match = 1.0
 
         # Conversation relevance
