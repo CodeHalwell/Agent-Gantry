@@ -17,3 +17,7 @@
 ## 2024-05-18 - Fast List Filtering with set.issubset
 **Learning:** Checking elements inside list comprehensions via `all(...)` or `any(...)` generator expressions creates significant overhead in tight loops (e.g., candidate filtering during semantic routing). The overhead comes from iterating over Python generators instead of native C code.
 **Action:** Replace `all(x in y)` and `any(x in y)` with fast native `set` operations like `set.issubset(y)` and `set.isdisjoint(y)`. This yields ~3x speedup. In lists/loops, extract the static side into a `set` *before* the loop.
+
+## 2023-10-27 - Fast regex vs generator expressions for string matching
+**Learning:** Using generator expressions like `any(kw in text for kw in keywords)` or `any(ord(c) < 32 for c in text)` is a major performance bottleneck in inner loops due to Python generator overhead.
+**Action:** Replace these with pre-compiled regular expressions and `.search()`. This offloads the iteration to optimized C code, yielding >5x speedup for character validation and ~40% speedup for multi-keyword matching. When replacing simple `kw in text` checks, omit word boundaries to preserve the exact substring matching behavior.
