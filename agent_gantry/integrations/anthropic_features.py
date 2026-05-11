@@ -6,9 +6,12 @@ Provides easy access to Anthropic's beta features including:
   header — deprecated and silently ignored on Opus 4.6+, Sonnet 4.6+, and Opus 4.7, where
   adaptive thinking supersedes it automatically)
 - Extended thinking (chain-of-thought reasoning, enabled via ``thinking={type: "enabled",
-  budget_tokens: N}`` in the request body — no beta header required)
-- Adaptive thinking (recommended for Opus 4.6+, Sonnet 4.6+, Opus 4.7: pass
-  ``thinking={type: "adaptive", effort: "medium"}`` for the model to self-regulate)
+  budget_tokens: N}`` in the request body — no beta header required; deprecated on Opus 4.6
+  and Sonnet 4.6, rejected on Opus 4.7)
+- Adaptive thinking (recommended for Opus 4.6+, Sonnet 4.6+, Opus 4.7; only supported mode on
+  Opus 4.7): ``thinking={type: "adaptive"}`` plus ``output_config={effort: "medium"}``
+  as separate top-level parameters — effort does NOT go inside the thinking block.
+  Source: https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking
 - Tool use integration with Agent-Gantry
 """
 
@@ -29,20 +32,23 @@ class AnthropicFeatures:
     """Configuration for Anthropic beta features."""
 
     enable_interleaved_thinking: bool = False
-    # Extended thinking: fixed budget via budget_tokens. Not supported on claude-opus-4-7
-    # (which only supports adaptive thinking). Supported on claude-sonnet-4-6,
-    # claude-opus-4-6, claude-haiku-4-5, and earlier Claude 4 models.
-    # Source: https://platform.claude.com/docs/en/docs/about-claude/models
+    # Extended thinking: fixed budget via budget_tokens. Rejected on claude-opus-4-7
+    # (use adaptive thinking instead). Deprecated but functional on claude-opus-4-6 and
+    # claude-sonnet-4-6. Supported on claude-haiku-4-5 and earlier Claude 4 models.
+    # Source: https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking
     enable_extended_thinking: bool = False
     thinking_budget_tokens: int | None = None
-    # Adaptive thinking: model self-regulates depth; recommended for Opus 4.7, Opus 4.6+,
-    # Sonnet 4.6+. Not available on claude-haiku-4-5.
+    # Adaptive thinking: model self-regulates depth; recommended for Opus 4.7 (only mode),
+    # Opus 4.6+, Sonnet 4.6+. Not available on claude-haiku-4-5.
     # Mutually exclusive with enable_extended_thinking.
+    # The effort value is sent as output_config.effort (NOT inside the thinking block).
+    # Source: https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking
     adaptive_thinking_effort: Literal["low", "medium", "high"] | None = None
     # Controls whether thinking blocks appear in the response content.
     # "summarized" — thinking is condensed; "omitted" — thinking is hidden but its
     # signature is still returned for multi-turn continuity.
-    # Source: https://platform.claude.com/docs/en/api/messages (thinking parameter)
+    # On claude-opus-4-7 the API default is "omitted"; on earlier models it is "summarized".
+    # Source: https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking
     thinking_display: Literal["summarized", "omitted"] | None = None
 
 
@@ -55,13 +61,16 @@ class AnthropicClient:
       Opus 4.5 / Sonnet 4.5 and earlier Claude 4 models; silently ignored on Opus 4.6+,
       Sonnet 4.6+, and Opus 4.7 where adaptive thinking is automatic)
     - Extended thinking (``thinking={type: "enabled", budget_tokens: N}``; supported on
-      claude-sonnet-4-6, claude-opus-4-6, claude-haiku-4-5, and earlier Claude 4 models;
-      **not supported on claude-opus-4-7** — use adaptive thinking instead)
-    - Adaptive thinking (``thinking={type: "adaptive", effort: "medium"}``; recommended
-      for claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-6; not available on
-      claude-haiku-4-5; set ``adaptive_thinking_effort`` in ``AnthropicFeatures`` or use
-      ``enable_thinking="adaptive"`` in ``create_anthropic_client``)
+      claude-haiku-4-5 and earlier Claude 4 models; deprecated on claude-opus-4-6 and
+      claude-sonnet-4-6; **rejected with 400 on claude-opus-4-7** — use adaptive thinking)
+    - Adaptive thinking (``thinking={type: "adaptive"}`` with ``output_config={effort: ...}``
+      as a separate top-level key; recommended for claude-opus-4-7, claude-opus-4-6,
+      claude-sonnet-4-6; not available on claude-haiku-4-5; set ``adaptive_thinking_effort``
+      in ``AnthropicFeatures`` or use ``enable_thinking="adaptive"`` in
+      ``create_anthropic_client``)
     - Automatic tool retrieval and execution
+
+    Source: https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking
     """
 
     def __init__(
@@ -147,14 +156,16 @@ class AnthropicClient:
             tools = [t.tool.to_dialect("anthropic") for t in retrieval_result.tools]
 
         # Build thinking payload — adaptive takes precedence over extended when both are set.
-        # Display key and kwargs assignment happen once after the block is constructed.
+        # Per the Anthropic API, the effort level for adaptive thinking belongs in
+        # output_config (a separate top-level parameter), NOT inside the thinking block.
+        # Source: https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking
         if "thinking" not in kwargs:
             thinking_block: dict[str, Any] | None = None
             if self._features.adaptive_thinking_effort:
-                thinking_block = {
-                    "type": "adaptive",
-                    "effort": self._features.adaptive_thinking_effort,
-                }
+                thinking_block = {"type": "adaptive"}
+                # effort is a top-level output_config field, not a thinking block field.
+                if "output_config" not in kwargs:
+                    kwargs["output_config"] = {"effort": self._features.adaptive_thinking_effort}
             elif self._features.enable_extended_thinking and self._features.thinking_budget_tokens:
                 thinking_block = {
                     "type": "enabled",
@@ -300,15 +311,18 @@ async def create_anthropic_client(
         api_key: Anthropic API key
         gantry: AgentGantry instance
         enable_thinking: Type of thinking to enable — ``"interleaved"`` (beta header, pre-4.6
-            models), ``"extended"`` (fixed budget via ``thinking_budget_tokens``; not supported
-            on claude-opus-4-7), or ``"adaptive"`` (model self-regulates depth; supported on
-            claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-6; recommended for Opus 4.7+)
+            models), ``"extended"`` (fixed budget via ``thinking_budget_tokens``; deprecated on
+            claude-opus-4-6 and claude-sonnet-4-6; rejected with 400 on claude-opus-4-7), or
+            ``"adaptive"`` (model self-regulates depth; recommended for Opus 4.7+; only mode
+            on Opus 4.7; effort is passed as ``output_config.effort`` not in the thinking block)
         thinking_budget_tokens: Budget for extended thinking (ignored for other modes)
         adaptive_effort: Effort level for adaptive thinking — ``"low"``, ``"medium"`` (default),
-            or ``"high"`` (ignored unless ``enable_thinking="adaptive"``)
+            or ``"high"`` (ignored unless ``enable_thinking="adaptive"``). Sent as
+            ``output_config.effort`` per the Anthropic API spec.
         thinking_display: Controls thinking visibility in the response. ``"summarized"``
             condenses the thinking block; ``"omitted"`` hides it but preserves the
-            signature for multi-turn continuity. ``None`` (default) shows full thinking.
+            signature for multi-turn continuity. On claude-opus-4-7 the API default is
+            ``"omitted"``; on earlier models the default is ``"summarized"``.
 
     Returns:
         Configured AnthropicClient

@@ -222,8 +222,8 @@ async def demo_comparison():
             print(block.text)
     print()
 
-    # With thinking
-    print("With interleaved thinking:")
+    # With thinking (interleaved beta header — for older models / legacy path)
+    print("With interleaved thinking (claude-sonnet-4-6, legacy beta header):")
     print("-" * 80)
     client_thinking = await create_anthropic_client(enable_thinking="interleaved")
     response_thinking, thinking = await client_thinking.chat_with_thinking(
@@ -242,6 +242,59 @@ async def demo_comparison():
     for block in response_thinking.content:
         if hasattr(block, "text"):
             print(block.text)
+    print()
+
+
+async def demo_adaptive_thinking():
+    """Demonstrate adaptive thinking — the recommended path for Opus 4.7.
+
+    Adaptive thinking is the *only* thinking mode supported on claude-opus-4-7.
+    Extended thinking (budget_tokens) is rejected on that model with a 400 error.
+    The effort level is passed via output_config.effort, not inside the thinking block.
+
+    Source: https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking
+    """
+    print("=" * 80)
+    print("Demo 5: Adaptive Thinking (claude-opus-4-7 — recommended for new code)")
+    print("=" * 80)
+    print()
+
+    # Adaptive thinking with effort="medium" (default): Claude self-regulates depth.
+    # effort is forwarded as output_config.effort by AnthropicClient.create_message().
+    client = await create_anthropic_client(
+        enable_thinking="adaptive",
+        adaptive_effort="medium",  # "low" | "medium" | "high"
+    )
+
+    response = await client.create_message(
+        model="claude-opus-4-7",
+        messages=[
+            {
+                "role": "user",
+                "content": "Explain, step-by-step, how you would design a fault-tolerant "
+                           "distributed key-value store for 1 billion daily active users.",
+            }
+        ],
+        max_tokens=4096,
+        auto_retrieve_tools=False,
+    )
+
+    print("💬 Response (adaptive thinking, effort=medium):")
+    thinking_seen = False
+    for block in response.content:
+        if hasattr(block, "type") and block.type == "thinking":
+            if not thinking_seen:
+                print("\n🧠 Thinking summary:")
+                thinking_seen = True
+            thinking_text = getattr(block, "thinking", "") or ""
+            print(f"  {thinking_text[:300]}..." if len(thinking_text) > 300 else f"  {thinking_text}")
+        elif hasattr(block, "text"):
+            print(block.text)
+
+    print()
+    print("Note: On claude-opus-4-7 the thinking.display default is 'omitted'.")
+    print("      Set thinking_display='summarized' in AnthropicFeatures to see full")
+    print("      summarised thinking blocks in the response.")
     print()
 
 
@@ -266,16 +319,20 @@ async def main():
         await demo_extended_thinking()
         await demo_thinking_with_tools()
         await demo_comparison()
+        await demo_adaptive_thinking()
 
         print("=" * 80)
         print("✅ All demos completed successfully!")
         print("=" * 80)
         print()
         print("Key Takeaways:")
-        print("  • Interleaved thinking shows the model's reasoning process")
-        print("  • Extended thinking allows deeper reasoning with budget control")
-        print("  • Both features work seamlessly with Agent-Gantry tool use")
-        print("  • Use thinking when you need transparency and better decision-making")
+        print("  • Adaptive thinking (Demo 5) is the recommended path for new code")
+        print("    — it is the ONLY mode supported on claude-opus-4-7")
+        print("  • Extended thinking (Demo 2) is deprecated on Opus 4.6 / Sonnet 4.6")
+        print("    and rejected with a 400 error on claude-opus-4-7")
+        print("  • Interleaved thinking (Demo 1) still works on pre-4.6 models")
+        print("  • Adaptive thinking automatically enables inter-tool reasoning")
+        print("  • All modes work seamlessly with Agent-Gantry tool use")
         print()
 
     except Exception as e:
