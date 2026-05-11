@@ -45,3 +45,7 @@
 ## 2026-05-09 - [Search Empty States as Dead Ends]
 **Learning:** A generic "No results found" message is a UX dead end. Users experiencing an empty state often abandon the action because they feel stuck and receive no actionable guidance. Adding visual comfort (like an icon) and explicit suggestions ("Try adjusting your search terms") significantly improves the recovery rate from zero-result states.
 **Action:** When designing or implementing search components or filtered lists, never use a plain text string for an empty state. Always provide a structured empty state with visual feedback (icon/illustration) and actionable guidance for the user's next step.
+
+## 2026-05-10 - [Dynamic ARIA Labels for Feedback States]
+**Learning:** When dynamically updating a button's visual text to provide feedback (e.g., changing 'Copy' to 'Copied!' or 'Failed'), if the button has a static `aria-label`, the screen reader will completely ignore the new visual text. Users relying on assistive technology will not receive any confirmation that their action succeeded or failed.
+**Action:** Always simultaneously update the `aria-label` attribute (using `setAttribute`) whenever visual text is modified to indicate a state change or feedback, ensuring assistive technologies announce the updated state correctly.

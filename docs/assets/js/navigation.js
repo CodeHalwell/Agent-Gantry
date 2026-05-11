@@ -185,18 +185,22 @@
         try {
           await navigator.clipboard.writeText(block.textContent);
           button.textContent = "Copied!";
+          button.setAttribute("aria-label", "Code copied to clipboard!");
           button.classList.add("copied");
 
           setTimeout(() => {
             button.textContent = "Copy";
+            button.setAttribute("aria-label", "Copy code to clipboard");
             button.classList.remove("copied");
           }, 2000);
         } catch (err) {
           console.error("Failed to copy code:", err);
           button.textContent = "Failed";
+          button.setAttribute("aria-label", "Failed to copy code");
 
           setTimeout(() => {
             button.textContent = "Copy";
+            button.setAttribute("aria-label", "Copy code to clipboard");
           }, 2000);
         }
       });
