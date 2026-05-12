@@ -1081,3 +1081,232 @@ async def test_bridge_filters_tool_surface_for_agent() -> None:
     assert len(leaked) <= 2, (
         f"Too many unrelated tools leaked through semantic routing: {leaked}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 19. Tool surface updates *between* loop iterations (per-run re-routing)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_context_provider_reroutes_per_user_turn() -> None:
+    """As the agent loops over user turns, the GantryContextProvider must
+    re-query the router on every ``agent.run`` invocation so the LLM only
+    sees tools relevant to the *current* turn — not a static set frozen at
+    agent construction.
+
+    This is the answer to "the agent is running in a loop, how does the
+    tool selection update?": ``query_strategy='per_run'`` (default) fires
+    ``before_run`` at the start of each ``agent.run`` call, derives a fresh
+    query from the latest user message, and rewrites the injected tool set.
+    """
+    from agent_gantry import GantryContextProvider
+
+    gantry = AgentGantry()
+
+    @gantry.register
+    def get_weather(city: str) -> str:
+        """Get current weather for a city."""
+        return f"{city}: sunny"
+
+    @gantry.register
+    def get_forecast(city: str, days: int = 3) -> str:
+        """Multi-day weather forecast for a city."""
+        return f"{city}: sunny"
+
+    @gantry.register
+    def lookup_invoice(invoice_id: str) -> str:
+        """Look up a billing invoice."""
+        return f"invoice {invoice_id}: $42 due"
+
+    @gantry.register
+    def refund_invoice(invoice_id: str) -> str:
+        """Refund a billing invoice."""
+        return f"refunded {invoice_id}"
+
+    @gantry.register
+    def read_file(path: str) -> str:
+        """Read file contents from disk."""
+        return f"contents:{path}"
+
+    @gantry.register
+    def write_file(path: str, contents: str) -> str:
+        """Write file contents to disk."""
+        return f"wrote {path}"
+
+    await gantry.sync()
+    total_registered = len(gantry.export_tools())
+    assert total_registered == 6
+
+    # Per-run strategy: re-query before each agent.run call.
+    provider = GantryContextProvider(
+        gantry,
+        top_k=2,
+        score_threshold=0.0,
+        query_strategy="per_run",
+    )
+
+    # Three scripted turns, each on a different domain. Each turn is a single
+    # text response (no function_call) so the script consumes exactly one
+    # entry per agent.run call.
+    client = ScriptedChatClient(
+        script=[
+            [Content.from_text("Weather noted.")],
+            [Content.from_text("Invoice handled.")],
+            [Content.from_text("File saved.")],
+        ]
+    )
+    agent = Agent(
+        client,
+        instructions="",
+        name="MultiTurnAgent",
+        context_providers=[provider],
+    )
+
+    session = agent.create_session()
+    # Loop the agent over user turns spanning different domains.
+    await agent.run("What's the weather forecast for London?", session=session)
+    await agent.run("Look up invoice INV-9 please.", session=session)
+    await agent.run("Read the file at /tmp/notes.md.", session=session)
+
+    assert client.call_count == 3
+    assert len(client.seen_tools) == 3
+
+    turn_weather, turn_billing, turn_files = client.seen_tools
+
+    # Each turn must have surfaced <= top_k tools — the surface stayed bounded.
+    for turn_idx, names in enumerate(client.seen_tools):
+        assert len(names) <= 2, (
+            f"Turn {turn_idx} forwarded {len(names)} tools, expected <= top_k=2: {names}"
+        )
+        assert len(names) < total_registered
+
+    # The tool surface must actually *change* between turns — otherwise the
+    # provider is just locking in a static set, not re-routing.
+    assert turn_weather != turn_billing, (
+        f"Tool set did not refresh between turn 1 (weather) and turn 2 (billing): "
+        f"both saw {turn_weather}"
+    )
+    assert turn_billing != turn_files, (
+        f"Tool set did not refresh between turn 2 (billing) and turn 3 (files): "
+        f"both saw {turn_billing}"
+    )
+
+    # And the right tool for each domain must be present on the right turn.
+    assert any(n.startswith("get_") and "weather" in n or n == "get_forecast" for n in turn_weather), (
+        f"Weather turn missing weather tool: {turn_weather}"
+    )
+    assert any("invoice" in n for n in turn_billing), (
+        f"Billing turn missing invoice tool: {turn_billing}"
+    )
+    assert any("file" in n for n in turn_files), (
+        f"File turn missing file tool: {turn_files}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 20. Tool surface updates *within* a single agent.run (per-call re-routing)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_context_provider_per_call_refresh_mechanism() -> None:
+    """Drive the per-call refresher directly with two synthetic chat contexts
+    to prove the routing-update *mechanism*: when the second round's message
+    stream shifts topic, the rewritten ``options['tools']`` reflects the new
+    query.
+
+    This is a unit-level proof of the same behaviour the ``per_call``
+    middleware delivers inside ``agent.run``. We invoke the refresher
+    directly because AF's middleware dispatcher is what the end-to-end form
+    depends on, and that dispatch is out of scope for this test — what we
+    care about is Gantry's contract: given a fresh message stream, produce
+    a fresh tool surface.
+    """
+    from agent_gantry import GantryContextProvider
+    from agent_gantry.query import concatenate_recent
+
+    gantry = AgentGantry()
+
+    @gantry.register
+    def get_weather(city: str) -> str:
+        """Get current weather for a city."""
+        return f"{city}: sunny"
+
+    @gantry.register
+    def get_forecast(city: str, days: int = 3) -> str:
+        """Multi-day weather forecast for a city."""
+        return f"{city}: sunny"
+
+    @gantry.register
+    def lookup_invoice(invoice_id: str) -> str:
+        """Look up a billing invoice."""
+        return f"invoice {invoice_id}"
+
+    @gantry.register
+    def refund_invoice(invoice_id: str) -> str:
+        """Refund a billing invoice."""
+        return f"refunded {invoice_id}"
+
+    await gantry.sync()
+
+    provider = GantryContextProvider(
+        gantry,
+        top_k=2,
+        score_threshold=0.0,
+        query_strategy="per_call",
+        query_generator=concatenate_recent,
+    )
+
+    # Simulate two successive chat rounds inside a single agent.run by
+    # feeding the refresher two synthetic context objects with shifting
+    # message streams.
+    class _FakeChatContext:
+        def __init__(self, messages: list[Message]) -> None:
+            self.messages = messages
+            self.options: dict[str, Any] = {"tools": []}
+
+    round1_ctx = _FakeChatContext(
+        messages=[Message(role="user", contents=[Content.from_text("Weather in Paris?")])]
+    )
+    await provider._refresh_tools_on_chat_context(round1_ctx)
+    round1_tools = [getattr(t, "name", None) for t in round1_ctx.options["tools"]]
+
+    # The model emitted a function_call to get_weather; the tool ran and now
+    # the conversation context for the second LLM round includes a tool
+    # result + a follow-up user request about a totally different domain.
+    round2_ctx = _FakeChatContext(
+        messages=[
+            Message(role="user", contents=[Content.from_text("Weather in Paris?")]),
+            Message(role="assistant", contents=[
+                Content.from_function_call(call_id="pc0", name="get_weather", arguments={"city": "Paris"})
+            ]),
+            Message(role="tool", contents=[
+                Content.from_function_result(call_id="pc0", result="Paris: sunny")
+            ]),
+            Message(role="user", contents=[Content.from_text("Now look up invoice INV-9 and refund it.")]),
+        ]
+    )
+    await provider._refresh_tools_on_chat_context(round2_ctx)
+    round2_tools = [getattr(t, "name", None) for t in round2_ctx.options["tools"]]
+
+    # Per-round bound on the surface.
+    assert len(round1_tools) <= 2, round1_tools
+    assert len(round2_tools) <= 2, round2_tools
+
+    # Round 1 (weather query) must surface weather tools.
+    assert any("weather" in n or "forecast" in n for n in round1_tools), round1_tools
+
+    # Round 2 (billing query) must surface invoice tools and must *drop*
+    # the stale weather tools from round 1.
+    assert any("invoice" in n for n in round2_tools), round2_tools
+    assert round1_tools != round2_tools, (
+        f"Round-2 tool surface did not refresh after topic shift: "
+        f"r1={round1_tools} r2={round2_tools}"
+    )
+
+    # And weather tools from r1 should not have leaked into r2's surface.
+    weather_in_r2 = [n for n in round2_tools if "weather" in n or "forecast" in n]
+    assert not weather_in_r2, (
+        f"Stale weather tools from round 1 leaked into round 2: {weather_in_r2}"
+    )
