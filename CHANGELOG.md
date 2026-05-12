@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`mistralai` dependency removed — replaced by OpenAI SDK for Mistral calls.**
+  The `mistralai` package was quarantined on PyPI on 2026-05-12 and is no longer
+  installable. Mistral's chat endpoint is OpenAI-compatible. The `openai` SDK with
+  `base_url="https://api.mistral.ai/v1"` is the canonical replacement. Changes:
+  - `pyproject.toml` `mistral` extra now depends on `openai>=2.36.0` instead of
+    `mistralai>=2.0.0`. `mistral` is removed from `llm-providers`.
+  - `agent_gantry/adapters/llm_client.py` — `provider="mistral"` now initialises
+    `AsyncOpenAI(base_url="https://api.mistral.ai/v1")` and uses
+    `chat.completions.create()`.
+  - `examples/llm_integration/mistral_demo.py` — fully updated to use the OpenAI
+    SDK with Mistral's base URL.
+  - `docs/reference/llm_sdk_compatibility.md` and `README.md` — Mistral snippets
+    updated accordingly.
+  - Transitive orphan packages `eval-type-backport` and `jsonpath-python` removed
+    from the lock file.
+  *Migration*: Replace `from mistralai import Mistral; async with Mistral(...) as c: ...`
+  with `from openai import AsyncOpenAI; c = AsyncOpenAI(api_key=..., base_url="https://api.mistral.ai/v1"); await c.chat.completions.create(...)`.
+  `LLMConfig(provider="mistral")` continues to work — migration is internal.
+  *Risk: safe with shim — public Mistral integration behaviour preserved.*
+- **`anthropic` floor bumped to `>=0.101.0`** (was `>=0.100.0`). Anthropic 0.101.0
+  released 2026-05-11; no breaking changes for Gantry's Messages API call sites.
+  *Risk: safe internal — floor bump only.*
+  Source: https://pypi.org/pypi/anthropic/json
+- **`pyproject.toml`** — `langgraph 1.2.0` hold documented. `langchain==1.2.18`
+  pins `langgraph<1.2.0`; the floor remains `>=1.1.10` until `langchain 1.3.0 GA`.
+
 ### Added
 
 - **`agent_gantry/adapters/tool_spec/providers.py`** — `AnthropicAdapter.to_provider_schema()` now accepts `strict=False` (default, backwards-compatible) or `strict=True`. When `True`, the output schema includes `"strict": true` at the tool-definition top level, enabling Anthropic's grammar-constrained sampling so Claude's tool `input` always matches `input_schema` exactly.
