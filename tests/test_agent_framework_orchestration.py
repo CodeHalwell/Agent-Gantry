@@ -828,3 +828,108 @@ async def test_build_workflow_empty_specs_raises(bridge: GantryToolBridge) -> No
     """build_workflow with no specs should raise ValueError."""
     with pytest.raises(ValueError, match="at least one agent"):
         await bridge.build_workflow(agent_specs=[])
+
+
+# ---------------------------------------------------------------------------
+# 16. build_agent end-to-end with extra_tools + multi-arg Gantry tool
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_build_agent_extra_tools_and_multi_arg_roundtrip(
+    bridge: GantryToolBridge,
+) -> None:
+    """build_agent must surface both Gantry-selected and extra tools, and the
+    Agent must round-trip a multi-arg Gantry tool call (call_id + result)."""
+    from agent_framework import tool
+
+    @tool(name="echo_note", description="Echo a short operator note.")
+    def echo_note(note: str) -> str:
+        return f"note:{note}"
+
+    client = ScriptedChatClient(
+        script=[
+            [_fc("lookup_order", {"order_id": "ORD-77", "include_items": True}, "c0")],
+            [Content.from_text("Order ORD-77 is shipped with 1 widget.")],
+        ]
+    )
+
+    agent = await bridge.build_agent(
+        client,
+        query="order lookup",
+        name="OrderAgent",
+        instructions="Answer order questions.",
+        limit=5,
+        score_threshold=0.0,
+        extra_tools=[echo_note],
+    )
+
+    assert isinstance(agent, Agent)
+    bound_tool_names = {
+        getattr(t, "name", None)
+        for t in (agent.default_options or {}).get("tools") or []
+    }
+    assert "lookup_order" in bound_tool_names, bound_tool_names
+    assert "echo_note" in bound_tool_names, "extra_tools must be appended"
+
+    resp = await agent.run("Look up order ORD-77 with items.")
+
+    assert "shipped" in resp.text.lower()
+    assert client.call_count == 2, "expected one function-call turn + final turn"
+
+    # The Agent's response must include a tool-result message with our call_id
+    # and the actual Gantry-executed payload.
+    function_results = [
+        c
+        for m in resp.messages
+        for c in (m.contents or [])
+        if getattr(c, "type", None) == "function_result"
+    ]
+    assert function_results, "Agent must surface the Gantry tool result"
+    fr = function_results[0]
+    assert fr.call_id == "c0"
+    rendered = str(fr.result) + (str(getattr(fr, "items", "")) or "")
+    assert "shipped" in rendered.lower()
+    assert "ORD-77" in rendered
+
+
+# ---------------------------------------------------------------------------
+# 17. as_agent end-to-end with a multi-arg Gantry tool
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_as_agent_runs_multi_arg_tool(bridge: GantryToolBridge) -> None:
+    """as_agent must produce an Agent that executes a Gantry tool with bool+str args."""
+    client = ScriptedChatClient(
+        script=[
+            [_fc("lookup_order", {"order_id": "ORD-AA", "include_items": False}, "k0")],
+            [Content.from_text("Order ORD-AA is shipped.")],
+        ]
+    )
+
+    agent = await bridge.as_agent(
+        client,
+        query="order lookup",
+        name="OrderAgent2",
+        instructions="",
+        limit=5,
+        score_threshold=0.0,
+    )
+
+    assert isinstance(agent, Agent)
+
+    resp = await agent.run("Look up order ORD-AA.")
+    assert "shipped" in resp.text.lower()
+
+    # Tool-result payload should carry the dict that the registered Python tool
+    # returned, including the empty items list for include_items=False.
+    fr = next(
+        c
+        for m in resp.messages
+        for c in (m.contents or [])
+        if getattr(c, "type", None) == "function_result"
+    )
+    rendered = str(fr.result) + str(getattr(fr, "items", ""))
+    assert "ORD-AA" in rendered
+    assert "shipped" in rendered.lower()
