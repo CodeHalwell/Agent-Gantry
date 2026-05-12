@@ -198,6 +198,4 @@ Respond with ONLY the intent category name (e.g., "data_query"), nothing else.""
         Returns:
             True if the client is initialized and ready
         """
-        if self._provider == "mistral":
-            return self._mistral_api_key is not None
         return self._client is not None

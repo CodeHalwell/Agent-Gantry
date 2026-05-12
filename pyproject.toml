@@ -178,7 +178,7 @@ mistral = [
     # correct replacement: pass base_url="https://api.mistral.ai/v1" to
     # AsyncOpenAI(). The MistralAdapter in agent_gantry.adapters.tool_spec
     # continues to translate tool schemas correctly for both patterns.
-    # Install with: pip install "agent-gantry[openai]"
+    # Install with: pip install "agent-gantry[mistral]"
     "openai>=2.36.0",
 ]
 groq = [
@@ -186,11 +186,11 @@ groq = [
 ]
 # Combined LLM provider dependencies
 llm-providers = [
-    # mistral is intentionally excluded: the mistralai package is quarantined on
-    # PyPI (2026-05-12). Mistral is OpenAI-compatible; openai (already here)
-    # covers Mistral calls via base_url="https://api.mistral.ai/v1". The
-    # standalone agent-gantry[mistral] extra also resolves to openai>=2.36.0.
-    "agent-gantry[openai,anthropic,google-genai,google-vertexai,groq]",
+    # mistralai package is quarantined on PyPI (2026-05-12). The mistral extra
+    # resolves to openai>=2.36.0 (Mistral is OpenAI-compatible). Including it
+    # here ensures [all] users inherit the mistral path and any future
+    # Mistral-specific dependencies are picked up automatically.
+    "agent-gantry[openai,anthropic,google-genai,google-vertexai,mistral,groq]",
 ]
 all = [
     "agent-gantry[dev,embeddings,openai,cohere,vector-stores,lancedb,nomic,mcp,a2a,llm-providers,agent-frameworks,example-tools]",
