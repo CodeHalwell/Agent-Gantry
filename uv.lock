@@ -661,7 +661,7 @@ vector-stores = [
 requires-dist = [
     { name = "agent-framework", marker = "extra == 'agent-frameworks'", specifier = ">=1.3.0,<2.0.0" },
     { name = "agent-gantry", extras = ["dev", "embeddings", "openai", "cohere", "vector-stores", "lancedb", "nomic", "mcp", "a2a", "llm-providers", "agent-frameworks", "example-tools"], marker = "extra == 'all'" },
-    { name = "agent-gantry", extras = ["openai", "anthropic", "google-genai", "google-vertexai", "groq"], marker = "extra == 'llm-providers'" },
+    { name = "agent-gantry", extras = ["openai", "anthropic", "google-genai", "google-vertexai", "mistral", "groq"], marker = "extra == 'llm-providers'" },
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.101.0" },
     { name = "asyncpg", marker = "extra == 'pgvector'", specifier = ">=0.29.0" },
     { name = "asyncpg", marker = "extra == 'vector-stores'", specifier = ">=0.29.0" },
