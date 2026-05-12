@@ -49,3 +49,7 @@
 ## 2026-05-10 - [Dynamic ARIA Labels for Feedback States]
 **Learning:** When dynamically updating a button's visual text to provide feedback (e.g., changing 'Copy' to 'Copied!' or 'Failed'), if the button has a static `aria-label`, the screen reader will completely ignore the new visual text. Users relying on assistive technology will not receive any confirmation that their action succeeded or failed.
 **Action:** Always simultaneously update the `aria-label` attribute (using `setAttribute`) whenever visual text is modified to indicate a state change or feedback, ensuring assistive technologies announce the updated state correctly.
+
+## 2026-05-12 - [Keyboard Accessibility for Scrollable Code Blocks]
+**Learning:** Code blocks (`<pre>`) often have `overflow-x: auto` applied via CSS to handle long lines of code without breaking the page layout. However, if these `<pre>` elements are not focusable, keyboard-only users cannot scroll them horizontally to read the truncated content.
+**Action:** When styling elements with `overflow: auto` or `overflow: scroll` (especially code blocks or tables), always ensure they are keyboard-focusable by adding `tabindex="0"`. Additionally, provide a `role="region"` and an `aria-label` (e.g., "Code snippet") so screen readers announce the scrollable container properly.
