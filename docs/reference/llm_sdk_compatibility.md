@@ -558,9 +558,9 @@ tools = await gantry.retrieve_tools("send notification")
 client = AsyncOpenAI(api_key="your-key", base_url="https://api.mistral.ai/v1")
 response = await client.chat.completions.create(
     model="mistral-large-latest",
-        messages=[{"role": "user", "content": "Notify the team"}],
-        tools=tools,
-    )
+    messages=[{"role": "user", "content": "Notify the team"}],
+    tools=tools,
+)
 ```
 
 ---
