@@ -933,3 +933,151 @@ async def test_as_agent_runs_multi_arg_tool(bridge: GantryToolBridge) -> None:
     rendered = str(fr.result) + str(getattr(fr, "items", ""))
     assert "ORD-AA" in rendered
     assert "shipped" in rendered.lower()
+
+
+# ---------------------------------------------------------------------------
+# 18. Gantry actually reduces the tool surface the Agent sees
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_bridge_filters_tool_surface_for_agent() -> None:
+    """Register many tools, prove the Agent only receives the relevant subset.
+
+    This is Agent-Gantry's headline value proposition: semantic routing must
+    keep the LLM's tool surface small. ``ScriptedChatClient.seen_tools``
+    records exactly which tools were forwarded on each AF turn, so this test
+    asserts (a) the AF Agent saw `limit` tools, not all registered, and
+    (b) the unrelated tools were filtered out.
+    """
+    gantry = AgentGantry()
+
+    @gantry.register
+    def get_weather(city: str) -> str:
+        """Get current weather forecast for a city."""
+        return f"{city}: sunny"
+
+    @gantry.register
+    def get_forecast(city: str, days: int = 3) -> str:
+        """Multi-day weather forecast for a city."""
+        return f"{city}: sunny for {days} days"
+
+    @gantry.register
+    def get_air_quality(city: str) -> str:
+        """Air quality index lookup for a city."""
+        return f"{city} AQI: 42"
+
+    @gantry.register
+    def lookup_order(order_id: str) -> str:
+        """Look up an e-commerce order by id."""
+        return f"order {order_id}: shipped"
+
+    @gantry.register
+    def refund_order(order_id: str) -> str:
+        """Issue a refund for an e-commerce order."""
+        return f"refunded {order_id}"
+
+    @gantry.register
+    def list_invoices(user_id: str) -> list[str]:
+        """List billing invoices for a customer."""
+        return ["INV-1", "INV-2"]
+
+    @gantry.register
+    def compute_tax(amount: float, rate: float) -> float:
+        """Compute sales tax for a transaction amount."""
+        return amount * rate
+
+    @gantry.register
+    def read_file(path: str) -> str:
+        """Read the contents of a file from disk."""
+        return f"contents of {path}"
+
+    @gantry.register
+    def write_file(path: str, contents: str) -> str:
+        """Write contents to a file on disk."""
+        return f"wrote {path}"
+
+    @gantry.register
+    def send_email(to: str, body: str) -> str:
+        """Send an email message to a recipient."""
+        return f"sent to {to}"
+
+    @gantry.register
+    def search_codebase(query: str) -> list[str]:
+        """Search the source code repository for a string."""
+        return [f"hit for {query}"]
+
+    @gantry.register
+    def schedule_meeting(title: str, when: str) -> str:
+        """Schedule a calendar meeting."""
+        return f"booked {title}"
+
+    await gantry.sync()
+
+    total_registered = len(gantry.export_tools())
+    assert total_registered == 12, total_registered
+
+    bridge = GantryToolBridge(gantry, score_threshold=0.0)
+
+    client = ScriptedChatClient(
+        script=[
+            [_fc("get_weather", {"city": "Tokyo"}, "rf0")],
+            [Content.from_text("Tokyo: sunny.")],
+        ]
+    )
+
+    # Limit=3 should retrieve at most 3 weather-related tools out of 12.
+    agent = await bridge.build_agent(
+        client,
+        query="what's the weather forecast",
+        name="WeatherAgent",
+        instructions="",
+        limit=3,
+        score_threshold=0.0,
+    )
+
+    bound = (agent.default_options or {}).get("tools") or []
+    bound_names = [getattr(t, "name", None) for t in bound]
+    assert len(bound) == 3, (
+        f"build_agent must attach exactly limit=3 tools (got {len(bound)}: {bound_names})"
+    )
+    assert len(bound) < total_registered, (
+        "Gantry must reduce the tool surface vs. all registered tools"
+    )
+
+    # Drive the Agent so the ScriptedChatClient records what the LLM saw.
+    resp = await agent.run("Weather in Tokyo?")
+    assert "sunny" in resp.text.lower()
+
+    # The AF Agent forwards its bound tool set to the chat client per turn.
+    # seen_tools[0] is the very first turn → exactly the Gantry-filtered set.
+    seen_first_turn = client.seen_tools[0]
+    assert seen_first_turn, "ScriptedChatClient must have received tools"
+    assert len(seen_first_turn) == 3, (
+        f"Agent forwarded {len(seen_first_turn)} tools instead of the filtered 3: "
+        f"{seen_first_turn}"
+    )
+    assert len(seen_first_turn) < total_registered
+
+    # Semantic correctness: the weather tool we actually need is in the set.
+    assert "get_weather" in seen_first_turn, seen_first_turn
+
+    # And most of the 12 unrelated/loosely-related tools were dropped.
+    # (SimpleEmbedder is hash-based, so we don't assert zero leakage — only
+    # that the surface shrank meaningfully.  The 3/12 == 75% reduction above
+    # is the headline value-prop assertion.)
+    irrelevant = {
+        "read_file",
+        "write_file",
+        "compute_tax",
+        "send_email",
+        "search_codebase",
+        "schedule_meeting",
+        "refund_order",
+        "list_invoices",
+        "lookup_order",
+    }
+    leaked = irrelevant.intersection(seen_first_turn)
+    assert len(leaked) <= 2, (
+        f"Too many unrelated tools leaked through semantic routing: {leaked}"
+    )
