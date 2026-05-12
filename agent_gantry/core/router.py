@@ -156,16 +156,12 @@ async def classify_intent(
         The classified intent
     """
     query_lower = query.lower()
-    scores: dict[TaskIntent, int] = {}
 
     enriched_query = query_lower
     if conversation_summary:
         enriched_query = f"{enriched_query} {conversation_summary.lower()}"
 
     # First try keyword-based classification
-    # ⚡ Bolt optimization: Replaced dictionary generation + generator expressions + multiple max() calls
-    # with a single-pass loop that tracks the best score inline.
-    # Impact: Reduces intent classification latency by ~60% in benchmarks.
     best_intent = None
     best_score = 0
 
