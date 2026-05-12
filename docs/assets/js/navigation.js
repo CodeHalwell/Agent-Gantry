@@ -167,6 +167,13 @@
     codeBlocks.forEach((block) => {
       const pre = block.parentElement;
 
+      // Make pre focusable and accessible for horizontal scrolling
+      if (!pre.hasAttribute("tabindex")) {
+        pre.setAttribute("tabindex", "0");
+        pre.setAttribute("role", "region");
+        pre.setAttribute("aria-label", "Code snippet");
+      }
+
       // Wrap pre in a container if not already wrapped
       if (!pre.parentElement.classList.contains("code-block-wrapper")) {
         const wrapper = document.createElement("div");
