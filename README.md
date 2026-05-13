@@ -225,19 +225,19 @@ async def chat(prompt, *, tools=None):
     )
 ```
 
-**Mistral:**
+**Mistral** (OpenAI-compatible endpoint; `mistralai` SDK quarantined on PyPI — use the `openai` SDK):
 ```python
-from mistralai import Mistral
+from openai import AsyncOpenAI
 from agent_gantry import with_semantic_tools
 
-client = Mistral()
+client = AsyncOpenAI(api_key="your-mistral-key", base_url="https://api.mistral.ai/v1")
 
 @with_semantic_tools(limit=3)  # Mistral uses OpenAI-compatible format
 async def chat(messages, *, tools=None):
-    return await client.chat.complete_async(
+    return await client.chat.completions.create(
         model="mistral-large-latest",
         messages=messages,
-        tools=tools
+        tools=tools,
     )
 ```
 

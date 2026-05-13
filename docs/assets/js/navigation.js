@@ -421,6 +421,32 @@
     });
   }
 
+  // ==================== Responsive Tables ====================
+
+  function initResponsiveTables() {
+    const tables = document.querySelectorAll("table");
+
+    tables.forEach((table) => {
+      // Check if it's already wrapped
+      if (table.parentElement.classList.contains("table-wrapper")) {
+        return;
+      }
+
+      // Create wrapper
+      const wrapper = document.createElement("div");
+      wrapper.className = "table-wrapper";
+
+      // Add accessibility attributes for horizontal scrolling
+      wrapper.setAttribute("tabindex", "0");
+      wrapper.setAttribute("role", "region");
+      wrapper.setAttribute("aria-label", "Data table");
+
+      // Wrap the table
+      table.parentNode.insertBefore(wrapper, table);
+      wrapper.appendChild(table);
+    });
+  }
+
   // ==================== Initialize All Features ====================
 
   function init() {
@@ -440,6 +466,7 @@
     markExternalLinks();
     initCollapsibleSections();
     addHeadingAnchors();
+    initResponsiveTables();
 
     console.log("Agent-Gantry Documentation - Navigation initialized");
   }
