@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-13
+
 ### Changed
 
 - **`mistralai` dependency removed — replaced by OpenAI SDK for Mistral calls.**
@@ -37,6 +39,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **End-to-end orchestration test coverage for `bridge.build_agent` and
+  `bridge.as_agent`.** The bridge previously had construction-shape tests
+  but no end-to-end `agent.run()` coverage with multi-arg Gantry tools.
+  New tests in `tests/test_agent_framework_orchestration.py` drive a
+  `ScriptedChatClient` through the full
+  function_call → Gantry-execute → function_result → final-text loop and
+  assert the resulting `function_result` content carries the expected
+  `call_id` and payload. Includes `extra_tools=` mixing static AF
+  FunctionTools with Gantry-selected tools in one Agent.
+- **Tool-surface reduction proof-of-routing test.** Registers 12 tools
+  across mixed domains, builds an Agent for a weather query with
+  `limit=3`, and asserts (a) the Agent's bound tool set is exactly 3,
+  (b) the chat client saw 3 tools (not 12) on the first turn, and
+  (c) `get_weather` is present while most unrelated tools are filtered.
+  This is the regression guard for Gantry's headline value-prop
+  (75% reduction in this scenario).
+- **Per-user-turn and per-chat-round re-routing tests.** Drives a real
+  multi-turn `agent.run` session over a topic-shifting conversation and
+  asserts the chat client's per-turn `seen_tools` differs across user
+  turns — Gantry re-queries on every `agent.run()` in `per_run` mode.
+  Adds a per-call refresher unit test that walks the
+  `_refresh_tools_on_chat_context` code path directly with two synthetic
+  chat contexts (round 1 weather, round 2 billing) and asserts the
+  surface flips between rounds.
+- **Real end-to-end `per_call` middleware test.**
+  `test_context_provider_per_call_end_to_end` drives a real `agent.run`
+  with `query_strategy="per_call"` + `as_chat_middleware()` through two
+  LLM rounds (function_call → result → final text) and asserts the
+  function executed via the `function_result` content. This is the
+  regression guard for the in-place mutation invariant.
+- **Per-round routing adaptation end-to-end test.**
+  `test_context_provider_per_call_surface_adapts_to_tool_result` uses a
+  deterministic keyword-overlap embedder (no model downloads) to prove
+  the per-round tool surface actually shifts as the message stream
+  shifts: round 1 = weather tools, round 2 = refund/billing tools after
+  the tool result mentions invoice content. Asserts the refund tool was
+  findable by AF's function executor (no `"not found"` in
+  `fr.exception`).
+- **`SkillsProvider` co-existence test.**
+  `test_context_provider_preserves_skill_tools_across_refresh` pre-seeds
+  options with a foreign `load_skill` tool, runs two refresh rounds
+  with a topic shift, and asserts the skill tool survives both
+  refreshes and the options dict reference is never replaced. Locks in
+  the contract that Gantry's refresh only strips tools whose names are
+  in the Gantry registry.
+- **Non-dict (Pydantic-ish) options coverage.**
+  `test_context_provider_refresh_mutates_non_dict_options_in_place`
+  exercises the non-dict options refresh branch with a stand-in
+  Pydantic-style object. Asserts (a) same reference mutated in-place,
+  (b) peer-provider tools preserved, (c) Gantry's dynamic top-k added.
+- **Unit tests for the `_msg_text` fix.**
+  `test_msg_text_walks_dict_contents_for_function_result` and
+  `test_msg_text_function_result_fallback_is_per_content` in
+  `tests/test_query_strategies.py` lock the dict-`contents` walker
+  and the per-content fallback gating. AF-Message coverage of the
+  same path lives in
+  `test_last_tool_result_extracts_text_from_af_function_result_message`
+  in the orchestration file (kept out of the query-strategies file
+  so it stays AF-free per its module docstring).
 - **`agent_gantry/adapters/tool_spec/providers.py`** — `AnthropicAdapter.to_provider_schema()` now accepts `strict=False` (default, backwards-compatible) or `strict=True`. When `True`, the output schema includes `"strict": true` at the tool-definition top level, enabling Anthropic's grammar-constrained sampling so Claude's tool `input` always matches `input_schema` exactly.
   *Risk: safe internal — purely additive; default preserves all existing behaviour.*  
   Source: https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use
@@ -153,6 +214,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`GantryContextProvider` per-call refresh now mutates `options` in
+  place instead of replacing the reference.** AF's
+  `FunctionInvocationLayer` keeps a reference to the same options dict
+  across its inner function-invocation loop and uses it both as the
+  chat-call payload *and* as the tool-lookup table when executing
+  function calls. The previous code did
+  `context.options = new_options`, which updated the chat client's
+  view but left the function executor reading a stale tool list — so
+  the model emitted a function call, AF couldn't find the tool in
+  `mutable_options['tools']`, and the inner loop terminated after one
+  round with an unexecuted `function_call` in the message stream.
+  Now mutates `options["tools"] = combined` in place. Symptom in the
+  wild: `agent.run` returning a function_call with no result.
+  *Risk: corrects a silent inner-loop termination; behaviour-fix only.*
+- **`GantryContextProvider` non-dict options branch now preserves
+  peer-provider tools and mutates in place.** Two regressions in the
+  Pydantic ChatOptions path: (a) existing tools were only read from
+  dict options, so peer-provider tools (skills, static tools, tools
+  from other ContextProviders) on a Pydantic model were dropped on
+  every per-call refresh; (b) the fallback path reassigned the same
+  reference (no-op) and wrapped the surrounding
+  `context.options = new_options` in `try/except AttributeError: pass`,
+  silently dropping tool updates on read-only attributes. Now reads
+  existing tools from `getattr(options, "tools", None)` for non-dict
+  inputs, uses `setattr(options, "tools", combined)` to preserve the
+  FunctionInvocationLayer reference invariant, and only falls back to
+  `model_copy` + reassign for genuinely frozen Pydantic models —
+  warning if even that fails. *Risk: corrects silent data loss for
+  non-dict options.*
+- **`agent_gantry.query._msg_text` now walks structured `contents`
+  for AF tool-role messages.** AF wraps tool output as a
+  `function_result` Content nested inside `Message.contents`;
+  `Message.text` is empty in that case and the actual text lives in
+  `Content.items[].text` (or `Content.result` for primitives).
+  `_msg_text` previously only inspected `Message.text` /
+  `Message.content`, so `last_tool_result` returned `""` for AF tool
+  messages and the query generator's `fallback_chain` collapsed to
+  `last_user_text` — which never changes within a single `agent.run`,
+  defeating per-round adaptation. Now walks `contents` (and
+  `msg["contents"]` for dict-shaped messages), pulling text from
+  `text` and `function_result` Content variants. *Risk: corrects
+  per-round routing adaptation; previously broken silently.*
+- **`agent_gantry.query._msg_text` per-content `function_result`
+  fallback now tracks contribution per-content.** The `.result`
+  fallback was gated by a global `if not parts:` check across the
+  whole message. When an earlier text content already populated
+  `parts`, a later `function_result` with empty `items[]` would
+  silently drop its primitive `.result`. Tracks `contributed` per
+  function_result so earlier text stays AND each function_result
+  still falls back to its own `.result`. *Risk: corrects silent
+  drop of tool output in mixed-content tool-role messages.*
 - **`README.md`**: Updated deprecated model identifiers in quick-start examples:
   `claude-sonnet-4-20250514` → `claude-sonnet-4-6` (retiring 15 June 2026);
   `gemini-2.0-flash` → `gemini-2.5-flash` (deprecated; service shutdown imminent).

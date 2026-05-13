@@ -390,11 +390,30 @@ class GantryContextProvider:
                 always_include / skill pins. This guarantees the per-round
                 top-k stays bounded and stale dynamic selections from
                 earlier rounds do not accumulate.
+
+                Mutates the existing options dict **in place** rather than
+                replacing the reference. ``FunctionInvocationLayer`` in
+                agent-framework keeps the same options dict across its
+                inner loop and uses it both as the chat-call payload *and*
+                as the tool-lookup table when executing function calls.
+                Reassigning ``context.options = new_options`` would only
+                update the chat-call payload — the function executor would
+                still see the original (stale) tool list and fail to find
+                the tools we just injected.
                 """
                 options = getattr(context, "options", None)
-                existing = []
+                existing: list[Any] = []
                 if isinstance(options, dict):
                     existing = list(options.get("tools") or [])
+                elif options is not None:
+                    # Pydantic ChatOptions / plain objects: peer-provider
+                    # tools live on the `tools` attribute. Read them too,
+                    # otherwise the combined list would drop everything
+                    # the model already carried (skills, static tools,
+                    # tools from another ContextProvider).
+                    attr_tools = getattr(options, "tools", None)
+                    if attr_tools:
+                        existing = list(attr_tools)
 
                 messages = (
                     getattr(context, "messages", None)
@@ -426,15 +445,47 @@ class GantryContextProvider:
                     combined.append(t)
 
                 if isinstance(options, dict):
-                    new_options = dict(options)
-                    new_options["tools"] = combined
+                    # Mutate in place — see docstring above.
+                    options["tools"] = combined
+                elif options is not None:
+                    # Non-dict options (e.g. a Pydantic ChatOptions model).
+                    # The in-place invariant from the docstring applies here
+                    # too — AF's FunctionInvocationLayer keeps the same
+                    # options reference across the inner loop, so we must
+                    # mutate the existing object rather than reassign
+                    # context.options. Try setattr first (works for plain
+                    # objects and mutable Pydantic models); only fall back
+                    # to a rebuilt-copy + reassignment if the attribute is
+                    # genuinely immutable (frozen model).
+                    mutated_in_place = False
                     try:
-                        context.options = new_options
-                    except AttributeError:
-                        # Some AF versions expose options as a read-only attr;
-                        # mutate in place as a fallback.
-                        options.clear()
-                        options.update(new_options)
+                        setattr(options, "tools", combined)
+                        mutated_in_place = True
+                    except (AttributeError, TypeError, ValueError):
+                        pass
+                    if not mutated_in_place:
+                        if hasattr(options, "model_copy"):
+                            new_options = options.model_copy(update={"tools": combined})
+                            try:
+                                context.options = new_options
+                            except AttributeError:
+                                logger.warning(
+                                    "GantryContextProvider: cannot update tools on "
+                                    "immutable options object %r (no in-place setattr, "
+                                    "no settable context.options). %d Gantry tools were "
+                                    "selected but will NOT be visible to AF.",
+                                    type(options).__name__,
+                                    len(combined),
+                                )
+                        else:
+                            logger.warning(
+                                "GantryContextProvider: options object %r is neither "
+                                "dict-like nor a Pydantic model and rejected attribute "
+                                "assignment. %d Gantry tools were selected but will "
+                                "NOT be visible to AF.",
+                                type(options).__name__,
+                                len(combined),
+                            )
 
                 logger.debug(
                     "GantryContextProvider: refreshed tools per-call "

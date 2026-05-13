@@ -111,6 +111,54 @@ def test_strategies_accept_dict_messages():
     assert "result of fn:" in last_tool_result(msgs)
 
 
+def test_msg_text_walks_dict_contents_for_function_result() -> None:
+    """``_msg_text`` walks structured ``contents`` lists for text-bearing
+    items. Verified here with dict-shaped messages so this file stays
+    free of any ``agent_framework`` import (per the module docstring);
+    AF-specific Message/Content coverage lives in
+    ``test_agent_framework_orchestration.py``.
+    """
+    from agent_gantry.query.strategies import _msg_text
+
+    # Mimic an AF tool-role message: function_result Content with
+    # items[].text populated; Message.text is empty.
+    msg = {
+        "role": "tool",
+        "text": "",
+        "contents": [
+            type("FR", (), {
+                "type": "function_result",
+                "items": [
+                    type("T", (), {"type": "text", "text": "Paris is sunny."})(),
+                ],
+                "result": None,
+            })(),
+        ],
+    }
+    assert "Paris is sunny" in _msg_text(msg)
+
+
+def test_msg_text_function_result_fallback_is_per_content() -> None:
+    """When an earlier text content already populated ``parts``, a later
+    function_result with empty ``items[]`` must still surface its
+    ``.result`` via the per-content fallback — not get gated by the
+    cumulative ``parts`` list.
+    """
+    from agent_gantry.query.strategies import _msg_text
+
+    text_c = type("TC", (), {"type": "text", "text": "hi"})()
+    empty_fr = type("FR", (), {
+        "type": "function_result",
+        "items": [],
+        "result": "actual tool output payload",
+    })()
+
+    msg = {"role": "tool", "text": "", "contents": [text_c, empty_fr]}
+    out = _msg_text(msg)
+    assert "hi" in out, out
+    assert "actual tool output payload" in out, out
+
+
 # ---------------------------------------------------------------------------
 # AgentGantry.list_tools_sync + preview
 # ---------------------------------------------------------------------------

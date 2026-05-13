@@ -19,6 +19,18 @@ def _msg_text(msg: Any) -> str:
 
     Tries ``.text`` first (AF native), then ``.content`` (OpenAI dialect),
     and for dict-shaped messages checks ``"text"`` and ``"content"``.
+
+    If none of those surface text, walks the structured ``contents`` list
+    (AF native) looking for text-bearing Content variants:
+
+    - ``type="text"``: use ``.text``
+    - ``type="function_result"``: prefer joined ``items[].text``; fall
+      back to ``str(.result)`` when the result is a primitive.
+
+    This is important for tool-role messages whose result text is nested
+    inside a ``function_result`` Content rather than exposed at the
+    Message level — without it, ``last_tool_result`` would always miss.
+
     Returns the empty string if no non-empty string content is found.
     """
     text = getattr(msg, "text", None)
@@ -32,6 +44,40 @@ def _msg_text(msg: Any) -> str:
             value = msg.get(key)
             if isinstance(value, str) and value.strip():
                 return value
+
+    contents = getattr(msg, "contents", None)
+    if contents is None and isinstance(msg, dict):
+        contents = msg.get("contents")
+    if contents:
+        parts: list[str] = []
+        for c in contents:
+            ctype = getattr(c, "type", None)
+            if ctype == "text":
+                t = getattr(c, "text", None)
+                if isinstance(t, str) and t.strip():
+                    parts.append(t.strip())
+            elif ctype == "function_result":
+                # Track per-content contribution: the `.result` fallback
+                # must fire when *this* function_result had no item text,
+                # independently of whether earlier contents in the same
+                # message produced any text.
+                contributed = False
+                items = getattr(c, "items", None) or []
+                for item in items:
+                    if getattr(item, "type", None) == "text":
+                        t = getattr(item, "text", None)
+                        if isinstance(t, str) and t.strip():
+                            parts.append(t.strip())
+                            contributed = True
+                if not contributed:
+                    result = getattr(c, "result", None)
+                    if isinstance(result, (str, int, float, bool)):
+                        s = str(result).strip()
+                        if s:
+                            parts.append(s)
+        if parts:
+            return " ".join(parts)
+
     return ""
 
 
