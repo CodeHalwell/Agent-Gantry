@@ -888,7 +888,7 @@ async def test_build_agent_extra_tools_and_multi_arg_roundtrip(
     assert function_results, "Agent must surface the Gantry tool result"
     fr = function_results[0]
     assert fr.call_id == "c0"
-    rendered = str(fr.result) + (str(getattr(fr, "items", "")) or "")
+    rendered = str(fr.result) + str(getattr(fr, "items", ""))
     assert "shipped" in rendered.lower()
     assert "ORD-77" in rendered
 
@@ -1193,7 +1193,10 @@ async def test_context_provider_reroutes_per_user_turn() -> None:
     )
 
     # And the right tool for each domain must be present on the right turn.
-    assert any(n.startswith("get_") and "weather" in n or n == "get_forecast" for n in turn_weather), (
+    assert any(
+        (n.startswith("get_") and "weather" in n) or n == "get_forecast"
+        for n in turn_weather
+    ), (
         f"Weather turn missing weather tool: {turn_weather}"
     )
     assert any("invoice" in n for n in turn_billing), (
@@ -1507,10 +1510,66 @@ async def test_context_provider_preserves_skill_tools_across_refresh() -> None:
 
 # ---------------------------------------------------------------------------
 # 23. Per-round routing actually adapts when the tool result shifts topic.
-#     Uses a real sentence-transformer embedder so semantic ranking is
-#     meaningful (SimpleEmbedder's hash-based scoring is too noisy to
-#     deterministically differentiate domains in a 5-tool registry).
+#     Uses a deterministic keyword-overlap embedder so the assertion runs
+#     in CI without downloading any model weights — what we're testing is
+#     the *plumbing* (does the router get re-queried with new content per
+#     round, do new tools get injected, are they findable by the function
+#     executor), not the quality of any specific embedder.
 # ---------------------------------------------------------------------------
+
+
+class _KeywordEmbedder:
+    """Deterministic, dependency-free embedder for tests.
+
+    Each text is embedded as a unit-norm vector over a fixed keyword
+    vocabulary. Two texts that share a domain keyword (e.g. "weather",
+    "invoice", "file") will have a high cosine similarity; texts in
+    disjoint domains will have near-zero similarity.
+
+    This is enough to deterministically demonstrate per-round routing
+    adaptation without depending on sentence-transformers, ONNX, or any
+    network-resident model.
+    """
+
+    _VOCAB: ClassVar[tuple[str, ...]] = (
+        "weather", "temperature", "forecast", "city",
+        "invoice", "refund", "billing", "payment",
+        "file", "filesystem", "disk", "path",
+        "email", "message",
+    )
+
+    @property
+    def dimension(self) -> int:
+        return len(self._VOCAB)
+
+    @property
+    def model_name(self) -> str:
+        return "keyword-overlap"
+
+    def get_embedder_id(self) -> str:
+        return f"{self.model_name}:{self.dimension}"
+
+    async def health_check(self) -> bool:
+        return True
+
+    def _vec(self, text: str) -> list[float]:
+        import math
+        lower = (text or "").lower()
+        counts = [float(lower.count(kw)) for kw in self._VOCAB]
+        norm = math.sqrt(sum(c * c for c in counts))
+        if norm == 0:
+            return [0.0] * len(self._VOCAB)
+        return [c / norm for c in counts]
+
+    async def embed_text(self, text: str) -> list[float]:
+        return self._vec(text)
+
+    async def embed_batch(
+        self,
+        texts: list[str],
+        batch_size: int | None = None,
+    ) -> list[list[float]]:
+        return [self._vec(t) for t in texts]
 
 
 @pytest.mark.asyncio
@@ -1525,30 +1584,17 @@ async def test_context_provider_per_call_surface_adapts_to_tool_result() -> None
     router must re-rank — surfacing the refund tool that wasn't in the
     round-1 set.
 
-    Skipped when ``sentence-transformers`` is not installed because
-    ``SimpleEmbedder``'s hash-based scoring is too noisy to differentiate
-    domains deterministically.
+    Uses a deterministic keyword-overlap embedder so the test runs in CI
+    without any model download or hash-based-embedder flake.
     """
-    st = pytest.importorskip(
-        "sentence_transformers",
-        reason="real embedder required to deterministically demonstrate "
-               "per-round adaptation; install agent-gantry[nomic] or "
-               "sentence-transformers",
-    )
-    del st  # only used as import gate
-
     from agent_gantry import GantryContextProvider
-    from agent_gantry.adapters.embedders.sentence_transformers import (
-        SentenceTransformersEmbedder,
-    )
     from agent_gantry.query import last_tool_result, last_user_text
 
-    embedder = SentenceTransformersEmbedder(model="all-MiniLM-L6-v2")
-    gantry = AgentGantry(embedder=embedder)
+    gantry = AgentGantry(embedder=_KeywordEmbedder())
 
     @gantry.register
     def get_weather(city: str) -> str:
-        """Get the current weather and temperature for a city."""
+        """Get the current weather forecast temperature for a city."""
         # Result legitimately introduces a NEW domain — billing.
         return (
             "Paris is sunny. Customer follow-up: invoice INV-9 payment refund "
@@ -1562,12 +1608,12 @@ async def test_context_provider_per_call_surface_adapts_to_tool_result() -> None
 
     @gantry.register
     def read_file(path: str) -> str:
-        """Read file contents from the local filesystem disk."""
+        """Read file contents from the local filesystem disk path."""
         return ""
 
     @gantry.register
     def write_file(path: str, contents: str) -> str:
-        """Write content to a file on the local filesystem disk."""
+        """Write content to a file on the local filesystem disk path."""
         return ""
 
     await gantry.sync()
@@ -1598,7 +1644,7 @@ async def test_context_provider_per_call_surface_adapts_to_tool_result() -> None
         middleware=[provider.as_chat_middleware()],
     )
 
-    resp = await agent.run("What's the weather in Paris?")
+    resp = await agent.run("What's the weather forecast temperature in Paris?")
 
     # 3 LLM rounds — both function calls executed (otherwise we'd see <3).
     assert client.call_count == 3
@@ -1636,3 +1682,120 @@ async def test_context_provider_per_call_surface_adapts_to_tool_result() -> None
         f"refund_invoice was not surfaced on round 2 — executor reported "
         f"missing tool: {fr.exception!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 24. _msg_text on AF function_result Content. Relocated from
+#     test_query_strategies.py to keep that file AF-free as documented.
+# ---------------------------------------------------------------------------
+
+
+def test_last_tool_result_extracts_text_from_af_function_result_message() -> None:
+    """AF wraps tool output as a ``function_result`` Content inside a
+    tool-role Message — ``Message.text`` is empty in that case and the
+    payload lives in ``Content.items[].text``. ``_msg_text`` must walk
+    ``contents`` to surface it, otherwise ``last_tool_result`` returns
+    "" and the per-call refresh's query collapses back to the original
+    user prompt across the entire run.
+    """
+    from agent_gantry.query import last_tool_result
+
+    fr = Content.from_function_result(
+        call_id="r0",
+        result="Paris is sunny. Invoice INV-9 payment is overdue.",
+    )
+    msg = Message(role="tool", contents=[fr])
+
+    out = last_tool_result([msg])
+    assert "Paris is sunny" in out, out
+    assert "INV-9" in out, out
+    assert out.startswith("tool result:") or out.startswith("result of"), out
+
+
+# ---------------------------------------------------------------------------
+# 25. Per-content function_result fallback: when an earlier text content
+#     populated `parts`, a later function_result with empty items[] must
+#     still surface its `.result` via the per-content fallback.
+# ---------------------------------------------------------------------------
+
+
+def test_msg_text_function_result_fallback_is_per_content() -> None:
+    from agent_gantry.query.strategies import _msg_text
+
+    # function_result Content with empty items and a primitive .result.
+    fr = Content.from_function_result(call_id="r0", result="")
+    fr.items = []  # explicit empty
+    fr.result = "actual tool output payload"
+
+    class _Msg:
+        role = "tool"
+        text = ""
+        content = None
+        contents = [
+            Content.from_text(text="hi"),
+            fr,
+        ]
+
+    out = _msg_text(_Msg())
+    # The earlier "hi" text must not gate the function_result fallback.
+    assert "hi" in out
+    assert "actual tool output payload" in out
+
+
+# ---------------------------------------------------------------------------
+# 26. Non-dict (Pydantic-ish) options refresh: peer-provider tools must
+#     be preserved and the existing options reference must be mutated in
+#     place rather than replaced, mirroring the dict-options invariant
+#     that FunctionInvocationLayer depends on.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_context_provider_refresh_mutates_non_dict_options_in_place() -> None:
+    from agent_framework import tool
+
+    from agent_gantry import GantryContextProvider
+
+    gantry = AgentGantry()
+
+    @gantry.register
+    def get_weather(city: str) -> str:
+        """Get current weather for a city."""
+        return f"{city}: sunny"
+
+    await gantry.sync()
+
+    @tool(name="load_skill", description="Foreign peer-provider tool.")
+    def load_skill(name: str) -> str:
+        return f"loaded {name}"
+
+    class _OptionsModel:
+        """Minimal stand-in for a Pydantic ChatOptions object: not a dict,
+        no model_copy, settable `tools` attribute."""
+
+        def __init__(self, tools: list[Any]) -> None:
+            self.tools = list(tools)
+
+    class _Ctx:
+        def __init__(self, messages: list[Message], options: _OptionsModel) -> None:
+            self.messages = messages
+            self.options = options
+
+    options = _OptionsModel(tools=[load_skill])
+    ctx = _Ctx(
+        messages=[Message(role="user", contents=[Content.from_text("Weather in Paris?")])],
+        options=options,
+    )
+
+    provider = GantryContextProvider(
+        gantry, top_k=2, score_threshold=0.0, query_strategy="per_call",
+    )
+    await provider._refresh_tools_on_chat_context(ctx)
+
+    # In-place mutation: same options reference, tools updated.
+    assert ctx.options is options
+    tool_names = [getattr(t, "name", None) for t in options.tools]
+    # Peer-provider tool preserved.
+    assert "load_skill" in tool_names, tool_names
+    # Gantry's dynamic selection added.
+    assert "get_weather" in tool_names, tool_names

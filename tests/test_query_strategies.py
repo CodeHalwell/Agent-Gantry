@@ -111,28 +111,52 @@ def test_strategies_accept_dict_messages():
     assert "result of fn:" in last_tool_result(msgs)
 
 
-def test_last_tool_result_extracts_text_from_af_function_result_message() -> None:
-    """AF wraps tool output as a ``function_result`` Content inside a
-    tool-role Message — ``Message.text`` is empty in that case and the
-    payload lives in ``Content.items[].text``. ``_msg_text`` must walk
-    ``contents`` to surface it, otherwise ``last_tool_result`` returns
-    "" and the per-call refresh's query collapses back to the original
-    user prompt across the entire run.
+def test_msg_text_walks_dict_contents_for_function_result() -> None:
+    """``_msg_text`` walks structured ``contents`` lists for text-bearing
+    items. Verified here with dict-shaped messages so this file stays
+    free of any ``agent_framework`` import (per the module docstring);
+    AF-specific Message/Content coverage lives in
+    ``test_agent_framework_orchestration.py``.
     """
-    af = pytest.importorskip("agent_framework")
+    from agent_gantry.query.strategies import _msg_text
 
-    fr = af.Content.from_function_result(
-        call_id="r0",
-        result="Paris is sunny. Invoice INV-9 payment is overdue.",
-    )
-    msg = af.Message(role="tool", contents=[fr])
+    # Mimic an AF tool-role message: function_result Content with
+    # items[].text populated; Message.text is empty.
+    msg = {
+        "role": "tool",
+        "text": "",
+        "contents": [
+            type("FR", (), {
+                "type": "function_result",
+                "items": [
+                    type("T", (), {"type": "text", "text": "Paris is sunny."})(),
+                ],
+                "result": None,
+            })(),
+        ],
+    }
+    assert "Paris is sunny" in _msg_text(msg)
 
-    out = last_tool_result([msg])
-    assert "Paris is sunny" in out, out
-    assert "INV-9" in out, out
-    # AF Messages don't carry a tool name at the message level; the
-    # generic-label fallback should kick in.
-    assert out.startswith("tool result:") or out.startswith("result of"), out
+
+def test_msg_text_function_result_fallback_is_per_content() -> None:
+    """When an earlier text content already populated ``parts``, a later
+    function_result with empty ``items[]`` must still surface its
+    ``.result`` via the per-content fallback — not get gated by the
+    cumulative ``parts`` list.
+    """
+    from agent_gantry.query.strategies import _msg_text
+
+    text_c = type("TC", (), {"type": "text", "text": "hi"})()
+    empty_fr = type("FR", (), {
+        "type": "function_result",
+        "items": [],
+        "result": "actual tool output payload",
+    })()
+
+    msg = {"role": "tool", "text": "", "contents": [text_c, empty_fr]}
+    out = _msg_text(msg)
+    assert "hi" in out, out
+    assert "actual tool output payload" in out, out
 
 
 # ---------------------------------------------------------------------------

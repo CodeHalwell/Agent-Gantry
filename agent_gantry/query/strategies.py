@@ -46,6 +46,8 @@ def _msg_text(msg: Any) -> str:
                 return value
 
     contents = getattr(msg, "contents", None)
+    if contents is None and isinstance(msg, dict):
+        contents = msg.get("contents")
     if contents:
         parts: list[str] = []
         for c in contents:
@@ -55,13 +57,19 @@ def _msg_text(msg: Any) -> str:
                 if isinstance(t, str) and t.strip():
                     parts.append(t.strip())
             elif ctype == "function_result":
+                # Track per-content contribution: the `.result` fallback
+                # must fire when *this* function_result had no item text,
+                # independently of whether earlier contents in the same
+                # message produced any text.
+                contributed = False
                 items = getattr(c, "items", None) or []
                 for item in items:
                     if getattr(item, "type", None) == "text":
                         t = getattr(item, "text", None)
                         if isinstance(t, str) and t.strip():
                             parts.append(t.strip())
-                if not parts:
+                            contributed = True
+                if not contributed:
                     result = getattr(c, "result", None)
                     if isinstance(result, (str, int, float, bool)):
                         s = str(result).strip()
