@@ -253,7 +253,7 @@ response = client.chat.completions.create(
 
 ### Package
 ```bash
-pip install "anthropic>=0.100.0"
+pip install "anthropic>=0.101.0"
 ```
 
 ### Client Initialization

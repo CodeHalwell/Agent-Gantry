@@ -126,7 +126,7 @@ Traditional keyword matching fails for natural language queries. Semantic search
 - "I need to get the current time" → matches `get_timestamp()` tool
 - "Calculate percentage" → matches `calculate()` tool
 
-### 4. MCP Router (NEW in v0.1.2)
+### 4. MCP Router
 
 **Purpose:** Semantic selection of MCP servers before connecting.
 

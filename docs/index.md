@@ -136,32 +136,35 @@ Works seamlessly with:
 - Semantic Kernel
 - Custom agents
 
-## What's New in v0.1.2
+## What's New in v0.3.0
 
 <div class="callout tip">
-<div class="callout-title">✨ Dynamic MCP Server Selection</div>
+<div class="callout-title">✨ Microsoft Agent Framework 1.3.0 + Mistral via OpenAI SDK</div>
 
-Register MCP servers with rich metadata and let Agent-Gantry intelligently select which servers to connect to based on your query:
+v0.3.0 lands two ecosystem updates and a regression-guarded routing test suite:
+
+- **Mistral integration switched to the OpenAI SDK.** The official `mistralai`
+  package was quarantined on PyPI on 2026-05-12; Gantry's `provider="mistral"`
+  now drives `AsyncOpenAI` against `base_url="https://api.mistral.ai/v1"`. Public
+  behaviour is preserved — `LLMConfig(provider="mistral")` works unchanged.
+- **`agent-framework` floor bumped to `1.3.0`.** Picks up `ClassSkill`,
+  `allowed_tools` for OpenAI and Gemini tool-choice, and the function-approval
+  flow in Foundry hosted agents.
+- **`anthropic` floor bumped to `>=0.101.0`.**
+- **New end-to-end routing tests** (`tests/test_agent_framework_orchestration.py`)
+  drive a `ScriptedChatClient` through the full
+  `function_call → Gantry-execute → function_result → final-text` loop,
+  proving Gantry's tool surface adapts per chat round.
 
 ```python
-# Register servers with metadata (no immediate connection)
-gantry.register_mcp_server(
-    name="filesystem",
-    command=["npx", "-y", "@modelcontextprotocol/server-filesystem"],
-    description="Provides tools for reading and writing files",
-    tags=["filesystem", "files", "io"],
-    examples=["read a file", "write to a file"],
-)
+# Mistral via the OpenAI-compatible endpoint (0.3.0+)
+from openai import AsyncOpenAI
 
-# Semantic search finds relevant servers
-servers = await gantry.retrieve_mcp_servers(
-    query="I need to read a configuration file",
-    limit=2
+client = AsyncOpenAI(
+    api_key="...",
+    base_url="https://api.mistral.ai/v1",
 )
-
-# Connect only to selected servers
-for server in servers:
-    await gantry.discover_tools_from_server(server.name)
+tools = await gantry.retrieve_tools("Translate hello to French", limit=1)
 ```
 
 <a href="{{ '/guides/dynamic_mcp_selection' | relative_url }}">Learn more about Dynamic MCP Selection →</a>

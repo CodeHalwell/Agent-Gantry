@@ -1,7 +1,7 @@
 version: "3.8"
 
 # Docker Compose for Agent-Gantry integration tests.
-# Usage: docker compose -f docker-compose.test.yml up -d
+# Usage: docker compose -f tests/docker-compose.test.yml up -d
 
 services:
   qdrant:
