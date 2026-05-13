@@ -67,9 +67,9 @@ agent-frameworks = [
     # introduces the incompatibility. To use crewai>=1.12.0, install it in a
     # separate environment without agent-framework.
     "crewai>=1.6.1",
-    "langchain>=1.2.18",
+    "langchain>=1.3.0",
     "langchain-openai>=1.2.1",
-    "langgraph>=1.1.10",
+    "langgraph>=1.2.0",
     "llama-index-core>=0.14.21",
     "llama-index-llms-openai>=0.7.7",
     # semantic-kernel>=1.41.3 conflicts with agent-framework>=1.2.1 on some
@@ -151,17 +151,18 @@ a2a = [
 ]
 # LLM provider SDK dependencies
 anthropic = [
-    "anthropic>=0.100.0",
+    "anthropic>=0.101.0",
 ]
 google-genai = [
-    # google-genai 2.0.0 (released 2026-05-07) and 2.0.1 (2026-05-09) introduce
-    # breaking changes *only* in the Interactions API. GenerateContent and function
-    # calling are entirely unaffected, so upgrading to 2.x is safe for Gantry's
-    # call sites. However, google-adk>=1.14.1 (in the agent-frameworks extra) requires
-    # google-genai<2.0.0 across all its versions up to 1.33.0 — the same opentelemetry
-    # pattern as crewai/semantic-kernel. The floor stays at 1.75.0 so the all[] extra
-    # remains installable. To run with google-genai 2.x, use a standalone environment
-    # without google-adk (pip install agent-gantry[google-genai]).
+    # google-genai 2.0.0 (released 2026-05-07), 2.0.1 (2026-05-09), 2.1.0 and 2.2.0
+    # (both released 2026-05-12) introduce breaking changes *only* in the Interactions
+    # API. GenerateContent and function calling are entirely unaffected, so upgrading
+    # to 2.x is safe for Gantry's call sites. However, google-adk>=1.14.1 (in the
+    # agent-frameworks extra) requires google-genai<2.0.0 across all its versions up
+    # to 1.33.0 — the same opentelemetry pattern as crewai/semantic-kernel. The floor
+    # stays at 1.75.0 so the all[] extra remains installable. To run with google-genai
+    # 2.x (latest: 2.2.0), use a standalone environment without google-adk:
+    # pip install agent-gantry[google-genai]
     "google-genai>=1.75.0",
 ]
 google-vertexai = [
