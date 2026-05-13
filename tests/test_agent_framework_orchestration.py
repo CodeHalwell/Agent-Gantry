@@ -1214,14 +1214,8 @@ async def test_context_provider_per_call_refresh_mechanism() -> None:
     """Drive the per-call refresher directly with two synthetic chat contexts
     to prove the routing-update *mechanism*: when the second round's message
     stream shifts topic, the rewritten ``options['tools']`` reflects the new
-    query.
-
-    This is a unit-level proof of the same behaviour the ``per_call``
-    middleware delivers inside ``agent.run``. We invoke the refresher
-    directly because AF's middleware dispatcher is what the end-to-end form
-    depends on, and that dispatch is out of scope for this test — what we
-    care about is Gantry's contract: given a fresh message stream, produce
-    a fresh tool surface.
+    query. Complementary to ``test_context_provider_per_call_end_to_end``,
+    which exercises the same code path through ``agent.run``.
     """
     from agent_gantry import GantryContextProvider
     from agent_gantry.query import concatenate_recent
@@ -1310,3 +1304,202 @@ async def test_context_provider_per_call_refresh_mechanism() -> None:
     assert not weather_in_r2, (
         f"Stale weather tools from round 1 leaked into round 2: {weather_in_r2}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 21. End-to-end per-call refresh through agent.run (the function-invocation
+#     inner loop). This is the real proof that chat_middleware fires on
+#     every round inside one agent.run AND that the freshly-injected tools
+#     are actually executable by AF's function-invocation layer.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_context_provider_per_call_end_to_end() -> None:
+    """A single ``agent.run`` makes 2 LLM rounds (function_call → result →
+    final text). With ``query_strategy='per_call'`` + ``as_chat_middleware``
+    the provider must run *between* the rounds and the tools it injects
+    must be visible to AF's function executor on round 1.
+
+    This guards against the regression where the refresher reassigned
+    ``context.options = new_options`` — the chat client saw the new tools
+    but ``FunctionInvocationLayer.mutable_options`` kept its original
+    reference and failed to locate the tool to execute.
+    """
+    from agent_gantry import GantryContextProvider
+    from agent_gantry.query import concatenate_recent
+
+    gantry = AgentGantry()
+
+    @gantry.register
+    def get_weather(city: str) -> str:
+        """Get current weather for a city."""
+        return f"Weather in {city}: 22C sunny"
+
+    @gantry.register
+    def lookup_invoice(invoice_id: str) -> str:
+        """Look up a billing invoice."""
+        return f"invoice {invoice_id}"
+
+    await gantry.sync()
+
+    provider = GantryContextProvider(
+        gantry,
+        top_k=2,
+        score_threshold=0.0,
+        query_strategy="per_call",
+        query_generator=concatenate_recent,
+    )
+
+    client = ScriptedChatClient(
+        script=[
+            # Round 1: model emits a function_call for the Gantry tool.
+            [_fc("get_weather", {"city": "Paris"}, "e2e0")],
+            # Round 2: model produces the final text answer using the result.
+            [Content.from_text("Paris weather: 22C sunny.")],
+        ]
+    )
+
+    agent = Agent(
+        client,
+        instructions="",
+        name="PerCallE2E",
+        context_providers=[provider],
+        middleware=[provider.as_chat_middleware()],
+    )
+
+    resp = await agent.run("Weather in Paris?")
+
+    # The model made 2 chat-completion rounds — meaning the function call
+    # was executed (otherwise AF would have stopped after round 1).
+    assert client.call_count == 2, (
+        f"Expected 2 inner rounds, got {client.call_count}. "
+        f"If only 1 ran, the function_call was not executed — the freshly "
+        f"injected tools were not visible to AF's function executor."
+    )
+
+    # Final text comes from round 2.
+    assert "22c" in resp.text.lower() or "sunny" in resp.text.lower(), resp.text
+
+    # The middleware refreshed tools on each of the two rounds.
+    assert len(client.seen_tools) == 2
+    for r_idx, names in enumerate(client.seen_tools):
+        assert names, f"Round {r_idx} forwarded no tools to the LLM"
+        assert "get_weather" in names, (
+            f"Round {r_idx} missing get_weather — refresh didn't propagate: {names}"
+        )
+        assert len(names) <= 2, (
+            f"Round {r_idx} exceeded top_k=2: {names}"
+        )
+
+    # The function_result message is present in the response — proof the
+    # tool actually executed end-to-end through the Gantry-wrapped path.
+    function_results = [
+        c
+        for m in resp.messages
+        for c in (m.contents or [])
+        if getattr(c, "type", None) == "function_result"
+    ]
+    assert function_results, (
+        "No function_result in the response — the tool was not executed."
+    )
+    fr = function_results[0]
+    assert fr.call_id == "e2e0"
+    rendered = str(fr.result) + str(getattr(fr, "items", ""))
+    assert "paris" in rendered.lower()
+
+
+# ---------------------------------------------------------------------------
+# 22. SkillsProvider co-existence: Gantry's per-call refresh must not strip
+#     skill tools (load_skill, read_skill_resource, run_skill_script) that
+#     another provider injected.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_context_provider_preserves_skill_tools_across_refresh() -> None:
+    """``SkillsProvider`` injects its own tools (``load_skill`` et al.) via
+    ``context.extend_tools(self.source_id, tools)`` in ``before_run``. The
+    Gantry per-call refresh must preserve those tools — only Gantry-owned
+    tools should be dropped & re-injected.
+
+    Rather than spin up a real SkillsProvider (which needs a skills source
+    on disk), we simulate its effect: pre-seed the chat context with a
+    foreign tool whose name is *not* in the Gantry registry, then run the
+    refresh and assert the foreign tool survives.
+    """
+    from agent_framework import tool
+
+    from agent_gantry import GantryContextProvider
+    from agent_gantry.query import concatenate_recent
+
+    gantry = AgentGantry()
+
+    @gantry.register
+    def get_weather(city: str) -> str:
+        """Get current weather for a city."""
+        return f"{city}: sunny"
+
+    await gantry.sync()
+
+    # Foreign tool not in the Gantry registry — represents what a peer
+    # provider (e.g. SkillsProvider) would have injected via extend_tools.
+    @tool(name="load_skill", description="Load a skill bundle by name (foreign).")
+    def load_skill(name: str) -> str:
+        return f"loaded {name}"
+
+    provider = GantryContextProvider(
+        gantry,
+        top_k=2,
+        score_threshold=0.0,
+        query_strategy="per_call",
+        query_generator=concatenate_recent,
+    )
+
+    class _FakeChatContext:
+        def __init__(self, messages: list[Message], options: dict[str, Any]) -> None:
+            self.messages = messages
+            self.options = options
+
+    # Round 1: only the foreign skill tool is in options (as if SkillsProvider
+    # had just injected it in before_run and no Gantry refresh has run yet).
+    options: dict[str, Any] = {"tools": [load_skill]}
+    ctx = _FakeChatContext(
+        messages=[Message(role="user", contents=[Content.from_text("Weather in Paris?")])],
+        options=options,
+    )
+
+    await provider._refresh_tools_on_chat_context(ctx)
+
+    tool_names = [getattr(t, "name", None) for t in ctx.options["tools"]]
+
+    # The skill tool must survive the refresh.
+    assert "load_skill" in tool_names, (
+        f"Foreign skill tool was stripped by Gantry refresh: {tool_names}"
+    )
+    # And Gantry's dynamic selection was layered on top.
+    assert "get_weather" in tool_names, (
+        f"Gantry's semantically-selected tool was not injected: {tool_names}"
+    )
+
+    # Critical: the refresh must mutate the SAME options dict (not replace
+    # the reference) so AF's FunctionInvocationLayer.mutable_options stays
+    # in sync. Confirm by identity.
+    assert ctx.options is options, (
+        "Provider replaced the options dict reference — this would desync "
+        "AF's tool-lookup table from the chat-call payload."
+    )
+
+    # Now simulate a follow-up round where the user shifts topic. The
+    # refresh should re-route Gantry's dynamic slot (none of get_weather's
+    # synonyms match) while still keeping load_skill.
+    ctx.messages.append(
+        Message(role="user", contents=[Content.from_text("Now load the math skill please.")])
+    )
+    await provider._refresh_tools_on_chat_context(ctx)
+
+    tool_names_r2 = [getattr(t, "name", None) for t in ctx.options["tools"]]
+    assert "load_skill" in tool_names_r2, (
+        f"Skill tool stripped on second refresh: {tool_names_r2}"
+    )
+    assert ctx.options is options, "Options reference changed on second refresh."

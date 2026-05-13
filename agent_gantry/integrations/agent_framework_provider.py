@@ -390,6 +390,16 @@ class GantryContextProvider:
                 always_include / skill pins. This guarantees the per-round
                 top-k stays bounded and stale dynamic selections from
                 earlier rounds do not accumulate.
+
+                Mutates the existing options dict **in place** rather than
+                replacing the reference. ``FunctionInvocationLayer`` in
+                agent-framework keeps the same options dict across its
+                inner loop and uses it both as the chat-call payload *and*
+                as the tool-lookup table when executing function calls.
+                Reassigning ``context.options = new_options`` would only
+                update the chat-call payload — the function executor would
+                still see the original (stale) tool list and fail to find
+                the tools we just injected.
                 """
                 options = getattr(context, "options", None)
                 existing = []
@@ -426,15 +436,19 @@ class GantryContextProvider:
                     combined.append(t)
 
                 if isinstance(options, dict):
-                    new_options = dict(options)
-                    new_options["tools"] = combined
+                    # Mutate in place — see docstring above.
+                    options["tools"] = combined
+                elif options is not None:
+                    # Non-dict options (e.g. a Pydantic ChatOptions model):
+                    # fall back to attribute assignment with a rebuilt copy.
+                    if hasattr(options, "model_copy"):
+                        new_options = options.model_copy(update={"tools": combined})
+                    else:
+                        new_options = options
                     try:
                         context.options = new_options
                     except AttributeError:
-                        # Some AF versions expose options as a read-only attr;
-                        # mutate in place as a fallback.
-                        options.clear()
-                        options.update(new_options)
+                        pass
 
                 logger.debug(
                     "GantryContextProvider: refreshed tools per-call "
