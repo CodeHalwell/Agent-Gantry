@@ -53,3 +53,7 @@
 ## 2026-05-12 - [Keyboard Accessibility for Scrollable Code Blocks]
 **Learning:** Code blocks (`<pre>`) often have `overflow-x: auto` applied via CSS to handle long lines of code without breaking the page layout. However, if these `<pre>` elements are not focusable, keyboard-only users cannot scroll them horizontally to read the truncated content.
 **Action:** When styling elements with `overflow: auto` or `overflow: scroll` (especially code blocks or tables), always ensure they are keyboard-focusable by adding `tabindex="0"`. Additionally, provide a `role="region"` and an `aria-label` (e.g., "Code snippet") so screen readers announce the scrollable container properly.
+
+## 2026-05-13 - [Keyboard Accessibility for Markdown Tables]
+**Learning:** Markdown generators (like Kramdown) output raw `<table>` elements without wrapping them in containers. Consequently, adding `overflow-x: auto` directly to the `<table>` element often fails to contain horizontal overflow consistently or securely across different browsers, and without a wrapper, keyboard users cannot scroll wide tables horizontally.
+**Action:** Always use a client-side JavaScript initialization script to locate raw `<table>` elements and wrap them in a `<div class="table-wrapper">` with `tabindex="0"`, `role="region"`, and a descriptive `aria-label` (e.g., "Data table"), while applying `overflow-x: auto` to the wrapper.

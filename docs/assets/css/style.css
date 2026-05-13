@@ -24,7 +24,8 @@
   --border-color: #e2e8f0;
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --shadow-lg:
+    0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
 
   /* Code block colors (dark theme) */
   --code-bg: #1e293b;
@@ -36,8 +37,12 @@
   --code-number: #fbbf24;
 
   /* Typography */
-  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
-  --font-mono: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', 'Fira Mono', 'Roboto Mono', 'Courier New', monospace;
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu",
+    "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+  --font-mono:
+    "SF Mono", "Monaco", "Inconsolata", "Fira Code", "Fira Mono", "Roboto Mono",
+    "Courier New", monospace;
 
   /* Spacing */
   --spacing-xs: 0.25rem;
@@ -46,7 +51,7 @@
   --spacing-lg: 1.5rem;
   --spacing-xl: 2rem;
   --spacing-2xl: 3rem;
-  
+
   /* Callout Backgrounds (Light Mode) */
   --bg-callout-note: #dbeafe;
   --bg-callout-warning: #fef3c7;
@@ -105,7 +110,12 @@ body {
 }
 
 /* ==================== Typography ==================== */
-h1, h2, h3, h4, h5, h6 {
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
   font-weight: 700;
   line-height: 1.3;
   margin-top: var(--spacing-xl);
@@ -157,12 +167,14 @@ a:hover {
   text-decoration: underline;
 }
 
-strong, b {
+strong,
+b {
   font-weight: 600;
   color: var(--text-primary);
 }
 
-em, i {
+em,
+i {
   font-style: italic;
 }
 
@@ -231,7 +243,9 @@ em, i {
   border: 1px solid var(--border-color);
   border-radius: 6px;
   font-size: 0.875rem;
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
 .search-input:focus {
@@ -446,10 +460,16 @@ pre code {
 }
 
 /* Tables */
+.table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  margin: var(--spacing-lg) 0;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
-  margin: var(--spacing-lg) 0;
+  margin: 0;
   font-size: 0.9rem;
 }
 
@@ -474,7 +494,8 @@ tr:hover {
 }
 
 /* Lists */
-ul, ol {
+ul,
+ol {
   margin: var(--spacing-md) 0;
   padding-left: var(--spacing-xl);
 }
