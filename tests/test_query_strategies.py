@@ -111,6 +111,30 @@ def test_strategies_accept_dict_messages():
     assert "result of fn:" in last_tool_result(msgs)
 
 
+def test_last_tool_result_extracts_text_from_af_function_result_message() -> None:
+    """AF wraps tool output as a ``function_result`` Content inside a
+    tool-role Message — ``Message.text`` is empty in that case and the
+    payload lives in ``Content.items[].text``. ``_msg_text`` must walk
+    ``contents`` to surface it, otherwise ``last_tool_result`` returns
+    "" and the per-call refresh's query collapses back to the original
+    user prompt across the entire run.
+    """
+    af = pytest.importorskip("agent_framework")
+
+    fr = af.Content.from_function_result(
+        call_id="r0",
+        result="Paris is sunny. Invoice INV-9 payment is overdue.",
+    )
+    msg = af.Message(role="tool", contents=[fr])
+
+    out = last_tool_result([msg])
+    assert "Paris is sunny" in out, out
+    assert "INV-9" in out, out
+    # AF Messages don't carry a tool name at the message level; the
+    # generic-label fallback should kick in.
+    assert out.startswith("tool result:") or out.startswith("result of"), out
+
+
 # ---------------------------------------------------------------------------
 # AgentGantry.list_tools_sync + preview
 # ---------------------------------------------------------------------------

@@ -1503,3 +1503,136 @@ async def test_context_provider_preserves_skill_tools_across_refresh() -> None:
         f"Skill tool stripped on second refresh: {tool_names_r2}"
     )
     assert ctx.options is options, "Options reference changed on second refresh."
+
+
+# ---------------------------------------------------------------------------
+# 23. Per-round routing actually adapts when the tool result shifts topic.
+#     Uses a real sentence-transformer embedder so semantic ranking is
+#     meaningful (SimpleEmbedder's hash-based scoring is too noisy to
+#     deterministically differentiate domains in a 5-tool registry).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_context_provider_per_call_surface_adapts_to_tool_result() -> None:
+    """End-to-end proof of per-round routing adaptation.
+
+    The user asks a weather question. Round 1's router (driven by the
+    user message) surfaces weather-flavoured tools. The model emits a
+    function_call; the Gantry tool runs and its result legitimately
+    introduces a *new* domain (billing/refund). On round 2 the query
+    generator (``last_tool_result``) picks up the tool's output, and the
+    router must re-rank — surfacing the refund tool that wasn't in the
+    round-1 set.
+
+    Skipped when ``sentence-transformers`` is not installed because
+    ``SimpleEmbedder``'s hash-based scoring is too noisy to differentiate
+    domains deterministically.
+    """
+    st = pytest.importorskip(
+        "sentence_transformers",
+        reason="real embedder required to deterministically demonstrate "
+               "per-round adaptation; install agent-gantry[nomic] or "
+               "sentence-transformers",
+    )
+    del st  # only used as import gate
+
+    from agent_gantry import GantryContextProvider
+    from agent_gantry.adapters.embedders.sentence_transformers import (
+        SentenceTransformersEmbedder,
+    )
+    from agent_gantry.query import last_tool_result, last_user_text
+
+    embedder = SentenceTransformersEmbedder(model="all-MiniLM-L6-v2")
+    gantry = AgentGantry(embedder=embedder)
+
+    @gantry.register
+    def get_weather(city: str) -> str:
+        """Get the current weather and temperature for a city."""
+        # Result legitimately introduces a NEW domain — billing.
+        return (
+            "Paris is sunny. Customer follow-up: invoice INV-9 payment refund "
+            "overdue billing."
+        )
+
+    @gantry.register
+    def refund_invoice(invoice_id: str) -> str:
+        """Issue a refund payment on a customer billing invoice."""
+        return f"refunded {invoice_id}"
+
+    @gantry.register
+    def read_file(path: str) -> str:
+        """Read file contents from the local filesystem disk."""
+        return ""
+
+    @gantry.register
+    def write_file(path: str, contents: str) -> str:
+        """Write content to a file on the local filesystem disk."""
+        return ""
+
+    await gantry.sync()
+
+    def query_gen(messages: Any) -> str:
+        return last_tool_result(messages) or last_user_text(messages)
+
+    provider = GantryContextProvider(
+        gantry,
+        top_k=2,
+        score_threshold=0.0,
+        query_strategy="per_call",
+        query_generator=query_gen,
+    )
+
+    client = ScriptedChatClient(
+        script=[
+            [_fc("get_weather", {"city": "Paris"}, "r0")],
+            [_fc("refund_invoice", {"invoice_id": "INV-9"}, "r1")],
+            [Content.from_text("All done.")],
+        ]
+    )
+    agent = Agent(
+        client,
+        instructions="",
+        name="AdaptiveAgent",
+        context_providers=[provider],
+        middleware=[provider.as_chat_middleware()],
+    )
+
+    resp = await agent.run("What's the weather in Paris?")
+
+    # 3 LLM rounds — both function calls executed (otherwise we'd see <3).
+    assert client.call_count == 3
+    assert len(client.seen_tools) == 3
+
+    round1, round2, _round3 = client.seen_tools
+
+    # Round 1: weather-flavoured query → weather tool present.
+    assert "get_weather" in round1, round1
+
+    # Round 2: query shifted to the tool result (mentions invoice/refund/billing).
+    # The refund tool must now be in the surfaced set, AND the surface must
+    # have actually *changed* — that's the headline adaptation guarantee.
+    assert "refund_invoice" in round2, (
+        f"Round-2 surface did not surface refund_invoice after the topic "
+        f"shifted in the tool result: {round2}"
+    )
+    assert round1 != round2, (
+        f"Tool surface did not change between round 1 and round 2 even "
+        f"though the query content shifted: r1={round1} r2={round2}"
+    )
+
+    # And the refund function call actually resolved (gating policy may
+    # require confirmation, but the function NAME must be found — that
+    # only happens when round-2 routing correctly surfaced it).
+    refund_results = [
+        c
+        for m in resp.messages
+        for c in (m.contents or [])
+        if getattr(c, "type", None) == "function_result" and c.call_id == "r1"
+    ]
+    assert refund_results, "refund_invoice function_result missing"
+    fr = refund_results[0]
+    assert "not found" not in (fr.exception or ""), (
+        f"refund_invoice was not surfaced on round 2 — executor reported "
+        f"missing tool: {fr.exception!r}"
+    )
