@@ -15,11 +15,11 @@ The general pattern is:
 ## Examples Included
 
 - `agent_framework_provider_example.py` — **recommended**: AF-native integration via `GantryContextProvider`. The provider plugs into `Agent(context_providers=[...])` and dynamically injects the top-k tools for each `agent.run(...)` — no pre-baking, coexists with `SkillsProvider`, and flows through every workflow builder unchanged. Includes a `skills=True` flag for always-on skill-bound tools and an `always_include` pin list.
-- `agent_framework_example.py`: Microsoft Agent Framework **1.0 GA** integration via `GantryToolBridge` (still useful when the tool set is *static* and known at agent-construction time). Demonstrates three construction patterns:
+- `agent_framework_example.py`: Microsoft Agent Framework **1.3.0** integration via `GantryToolBridge` (still useful when the tool set is *static* and known at agent-construction time). Demonstrates three construction patterns:
   1. `bridge.build_agent(client, query, ...)` — convenience one-liner via `client.as_agent()`.
   2. `bridge.as_agent(client, query, ...)` — direct `Agent(client, ...)` construction; preferred for `WorkflowBuilder` because the result is a first-class `Agent`.
   3. `bridge.build_workflow([specs], edges=[...])` — fan-out/handoff routing where each participating agent receives its own semantically-selected Gantry tool subset.
-- `agent_framework_orchestration_example.py`: Multi-agent orchestration patterns (Sequential / Concurrent / Handoff) from AF 1.0 GA, each participating agent receiving its own semantically selected Gantry tool slice.
+- `agent_framework_orchestration_example.py`: Multi-agent orchestration patterns (Sequential / Concurrent / Handoff) on AF **1.3.0**, each participating agent receiving its own semantically selected Gantry tool slice. Since AF 1.2.2, the terminal output of sequential/concurrent workflows is an `AgentResponse` (str-coercible) rather than a bare string — extract text with `str(result)` or `result.text`.
 - `google_adk_example.py`: Google Agent Development Kit (ADK) integration using `Agent` + `Runner`.
 - `langchain_example.py`: Using Gantry with LangChain 0.3+ `create_agent`.
 - `langgraph_example.py`: Integrating Gantry into a LangGraph workflow.

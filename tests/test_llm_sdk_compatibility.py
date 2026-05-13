@@ -178,41 +178,45 @@ class TestGoogleVertexAICompatibility:
 
 
 class TestMistralCompatibility:
-    """Tests for Mistral SDK compatibility."""
+    """Tests for Mistral compatibility via the OpenAI-compatible endpoint.
 
-    def test_mistral_import(self) -> None:
-        """Test that Mistral SDK can be imported."""
-        pytest.importorskip("mistralai")
-        from mistralai import Mistral
+    The official ``mistralai`` SDK was quarantined on PyPI on 2026-05-12 and is no
+    longer installable. Gantry's ``provider="mistral"`` now uses ``AsyncOpenAI``
+    with ``base_url="https://api.mistral.ai/v1"`` (see ``adapters/llm_client.py``).
+    """
 
-        assert Mistral is not None
+    def test_mistral_uses_openai_sdk(self) -> None:
+        """Test that the OpenAI SDK is the supported entry point for Mistral."""
+        pytest.importorskip("openai")
+        from openai import AsyncOpenAI
+
+        assert AsyncOpenAI is not None
 
     def test_mistral_client_initialization(self) -> None:
-        """Test Mistral client initialization pattern."""
-        pytest.importorskip("mistralai")
-        from mistralai import Mistral
+        """Test AsyncOpenAI client initialization with the Mistral base URL."""
+        pytest.importorskip("openai")
+        from openai import AsyncOpenAI
 
-        client = Mistral(api_key="test-key")
+        client = AsyncOpenAI(
+            api_key="test-key",
+            base_url="https://api.mistral.ai/v1",
+        )
         assert client is not None
         assert hasattr(client, "chat")
+        assert hasattr(client.chat, "completions")
 
     def test_mistral_has_required_endpoints(self) -> None:
-        """Test Mistral client has required endpoint methods."""
-        pytest.importorskip("mistralai")
-        from mistralai import Mistral
+        """Test the OpenAI-compatible client exposes the chat-completions endpoint."""
+        pytest.importorskip("openai")
+        from openai import AsyncOpenAI
 
-        client = Mistral(api_key="test-key")
+        client = AsyncOpenAI(
+            api_key="test-key",
+            base_url="https://api.mistral.ai/v1",
+        )
 
-        # Chat complete
-        assert hasattr(client.chat, "complete")
-
-        # FIM (Fill-in-the-Middle) for code completion
-        assert hasattr(client, "fim")
-        assert hasattr(client.fim, "complete")
-
-        # Agents
-        assert hasattr(client, "agents")
-        assert hasattr(client.agents, "complete")
+        # Mistral's OpenAI-compatible endpoint exposes chat.completions.create
+        assert hasattr(client.chat.completions, "create")
 
 
 class TestGroqCompatibility:
@@ -394,8 +398,8 @@ class TestSDKVersionCompatibility:
         version = getattr(anthropic, "__version__", None)
         if version is None:
             pytest.skip("anthropic module is mocked in this test session")
-        assert Version(version) >= Version("0.97.0"), (
-            f"Anthropic SDK version {version} is below minimum 0.97.0"
+        assert Version(version) >= Version("0.101.0"), (
+            f"Anthropic SDK version {version} is below minimum 0.101.0"
         )
 
     def test_groq_minimum_version(self) -> None:
@@ -410,19 +414,14 @@ class TestSDKVersionCompatibility:
             f"Groq SDK version {version} is below minimum 0.13.0"
         )
 
-    def test_mistral_minimum_version(self) -> None:
-        """Test Mistral SDK meets minimum version."""
-        mistralai = pytest.importorskip("mistralai")
-        # Try to get version from package metadata if __version__ not available
-        version = getattr(mistralai, "__version__", None)
-        if version is None:
-            # Use importlib.metadata to get version
-            try:
-                from importlib.metadata import version as get_version
+    def test_mistral_uses_openai_minimum_version(self) -> None:
+        """Mistral is consumed via the OpenAI SDK; verify it meets the floor used
+        by the ``mistral`` extra in ``pyproject.toml`` (``openai>=2.36.0``)."""
+        from packaging.version import Version
 
-                version = get_version("mistralai")
-            except Exception:
-                pytest.skip("Could not determine mistralai version")
-        parts = version.split(".")
-        major = int(parts[0])
-        assert major >= 1, f"Mistral SDK version {version} is below minimum 1.0.0"
+        openai = pytest.importorskip("openai")
+        version = openai.__version__
+        assert Version(version) >= Version("2.36.0"), (
+            f"OpenAI SDK version {version} is below the minimum 2.36.0 required "
+            "for Mistral's OpenAI-compatible endpoint."
+        )

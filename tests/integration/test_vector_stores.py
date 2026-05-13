@@ -5,7 +5,7 @@ Requires running instances of vector stores. Run with:
     pytest -m integration tests/integration/test_vector_stores.py
 
 For local testing, use docker-compose:
-    docker compose -f docker-compose.test.yml up -d
+    docker compose -f tests/docker-compose.test.yml up -d
 """
 
 from __future__ import annotations

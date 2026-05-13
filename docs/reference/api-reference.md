@@ -8,7 +8,7 @@ description: "Complete API documentation for Agent-Gantry"
 
 # API Reference
 
-Complete API documentation for Agent-Gantry v0.1.2.
+Complete API documentation for Agent-Gantry v0.3.0.
 
 ---
 

@@ -1,5 +1,5 @@
 """
-Microsoft Agent Framework 1.2 — multi-agent orchestration with Agent-Gantry.
+Microsoft Agent Framework 1.3.0 — multi-agent orchestration with Agent-Gantry.
 
 Demonstrates three production orchestration patterns, each powered by Gantry's
 semantic tool routing:
@@ -14,10 +14,22 @@ Each participating agent uses a distinct, semantically selected subset of
 the Gantry tool registry, so the LLM only sees the tools relevant to that
 agent's role (i.e. the token-saving benefit compounds across participants).
 
-AF 1.1.0 added ``GeminiChatClient`` (``from agent_framework.gemini import
-GeminiChatClient``). Pass it as ``client`` to any bridge helper to run
-agents on Gemini models. Set ``GOOGLE_API_KEY`` and swap ``OpenAIChatClient``
-for ``GeminiChatClient`` to try it.
+Version notes:
+
+* AF 1.1.0 added ``GeminiChatClient`` (``from agent_framework.gemini import
+  GeminiChatClient``). Pass it as ``client`` to any bridge helper to run
+  agents on Gemini models — set ``GOOGLE_API_KEY`` and swap
+  ``OpenAIChatClient`` for ``GeminiChatClient``.
+* AF 1.2.2 changed the terminal output of ``SequentialBuilder`` and
+  ``ConcurrentBuilder`` workflows from a bare string to an
+  :class:`agent_framework.AgentResponse`. The class is ``str``-coercible
+  (``str(result)`` or ``result.text``), but code that previously did
+  ``result.startswith(...)`` on a bare string needs adapting.
+* AF 1.3.0 adds ``ClassSkill`` and ``allowed_tools`` for OpenAI/Gemini
+  tool-choice filtering, plus experimental session/todo-list/memory
+  context providers. Gantry has not yet exposed an ``allowed_tools``
+  pass-through in :class:`GantryToolBridge`; subset selection is still
+  achieved via ``query`` + ``limit``.
 
 Run:
 
