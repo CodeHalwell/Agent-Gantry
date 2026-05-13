@@ -33,9 +33,6 @@ class LLMClient:
         """
         self._config = config
         self._client: Any = None
-        # mistralai >= 2.0 uses a per-call async context manager rather than a
-        # long-lived client object. Store only the API key for that provider.
-        self._mistral_api_key: str | None = None
         self._provider = config.provider
         self._model = config.model
         self._initialize_client()
@@ -61,10 +58,15 @@ class LLMClient:
 
             self._client = genai.Client(api_key=api_key)
         elif self._provider == "mistral":
-            # mistralai >= 2.0 requires `async with Mistral(...) as client:` per call.
-            # We store only the API key here; the context manager is opened in
-            # classify_intent() so resources are released after every invocation.
-            self._mistral_api_key = api_key
+            # mistralai (the official Mistral SDK) is quarantined on PyPI (2026-05-12).
+            # Mistral's API is OpenAI-compatible; use AsyncOpenAI with the Mistral
+            # base URL. The chat.completions interface is identical.
+            from openai import AsyncOpenAI
+
+            self._client = AsyncOpenAI(
+                api_key=api_key,
+                base_url="https://api.mistral.ai/v1",
+            )
         elif self._provider == "groq":
             from groq import AsyncGroq
 
@@ -163,16 +165,14 @@ Respond with ONLY the intent category name (e.g., "data_query"), nothing else.""
             )
             result = response.text.strip()
         elif self._provider == "mistral":
-            # mistralai >= 2.0: open a fresh async context manager per call.
-            from mistralai import Mistral
-
-            async with Mistral(api_key=self._mistral_api_key) as mistral_client:
-                response = await mistral_client.chat.complete_async(
-                    model=self._model,
-                    messages=[{"role": "user", "content": prompt}],
-                    max_tokens=self._config.max_tokens,
-                    temperature=self._config.temperature,
-                )
+            # Mistral's API is OpenAI-compatible; self._client is AsyncOpenAI
+            # with base_url="https://api.mistral.ai/v1" (set in _initialize_client).
+            response = await self._client.chat.completions.create(
+                model=self._model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=self._config.max_tokens,
+                temperature=self._config.temperature,
+            )
             result = response.choices[0].message.content.strip()
         else:
             raise ValueError(f"Unsupported provider: {self._provider}")
@@ -198,6 +198,4 @@ Respond with ONLY the intent category name (e.g., "data_query"), nothing else.""
         Returns:
             True if the client is initialized and ready
         """
-        if self._provider == "mistral":
-            return self._mistral_api_key is not None
         return self._client is not None

@@ -20,7 +20,7 @@ Agent-Gantry is designed to work seamlessly with leading LLM providers. This gui
 | Anthropic | `anthropic` | ✅ Full Support | Claude models |
 | Google GenAI | `google-genai` | ✅ Full Support | For prototyping |
 | Google Vertex AI | `google-cloud-aiplatform` | ✅ Full Support | Production recommended |
-| Mistral | `mistralai` | ✅ Full Support | Including agents API |
+| Mistral | `openai` | ⚠️ OpenAI-compatible endpoint | `mistralai` quarantined on PyPI (2026-05-12); use OpenAI SDK with `base_url="https://api.mistral.ai/v1"` |
 | Groq | `groq` | ✅ Full Support | Fast inference |
 | OpenRouter | `openai` | ✅ Full Support | Via base_url override |
 
@@ -504,61 +504,43 @@ response = model.generate_content("What's AAPL stock price?")
 
 ## Mistral
 
+> **⚠️ Note (2026-05-12):** The `mistralai` package was quarantined on PyPI and is
+> no longer installable. Mistral's chat endpoint is OpenAI-compatible; use the
+> `openai` SDK with `base_url="https://api.mistral.ai/v1"` instead. All Gantry
+> tool schemas work without modification.
+
 ### Package
 ```bash
-pip install mistralai>=2.0.0
+pip install "agent-gantry[openai]"
+# or: pip install openai
 ```
 
 ### Client Initialization
 ```python
-from mistralai import Mistral
+from openai import AsyncOpenAI
 
-# mistralai 2.x uses an async context manager for proper resource cleanup
-async with Mistral(api_key="your-api-key") as client:
-    response = await client.chat.complete_async(...)
+# Mistral is OpenAI-compatible — point AsyncOpenAI at the Mistral base URL.
+client = AsyncOpenAI(api_key="your-mistral-api-key", base_url="https://api.mistral.ai/v1")
 ```
 
 ### Key Methods
 
 #### Chat Complete (async)
 ```python
-# mistralai 2.x: use async with for proper resource cleanup
-async with Mistral(api_key="your-api-key") as client:
-    response = await client.chat.complete_async(
-        model="mistral-large-latest",
-        messages=[
-            {"role": "user", "content": "Hello, Mistral!"}
-        ]
-    )
-    print(response.choices[0].message.content)
-```
+from openai import AsyncOpenAI
 
-#### Fill-in-the-Middle (FIM)
-```python
-async with Mistral(api_key="your-api-key") as client:
-    response = await client.fim.complete_async(
-        model="codestral-latest",
-        prompt="def fibonacci(n):",
-        suffix="    return result"
-    )
-    print(response.choices[0].message.content)
-```
-
-#### Agents
-```python
-async with Mistral(api_key="your-api-key") as client:
-    response = await client.agents.complete_async(
-        agent_id="your-agent-id",
-        messages=[
-            {"role": "user", "content": "Help me with a task"}
-        ]
-    )
+client = AsyncOpenAI(api_key="your-mistral-api-key", base_url="https://api.mistral.ai/v1")
+response = await client.chat.completions.create(
+    model="mistral-large-latest",
+    messages=[{"role": "user", "content": "Hello, Mistral!"}],
+)
+print(response.choices[0].message.content)
 ```
 
 ### Agent-Gantry Integration
 
 ```python
-from mistralai import Mistral
+from openai import AsyncOpenAI
 from agent_gantry import AgentGantry
 
 gantry = AgentGantry()
@@ -570,16 +552,15 @@ def send_notification(message: str, channel: str) -> str:
 
 await gantry.sync()
 
-# Get tools in OpenAI-compatible format (Mistral uses the same schema)
+# Gantry's default dialect produces OpenAI-compatible function schemas.
 tools = await gantry.retrieve_tools("send notification")
 
-# Use with Mistral 2.x async context manager
-async with Mistral(api_key="your-key") as client:
-    response = await client.chat.complete_async(
-        model="mistral-large-latest",
-        messages=[{"role": "user", "content": "Notify the team"}],
-        tools=tools,
-    )
+client = AsyncOpenAI(api_key="your-key", base_url="https://api.mistral.ai/v1")
+response = await client.chat.completions.create(
+    model="mistral-large-latest",
+    messages=[{"role": "user", "content": "Notify the team"}],
+    tools=tools,
+)
 ```
 
 ---
@@ -895,6 +876,6 @@ for chunk in response:
 - [Anthropic Python SDK](https://github.com/anthropics/anthropic-sdk-python)
 - [Google GenAI SDK](https://github.com/googleapis/python-genai)
 - [Google Cloud AI Platform](https://cloud.google.com/python/docs/reference/aiplatform/latest)
-- [Mistral AI SDK](https://github.com/mistralai/client-python)
+- [Mistral AI API docs](https://docs.mistral.ai/) (use OpenAI SDK with `base_url="https://api.mistral.ai/v1"`; `mistralai` package is quarantined)
 - [Groq SDK](https://github.com/groq/groq-python)
 - [OpenRouter Documentation](https://openrouter.ai/docs)
