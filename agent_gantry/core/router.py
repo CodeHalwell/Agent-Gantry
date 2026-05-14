@@ -511,20 +511,21 @@ class SemanticRouter:
             # Vectorized dot product of all remaining candidates with the last selected item
             all_sims = np.dot(normed_emb, last_emb)
 
-            mmr_scores: dict[int, float] = {}
+            best_idx = -1
+            best_score = -float("inf")
 
             for idx in candidates:
                 sim = float(all_sims[idx])
                 if sim > max_sims[idx]:
                     max_sims[idx] = sim
 
-                mmr_scores[idx] = (
-                    lambda_param * relevance_scores[idx] - (1.0 - lambda_param) * max_sims[idx]
-                )
+                score = lambda_param * relevance_scores[idx] - (1.0 - lambda_param) * max_sims[idx]
+                if score > best_score:
+                    best_score = score
+                    best_idx = idx
 
-            next_idx = max(mmr_scores, key=lambda k: mmr_scores[k])
-            selected.append(next_idx)
-            candidates.remove(next_idx)
+            selected.append(best_idx)
+            candidates.remove(best_idx)
 
         return [scored_tools[i] for i in selected]
 
