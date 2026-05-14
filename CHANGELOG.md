@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`anthropic` floor bumped to `>=0.102.0`** (was `>=0.101.0`). Anthropic 0.102.0
+  released 2026-05-13; no breaking changes for Gantry's Messages API call sites.
+  *Risk: safe internal — floor bump only.*
+  Source: https://pypi.org/pypi/anthropic/json
+
+- **`langchain` floor bumped to `>=1.3.0`** (was `>=1.2.18`). LangChain 1.3.0 GA
+  released 2026-05-14. This lifts the `langgraph<1.2.0` upper bound that 1.2.18
+  imposed. The previous hold comment is removed.
+  *Risk: safe internal — floor bump only.*
+  Source: https://pypi.org/pypi/langchain/json
+
+- **`langgraph` floor bumped to `>=1.2.0`** (was `>=1.1.10`). Unblocked by
+  LangChain 1.3.0 GA. LangGraph 1.2.0 is the current stable release.
+  *Risk: safe internal — floor bump only.*
+  Source: https://pypi.org/pypi/langgraph/json
+
+- **`google-adk` floor bumped to `>=1.33.0`** (was `>=1.14.1`). ADK 1.33.0 released
+  2026-05-08. The opentelemetry-api ranges of ADK 1.33.0 (`>=1.36,<=1.41.1`) and
+  agent-framework 1.3.0 (`>=1.39.0`) overlap at 1.39.x–1.41.1; the lock resolves to
+  1.39.1, so both packages co-install. The `google-genai<2.0.0` constraint from ADK
+  is unchanged; the `all[]` extra remains installable.
+  *Risk: safe internal — floor bump only.*
+  Source: https://pypi.org/pypi/google-adk/1.33.0/json
+
+- **`examples/agent_frameworks/langgraph_example.py`**: Changed
+  `from langchain.tools import tool` to `from langchain_core.tools import tool`.
+  The canonical location in LangChain 1.x is `langchain_core.tools`; the shim in
+  `langchain.tools` may be removed in a future 1.x minor release.
+  *Risk: safe with compatibility shim.*
+
+- **`pyproject.toml` comments updated**: `crewai`, `google-adk`, and `google-genai`
+  comments updated to reflect current latest stable versions (crewai 1.14.4,
+  google-adk 1.33.0, google-genai 2.2.0) and co-installation status.
+
 ## [0.3.0] - 2026-05-13
 
 ### Changed
