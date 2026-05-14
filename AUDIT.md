@@ -21,7 +21,7 @@ The principal actionable items are:
 1. **`anthropic` floor**: `0.101.0` → `0.102.0` (latest stable).
 2. **`langchain` floor**: `1.2.18` → `1.3.0` (GA released; **unblocks langgraph**).
 3. **`langgraph` floor**: `1.1.10` → `1.2.0` (now unblocked by langchain 1.3.0).
-4. **`google-adk` floor**: `1.14.1` → `1.33.0` (major version improvement; opentelemetry-api overlap confirmed installable).
+4. **`google-adk` floor**: stays at `1.14.1` — upgrade to `1.33.0` blocked by pydantic conflict with `semantic-kernel` (see §4.5).
 5. **langgraph example**: `from langchain.tools import tool` → `from langchain_core.tools import tool` (canonical LangChain 1.x import).
 
 ---
@@ -39,7 +39,7 @@ Sources verified against PyPI JSON API (cited URLs below each entry).
 | `autogen-agentchat` | `>=0.7.5` | `0.7.5` | `0.7.5` ✅ | None | — |
 | `autogen-ext[openai]` | `>=0.7.5` | `0.7.5` | `0.7.5` ✅ | None | — |
 | `crewai` | `>=1.6.1` | `1.6.1` | `1.14.4` | Update comment (still conflicts with AF) | Note only |
-| `google-adk` | `>=1.14.1` | `1.14.1` | `1.33.0` | Bump floor + update comment | Safe internal |
+| `google-adk` | `>=1.14.1` | `1.14.1` | `1.33.0` (pydantic blocked) | Comment updated; floor stays `1.14.1` | Blocked — see §4.5 |
 | `google-genai` | `>=1.75.0` | `1.75.0` | `2.2.0` | Update comment; floor stays at 1.75.0 (google-adk pins `<2`) | Note only |
 | `groq` | `>=1.2.0` | `1.2.0` | `1.2.0` ✅ | None | — |
 | `langchain` | `>=1.2.18` | `1.2.18` | `1.3.0` | Bump floor | Safe internal |
@@ -67,7 +67,7 @@ Sources verified against PyPI JSON API (cited URLs below each entry).
 uv lock --upgrade-package anthropic
 uv lock --upgrade-package langchain
 uv lock --upgrade-package langgraph
-uv lock --upgrade-package google-adk
+
 
 # Verify no conflicts:
 uv sync --all-extras
@@ -81,11 +81,15 @@ The current floor is `>=1.36.0`; the lock resolves to `1.36.0`. The comment docu
 
 However, the empirical evidence (lock resolving to 1.36.0 rather than 1.42.0) suggests a dependency sub-package or transitive constraint is blocking the upgrade. **Recommendation:** run `uv add "semantic-kernel>=1.42.0"` in a clean environment with `agent-framework` present, observe the resolver output, and update the floor and comment accordingly. Do not bump without first reproducing a successful `uv sync --all-extras`.
 
-### 2.4 Key dependency comments to verify: google-adk and agent-framework co-installation
+### 2.4 google-adk 1.33.0 blocked — pydantic conflict
 
-`google-adk 1.33.0` requires `opentelemetry-api>=1.36, <=1.41.1`. `agent-framework-core 1.3.0` requires `opentelemetry-api>=1.39.0, <2`. The intersection is `1.39.0–1.41.1`. The current lock resolves `opentelemetry-api` to `1.39.1` — inside that intersection — so both packages **can** co-install today. The comment in `pyproject.toml` can be updated to reflect this.
+`google-adk 1.33.0` requires `pydantic>=2.12`. `semantic-kernel>=1.36.0` (present in the same `agent-frameworks` extra) requires `pydantic<2.12`. These ranges are mutually exclusive; `uv lock` fails with an unsatisfiable error when both constraints are present. The `google-adk` floor therefore stays at `>=1.14.1`.
 
-Source: https://pypi.org/pypi/google-adk/1.33.0/json (verified 2026-05-14); https://pypi.org/pypi/agent-framework-core/1.3.0/json (verified 2026-05-14).
+The opentelemetry-api ranges of `google-adk 1.33.0` (`>=1.36,<=1.41.1`) and `agent-framework 1.3.0` (`>=1.39.0`) do overlap (at `1.39.x–1.41.1`), but this is moot until the pydantic conflict is resolved.
+
+**When it becomes unblocked:** When either (a) semantic-kernel releases a version with `pydantic>=2.12` support, or (b) a future google-adk release relaxes its pydantic floor, both floors can be bumped simultaneously.
+
+Source: https://pypi.org/pypi/google-adk/1.33.0/json (verified 2026-05-14).
 
 ---
 
@@ -239,11 +243,9 @@ Floor: `>=1.6.1`. Latest stable: `1.14.4`. **Conflict persists**: `crewai 1.14.4
 
 Source: https://pypi.org/pypi/crewai/1.14.4/json (verified 2026-05-14).
 
-### 4.5 Google ADK (1.14.1 → 1.33.0)
+### 4.5 Google ADK — floor stays at 1.14.1 (pydantic conflict)
 
-The `google-adk>=1.14.1` floor is outdated. `1.33.0` released 2026-05-08 is the latest stable. The `google-genai<2.0.0` constraint in all ADK versions up to 1.33.0 remains, so the `google-genai` floor stays at `1.75.0` in the combined `all[]` extra.
-
-Crucially, ADK 1.33.0 requires `opentelemetry-api>=1.36, <=1.41.1`. The current lock resolves `opentelemetry-api` to `1.39.1`, inside that range. Both ADK and agent-framework are installable together with this pin. The previous comment noting "conflicts on Python 3.13/Windows" reflected an older ADK version; that specific caveat no longer applies.
+`google-adk 1.33.0` (latest stable) requires `pydantic>=2.12`, which conflicts with `semantic-kernel>=1.36.0` (`pydantic<2.12`). Both are in the same `agent-frameworks` extra. `uv lock` fails when both constraints are present. The floor stays at `>=1.14.1` and the `pyproject.toml` comment is updated to document this specific blocker. See §2.4 for full analysis.
 
 Source: https://pypi.org/pypi/google-adk/1.33.0/json (verified 2026-05-14).
 

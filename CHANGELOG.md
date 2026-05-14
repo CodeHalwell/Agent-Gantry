@@ -25,12 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   *Risk: safe internal — floor bump only.*
   Source: https://pypi.org/pypi/langgraph/json
 
-- **`google-adk` floor bumped to `>=1.33.0`** (was `>=1.14.1`). ADK 1.33.0 released
-  2026-05-08. The opentelemetry-api ranges of ADK 1.33.0 (`>=1.36,<=1.41.1`) and
-  agent-framework 1.3.0 (`>=1.39.0`) overlap at 1.39.x–1.41.1; the lock resolves to
-  1.39.1, so both packages co-install. The `google-genai<2.0.0` constraint from ADK
-  is unchanged; the `all[]` extra remains installable.
-  *Risk: safe internal — floor bump only.*
+- **`google-adk` floor stays at `>=1.14.1`** — upgrade to 1.33.0 blocked.
+  `google-adk 1.33.0` requires `pydantic>=2.12`, which is mutually exclusive with
+  `semantic-kernel>=1.36.0` (`pydantic<2.12`). Both are in the `agent-frameworks`
+  extra, so the floor remains `1.14.1`. The comment is updated to document this
+  specific conflict. To use google-adk 1.33.0, install it in a standalone environment
+  without semantic-kernel.
+  *Risk: safe internal — note only, floor unchanged.*
   Source: https://pypi.org/pypi/google-adk/1.33.0/json
 
 - **`examples/agent_frameworks/langgraph_example.py`**: Changed
@@ -41,7 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`pyproject.toml` comments updated**: `crewai`, `google-adk`, and `google-genai`
   comments updated to reflect current latest stable versions (crewai 1.14.4,
-  google-adk 1.33.0, google-genai 2.2.0) and co-installation status.
+  google-adk 1.33.0 blocked by pydantic conflict, google-genai 2.2.0) and
+  co-installation status. `uv.lock` regenerated to reflect all floor bumps.
 
 ## [0.3.0] - 2026-05-13
 
