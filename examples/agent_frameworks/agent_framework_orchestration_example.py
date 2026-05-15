@@ -1,5 +1,5 @@
 """
-Microsoft Agent Framework 1.3.0 — multi-agent orchestration with Agent-Gantry.
+Microsoft Agent Framework 1.4.0 — multi-agent orchestration with Agent-Gantry.
 
 Demonstrates three production orchestration patterns, each powered by Gantry's
 semantic tool routing:

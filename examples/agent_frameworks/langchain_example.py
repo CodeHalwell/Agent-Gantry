@@ -43,7 +43,7 @@ async def main():
     print(f"Gantry retrieved {len(retrieved_tools)} tools.")
 
     # 4. Wrap Gantry tools as LangChain tools for use in LangGraph
-    from langchain.tools import tool
+    from langchain_core.tools import tool
 
     def make_langchain_tool(tool_name: str, tool_desc: str, gantry_instance: AgentGantry):
         """Factory that binds the captured tool_name into a LangChain tool."""
