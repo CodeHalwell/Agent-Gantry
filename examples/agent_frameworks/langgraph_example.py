@@ -2,6 +2,7 @@ import asyncio
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
+from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 
@@ -35,8 +36,6 @@ async def main():
     print(f"Gantry retrieved {len(tools_schema)} tools.")
 
     # Wrap Gantry execution for LangGraph
-    from langchain.tools import tool
-
     def make_langgraph_tool(tool_name: str, tool_desc: str, gantry_instance: AgentGantry):
         """Factory function to properly bind tool name to wrapper."""
 

@@ -61,19 +61,16 @@ agent-frameworks = [
     "agent-framework>=1.3.0,<2.0.0",
     "autogen-agentchat>=0.7.5",
     "autogen-ext[openai]>=0.7.5",
-    # crewai>=1.12.0 pins opentelemetry-api<1.35, which conflicts with
-    # agent-framework>=1.2.1 (requires opentelemetry-api>=1.39.0). crewai==1.6.1
-    # co-installs fine with agent-framework>=1.2.1 — it is crewai>=1.12.0 that
-    # introduces the incompatibility. To use crewai>=1.12.0, install it in a
-    # separate environment without agent-framework.
+    # crewai 1.14.4 (latest stable) pins opentelemetry-api~=1.34.0 (<1.35), which
+    # conflicts with agent-framework>=1.2.1 (requires opentelemetry-api>=1.39.0).
+    # crewai==1.6.1 co-installs with agent-framework. For crewai 1.14.4 (standalone),
+    # install in a separate environment without agent-framework.
     "crewai>=1.6.1",
-    "langchain>=1.2.18",
+    "langchain>=1.3.0",
     "langchain-openai>=1.2.1",
-    # langgraph 1.2.0 is available but blocked: langchain==1.2.18 explicitly pins
-    # langgraph>=1.1.10,<1.2.0. langchain 1.3.0 stable is required to lift that upper
-    # bound; only 1.3.0 pre-releases exist as of 2026-05-12. Floor stays at 1.1.10
-    # until langchain 1.3.0 GA is published.
-    "langgraph>=1.1.10",
+    # langchain 1.3.0 GA (released 2026-05-14) lifted the langgraph<1.2.0 upper bound.
+    # Floor bumped from 1.1.10 to 1.2.0.
+    "langgraph>=1.2.0",
     "llama-index-core>=0.14.21",
     "llama-index-llms-openai>=0.7.7",
     # semantic-kernel>=1.41.3 conflicts with agent-framework>=1.2.1 on some
@@ -82,8 +79,11 @@ agent-frameworks = [
     # Floor bumped to >=1.36.0 to match the uv.lock-resolved version; full
     # upgrade to 1.41.3 requires standalone testing without agent-framework.
     "semantic-kernel>=1.36.0",
-    # google-adk 1.31.1 conflicts with agent-framework>=1.2.1 on Python 3.13/Windows;
-    # bump this floor in a standalone (no agent-framework) environment.
+    # google-adk 1.33.0 (latest, 2026-05-08) requires pydantic>=2.12, which
+    # conflicts with semantic-kernel>=1.36.0 (requires pydantic<2.12). Both
+    # packages co-exist in the agent-frameworks extra, so the google-adk floor
+    # stays at 1.14.1. To use google-adk 1.33.0, install it in a standalone
+    # environment without semantic-kernel.
     "google-adk>=1.14.1",
 ]
 example-tools = [
@@ -155,17 +155,14 @@ a2a = [
 ]
 # LLM provider SDK dependencies
 anthropic = [
-    "anthropic>=0.101.0",
+    "anthropic>=0.102.0",
 ]
 google-genai = [
-    # google-genai 2.0.0 (released 2026-05-07) and 2.0.1 (2026-05-09) introduce
-    # breaking changes *only* in the Interactions API. GenerateContent and function
-    # calling are entirely unaffected, so upgrading to 2.x is safe for Gantry's
-    # call sites. However, google-adk>=1.14.1 (in the agent-frameworks extra) requires
-    # google-genai<2.0.0 across all its versions up to 1.33.0 — the same opentelemetry
-    # pattern as crewai/semantic-kernel. The floor stays at 1.75.0 so the all[] extra
-    # remains installable. To run with google-genai 2.x, use a standalone environment
-    # without google-adk (pip install agent-gantry[google-genai]).
+    # google-genai 2.2.0 (latest stable) introduces breaking changes only in the
+    # Interactions API; GenerateContent and function calling are entirely unaffected.
+    # google-adk (in the agent-frameworks extra) requires google-genai<2.0.0 across
+    # all versions up to 1.33.0, so the all[] extra stays at the 1.x floor.
+    # Standalone 2.x upgrade: pip install "agent-gantry[google-genai]"
     "google-genai>=1.75.0",
 ]
 google-vertexai = [
