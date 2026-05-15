@@ -1310,6 +1310,16 @@ class AgentGantry:
         """Return the number of registered tools."""
         return len(self._tool_handlers)
 
+    @property
+    def embedder(self) -> EmbeddingAdapter:
+        """Return the embedder this gantry is using.
+
+        Public accessor exposed so sibling modules (CLI helpers,
+        the registry linter, custom tooling) can perform their own
+        embedding work without reaching into ``_embedder``.
+        """
+        return self._embedder
+
     async def get_tool(self, name: str, namespace: str = "default") -> ToolDefinition | None:
         """
         Get a tool by name.
@@ -1428,6 +1438,41 @@ class AgentGantry:
             (f"{st.tool.namespace}.{st.tool.name}", st.semantic_score)
             for st in result.tools
         ]
+
+    async def analyze_registry(
+        self,
+        *,
+        similarity_threshold: float = 0.85,
+        tag_overlap_share: float = 0.5,
+    ) -> Any:
+        """Lint the registry for common tool-description mistakes.
+
+        Convenience wrapper around
+        :func:`agent_gantry.utils.registry_linter.analyze_registry`.
+        Returns a :class:`RegistryAnalysis` listing tools whose
+        descriptions name other registered tools (which pulls them
+        toward the wrong queries via embedding similarity), pairs of
+        tools whose searchable text is too similar to disambiguate,
+        and tags that appear on so many tools they no longer carry
+        discriminative value.
+        """
+        from agent_gantry.utils.registry_linter import (
+            analyze_registry as _analyze,
+        )
+
+        return await _analyze(
+            self,
+            similarity_threshold=similarity_threshold,
+            tag_overlap_share=tag_overlap_share,
+        )
+
+    async def pairwise_similarity(self, tool_a: str, tool_b: str) -> float:
+        """Cosine similarity between two registered tools' searchable text."""
+        from agent_gantry.utils.registry_linter import (
+            pairwise_similarity as _sim,
+        )
+
+        return await _sim(self, tool_a, tool_b)
 
     def export_tools(self) -> list[ToolDefinition]:
         """

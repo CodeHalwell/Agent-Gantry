@@ -28,6 +28,23 @@ For development:
 pip install agent-gantry[dev]
 ```
 
+### Optional: install the bundled Claude Skill
+
+Agent-Gantry ships a Claude Skill — a self-contained reference an agent can read to learn the library — bundled inside the wheel. Install it next to your other skills with one command:
+
+```bash
+agent-gantry install-skill --target ./skills
+```
+
+This drops a `skills/agent-gantry/` directory in your project. Wire it into an AF agent via `SkillsProvider(skill_paths=["./skills"])` or point Claude Code at it directly. To use the bundled copy without copying:
+
+```python
+from agent_gantry.skills import skill_path
+print(skill_path())  # /…/site-packages/agent_gantry/skills/agent-gantry
+```
+
+The skill covers each integration (Microsoft Agent Framework, LangChain, AutoGen, CrewAI, LlamaIndex, Semantic Kernel, Google ADK, plain SDK use), the new introspection APIs, and a debugging playbook.
+
 ### LLM Provider SDKs
 
 Install with specific LLM provider support:
@@ -243,6 +260,78 @@ async def chat(messages, *, tools=None):
 
 See [docs/llm_sdk_compatibility.md](docs/llm_sdk_compatibility.md) for detailed integration guides.
 
+### Microsoft Agent Framework (native integration)
+
+For Microsoft Agent Framework 1.x, `GantryContextProvider` plugs into AF's context-engineering pipeline as a first-class `ContextProvider` — no manual schema wiring, no static tool list, no overrides of `Agent(tools=...)`. Two modes:
+
+```python
+from agent_framework import Agent
+from agent_framework.openai import OpenAIChatClient
+from agent_gantry import AgentGantry, GantryContextProvider
+
+gantry = AgentGantry()
+# ... register tools, await gantry.sync() ...
+
+# Per-run mode: tool set is fixed for one agent.run() call.
+provider = GantryContextProvider(gantry, top_k=5)
+agent = Agent(OpenAIChatClient(), "...", context_providers=[provider])
+
+# Per-call mode: re-runs retrieval every chat-completion round (multi-step agents).
+provider = GantryContextProvider(gantry, top_k=3, query_strategy="per_call")
+agent = Agent(OpenAIChatClient(), "...")
+provider.attach_to(agent)  # one-call helper — attaches provider + middleware
+```
+
+`GantryContextProvider` co-exists with `SkillsProvider`, flows through `WorkflowBuilder` / `SequentialBuilder` / `HandoffBuilder`, and supports `required=[...]`, `always_include=[...]`, `static_tools=[...]`, and `verbose=True` for one-line per-round logging. See `examples/agent_frameworks/agent_framework_provider_example.py` for the full walkthrough.
+
+### Debugging tool routing
+
+When the LLM "doesn't see" a tool you expect, Agent-Gantry surfaces the decision so you don't have to write middleware to find out:
+
+```python
+# After any agent.run() call:
+decision = provider.last_selection
+print(decision.summary())         # query="..." → top5: [tool_a:0.61, ...]
+for c in decision.candidates:
+    print(c.name, c.score, c.kept)  # full ranked list, kept/dropped
+
+# Or, offline — same code path as the live middleware:
+decision = await provider.dry_run_retrieve("the user's actual query")
+```
+
+For registry-level mistakes — descriptions that name other tools, near-duplicate tools, overly generic tags — run the linter:
+
+```bash
+agent-gantry lint
+agent-gantry sim factorial fibonacci   # cosine similarity between two tools
+```
+
+### Robust score thresholds for long queries
+
+Absolute cosine thresholds collapse on long instructional queries because the embedding gets diluted. Use the relative mode for length-robust filtering:
+
+```python
+provider = GantryContextProvider(gantry, score_threshold="relative:0.8")
+# Keep anything within 80% of the top score, regardless of query length.
+```
+
+The default is `score_threshold=0.0` (no filtering) — opt-in to filtering, don't get filtered by surprise.
+
+### Persistent embedding cache
+
+`InMemoryVectorStore` (the default) re-embeds every tool on each cold start — real money on paid embedders. Wrap with `CachedEmbedder` for a disk-backed SQLite cache keyed by `(embedder_id, text_hash)`:
+
+```python
+from agent_gantry import AgentGantry
+from agent_gantry.adapters.embedders.openai import OpenAIEmbedder
+from agent_gantry.adapters.embedders.cached import CachedEmbedder
+from agent_gantry.schema.config import EmbedderConfig
+
+base = OpenAIEmbedder(EmbedderConfig(type="openai", model="text-embedding-3-large"))
+embedder = CachedEmbedder(base)  # default: ~/.cache/agent_gantry/embeddings.sqlite
+gantry = AgentGantry(embedder=embedder)
+```
+
 ### Load tools from multiple modules
 
 Organize tools in a `tools/` directory with separate files for each category, then import them into your main file:
@@ -358,11 +447,17 @@ with a warning so shared modules can be safely combined.
 ## Features
 
 - **Semantic Routing**: Intelligent tool selection using vector similarity, intent classification, and conversation context
+- **Native Microsoft Agent Framework integration**: `GantryContextProvider` plugs into AF as a first-class `ContextProvider` — per-run or per-call retrieval
 - **Multi-Protocol Support**: Native support for MCP (Model Context Protocol) and A2A (Agent-to-Agent)
 - **Schema Transcoding**: Automatic conversion between OpenAI, Anthropic, and Gemini tool formats
-- **LLM Provider Compatibility**: Works with OpenAI, Azure OpenAI, Anthropic, Google GenAI, Vertex AI, Mistral, Groq, and OpenRouter
+- **LLM Provider Compatibility**: Works with OpenAI, Azure OpenAI, Anthropic, Google GenAI, Vertex AI, Mistral, Groq, OpenRouter — plus any OpenAI-compatible endpoint via `api_base`
+- **First-class introspection**: `RetrievalDecision`, `provider.last_selection`, `provider.dry_run_retrieve(query)`, verbose mode — debug routing without writing middleware
+- **Length-robust thresholds**: `score_threshold="relative:0.8"` keeps anything within 80% of the top score, surviving long pipeline-style queries that collapse absolute cosine cutoffs
+- **Registry linter**: `agent-gantry lint` flags tool descriptions that pull each other into the wrong queries (cross-references, near-duplicates, generic tags)
+- **Persistent embedding cache**: `CachedEmbedder` wraps any embedder with a SQLite cache so cold starts don't re-embed everything
+- **Bundled Claude Skill**: ship usage docs to your agents via `agent-gantry install-skill` or `from agent_gantry.skills import skill_path`
 - **Circuit Breakers**: Automatic failure detection and recovery
-- **Observability**: Built-in structured logging and telemetry for tracing and metrics
+- **Observability**: Built-in structured logging and telemetry for tracing and metrics, including `gantry.bridge_retrieval` spans carrying the full ranked candidate list
 - **Zero-Trust Security**: Capability-based permissions and policy enforcement
 - **Modular tool loading**: Import and deduplicate tool registries from other modules or packages
 - **Local persistence & skills**: LanceDB-backed tool/skill storage, Matryoshka embeddings, and skill schemas for prompt guidance
@@ -418,17 +513,23 @@ Agent-Gantry has been verified in end-to-end scenarios with real LLMs and tangib
 
 ```
 agent_gantry/
-├── core/                 # Main facade, registry, router, executor
+├── core/                 # Main facade, registry, router, executor, security
 ├── schema/               # Data models (tools, queries, events, config)
 ├── adapters/             # Protocol adapters
-│   ├── vector_stores/    # Qdrant, Chroma, In-Memory, etc.
-│   ├── embedders/        # OpenAI, SentenceTransformers, etc.
-│   ├── rerankers/        # Cohere, CrossEncoder, etc.
+│   ├── vector_stores/    # Qdrant, Chroma, LanceDB, In-Memory, PGVector
+│   ├── embedders/        # OpenAI, Azure, Nomic, SentenceTransformers, Simple, Cached
+│   ├── rerankers/        # Cohere, CrossEncoder
 │   └── executors/        # Direct, Sandbox, MCP, HTTP, A2A
-├── providers/            # Tool import from various sources
+├── providers/            # Tool import from various sources (A2A, …)
 ├── servers/              # MCP and A2A server implementations
-├── integrations/         # LangChain, AutoGen, LlamaIndex, CrewAI
-├── observability/        # Telemetry, metrics, logging
+├── integrations/         # Microsoft Agent Framework bridge/provider/middleware,
+│                         # LangChain, AutoGen, LlamaIndex, CrewAI, Semantic Kernel,
+│                         # Google ADK, Anthropic Skills
+├── query/                # Query generators (last_user_text, last_tool_result, …)
+├── metrics/              # Token-savings metrics
+├── observability/        # Telemetry adapters (console, OpenTelemetry, Prometheus)
+├── utils/                # Fingerprinting, registry linter, async helpers
+├── skills/               # Bundled Claude Skill (Agent-Gantry usage docs)
 └── cli/                  # Command-line interface
 ```
 
@@ -648,15 +749,20 @@ See `examples/a2a_integration_demo.py` for a complete demonstration.
 
 ## CLI
 
-A lightweight CLI ships with the package for quick inspection:
+A lightweight CLI ships with the package for quick inspection and diagnostics:
 
 ```bash
-agent-gantry list
+agent-gantry list                              # list registered tools
 agent-gantry search "refund an order" --limit 3
+agent-gantry lint                              # detect tool-description authoring mistakes
+agent-gantry sim factorial fibonacci           # cosine similarity between two tools
+agent-gantry sync --dry-run                    # which tools would (re-)embed and why
+agent-gantry install-skill --target ./skills   # install the bundled Claude Skill
 ```
 
-It boots with demo tools and an in-memory embedder. For details and customization options, see
-[docs/cli.md](docs/cli.md).
+`lint` flags three patterns that silently degrade routing quality: tool descriptions that name *other* registered tools (the embedding pulls them toward the wrong queries), pairs of tools with >0.85 cosine similarity (probably should be merged or differentiated), and tags that appear on more than half the registry (low discriminative value).
+
+The CLI boots with demo tools and an in-memory embedder. For details and customization options, see [docs/cli.md](docs/cli.md).
 
 ## Documentation
 

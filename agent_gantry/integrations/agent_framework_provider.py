@@ -73,8 +73,27 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
-from agent_gantry.query import last_user_text as _default_query_generator
+from agent_gantry.integrations.agent_framework_bridge import (
+    GantryToolBridge,
+    RetrievalDecision,
+)
+from agent_gantry.query import (
+    fallback_chain,
+    last_tool_result,
+    last_user_text,
+)
+
+_DEFAULT_PER_RUN_QUERY = last_user_text
+
+
+def _default_per_call_query() -> Any:
+    """Recommended ``per_call`` default — tool result, then user text.
+
+    Built lazily so the composed callable is fresh each time
+    (``fallback_chain`` is cheap; the indirection just avoids a global).
+    """
+    return fallback_chain(last_tool_result, last_user_text)
+
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
@@ -146,19 +165,31 @@ class GantryContextProvider:
             providing semantic retrieval and execution.
         top_k: Maximum number of dynamically retrieved tools per chat-completion
             round (or per ``agent.run`` call in ``per_run`` mode). Defaults
-            to ``5``.
+            to ``5``. Note: ``top_k`` governs only the *dynamic* selection.
+            Tools contributed by skills, by ``always_include`` / ``required``,
+            and by ``static_tools`` are appended on top of the ``top_k``
+            slice. A user setting ``top_k=6`` with one skill and one
+            always-include tool will see ``6 + 2 = 8`` tools.
         score_threshold: Minimum semantic relevance score for retrieved
-            tools. Defaults to ``0.3``.
+            tools. Defaults to ``0.0`` (no filtering). Long queries dilute
+            absolute cosine similarities, so the previous ``0.3`` default
+            silently filtered relevant tools on multi-step pipelines.
+            Accepts either a ``float`` (absolute cosine cutoff) or the
+            string ``"relative:<frac>"`` (e.g. ``"relative:0.8"`` retains
+            anything within 80% of the top score) for length-robust
+            filtering.
         query_strategy: ``"per_run"`` (default) refreshes the tool selection
             once at the start of ``agent.run()``. ``"per_call"`` re-runs
             retrieval on every chat-completion round; pair this mode with
             :meth:`as_chat_middleware` to install the per-round refresher.
         query_generator: Callable used to derive the retrieval query string
-            from the conversation messages. Defaults to
-            :func:`agent_gantry.query.last_user_text`. Sync or async are both
-            accepted. See :mod:`agent_gantry.query` for built-in alternatives
-            (``last_tool_result``, ``last_assistant_text``, ``concatenate_recent``,
-            ``fallback_chain``).
+            from the conversation messages. When ``None`` the default
+            depends on ``query_strategy``: ``last_user_text`` for
+            ``per_run`` (back-compat), and ``fallback_chain(last_tool_result,
+            last_user_text)`` for ``per_call`` — the latter is what makes
+            ``per_call`` actually adapt across rounds. Sync or async are
+            both accepted. See :mod:`agent_gantry.query` for the built-in
+            alternatives.
         skills: When ``True``, every invocation also injects the union of
             tools bound to all registered Gantry skills (from the supplied
             ``skill_registry`` if any, else the registry attached to the
@@ -191,6 +222,16 @@ class GantryContextProvider:
         bridge: Optional pre-built :class:`GantryToolBridge` to reuse its
             wrapper cache across multiple providers. When ``None`` a new
             bridge is built from the supplied ``gantry``.
+        static_tools: AF-native tools (or any objects accepted by
+            ``Agent(tools=[...])``) that should be appended to every
+            round's surface. Unlike ``always_include`` — which pins
+            *gantry-registered* tools by name — ``static_tools`` is for
+            tools that live outside the gantry registry. They are never
+            filtered by the per-call refresh.
+        verbose: When ``True`` (default ``False``), the provider logs a
+            one-line INFO summary of every retrieval round:
+            ``gantry: query="…" → top5: [name:0.61, …]``. Sets the
+            ``agent_gantry`` logger to INFO if it has no level set.
         **query_kwargs: Additional keyword arguments forwarded to
             :meth:`GantryToolBridge.get_tools` (e.g. ``namespaces``,
             ``required_capabilities``, ``enable_reranking``).
@@ -227,16 +268,18 @@ class GantryContextProvider:
         gantry: AgentGantry,
         *,
         top_k: int = 5,
-        score_threshold: float = 0.3,
+        score_threshold: float | str = 0.0,
         query_strategy: str = "per_run",
         query_generator: Callable[..., Any] | None = None,
         skills: bool = False,
         skill_registry: SkillRegistry | None = None,
         always_include: list[str] | None = None,
         required: list[str] | None = None,
+        static_tools: list[Any] | None = None,
         as_function_tool: bool | None = None,
         source_id: str = "agent_gantry",
         bridge: GantryToolBridge | None = None,
+        verbose: bool = False,
         **query_kwargs: Any,
     ) -> Any:
         if query_strategy not in ("per_run", "per_call"):
@@ -253,7 +296,27 @@ class GantryContextProvider:
         )
         always_include = list(always_include or [])
         required = list(required or [])
-        query_generator = query_generator or _default_query_generator
+        static_tools_list: list[Any] = list(static_tools or [])
+
+        # Default query generator depends on strategy: per_call wants
+        # round-to-round adaptation, so the historical last_user_text
+        # default (which returns the same string every round) would
+        # silently disable the very thing per_call enables.
+        if query_generator is None:
+            if query_strategy == "per_call":
+                query_generator = _default_per_call_query()
+            else:
+                query_generator = _DEFAULT_PER_RUN_QUERY
+        elif (
+            query_strategy == "per_call"
+            and query_generator is last_user_text
+        ):
+            logger.warning(
+                "GantryContextProvider: query_strategy='per_call' was set "
+                "but query_generator=last_user_text returns the same string "
+                "every round, defeating per-call adaptation. Consider "
+                "fallback_chain(last_tool_result, last_user_text) instead."
+            )
 
         if required:
             known = gantry.list_tools_sync()
@@ -291,8 +354,20 @@ class GantryContextProvider:
                 self._always_include = always_include_effective
                 self._declared_always_include = list(always_include)
                 self._required = list(required)
+                self._static_tools = list(static_tools_list)
                 self._query_kwargs = dict(query_kwargs)
                 self._source_id = source_id
+                self._verbose = verbose
+                self._last_selection: RetrievalDecision | None = None
+                # One-shot warnings: we don't want to spam the log every
+                # round even when the misconfiguration persists.
+                self._warned_about_missing_chat_middleware = False
+                self._logged_top_k_math = False
+                if verbose:
+                    # Don't override a user-configured level; only nudge
+                    # when the logger has no explicit level set.
+                    if logger.level == logging.NOTSET:
+                        logger.setLevel(logging.INFO)
 
             # ----- Public, read-only configuration accessors --------------
             @property
@@ -323,6 +398,21 @@ class GantryContextProvider:
             def bridge(self) -> GantryToolBridge:
                 return self._bridge
 
+            @property
+            def static_tools(self) -> tuple[Any, ...]:
+                return tuple(self._static_tools)
+
+            @property
+            def last_selection(self) -> RetrievalDecision | None:
+                """The most recent retrieval decision, or ``None``.
+
+                Cleared/replaced on every ``before_run`` (per_run mode) or
+                every chat-middleware tick (per_call mode). Read this from
+                middleware, tests, or interactive sessions to diagnose
+                "why did the LLM not see tool X this round?".
+                """
+                return self._last_selection
+
             # ----- AF lifecycle ------------------------------------------
             async def before_run(
                 self,
@@ -332,6 +422,26 @@ class GantryContextProvider:
                 context: Any,
                 state: dict[str, Any],
             ) -> None:
+                # per_call mode requires the chat middleware to do the
+                # actual per-round refresh. If the user forgot to attach
+                # it, the agent silently degrades to per_run behaviour
+                # with extra plumbing — warn once so the misconfiguration
+                # is visible without strangers reading the source.
+                if (
+                    self._query_strategy == "per_call"
+                    and not self._warned_about_missing_chat_middleware
+                    and not self._chat_middleware_attached(agent)
+                ):
+                    self._warned_about_missing_chat_middleware = True
+                    logger.warning(
+                        "GantryContextProvider: query_strategy='per_call' is "
+                        "enabled but as_chat_middleware() does not appear to "
+                        "be attached to the agent — the provider will fall "
+                        "back to per_run behaviour. Pass "
+                        "middleware=[provider.as_chat_middleware()] to your "
+                        "Agent(...) or use provider.attach_to(agent)."
+                    )
+
                 # In per_call mode, the chat_middleware does the dynamic
                 # retrieval per LLM round; we still inject always_include /
                 # skill tools at run-start so they are present even if the
@@ -348,6 +458,110 @@ class GantryContextProvider:
                         len(tools),
                         self._query_strategy,
                     )
+
+            # ----- Setup helpers -----------------------------------------
+            def attach_to(self, agent: Any) -> Any:
+                """Register this provider and its chat middleware on ``agent``.
+
+                Single-call helper for the common ``per_call`` setup. Does
+                the dance of appending to ``agent.context_providers`` and
+                ``agent.middleware`` (whichever attribute the AF version
+                exposes), creating the lists if missing. Returns
+                ``agent`` for chaining.
+
+                The chat middleware is only attached when
+                ``query_strategy='per_call'`` — in ``per_run`` mode it's
+                a no-op and would just add overhead. The context
+                provider is always attached.
+                """
+                # context_providers
+                providers_attr = self._first_present_attr(
+                    agent, ("context_providers", "_context_providers")
+                )
+                if providers_attr is not None:
+                    current = getattr(agent, providers_attr) or []
+                    if self not in current:
+                        try:
+                            setattr(agent, providers_attr, [*current, self])
+                        except (AttributeError, TypeError):
+                            try:
+                                current.append(self)
+                            except Exception:
+                                logger.warning(
+                                    "GantryContextProvider.attach_to: could "
+                                    "not attach context provider to agent %r.",
+                                    type(agent).__name__,
+                                )
+                else:
+                    logger.warning(
+                        "GantryContextProvider.attach_to: agent %r has no "
+                        "context_providers attribute; the provider was not "
+                        "attached.",
+                        type(agent).__name__,
+                    )
+
+                # middleware (per_call only)
+                if self._query_strategy == "per_call":
+                    middleware_attr = self._first_present_attr(
+                        agent, ("middleware", "_middleware")
+                    )
+                    mw = self.as_chat_middleware()
+                    if middleware_attr is not None:
+                        current_mw = getattr(agent, middleware_attr) or []
+                        try:
+                            setattr(agent, middleware_attr, [*current_mw, mw])
+                        except (AttributeError, TypeError):
+                            try:
+                                current_mw.append(mw)
+                            except Exception:
+                                logger.warning(
+                                    "GantryContextProvider.attach_to: could "
+                                    "not attach chat middleware to agent %r.",
+                                    type(agent).__name__,
+                                )
+                    else:
+                        logger.warning(
+                            "GantryContextProvider.attach_to: agent %r has "
+                            "no middleware attribute; chat middleware was "
+                            "not attached.",
+                            type(agent).__name__,
+                        )
+                return agent
+
+            @staticmethod
+            def _first_present_attr(obj: Any, names: tuple[str, ...]) -> str | None:
+                for n in names:
+                    if hasattr(obj, n):
+                        return n
+                return None
+
+            def _chat_middleware_attached(self, agent: Any) -> bool:
+                """Best-effort check for ``as_chat_middleware`` on the agent.
+
+                Heuristic: look for any middleware whose qualified name
+                contains the provider's sentinel ``_per_call_retrieval``.
+                AF wraps the decorated coroutine into different objects
+                across versions, so we just match on the name.
+                """
+                if agent is None:
+                    return True  # don't warn when there's nothing to inspect
+                mw_attr = self._first_present_attr(
+                    agent, ("middleware", "_middleware")
+                )
+                if mw_attr is None:
+                    return True
+                middlewares = getattr(agent, mw_attr) or []
+                for m in middlewares:
+                    candidates = (
+                        getattr(m, "__name__", None),
+                        getattr(m, "__qualname__", None),
+                        getattr(getattr(m, "func", None), "__name__", None),
+                        type(m).__name__,
+                    )
+                    for c in candidates:
+                        if isinstance(c, str) and "_per_call_retrieval" in c:
+                            return True
+                return False
 
             # ----- Per-call middleware factory ---------------------------
             def as_chat_middleware(self) -> Any:
@@ -423,13 +637,24 @@ class GantryContextProvider:
                 fresh, _ = await self._collect_tools(
                     messages, include_dynamic=True
                 )
+                # _collect_tools sets self._last_selection on every
+                # dynamic refresh, so the per-call middleware path
+                # automatically exposes the latest decision via the
+                # provider's `last_selection` property.
                 gantry_names = self._all_known_tool_names()
+                static_names = {
+                    _tool_name(t) for t in self._static_tools if _tool_name(t)
+                }
 
                 preserved = []
                 dropped = 0
                 for t in existing:
                     name = _tool_name(t)
-                    if name and name in gantry_names:
+                    # Drop stale gantry-known tools so the per-round
+                    # surface stays bounded. Static tools may appear in
+                    # both `existing` (carried across rounds) and `fresh`
+                    # (we re-add them ourselves); dedup happens below.
+                    if name and name in gantry_names and name not in static_names:
                         dropped += 1
                         continue
                     preserved.append(t)
@@ -524,16 +749,19 @@ class GantryContextProvider:
             ) -> tuple[list[Any], set[str]]:
                 tools: list[Any] = []
                 seen: set[str] = set()
+                decision: RetrievalDecision | None = None
 
                 if include_dynamic:
                     query = await self._build_query(messages)
                     if query:
                         try:
-                            retrieved = await self._bridge.get_tools(
-                                query,
-                                limit=self._top_k,
-                                score_threshold=self._score_threshold,
-                                **self._query_kwargs,
+                            retrieved, decision = (
+                                await self._bridge.get_tools_with_decision(
+                                    query,
+                                    limit=self._top_k,
+                                    score_threshold=self._score_threshold,
+                                    **self._query_kwargs,
+                                )
                             )
                         except Exception:
                             logger.exception(
@@ -550,19 +778,95 @@ class GantryContextProvider:
                             tools.append(t)
 
                 # Skills: always-on tools bound to registered Gantry skills.
+                skill_count = 0
                 if self._skills_enabled:
                     skill_tool_names = self._collect_skill_tool_names()
                     extra = self._wrap_named(skill_tool_names, seen, source="skill")
                     tools.extend(extra)
+                    skill_count = len(extra)
 
                 # Explicit always_include / required pins.
+                always_count = 0
                 if self._always_include:
                     extra = self._wrap_named(
                         self._always_include, seen, source="always_include"
                     )
                     tools.extend(extra)
+                    always_count = len(extra)
+
+                # Static AF-native tools that live outside the gantry registry.
+                static_count = 0
+                for t in self._static_tools:
+                    name = _tool_name(t)
+                    if name and name in seen:
+                        continue
+                    if name:
+                        seen.add(name)
+                    tools.append(t)
+                    static_count += 1
+
+                if include_dynamic and decision is not None:
+                    self._last_selection = decision
+                    if self._verbose:
+                        logger.info("gantry: %s", decision.summary())
+
+                # One-shot info log clarifying the top_k math whenever
+                # non-dynamic contributions raise the surface above top_k.
+                extra_total = skill_count + always_count + static_count
+                if (
+                    include_dynamic
+                    and extra_total > 0
+                    and not self._logged_top_k_math
+                ):
+                    self._logged_top_k_math = True
+                    logger.info(
+                        "GantryContextProvider: dynamic top_k=%d + %d preserved "
+                        "(skills=%d, always_include=%d, static=%d). The final "
+                        "tool surface is the dynamic slice plus preserved tools.",
+                        self._top_k,
+                        extra_total,
+                        skill_count,
+                        always_count,
+                        static_count,
+                    )
 
                 return tools, seen
+
+            async def dry_run_retrieve(
+                self,
+                query: str,
+                *,
+                limit: int | None = None,
+                score_threshold: float | str | None = None,
+            ) -> RetrievalDecision:
+                """Run the live retrieval path against a synthetic query.
+
+                Uses the *exact same* threshold, top_k, and ``query_kwargs``
+                as the live middleware. Use this to diagnose why a tool
+                is or is not surfacing without spinning up an agent.
+
+                Args:
+                    query: The query string to retrieve against.
+                    limit: Override ``top_k`` for this call only.
+                    score_threshold: Override the threshold for this call
+                        only (accepts the same forms as the constructor).
+
+                Returns:
+                    The :class:`RetrievalDecision` produced by the bridge.
+                """
+                eff_limit = self._top_k if limit is None else limit
+                eff_threshold = (
+                    self._score_threshold
+                    if score_threshold is None
+                    else score_threshold
+                )
+                _, decision = await self._bridge.get_tools_with_decision(
+                    query,
+                    limit=eff_limit,
+                    score_threshold=eff_threshold,
+                    **self._query_kwargs,
+                )
+                return decision
 
             async def _build_query(self, messages: Any) -> str:
                 try:
@@ -573,7 +877,7 @@ class GantryContextProvider:
                         "GantryContextProvider: query_generator raised; falling "
                         "back to last_user_text."
                     )
-                    return _default_query_generator(messages)
+                    return last_user_text(messages)
 
             def _resolve_skill_registry(self) -> SkillRegistry | None:
                 if self._skill_registry is not None:

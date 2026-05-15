@@ -190,6 +190,137 @@ def concatenate_recent(
     return separator.join(p.strip() for p in parts)
 
 
+# Imperative scaffolding tokens that crowd out content nouns/verbs in
+# instruction-style queries. Lowered for case-insensitive matching.
+_SCAFFOLD_TOKENS: frozenset[str] = frozenset(
+    {
+        "please", "kindly", "thanks", "thank", "you", "your", "yours",
+        "must", "should", "shall", "will", "would", "could", "can",
+        "do", "don't", "dont", "not", "no", "never", "always",
+        "i", "me", "my", "we", "us", "our", "ours",
+        "the", "a", "an", "this", "that", "these", "those",
+        "is", "are", "was", "were", "be", "been", "being", "am",
+        "have", "has", "had", "having",
+        "to", "from", "of", "in", "on", "at", "by", "for", "with",
+        "and", "or", "but", "if", "then", "else", "so", "as",
+        "step", "steps", "first", "next", "last", "final", "finally",
+        "use", "using", "run", "make", "ensure", "remember",
+        "different", "each", "every", "any", "some", "one", "two",
+        "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+        "pipeline", "task", "instruction", "instructions",
+        "it", "its", "they", "them", "their",
+    }
+)
+
+
+_KEYWORD_TOKEN_RE = None  # type: ignore[var-annotated]
+
+
+def _tokenize_for_keywords(text: str) -> list[str]:
+    """Split into alpha/numeric tokens, lowercase."""
+    import re
+
+    global _KEYWORD_TOKEN_RE
+    if _KEYWORD_TOKEN_RE is None:
+        _KEYWORD_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
+    return [m.group(0).lower() for m in _KEYWORD_TOKEN_RE.finditer(text)]
+
+
+def keyword_focused(
+    messages: Iterable[Any] | None,
+    *,
+    max_tokens: int = 32,
+    base: Callable[[Iterable[Any] | None], str] | None = None,
+) -> str:
+    """Strip imperative scaffolding from the conversation tail.
+
+    Long instructional queries ("Please run this five-step pipeline. Do
+    not skip steps...") dilute the embedding signal because most of the
+    text is verbs of obligation and connective tissue rather than the
+    nouns/verbs that describe what tool you actually want. This
+    generator pulls a base text out of the messages (default:
+    :func:`last_user_text`), drops obvious scaffolding tokens, and keeps
+    the residual content words.
+
+    Args:
+        messages: Conversation history (most recent last).
+        max_tokens: Cap on the number of retained tokens. Defaults to 32.
+        base: Generator used to extract the source text. Defaults to
+            :func:`last_user_text`.
+
+    Returns:
+        A space-joined string of retained tokens (lowercased). Returns
+        the empty string when the base generator does.
+    """
+    base_fn = base or last_user_text
+    raw = base_fn(messages)
+    if not raw or not raw.strip():
+        return ""
+    tokens = _tokenize_for_keywords(raw)
+    kept: list[str] = []
+    for tok in tokens:
+        if len(tok) < 2:
+            continue
+        if tok in _SCAFFOLD_TOKENS:
+            continue
+        kept.append(tok)
+        if len(kept) >= max_tokens:
+            break
+    return " ".join(kept)
+
+
+def truncated(
+    generator: Callable[..., Any],
+    *,
+    max_chars: int = 200,
+    keep: str = "tail",
+) -> Callable[[Iterable[Any] | None], Any]:
+    """Wrap a generator to cap the produced query length.
+
+    Sync and async generators are both supported; the returned wrapper
+    mirrors the underlying coroutine-ness so it plugs into
+    ``GantryContextProvider`` without further adaptation.
+
+    Args:
+        generator: The generator to wrap.
+        max_chars: Maximum number of characters in the output. Defaults
+            to 200.
+        keep: ``"tail"`` (default) keeps the final ``max_chars``
+            characters — typically the latest tool output. ``"head"``
+            keeps the leading ``max_chars`` characters.
+
+    Returns:
+        A new generator with the same call shape as ``generator``.
+    """
+    if keep not in ("head", "tail"):
+        raise ValueError(f"keep must be 'head' or 'tail', got {keep!r}")
+
+    def _cap(text: str) -> str:
+        if not text:
+            return ""
+        if len(text) <= max_chars:
+            return text
+        if keep == "tail":
+            return text[-max_chars:]
+        return text[:max_chars]
+
+    import inspect
+
+    if inspect.iscoroutinefunction(generator):
+
+        async def _async_wrapper(messages: Iterable[Any] | None) -> str:
+            value = await generator(messages)
+            return _cap(value or "")
+
+        return _async_wrapper
+
+    def _wrapper(messages: Iterable[Any] | None) -> str:
+        value = generator(messages)
+        return _cap(value or "")
+
+    return _wrapper
+
+
 def fallback_chain(
     *generators: Callable[[Iterable[Any] | None], str],
 ) -> Callable[[Iterable[Any] | None], str]:

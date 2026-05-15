@@ -7,7 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`RetrievalDecision` introspection** on `GantryContextProvider` and
+  `GantryToolBridge.get_tools_with_decision`. Carries the ranked candidate
+  list (kept/dropped), the injected tools, and the effective threshold.
+  Exposed on the provider as `provider.last_selection`. The decision is
+  attached to the new `gantry.bridge_retrieval` telemetry span as
+  structured attributes. Pair with `verbose=True` on the provider for
+  a one-line INFO summary per round.
+- **`provider.dry_run_retrieve(query)`**: officially supported diagnostic
+  that uses the *exact same* code path as the live middleware. Use to
+  validate "would the LLM see X?" without spinning up an agent.
+- **Relative score thresholds**: `score_threshold="relative:0.8"` retains
+  any candidate within 80% of the top score. Length-robust where absolute
+  cosine cutoffs collapse with long pipeline-style queries.
+- **`static_tools=[...]` on `GantryContextProvider`**: pin AF-native tools
+  that live *outside* the gantry registry into every round's surface.
+- **`provider.attach_to(agent)` helper**: appends the provider and
+  (when in `per_call`) the chat middleware in one call.
+- **`agent_gantry.query.keyword_focused`** and **`truncated`**: drop-in
+  query generators that strip imperative scaffolding and cap query
+  length respectively. Mitigate the long-query degradation pattern.
+- **`GantryToolChoiceMiddleware`**: AF chat middleware that re-derives
+  `tool_choice` per round from a user-supplied callable. Enables the
+  "force tool calls for N rounds, then text on summarisation" pattern.
+- **Registry linter**: `gantry.analyze_registry()` and
+  `gantry.pairwise_similarity()` Python APIs flag tool descriptions that
+  cross-reference other tools, pairs whose searchable text is too
+  similar, and tags with low discriminative value. Exposed via the CLI
+  as `gantry lint` and `gantry sim toolA toolB`.
+- **`gantry sync --dry-run` CLI**: reports which tools would be
+  (re-)embedded and why, without invoking the embedder.
+- **`CachedEmbedder`** (`agent_gantry.adapters.embedders.cached`): wraps
+  any embedder with a disk-backed SQLite cache keyed by embedder_id and
+  text hash. Eliminates re-embedding spend across cold starts. Default
+  cache path `~/.cache/agent_gantry/embeddings.sqlite`. Dedups duplicate
+  strings within a batch so the underlying embedder is never called
+  twice for the same text. SQLite I/O is offloaded to a thread so it
+  doesn't block the event loop.
+- **Bundled Claude Skill** at `agent_gantry/skills/agent-gantry/SKILL.md`,
+  shipped in the wheel and discoverable via `from agent_gantry.skills
+  import skill_path`. Install into a project's skills directory with
+  `agent-gantry install-skill --target ./skills`. The skill also
+  publishes under the standard `share/claude/skills/agent-gantry/`
+  wheel data path so Claude Code can find it automatically.
+- **`gantry.embedder`** public property — sibling modules should use
+  this instead of reaching into `gantry._embedder`.
+
 ### Changed
+
+- **Default `score_threshold` on `GantryContextProvider` and
+  `GantryToolBridge` lowered from `0.3` to `0.0`** (no filtering).
+  Long queries dilute absolute cosine similarities, so the previous
+  default silently filtered relevant tools on multi-step pipelines.
+  Filtering is now opt-in. Pair with `score_threshold="relative:<frac>"`
+  for length-robust filtering.
+- **`per_call` default query generator** is now
+  `fallback_chain(last_tool_result, last_user_text)` (was
+  `last_user_text`). `last_user_text` returns the same string every
+  round, which silently disabled per-round adaptation. `per_run` still
+  defaults to `last_user_text`. Explicitly passing `last_user_text`
+  with `query_strategy="per_call"` now logs a WARNING.
+- **`OpenAIEmbedder` honours `config.api_base` / `OPENAI_BASE_URL`**.
+  Previously hard-coded to OpenAI's endpoint, blocking Requesty,
+  OpenRouter, Together, vLLM and other OpenAI-compatible providers.
+- **`per_call` without `as_chat_middleware()` attached now warns once**
+  on the first `before_run`. The previous behavior silently degraded
+  to `per_run` semantics.
+- **Threshold-filtered-everything WARNING**: when `score_threshold`
+  drops every candidate, the bridge logs a WARNING with the threshold
+  (and the resolved cutoff for relative mode) plus the top scores so
+  users see "it was the threshold, not relevance".
+
+### Fixed
+
+- Relative `score_threshold` over-fetches the candidate pool by 4× to
+  compute the cutoff. The over-fetched limit is now clamped to the
+  `ToolQuery.limit` upper bound (50) so callers passing `limit >= 13`
+  with a relative threshold no longer hit a Pydantic validation error.
+- Relative threshold falls back to `0.0` cutoff when the top score is
+  non-positive (defensive — `ScoredTool.semantic_score` is Pydantic
+  clamped `>= 0`, but the guard prevents the degenerate "filtered the
+  top match" path if a custom embedder ever returned negative scores).
+- Registry linter pre-compiles regex patterns once instead of inside
+  the nested loop — O(N²) → O(N) compile cost.
+- `_default_query_generator` reference removed (the import was renamed
+  to `last_user_text` in this release).
 
 - **`anthropic` floor bumped to `>=0.102.0`** (was `>=0.101.0`). Anthropic 0.102.0
   released 2026-05-13; no breaking changes for Gantry's Messages API call sites.

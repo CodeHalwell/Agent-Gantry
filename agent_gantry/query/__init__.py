@@ -47,15 +47,19 @@ from __future__ import annotations
 from agent_gantry.query.strategies import (
     concatenate_recent,
     fallback_chain,
+    keyword_focused,
     last_assistant_text,
     last_tool_result,
     last_user_text,
+    truncated,
 )
 
 __all__ = [
     "concatenate_recent",
     "fallback_chain",
+    "keyword_focused",
     "last_assistant_text",
     "last_tool_result",
     "last_user_text",
+    "truncated",
 ]
