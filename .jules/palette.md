@@ -57,3 +57,7 @@
 ## 2026-05-13 - [Keyboard Accessibility for Markdown Tables]
 **Learning:** Markdown generators (like Kramdown) output raw `<table>` elements without wrapping them in containers. Consequently, adding `overflow-x: auto` directly to the `<table>` element often fails to contain horizontal overflow consistently or securely across different browsers, and without a wrapper, keyboard users cannot scroll wide tables horizontally.
 **Action:** Always use a client-side JavaScript initialization script to locate raw `<table>` elements and wrap them in a `<div class="table-wrapper">` with `tabindex="0"`, `role="region"`, and a descriptive `aria-label` (e.g., "Data table"), while applying `overflow-x: auto` to the wrapper.
+
+## 2026-05-15 - [Semantic Grouping for Navigation Submenus]
+**Learning:** When building complex sidebar navigation with categorized sections (e.g., using `<div>` for titles above `<ul>` submenus), screen readers announce the submenus as isolated lists without context. Users cannot easily discern which category the list belongs to.
+**Action:** Always associate navigation section titles with their respective submenus by giving the title an `id` and adding `aria-labelledby="[id]"` to the `<ul>` element. This ensures screen readers announce the category name when entering the list.
