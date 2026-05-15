@@ -877,7 +877,7 @@ class GantryContextProvider:
                         "GantryContextProvider: query_generator raised; falling "
                         "back to last_user_text."
                     )
-                    return _default_query_generator(messages)
+                    return last_user_text(messages)
 
             def _resolve_skill_registry(self) -> SkillRegistry | None:
                 if self._skill_registry is not None:
