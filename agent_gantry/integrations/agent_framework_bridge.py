@@ -183,6 +183,14 @@ def _parse_threshold(
     )
 
 
+# Mirror of the ``le`` constraint on ``ToolQuery.limit`` (see
+# ``agent_gantry/schema/query.py``). Kept as a module-level constant so the
+# bridge can clamp its relative-mode over-fetch without re-introspecting
+# the Pydantic model at call time. If the schema's upper bound changes,
+# update this constant.
+_TOOL_QUERY_MAX_LIMIT = 50
+
+
 # Capabilities that indicate a tool is potentially destructive / requires
 # explicit human approval in production. Mapped to AF's
 # ``approval_mode="always_require"`` so that AF surfaces an approval event
@@ -506,10 +514,22 @@ class GantryToolBridge:
         # tools that were dropped — without that, "score_threshold filtered
         # every candidate" warnings are blind and the relative-threshold
         # mode is impossible to implement.
+        #
+        # Relative mode also needs the full candidate pool so the cutoff
+        # is computed correctly, so we over-fetch by 4×. Clamp to
+        # ``ToolQuery.limit``'s upper bound (50) — without the clamp,
+        # callers using ``limit >= 13`` with a relative threshold hit a
+        # Pydantic validation error on the ``ToolQuery`` construction
+        # below.
+        if mode == "relative":
+            store_limit = min(_TOOL_QUERY_MAX_LIMIT, max(limit * 4, limit))
+        else:
+            store_limit = limit
+
         return await self._gantry.retrieve(
             ToolQuery(
                 context=ConversationContext(query=query, **context_kwargs),
-                limit=max(limit * 4, limit) if mode == "relative" else limit,
+                limit=store_limit,
                 score_threshold=0.0,
                 **tq_kwargs,
             )
@@ -542,7 +562,15 @@ class GantryToolBridge:
 
         if mode == "relative" and numeric is not None:
             top_score = max(st.semantic_score for st in scored)
-            cutoff = top_score * numeric
+            # ``ScoredTool.semantic_score`` is Pydantic-clamped to ``[0, 1]``
+            # so this is the common path. Guard against the degenerate
+            # ``top_score <= 0`` case anyway — multiplying a negative top
+            # by a positive fraction produces a cutoff *above* the top
+            # score and silently drops every candidate including the
+            # best one. When that happens, fall back to ``0.0`` so the
+            # ranking is preserved and the (zero-scoring) candidates are
+            # at least visible to the caller via the decision record.
+            cutoff = top_score * numeric if top_score > 0 else 0.0
         else:
             cutoff = numeric or 0.0
 
@@ -700,14 +728,24 @@ class GantryToolBridge:
                 pass
 
             # If threshold filtered everything out, surface a WARNING so
-            # users don't see "empty surface" without context.
+            # users don't see "empty surface" without context. Always log
+            # the configured threshold (and the resolved cutoff for the
+            # relative mode) so the message explains *which* cutoff
+            # dropped the candidates, not just the mode name.
             if result.tools and not kept_top:
+                if decision.threshold_mode.startswith("relative") and (
+                    decision.effective_threshold is not None
+                ):
+                    threshold_repr = (
+                        f"{decision.threshold} "
+                        f"(cutoff={decision.effective_threshold:.3f})"
+                    )
+                else:
+                    threshold_repr = repr(decision.threshold)
                 logger.warning(
                     "GantryToolBridge: score_threshold %s filtered out all %d "
                     "candidates for query %r. Top scores: %s",
-                    decision.threshold_mode
-                    if decision.threshold == 0.0
-                    else decision.threshold,
+                    threshold_repr,
                     len(result.tools),
                     query[:80],
                     ", ".join(

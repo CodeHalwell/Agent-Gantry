@@ -123,8 +123,13 @@ class CachedEmbedder:
         # Hash once per text and reuse for both read and write.
         hashes = [_hash(t) for t in texts]
 
+        # SQLite operations are CPU/IO blocking; offload them to a thread
+        # so a long lookup doesn't starve the event loop in concurrent
+        # workloads (a chat session running other tasks in parallel).
         async with self._lock:
-            cached = self._lookup_batch(embedder_id, hashes)
+            cached = await asyncio.to_thread(
+                self._lookup_batch, embedder_id, hashes
+            )
 
         outputs: list[list[float] | None] = [cached.get(h) for h in hashes]
         miss_indices = [i for i, v in enumerate(outputs) if v is None]
@@ -132,19 +137,46 @@ class CachedEmbedder:
         self.misses += len(miss_indices)
 
         if miss_indices:
-            miss_texts = [texts[i] for i in miss_indices]
+            # Dedupe miss_indices by hash so duplicate strings inside a
+            # single batch don't produce duplicate embed calls. The
+            # underlying embedder is the expensive part; passing the same
+            # text twice would otherwise pay twice. Order-preserving so
+            # the unique miss list is deterministic.
+            unique_miss_hashes: list[str] = []
+            unique_miss_texts: list[str] = []
+            unique_miss_seen: set[str] = set()
+            for i in miss_indices:
+                h = hashes[i]
+                if h in unique_miss_seen:
+                    continue
+                unique_miss_seen.add(h)
+                unique_miss_hashes.append(h)
+                unique_miss_texts.append(texts[i])
+
             # Delegate the actual embedding work outside the lock so
             # cache reads from other coroutines can proceed in parallel.
             new_embeddings = await self._embedder.embed_batch(
-                miss_texts, batch_size=batch_size
+                unique_miss_texts, batch_size=batch_size
             )
-            async with self._lock:
-                self._store_batch(
-                    embedder_id,
-                    [(hashes[i], emb) for i, emb in zip(miss_indices, new_embeddings)],
+            if len(new_embeddings) != len(unique_miss_texts):
+                # Defensive: if the underlying embedder returns the wrong
+                # number of vectors, surface a clear error rather than
+                # silently writing a truncated result that would mis-index.
+                raise RuntimeError(
+                    f"CachedEmbedder: underlying {type(self._embedder).__name__} "
+                    f"returned {len(new_embeddings)} embeddings for "
+                    f"{len(unique_miss_texts)} inputs."
                 )
-            for i, emb in zip(miss_indices, new_embeddings):
-                outputs[i] = emb
+
+            by_hash = dict(zip(unique_miss_hashes, new_embeddings))
+            async with self._lock:
+                await asyncio.to_thread(
+                    self._store_batch,
+                    embedder_id,
+                    list(by_hash.items()),
+                )
+            for i in miss_indices:
+                outputs[i] = by_hash[hashes[i]]
 
         # outputs has no Nones at this point — every slot was either a
         # hit or filled by the embedding call.
@@ -156,10 +188,12 @@ class CachedEmbedder:
         if not hashes:
             return {}
         # SQLite parameter limit is 999 by default; chunk to stay safe.
+        # Also dedupe hashes in case the input batch had duplicates.
+        unique_hashes = list(dict.fromkeys(hashes))
         out: dict[str, list[float]] = {}
         cur = self._conn.cursor()
-        for i in range(0, len(hashes), 500):
-            chunk = hashes[i : i + 500]
+        for i in range(0, len(unique_hashes), 500):
+            chunk = unique_hashes[i : i + 500]
             placeholders = ",".join("?" * len(chunk))
             rows = cur.execute(
                 f"SELECT text_hash, embedding FROM embeddings "

@@ -1310,6 +1310,16 @@ class AgentGantry:
         """Return the number of registered tools."""
         return len(self._tool_handlers)
 
+    @property
+    def embedder(self) -> EmbeddingAdapter:
+        """Return the embedder this gantry is using.
+
+        Public accessor exposed so sibling modules (CLI helpers,
+        the registry linter, custom tooling) can perform their own
+        embedding work without reaching into ``_embedder``.
+        """
+        return self._embedder
+
     async def get_tool(self, name: str, namespace: str = "default") -> ToolDefinition | None:
         """
         Get a tool by name.

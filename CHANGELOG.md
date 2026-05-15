@@ -42,7 +42,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`CachedEmbedder`** (`agent_gantry.adapters.embedders.cached`): wraps
   any embedder with a disk-backed SQLite cache keyed by embedder_id and
   text hash. Eliminates re-embedding spend across cold starts. Default
-  cache path `~/.cache/agent_gantry/embeddings.sqlite`.
+  cache path `~/.cache/agent_gantry/embeddings.sqlite`. Dedups duplicate
+  strings within a batch so the underlying embedder is never called
+  twice for the same text. SQLite I/O is offloaded to a thread so it
+  doesn't block the event loop.
+- **Bundled Claude Skill** at `agent_gantry/skills/agent-gantry/SKILL.md`,
+  shipped in the wheel and discoverable via `from agent_gantry.skills
+  import skill_path`. Install into a project's skills directory with
+  `agent-gantry install-skill --target ./skills`. The skill also
+  publishes under the standard `share/claude/skills/agent-gantry/`
+  wheel data path so Claude Code can find it automatically.
+- **`gantry.embedder`** public property — sibling modules should use
+  this instead of reaching into `gantry._embedder`.
 
 ### Changed
 
@@ -65,10 +76,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on the first `before_run`. The previous behavior silently degraded
   to `per_run` semantics.
 - **Threshold-filtered-everything WARNING**: when `score_threshold`
-  drops every candidate, the bridge logs a WARNING with the top scores
-  so users see "it was the threshold, not relevance".
+  drops every candidate, the bridge logs a WARNING with the threshold
+  (and the resolved cutoff for relative mode) plus the top scores so
+  users see "it was the threshold, not relevance".
 
+### Fixed
 
+- Relative `score_threshold` over-fetches the candidate pool by 4× to
+  compute the cutoff. The over-fetched limit is now clamped to the
+  `ToolQuery.limit` upper bound (50) so callers passing `limit >= 13`
+  with a relative threshold no longer hit a Pydantic validation error.
+- Relative threshold falls back to `0.0` cutoff when the top score is
+  non-positive (defensive — `ScoredTool.semantic_score` is Pydantic
+  clamped `>= 0`, but the guard prevents the degenerate "filtered the
+  top match" path if a custom embedder ever returned negative scores).
+- Registry linter pre-compiles regex patterns once instead of inside
+  the nested loop — O(N²) → O(N) compile cost.
+- `_default_query_generator` reference removed (the import was renamed
+  to `last_user_text` in this release).
 
 - **`anthropic` floor bumped to `>=0.102.0`** (was `>=0.101.0`). Anthropic 0.102.0
   released 2026-05-13; no breaking changes for Gantry's Messages API call sites.

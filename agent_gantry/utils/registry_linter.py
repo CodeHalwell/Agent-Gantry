@@ -109,9 +109,18 @@ def _detect_cross_references(
 ) -> list[CrossReferenceFinding]:
     findings: list[CrossReferenceFinding] = []
     names = {t.name for t in tools}
-    # Tokens to scan: description + extended_description + tags + examples.
+    # Pre-compile one pattern per tool name so we don't pay the regex
+    # compilation cost inside the nested loop. For a registry with N
+    # tools, this turns an O(N²) compile cost into O(N).
     # Match whole-word, case-insensitive, with non-word boundaries so we
     # don't match the tool's *own* name when it's a substring of another.
+    # Short names (< 3 chars) produce too many false positives — skip them.
+    patterns: dict[str, re.Pattern[str]] = {
+        n: re.compile(rf"(?<!\w){re.escape(n.lower())}(?!\w)")
+        for n in names
+        if len(n) >= 3
+    }
+    # Tokens to scan: description + extended_description + tags + examples.
     for tool in tools:
         text_blobs: list[str] = [tool.description or ""]
         if tool.extended_description:
@@ -120,13 +129,9 @@ def _detect_cross_references(
         text_blobs.extend(tool.examples or [])
         full = " ".join(text_blobs).lower()
         refs: list[str] = []
-        for other in names:
+        for other, pattern in patterns.items():
             if other == tool.name:
                 continue
-            if len(other) < 3:
-                # Skip short names that produce too many false positives.
-                continue
-            pattern = re.compile(rf"(?<!\w){re.escape(other.lower())}(?!\w)")
             if pattern.search(full):
                 refs.append(other)
         if refs:
@@ -214,7 +219,7 @@ async def analyze_registry(
     cross_refs = _detect_cross_references(tools)
     tag_overlaps = _detect_overlapping_tags(tools, max_share=tag_overlap_share)
 
-    eff_embedder = embedder if embedder is not None else gantry._embedder
+    eff_embedder = embedder if embedder is not None else gantry.embedder
     similar_pairs = await _detect_similar_pairs(
         tools, eff_embedder, similarity_threshold=similarity_threshold
     )
@@ -254,7 +259,7 @@ async def pairwise_similarity(
         raise LookupError(f"Tool {tool_a!r} not found in registry.")
     if tool_b not in lookup:
         raise LookupError(f"Tool {tool_b!r} not found in registry.")
-    eff_embedder = embedder if embedder is not None else gantry._embedder
+    eff_embedder = embedder if embedder is not None else gantry.embedder
     texts = [
         _searchable_text(lookup[tool_a]),
         _searchable_text(lookup[tool_b]),

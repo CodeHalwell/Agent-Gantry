@@ -203,6 +203,22 @@ Repository = "https://github.com/CodeHalwell/Agent-Gantry"
 [tool.hatch.build.targets.wheel]
 packages = ["agent_gantry"]
 
+[tool.hatch.build.targets.wheel.shared-data]
+"agent_gantry/skills/agent-gantry" = "share/claude/skills/agent-gantry"
+
+[tool.hatch.build]
+# Make sure SKILL.md and the references/ tree ship inside the wheel
+# alongside the package itself. The shared-data table above also
+# publishes a copy under ``share/claude/skills/`` so Claude Code can
+# find the skill via the standard discovery path
+# (``$VENV/share/claude/skills/`` is searched at startup).
+include = [
+    "agent_gantry/**/*.py",
+    "agent_gantry/**/*.md",
+    "agent_gantry/**/*.txt",
+    "agent_gantry/skills/**/*",
+]
+
 [tool.ruff]
 target-version = "py310"
 line-length = 100

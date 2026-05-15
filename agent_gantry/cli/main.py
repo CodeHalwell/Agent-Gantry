@@ -87,18 +87,43 @@ def main(argv: list[str] | None = None) -> int:
         help="Force re-sync of all tools regardless of fingerprint match.",
     )
 
+    skill_parser = subparsers.add_parser(
+        "install-skill",
+        help="Install the bundled Agent-Gantry Claude Skill into a target directory",
+    )
+    skill_parser.add_argument(
+        "--target",
+        default="./skills",
+        help="Destination directory (default: ./skills).",
+    )
+    skill_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace an existing agent-gantry directory in --target.",
+    )
+    skill_parser.add_argument(
+        "--print-path",
+        action="store_true",
+        help="Just print the path to the bundled skill (no copy).",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command is None:
         parser.print_help()
         return 0
 
-    gantry = AgentGantry()
-    _load_demo_tools(gantry)
-    # Defer the eager sync until we know the command actually needs it —
-    # lint/sim/sync --dry-run shouldn't trigger embedding work.
-    if args.command not in ("lint", "sim", "sync"):
-        asyncio.run(gantry.sync())
+    # install-skill is a pure file-copy operation; it doesn't need a
+    # gantry instance or demo tool registration.
+    if args.command == "install-skill":
+        gantry = None  # type: ignore[assignment]
+    else:
+        gantry = AgentGantry()
+        _load_demo_tools(gantry)
+        # Defer the eager sync until we know the command actually needs it —
+        # lint/sim/sync --dry-run shouldn't trigger embedding work.
+        if args.command not in ("lint", "sim", "sync"):
+            asyncio.run(gantry.sync())
 
     if args.command == "list":
         tools = asyncio.run(gantry.list_tools(namespace=args.namespace))
@@ -140,6 +165,28 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "sync":
         return asyncio.run(_run_sync_command(gantry, dry_run=args.dry_run, force=args.force))
+
+    if args.command == "install-skill":
+        from agent_gantry.skills import install_to, skill_path
+
+        if args.print_path:
+            try:
+                print(skill_path())
+                return 0
+            except FileNotFoundError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
+        try:
+            dst = install_to(args.target, overwrite=args.overwrite)
+        except FileExistsError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            print("  Re-run with --overwrite to replace.", file=sys.stderr)
+            return 2
+        except FileNotFoundError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        print(f"Installed Agent-Gantry skill to {dst}")
+        return 0
 
     parser.print_help()
     return 0
