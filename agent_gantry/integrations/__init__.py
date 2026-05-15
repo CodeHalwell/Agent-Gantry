@@ -5,10 +5,15 @@ Integrations with LangChain, AutoGen, LlamaIndex, CrewAI,
 Microsoft Agent Framework, etc.
 """
 
-from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+from agent_gantry.integrations.agent_framework_bridge import (
+    GantryToolBridge,
+    RetrievalCandidate,
+    RetrievalDecision,
+)
 from agent_gantry.integrations.agent_framework_middleware import (
     GantryApprovalMiddleware,
     GantryObservabilityMiddleware,
+    GantryToolChoiceMiddleware,
 )
 from agent_gantry.integrations.agent_framework_provider import (
     GantryContextProvider,
@@ -26,7 +31,10 @@ __all__: list[str] = [
     "GantryContextProvider",
     "GantryObservabilityMiddleware",
     "GantryToolBridge",
+    "GantryToolChoiceMiddleware",
     "MissingRequiredToolError",
+    "RetrievalCandidate",
+    "RetrievalDecision",
     "SemanticToolSelector",
     "SemanticToolsDecorator",
     "with_semantic_tools",

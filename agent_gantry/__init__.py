@@ -7,6 +7,10 @@ Core Philosophy: Context is precious. Execution is sacred. Trust is earned.
 """
 
 from agent_gantry.core.gantry import AgentGantry, create_default_gantry
+from agent_gantry.integrations.agent_framework_bridge import (
+    RetrievalCandidate,
+    RetrievalDecision,
+)
 from agent_gantry.integrations.agent_framework_provider import (
     GantryContextProvider,
     MissingRequiredToolError,
@@ -30,6 +34,8 @@ __all__ = [
     "AgentGantry",
     "GantryContextProvider",
     "MissingRequiredToolError",
+    "RetrievalCandidate",
+    "RetrievalDecision",
     "create_default_gantry",
     "with_semantic_tools",
     "set_default_gantry",

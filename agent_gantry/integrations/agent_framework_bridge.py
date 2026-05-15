@@ -37,6 +37,7 @@ import inspect
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Annotated, Any
 
 from pydantic import Field
@@ -50,6 +51,136 @@ if TYPE_CHECKING:
     from agent_gantry.schema.tool import ToolDefinition
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class RetrievalCandidate:
+    """A single tool that was considered during a retrieval round.
+
+    Carries the qualified name and the raw semantic score, plus a flag
+    indicating whether the candidate survived the configured score
+    threshold and was therefore eligible for injection into the LLM
+    prompt.
+    """
+
+    name: str
+    qualified_name: str
+    score: float
+    kept: bool
+
+
+@dataclass
+class RetrievalDecision:
+    """Structured record of *what just happened* during a retrieval round.
+
+    The dataclass is intentionally cheap to construct and pickle so it
+    can be attached to telemetry spans, dumped to logs, and inspected
+    from middleware. ``GantryContextProvider.last_selection`` exposes
+    the most-recent decision; the same shape is returned by
+    :meth:`GantryContextProvider.dry_run_retrieve`.
+
+    Fields:
+        query: The query string that drove this retrieval.
+        candidates: All candidates returned by the gantry, in score order.
+            Each carries a ``kept`` flag indicating whether it passed the
+            threshold filter.
+        injected: Names of tools that were ultimately injected into the
+            LLM tool list (top-K of candidates after thresholding, plus
+            always_include / required pins / skills, in injection order).
+        threshold: The effective ``score_threshold`` applied. ``None``
+            for the relative-threshold mode; ``effective_threshold`` carries
+            the resolved numeric cutoff for that case.
+        threshold_mode: ``"absolute"`` for a fixed cosine cutoff,
+            ``"relative:<frac>"`` for the relative mode.
+        effective_threshold: The numeric cutoff actually applied for this
+            round (the input ``threshold`` for absolute mode, or the
+            resolved ``frac * top_score`` for relative mode).
+    """
+
+    query: str = ""
+    candidates: list[RetrievalCandidate] = field(default_factory=list)
+    injected: list[str] = field(default_factory=list)
+    threshold: float | str | None = None
+    threshold_mode: str = "absolute"
+    effective_threshold: float | None = None
+
+    @property
+    def kept(self) -> list[RetrievalCandidate]:
+        """Candidates that passed the threshold filter."""
+        return [c for c in self.candidates if c.kept]
+
+    @property
+    def dropped(self) -> list[RetrievalCandidate]:
+        """Candidates that were dropped by the threshold filter."""
+        return [c for c in self.candidates if not c.kept]
+
+    def summary(self, top: int = 5) -> str:
+        """One-line ``INFO``-style summary, truncated to ``top`` candidates."""
+        head = self.candidates[:top]
+        rendered = ", ".join(f"{c.name}:{c.score:.2f}" for c in head)
+        q = (self.query or "").strip().replace("\n", " ")
+        if len(q) > 60:
+            q = q[:60] + "…"
+        return f'query="{q}" → top{min(top, len(head))}: [{rendered}]'
+
+    def as_span_attributes(self) -> dict[str, Any]:
+        """Flat attribute dict suitable for telemetry spans."""
+        return {
+            "query": self.query,
+            "threshold_mode": self.threshold_mode,
+            "effective_threshold": self.effective_threshold,
+            "candidate_count": len(self.candidates),
+            "injected_count": len(self.injected),
+            "candidates": [c.qualified_name for c in self.candidates],
+            "scores": [c.score for c in self.candidates],
+            "kept": [c.qualified_name for c in self.candidates if c.kept],
+            "injected": list(self.injected),
+        }
+
+
+def _parse_threshold(
+    threshold: float | str | None,
+) -> tuple[str, float | None]:
+    """Decode a ``score_threshold`` value into ``(mode, numeric)``.
+
+    Accepts:
+    - ``None`` → ``("absolute", None)`` (no filtering, equivalent to 0.0).
+    - ``float`` → ``("absolute", <value>)``.
+    - ``"relative:<frac>"`` → ``("relative", <frac>)`` where ``<frac>``
+      is the multiplier applied to the top candidate's score to produce
+      the cutoff for the round.
+    """
+    if threshold is None:
+        return "absolute", None
+    if isinstance(threshold, (int, float)):
+        return "absolute", float(threshold)
+    if isinstance(threshold, str):
+        s = threshold.strip().lower()
+        if s.startswith("relative:"):
+            try:
+                frac = float(s.split(":", 1)[1])
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid relative score_threshold {threshold!r}: "
+                    "expected 'relative:<float>' (e.g. 'relative:0.8')."
+                ) from exc
+            if not 0.0 <= frac <= 1.0:
+                raise ValueError(
+                    f"Relative score_threshold fraction must be in [0.0, 1.0], "
+                    f"got {frac}."
+                )
+            return "relative", frac
+        # Bare numeric strings — be forgiving.
+        try:
+            return "absolute", float(s)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid score_threshold {threshold!r}: expected a float "
+                f"or 'relative:<float>'."
+            ) from exc
+    raise TypeError(
+        f"score_threshold must be float, str, or None; got {type(threshold).__name__}."
+    )
 
 
 # Capabilities that indicate a tool is potentially destructive / requires
@@ -306,21 +437,25 @@ class GantryToolBridge:
 
     Args:
         gantry: The AgentGantry instance providing tool retrieval and execution.
-        score_threshold: Minimum relevance score for tool selection (default: 0.3).
+        score_threshold: Minimum relevance score for tool selection (default: 0.0).
+            Accepts a ``float`` (absolute cosine cutoff), the string
+            ``"relative:<frac>"`` (e.g. ``"relative:0.8"`` retains anything
+            within 80% of the top score), or ``None`` (no filtering).
     """
 
     def __init__(
         self,
         gantry: AgentGantry,
         *,
-        score_threshold: float = 0.3,
+        score_threshold: float | str | None = 0.0,
         as_function_tool: bool | None = None,
     ) -> None:
         """Initialize the bridge.
 
         Args:
             gantry: The AgentGantry instance providing tool retrieval and execution.
-            score_threshold: Minimum relevance score for tool selection (default: 0.3).
+            score_threshold: Minimum relevance score for tool selection
+                (default: ``0.0``; see class docstring for the relative mode).
             as_function_tool: Whether wrapped tools should be elevated to
                 ``agent_framework.FunctionTool`` via the ``@tool`` decorator.
                 ``None`` (default) = auto-detect (wrap if AF is importable);
@@ -328,6 +463,9 @@ class GantryToolBridge:
                 ``False`` = always return bare callables. Defaults produce the
                 most idiomatic AF behaviour without introducing a hard dep.
         """
+        # Validate the threshold eagerly so misconfiguration surfaces at
+        # construction time rather than on the first retrieval round.
+        _parse_threshold(score_threshold)
         self._gantry = gantry
         self._score_threshold = score_threshold
         self._as_function_tool = as_function_tool
@@ -338,13 +476,22 @@ class GantryToolBridge:
         query: str,
         *,
         limit: int = 5,
-        score_threshold: float | None = None,
+        score_threshold: float | str | None = None,
         **query_kwargs: Any,
     ) -> RetrievalResult:
-        """Shared retrieval logic for get_tools and get_tools_with_scores."""
+        """Shared retrieval logic for get_tools and get_tools_with_scores.
+
+        The relative threshold mode (``"relative:<frac>"``) cannot be
+        applied at the vector-store level (the cutoff is data-dependent),
+        so we issue the underlying gantry query without a score cutoff
+        and apply the filter post-hoc in :meth:`_apply_threshold`.
+        """
         from agent_gantry.schema.query import ConversationContext, ToolQuery
 
-        threshold = score_threshold if score_threshold is not None else self._score_threshold
+        threshold = (
+            score_threshold if score_threshold is not None else self._score_threshold
+        )
+        mode, _numeric = _parse_threshold(threshold)
 
         # Separate context-level kwargs from query-level kwargs
         context_fields = set(ConversationContext.model_fields.keys()) - {"query"}
@@ -352,14 +499,79 @@ class GantryToolBridge:
         tool_query_fields = set(ToolQuery.model_fields.keys()) - {"context", "limit", "score_threshold"}
         tq_kwargs = {k: v for k, v in query_kwargs.items() if k in tool_query_fields}
 
+        # Always push 0.0 to the underlying store and apply the threshold
+        # post-hoc in :meth:`_apply_threshold`. This costs a few extra
+        # candidates from the vector store (the router already over-fetches
+        # query.limit * 4 anyway) but lets the decision record list the
+        # tools that were dropped — without that, "score_threshold filtered
+        # every candidate" warnings are blind and the relative-threshold
+        # mode is impossible to implement.
         return await self._gantry.retrieve(
             ToolQuery(
                 context=ConversationContext(query=query, **context_kwargs),
-                limit=limit,
-                score_threshold=threshold,
+                limit=max(limit * 4, limit) if mode == "relative" else limit,
+                score_threshold=0.0,
                 **tq_kwargs,
             )
         )
+
+    def _apply_threshold(
+        self,
+        scored: list[Any],
+        *,
+        threshold: float | str | None,
+        limit: int,
+    ) -> tuple[list[Any], RetrievalDecision]:
+        """Filter scored tools by threshold and return a decision record.
+
+        ``scored`` is the list of ``ScoredTool`` from
+        :class:`RetrievalResult.tools`. The returned tuple is
+        ``(kept_top_K, decision)`` where ``kept_top_K`` honours ``limit``.
+        """
+        effective = threshold if threshold is not None else self._score_threshold
+        mode, numeric = _parse_threshold(effective)
+
+        if not scored:
+            return [], RetrievalDecision(
+                threshold=effective,
+                threshold_mode=mode
+                if mode == "absolute"
+                else f"relative:{numeric}",
+                effective_threshold=None,
+            )
+
+        if mode == "relative" and numeric is not None:
+            top_score = max(st.semantic_score for st in scored)
+            cutoff = top_score * numeric
+        else:
+            cutoff = numeric or 0.0
+
+        candidates: list[RetrievalCandidate] = []
+        kept: list[Any] = []
+        for st in scored:
+            score = float(st.semantic_score)
+            keep = score >= cutoff
+            candidates.append(
+                RetrievalCandidate(
+                    name=st.tool.name,
+                    qualified_name=f"{st.tool.namespace}.{st.tool.name}",
+                    score=score,
+                    kept=keep,
+                )
+            )
+            if keep:
+                kept.append(st)
+
+        kept_top = kept[:limit]
+        decision = RetrievalDecision(
+            candidates=candidates,
+            threshold=effective,
+            threshold_mode=mode
+            if mode == "absolute"
+            else f"relative:{numeric}",
+            effective_threshold=cutoff,
+        )
+        return kept_top, decision
 
     def _get_or_build(
         self,
@@ -384,7 +596,7 @@ class GantryToolBridge:
         query: str,
         *,
         limit: int = 5,
-        score_threshold: float | None = None,
+        score_threshold: float | str | None = None,
         cache: bool = True,
         **query_kwargs: Any,
     ) -> list[Any]:
@@ -400,6 +612,10 @@ class GantryToolBridge:
             query: The user query or task description to match tools against.
             limit: Maximum number of tools to return (default: 5).
             score_threshold: Override the bridge's default score threshold.
+                Accepts a ``float`` (absolute cosine cutoff), the string
+                ``"relative:<frac>"`` (e.g. ``"relative:0.8"`` keeps
+                anything within 80% of the top score), or ``None`` (use
+                the bridge default).
             cache: Whether to reuse previously wrapped callables for the same
                    tool (avoids re-creating wrappers). Default: True.
             **query_kwargs: Additional keyword arguments passed through to
@@ -411,19 +627,101 @@ class GantryToolBridge:
         Returns:
             List of async callables suitable for AF agent ``tools=[...]``.
         """
-        result = await self._retrieve(
-            query, limit=limit, score_threshold=score_threshold, **query_kwargs
-        )
-
-        tools = [self._get_or_build(st.tool, cache) for st in result.tools]
-
-        logger.debug(
-            "GantryToolBridge: selected %d/%d tools for query '%s'",
-            len(tools),
-            result.candidate_count,
-            query[:50],
+        tools, _ = await self.get_tools_with_decision(
+            query,
+            limit=limit,
+            score_threshold=score_threshold,
+            cache=cache,
+            **query_kwargs,
         )
         return tools
+
+    async def get_tools_with_decision(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        score_threshold: float | str | None = None,
+        cache: bool = True,
+        **query_kwargs: Any,
+    ) -> tuple[list[Any], RetrievalDecision]:
+        """Same as :meth:`get_tools` but also returns the decision record.
+
+        Returns the ranked candidate list (passed and dropped by the
+        threshold filter), the final injected list, and the effective
+        threshold — enough to make the routing path self-diagnosable
+        from outside the library. See :class:`RetrievalDecision`.
+
+        Wraps the retrieval in a ``gantry.bridge_retrieval`` telemetry
+        span carrying the candidate list and scores as attributes so
+        OpenTelemetry consumers see the ranked decision in their
+        tracing backend.
+        """
+        from agent_gantry.utils.async_utils import AsyncNoopContext
+
+        telemetry = getattr(self._gantry, "_telemetry", None)
+        span_attrs: dict[str, Any] = {
+            "query": query,
+            "limit": limit,
+            "score_threshold": (
+                score_threshold
+                if score_threshold is not None
+                else self._score_threshold
+            ),
+        }
+        span_cm = (
+            telemetry.span("gantry.bridge_retrieval", span_attrs)
+            if telemetry
+            else AsyncNoopContext()
+        )
+
+        async with span_cm:
+            result = await self._retrieve(
+                query, limit=limit, score_threshold=score_threshold, **query_kwargs
+            )
+
+            # Threshold filtering happens post-hoc so the decision record can
+            # see both kept and dropped candidates regardless of whether the
+            # threshold was relative or absolute.
+            kept_top, decision = self._apply_threshold(
+                list(result.tools), threshold=score_threshold, limit=limit
+            )
+            decision.query = query
+            tools = [self._get_or_build(st.tool, cache) for st in kept_top]
+            decision.injected = [st.tool.name for st in kept_top]
+
+            # Enrich the span with the structured decision. Telemetry
+            # adapters in this codebase store the same dict instance they
+            # were handed at span open, so mutating it now persists the
+            # candidates list onto the recorded span.
+            try:
+                span_attrs.update(decision.as_span_attributes())
+            except Exception:  # pragma: no cover - defensive
+                pass
+
+            # If threshold filtered everything out, surface a WARNING so
+            # users don't see "empty surface" without context.
+            if result.tools and not kept_top:
+                logger.warning(
+                    "GantryToolBridge: score_threshold %s filtered out all %d "
+                    "candidates for query %r. Top scores: %s",
+                    decision.threshold_mode
+                    if decision.threshold == 0.0
+                    else decision.threshold,
+                    len(result.tools),
+                    query[:80],
+                    ", ".join(
+                        f"{c.name}:{c.score:.3f}" for c in decision.candidates[:5]
+                    ),
+                )
+
+            logger.debug(
+                "GantryToolBridge: selected %d/%d tools for query '%s'",
+                len(tools),
+                result.candidate_count,
+                query[:50],
+            )
+            return tools, decision
 
     def wrap_tools(
         self,
@@ -467,7 +765,7 @@ class GantryToolBridge:
         query: str,
         *,
         limit: int = 5,
-        score_threshold: float | None = None,
+        score_threshold: float | str | None = None,
         cache: bool = True,
         **query_kwargs: Any,
     ) -> list[tuple[Any, float]]:
@@ -493,9 +791,13 @@ class GantryToolBridge:
             query, limit=limit, score_threshold=score_threshold, **query_kwargs
         )
 
+        kept_top, _ = self._apply_threshold(
+            list(result.tools), threshold=score_threshold, limit=limit
+        )
+
         return [
             (self._get_or_build(st.tool, cache), st.final_score)
-            for st in result.tools
+            for st in kept_top
         ]
 
     # ------------------------------------------------------------------

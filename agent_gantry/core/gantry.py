@@ -1429,6 +1429,41 @@ class AgentGantry:
             for st in result.tools
         ]
 
+    async def analyze_registry(
+        self,
+        *,
+        similarity_threshold: float = 0.85,
+        tag_overlap_share: float = 0.5,
+    ) -> Any:
+        """Lint the registry for common tool-description mistakes.
+
+        Convenience wrapper around
+        :func:`agent_gantry.utils.registry_linter.analyze_registry`.
+        Returns a :class:`RegistryAnalysis` listing tools whose
+        descriptions name other registered tools (which pulls them
+        toward the wrong queries via embedding similarity), pairs of
+        tools whose searchable text is too similar to disambiguate,
+        and tags that appear on so many tools they no longer carry
+        discriminative value.
+        """
+        from agent_gantry.utils.registry_linter import (
+            analyze_registry as _analyze,
+        )
+
+        return await _analyze(
+            self,
+            similarity_threshold=similarity_threshold,
+            tag_overlap_share=tag_overlap_share,
+        )
+
+    async def pairwise_similarity(self, tool_a: str, tool_b: str) -> float:
+        """Cosine similarity between two registered tools' searchable text."""
+        from agent_gantry.utils.registry_linter import (
+            pairwise_similarity as _sim,
+        )
+
+        return await _sim(self, tool_a, tool_b)
+
     def export_tools(self) -> list[ToolDefinition]:
         """
         Export all registered and pending tools.

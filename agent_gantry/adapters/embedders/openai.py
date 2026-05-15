@@ -200,15 +200,31 @@ class OpenAIEmbedder(BaseOpenAIEmbedder):
                 "OPENAI_API_KEY environment variable."
             )
 
-        # Initialize client with retry logic
-        self._client = AsyncOpenAI(
-            api_key=api_key,
-            max_retries=self._max_retries,
-        )
+        # Honor an OpenAI-compatible custom endpoint (Requesty, OpenRouter,
+        # Together, vLLM, …) when supplied via config.api_base or the
+        # OPENAI_BASE_URL env var. Without this users have to monkey-patch
+        # or globally set OPENAI_BASE_URL — both brittle.
+        base_url = config.api_base or os.getenv("OPENAI_BASE_URL")
 
-        logger.info(
-            f"Initialized OpenAIEmbedder with model={self._model}, dimension={self._dimension}"
-        )
+        client_kwargs: dict[str, Any] = {
+            "api_key": api_key,
+            "max_retries": self._max_retries,
+        }
+        if base_url:
+            client_kwargs["base_url"] = base_url
+
+        self._client = AsyncOpenAI(**client_kwargs)
+
+        if base_url:
+            logger.info(
+                f"Initialized OpenAIEmbedder with model={self._model}, "
+                f"dimension={self._dimension}, base_url={base_url}"
+            )
+        else:
+            logger.info(
+                f"Initialized OpenAIEmbedder with model={self._model}, "
+                f"dimension={self._dimension}"
+            )
 
     def get_embedder_id(self) -> str:
         """

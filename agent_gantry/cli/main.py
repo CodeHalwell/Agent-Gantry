@@ -48,6 +48,45 @@ def main(argv: list[str] | None = None) -> int:
     search_parser.add_argument("query", help="Natural language query")
     search_parser.add_argument("--limit", type=int, default=5, help="Maximum tools to return")
 
+    lint_parser = subparsers.add_parser(
+        "lint",
+        help="Detect tool-description authoring mistakes",
+    )
+    lint_parser.add_argument(
+        "--similarity-threshold",
+        type=float,
+        default=0.85,
+        help="Cosine threshold above which two tools are flagged as similar (default 0.85).",
+    )
+    lint_parser.add_argument(
+        "--tag-overlap-share",
+        type=float,
+        default=0.5,
+        help="Tag flagged when it appears on more than this fraction of tools (default 0.5).",
+    )
+
+    sim_parser = subparsers.add_parser(
+        "sim",
+        help="Print the cosine similarity between two registered tools",
+    )
+    sim_parser.add_argument("tool_a", help="First tool name (or namespace.name)")
+    sim_parser.add_argument("tool_b", help="Second tool name (or namespace.name)")
+
+    sync_parser = subparsers.add_parser(
+        "sync",
+        help="Sync tool embeddings into the configured vector store",
+    )
+    sync_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report which tools would be (re-)embedded and why, without doing it.",
+    )
+    sync_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force re-sync of all tools regardless of fingerprint match.",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command is None:
@@ -56,7 +95,10 @@ def main(argv: list[str] | None = None) -> int:
 
     gantry = AgentGantry()
     _load_demo_tools(gantry)
-    asyncio.run(gantry.sync())
+    # Defer the eager sync until we know the command actually needs it —
+    # lint/sim/sync --dry-run shouldn't trigger embedding work.
+    if args.command not in ("lint", "sim", "sync"):
+        asyncio.run(gantry.sync())
 
     if args.command == "list":
         tools = asyncio.run(gantry.list_tools(namespace=args.namespace))
@@ -75,7 +117,67 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{scored.tool.name} ({scored.semantic_score:.2f}) - {scored.tool.description}")
         return 0
 
+    if args.command == "lint":
+        analysis = asyncio.run(
+            gantry.analyze_registry(
+                similarity_threshold=args.similarity_threshold,
+                tag_overlap_share=args.tag_overlap_share,
+            )
+        )
+        print(analysis.format_text())
+        return 1 if not analysis.empty else 0
+
+    if args.command == "sim":
+        try:
+            score = asyncio.run(
+                gantry.pairwise_similarity(args.tool_a, args.tool_b)
+            )
+        except LookupError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        print(f"{args.tool_a} ⇄ {args.tool_b}: {score:.4f}")
+        return 0
+
+    if args.command == "sync":
+        return asyncio.run(_run_sync_command(gantry, dry_run=args.dry_run, force=args.force))
+
     parser.print_help()
+    return 0
+
+
+async def _run_sync_command(
+    gantry: AgentGantry,
+    *,
+    dry_run: bool,
+    force: bool,
+) -> int:
+    """Run the ``gantry sync`` subcommand.
+
+    In ``--dry-run`` mode, queries the SyncManager for the set of tools
+    whose fingerprints don't match what's stored, and reports them
+    without invoking the embedder.
+    """
+    # Touching ``ensure_synced`` triggers the embedding work we are
+    # trying to avoid in dry-run mode. Use the lower-level
+    # ``detect_changes`` path instead.
+    await gantry._ensure_initialized()
+    sync_mgr = gantry._sync_manager
+    all_tools = gantry.export_tools()
+    to_sync = await sync_mgr.detect_changes(all_tools, force=force)
+    if dry_run:
+        if not to_sync:
+            print("Up to date — no tools would be (re-)embedded.")
+            return 0
+        print(f"{len(to_sync)} tool(s) would be (re-)embedded:")
+        stored = await gantry._vector_store.get_stored_fingerprints()
+        for tool in to_sync:
+            tool_id = f"{tool.namespace}.{tool.name}"
+            reason = "new" if tool_id not in stored else "fingerprint changed"
+            print(f"  - {tool_id}: {reason}")
+        return 0
+
+    count = await gantry.sync(force=force)
+    print(f"Synced {count} tool(s).")
     return 0
 
 

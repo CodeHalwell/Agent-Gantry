@@ -41,6 +41,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _import_af_chat_middleware() -> Any:
+    """Lazy import of ``agent_framework.chat_middleware``."""
+    try:
+        from agent_framework import chat_middleware
+    except ImportError as exc:  # pragma: no cover - depends on install
+        raise ImportError(
+            "Agent-Framework chat middleware requires the 'agent-framework' "
+            "package. Install with: pip install 'agent-gantry[agent-frameworks]'"
+        ) from exc
+    return chat_middleware
+
+
 def _import_af_middleware_bits() -> tuple[Any, Any]:
     """Lazy import of AF symbols; raises a helpful ImportError otherwise.
 
@@ -204,7 +216,85 @@ class GantryObservabilityMiddleware:
         return observability_cls(gantry)
 
 
+class GantryToolChoiceMiddleware:
+    """Chat middleware that modulates ``tool_choice`` per round.
+
+    AF's ``tool_choice`` is a single global setting on the agent; a
+    common pattern is "force a tool call for the first N rounds of a
+    pipeline so the model can't bail to text, then allow text on the
+    summarisation turn". This middleware solves that by re-deriving
+    ``tool_choice`` on every chat-completion round from a user-supplied
+    callable.
+
+    The callable receives the AF chat-middleware ``context`` and may
+    return any of:
+
+    - ``"auto"`` (let the model choose),
+    - ``"required"`` (force a tool call),
+    - ``"none"`` (text only),
+    - A dict in AF / OpenAI tool-choice shape (e.g.
+      ``{"type": "function", "function": {"name": "..."}}``),
+    - ``None`` (don't touch the existing value).
+
+    The callable may be sync or async. Counting rounds is left to the
+    caller — the simplest pattern is to close over a counter::
+
+        rounds = {"n": 0}
+        def choice(ctx):
+            rounds["n"] += 1
+            return "required" if rounds["n"] <= 5 else "auto"
+        agent = Agent(client, "...", middleware=[
+            provider.as_chat_middleware(),
+            GantryToolChoiceMiddleware(choice),
+        ])
+    """
+
+    def __new__(cls, decider: Any) -> Any:
+        chat_middleware = _import_af_chat_middleware()
+        import inspect
+
+        is_async = inspect.iscoroutinefunction(decider)
+
+        @chat_middleware
+        async def _tool_choice_mw(context: Any, call_next: Any) -> None:
+            try:
+                choice = (
+                    await decider(context) if is_async else decider(context)
+                )
+            except Exception:
+                logger.exception(
+                    "GantryToolChoiceMiddleware: decider raised; leaving "
+                    "tool_choice unchanged."
+                )
+                choice = None
+
+            if choice is not None:
+                options = getattr(context, "options", None)
+                if isinstance(options, dict):
+                    options["tool_choice"] = choice
+                elif options is not None:
+                    try:
+                        setattr(options, "tool_choice", choice)
+                    except (AttributeError, TypeError, ValueError):
+                        if hasattr(options, "model_copy"):
+                            try:
+                                context.options = options.model_copy(
+                                    update={"tool_choice": choice}
+                                )
+                            except Exception:
+                                logger.warning(
+                                    "GantryToolChoiceMiddleware: could not "
+                                    "set tool_choice on options of type %r.",
+                                    type(options).__name__,
+                                )
+
+            await call_next()
+
+        return _tool_choice_mw
+
+
 __all__ = [
     "GantryApprovalMiddleware",
     "GantryObservabilityMiddleware",
+    "GantryToolChoiceMiddleware",
 ]
