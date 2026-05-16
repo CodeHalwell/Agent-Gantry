@@ -157,9 +157,18 @@ def _detect_overlapping_tags(
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
-    num = sum(x * y for x, y in zip(a, b))
-    da = math.sqrt(sum(x * x for x in a))
-    db = math.sqrt(sum(y * y for y in b))
+    # ⚡ Bolt: Calculate dot product and norms in a single pass to reduce overhead
+    num = 0.0
+    da_sq = 0.0
+    db_sq = 0.0
+    for x, y in zip(a, b):
+        num += x * y
+        da_sq += x * x
+        db_sq += y * y
+
+    da = math.sqrt(da_sq)
+    db = math.sqrt(db_sq)
+
     if da == 0.0 or db == 0.0:
         return 0.0
     return num / (da * db)

@@ -25,3 +25,7 @@
 ## 2026-05-15 - Single-pass maximum tracking in tight loops
 **Learning:** In Python, replacing generator expressions combined with dictionary generation and multiple `max()` calls (e.g., `max(scores.values())`) with a single-pass nested loop that tracks the maximum value inline can reduce latency by ~60% in tight evaluation paths like intent classification.
 **Action:** When calculating maximum frequencies or scores across multiple categories in an inner loop, use inline integer counters and manually update a `best_score`/`best_intent` tracker rather than building a full dictionary and passing it to built-in aggregate functions.
+
+## 2023-10-27 - Inline vector dot product and norm accumulation
+**Learning:** In Python, calculating vector math (like cosine similarity) using multiple generator expressions (e.g., `sum(x * y for...)` and `math.sqrt(sum(x * x for...))`) is inefficient. Replacing these with a single-pass inline `for` loop that accumulates the dot product and squared sums simultaneously significantly improves performance by reducing generator overhead and redundant iterations.
+**Action:** When calculating similarity or distance manually between Python lists, write a single `for x, y in zip(a, b):` loop rather than using multiple `sum()` calls.

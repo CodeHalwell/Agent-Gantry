@@ -27,7 +27,7 @@ from agent_gantry import AgentGantry, GantryContextProvider  # noqa: E402
 from agent_gantry.integrations.anthropic_skills import SkillRegistry  # noqa: E402
 
 
-def _user_msg(text: str) -> "af.Message":
+def _user_msg(text: str) -> af.Message:
     return af.Message(role="user", contents=[text])
 
 
