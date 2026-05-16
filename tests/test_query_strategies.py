@@ -292,3 +292,258 @@ def test_rerankers_module_exposes_optional_classes_via_dir():
     listed = set(dir(rk))
     expected = {"RerankerAdapter", "CohereReranker", "CrossEncoderReranker"}
     assert expected.issubset(listed)
+
+
+# ---------------------------------------------------------------------------
+# New: keyword_focused + truncated query helpers
+# ---------------------------------------------------------------------------
+
+
+def test_keyword_focused_strips_scaffolding_and_keeps_content_words():
+    """Imperative scaffolding ("please", "step", "the", …) must be
+    dropped so the remaining tokens carry the actual content signal."""
+    from agent_gantry.query import keyword_focused
+
+    msg = _Msg(
+        "user",
+        "Please run this five-step pipeline. Use a different tool for "
+        "each step. Compute the factorial of 7 and the sha256 hash.",
+    )
+    out = keyword_focused([msg])
+    tokens = out.split()
+    # Content words survive.
+    assert "factorial" in tokens
+    assert "sha256" in tokens
+    assert "compute" in tokens
+    # Scaffolding is dropped.
+    for scaffold in ("please", "the", "this", "step", "use", "of"):
+        assert scaffold not in tokens, f"{scaffold!r} should be stripped"
+
+
+def test_keyword_focused_handles_empty_messages():
+    from agent_gantry.query import keyword_focused
+
+    assert keyword_focused([]) == ""
+    assert keyword_focused(None) == ""
+
+
+def test_truncated_caps_length_keeping_tail_by_default():
+    from agent_gantry.query import last_user_text, truncated
+
+    msg = _Msg("user", "the quick brown fox jumps over the lazy dog")
+    gen = truncated(last_user_text, max_chars=10, keep="tail")
+    out = gen([msg])
+    assert len(out) <= 10
+    # Tail is preserved (defaults to "tail"), so "dog" should remain.
+    assert "dog" in out
+
+
+def test_truncated_keep_head():
+    from agent_gantry.query import last_user_text, truncated
+
+    msg = _Msg("user", "the quick brown fox jumps over the lazy dog")
+    gen = truncated(last_user_text, max_chars=10, keep="head")
+    out = gen([msg])
+    assert len(out) <= 10
+    assert "the" in out
+
+
+def test_truncated_supports_async_generator():
+    """Wrapper must mirror the underlying coroutine-ness."""
+    import asyncio
+    import inspect
+
+    from agent_gantry.query import truncated
+
+    async def async_gen(_messages):
+        return "this is a long async result string"
+
+    wrapped = truncated(async_gen, max_chars=12, keep="tail")
+    assert inspect.iscoroutinefunction(wrapped)
+    out = asyncio.run(wrapped([]))
+    assert len(out) == 12
+
+
+# ---------------------------------------------------------------------------
+# New: AgentGantry.analyze_registry + pairwise_similarity
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_analyze_registry_detects_cross_references():
+    """A tool description naming another registered tool is the
+    headline mistake from the issue — verify the linter catches it."""
+    g = AgentGantry()
+
+    @g.register
+    def factorial(n: int) -> int:
+        """Compute factorial of n recursively."""
+        return n
+
+    @g.register
+    def fibonacci(n: int) -> int:
+        """Unrelated to factorial — different recurrence relation."""
+        return n
+
+    await g.sync()
+    analysis = await g.analyze_registry()
+    refs = {f.tool: f.references for f in analysis.cross_references}
+    assert "fibonacci" in refs
+    assert "factorial" in refs["fibonacci"]
+    assert not analysis.empty
+
+
+@pytest.mark.asyncio
+async def test_analyze_registry_clean_registry_reports_empty():
+    g = AgentGantry()
+
+    @g.register
+    def add(a: int, b: int) -> int:
+        """Add two numbers."""
+        return a + b
+
+    await g.sync()
+    analysis = await g.analyze_registry()
+    assert analysis.cross_references == []
+
+
+@pytest.mark.asyncio
+async def test_pairwise_similarity_returns_cosine_score():
+    g = AgentGantry()
+
+    @g.register
+    def add_numbers(a: int, b: int) -> int:
+        """Add two numbers."""
+        return a + b
+
+    @g.register
+    def subtract_numbers(a: int, b: int) -> int:
+        """Subtract one number from another."""
+        return a - b
+
+    await g.sync()
+    score = await g.pairwise_similarity("add_numbers", "subtract_numbers")
+    assert 0.0 <= score <= 1.0
+
+    with pytest.raises(LookupError):
+        await g.pairwise_similarity("add_numbers", "nope")
+
+
+# ---------------------------------------------------------------------------
+# New: GantryToolBridge — threshold parsing + RetrievalDecision
+# ---------------------------------------------------------------------------
+
+
+def test_parse_threshold_accepts_float_relative_and_none():
+    from agent_gantry.integrations.agent_framework_bridge import _parse_threshold
+
+    assert _parse_threshold(None) == ("absolute", None)
+    assert _parse_threshold(0.3) == ("absolute", 0.3)
+    assert _parse_threshold("relative:0.8") == ("relative", 0.8)
+    assert _parse_threshold("0.5") == ("absolute", 0.5)
+
+    with pytest.raises(ValueError):
+        _parse_threshold("relative:abc")
+    with pytest.raises(ValueError):
+        _parse_threshold("relative:1.5")
+    with pytest.raises(TypeError):
+        _parse_threshold([0.3])  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_bridge_emits_retrieval_decision_with_kept_and_dropped():
+    """The bridge's decision-returning API must list both kept and
+    dropped candidates so callers can self-diagnose threshold issues
+    without re-running retrieval."""
+    from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+
+    g = AgentGantry()
+
+    @g.register
+    def get_weather(city: str) -> str:
+        """Get the current weather for a city."""
+        return "x"
+
+    @g.register
+    def book_flight(origin: str, destination: str) -> str:
+        """Book a flight between two cities."""
+        return "x"
+
+    await g.sync()
+    bridge = GantryToolBridge(g, score_threshold=0.0)
+
+    # Use a very high absolute threshold to force everything to be dropped.
+    _tools, decision = await bridge.get_tools_with_decision(
+        "weather", limit=5, score_threshold=0.99
+    )
+    assert decision.injected == []
+    # Candidates must still be populated so the user can see what was filtered.
+    assert len(decision.candidates) >= 1
+    assert all(not c.kept for c in decision.candidates)
+    # And the summary string is well-formed.
+    assert "query=" in decision.summary()
+
+
+@pytest.mark.asyncio
+async def test_bridge_relative_threshold_keeps_top_band():
+    """``relative:0.9`` should retain only candidates within 90% of the
+    top score and report the effective cutoff."""
+    from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+
+    g = AgentGantry()
+
+    @g.register
+    def get_weather(city: str) -> str:
+        """Get the current weather for a city."""
+        return "x"
+
+    @g.register
+    def book_flight(origin: str, destination: str) -> str:
+        """Book a flight between two cities."""
+        return "x"
+
+    @g.register
+    def lookup_user(user_id: str) -> str:
+        """Look up a user by ID."""
+        return "x"
+
+    await g.sync()
+    bridge = GantryToolBridge(g)
+    _tools, decision = await bridge.get_tools_with_decision(
+        "weather", limit=5, score_threshold="relative:0.9"
+    )
+    assert decision.threshold_mode.startswith("relative")
+    assert decision.effective_threshold is not None
+    # At least one tool should pass; not all should pass (otherwise the
+    # threshold did nothing).
+    kept_count = sum(c.kept for c in decision.candidates)
+    assert kept_count >= 1
+
+
+# ---------------------------------------------------------------------------
+# New: CachedEmbedder
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cached_embedder_persists_across_instances(tmp_path):
+    """Re-opening the cache file must yield hits, not re-embed work."""
+    from agent_gantry.adapters.embedders.cached import CachedEmbedder
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+
+    cache = tmp_path / "embed.sqlite"
+    first = CachedEmbedder(SimpleEmbedder(), cache_path=cache)
+    v1 = await first.embed_batch(["alpha", "beta"])
+    assert first.hits == 0 and first.misses == 2
+    # Second call to same instance: all hits.
+    v2 = await first.embed_batch(["alpha", "beta"])
+    assert v2 == v1
+    assert first.hits == 2
+    first.close()
+
+    # Fresh instance reopens the same file: must still hit.
+    second = CachedEmbedder(SimpleEmbedder(), cache_path=cache)
+    v3 = await second.embed_batch(["alpha"])
+    assert v3 == [v1[0]]
+    assert second.hits == 1 and second.misses == 0
+    second.close()

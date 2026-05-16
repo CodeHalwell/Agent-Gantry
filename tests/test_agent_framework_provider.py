@@ -27,7 +27,7 @@ from agent_gantry import AgentGantry, GantryContextProvider  # noqa: E402
 from agent_gantry.integrations.anthropic_skills import SkillRegistry  # noqa: E402
 
 
-def _user_msg(text: str) -> "af.Message":
+def _user_msg(text: str) -> af.Message:
     return af.Message(role="user", contents=[text])
 
 
@@ -239,12 +239,162 @@ class TestGantryContextProvider:
         async def _boom(*_a: object, **_k: object) -> list:
             raise RuntimeError("retrieval down")
 
-        # Patch the bridge's get_tools rather than gantry.retrieve so the
-        # provider's own try/except path is exercised.
-        monkeypatch.setattr(provider._bridge, "get_tools", _boom)
+        # Patch the bridge's decision-returning retrieval (the provider's
+        # actual call path) so the provider's own try/except is exercised.
+        monkeypatch.setattr(
+            provider._bridge, "get_tools_with_decision", _boom
+        )
 
         ctx = af.SessionContext(input_messages=[_user_msg("weather")])
         await provider.before_run(agent=None, session=None, context=ctx, state={})
 
         # No exception, no tools injected — agent.run continues.
         assert ctx.tools == []
+
+    # ------------------------------------------------------------------
+    # New surface area: last_selection / dry_run_retrieve / static_tools
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_last_selection_exposes_decision_after_before_run(
+        self, gantry_with_tools: AgentGantry
+    ) -> None:
+        """After each retrieval the provider exposes the structured decision."""
+        provider = GantryContextProvider(
+            gantry_with_tools, top_k=2, score_threshold=0.0
+        )
+        ctx = af.SessionContext(input_messages=[_user_msg("weather")])
+        await provider.before_run(agent=None, session=None, context=ctx, state={})
+
+        decision = provider.last_selection
+        assert decision is not None
+        assert decision.query == "weather"
+        assert decision.injected
+        # Candidates is the ranked list and is non-empty.
+        assert decision.candidates
+        # Every injected tool was kept.
+        assert all(c.kept for c in decision.candidates if c.name in decision.injected)
+
+    @pytest.mark.asyncio
+    async def test_dry_run_retrieve_uses_same_code_path(
+        self, gantry_with_tools: AgentGantry
+    ) -> None:
+        """dry_run_retrieve must mirror the live retrieval (same threshold,
+        same kwargs) so users can validate "would the LLM see X?" offline."""
+        provider = GantryContextProvider(
+            gantry_with_tools, top_k=2, score_threshold=0.0
+        )
+        decision = await provider.dry_run_retrieve("book me a flight")
+        names = {c.name for c in decision.candidates}
+        # The fixture's book_flight should rank for a "flight" query.
+        assert "book_flight" in names
+        # Same path => same threshold mode reported.
+        assert decision.threshold_mode == "absolute"
+
+    @pytest.mark.asyncio
+    async def test_static_tools_injected_on_every_run(
+        self, gantry_with_tools: AgentGantry
+    ) -> None:
+        """Tools that live outside the gantry registry must still be
+        injected when supplied via static_tools."""
+
+        async def af_native_tool(x: str) -> str:
+            """A tool not registered with gantry."""
+            return x
+
+        af_native_tool.__name__ = "af_native_tool"
+        provider = GantryContextProvider(
+            gantry_with_tools,
+            top_k=1,
+            score_threshold=0.0,
+            static_tools=[af_native_tool],
+        )
+        ctx = af.SessionContext(input_messages=[_user_msg("weather")])
+        await provider.before_run(agent=None, session=None, context=ctx, state={})
+        names = _tool_names(ctx.tools)
+        assert "af_native_tool" in names
+
+    @pytest.mark.asyncio
+    async def test_per_call_default_generator_is_fallback_chain(
+        self, gantry_with_tools: AgentGantry
+    ) -> None:
+        """per_call mode must pick a generator that actually adapts each
+        round; the per_run default (last_user_text) would silently
+        disable the very thing per_call enables."""
+        from agent_gantry.query import last_user_text
+
+        provider = GantryContextProvider(
+            gantry_with_tools, top_k=1, query_strategy="per_call"
+        )
+        # The selected generator is *not* the bare last_user_text default.
+        assert provider._query_generator is not last_user_text  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_per_call_with_last_user_text_warns(
+        self,
+        gantry_with_tools: AgentGantry,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Explicitly pairing per_call with last_user_text — the
+        misconfiguration the issue calls out — must warn."""
+        import logging
+
+        from agent_gantry.query import last_user_text
+
+        with caplog.at_level(logging.WARNING):
+            GantryContextProvider(
+                gantry_with_tools,
+                query_strategy="per_call",
+                query_generator=last_user_text,
+            )
+        assert "per_call" in caplog.text and "last_user_text" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_per_call_warns_when_chat_middleware_not_attached(
+        self,
+        gantry_with_tools: AgentGantry,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """per_call mode without the chat middleware on the agent must
+        warn so the user knows retrieval is silently per_run-only."""
+        import logging
+
+        class FakeAgent:
+            middleware: list = []
+
+        provider = GantryContextProvider(
+            gantry_with_tools, top_k=1, query_strategy="per_call"
+        )
+        ctx = af.SessionContext(input_messages=[_user_msg("weather")])
+        with caplog.at_level(logging.WARNING):
+            await provider.before_run(
+                agent=FakeAgent(), session=None, context=ctx, state={}
+            )
+        assert "as_chat_middleware" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_attach_to_appends_provider_and_middleware(
+        self, gantry_with_tools: AgentGantry
+    ) -> None:
+        """attach_to is the one-call setup helper for the per_call flow."""
+
+        class FakeAgent:
+            context_providers: list = []
+            middleware: list = []
+
+        agent = FakeAgent()
+        provider = GantryContextProvider(
+            gantry_with_tools, query_strategy="per_call"
+        )
+        provider.attach_to(agent)
+        assert provider in agent.context_providers
+        assert len(agent.middleware) == 1
+
+    def test_relative_threshold_accepted_at_construction(
+        self, gantry_with_tools: AgentGantry
+    ) -> None:
+        """A 'relative:<frac>' string is accepted and not rejected as a float."""
+        provider = GantryContextProvider(
+            gantry_with_tools, score_threshold="relative:0.8"
+        )
+        assert provider.score_threshold == "relative:0.8"

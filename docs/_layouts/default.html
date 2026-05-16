@@ -79,16 +79,16 @@
     <nav class="sidebar" role="navigation" aria-label="Main navigation">
       <ul class="sidebar-nav">
         <li class="nav-section">
-          <div class="nav-section-title">Getting Started</div>
-          <ul class="nav-submenu">
+          <div class="nav-section-title" id="nav-getting-started">Getting Started</div>
+          <ul class="nav-submenu" aria-labelledby="nav-getting-started">
             <li class="nav-item"><a href="{{ '/' | relative_url }}" class="nav-link">Home</a></li>
             <li class="nav-item"><a href="{{ '/getting-started' | relative_url }}" class="nav-link">Quick Start</a></li>
           </ul>
         </li>
 
         <li class="nav-section">
-          <div class="nav-section-title">Guides</div>
-          <ul class="nav-submenu">
+          <div class="nav-section-title" id="nav-guides">Guides</div>
+          <ul class="nav-submenu" aria-labelledby="nav-guides">
             <li class="nav-item"><a href="{{ '/guides/semantic_tool_decorator' | relative_url }}" class="nav-link">Semantic Tool Decorator</a></li>
             <li class="nav-item"><a href="{{ '/guides/dynamic_mcp_selection' | relative_url }}" class="nav-link">Dynamic MCP Selection</a></li>
             <li class="nav-item"><a href="{{ '/guides/vector_store_llm_integration' | relative_url }}" class="nav-link">Vector Store & LLM Integration</a></li>
@@ -97,8 +97,8 @@
         </li>
 
         <li class="nav-section">
-          <div class="nav-section-title">Reference</div>
-          <ul class="nav-submenu">
+          <div class="nav-section-title" id="nav-reference">Reference</div>
+          <ul class="nav-submenu" aria-labelledby="nav-reference">
             <li class="nav-item"><a href="{{ '/reference/api-reference' | relative_url }}" class="nav-link">API Reference</a></li>
             <li class="nav-item"><a href="{{ '/reference/configuration' | relative_url }}" class="nav-link">Configuration</a></li>
             <li class="nav-item"><a href="{{ '/reference/llm_sdk_compatibility' | relative_url }}" class="nav-link">LLM SDK Compatibility</a></li>
@@ -107,16 +107,16 @@
         </li>
 
         <li class="nav-section">
-          <div class="nav-section-title">Architecture</div>
-          <ul class="nav-submenu">
+          <div class="nav-section-title" id="nav-architecture">Architecture</div>
+          <ul class="nav-submenu" aria-labelledby="nav-architecture">
             <li class="nav-item"><a href="{{ '/architecture/overview' | relative_url }}" class="nav-link">System Overview</a></li>
             <li class="nav-item"><a href="{{ '/architecture/best-practices' | relative_url }}" class="nav-link">Best Practices</a></li>
           </ul>
         </li>
 
         <li class="nav-section">
-          <div class="nav-section-title">Help</div>
-          <ul class="nav-submenu">
+          <div class="nav-section-title" id="nav-help">Help</div>
+          <ul class="nav-submenu" aria-labelledby="nav-help">
             <li class="nav-item"><a href="{{ '/troubleshooting' | relative_url }}" class="nav-link">Troubleshooting</a></li>
             <li class="nav-item"><a href="https://github.com/CodeHalwell/Agent-Gantry/issues" class="nav-link">Report Issue</a></li>
           </ul>

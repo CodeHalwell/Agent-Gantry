@@ -163,9 +163,17 @@ class InMemoryVectorStore:
         if len(a) != len(b):
             return 0.0
 
-        dot_product = sum(x * y for x, y in zip(a, b))
-        norm_a = math.sqrt(sum(x * x for x in a))
-        norm_b = math.sqrt(sum(x * x for x in b))
+        # ⚡ Bolt: Calculate dot product and norms in a single pass to reduce overhead
+        dot_product = 0.0
+        norm_a_sq = 0.0
+        norm_b_sq = 0.0
+        for x, y in zip(a, b):
+            dot_product += x * y
+            norm_a_sq += x * x
+            norm_b_sq += y * y
+
+        norm_a = math.sqrt(norm_a_sq)
+        norm_b = math.sqrt(norm_b_sq)
 
         if norm_a == 0 or norm_b == 0:
             return 0.0
