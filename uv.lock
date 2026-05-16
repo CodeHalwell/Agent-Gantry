@@ -60,14 +60,14 @@ wheels = [
 
 [[package]]
 name = "agent-framework"
-version = "1.3.0"
+version = "1.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "agent-framework-core", extra = ["all"] },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/68/e8/c2ee1c4dae4a86b95091969426d11361232a0c554124ba321852a6b6b9bd/agent_framework-1.3.0.tar.gz", hash = "sha256:a13423aceaf587cf28180138151d445bd2d4ce82908cef4a6fbb85fa1771bac1", size = 5509571, upload-time = "2026-05-08T00:09:16.022Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/73/06/2a1a95e4d87ef8e156fe96d956bb25f3fb45d6680638d75496b7d2419f27/agent_framework-1.4.0.tar.gz", hash = "sha256:d67bc4539707b1ed920af5982ff52e398921c4739e9e9918cf9109a48d498a47", size = 5538169, upload-time = "2026-05-15T00:55:06.676Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a0/81/050f8f8bce8c629a88197837b4beb35cb287f880789fc01923fd5938f142/agent_framework-1.3.0-py3-none-any.whl", hash = "sha256:baaaa932639c87be99d43333f612c3b4112d6d976f0e1e72238e42a4bd572438", size = 5684, upload-time = "2026-05-08T00:09:54.064Z" },
+    { url = "https://files.pythonhosted.org/packages/76/d6/15a1938778deb50fffb59f1286e5626f5dd9f4c53f48aa946dec934ddbbf/agent_framework-1.4.0-py3-none-any.whl", hash = "sha256:46e31bfe3f9ac8b36f99999d22de1796a12af6f8d80f49dc48421ac001cf6b4e", size = 5686, upload-time = "2026-05-15T00:55:32.975Z" },
 ]
 
 [[package]]
@@ -236,7 +236,7 @@ wheels = [
 
 [[package]]
 name = "agent-framework-core"
-version = "1.3.0"
+version = "1.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "opentelemetry-api" },
@@ -244,9 +244,9 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/90/59/4c212abdb93074677d643e31a3c21e33ff26a3ccc351145475cd1ffffad7/agent_framework_core-1.3.0.tar.gz", hash = "sha256:91c3659718b733f70dde6fb3626edb044733e0f7aa5f9726c9774e17fae328ef", size = 365395, upload-time = "2026-05-08T00:09:09.36Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/15/e0/81b7cd52b37cd690a3fd361e57367c5c9792e70817386ae5cfccca232261/agent_framework_core-1.4.0.tar.gz", hash = "sha256:aad76bf01ed99c211076de778d29525c955ac4cce10f3a8e084e1e3053c7eacb", size = 369652, upload-time = "2026-05-15T00:55:10.121Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/56/f2/c4258333f2691ee10869bf72f51d423808962ccf0c195b1f893c06c348ad/agent_framework_core-1.3.0-py3-none-any.whl", hash = "sha256:b7a5baf2beb383e9042af057df79dae4fda0b836cbc8530b3b2a57a3c12bb7ac", size = 407978, upload-time = "2026-05-08T00:09:32.752Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/04/cc1d27e0af5bc88cc3ea59b33bdab2ef64512fea086b3f522eaf1499cf87/agent_framework_core-1.4.0-py3-none-any.whl", hash = "sha256:04335f6d85999061e01ce3f727efd7cb45214a695131488ccbef0cb17959163b", size = 412273, upload-time = "2026-05-15T00:55:08.65Z" },
 ]
 
 [package.optional-dependencies]
@@ -659,7 +659,7 @@ vector-stores = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-framework", marker = "extra == 'agent-frameworks'", specifier = ">=1.3.0,<2.0.0" },
+    { name = "agent-framework", marker = "extra == 'agent-frameworks'", specifier = ">=1.4.0,<2.0.0" },
     { name = "agent-gantry", extras = ["dev", "embeddings", "openai", "cohere", "vector-stores", "lancedb", "nomic", "mcp", "a2a", "llm-providers", "agent-frameworks", "example-tools"], marker = "extra == 'all'" },
     { name = "agent-gantry", extras = ["openai", "anthropic", "google-genai", "google-vertexai", "mistral", "groq"], marker = "extra == 'llm-providers'" },
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.102.0" },

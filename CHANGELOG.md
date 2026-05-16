@@ -59,6 +59,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`agent-framework` floor bumped to `>=1.4.0`** (was `>=1.3.0`). Agent Framework
+  1.4.0 released 2026-05-15. Changes in 1.4.0: MCP tool-call metadata forwarding,
+  path-traversal fix in checkpoint storage, A2A SDK v1.0 alignment. Two breaking
+  changes in 1.4.0 that do NOT affect Gantry: (1) SkillFrontmatter extraction in the
+  experimental file-based skills API; (2) DevUI CORS tightening. Lock file updated:
+  `agent-framework` and `agent-framework-core` both moved from 1.3.0 → 1.4.0.
+  *Risk: safe internal — no changes to Agent, WorkflowBuilder, ContextProvider,
+  FunctionMiddleware, or any other API surface that Gantry consumes.*
+  Source: https://pypi.org/pypi/agent-framework/json
+
+- **`google-adk` floor stays at `>=1.14.1`** — upgrade to 1.33.0 blocked by two
+  independent conflicts. (1) **langgraph** (primary blocker): google-adk 1.33.0
+  requires `langgraph<0.4.8`, which is mutually exclusive with `langgraph>=1.2.0` in
+  the `agent-frameworks` extra; no floor bump resolves this. (2) **pydantic**
+  (partially resolved): google-adk 1.33.0 requires `pydantic>=2.12`; semantic-kernel
+  1.42.0 has relaxed its upper bound to `<2.14`, but the langgraph conflict still
+  blocks co-installation regardless. `pyproject.toml` comment updated to document
+  both blockers. To use google-adk 1.33.0, install it in a standalone environment
+  without LangChain/LangGraph.
+  *Risk: safe internal — comment only, floor unchanged.*
+  Source: https://pypi.org/pypi/google-adk/1.33.0/json
+
+- **`semantic-kernel` comment updated** — 1.42.0 is the current stable release.
+  1.42.0 relaxes the pydantic upper bound from `<2.12` to `<2.14`, resolving the
+  pydantic conflict with google-adk 1.33.0 as far as semantic-kernel is concerned.
+  However, (a) the opentelemetry-api conflict with agent-framework on some Python
+  versions remains unresolved, keeping the floor at `>=1.36.0`; and (b) google-adk
+  1.33.0 has an independent langgraph<0.4.8 conflict that blocks it regardless.
+  Floor stays at `>=1.36.0` until opentelemetry conflict is confirmed resolved.
+  *Risk: safe internal — comment only, floor unchanged.*
+  Source: https://pypi.org/pypi/semantic-kernel/1.42.0/json
+
+- **`google-genai` comment updated** — latest stable is now 2.3.0 (was 2.2.0).
+  No change to floor or installation instructions.
+  *Risk: safe internal — comment only.*
+  Source: https://pypi.org/pypi/google-genai/json
+
+- **`crewai` comment updated** — latest stable is 1.14.4. The co-installation
+  conflict with `agent-framework` via `opentelemetry-api` version incompatibility
+  is documented. Floor stays at `>=1.6.1`.
+  *Risk: safe internal — comment only.*
+
+- **LangChain `tool` import migrated to `langchain_core`** in
+  `examples/agent_frameworks/langchain_example.py` (this PR) and
+  `examples/agent_frameworks/langgraph_example.py` (prior commit). Both now use
+  `from langchain_core.tools import tool` at module level. The `langchain.tools`
+  shim may be removed in a future LangChain 1.x minor release.
+  *Risk: safe with compatibility shim.*
+  Source: https://python.langchain.com/docs/concepts/tools/
+
+- **`examples/agent_frameworks/agent_framework_example.py`** and
+  **`agent_framework_orchestration_example.py`**: Version reference in docstring
+  updated from 1.3.0 to 1.4.0 to match the bumped `agent-framework` floor.
+  *Risk: safe internal — documentation only.*
+
 - **Default `score_threshold` on `GantryContextProvider` and
   `GantryToolBridge` lowered from `0.3` to `0.0`** (no filtering).
   Long queries dilute absolute cosine similarities, so the previous
@@ -112,26 +167,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   LangChain 1.3.0 GA. LangGraph 1.2.0 is the current stable release.
   *Risk: safe internal — floor bump only.*
   Source: https://pypi.org/pypi/langgraph/json
-
-- **`google-adk` floor stays at `>=1.14.1`** — upgrade to 1.33.0 blocked.
-  `google-adk 1.33.0` requires `pydantic>=2.12`, which is mutually exclusive with
-  `semantic-kernel>=1.36.0` (`pydantic<2.12`). Both are in the `agent-frameworks`
-  extra, so the floor remains `1.14.1`. The comment is updated to document this
-  specific conflict. To use google-adk 1.33.0, install it in a standalone environment
-  without semantic-kernel.
-  *Risk: safe internal — note only, floor unchanged.*
-  Source: https://pypi.org/pypi/google-adk/1.33.0/json
-
-- **`examples/agent_frameworks/langgraph_example.py`**: Changed
-  `from langchain.tools import tool` to `from langchain_core.tools import tool`.
-  The canonical location in LangChain 1.x is `langchain_core.tools`; the shim in
-  `langchain.tools` may be removed in a future 1.x minor release.
-  *Risk: safe with compatibility shim.*
-
-- **`pyproject.toml` comments updated**: `crewai`, `google-adk`, and `google-genai`
-  comments updated to reflect current latest stable versions (crewai 1.14.4,
-  google-adk 1.33.0 blocked by pydantic conflict, google-genai 2.2.0) and
-  co-installation status. `uv.lock` regenerated to reflect all floor bumps.
 
 ## [0.3.0] - 2026-05-13
 
