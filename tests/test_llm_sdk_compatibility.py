@@ -381,12 +381,15 @@ class TestSDKVersionCompatibility:
     """Tests for SDK version compatibility."""
 
     def test_openai_minimum_version(self) -> None:
-        """Test OpenAI SDK meets minimum version."""
+        """Test OpenAI SDK meets minimum version (>=2.37.0 per pyproject.toml [openai] extra)."""
+        from packaging.version import Version
+
         openai = pytest.importorskip("openai")
         version = openai.__version__
-        parts = version.split(".")
-        major = int(parts[0])
-        assert major >= 1, f"OpenAI SDK version {version} is below minimum 1.0.0"
+        assert Version(version) >= Version("2.37.0"), (
+            f"OpenAI SDK version {version} is below the minimum 2.37.0 required by "
+            "the [openai] extra in pyproject.toml."
+        )
 
     def test_anthropic_minimum_version(self) -> None:
         """Test Anthropic SDK meets minimum version."""
@@ -398,8 +401,8 @@ class TestSDKVersionCompatibility:
         version = getattr(anthropic, "__version__", None)
         if version is None:
             pytest.skip("anthropic module is mocked in this test session")
-        assert Version(version) >= Version("0.101.0"), (
-            f"Anthropic SDK version {version} is below minimum 0.101.0"
+        assert Version(version) >= Version("0.102.0"), (
+            f"Anthropic SDK version {version} is below minimum 0.102.0"
         )
 
     def test_groq_minimum_version(self) -> None:
@@ -416,12 +419,12 @@ class TestSDKVersionCompatibility:
 
     def test_mistral_uses_openai_minimum_version(self) -> None:
         """Mistral is consumed via the OpenAI SDK; verify it meets the floor used
-        by the ``mistral`` extra in ``pyproject.toml`` (``openai>=2.36.0``)."""
+        by the ``mistral`` extra in ``pyproject.toml`` (``openai>=2.37.0``)."""
         from packaging.version import Version
 
         openai = pytest.importorskip("openai")
         version = openai.__version__
-        assert Version(version) >= Version("2.36.0"), (
-            f"OpenAI SDK version {version} is below the minimum 2.36.0 required "
+        assert Version(version) >= Version("2.37.0"), (
+            f"OpenAI SDK version {version} is below the minimum 2.37.0 required "
             "for Mistral's OpenAI-compatible endpoint."
         )

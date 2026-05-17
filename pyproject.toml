@@ -67,7 +67,7 @@ agent-frameworks = [
     # crewai==1.6.1 co-installs with agent-framework. For crewai 1.14.4 (standalone),
     # install in a separate environment without agent-framework.
     "crewai>=1.6.1",
-    # langchain 1.3.1 (released 2026-05-17) is a patch release; no breaking changes.
+    # langchain 1.3.1 (released 2026-05-15) is a patch release; no breaking changes.
     # Requires langgraph<1.3.0,>=1.2.0 — compatible with our langgraph>=1.2.0 floor.
     "langchain>=1.3.1",
     "langchain-openai>=1.2.1",
