@@ -269,6 +269,70 @@ class TestAnthropicClient:
         assert "is_error" not in tool_results[0]
         assert tool_results[0]["content"] == '{"temperature": 25, "unit": "C"}'
 
+    @pytest.mark.asyncio
+    async def test_create_message_with_output_schema(self):
+        """Test that output_schema injects the correct output_config payload."""
+        client = AnthropicClient(api_key="test-key")
+        mock_response = MagicMock()
+        mock_response.content = []
+        client._client.messages.create = AsyncMock(return_value=mock_response)
+
+        schema = {
+            "type": "object",
+            "properties": {"status": {"type": "string"}},
+            "required": ["status"],
+            "additionalProperties": False,
+        }
+        await client.create_message(
+            model="claude-sonnet-4-6",
+            messages=[{"role": "user", "content": "Hello"}],
+            auto_retrieve_tools=False,
+            output_schema=schema,
+        )
+
+        call_kwargs = client._client.messages.create.call_args.kwargs
+        assert "output_config" in call_kwargs
+        assert call_kwargs["output_config"]["format"]["type"] == "json_schema"
+        assert call_kwargs["output_config"]["format"]["schema"] == schema
+
+    @pytest.mark.asyncio
+    async def test_create_message_output_config_caller_wins(self):
+        """Test that an explicit output_config kwarg takes precedence over output_schema."""
+        client = AnthropicClient(api_key="test-key")
+        mock_response = MagicMock()
+        mock_response.content = []
+        client._client.messages.create = AsyncMock(return_value=mock_response)
+
+        caller_config = {"format": {"type": "text"}}
+        schema = {"type": "object", "properties": {"x": {"type": "integer"}}}
+        await client.create_message(
+            model="claude-sonnet-4-6",
+            messages=[{"role": "user", "content": "Hello"}],
+            auto_retrieve_tools=False,
+            output_schema=schema,
+            output_config=caller_config,
+        )
+
+        call_kwargs = client._client.messages.create.call_args.kwargs
+        assert call_kwargs["output_config"] == caller_config
+
+    @pytest.mark.asyncio
+    async def test_create_message_no_output_schema(self):
+        """Test that output_config is absent when output_schema is not supplied."""
+        client = AnthropicClient(api_key="test-key")
+        mock_response = MagicMock()
+        mock_response.content = []
+        client._client.messages.create = AsyncMock(return_value=mock_response)
+
+        await client.create_message(
+            model="claude-sonnet-4-6",
+            messages=[{"role": "user", "content": "Hello"}],
+            auto_retrieve_tools=False,
+        )
+
+        call_kwargs = client._client.messages.create.call_args.kwargs
+        assert "output_config" not in call_kwargs
+
 
 class TestCreateAnthropicClient:
     """Tests for create_anthropic_client convenience function."""

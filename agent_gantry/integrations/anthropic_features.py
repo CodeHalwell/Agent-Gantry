@@ -109,10 +109,11 @@ class AnthropicClient:
         query: str | None = None,
         auto_retrieve_tools: bool = True,
         tool_limit: int = 5,
+        output_schema: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> Any:
         """
-        Create a message with optional tool retrieval.
+        Create a message with optional tool retrieval and structured output.
 
         Args:
             model: Model identifier (e.g., "claude-sonnet-4-6")
@@ -121,6 +122,13 @@ class AnthropicClient:
             query: Query for tool retrieval (defaults to last user message)
             auto_retrieve_tools: Whether to automatically retrieve tools
             tool_limit: Maximum number of tools to retrieve
+            output_schema: Optional JSON Schema dict that constrains Claude's response
+                to a specific JSON structure via ``output_config.format``. When
+                supplied the response content will be a valid JSON object matching
+                this schema.  Mutually exclusive with a caller-supplied
+                ``output_config`` in ``**kwargs``; the caller's ``output_config``
+                takes precedence if both are present.
+                Source: https://platform.claude.com/docs/en/build-with-claude/structured-outputs
             **kwargs: Additional arguments passed to messages.create()
 
         Returns:
@@ -164,6 +172,17 @@ class AnthropicClient:
                 if self._features.thinking_display:
                     thinking_block["display"] = self._features.thinking_display
                 kwargs["thinking"] = thinking_block
+
+        # Inject output_config for structured JSON output when a schema is provided
+        # and the caller has not already supplied their own output_config.
+        # Source: https://platform.claude.com/docs/en/build-with-claude/structured-outputs
+        if output_schema is not None and "output_config" not in kwargs:
+            kwargs["output_config"] = {
+                "format": {
+                    "type": "json_schema",
+                    "schema": output_schema,
+                }
+            }
 
         # Create message
         response = await self._client.messages.create(

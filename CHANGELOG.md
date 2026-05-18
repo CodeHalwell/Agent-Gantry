@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`AnthropicClient.create_message()` now accepts `output_schema`** — an optional
+  JSON Schema dict that constrains Claude's response to a specific JSON structure
+  via the `output_config.format` parameter introduced in the Anthropic Messages API.
+  When supplied the dict is injected as
+  `output_config={"format":{"type":"json_schema","schema":{...}}}` unless the caller
+  already provides their own `output_config` (caller wins). Default `None` preserves
+  all existing behaviour — no changes required for existing callers.
+  *Risk: safe additive.*
+  Source: https://platform.claude.com/docs/en/build-with-claude/structured-outputs
+
+### Changed
+
+- **`agent-framework` floor bumped to `>=1.4.0,<2.0.0`** (was `>=1.3.0,<2.0.0`).
+  Agent Framework 1.4.0 was released 2026-05-15. Breaking changes in 1.4.0 are
+  confined to the experimental skills API (file-skill folder discovery aligns with
+  agentskills.io spec; skill metadata extracted into `SkillFrontmatter`) — neither
+  is used by Gantry. New features include MCP tool-call metadata forwarding,
+  `list[str]` support in file skills, and AG-UI tool-result display channel.
+  *Risk: safe internal — floor bump only; no Gantry code changes required.*
+  Source: https://pypi.org/pypi/agent-framework/json, https://github.com/microsoft/agent-framework/releases
+
+- **`openai` floor bumped to `>=2.37.0`** (was `>=2.36.0`). Current stable release;
+  no API surface changes for Gantry's Responses API or Chat Completions call sites.
+  Floor updated in the `openai`, `mistral`, and `llm-providers` extras.
+  *Risk: safe internal — floor bump only.*
+  Source: https://pypi.org/pypi/openai/json
+
+- **`langchain` floor bumped to `>=1.3.1`** (was `>=1.3.0`). Patch release; no API
+  changes.
+  *Risk: safe internal — floor bump only.*
+  Source: https://pypi.org/pypi/langchain/json
+
 ## [0.4.0] - 2026-05-15
 
 ### Added
