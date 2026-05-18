@@ -790,7 +790,7 @@ repos:
     hooks:
       - id: agent-gantry-lint
         name: agent-gantry lint
-        entry: python -m scripts.gantry_lint
+        entry: python scripts/gantry_lint.py
         language: system
         pass_filenames: false
         files: ^my_app/tools/.*\.py$
@@ -821,8 +821,11 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
+      # Install your project so `my_app.tools` is importable. Swap for
+      # `uv sync` / `poetry install` / `pip install -r requirements.txt`
+      # as appropriate.
       - run: pip install -e .
-      - run: python -m scripts.gantry_lint
+      - run: python scripts/gantry_lint.py
         env:
           # Provide whatever credentials your embedder needs — e.g. for
           # OpenAIEmbedder, set OPENAI_API_KEY. Without these, the
@@ -830,7 +833,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 ```
 
-The bundled CLI boots with demo tools and an in-memory embedder. For details and customization options, see [docs/cli.md](docs/cli.md).
+For more CLI details and customization options, see [docs/cli.md](docs/cli.md).
 
 ## Documentation
 
