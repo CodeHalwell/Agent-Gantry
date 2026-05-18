@@ -124,6 +124,14 @@ class ToolDefinition(BaseModel):
 
     model_config = ConfigDict(extra="ignore", validate_assignment=True)
 
+    @field_validator("name", "version", "namespace")
+    @classmethod
+    def validate_identifiers(cls, v: str) -> str:
+        """Validate that identifiers do not contain newlines."""
+        if "\n" in v or "\r" in v:
+            raise ValueError("Value cannot contain newline characters")
+        return v
+
     @field_validator("name")
     @classmethod
     def validate_name(cls, v: str) -> str:
