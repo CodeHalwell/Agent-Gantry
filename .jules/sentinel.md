@@ -26,3 +26,11 @@
 **Vulnerability:** The `PGVectorStore` implementation used string formatting to insert the `{self._table_name}` into raw SQL queries without double quotes (e.g., `CREATE TABLE IF NOT EXISTS {self._table_name}`). While the table name was validated against a strict regex, if validation were to fail or be bypassed, or if a table name matched a reserved SQL keyword, it could lead to SQL injection or syntax errors because PostgreSQL identifiers should be double-quoted when constructed dynamically.
 **Learning:** Even when SQL identifiers (like table or column names) are validated using strict regular expressions, they must always be properly double-quoted when injected directly into raw SQL strings. This provides a critical second layer of defense (defense-in-depth) against injection vulnerabilities and prevents syntax errors from reserved keyword collisions.
 **Prevention:** Always wrap dynamically injected SQL identifiers in double quotes (e.g., `"{table_name}"`) when using string interpolation or f-strings in Python for database queries.
+## 2026-05-18 - [HIGH] Fix regex bypass via newline injection in tool identifier validation
+**Vulnerability:** The `ToolDefinition.name` and `version` fields were validated using Pydantic's `Field(pattern=...)` which uses the Rust regex crate. The Rust regex engine's `$` anchor matches the end of the string OR the end of the line, meaning that if a trailing newline was present (e.g., `"valid_name
+"`), the pattern validation would pass, potentially allowing log injection or HTTP header injection vulnerabilities. The `namespace` field lacked newline validation entirely.
+**Learning:** In Pydantic v2, `Field(pattern=...)` uses the Rust `regex` crate, which does not support the `\Z` anchor (absolute end of string) and will raise a `SchemaError`. Furthermore, just checking `.endswith('
+')` is insufficient security theater since newlines can be injected into the middle of the string or followed by spaces.
+**Prevention:** To explicitly reject newlines and avoid security bypasses in Pydantic models, use a custom `@field_validator` checking `"
+" in v or "" in v` across the entire string rather than relying on regex `$` or checking `.endswith('
+')`.
