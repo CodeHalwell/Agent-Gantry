@@ -760,9 +760,69 @@ agent-gantry sync --dry-run                    # which tools would (re-)embed an
 agent-gantry install-skill --target ./skills   # install the bundled Claude Skill
 ```
 
-`lint` flags three patterns that silently degrade routing quality: tool descriptions that name *other* registered tools (the embedding pulls them toward the wrong queries), pairs of tools with >0.85 cosine similarity (probably should be merged or differentiated), and tags that appear on more than half the registry (low discriminative value).
+`lint` flags three patterns that silently degrade routing quality: tool descriptions that name *other* registered tools (the embedding pulls them toward the wrong queries), pairs of tools with >0.85 cosine similarity (probably should be merged or differentiated), and tags that appear on more than half the registry (low discriminative value). Exit code is `1` when any issues are flagged, `0` when the registry is clean — so it drops into any CI runner that respects exit codes.
 
-The CLI boots with demo tools and an in-memory embedder. For details and customization options, see [docs/cli.md](docs/cli.md).
+The bundled `agent-gantry` entrypoint boots with demo tools, so for your own registry wire a tiny wrapper that imports your `AgentGantry` instance and calls `analyze_registry()` directly:
+
+```python
+# scripts/gantry_lint.py
+import asyncio, sys
+from my_app.tools import gantry  # your configured AgentGantry instance
+
+async def _run() -> int:
+    analysis = await gantry.analyze_registry()
+    print(analysis.format_text())
+    return 1 if not analysis.empty else 0
+
+if __name__ == "__main__":
+    sys.exit(asyncio.run(_run()))
+```
+
+### `lint` as a pre-commit hook
+
+Add a `local` hook to `.pre-commit-config.yaml` so the registry gets checked on every commit that touches tool definitions:
+
+```yaml
+repos:
+  - repo: local
+    hooks:
+      - id: agent-gantry-lint
+        name: agent-gantry lint
+        entry: python -m scripts.gantry_lint
+        language: system
+        pass_filenames: false
+        files: ^my_app/tools/.*\.py$
+```
+
+`pass_filenames: false` keeps the hook running once per commit instead of once per file, and the `files:` filter skips it on commits that don't touch the registry.
+
+### `lint` in GitHub Actions
+
+```yaml
+# .github/workflows/gantry-lint.yml
+name: gantry-lint
+on:
+  pull_request:
+    paths:
+      - 'my_app/tools/**'
+      - 'pyproject.toml'
+  push:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -e .
+      - run: python -m scripts.gantry_lint
+```
+
+The bundled CLI boots with demo tools and an in-memory embedder. For details and customization options, see [docs/cli.md](docs/cli.md).
 
 ## Documentation
 
