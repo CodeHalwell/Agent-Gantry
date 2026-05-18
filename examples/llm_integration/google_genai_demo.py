@@ -75,14 +75,34 @@ async def main():
         model="gemini-2.5-flash", contents=user_query, config=config
     )
 
-    # Inspect response for function calls
+    # Inspect response for function calls and complete the round-trip
     if response.function_calls:
+        # Build function response parts for each call, then send them back.
+        # For Gemini 2.x models each FunctionResponse must echo the matching
+        # `id` from the FunctionCall so the model can correlate parallel calls.
+        # Source: https://ai.google.dev/gemini-api/docs/function-calling
+        function_response_parts = []
         for fn in response.function_calls:
             print(f"Gemini decided to call: {fn.name}({fn.args})")
-
-            # Execute securely via Gantry
             result = await gantry.execute(ToolCall(tool_name=fn.name, arguments=dict(fn.args)))
             print(f"Execution Result: {result.result}")
+            fn_response = types.Part.from_function_response(
+                name=fn.name,
+                response={"result": result.result if result.result is not None else ""},
+            )
+            function_response_parts.append(fn_response)
+
+        # Continue the conversation with the tool results
+        followup = await client.aio.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                user_query,
+                response.candidates[0].content,  # model's function_call turn
+                types.Content(role="user", parts=function_response_parts),
+            ],
+            config=config,
+        )
+        print(f"Final answer: {followup.text}")
 
     # --- Scenario: Using the Decorator ---
     print("\n--- Scenario: Using @with_semantic_tools Decorator (RECOMMENDED) ---")

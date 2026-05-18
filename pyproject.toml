@@ -67,21 +67,23 @@ agent-frameworks = [
     # crewai==1.6.1 co-installs with agent-framework. For crewai 1.14.4 (standalone),
     # install in a separate environment without agent-framework.
     "crewai>=1.6.1",
-    "langchain>=1.3.0",
+    "langchain>=1.3.1",
     "langchain-openai>=1.2.1",
     # langchain 1.3.0 GA (released 2026-05-14) lifted the langgraph<1.2.0 upper bound.
     # Floor bumped from 1.1.10 to 1.2.0.
     "langgraph>=1.2.0",
-    "llama-index-core>=0.14.21",
-    "llama-index-llms-openai>=0.7.7",
-    # semantic-kernel 1.42.0 (latest stable 2026-05-15) relaxes the pydantic
-    # upper bound to <2.14 (was <2.12 in <=1.41.x), but retains an opentelemetry-api
-    # version incompatibility with agent-framework on some Python versions. Until that
-    # conflict is confirmed resolved, the floor stays at >=1.36.0. Upgrade to 1.42.0
-    # in a standalone environment without agent-framework. Note: the previous pydantic
-    # conflict with google-adk 1.33.0 is now moot for semantic-kernel alone (1.42.0
-    # allows pydantic>=2.12), but google-adk 1.33.0 also requires langgraph<0.4.8
-    # which conflicts with langgraph>=1.2.0 in this extra (see google-adk comment).
+    "llama-index-core>=0.14.22",
+    "llama-index-llms-openai>=0.7.8",
+    # semantic-kernel 1.42.0 (latest stable 2026-05-18) requires opentelemetry-api~=1.24
+    # (i.e. >=1.24.0,<2.0.0). agent-framework-core 1.4.0 requires opentelemetry-api
+    # >=1.39.0,<2. These ranges formally overlap at >=1.39.0,<2.0.0, so the resolver
+    # should pick a satisfying version. To confirm: run `uv sync --all-extras` with
+    # semantic-kernel>=1.42.0 and verify `uv` selects an opentelemetry-api>=1.39.0.
+    # Until that co-install is verified in CI, the floor stays at >=1.36.0. Upgrade to
+    # 1.42.0 in a standalone environment without agent-framework in the meantime.
+    # Note: the previous pydantic conflict with google-adk 1.33.0 is now moot for
+    # semantic-kernel alone (1.42.0 allows pydantic<2.14), but google-adk 1.33.0 also
+    # requires langgraph<0.4.8 which conflicts with langgraph>=1.2.0 in this extra.
     "semantic-kernel>=1.36.0",
     # google-adk 1.33.0 (latest, 2026-05-08) has two separate conflicts in this
     # combined extra:
@@ -125,7 +127,7 @@ embeddings = [
     "sentence-transformers>=2.2.0",
 ]
 openai = [
-    "openai>=2.36.0",
+    "openai>=2.37.0",
 ]
 cohere = [
     "cohere>=5.0.0",
@@ -168,7 +170,7 @@ anthropic = [
     "anthropic>=0.102.0",
 ]
 google-genai = [
-    # google-genai 2.3.0 (latest stable 2026-05-15) introduces breaking changes only
+    # google-genai 2.4.0 (latest stable 2026-05-18) introduces breaking changes only
     # in the Interactions API; GenerateContent and function calling are entirely
     # unaffected. google-adk (in the agent-frameworks extra) requires google-genai<2.0.0
     # across all versions up to 1.33.0, so the all[] extra stays at the 1.x floor.
@@ -186,7 +188,7 @@ mistral = [
     # AsyncOpenAI(). The MistralAdapter in agent_gantry.adapters.tool_spec
     # continues to translate tool schemas correctly for both patterns.
     # Install with: pip install "agent-gantry[mistral]"
-    "openai>=2.36.0",
+    "openai>=2.37.0",
 ]
 groq = [
     "groq>=1.2.0",
@@ -194,7 +196,7 @@ groq = [
 # Combined LLM provider dependencies
 llm-providers = [
     # mistralai package is quarantined on PyPI (2026-05-12). The mistral extra
-    # resolves to openai>=2.36.0 (Mistral is OpenAI-compatible). Including it
+    # resolves to openai>=2.37.0 (Mistral is OpenAI-compatible). Including it
     # here ensures [all] users inherit the mistral path and any future
     # Mistral-specific dependencies are picked up automatically.
     "agent-gantry[openai,anthropic,google-genai,google-vertexai,mistral,groq]",
