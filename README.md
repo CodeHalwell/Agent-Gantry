@@ -766,7 +766,9 @@ The bundled `agent-gantry` entrypoint boots with demo tools, so for your own reg
 
 ```python
 # scripts/gantry_lint.py
-import asyncio, sys
+import asyncio
+import sys
+
 from my_app.tools import gantry  # your configured AgentGantry instance
 
 async def _run() -> int:
@@ -805,6 +807,7 @@ on:
   pull_request:
     paths:
       - 'my_app/tools/**'
+      - 'scripts/gantry_lint.py'
       - 'pyproject.toml'
   push:
     branches: [main]
@@ -820,6 +823,11 @@ jobs:
           cache: pip
       - run: pip install -e .
       - run: python -m scripts.gantry_lint
+        env:
+          # Provide whatever credentials your embedder needs — e.g. for
+          # OpenAIEmbedder, set OPENAI_API_KEY. Without these, the
+          # analyze_registry() call fails in the embedding phase.
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 ```
 
 The bundled CLI boots with demo tools and an in-memory embedder. For details and customization options, see [docs/cli.md](docs/cli.md).
