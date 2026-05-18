@@ -61,3 +61,7 @@
 ## 2026-05-15 - [Semantic Grouping for Navigation Submenus]
 **Learning:** When building complex sidebar navigation with categorized sections (e.g., using `<div>` for titles above `<ul>` submenus), screen readers announce the submenus as isolated lists without context. Users cannot easily discern which category the list belongs to.
 **Action:** Always associate navigation section titles with their respective submenus by giving the title an `id` and adding `aria-labelledby="[id]"` to the `<ul>` element. This ensures screen readers announce the category name when entering the list.
+
+## 2026-05-18 - [Visual Hierarchy in Search Inputs]
+**Learning:** When designing search inputs, the text placeholder alone isn't always enough to establish visual hierarchy. Adding a persistent search icon ensures immediate recognizability, while applying `pointer-events: none` prevents the icon from blocking the input's clickable area.
+**Action:** Always add a visual search icon (like a magnifying glass) inside search inputs to improve immediate recognizability, ensuring it has `pointer-events: none` and appropriate padding on the input text.
