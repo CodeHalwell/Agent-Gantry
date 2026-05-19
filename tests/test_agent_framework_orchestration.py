@@ -1556,7 +1556,13 @@ class _KeywordEmbedder:
         import math
         lower = (text or "").lower()
         counts = [float(lower.count(kw)) for kw in self._VOCAB]
-        norm = math.sqrt(sum(c * c for c in counts))
+
+        # ⚡ Bolt: Calculate squared sum in an inline loop to reduce generator overhead
+        norm_sq = 0.0
+        for c in counts:
+            norm_sq += c * c
+        norm = math.sqrt(norm_sq)
+
         if norm == 0:
             return [0.0] * len(self._VOCAB)
         return [c / norm for c in counts]

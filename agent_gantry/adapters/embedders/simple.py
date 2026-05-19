@@ -75,7 +75,11 @@ class SimpleEmbedder(EmbeddingAdapter):
             idx = int(hashlib.sha256(token.encode()).hexdigest(), 16) % self._dimension
             vec[idx] += 1.0
 
-        norm = math.sqrt(sum(x * x for x in vec))
+        # ⚡ Bolt: Calculate squared sum in an inline loop to reduce generator overhead
+        norm_sq = 0.0
+        for x in vec:
+            norm_sq += x * x
+        norm = math.sqrt(norm_sq)
         if norm == 0.0:
             return vec
         return [x / norm for x in vec]

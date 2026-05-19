@@ -29,3 +29,7 @@
 ## 2023-10-27 - Inline vector dot product and norm accumulation
 **Learning:** In Python, calculating vector math (like cosine similarity) using multiple generator expressions (e.g., `sum(x * y for...)` and `math.sqrt(sum(x * x for...))`) is inefficient. Replacing these with a single-pass inline `for` loop that accumulates the dot product and squared sums simultaneously significantly improves performance by reducing generator overhead and redundant iterations.
 **Action:** When calculating similarity or distance manually between Python lists, write a single `for x, y in zip(a, b):` loop rather than using multiple `sum()` calls.
+
+## 2026-05-19 - Inline loop for calculating squared sums
+**Learning:** Generator expressions inside `math.sqrt(sum(x * x for x in vec))` have non-trivial performance overhead in pure Python because of the cost of setting up the generator frame and performing internal iteration steps.
+**Action:** Replace `math.sqrt(sum(x * x ...))` patterns with an inline `for` loop that accumulates the sum of squares directly before applying `math.sqrt()`. This applies significantly to vector operations in embedders like `SimpleEmbedder`.
