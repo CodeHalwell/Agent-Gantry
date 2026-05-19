@@ -11,7 +11,13 @@ Compatibility:
     - AutoGen v0.4+ (AG2): ✅ Compatible
     - AutoGen v0.2: ❌ Not compatible (breaking changes)
 
-Migration Notes:
+Migration Notes (AG2 → Microsoft Agent Framework):
+    Microsoft Agent Framework (MAF) is Microsoft's stated successor direction to AutoGen.
+    For teams evaluating MAF, see ``examples/agent_frameworks/agent_framework_example.py``
+    for the idiomatic Gantry + MAF integration pattern, including multi-agent workflows.
+    This example remains fully supported for teams staying on AG2.
+
+Migration Notes (AutoGen v0.2 → v0.4):
     AutoGen v0.4 uses a new async, event-driven API:
     - autogen_agentchat: High-level agent chat API
     - autogen_ext: Extensions for model providers

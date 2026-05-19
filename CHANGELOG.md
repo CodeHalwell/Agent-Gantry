@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`anthropic` floor bumped to `>=0.103.0`** (was `>=0.102.0`). Released
+  2026-05-19; adds self-hosted sandbox helpers for Claude Managed Agents (CMA).
+  No breaking changes; no Gantry code changes required.
+  *Risk: safe internal — floor bump only.*
+  Source: https://pypi.org/pypi/anthropic/json
+
+- **`llama-index-core` floor bumped to `>=0.14.22`** (was `>=0.14.21`). Patch
+  release; no API changes.
+  *Risk: safe internal — floor bump only.*
+  Source: https://pypi.org/pypi/llama-index-core/json
+
+- **`pyproject.toml` held-package comments updated** to reflect latest stable
+  versions: `crewai` 1.14.5 (was 1.14.4), `google-adk` 1.34.0 (was 1.33.0),
+  `google-genai` 2.4.0 (was 2.3.0). Floor pins and conflict notes are unchanged.
+
+## [0.4.0+2026-05-16] — pre-release patch (CHANGELOG entry retroactively named)
+
 ### Added
 
 - **`AnthropicClient.create_message()` now accepts `output_schema`** — an optional
