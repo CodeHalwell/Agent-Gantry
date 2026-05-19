@@ -344,7 +344,7 @@ class ExecutionEngine:
     ) -> ToolResult | None:
         """Check security policy permissions."""
         if self._security_policy:
-            from agent_gantry.core.security import ConfirmationRequiredError
+            from agent_gantry.core.security import ConfirmationRequiredError, PermissionDeniedError
 
             try:
                 self._security_policy.check_permission(call.tool_name, call.arguments)
@@ -353,6 +353,20 @@ class ExecutionEngine:
                     tool_name=call.tool_name,
                     status=ExecutionStatus.PENDING_CONFIRMATION,
                     error="Tool requires human confirmation",
+                    queued_at=queued_at,
+                    completed_at=datetime.now(timezone.utc),
+                    trace_id=trace_id,
+                    span_id=span_id,
+                )
+                if self._telemetry:
+                    await self._telemetry.record_execution(call, result)
+                return result
+            except PermissionDeniedError as e:
+                result = ToolResult(
+                    tool_name=call.tool_name,
+                    status=ExecutionStatus.FAILURE,
+                    error=str(e),
+                    error_type="PermissionDeniedError",
                     queued_at=queued_at,
                     completed_at=datetime.now(timezone.utc),
                     trace_id=trace_id,

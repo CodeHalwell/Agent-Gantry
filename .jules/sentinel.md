@@ -34,3 +34,8 @@
 **Prevention:** To explicitly reject newlines and avoid security bypasses in Pydantic models, use a custom `@field_validator` checking `"
 " in v or "" in v` across the entire string rather than relying on regex `$` or checking `.endswith('
 ')`.
+
+## 2024-05-18 - [MEDIUM] Fix unhandled PermissionDeniedError in executor
+**Vulnerability:** The `ExecutionEngine._check_security_policy` method caught `ConfirmationRequiredError` raised by `SecurityPolicy.check_permission` but failed to catch `PermissionDeniedError`. When a domain was restricted by the security policy or a rate limit was reached, an unhandled exception would bubble up instead of cleanly returning a failed `ToolResult`.
+**Learning:** Security policy exceptions (like authorization and permission errors) must be exhaustively caught within the tool execution pipeline to ensure the engine gracefully and securely fails, logging the outcome without crashing the parent application or exposing raw stack traces.
+**Prevention:** Always verify that every custom exception raised by a security or validation component is explicitly handled in the calling method, specifically when translating application exceptions into structured API or execution responses like `ToolResult`.
