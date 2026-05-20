@@ -50,16 +50,21 @@ dev = [
     "python-dotenv>=1.0.0",
 ]
 agent-frameworks = [
-    # Bump to 1.4.0 (released 2026-05-15): picks up MCP tool-call metadata forwarding,
-    # path-traversal fix in checkpoint storage, and A2A SDK v1.0 alignment inside AF.
-    # Two breaking changes in 1.4.0: (1) SkillFrontmatter extraction from file-based
-    # skills (experimental skills API, not used by Gantry); (2) DevUI CORS tightening
-    # (not relevant to library code). 1.3.0 breaking changes also apply: (3) skills
-    # multi-source architecture restructuring (experimental, not used by Gantry);
-    # (4) removal of bespoke Foundry toolbox helpers in favour of MCP (not used by
-    # Gantry). Prior 1.2.2 note retained: sequential-approval and concurrent workflow
-    # terminal outputs return as AgentResponse — use str() or .content to extract text.
-    "agent-framework>=1.4.0,<2.0.0",
+    # Bump to 1.5.0 (released 2026-05-20): key fix — tools injected by
+    # ContextProvider.before_run are now properly included in GitHub Copilot session
+    # creation (#5780), directly benefiting GantryContextProvider; enhanced handling
+    # of intermediate outputs across workflows and orchestrations (#5623);
+    # agent-framework-orchestrations advanced to RC (1.0.0rc1). Durabletask floor
+    # set to >=1.4.0 with exclusions for 1.4.1–1.4.3 (handled by AF's own deps).
+    # No breaking changes in 1.5.0. 1.4.0 breaking changes: (1) SkillFrontmatter
+    # extraction from file-based skills (experimental, not used by Gantry);
+    # (2) DevUI CORS tightening (not relevant to library code). 1.3.0 breaking
+    # changes: (3) skills multi-source architecture restructuring (experimental, not
+    # used by Gantry); (4) removal of bespoke Foundry toolbox helpers in favour of
+    # MCP (not used by Gantry). Prior 1.2.2 note retained: sequential-approval and
+    # concurrent workflow terminal outputs return as AgentResponse — use str() or
+    # .content to extract text.
+    "agent-framework>=1.5.0,<2.0.0",
     "autogen-agentchat>=0.7.5",
     "autogen-ext[openai]>=0.7.5",
     # crewai 1.14.5 (latest stable) pins opentelemetry-api~=1.34.0 (<1.35), which
@@ -80,20 +85,20 @@ agent-frameworks = [
     # version incompatibility with agent-framework on some Python versions. Until that
     # conflict is confirmed resolved, the floor stays at >=1.36.0. Upgrade to 1.42.0
     # in a standalone environment without agent-framework. Note: the previous pydantic
-    # conflict with google-adk 1.33.0 is now moot for semantic-kernel alone (1.42.0
-    # allows pydantic>=2.12), but google-adk 1.33.0 also requires langgraph<0.4.8
+    # conflict with google-adk <=1.41.x is now moot for semantic-kernel alone (1.42.0
+    # allows pydantic>=2.12), but google-adk 2.0.0 still requires langgraph<0.4.8
     # which conflicts with langgraph>=1.2.0 in this extra (see google-adk comment).
     "semantic-kernel>=1.36.0",
-    # google-adk 1.34.0 (latest, 2026-05-18) has two separate conflicts in this
-    # combined extra:
+    # google-adk 2.0.0 (latest stable, 2026-05-20) has two separate conflicts in
+    # this combined extra:
     # (1) Requires pydantic>=2.12, which conflicted with semantic-kernel<=1.41.x
     #     (pydantic<2.12). semantic-kernel 1.42.0 relaxes to pydantic<2.14, so
     #     the pydantic conflict is resolved once semantic-kernel is upgraded there.
     # (2) Requires langgraph<0.4.8 (via extensions extra), which is incompatible
     #     with langgraph>=1.2.0 in this extra. This conflict cannot be resolved by
-    #     a simple floor bump and remains the primary blocker for google-adk 1.34.0
+    #     a simple floor bump and remains the primary blocker for google-adk 2.0.0
     #     in the combined agent-frameworks extra.
-    # Floor stays at 1.14.1. To use google-adk 1.34.0, install it in a standalone
+    # Floor stays at 1.14.1. To use google-adk 2.0.0, install it in a standalone
     # environment without langchain/langgraph.
     "google-adk>=1.14.1",
 ]
@@ -166,9 +171,10 @@ a2a = [
 ]
 # LLM provider SDK dependencies
 anthropic = [
-    # 0.103.0 (released 2026-05-19): adds self-hosted sandbox helpers for Claude
-    # Managed Agents. No breaking changes; no Gantry code changes required.
-    "anthropic>=0.103.0",
+    # 0.103.1 (released 2026-05-19): patch — SessionToolRunner no longer processes
+    # tool calls it does not own. No breaking changes; no Gantry code changes required.
+    # 0.103.0: added self-hosted sandbox helpers for Claude Managed Agents.
+    "anthropic>=0.103.1",
 ]
 google-genai = [
     # google-genai 2.4.0 (latest stable 2026-05-19) introduces breaking changes only
