@@ -29,3 +29,7 @@
 ## 2023-10-27 - Inline vector dot product and norm accumulation
 **Learning:** In Python, calculating vector math (like cosine similarity) using multiple generator expressions (e.g., `sum(x * y for...)` and `math.sqrt(sum(x * x for...))`) is inefficient. Replacing these with a single-pass inline `for` loop that accumulates the dot product and squared sums simultaneously significantly improves performance by reducing generator overhead and redundant iterations.
 **Action:** When calculating similarity or distance manually between Python lists, write a single `for x, y in zip(a, b):` loop rather than using multiple `sum()` calls.
+
+## 2023-10-27 - Fast reverse iteration for sorted sliding windows
+**Learning:** Calculating counts over a chronologically sorted collection (like a sliding window rate limiter in `agent_gantry/core/rate_limiter.py`) using generator expressions that iterate over the entire collection (e.g., `sum(1 for t in history if t >= threshold)`) is highly inefficient for large windows.
+**Action:** Use a reverse iterator (`for t in reversed(history):`) and break early when `t < threshold` to reduce O(N) operations to O(1).

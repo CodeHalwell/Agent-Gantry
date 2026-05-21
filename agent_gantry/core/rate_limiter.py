@@ -72,7 +72,9 @@ class RateLimiter:
         # entries leak at the rate of one lock per distinct loop ever used,
         # which is a bounded constant in practice (typically 1–2 loops per
         # process). Closed loops are pruned lazily on lookup.
-        self._loop_locks: dict[int, tuple[weakref.ref[asyncio.AbstractEventLoop], asyncio.Lock]] = {}
+        self._loop_locks: dict[
+            int, tuple[weakref.ref[asyncio.AbstractEventLoop], asyncio.Lock]
+        ] = {}
 
     def _lock_for_running_loop(self) -> asyncio.Lock:
         """Return a per-running-loop ``asyncio.Lock``.
@@ -93,9 +95,7 @@ class RateLimiter:
         lock = asyncio.Lock()
         self._loop_locks[key] = (weakref.ref(loop), lock)
         # Opportunistic cleanup of stale entries (closed loops).
-        for stale_key in [
-            k for k, (ref, _l) in self._loop_locks.items() if ref() is None
-        ]:
+        for stale_key in [k for k, (ref, _l) in self._loop_locks.items() if ref() is None]:
             self._loop_locks.pop(stale_key, None)
         return lock
 
@@ -189,7 +189,15 @@ class RateLimiter:
 
         # Check minute limit (count only entries within the last 60 seconds)
         minute_ago = now - 60
-        recent_count = sum(1 for t in history if t >= minute_ago)
+
+        # ⚡ Bolt: Iterate in reverse and break early instead of using generator over entire history
+        recent_count = 0
+        for t in reversed(history):
+            if t >= minute_ago:
+                recent_count += 1
+            else:
+                break
+
         if recent_count >= self._config.max_calls_per_minute:
             # Find the oldest entry within the minute window for retry_after
             for t in history:
