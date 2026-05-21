@@ -43,7 +43,7 @@ class CohereReranker(RerankerAdapter):
             ImportError: If cohere package is not installed
         """
         try:
-            from cohere import AsyncClient
+            from cohere import AsyncClientV2
         except ImportError as exc:
             raise ImportError(
                 "Cohere package is not installed. Install it with:\n"
@@ -53,7 +53,7 @@ class CohereReranker(RerankerAdapter):
         api_key = api_key or os.getenv("COHERE_API_KEY")
         self._model = model or "rerank-english-v3.0"
         self._max_chunks_per_doc = max_chunks_per_doc
-        self._client = AsyncClient(api_key=api_key) if api_key else None
+        self._client = AsyncClientV2(api_key=api_key) if api_key else None
 
         logger.info(f"Initialized CohereReranker with model={self._model}")
 
