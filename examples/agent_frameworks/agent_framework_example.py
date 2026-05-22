@@ -1,15 +1,16 @@
 """
-Microsoft Agent Framework (1.4.0) integration example.
+Microsoft Agent Framework (1.6.0) integration example.
 
 Demonstrates how Agent-Gantry's semantic routing reduces token usage in
 multi-agent systems by surfacing only the relevant tools per query.
 
-The ``agent-framework`` floor in ``pyproject.toml`` is ``>=1.4.0,<2.0.0``.
+The ``agent-framework`` floor in ``pyproject.toml`` is ``>=1.6.0,<2.0.0``.
 ``GantryToolBridge`` works against any AF release in that range; the bridge
-itself is API-stable across 1.3.x → 1.4.x and is unaffected by the 1.4.0
-changes (MCP tool-call metadata, SkillFrontmatter extraction, A2A SDK v1.0
-migration, and DevUI security hardening — all upstream-only APIs or
-infrastructure that Gantry does not consume).
+itself is API-stable across 1.4.x → 1.6.x and is unaffected by the 1.6.0
+changes (shell tool, non-streaming A2A transport, Copilot session improvements,
+and instrumentation-by-default — all upstream-only features or infrastructure
+that Gantry does not consume directly). Note: AF 1.6.0 enables OpenTelemetry
+instrumentation by default; to opt out set ``OTEL_SDK_DISABLED=true``.
 
 Covers three construction patterns:
 

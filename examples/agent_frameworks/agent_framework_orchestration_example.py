@@ -1,5 +1,5 @@
 """
-Microsoft Agent Framework 1.4.0 — multi-agent orchestration with Agent-Gantry.
+Microsoft Agent Framework 1.6.0 — multi-agent orchestration with Agent-Gantry.
 
 Demonstrates three production orchestration patterns, each powered by Gantry's
 semantic tool routing:
@@ -30,6 +30,13 @@ Version notes:
   context providers. Gantry has not yet exposed an ``allowed_tools``
   pass-through in :class:`GantryToolBridge`; subset selection is still
   achieved via ``query`` + ``limit``.
+* AF 1.5.0 records the actual served model from Azure OpenAI; tools from
+  ``ContextProvider.before_run`` are now included in GitHub Copilot sessions
+  (positive change for :class:`GantryContextProvider`).
+* AF 1.6.0 enables OpenTelemetry instrumentation by default (breaking for
+  deployments not expecting automatic tracing). Set ``OTEL_SDK_DISABLED=true``
+  to opt out. Users running :class:`GantryObservabilityMiddleware` alongside
+  AF 1.6.0 will observe nested spans; both layers remain functionally correct.
 
 Run:
 
