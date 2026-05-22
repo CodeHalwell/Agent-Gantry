@@ -318,10 +318,23 @@ async def test_concurrent_orchestration(bridge: GantryToolBridge) -> None:
 
     # Simulate concurrent execution directly (the orchestrator would dispatch
     # both agents against the same input; we verify both succeed in parallel).
-    r_a, r_b = await asyncio.gather(
-        agent_a.run("What's the weather in Tokyo?"),
-        agent_b.run("Lookup order ORD-7"),
-    )
+    #
+    # AF 1.6.0 introduced AgentTelemetryLayer which calls ContextVar.set()
+    # synchronously inside Agent.run() (a regular def, not async def).  When
+    # agent.run() is passed directly as an argument to asyncio.gather(), Python
+    # evaluates the call in the *caller's* context before any Tasks are created;
+    # asyncio.gather then copies that context into each Task, so the tokens
+    # belong to the original context and ContextVar.reset() raises ValueError in
+    # the Task's copied context.  Wrapping each call in an async coroutine
+    # ensures run() (and its synchronous ContextVar.set()) executes *inside* the
+    # Task's own context, keeping set/reset in the same context.
+    async def _run_a() -> Any:
+        return await agent_a.run("What's the weather in Tokyo?")
+
+    async def _run_b() -> Any:
+        return await agent_b.run("Lookup order ORD-7")
+
+    r_a, r_b = await asyncio.gather(_run_a(), _run_b())
     assert "sunny" in r_a.text.lower()
     assert "shipped" in r_b.text.lower()
 
