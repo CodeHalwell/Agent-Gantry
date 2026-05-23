@@ -141,14 +141,21 @@
         </div>
       `;
       searchResults.style.display = "block";
+      if (searchInput) {
+        searchInput.setAttribute("aria-expanded", "true");
+        searchInput.removeAttribute("aria-activedescendant");
+      }
       announceSearch("No results found. Try adjusting your search terms.");
       return;
     }
 
-    results.forEach((result) => {
+    results.forEach((result, index) => {
       const resultItem = document.createElement("a");
       resultItem.className = "search-result-item";
       resultItem.href = result.url;
+      resultItem.id = `search-result-item-${index}`;
+      resultItem.setAttribute("role", "option");
+      resultItem.setAttribute("aria-selected", "false");
 
       const resultTitle = document.createElement("div");
       resultTitle.className = "search-result-title";
@@ -164,6 +171,10 @@
     });
 
     searchResults.style.display = "block";
+    if (searchInput) {
+      searchInput.setAttribute("aria-expanded", "true");
+      searchInput.removeAttribute("aria-activedescendant");
+    }
     announceSearch(
       `${results.length} results found. Use up and down arrows to navigate.`,
     );
@@ -175,6 +186,10 @@
   function hideResults() {
     if (searchResults && searchResults.style.display !== "none") {
       searchResults.style.display = "none";
+      if (searchInput) {
+        searchInput.setAttribute("aria-expanded", "false");
+        searchInput.removeAttribute("aria-activedescendant");
+      }
       announceSearch("Search results closed");
     }
   }
@@ -188,10 +203,17 @@
       return;
     }
 
+    searchInput.setAttribute("role", "combobox");
+    searchInput.setAttribute("aria-expanded", "false");
+    searchInput.setAttribute("aria-autocomplete", "list");
+    searchInput.setAttribute("aria-controls", "search-results-listbox");
+
     // Create results container if it doesn't exist
     searchResults = document.querySelector(".search-results");
     if (!searchResults) {
       searchResults = document.createElement("div");
+      searchResults.id = "search-results-listbox";
+      searchResults.setAttribute("role", "listbox");
       searchResults.className = "search-results";
       searchResults.style.cssText = `
         position: absolute;
@@ -324,8 +346,13 @@
       }
 
       // Update active item
-      items.forEach((item) => item.classList.remove("active"));
+      items.forEach((item) => {
+        item.classList.remove("active");
+        item.setAttribute("aria-selected", "false");
+      });
       items[currentIndex].classList.add("active");
+      items[currentIndex].setAttribute("aria-selected", "true");
+      searchInput.setAttribute("aria-activedescendant", items[currentIndex].id);
       items[currentIndex].scrollIntoView({ block: "nearest" });
 
       const activeTitle = items[currentIndex].querySelector(

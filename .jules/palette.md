@@ -65,3 +65,7 @@
 ## 2026-05-18 - [Visual Hierarchy in Search Inputs]
 **Learning:** When designing search inputs, the text placeholder alone isn't always enough to establish visual hierarchy. Adding a persistent search icon ensures immediate recognizability, while applying `pointer-events: none` prevents the icon from blocking the input's clickable area.
 **Action:** Always add a visual search icon (like a magnifying glass) inside search inputs to improve immediate recognizability, ensuring it has `pointer-events: none` and appropriate padding on the input text.
+
+## 2026-05-19 - [ARIA Combobox for Search Inputs]
+**Learning:** For accessibility in custom search dropdowns (input + results list), implement the ARIA combobox pattern. Screen readers need these explicit roles and attributes to understand the relationship between the input field and the dynamic list of results, and to announce the currently active item during keyboard navigation.
+**Action:** Add `role="combobox"`, `aria-expanded`, `aria-autocomplete`, and `aria-controls` to the input, `role="listbox"` to the dropdown container, and use `aria-activedescendant` on the input combined with `role="option"` and `aria-selected` on the results to announce active items.
