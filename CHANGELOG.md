@@ -7,24 +7,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`AnthropicAdapter.to_provider_schema(strict=True)` now auto-injects
+  `additionalProperties: false`** into the emitted `input_schema`. Anthropic's
+  strict tool-use mode requires this field to activate grammar-constrained
+  sampling; previously the requirement was documented but not enforced, so
+  users who omitted it from their JSON Schema would silently get non-strict
+  behaviour. The original `ToolDefinition.parameters_schema` is never mutated
+  (a shallow copy is made). No change for `strict=False` (default).
+  *Risk: safe additive — only affects callers who explicitly pass `strict=True`;
+  the injected key is additive and may suppress an implicit `true` default on
+  very old schemas (check with `jsonschema` lint if concerned).*
+  Source: https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use
+
 ### Changed
 
-- **`anthropic` floor bumped to `>=0.103.0`** (was `>=0.102.0`). Released
-  2026-05-19; adds self-hosted sandbox helpers for Claude Managed Agents (CMA).
-  No breaking changes; no Gantry code changes required.
+- **`agent-framework` floor held at `>=1.5.0,<2.0.0`** — reverted the 1.6.0 bump
+  attempted in this audit cycle. AF 1.6.0 (released 2026-05-22) introduces
+  instrumentation enabled by default using `asyncio.ContextVar` tokens, which
+  triggers a hard `ValueError` when two `Agent.run()` calls are awaited
+  concurrently via `asyncio.gather()` or `TaskGroup`:
+  ```
+  ValueError: <Token var=<ContextVar name='inner_response_telemetry_captured_fields'>
+  ...> was created in a different Context
+  ```
+  The root cause is that `asyncio.gather()` creates a child asyncio context for
+  each coroutine; AF's `ContextVar.reset(token)` is then called from the parent
+  context (not the child context in which the token was issued), violating the
+  CPython invariant *"A token object cannot be used to reset the variable in a
+  context other than the one where it was created."*
+  This is an upstream bug in AF 1.6.0 that affects any concurrent agent usage
+  (not a Gantry issue). The floor will be bumped once AF releases a patch.
+  AF 1.5.0 features continue to benefit Gantry: intermediate output handling,
+  `ContextProvider.before_run` tools-in-session fix, Azure OpenAI recording.
+  *Risk: safe internal — revert-only; no Gantry code changes required.*
+  Source: https://pypi.org/pypi/agent-framework/json
+
+- **`openai` floor bumped to `>=2.38.0`** (was `>=2.37.0`). Released 2026-05-21;
+  adds `service_tier` parameter to `responses compact`, eager pydantic iterator
+  validation, and workload-identity auth cleanup. No breaking changes. Floor
+  updated in the `openai`, `mistral`, and `llm-providers` extras.
+  *Risk: safe internal — floor bump only.*
+  Source: https://pypi.org/pypi/openai/json
+
+- **`anthropic` floor bumped to `>=0.104.1`** (was `>=0.103.1`). 0.104.0 added
+  thinking-token-count beta in streaming; 0.104.1 (released 2026-05-22) patches a
+  bug where `encrypted_content` was not carried through the beta compaction
+  accumulator. No breaking changes; no Gantry code changes required.
   *Risk: safe internal — floor bump only.*
   Source: https://pypi.org/pypi/anthropic/json
+
+- **`langgraph` floor bumped to `>=1.2.1`** (was `>=1.2.0`). Patch release;
+  no API changes.
+  *Risk: safe internal — floor bump only.*
+  Source: https://pypi.org/pypi/langgraph/json
+
+- **`pyproject.toml` held-package comments updated** to reflect latest stable
+  versions: `google-genai` 2.6.0 (was 2.5.0), `google-adk` 2.1.0 (was 1.34.0,
+  major version bump — new Workflow Runtime and Task API; conflicts with
+  `langgraph>=1.2.1` prevent upgrade in the combined `agent-frameworks` extra).
+  Floor pins are unchanged; notes updated to document the google-adk 2.x conflict
+  and the standalone install path.
+  *Risk: safe internal — documentation only.*
+  Source: https://pypi.org/pypi/google-genai/json, https://pypi.org/pypi/google-adk/json
+
+- **`examples/llm_integration/google_genai_demo.py`**: Extended the function-call
+  scenario to show the full tool-result round-trip using the SDK-idiomatic
+  `types.Part.from_function_response()` helper with `id` forwarding for parallel
+  call correlation. Adds a follow-up `generate_content` call that includes the
+  model's function-call turn and the tool result so Gemini can compose a final
+  text answer.
+  *Risk: safe — example-only change.*
+  Source: https://ai.google.dev/gemini-api/docs/function-calling
+
+- **`GantryObservabilityMiddleware` docstring** updated with an AF 1.6.0
+  double-instrumentation note explaining the interaction with AF's new
+  default-enabled OTel spans and how to suppress them when a single span
+  source is preferred.
+  *Risk: safe internal — documentation only.*
 
 - **`llama-index-core` floor bumped to `>=0.14.22`** (was `>=0.14.21`). Patch
   release; no API changes.
   *Risk: safe internal — floor bump only.*
   Source: https://pypi.org/pypi/llama-index-core/json
-
-- **`pyproject.toml` held-package comments updated** to reflect latest stable
-  versions: `crewai` 1.14.5 (was 1.14.4), `google-adk` 1.34.0 (was 1.33.0),
-  `google-genai` 2.4.0 (was 2.3.0). Floor pins and conflict notes are unchanged.
-  *Risk: safe internal — documentation only.*
-  Source: `pyproject.toml`
 
 ## [0.4.0+2026-05-16] — pre-release patch (CHANGELOG entry retroactively named)
 

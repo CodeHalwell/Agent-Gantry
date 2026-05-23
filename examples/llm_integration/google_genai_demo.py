@@ -75,14 +75,46 @@ async def main():
         model="gemini-2.5-flash", contents=user_query, config=config
     )
 
-    # Inspect response for function calls
+    # Inspect response for function calls and send results back.
+    # Gemini requires a multi-turn exchange: the model's function_call Part
+    # and our function_response Part must be included in the next request so
+    # the model can compose a final text answer.
+    # Use types.Part.from_function_response() (recommended over raw dicts) and
+    # echo back the call id so the API can correlate parallel calls.
+    # Source: https://ai.google.dev/gemini-api/docs/function-calling
     if response.function_calls:
+        tool_result_parts = []
         for fn in response.function_calls:
             print(f"Gemini decided to call: {fn.name}({fn.args})")
 
             # Execute securely via Gantry
             result = await gantry.execute(ToolCall(tool_name=fn.name, arguments=dict(fn.args)))
             print(f"Execution Result: {result.result}")
+
+            # Build the function response Part using the SDK helper; include
+            # the call id to support parallel function calls correctly.
+            tool_result_parts.append(
+                types.Part.from_function_response(
+                    name=fn.name,
+                    response={"result": result.result},
+                    # id is present on google-genai >= 1.x for parallel calls
+                    **({"id": fn.id} if getattr(fn, "id", None) else {}),
+                )
+            )
+
+        # Send tool results back — include the original model response so Gemini
+        # has context, then append our function_response parts.
+        if tool_result_parts:
+            followup = await client.aio.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=[
+                    user_query,                      # original user message
+                    response.candidates[0].content,  # model's function_call turn
+                    types.Content(role="tool", parts=tool_result_parts),
+                ],
+                config=config,
+            )
+            print(f"Gemini final answer: {followup.text}")
 
     # --- Scenario: Using the Decorator ---
     print("\n--- Scenario: Using @with_semantic_tools Decorator (RECOMMENDED) ---")

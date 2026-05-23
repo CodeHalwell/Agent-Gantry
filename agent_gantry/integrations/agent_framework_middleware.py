@@ -208,8 +208,36 @@ class GantryApprovalMiddleware:
 
 
 class GantryObservabilityMiddleware:
-    """Factory wrapper for the observability middleware. See
-    :class:`GantryApprovalMiddleware` for the rationale."""
+    """Factory wrapper for the observability middleware.
+
+    Records every AF function invocation as a ``gantry.af_function_invocation``
+    telemetry span, exposing tool name, latency, and success signals through
+    whatever telemetry adapter is configured on the Gantry instance
+    (console, OpenTelemetry, custom).
+
+    **agent-framework ≥ 1.6.0 note — instrumentation enabled by default:**
+    Agent Framework 1.6.0 ships instrumentation enabled by default, meaning
+    AF will emit its own OpenTelemetry spans for every function invocation
+    (covering invocation timing and argument/result shapes).  When a user
+    also attaches ``GantryObservabilityMiddleware`` *and* configures an OTel
+    exporter, both span trees will appear in the tracing backend — one from
+    AF (invocation lifecycle) and one from Gantry (tool intent and result).
+    This is intentional: the two spans are complementary rather than
+    duplicates.  If you want only one source of truth, either omit this
+    middleware (rely on AF's built-in instrumentation) or suppress AF's
+    instrumentation by calling
+    ``agent_framework.telemetry.disable_instrumentation()`` before building
+    the agent.
+
+    .. note::
+        AF 1.6.0 has a known upstream bug: concurrent ``Agent.run()`` calls
+        via ``asyncio.gather()`` raise ``ValueError`` due to a ``ContextVar``
+        token being reset in a different asyncio context than it was created.
+        The Gantry package floor remains at ``>=1.5.0`` until a patch is
+        released.  This note will be removed when the floor is bumped.
+
+    See :class:`GantryApprovalMiddleware` for the factory-pattern rationale.
+    """
 
     def __new__(cls, gantry: AgentGantry) -> Any:
         _, observability_cls = _build_middleware_classes()

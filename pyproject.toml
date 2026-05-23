@@ -50,21 +50,27 @@ dev = [
     "python-dotenv>=1.0.0",
 ]
 agent-frameworks = [
-    # Bump to 1.5.0 (released 2026-05-20): improves intermediate output handling for
-    # workflows and orchestrations, fixes ContextProvider.before_run tools now being
-    # correctly included in session creation (directly benefits GantryContextProvider),
-    # adds Azure OpenAI served-model recording, and parses YAML block scalars in
-    # SKILL.md frontmatter. No breaking changes from 1.4.0 → 1.5.0; API surface
-    # (WorkflowBuilder, SequentialBuilder, HandoffBuilder, AgentExecutor, FunctionTool,
-    # ContextProvider, chat_middleware) is unchanged. Prior 1.4.0 breaking changes:
-    # (1) SkillFrontmatter extraction from file-based skills (experimental, not used
-    # by Gantry); (2) DevUI CORS tightening (not relevant to library code). Prior
-    # 1.3.0 breaking changes: (3) skills multi-source architecture restructuring
-    # (experimental, not used by Gantry); (4) removal of bespoke Foundry toolbox
-    # helpers in favour of MCP (not used by Gantry). Prior 1.2.2 note retained:
+    # Range: >=1.5.0,<1.6.0.  AF 1.6.0 (released 2026-05-22) is intentionally
+    # excluded: its default-enabled instrumentation uses asyncio.ContextVar
+    # tokens that cannot be reset across asyncio child contexts, causing:
+    #   ValueError: <Token ...> was created in a different Context
+    # in agent_framework/observability.py when two Agent.run() calls run
+    # concurrently via asyncio.gather() or TaskGroup.  This is an upstream
+    # bug in AF 1.6.0, not a Gantry issue.  The upper bound will be relaxed
+    # to <2.0.0 once AF releases a patch.
+    # AF 1.5.0 features retained: intermediate output handling,
+    # ContextProvider.before_run tools-in-session fix (directly benefits
+    # GantryContextProvider), Azure OpenAI recording, YAML block scalar parsing.
+    # Prior 1.4.0 breaking changes: (1) SkillFrontmatter extraction
+    # (experimental, not used by Gantry); (2) DevUI CORS tightening (not
+    # relevant). Prior 1.3.0 breaking changes: (3) skills multi-source
+    # restructuring (experimental, not used); (4) bespoke Foundry toolbox
+    # helpers removed in favour of MCP (not used). Prior 1.2.2 note retained:
     # sequential-approval and concurrent workflow terminal outputs return as
     # AgentResponse — use str() or .content to extract text.
-    "agent-framework>=1.5.0,<2.0.0",
+    # Source: https://pypi.org/pypi/agent-framework/json
+    #         https://github.com/microsoft/agent-framework/releases
+    "agent-framework>=1.5.0,<1.6.0",
     "autogen-agentchat>=0.7.5",
     "autogen-ext[openai]>=0.7.5",
     # crewai 1.14.5 (latest stable) pins opentelemetry-api~=1.34.0 (<1.35), which
@@ -75,9 +81,10 @@ agent-frameworks = [
     # langchain 1.3.1 (released 2026-05-16) — patch release; no API changes.
     "langchain>=1.3.1",
     "langchain-openai>=1.2.1",
-    # langchain 1.3.0 GA (released 2026-05-14) lifted the langgraph<1.2.0 upper bound.
-    # Floor bumped from 1.1.10 to 1.2.0.
-    "langgraph>=1.2.0",
+    # langgraph 1.2.1 (released 2026-05-22) — patch release; no API changes.
+    # Floor bumped from 1.2.0 to 1.2.1.
+    # Source: https://pypi.org/pypi/langgraph/json
+    "langgraph>=1.2.1",
     "llama-index-core>=0.14.22",
     "llama-index-llms-openai>=0.7.7",
     # semantic-kernel 1.42.0 (latest stable 2026-05-15) relaxes the pydantic
@@ -89,17 +96,19 @@ agent-frameworks = [
     # allows pydantic>=2.12), but google-adk 1.33.0 also requires langgraph<0.4.8
     # which conflicts with langgraph>=1.2.0 in this extra (see google-adk comment).
     "semantic-kernel>=1.36.0",
-    # google-adk 1.34.0 (latest, 2026-05-18) has two separate conflicts in this
-    # combined extra:
-    # (1) Requires pydantic>=2.12, which conflicted with semantic-kernel<=1.41.x
-    #     (pydantic<2.12). semantic-kernel 1.42.0 relaxes to pydantic<2.14, so
-    #     the pydantic conflict is resolved once semantic-kernel is upgraded there.
-    # (2) Requires langgraph<0.4.8 (via extensions extra), which is incompatible
-    #     with langgraph>=1.2.0 in this extra. This conflict cannot be resolved by
-    #     a simple floor bump and remains the primary blocker for google-adk 1.34.0
-    #     in the combined agent-frameworks extra.
-    # Floor stays at 1.14.1. To use google-adk 1.34.0, install it in a standalone
-    # environment without langchain/langgraph.
+    # google-adk 2.1.0 (latest stable, 2026-05-22) introduced a Workflow Runtime
+    # and Task API (major version bump from 1.x). Two separate conflicts prevent
+    # upgrading in this combined extra:
+    # (1) google-adk 2.x (like 1.34.x before it) requires langgraph<0.4.8 via
+    #     its extensions extra, which is incompatible with langgraph>=1.2.1 here.
+    #     This cannot be resolved by a simple floor bump and remains the primary
+    #     blocker for google-adk 2.x in the combined agent-frameworks extra.
+    # (2) Potential transitive pydantic / opentelemetry-api conflicts introduced
+    #     by 2.x internals require validation in an isolated environment first.
+    # Floor stays at 1.14.1. To use google-adk 2.1.0, install it in a standalone
+    # environment without langchain/langgraph:
+    #   pip install "agent-gantry[google-genai]" "google-adk>=2.1.0"
+    # Source: https://pypi.org/pypi/google-adk/json
     "google-adk>=1.14.1",
 ]
 example-tools = [
@@ -131,7 +140,11 @@ embeddings = [
     "sentence-transformers>=2.2.0",
 ]
 openai = [
-    "openai>=2.37.0",
+    # 2.38.0 (released 2026-05-21): adds service_tier to responses compact,
+    # pydantic iterator eager-validation, and workload-identity auth cleanup.
+    # No breaking changes.
+    # Source: https://pypi.org/pypi/openai/json
+    "openai>=2.38.0",
 ]
 cohere = [
     # cohere 6.0.0 (2026) renamed the async client from AsyncClient to AsyncClientV2.
@@ -175,19 +188,22 @@ a2a = [
 ]
 # LLM provider SDK dependencies
 anthropic = [
-    # 0.103.1 (released 2026-05-19): patch on 0.103.0 (self-hosted sandbox helpers
-    # for Claude Managed Agents). No breaking changes; no Gantry code changes required.
-    "anthropic>=0.103.1",
+    # 0.104.1 (released 2026-05-22): 0.104.0 added thinking-token-count beta for
+    # streaming; 0.104.1 is a patch fixing encrypted_content not being carried
+    # through the beta compaction accumulator. No breaking changes.
+    # Source: https://pypi.org/pypi/anthropic/json
+    "anthropic>=0.104.1",
 ]
 google-genai = [
-    # google-genai 2.5.0 (latest stable 2026-05-21) — breaking changes in 2.0.0 were
+    # google-genai 2.6.0 (latest stable 2026-05-22) — breaking changes in 2.0.0 were
     # limited to the Interactions API (SSE event renames, response_format restructuring);
     # GenerateContent and function calling are entirely unaffected across 1.x and 2.x.
     # google-adk (in the agent-frameworks extra) requires google-genai<2.0.0 across all
     # versions up to 2.0.0, so the combined all[] extra keeps a 1.x-compatible floor.
-    # The pip resolver picks the latest compatible version (2.5.0 for standalone
+    # The pip resolver picks the latest compatible version (2.6.0 for standalone
     # [google-genai] installs; >=1.75.0,<2.0.0 when google-adk is co-installed).
     # Standalone 2.x upgrade: pip install "agent-gantry[google-genai]"
+    # Source: https://pypi.org/pypi/google-genai/json
     "google-genai>=1.75.0",
 ]
 google-vertexai = [
@@ -201,7 +217,7 @@ mistral = [
     # AsyncOpenAI(). The MistralAdapter in agent_gantry.adapters.tool_spec
     # continues to translate tool schemas correctly for both patterns.
     # Install with: pip install "agent-gantry[mistral]"
-    "openai>=2.37.0",
+    "openai>=2.38.0",
 ]
 groq = [
     "groq>=1.2.0",
