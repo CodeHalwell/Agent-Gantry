@@ -39,3 +39,8 @@
 **Vulnerability:** The `ExecutionEngine._check_security_policy` method caught `ConfirmationRequiredError` raised by `SecurityPolicy.check_permission` but failed to catch `PermissionDeniedError`. When a domain was restricted by the security policy or a rate limit was reached, an unhandled exception would bubble up instead of cleanly returning a failed `ToolResult`.
 **Learning:** Security policy exceptions (like authorization and permission errors) must be exhaustively caught within the tool execution pipeline to ensure the engine gracefully and securely fails, logging the outcome without crashing the parent application or exposing raw stack traces.
 **Prevention:** Always verify that every custom exception raised by a security or validation component is explicitly handled in the calling method, specifically when translating application exceptions into structured API or execution responses like `ToolResult`.
+
+## 2025-02-28 - SSRF Bypass via Empty Hostnames
+**Vulnerability:** The domain extraction logic in `SecurityPolicy._extract_domains` allowed bypassing the allowed domains check for URLs where the hostname evaluated to `None` or an empty string, such as `file:///etc/passwd` or `http:///etc/passwd`.
+**Learning:** `urllib.parse.urlparse` sets `hostname` to `None` for local file paths and malformed HTTP URLs. Relying solely on the presence of a hostname to validate the domain enables attackers to bypass security boundaries and access local files or resources.
+**Prevention:** Always handle cases where `parsed.hostname` is missing or empty by explicitly rejecting them or mapping them to an empty domain (`""`) so that subsequent authorization logic (e.g., `_is_domain_allowed`) properly blocks them.

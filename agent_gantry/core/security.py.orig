@@ -175,9 +175,6 @@ class SecurityPolicy:
 
                 if parsed.hostname:
                     domains.add(parsed.hostname)
-                else:
-                    # Prevent bypasses via empty hostnames (e.g., file:///etc/passwd, http:///)
-                    domains.add("")
             except Exception:
                 pass
 
