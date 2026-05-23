@@ -229,6 +229,13 @@ class GantryObservabilityMiddleware:
     ``agent_framework.telemetry.disable_instrumentation()`` before building
     the agent.
 
+    .. note::
+        AF 1.6.0 has a known upstream bug: concurrent ``Agent.run()`` calls
+        via ``asyncio.gather()`` raise ``ValueError`` due to a ``ContextVar``
+        token being reset in a different asyncio context than it was created.
+        The Gantry package floor remains at ``>=1.5.0`` until a patch is
+        released.  This note will be removed when the floor is bumped.
+
     See :class:`GantryApprovalMiddleware` for the factory-pattern rationale.
     """
 

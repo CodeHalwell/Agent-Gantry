@@ -23,18 +23,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **`agent-framework` floor bumped to `>=1.6.0,<2.0.0`** (was `>=1.5.0,<2.0.0`).
-  Released 2026-05-22. New: shell tool (local + Docker), experimental hosted tool
-  factories on `FoundryChatClient`, A2A `return_immediately` non-streaming
-  transport, MCP prompt-loading skip when unsupported.
-  **One behavioural change: instrumentation is now ENABLED BY DEFAULT** — AF emits
-  OpenTelemetry spans for every function invocation without explicit setup.  Impact
-  on Gantry: `GantryObservabilityMiddleware` will now produce *two* span trees for
-  the same tool call when an OTel exporter is configured (one from AF, one from
-  Gantry). Both are intentional and complementary; suppress AF's spans via
-  `agent_framework.telemetry.disable_instrumentation()` if only one source is
-  desired. No Gantry import paths are affected.
-  *Risk: safe internal — floor bump only; AF 1.6.0 API surface unchanged.*
+- **`agent-framework` floor held at `>=1.5.0,<2.0.0`** — reverted the 1.6.0 bump
+  attempted in this audit cycle. AF 1.6.0 (released 2026-05-22) introduces
+  instrumentation enabled by default using `asyncio.ContextVar` tokens, which
+  triggers a hard `ValueError` when two `Agent.run()` calls are awaited
+  concurrently via `asyncio.gather()` or `TaskGroup`:
+  ```
+  ValueError: <Token var=<ContextVar name='inner_response_telemetry_captured_fields'>
+  ...> was created in a different Context
+  ```
+  The root cause is that `asyncio.gather()` creates a child asyncio context for
+  each coroutine; AF's `ContextVar.reset(token)` is then called from the parent
+  context (not the child context in which the token was issued), violating the
+  CPython invariant *"A token object cannot be used to reset the variable in a
+  context other than the one where it was created."*
+  This is an upstream bug in AF 1.6.0 that affects any concurrent agent usage
+  (not a Gantry issue). The floor will be bumped once AF releases a patch.
+  AF 1.5.0 features continue to benefit Gantry: intermediate output handling,
+  `ContextProvider.before_run` tools-in-session fix, Azure OpenAI recording.
+  *Risk: safe internal — revert-only; no Gantry code changes required.*
   Source: https://pypi.org/pypi/agent-framework/json
 
 - **`openai` floor bumped to `>=2.38.0`** (was `>=2.37.0`). Released 2026-05-21;
