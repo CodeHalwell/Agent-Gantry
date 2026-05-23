@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`SecurityPolicy._extract_domains` now blocks SSRF/LFI bypass via empty
+  hostnames**: URLs where `urllib.parse.urlparse` evaluates `hostname` to
+  `None` or `""` (e.g. `file:///etc/passwd`, `http:///`) previously bypassed
+  the `allowed_domains` check entirely because no domain was added to the
+  extracted set. The fix explicitly adds `""` in these cases so that
+  `_is_domain_allowed` correctly rejects them.
+  *Risk: safe security fix — only affects callers who configure `allowed_domains`;
+  the empty string `""` will never match a valid allowed domain entry.*
+
 - **`AnthropicAdapter.to_provider_schema(strict=True)` now auto-injects
   `additionalProperties: false`** into the emitted `input_schema`. Anthropic's
   strict tool-use mode requires this field to activate grammar-constrained

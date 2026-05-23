@@ -175,6 +175,13 @@ class SecurityPolicy:
 
                 if parsed.hostname:
                     domains.add(parsed.hostname)
+                else:
+                    # Prevent SSRF/LFI bypass via empty hostnames
+                    # (e.g. file:///etc/passwd, http:///). urlparse sets
+                    # hostname to None for these; adding "" ensures
+                    # _is_domain_allowed rejects them when allowed_domains
+                    # is configured.
+                    domains.add("")
             except Exception:
                 pass
 
