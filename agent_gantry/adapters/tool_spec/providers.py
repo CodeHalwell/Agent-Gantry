@@ -309,18 +309,32 @@ class AnthropicAdapter:
             tool: The tool definition to convert
             strict: Enable Anthropic strict tool use — uses grammar-constrained
                 sampling so Claude's ``input`` always matches ``input_schema``
-                exactly. Requires ``additionalProperties: false`` on the
-                ``input_schema`` when used in production. Defaults to False.
+                exactly.  When ``True`` this method automatically injects
+                ``additionalProperties: false`` into the ``input_schema`` copy
+                (required by the Anthropic API for strict mode to take effect).
+                The original schema on the ToolDefinition is never mutated.
+                Defaults to False.
                 Source: https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use
             **options: Additional provider-specific options
 
         Returns:
             Anthropic-compatible tool schema
         """
+        # Use the raw schema for non-strict mode; for strict mode, shallow-copy
+        # and inject additionalProperties: false so the API constraint is met
+        # without mutating the shared ToolDefinition.parameters_schema.
+        if strict:
+            input_schema: dict[str, Any] = {
+                **tool.parameters_schema,
+                "additionalProperties": False,
+            }
+        else:
+            input_schema = tool.parameters_schema
+
         schema: dict[str, Any] = {
             "name": tool.name,
             "description": tool.description,
-            "input_schema": tool.parameters_schema,
+            "input_schema": input_schema,
         }
         if strict:
             schema["strict"] = True

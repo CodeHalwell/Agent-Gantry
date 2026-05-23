@@ -60,14 +60,14 @@ wheels = [
 
 [[package]]
 name = "agent-framework"
-version = "1.5.0"
+version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "agent-framework-core", extra = ["all"] },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/84/2b/fc64914b8740c6cdbecfb1cd68b2a793af4d793653c920661042f4bac8ff/agent_framework-1.5.0.tar.gz", hash = "sha256:f6f29de2e992d886720256f20d5e0264669acbb2b19f60fa5c78640c3b207899", size = 5299676, upload-time = "2026-05-20T00:28:48.109Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/93/f5/7c7b86fdad0a565851f72e915a64afcbcf52ee4da6ae563adc95919c355a/agent_framework-1.6.0.tar.gz", hash = "sha256:7aabf129b520db488a154f322433b071c2415dc7ba80c36d4600f3c2ffb090cd", size = 5706865, upload-time = "2026-05-22T02:24:08.045Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/75/f3/d618e18d55a8d0fec7a00bfaebacba7a514deba4bc8179cf2b08b5253d4b/agent_framework-1.5.0-py3-none-any.whl", hash = "sha256:1341e12df4b780521296358e7fc0e785123f4f0b3eea94ee568badc2afebb68e", size = 5686, upload-time = "2026-05-20T00:28:31.752Z" },
+    { url = "https://files.pythonhosted.org/packages/00/37/58107ac11c7e76563a415583220308defc45ef93732e62c42b4a86730711/agent_framework-1.6.0-py3-none-any.whl", hash = "sha256:fdaa81ccbd8d6802ed900617a78c0b207608f1e28a57e35a11e1abc65413812a", size = 5690, upload-time = "2026-05-22T02:23:46.516Z" },
 ]
 
 [[package]]
@@ -236,7 +236,7 @@ wheels = [
 
 [[package]]
 name = "agent-framework-core"
-version = "1.5.0"
+version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "opentelemetry-api" },
@@ -244,8 +244,9 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "typing-extensions" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/eb/ce/58ec4158bb58236aa56c229d4a7189747171d915298d06ee692a32db6c09/agent_framework_core-1.6.0.tar.gz", hash = "sha256:a9854771cd96d6a4095da7f4befc95d22fb217c200d14f9ef389d4710fa4b064", size = 378842, upload-time = "2026-05-22T02:24:27.39Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/39/a9/748bbc433615db46efab8e780ea8d8fc70a67748071753707ddf6fac9008/agent_framework_core-1.5.0-py3-none-any.whl", hash = "sha256:cc1ccd2e3cefc22f8f933b1d8e53da7752ed735c222e686e8b503c6be61de331", size = 418892, upload-time = "2026-05-20T00:25:08.852Z" },
+    { url = "https://files.pythonhosted.org/packages/34/0f/d3e3202168cb2f9a3acc67f3a3dc69d87fa504f3712cd0910bb8c0729c51/agent_framework_core-1.6.0-py3-none-any.whl", hash = "sha256:cdd09cc534b090cc030334267ebf2613468051890b4f6307f16c39bf6121729b", size = 421237, upload-time = "2026-05-22T02:23:26.461Z" },
 ]
 
 [package.optional-dependencies]
@@ -658,10 +659,10 @@ vector-stores = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-framework", marker = "extra == 'agent-frameworks'", specifier = ">=1.5.0,<2.0.0" },
+    { name = "agent-framework", marker = "extra == 'agent-frameworks'", specifier = ">=1.6.0,<2.0.0" },
     { name = "agent-gantry", extras = ["dev", "embeddings", "openai", "cohere", "vector-stores", "lancedb", "nomic", "mcp", "a2a", "llm-providers", "agent-frameworks", "example-tools"], marker = "extra == 'all'" },
     { name = "agent-gantry", extras = ["openai", "anthropic", "google-genai", "google-vertexai", "mistral", "groq"], marker = "extra == 'llm-providers'" },
-    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.103.1" },
+    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.104.1" },
     { name = "asyncpg", marker = "extra == 'pgvector'", specifier = ">=0.29.0" },
     { name = "asyncpg", marker = "extra == 'vector-stores'", specifier = ">=0.29.0" },
     { name = "autogen-agentchat", marker = "extra == 'agent-frameworks'", specifier = ">=0.7.5" },
@@ -685,7 +686,7 @@ requires-dist = [
     { name = "lancedb", marker = "extra == 'lancedb'", specifier = ">=0.4.0" },
     { name = "langchain", marker = "extra == 'agent-frameworks'", specifier = ">=1.3.1" },
     { name = "langchain-openai", marker = "extra == 'agent-frameworks'", specifier = ">=1.2.1" },
-    { name = "langgraph", marker = "extra == 'agent-frameworks'", specifier = ">=1.2.0" },
+    { name = "langgraph", marker = "extra == 'agent-frameworks'", specifier = ">=1.2.1" },
     { name = "llama-index-core", marker = "extra == 'agent-frameworks'", specifier = ">=0.14.22" },
     { name = "llama-index-llms-openai", marker = "extra == 'agent-frameworks'", specifier = ">=0.7.7" },
     { name = "matplotlib", marker = "extra == 'example-tools'", specifier = ">=3.7.0" },
@@ -693,8 +694,8 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "numpy", marker = "extra == 'embeddings'", specifier = ">=1.24.0" },
     { name = "numpy", marker = "extra == 'nomic'", specifier = ">=1.24.0" },
-    { name = "openai", marker = "extra == 'mistral'", specifier = ">=2.37.0" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=2.37.0" },
+    { name = "openai", marker = "extra == 'mistral'", specifier = ">=2.38.0" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=2.38.0" },
     { name = "pandas", marker = "extra == 'example-tools'", specifier = ">=2.0.0" },
     { name = "pillow", marker = "extra == 'example-tools'", specifier = ">=10.0.0" },
     { name = "pint", marker = "extra == 'example-tools'", specifier = ">=0.24.4" },
@@ -920,7 +921,7 @@ wheels = [
 
 [[package]]
 name = "anthropic"
-version = "0.103.1"
+version = "0.104.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -932,9 +933,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fb/57/0b758b08cf4606c94d63a997d67a0063f7438efbaf81cfedd0d7c0c69d67/anthropic-0.103.1.tar.gz", hash = "sha256:21c12f4fc0fdd87a2e80d58479cd0af640062b3cfb82bbfa01c7977acd4defeb", size = 848877, upload-time = "2026-05-19T15:43:27.698Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/22/c7/7a655b948916f777354648ce979f68b94d5b8dbdb5f61fed1f37fad9378c/anthropic-0.104.1.tar.gz", hash = "sha256:17362b6c45f527afcc9b0fdf62011ffd359726ab2ebcb1978ea0cc41bd8d8d40", size = 850081, upload-time = "2026-05-22T15:36:57.432Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ad/ec/cf357cf571377a39552c1530390a9b79bbdb6ea463f48fbe4e3624141e3b/anthropic-0.103.1-py3-none-any.whl", hash = "sha256:b9a523fac34e64caf6ee55fdbda213950e6a744b906fce100d34909aad2cd8f4", size = 832551, upload-time = "2026-05-19T15:43:29.663Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/12/d9ab42790494d7c428391a46cd28492395566a6a8ccb138d681978594455/anthropic-0.104.1-py3-none-any.whl", hash = "sha256:35c8cb456f5a4405aafe1f10f03f6fcc54fa51fa8ec01d655cc4b437d120e9b7", size = 832996, upload-time = "2026-05-22T15:36:59.519Z" },
 ]
 
 [[package]]
@@ -3908,7 +3909,7 @@ wheels = [
 
 [[package]]
 name = "langgraph"
-version = "1.2.0"
+version = "1.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "langchain-core" },
@@ -3918,9 +3919,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "xxhash" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/58/61/d5d25e783035aa307d289b37e082258a6061c0fb4caa4a284f3bf1e87169/langgraph-1.2.0.tar.gz", hash = "sha256:4a9baaf62afc5d5f63144a50095140a34b9aa9b7cea695d25326d564775348e7", size = 690248, upload-time = "2026-05-12T03:46:39.164Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1c/8e/34a57e338a319e3b32c1bd183c2a9a04f7f35d683d3f3d8f597f6eacbc4e/langgraph-1.2.1.tar.gz", hash = "sha256:28314f844678d9d307cbd63e7b48b0145bf17177d84b40ee2921061e07b6f966", size = 693750, upload-time = "2026-05-21T18:33:07.478Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f6/e8/e3304ac0015c2bdb04ad9785e4ed65c788855ce7857ce6104dd2f5d322db/langgraph-1.2.0-py3-none-any.whl", hash = "sha256:03fd5895a8d4b70db1ff63ebc3bacead29dd20cd794a8b1a483e7ec9018f7a65", size = 234262, upload-time = "2026-05-12T03:46:37.971Z" },
+    { url = "https://files.pythonhosted.org/packages/73/8c/313912e26866893bd15be9b4ea3442dc86f69270b0ad01a4961d1eba7118/langgraph-1.2.1-py3-none-any.whl", hash = "sha256:5cc4020de8f1e2a048d773f6e9128646a2af8c68a8067ab9cab177a2fcc8d221", size = 235317, upload-time = "2026-05-21T18:33:05.687Z" },
 ]
 
 [[package]]
@@ -5089,7 +5090,7 @@ wheels = [
 
 [[package]]
 name = "openai"
-version = "2.37.0"
+version = "2.38.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -5101,9 +5102,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/32/50/5901f01ef14e6c27788beb91e54fef5d6204fb5fb9e97402fc8a14de2e32/openai-2.37.0.tar.gz", hash = "sha256:f4bc562cc5f3a43d40d678105572d9d44765f6e0f50c125f63055419b72f4bd9", size = 754706, upload-time = "2026-05-15T22:30:35.428Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8f/12/cfa322c5f5dd8fa21aab9a7a8e979e7a11123800f86ca8d82eb68a83d213/openai-2.38.0.tar.gz", hash = "sha256:798694c6cf74145541fda94325b6f8f72d8e1fd0262cc137c8d728177a6a4ce3", size = 772764, upload-time = "2026-05-21T21:23:42.105Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ed/4c/bce61680d0699a78a405fd9a67989b175ba020590428831aab2ab1d2be7c/openai-2.37.0-py3-none-any.whl", hash = "sha256:814633888b8f3b1ffd6615697c6e4ef93632d08b7c2e28c8c5ef3556e5a10107", size = 1303238, upload-time = "2026-05-15T22:30:32.767Z" },
+    { url = "https://files.pythonhosted.org/packages/0a/bf/ccff9be562e24207716d04ef9dc931c76aff0c89a7265da43e2104d7fe06/openai-2.38.0-py3-none-any.whl", hash = "sha256:ec6661c57b2dcc47414a767e6e3335c7ed3d19c9696999283a3c82e95c756a3c", size = 1344910, upload-time = "2026-05-21T21:23:39.636Z" },
 ]
 
 [[package]]
