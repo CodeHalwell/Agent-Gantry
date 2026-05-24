@@ -69,3 +69,6 @@
 ## 2026-05-19 - [ARIA Combobox for Search Inputs]
 **Learning:** For accessibility in custom search dropdowns (input + results list), implement the ARIA combobox pattern. Screen readers need these explicit roles and attributes to understand the relationship between the input field and the dynamic list of results, and to announce the currently active item during keyboard navigation.
 **Action:** Add `role="combobox"`, `aria-expanded`, `aria-autocomplete`, and `aria-controls` to the input, `role="listbox"` to the dropdown container, and use `aria-activedescendant` on the input combined with `role="option"` and `aria-selected` on the results to announce active items.
+## 2025-05-18 - Semantic Anchor IDs vs TOC Execution Order
+**Learning:** Generating TOC elements with fallback IDs (`heading-0`) *before* semantic IDs are calculated breaks anchor functionality and produces inaccessible URLs. When multiple features depend on element IDs (like TOC generation and hover anchors), ID generation must be centralized and executed first.
+**Action:** Always centralize DOM node ID generation in a dedicated initialization function that runs before any features that depend on those IDs. Track seen IDs to prevent duplicates and append counters if necessary.
