@@ -175,6 +175,8 @@ class SecurityPolicy:
 
                 if parsed.hostname:
                     domains.add(parsed.hostname)
+                elif parsed.scheme == "file" or not parsed.netloc:
+                    domains.add("<invalid_domain>")
             except Exception:
                 pass
 
