@@ -123,6 +123,39 @@
     });
   }
 
+  // ==================== Ensure Semantic Heading IDs ====================
+
+  function ensureHeadingIds() {
+    const headings = document.querySelectorAll(
+      ".content-wrapper h2, .content-wrapper h3, .content-wrapper h4"
+    );
+
+    const seenIds = new Set();
+
+    headings.forEach((heading) => {
+      if (!heading.id) {
+        let baseId = heading.textContent
+          .toLowerCase()
+          .replace(/[^\w\s-]/g, "")
+          .replace(/\s+/g, "-");
+
+        if (!baseId) {
+          baseId = "section";
+        }
+
+        let finalId = baseId;
+        let counter = 1;
+        while (seenIds.has(finalId)) {
+          finalId = `${baseId}-${counter}`;
+          counter++;
+        }
+
+        heading.id = finalId;
+      }
+      seenIds.add(heading.id);
+    });
+  }
+
   // ==================== Table of Contents Generator ====================
 
   function generateTableOfContents() {
@@ -131,6 +164,9 @@
 
     if (!content || !tocContainer) return;
 
+    tocContainer.setAttribute("role", "navigation");
+    tocContainer.setAttribute("aria-label", "Table of contents");
+
     const headings = content.querySelectorAll("h2, h3, h4");
     if (headings.length === 0) return;
 
@@ -138,11 +174,6 @@
     tocList.className = "toc-list";
 
     headings.forEach((heading, index) => {
-      // Add ID if not present
-      if (!heading.id) {
-        heading.id = "heading-" + index;
-      }
-
       const level = parseInt(heading.tagName.substring(1));
       const listItem = document.createElement("li");
       listItem.className = "toc-item toc-level-" + level;
@@ -377,13 +408,6 @@
     );
 
     headings.forEach((heading) => {
-      if (!heading.id) {
-        heading.id = heading.textContent
-          .toLowerCase()
-          .replace(/[^\w\s-]/g, "")
-          .replace(/\s+/g, "-");
-      }
-
       const anchor = document.createElement("a");
       anchor.className = "heading-anchor";
       anchor.href = "#" + heading.id;
@@ -459,6 +483,7 @@
     initMobileMenu();
     highlightActiveNav();
     initSmoothScroll();
+    ensureHeadingIds();
     generateTableOfContents();
     initCodeCopyButtons();
     initScrollProgress();
