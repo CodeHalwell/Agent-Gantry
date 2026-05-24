@@ -50,14 +50,25 @@ dev = [
     "python-dotenv>=1.0.0",
 ]
 agent-frameworks = [
-    # Range: >=1.5.0,<1.6.0.  AF 1.6.0 (released 2026-05-22) is intentionally
-    # excluded: its default-enabled instrumentation uses asyncio.ContextVar
-    # tokens that cannot be reset across asyncio child contexts, causing:
+    # Range: >=1.5.0,<2.0.0.
+    # AF 1.6.0 (released 2026-05-22) introduced instrumentation enabled by
+    # default.  Its ContextVar tokens cannot be reset across asyncio child
+    # contexts, so calling two Agent.run() coroutines concurrently via
+    # asyncio.gather() / TaskGroup raises:
     #   ValueError: <Token ...> was created in a different Context
-    # in agent_framework/observability.py when two Agent.run() calls run
-    # concurrently via asyncio.gather() or TaskGroup.  This is an upstream
-    # bug in AF 1.6.0, not a Gantry issue.  The upper bound will be relaxed
-    # to <2.0.0 once AF releases a patch.
+    # in agent_framework/observability.py.  This is an upstream bug in AF 1.6.0;
+    # it does NOT affect sequential workflows (WorkflowAgent, SequentialBuilder,
+    # HandoffBuilder all dispatch one Agent at a time).
+    #
+    # Workaround for concurrent workflows on AF >=1.6.0:
+    #   from agent_gantry import disable_af_instrumentation
+    #   disable_af_instrumentation()   # call once before agent construction
+    # This shim calls agent_framework.telemetry.disable_instrumentation() when
+    # AF >=1.6.0 is detected.  Use GantryObservabilityMiddleware to retain
+    # per-invocation tracing without the ContextVar clash.
+    # GantryToolBridge also accepts disable_af_instrumentation=True to apply
+    # the shim automatically at bridge construction time.
+    #
     # AF 1.5.0 features retained: intermediate output handling,
     # ContextProvider.before_run tools-in-session fix (directly benefits
     # GantryContextProvider), Azure OpenAI recording, YAML block scalar parsing.
@@ -70,7 +81,7 @@ agent-frameworks = [
     # AgentResponse — use str() or .content to extract text.
     # Source: https://pypi.org/pypi/agent-framework/json
     #         https://github.com/microsoft/agent-framework/releases
-    "agent-framework>=1.5.0,<1.6.0",
+    "agent-framework>=1.5.0,<2.0.0",
     "autogen-agentchat>=0.7.5",
     "autogen-ext[openai]>=0.7.5",
     # crewai 1.14.5 (latest stable) pins opentelemetry-api~=1.34.0 (<1.35), which

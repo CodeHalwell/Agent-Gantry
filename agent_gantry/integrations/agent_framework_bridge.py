@@ -206,6 +206,95 @@ _APPROVAL_REQUIRED_CAPS: frozenset[ToolCapability] = frozenset(
 )
 
 
+def _get_af_version() -> tuple[int, int, int] | None:
+    """Return the installed agent-framework version as (major, minor, patch), or ``None``."""
+    try:
+        import importlib.metadata as _im
+        raw = _im.version("agent-framework")
+        parts = raw.split(".")
+        return (int(parts[0]), int(parts[1]), int(parts[2]) if len(parts) > 2 else 0)
+    except Exception:
+        return None
+
+
+def disable_af_instrumentation() -> bool:
+    """Disable Microsoft Agent Framework's default instrumentation (AF >=1.6.0).
+
+    AF 1.6.0 enables ``asyncio.ContextVar``-based telemetry by default.  When
+    two ``Agent.run()`` coroutines run concurrently (e.g. via
+    ``asyncio.gather()`` or ``TaskGroup``), CPython raises::
+
+        ValueError: <Token …> was created in a different Context
+
+    because each ``gather`` coroutine runs in an isolated child asyncio context
+    and AF tries to reset the token from the parent context.
+
+    Calling this helper once — before building any agent — disables AF's
+    built-in instrumentation for the lifetime of the process, avoiding the
+    crash.  It is a no-op when AF is not installed or when the version is
+    earlier than 1.6.0 (which has no default instrumentation to disable).
+
+    To retain per-invocation observability after calling this function, attach
+    :class:`~agent_gantry.integrations.agent_framework_middleware.GantryObservabilityMiddleware`
+    to your agents; it records timing and success signals without the
+    ContextVar clash.
+
+    Returns:
+        ``True`` if instrumentation was successfully disabled, ``False`` if it
+        was already disabled, not applicable, or the AF version predates 1.6.0.
+
+    Example::
+
+        # Sequential workflows are unaffected — only needed for concurrent
+        # asyncio.gather() / TaskGroup usage with AF >=1.6.0.
+        from agent_gantry import disable_af_instrumentation
+        disable_af_instrumentation()
+
+        bridge = GantryToolBridge(gantry)
+        agents = await asyncio.gather(
+            bridge.as_agent(client, "query-a", name="A", instructions="…"),
+            bridge.as_agent(client, "query-b", name="B", instructions="…"),
+        )
+
+    Source: https://pypi.org/pypi/agent-framework/json (1.6.0 release notes —
+    "Enable instrumentation by default")
+    """
+    ver = _get_af_version()
+    if ver is None or ver < (1, 6, 0):
+        return False
+    try:
+        from agent_framework import telemetry as _af_telemetry  # type: ignore[import-not-found]
+
+        _disable = getattr(_af_telemetry, "disable_instrumentation", None)
+        if callable(_disable):
+            _disable()
+            logger.debug(
+                "disable_af_instrumentation: called agent_framework.telemetry"
+                ".disable_instrumentation() (AF %d.%d.%d)",
+                *ver,
+            )
+            return True
+        logger.warning(
+            "disable_af_instrumentation: agent_framework.telemetry has no "
+            "'disable_instrumentation' callable (AF %d.%d.%d). "
+            "The ContextVar concurrency workaround could not be applied.",
+            *ver,
+        )
+        return False
+    except Exception:
+        logger.debug(
+            "disable_af_instrumentation: failed to import or call "
+            "agent_framework.telemetry.disable_instrumentation",
+            exc_info=True,
+        )
+        return False
+
+
+# Private alias so GantryToolBridge.__init__ can call the module-level helper
+# without the local parameter `disable_af_instrumentation` shadowing it.
+_disable_af_instrumentation = disable_af_instrumentation
+
+
 def _require_af_installed(caller: str) -> None:
     """Raise a descriptive ImportError when agent-framework is not installed."""
     try:
@@ -457,8 +546,9 @@ class GantryToolBridge:
         *,
         score_threshold: float | str | None = 0.0,
         as_function_tool: bool | None = None,
+        disable_af_instrumentation: bool = False,
     ) -> None:
-        """Initialize the bridge.
+        """Initialise the bridge.
 
         Args:
             gantry: The AgentGantry instance providing tool retrieval and execution.
@@ -470,6 +560,17 @@ class GantryToolBridge:
                 ``True`` = force wrapping (raise if AF is missing);
                 ``False`` = always return bare callables. Defaults produce the
                 most idiomatic AF behaviour without introducing a hard dep.
+            disable_af_instrumentation: When ``True``, call
+                :func:`disable_af_instrumentation` at construction time to
+                suppress AF >=1.6.0's default ContextVar-based telemetry.
+                Required for concurrent workflows (``asyncio.gather()`` /
+                ``TaskGroup``) on AF 1.6.0 to prevent::
+
+                    ValueError: <Token …> was created in a different Context
+
+                Safe to pass when AF <1.6.0 is installed (becomes a no-op).
+                Sequential single-agent flows are unaffected and do NOT need
+                this flag. Defaults to ``False``.
         """
         # Validate the threshold eagerly so misconfiguration surfaces at
         # construction time rather than on the first retrieval round.
@@ -478,6 +579,8 @@ class GantryToolBridge:
         self._score_threshold = score_threshold
         self._as_function_tool = as_function_tool
         self._tool_cache: dict[str, Any] = {}
+        if disable_af_instrumentation:
+            _disable_af_instrumentation()
 
     async def _retrieve(
         self,
