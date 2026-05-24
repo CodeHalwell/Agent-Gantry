@@ -207,12 +207,23 @@ _APPROVAL_REQUIRED_CAPS: frozenset[ToolCapability] = frozenset(
 
 
 def _get_af_version() -> tuple[int, int, int] | None:
-    """Return the installed agent-framework version as (major, minor, patch), or ``None``."""
+    """Return the installed agent-framework version as (major, minor, patch), or ``None``.
+
+    Uses ``re.findall`` to extract only the numeric components so pre-release
+    strings like ``"1.6.0rc1"`` or ``"1.6.0b2"`` are parsed correctly rather
+    than triggering a ``ValueError`` in ``int()``.
+    """
     try:
         import importlib.metadata as _im
+        import re
+
         raw = _im.version("agent-framework")
-        parts = raw.split(".")
-        return (int(parts[0]), int(parts[1]), int(parts[2]) if len(parts) > 2 else 0)
+        nums = [int(n) for n in re.findall(r"[0-9]+", raw)]
+        return (
+            nums[0] if len(nums) > 0 else 0,
+            nums[1] if len(nums) > 1 else 0,
+            nums[2] if len(nums) > 2 else 0,
+        )
     except Exception:
         return None
 
