@@ -102,16 +102,16 @@ async def test_concurrent_retrieval_throughput(gantry_with_tools):
     num_requests = 20
 
     # Test 1: Sequential retrievals (baseline)
-    start = time.time()
+    start = time.perf_counter()
     for i in range(num_requests):
         await gantry.retrieve_tools(f"query {i}", limit=5)
-    sequential_duration = time.time() - start
+    sequential_duration = time.perf_counter() - start
 
     # Test 2: Concurrent retrievals (should be much faster if non-blocking)
-    start = time.time()
+    start = time.perf_counter()
     tasks = [gantry.retrieve_tools(f"query {i}", limit=5) for i in range(num_requests)]
     await asyncio.gather(*tasks)
-    concurrent_duration = time.time() - start
+    concurrent_duration = time.perf_counter() - start
 
     # Calculate speedup
     speedup = sequential_duration / concurrent_duration
@@ -168,13 +168,13 @@ async def test_mmr_embedding_caching():
     initial_embed_count = embedder.embed_count
 
     # Retrieve with MMR diversity
-    start = time.time()
+    start = time.perf_counter()
     await gantry.retrieve_tools(
         "task query",
         limit=5,
         diversity_factor=0.5,  # Enable MMR
     )
-    duration = time.time() - start
+    duration = time.perf_counter() - start
     embed_count_after = embedder.embed_count
 
     # Calculate how many embeddings were generated during retrieval
@@ -206,15 +206,15 @@ async def test_embedding_latency():
     embedder = MockEmbedder(latency_ms=100, dimension=768)
 
     # Test single embedding
-    start = time.time()
+    start = time.perf_counter()
     await embedder.embed_text("test query")
-    single_duration = time.time() - start
+    single_duration = time.perf_counter() - start
 
     # Test batch embedding
     texts = [f"query {i}" for i in range(10)]
-    start = time.time()
+    start = time.perf_counter()
     await embedder.embed_batch(texts)
-    batch_duration = time.time() - start
+    batch_duration = time.perf_counter() - start
 
     print(f"\n{'=' * 60}")
     print("Embedding Latency Benchmark")
@@ -244,22 +244,24 @@ async def test_vector_search_performance(gantry_with_tools):
 
     # Benchmark search performance
     iterations = 100
-    start = time.time()
+    start = time.perf_counter()
     for _ in range(iterations):
         await gantry._vector_store.search(
             query_vector=query_embedding,
             limit=10,
         )
-    duration = time.time() - start
+    duration = time.perf_counter() - start
     avg_latency = (duration / iterations) * 1000
+
+    throughput = float("inf") if duration <= 0 else iterations / duration
 
     print(f"\n{'=' * 60}")
     print("Vector Search Performance Benchmark")
     print(f"{'=' * 60}")
     print(f"Total searches: {iterations}")
-    print(f"Total duration: {duration:.2f}s")
+    print(f"Total duration: {duration:.6f}s")
     print(f"Average latency: {avg_latency:.2f}ms")
-    print(f"Throughput: {iterations / duration:.0f} searches/sec")
+    print(f"Throughput: {throughput:.0f} searches/sec")
     print(f"{'=' * 60}\n")
 
     # In-memory search should be fast. Use 200ms as an upper bound — macOS kqueue
@@ -289,9 +291,9 @@ async def test_end_to_end_retrieval_latency(gantry_with_tools):
     latencies = []
 
     for i in range(iterations):
-        start = time.time()
+        start = time.perf_counter()
         tools = await gantry.retrieve_tools(f"query {i}", limit=5)
-        latency = (time.time() - start) * 1000
+        latency = (time.perf_counter() - start) * 1000
         latencies.append(latency)
         assert len(tools) <= 5, "Limit not respected"
 
@@ -347,10 +349,10 @@ async def test_concurrent_execution_scalability():
     results = {}
 
     for concurrency in concurrency_levels:
-        start = time.time()
+        start = time.perf_counter()
         tasks = [gantry.retrieve_tools(f"query {i}", limit=5) for i in range(concurrency)]
         await asyncio.gather(*tasks)
-        duration = time.time() - start
+        duration = time.perf_counter() - start
         throughput = concurrency / duration
 
         results[concurrency] = {
