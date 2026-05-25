@@ -174,13 +174,13 @@ async def test_mmr_embedding_caching():
     initial_embed_count = embedder.embed_count
 
     # Retrieve with MMR diversity
-    start = time.time()
+    start = time.perf_counter()
     await gantry.retrieve_tools(
         "task query",
         limit=5,
         diversity_factor=0.5,  # Enable MMR
     )
-    duration = time.time() - start
+    duration = time.perf_counter() - start
     embed_count_after = embedder.embed_count
 
     # Calculate how many embeddings were generated during retrieval
