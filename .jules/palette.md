@@ -72,3 +72,7 @@
 ## 2025-05-18 - Semantic Anchor IDs vs TOC Execution Order
 **Learning:** Generating TOC elements with fallback IDs (`heading-0`) *before* semantic IDs are calculated breaks anchor functionality and produces inaccessible URLs. When multiple features depend on element IDs (like TOC generation and hover anchors), ID generation must be centralized and executed first.
 **Action:** Always centralize DOM node ID generation in a dedicated initialization function that runs before any features that depend on those IDs. Track seen IDs to prevent duplicates and append counters if necessary.
+
+## 2026-05-22 - [Keyboard Accessibility for Combobox Options]
+**Learning:** In an ARIA combobox where `aria-activedescendant` is used to manage focus via arrow keys, leaving interactive elements (like `<a>` with `href`) in the dropdown list in the normal document tab order forces keyboard users to awkwardly tab through every single search result to reach the rest of the page.
+**Action:** When implementing an ARIA combobox pattern, always ensure the child options (like search results) have `tabindex="-1"` applied, removing them from the tab sequence so users can efficiently bypass the dropdown while still navigating via arrow keys.
