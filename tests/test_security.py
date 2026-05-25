@@ -13,3 +13,20 @@ def test_validate_description_valid():
     is_valid, msg = validate_description(payload)
     assert is_valid is True
     assert msg is None
+
+
+def test_ssrf_domain_extraction_bypass():
+    from agent_gantry.core.security import SecurityPolicy, PermissionDeniedError
+    import pytest
+
+    sp = SecurityPolicy(allowed_domains=["example.com"])
+
+    # These URLs parse with a netloc but without a valid hostname
+    malicious_urls = [
+        "http://@/etc/passwd",
+        "http://example.com@",
+    ]
+
+    for url in malicious_urls:
+        with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
+            sp.check_permission("test_tool", {"url": url})
