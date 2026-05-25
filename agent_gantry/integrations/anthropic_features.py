@@ -184,14 +184,24 @@ class AnthropicClient:
                 }
             }
 
-        # Create message
-        response = await self._client.messages.create(
-            model=model,
-            messages=messages,
-            max_tokens=max_tokens,
-            tools=tools if tools else [],
+        # Build the create() kwargs.  Only include `tools` when the list is
+        # non-empty: passing an empty list is treated by the Anthropic API the
+        # same as specifying tool_choice="none" — it still appends the tool-use
+        # system prompt and consumes tokens (346 extra input tokens for most
+        # Claude 4 models per the pricing table).  Omitting the key entirely
+        # avoids that overhead when no tools were retrieved.
+        # Source: https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview
+        create_kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
             **kwargs,
-        )
+        }
+        if tools:
+            create_kwargs["tools"] = tools
+
+        # Create message
+        response = await self._client.messages.create(**create_kwargs)
 
         return response
 

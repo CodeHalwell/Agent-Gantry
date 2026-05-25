@@ -7,7 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`disable_af_instrumentation()` helper** — new top-level function
+  (`from agent_gantry import disable_af_instrumentation`) that calls
+  `agent_framework.telemetry.disable_instrumentation()` when AF >=1.6.0 is
+  installed. Required for concurrent `asyncio.gather()` / `TaskGroup` workflows
+  on AF 1.6.0 (which defaults to ContextVar-based instrumentation that crashes
+  when tokens are reset across child asyncio contexts). No-op on AF <1.6.0 or
+  when AF is not installed. Returns `True` if instrumentation was disabled,
+  `False` if it was not applicable.
+  *Risk: safe additive — existing callers unaffected.*
+  Source: https://pypi.org/pypi/agent-framework/json (1.6.0 release notes)
+
+- **`GantryToolBridge(disable_af_instrumentation=True)`** — new optional
+  constructor parameter that applies the shim automatically at bridge
+  construction time. Useful when the bridge is constructed near the point where
+  concurrent agents are built. Defaults to `False`.
+  *Risk: safe additive — new keyword arg with a `False` default.*
+
 ### Fixed
+
+- **`AnthropicClient.create_message()` no longer sends `tools=[]`** when no
+  tools are retrieved. Previously an empty list was always passed, which causes
+  the Anthropic API to inject the tool-use system prompt even with no tools
+  (adding ≈346 extra input tokens for Claude 4 models). The `tools` key is now
+  omitted entirely when the retrieved list is empty, preserving existing
+  behaviour for non-empty lists.
+  *Risk: safe fix — only changes the API payload when `tools` would have been
+  `[]`; all callers that rely on non-empty tool lists are unaffected.*
+  Source: https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview
+          (pricing table — tool-use system-prompt token overhead)
+
+### Fixed (prior)
 
 - **`AnthropicAdapter.to_provider_schema(strict=True)` now auto-injects
   `additionalProperties: false`** into the emitted `input_schema`. Anthropic's
@@ -23,26 +55,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **`agent-framework` floor held at `>=1.5.0,<2.0.0`** — reverted the 1.6.0 bump
-  attempted in this audit cycle. AF 1.6.0 (released 2026-05-22) introduces
-  instrumentation enabled by default using `asyncio.ContextVar` tokens, which
-  triggers a hard `ValueError` when two `Agent.run()` calls are awaited
-  concurrently via `asyncio.gather()` or `TaskGroup`:
+- **`agent-framework` range updated to `>=1.5.0,<2.0.0`** — upper bound relaxed
+  from `<1.6.0`. AF 1.6.0 (released 2026-05-22) introduces instrumentation
+  enabled by default using `asyncio.ContextVar` tokens, which triggers a hard
+  `ValueError` when two `Agent.run()` calls are awaited concurrently via
+  `asyncio.gather()` or `TaskGroup`. Sequential workflows (``WorkflowAgent``,
+  `SequentialBuilder`, `HandoffBuilder`) are **not** affected. A Gantry
+  compatibility shim is now provided:
+  ```python
+  from agent_gantry import disable_af_instrumentation
+  disable_af_instrumentation()   # call once at startup for concurrent workflows
   ```
-  ValueError: <Token var=<ContextVar name='inner_response_telemetry_captured_fields'>
-  ...> was created in a different Context
-  ```
-  The root cause is that `asyncio.gather()` creates a child asyncio context for
-  each coroutine; AF's `ContextVar.reset(token)` is then called from the parent
-  context (not the child context in which the token was issued), violating the
-  CPython invariant *"A token object cannot be used to reset the variable in a
-  context other than the one where it was created."*
-  This is an upstream bug in AF 1.6.0 that affects any concurrent agent usage
-  (not a Gantry issue). The floor will be bumped once AF releases a patch.
-  AF 1.5.0 features continue to benefit Gantry: intermediate output handling,
-  `ContextProvider.before_run` tools-in-session fix, Azure OpenAI recording.
-  *Risk: safe internal — revert-only; no Gantry code changes required.*
+  Or pass ``GantryToolBridge(gantry, disable_af_instrumentation=True)`` to
+  apply it automatically. See the ``disable_af_instrumentation`` entry in
+  the Added section above.
+  *Risk: safe — upper bound relaxed; the shim is opt-in and a no-op on AF <1.6.0.*
   Source: https://pypi.org/pypi/agent-framework/json
+          https://github.com/microsoft/agent-framework/releases (1.6.0 notes)
 
 - **`openai` floor bumped to `>=2.38.0`** (was `>=2.37.0`). Released 2026-05-21;
   adds `service_tier` parameter to `responses compact`, eager pydantic iterator

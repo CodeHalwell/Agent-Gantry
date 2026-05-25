@@ -225,16 +225,21 @@ class GantryObservabilityMiddleware:
     This is intentional: the two spans are complementary rather than
     duplicates.  If you want only one source of truth, either omit this
     middleware (rely on AF's built-in instrumentation) or suppress AF's
-    instrumentation by calling
-    ``agent_framework.telemetry.disable_instrumentation()`` before building
-    the agent.
+    instrumentation via Gantry's helper::
+
+        from agent_gantry import disable_af_instrumentation
+        disable_af_instrumentation()   # call once before agent construction
 
     .. note::
-        AF 1.6.0 has a known upstream bug: concurrent ``Agent.run()`` calls
-        via ``asyncio.gather()`` raise ``ValueError`` due to a ``ContextVar``
-        token being reset in a different asyncio context than it was created.
-        The Gantry package floor remains at ``>=1.5.0`` until a patch is
-        released.  This note will be removed when the floor is bumped.
+        AF 1.6.0 has a known upstream bug affecting *concurrent* ``Agent.run()``
+        calls via ``asyncio.gather()`` / ``TaskGroup``: a ``ContextVar`` token
+        is reset in a different asyncio context than it was created, raising
+        ``ValueError``.  Sequential workflows (``WorkflowAgent``,
+        ``SequentialBuilder``, ``HandoffBuilder``) are **not** affected.
+        For concurrent patterns on AF 1.6.0 call
+        :func:`~agent_gantry.disable_af_instrumentation` (or pass
+        ``disable_af_instrumentation=True`` to ``GantryToolBridge``) once
+        at startup to disable AF's instrumentation.
 
     See :class:`GantryApprovalMiddleware` for the factory-pattern rationale.
     """

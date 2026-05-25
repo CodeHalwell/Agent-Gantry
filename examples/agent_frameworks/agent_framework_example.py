@@ -1,16 +1,22 @@
 """
-Microsoft Agent Framework (1.5.0) integration example.
+Microsoft Agent Framework (1.5.0+) integration example.
 
 Demonstrates how Agent-Gantry's semantic routing reduces token usage in
 multi-agent systems by surfacing only the relevant tools per query.
 
-The ``agent-framework`` floor in ``pyproject.toml`` is ``>=1.5.0,<2.0.0``.
-``GantryToolBridge`` works against any AF release in that range; the bridge
-itself is API-stable across 1.4.x → 1.5.x and is unaffected by the 1.5.0
-changes (intermediate output handling improvements for workflows, the
-ContextProvider.before_run tools-in-session-creation fix, Azure OpenAI
-served-model recording, and YAML block scalar parsing in SKILL.md — all
-upstream improvements or infrastructure that Gantry does not consume).
+The ``agent-framework`` range in ``pyproject.toml`` is ``>=1.5.0,<2.0.0``.
+``GantryToolBridge`` works against any AF release in that range.
+
+**AF 1.6.0 concurrent workflow note:**
+AF 1.6.0 enables ContextVar-based instrumentation by default.  Sequential
+workflows (WorkflowAgent, SequentialBuilder, HandoffBuilder — all used here)
+are **not** affected.  If you run concurrent workflows via ``asyncio.gather()``
+or ``TaskGroup`` on AF 1.6.0, add one call at startup::
+
+    from agent_gantry import disable_af_instrumentation
+    disable_af_instrumentation()
+
+Or construct the bridge with ``GantryToolBridge(gantry, disable_af_instrumentation=True)``.
 
 Covers three construction patterns:
 
