@@ -156,6 +156,7 @@
       resultItem.id = `search-result-item-${index}`;
       resultItem.setAttribute("role", "option");
       resultItem.setAttribute("aria-selected", "false");
+      resultItem.setAttribute("tabindex", "-1");
 
       const resultTitle = document.createElement("div");
       resultTitle.className = "search-result-title";
