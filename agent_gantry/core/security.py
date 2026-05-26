@@ -167,10 +167,9 @@ class SecurityPolicy:
                     # like http://example.com:evil.com
                     _ = parsed.port
                 except ValueError:
-                    # Invalid port, treat netloc as the domain, stripping userinfo if present
-                    if parsed.netloc:
-                        netloc = parsed.netloc.split("@")[-1]
-                        domains.add(netloc)
+                    # Invalid port, rely on hostname or invalidate
+                    if not parsed.hostname:
+                        domains.add("<invalid_domain>")
                         continue
 
                 if parsed.hostname:
