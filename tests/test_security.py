@@ -30,3 +30,20 @@ def test_ssrf_domain_extraction_bypass():
     for url in malicious_urls:
         with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
             sp.check_permission("test_tool", {"url": url})
+
+def test_ssrf_port_bypass():
+    from agent_gantry.core.security import SecurityPolicy, PermissionDeniedError
+    import pytest
+
+    sp = SecurityPolicy(allowed_domains=["example.com"])
+
+    # This URL parses with a valid hostname "example.com" but invalid port "evil.com".
+    # Httpx considers this invalid, but if passed to other systems, might act differently.
+    # We should ensure standard malformed ones that lack hostname get rejected.
+    malicious_urls = [
+        "http://@:evil.com/etc/passwd",
+    ]
+
+    for url in malicious_urls:
+        with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
+            sp.check_permission("test_tool", {"url": url})
