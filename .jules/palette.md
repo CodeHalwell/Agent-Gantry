@@ -76,3 +76,7 @@
 ## 2026-05-22 - [Keyboard Accessibility for Combobox Options]
 **Learning:** In an ARIA combobox where `aria-activedescendant` is used to manage focus via arrow keys, leaving interactive elements (like `<a>` with `href`) in the dropdown list in the normal document tab order forces keyboard users to awkwardly tab through every single search result to reach the rest of the page.
 **Action:** When implementing an ARIA combobox pattern, always ensure the child options (like search results) have `tabindex="-1"` applied, removing them from the tab sequence so users can efficiently bypass the dropdown while still navigating via arrow keys.
+
+## 2024-05-23 - [Keyboard Focus Management on Combobox Escape]
+**Learning:** When users dismiss a combobox dropdown (like search results) using the `Escape` key, automatically blurring the input causes them to lose their position in the tab order, forcing them to start navigating from the top of the document again.
+**Action:** When handling the `Escape` key in a combobox, always call `e.preventDefault()` to stop the event from bubbling, and leave focus on the input field so users can seamlessly continue keyboard navigation.

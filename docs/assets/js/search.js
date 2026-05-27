@@ -339,8 +339,8 @@
         }
         return;
       } else if (e.key === "Escape") {
+        e.preventDefault();
         hideResults();
-        searchInput.blur();
         return;
       } else {
         return;
