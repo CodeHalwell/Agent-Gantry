@@ -167,10 +167,10 @@ class SecurityPolicy:
                     # like http://example.com:evil.com
                     _ = parsed.port
                 except ValueError:
-                    # Invalid port, rely on hostname or invalidate
-                    if not parsed.hostname:
-                        domains.add("<invalid_domain>")
-                        continue
+                    # Invalid port, fail the validation to avoid SSRF bypasses
+                    # where downstream clients parse the malformed port differently
+                    domains.add("<invalid_domain>")
+                    continue
 
                 if parsed.hostname:
                     domains.add(parsed.hostname)
