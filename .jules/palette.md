@@ -80,3 +80,7 @@
 ## 2024-05-23 - [Keyboard Focus Management on Combobox Escape]
 **Learning:** When users dismiss a combobox dropdown (like search results) using the `Escape` key, automatically blurring the input causes them to lose their position in the tab order, forcing them to start navigating from the top of the document again.
 **Action:** When handling the `Escape` key in a combobox, always call `e.preventDefault()` to stop the event from bubbling, and leave focus on the input field so users can seamlessly continue keyboard navigation.
+
+## 2026-05-28 - [Respecting prefers-reduced-motion for Accessibility]
+**Learning:** Animations, transitions, and smooth scrolling can cause discomfort or nausea for users with vestibular disorders. If these features are added without respecting the user's OS-level motion preferences, it creates a severe accessibility barrier.
+**Action:** Always include a `@media (prefers-reduced-motion: reduce)` block in the global CSS to forcefully disable animations, transitions, and smooth scrolling site-wide when the user has requested reduced motion.
