@@ -84,3 +84,7 @@
 ## 2026-05-28 - [Respecting prefers-reduced-motion for Accessibility]
 **Learning:** Animations, transitions, and smooth scrolling can cause discomfort or nausea for users with vestibular disorders. If these features are added without respecting the user's OS-level motion preferences, it creates a severe accessibility barrier.
 **Action:** Always include a `@media (prefers-reduced-motion: reduce)` block in the global CSS to forcefully disable animations, transitions, and smooth scrolling site-wide when the user has requested reduced motion.
+
+## 2026-05-29 - [Event Binding Order for Dynamic Content]
+**Learning:** Attaching event listeners (like smooth scrolling behavior) to DOM elements using a generic selector early in the initialization sequence misses elements that are generated later dynamically (like Table of Contents or Heading anchors).
+**Action:** Always ensure that behavioral initialization functions (like `initSmoothScroll`) run *after* all functions that dynamically generate the targeted DOM nodes.
