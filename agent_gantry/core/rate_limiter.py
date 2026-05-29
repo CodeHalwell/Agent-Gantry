@@ -272,12 +272,20 @@ class RateLimiter:
         """
         if tool_name:
             key = self._get_key(tool_name, namespace)
+
+            # ⚡ Bolt: Fast reverse iteration to count calls in last minute instead of filtering whole history
+            calls_last_minute = 0
+            now = time.time()
+            for t in reversed(self._call_history.get(key, [])):
+                if now - t < 60:
+                    calls_last_minute += 1
+                else:
+                    break
+
             return {
                 "key": key,
                 "concurrent": self._concurrent.get(key, 0),
-                "calls_last_minute": len(
-                    [t for t in self._call_history.get(key, []) if time.time() - t < 60]
-                ),
+                "calls_last_minute": calls_last_minute,
                 "calls_last_hour": len(self._call_history.get(key, [])),
                 "tokens": self._tokens.get(key, 0)
                 if self._config.strategy == "token_bucket"
