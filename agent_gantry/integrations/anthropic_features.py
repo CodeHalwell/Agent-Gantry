@@ -29,14 +29,14 @@ class AnthropicFeatures:
     """Configuration for Anthropic beta features."""
 
     enable_interleaved_thinking: bool = False
-    # Extended thinking: fixed budget via budget_tokens. Not supported on claude-opus-4-7
-    # (which only supports adaptive thinking). Supported on claude-sonnet-4-6,
-    # claude-opus-4-6, claude-haiku-4-5, and earlier Claude 4 models.
-    # Source: https://platform.claude.com/docs/en/docs/about-claude/models
+    # Extended thinking: fixed budget via budget_tokens. Not supported on claude-opus-4-8
+    # or claude-opus-4-7 (both support adaptive thinking only). Supported on
+    # claude-sonnet-4-6, claude-opus-4-6, claude-haiku-4-5, and earlier Claude 4 models.
+    # Source: https://platform.claude.com/docs/en/docs/about-claude/models/overview
     enable_extended_thinking: bool = False
     thinking_budget_tokens: int | None = None
-    # Adaptive thinking: model self-regulates depth; recommended for Opus 4.7, Opus 4.6+,
-    # Sonnet 4.6+. Not available on claude-haiku-4-5.
+    # Adaptive thinking: model self-regulates depth; recommended for Opus 4.8, Opus 4.7,
+    # Opus 4.6+, Sonnet 4.6+. Not available on claude-haiku-4-5.
     # Mutually exclusive with enable_extended_thinking.
     adaptive_thinking_effort: Literal["low", "medium", "high"] | None = None
     # Controls whether thinking blocks appear in the response content.
@@ -53,12 +53,12 @@ class AnthropicClient:
     Supports:
     - Interleaved thinking (``interleaved-thinking-2025-05-14`` beta header; required for
       Opus 4.5 / Sonnet 4.5 and earlier Claude 4 models; silently ignored on Opus 4.6+,
-      Sonnet 4.6+, and Opus 4.7 where adaptive thinking is automatic)
+      Sonnet 4.6+, Opus 4.7, and Opus 4.8 where adaptive thinking is automatic)
     - Extended thinking (``thinking={type: "enabled", budget_tokens: N}``; supported on
       claude-sonnet-4-6, claude-opus-4-6, claude-haiku-4-5, and earlier Claude 4 models;
-      **not supported on claude-opus-4-7** — use adaptive thinking instead)
+      **not supported on claude-opus-4-8 or claude-opus-4-7** — use adaptive thinking instead)
     - Adaptive thinking (``thinking={type: "adaptive", effort: "medium"}``; recommended
-      for claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-6; not available on
+      for claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-6; not available on
       claude-haiku-4-5; set ``adaptive_thinking_effort`` in ``AnthropicFeatures`` or use
       ``enable_thinking="adaptive"`` in ``create_anthropic_client``)
     - Automatic tool retrieval and execution
@@ -88,8 +88,8 @@ class AnthropicClient:
         self._features = features or AnthropicFeatures()
 
         # The interleaved-thinking beta header is required for Opus 4.5 / Sonnet 4.5 and
-        # earlier Claude 4 models. On Opus 4.6+, Sonnet 4.6+, and Opus 4.7 the header is
-        # deprecated and silently ignored — adaptive thinking is automatic on those models.
+        # earlier Claude 4 models. On Opus 4.6+, Sonnet 4.6+, Opus 4.7, and Opus 4.8 the
+        # header is deprecated and silently ignored — adaptive thinking is automatic.
         # Extended thinking does NOT need a beta header; it is activated via the `thinking`
         # parameter in each create_message() call (see below).
         extra_headers = {}
@@ -330,8 +330,9 @@ async def create_anthropic_client(
         gantry: AgentGantry instance
         enable_thinking: Type of thinking to enable — ``"interleaved"`` (beta header, pre-4.6
             models), ``"extended"`` (fixed budget via ``thinking_budget_tokens``; not supported
-            on claude-opus-4-7), or ``"adaptive"`` (model self-regulates depth; supported on
-            claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-6; recommended for Opus 4.7+)
+            on claude-opus-4-8 or claude-opus-4-7), or ``"adaptive"`` (model self-regulates
+            depth; supported on claude-opus-4-8, claude-opus-4-7, claude-opus-4-6,
+            claude-sonnet-4-6; recommended for Opus 4.8+)
         thinking_budget_tokens: Budget for extended thinking (ignored for other modes)
         adaptive_effort: Effort level for adaptive thinking — ``"low"``, ``"medium"`` (default),
             or ``"high"`` (ignored unless ``enable_thinking="adaptive"``)
