@@ -127,7 +127,7 @@
 
   function ensureHeadingIds() {
     const headings = document.querySelectorAll(
-      ".content-wrapper h2, .content-wrapper h3, .content-wrapper h4"
+      ".content-wrapper h2, .content-wrapper h3, .content-wrapper h4",
     );
 
     const seenIds = new Set();
@@ -482,7 +482,6 @@
 
     initMobileMenu();
     highlightActiveNav();
-    initSmoothScroll();
     ensureHeadingIds();
     generateTableOfContents();
     initCodeCopyButtons();
@@ -492,6 +491,7 @@
     initCollapsibleSections();
     addHeadingAnchors();
     initResponsiveTables();
+    initSmoothScroll();
 
     console.log("Agent-Gantry Documentation - Navigation initialized");
   }
