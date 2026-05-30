@@ -172,10 +172,10 @@ class SecurityPolicy:
                     domains.add("<invalid_domain>")
                     continue
 
-                if parsed.hostname:
-                    domains.add(parsed.hostname)
-                elif parsed.scheme == "file" or not parsed.hostname:
+                if parsed.scheme == "file" or not parsed.hostname:
                     domains.add("<invalid_domain>")
+                else:
+                    domains.add(parsed.hostname)
             except Exception:
                 pass
 
