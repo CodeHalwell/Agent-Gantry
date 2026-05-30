@@ -1,15 +1,16 @@
 # Agent-Gantry Modernisation Audit
 
-**Date:** 2026-05-29 (supersedes 2026-05-27 run)
+**Date:** 2026-05-30 (supersedes 2026-05-29 run)
 **Repository:** `CodeHalwell/Agent-Gantry` · version `0.4.0`
-**Branch:** `claude/cool-hopper-34gYr` (based on `main`)
+**Branch:** `claude/cool-hopper-7ZK9O` (based on `claude/cool-hopper-34gYr`)
 **Auditor:** Claude (Sonnet 4.6)
 
-> **PR history incorporated.** This audit builds on the 2026-05-27 run which
-> already incorporated security fix PR #207 (SSRF bypass), accessibility fix PR #208
-> (search combobox Escape focus), audit+lock-bump commit #209 (langchain/langgraph),
-> and docs CSS commit #210 (prefers-reduced-motion). The 2026-05-29 run adds
-> agent-framework 1.7.0, anthropic 0.105.0, and claude-opus-4-8 model awareness.
+> **PR history incorporated.** This audit builds on the 2026-05-29 run (PR #213)
+> which added agent-framework 1.7.0, anthropic 0.105.0, claude-opus-4-8 model
+> awareness, and AF declarative breaking-change analysis.  The 2026-05-30 run
+> adds groq 1.4.0, mcp 1.27.2 floor bumps, a crewai version note, and the
+> claude-opus-4-8 thinking-mode guard tests identified as "good next-step" in PR #213.
+> Also incorporates open PRs #214 (SSRF file:// fix) and #215 (search UX) from main.
 
 ---
 
@@ -17,44 +18,39 @@
 
 | Severity | Count | Areas |
 |----------|-------|-------|
-| **Must-change now** | 3 | AF floor bump (1.5.0→1.7.0), anthropic floor bump (0.104.1→0.105.0), claude-opus-4-8 model awareness in anthropic_features.py |
-| **Good next-step** | 4 | google-genai comment refresh (2.7.0), HarnessAgent exploration, google-adk 2.x standalone docs, MAF migration guide |
+| **Must-change now** | 0 | No breaking or imminent issues found this run |
+| **Good next-step** | 3 | HarnessAgent exploration for long-running pipelines, google-adk 2.x standalone docs, MAF migration guide |
 
-The repository remains in excellent overall health for `v0.4.0`. All three provider API
-surfaces are current and no Assistants API or deprecated model IDs were found.
+The repository remains in excellent overall health for `v0.4.0`. All provider API
+surfaces are current. No Assistants API usage or retired model IDs found.
+Model retirement deadline: `claude-sonnet-4-20250514` / `claude-opus-4-20250514`
+retire **June 15, 2026** — confirmed absent from the codebase ✅.
 
-**New findings this run (2026-05-29):**
+**New findings this run (2026-05-30):**
 
-1. **`agent-framework` 1.7.0** (released 2026-05-28) — lock was pinned to 1.5.0. The
-   1.7.0 breaking change (removed Python-only declarative actions in
-   `agent-framework-declarative`) does **not** affect Gantry, which uses only core
-   primitives. Floor bumped to `>=1.7.0,<2.0.0`; lock updated.
+1. **`groq` 1.4.0** (released 2026-05-28) — adds realtime audio transcription and
+   updated model aliases. No breaking changes to `chat.completions`. Floor bumped
+   from `>=1.2.0` to `>=1.4.0`.
 
-2. **`anthropic` 0.105.0/0.105.2** (released 2026-05-28/29) — adds `claude-opus-4-8`
-   model support, mid-conversation system blocks, and `usage.output_tokens_details`.
-   Floor bumped to `>=0.105.0`; lock updated.
+2. **`mcp` 1.27.2** (released 2026-05-29) — patch release, no API changes.
+   Floor bumped from `>=1.27.1` to `>=1.27.2`.
 
-3. **`claude-opus-4-8`** is now Anthropic's primary/latest Opus model. Adaptive thinking
-   only (no extended thinking). `anthropic_features.py` updated to include it.
+3. **`crewai` 1.14.6** (latest stable, 2026-05-30) — patch release over 1.14.5.
+   Still blocked from upgrade in the combined `agent-frameworks` extra (OTel conflict).
+   Comment updated; floor remains `>=1.6.1`.
 
-4. **Model retirement warning** — `claude-sonnet-4-20250514` and
-   `claude-opus-4-20250514` retire on **June 15, 2026** (17 days from today). A grep
-   confirms neither deprecated ID appears anywhere in the codebase. ✅
+4. **`claude-opus-4-8` thinking-mode guard tests** — added
+   `TestClaudeOpus48ThinkingGuards` to `tests/test_anthropic_features.py`.
+   Documents that adaptive thinking is correct for this model and extended thinking
+   is incompatible. Converts the "good next-step" item from the 2026-05-29 audit.
 
-5. **`google-genai` 2.7.0** — no breaking changes to function calling. Comment updated;
-   floor unchanged at `>=1.75.0` (google-adk conflict in combined extra).
-
-**Actionable items completed in this audit run:**
-1. Bump `agent-framework` floor `>=1.5.0,<2.0.0 → >=1.7.0,<2.0.0`.
-2. Bump `anthropic` floor `>=0.104.1 → >=0.105.0`.
-3. Update `pyproject.toml` comments for `agent-framework` 1.7.0, `google-genai` 2.7.0.
-4. Update `anthropic_features.py` to add `claude-opus-4-8` to model support tables.
-5. Regenerate `uv.lock` (agent-framework 1.5.0→1.7.0, anthropic 0.104.1→0.105.2).
-
-**Items completed in the 2026-05-27 run (preserved):**
-6. Bump `langchain>=1.3.2`, `langchain-openai>=1.2.2`, `langgraph>=1.2.2`.
-7. Regenerated `uv.lock` for those three packages.
-8. Fixed SSRF bypass (PR #207), accessibility (PR #208).
+**Items completed in prior runs (preserved):**
+5. Bump `agent-framework` floor `>=1.5.0,<2.0.0 → >=1.7.0,<2.0.0` (2026-05-29 run).
+6. Bump `anthropic` floor `>=0.104.1 → >=0.105.0` (2026-05-29 run).
+7. Update `pyproject.toml` comments for AF 1.7.0, `google-genai` 2.7.0 (2026-05-29 run).
+8. Update `anthropic_features.py` for `claude-opus-4-8` (2026-05-29 run).
+9. Bump `langchain>=1.3.2`, `langchain-openai>=1.2.2`, `langgraph>=1.2.2` (2026-05-27).
+10. Fixed SSRF bypass (PR #207), accessibility (PR #208), search UX (PR #215).
 
 ---
 
@@ -66,8 +62,8 @@ Sources verified against PyPI JSON API (cited URLs below).
 
 | Package | Previous floor | Current floor | Latest stable | Action | Risk |
 |---------|---------------|---------------|---------------|--------|------|
-| `agent-framework` | `>=1.5.0,<2.0.0` | `>=1.7.0,<2.0.0` | `1.7.0` | **Bumped ✅** | Safe internal — breaking change in `declarative` sub-package, not used by Gantry |
-| `anthropic` | `>=0.104.1` | `>=0.105.0` | `0.105.2` | **Bumped ✅** | Safe internal |
+| `agent-framework` | `>=1.5.0,<2.0.0` | `>=1.7.0,<2.0.0` | `1.7.0` | **Bumped ✅** (2026-05-29) | Safe internal — breaking change in `declarative` sub-package, not used by Gantry |
+| `anthropic` | `>=0.104.1` | `>=0.105.0` | `0.105.2` | **Bumped ✅** (2026-05-29) | Safe internal |
 | `google-genai` | `>=1.75.0` | `>=1.75.0` | `2.7.0` | Comment updated ✅ | Floor unchanged (google-adk conflict) |
 | `openai` | `>=2.38.0` | `>=2.38.0` | `2.38.0` | ✅ at latest | — |
 | `langchain` | `>=1.3.2` | `>=1.3.2` | `1.3.2` | ✅ at latest | — |
@@ -75,35 +71,36 @@ Sources verified against PyPI JSON API (cited URLs below).
 | `langgraph` | `>=1.2.2` | `>=1.2.2` | `1.2.2` | ✅ at latest | — |
 | `autogen-agentchat` | `>=0.7.5` | `>=0.7.5` | `0.7.5` | ✅ at latest | — |
 | `autogen-ext[openai]` | `>=0.7.5` | `>=0.7.5` | `0.7.5` | ✅ at latest | — |
-| `crewai` | `>=1.6.1` | `>=1.6.1` | `1.14.5` | Note only — OTel conflict | Blocked |
+| `crewai` | `>=1.6.1` | `>=1.6.1` | `1.14.6` | Comment updated ✅ — OTel conflict | Blocked in combined extra |
 | `google-adk` | `>=1.14.1` | `>=1.14.1` | `2.1.0` | Note only — langgraph conflict | Blocked |
-| `mcp` | `>=1.27.1` | `>=1.27.1` | `1.27.1` | ✅ at latest | — |
-| `groq` | `>=1.2.0` | `>=1.2.0` | `1.2.0` | ✅ at latest | — |
+| `mcp` | `>=1.27.1` | `>=1.27.2` | `1.27.2` | **Bumped ✅** (2026-05-30) | Safe patch |
+| `groq` | `>=1.2.0` | `>=1.4.0` | `1.4.0` | **Bumped ✅** (2026-05-30) | Safe minor |
 | `semantic-kernel` | `>=1.36.0` | `>=1.36.0` | `1.42.0` | Note only — OTel conflict | Blocked |
 | `llama-index-core` | `>=0.14.22` | `>=0.14.22` | `0.14.22` | ✅ at latest | — |
 
-**Citation sources (verified 2026-05-29):**
+**Citation sources (verified 2026-05-30):**
 - `agent-framework 1.7.0`: https://pypi.org/pypi/agent-framework/json · https://github.com/microsoft/agent-framework/releases
 - `anthropic 0.105.2`: https://pypi.org/pypi/anthropic/json · https://github.com/anthropics/anthropic-sdk-python/releases
 - `google-genai 2.7.0`: https://pypi.org/pypi/google-genai/json · https://github.com/googleapis/python-genai/releases
 - `openai 2.38.0`: https://pypi.org/pypi/openai/json
 - `langchain 1.3.2`: https://pypi.org/pypi/langchain/json
 - `langgraph 1.2.2`: https://pypi.org/pypi/langgraph/json
-- `mcp 1.27.1`: https://pypi.org/pypi/mcp/json
+- `mcp 1.27.2`: https://pypi.org/pypi/mcp/json
+- `groq 1.4.0`: https://pypi.org/pypi/groq/json
 
 ### 2.2 Commands applied in this run
 
 ```bash
-# Bumped floors in pyproject.toml, then regenerated the lock:
+# 2026-05-29 run (PR #213):
 uv lock --upgrade-package agent-framework --upgrade-package anthropic
+# Updated agent-framework v1.5.0 -> v1.7.0, anthropic v0.104.1 -> v0.105.2
 
-# Output:
-# Updated agent-framework v1.5.0 -> v1.7.0
-# Updated agent-framework-core v1.5.0 -> v1.7.0
-# Updated anthropic v0.104.1 -> v0.105.2
+# 2026-05-30 run (this PR):
+uv lock --upgrade-package groq --upgrade-package mcp
+# Updated groq v1.2.0 -> v1.4.0, mcp v1.27.1 -> v1.27.2
 ```
 
-No solver conflicts were raised. The two packages updated cleanly within the existing
+No solver conflicts were raised. All packages updated cleanly within the existing
 constraint set.
 
 ### 2.3 agent-framework 1.7.0 — breaking change analysis

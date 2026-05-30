@@ -91,9 +91,9 @@ agent-frameworks = [
     "agent-framework>=1.7.0,<2.0.0",
     "autogen-agentchat>=0.7.5",
     "autogen-ext[openai]>=0.7.5",
-    # crewai 1.14.5 (latest stable, 2026-05-27) pins opentelemetry-api~=1.34.0 (<1.35),
+    # crewai 1.14.6 (latest stable, 2026-05-30) pins opentelemetry-api~=1.34.0 (<1.35),
     # which conflicts with agent-framework>=1.2.1 (requires opentelemetry-api>=1.39.0).
-    # crewai==1.6.1 co-installs with agent-framework. For crewai 1.14.5 (standalone),
+    # crewai==1.6.1 co-installs with agent-framework. For crewai 1.14.6 (standalone),
     # install in a separate environment without agent-framework.
     # Source: https://pypi.org/pypi/crewai/json
     "crewai>=1.6.1",
@@ -201,7 +201,9 @@ nomic = [
     "einops>=0.8.1",
 ]
 mcp = [
-    "mcp>=1.27.1",
+    # mcp 1.27.2 (released 2026-05-29): patch release, no API changes.
+    # Source: https://pypi.org/pypi/mcp/json
+    "mcp>=1.27.2",
 ]
 a2a = [
     "httpx>=0.24.0",
@@ -246,7 +248,10 @@ mistral = [
     "openai>=2.38.0",
 ]
 groq = [
-    "groq>=1.2.0",
+    # groq 1.4.0 (released 2026-05-28): adds realtime audio transcription and
+    # updated model aliases. No breaking changes to chat.completions.
+    # Source: https://pypi.org/pypi/groq/json
+    "groq>=1.4.0",
 ]
 # Combined LLM provider dependencies
 llm-providers = [

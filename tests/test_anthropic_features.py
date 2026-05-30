@@ -375,3 +375,89 @@ class TestCreateAnthropicClient:
             gantry=gantry,
         )
         assert client._gantry == gantry
+
+
+class TestClaudeOpus48ThinkingGuards:
+    """Guard tests documenting claude-opus-4-8 thinking-mode constraints.
+
+    claude-opus-4-8 supports adaptive thinking only.  Extended thinking
+    (``budget_tokens``) is **not** supported by the model and will cause an
+    API error when submitted.  These tests verify that the recommended
+    ``AnthropicFeatures`` configuration is correct and that the convenience
+    factory produces the right payload for this model family.
+
+    Source: https://platform.claude.com/docs/en/docs/about-claude/models/overview
+    """
+
+    def test_adaptive_config_is_correct_for_opus48(self):
+        """AnthropicFeatures with adaptive thinking is the right config for opus-4-8."""
+        features = AnthropicFeatures(adaptive_thinking_effort="medium")
+        assert features.adaptive_thinking_effort == "medium"
+        assert features.enable_extended_thinking is False
+        assert features.thinking_budget_tokens is None
+
+    def test_all_adaptive_effort_levels_accepted_for_opus48(self):
+        """low / medium / high effort levels are all valid for adaptive mode on opus-4-8."""
+        for effort in ("low", "medium", "high"):
+            features = AnthropicFeatures(adaptive_thinking_effort=effort)
+            assert features.adaptive_thinking_effort == effort
+            assert features.enable_extended_thinking is False
+
+    def test_default_features_safe_for_opus48(self):
+        """Default AnthropicFeatures has no thinking enabled — safe for opus-4-8."""
+        features = AnthropicFeatures()
+        assert features.enable_extended_thinking is False
+        assert features.thinking_budget_tokens is None
+        assert features.adaptive_thinking_effort is None
+
+    def test_extended_thinking_config_documents_incompatibility_with_opus48(self):
+        """Extended thinking must NOT be combined with claude-opus-4-8.
+
+        The dataclass accepts the flag (there is no model-level guard at
+        the client layer); the caller is responsible for not passing
+        enable_extended_thinking=True when targeting opus-4-8.  This test
+        documents the boundary so that future guard implementations have a
+        clear regression point.
+        """
+        correct = AnthropicFeatures(adaptive_thinking_effort="high")
+        assert correct.enable_extended_thinking is False
+
+        incompatible = AnthropicFeatures(
+            enable_extended_thinking=True, thinking_budget_tokens=8000
+        )
+        assert incompatible.enable_extended_thinking is True
+
+    @pytest.mark.asyncio
+    async def test_create_anthropic_client_adaptive_for_opus48(self):
+        """create_anthropic_client(enable_thinking='adaptive') is correct for opus-4-8."""
+        client = await create_anthropic_client(
+            api_key="test-key",
+            enable_thinking="adaptive",
+            adaptive_effort="medium",
+        )
+        assert client._features.adaptive_thinking_effort == "medium"
+        assert client._features.enable_extended_thinking is False
+        assert client._features.enable_interleaved_thinking is False
+
+    @pytest.mark.asyncio
+    async def test_opus48_adaptive_thinking_payload_shape(self):
+        """Verify the thinking payload emitted for opus-4-8 adaptive mode."""
+        features = AnthropicFeatures(adaptive_thinking_effort="high")
+        client = AnthropicClient(api_key="test-key", features=features)
+
+        mock_response = MagicMock()
+        mock_response.content = []
+        client._client.messages.create = AsyncMock(return_value=mock_response)
+
+        await client.create_message(
+            model="claude-opus-4-8",
+            messages=[{"role": "user", "content": "Explain quantum entanglement"}],
+            auto_retrieve_tools=False,
+        )
+
+        call_kwargs = client._client.messages.create.call_args.kwargs
+        assert call_kwargs["model"] == "claude-opus-4-8"
+        assert "thinking" in call_kwargs
+        assert call_kwargs["thinking"]["type"] == "adaptive"
+        assert call_kwargs["thinking"]["effort"] == "high"
+        assert "budget_tokens" not in call_kwargs["thinking"]
