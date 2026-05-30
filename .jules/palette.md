@@ -1,3 +1,7 @@
+## 2026-05-30 - [State Retention and Quick Clearing in Search Comboboxes]
+**Learning:** When users click away from a custom search combobox and click back into the input, the dropdown typically remains hidden, resulting in a UX dead end. Furthermore, `Escape` is commonly used to dismiss dropdowns, but if the dropdown is already closed, users expect `Escape` to quickly clear the input field to start a new search.
+**Action:** Always add a `focus` event listener to search inputs that selects the existing text and re-evaluates/displays results if a query exists. Additionally, improve the `Escape` key handler to clear the input field if the results dropdown is already hidden.
+
 ## 2026-04-17 - [External Link Decorative Icon Accessibility]
 **Learning:** For accessibility in HTML/JS components, add `aria-hidden="true"` to decorative external link icons. Instead of appending a visually hidden `.sr-only` span, which can cause visual regressions if the CSS is missing or misapplied, prefer setting an `aria-label` directly on the link element (e.g., `link.setAttribute('aria-label', originalText + ' (opens in a new tab)');`).
 **Action:** Update external link icon scripts to append the `aria-label` to the anchor tag itself, making sure to capture the original textContent before any new child nodes (like icons) are appended.

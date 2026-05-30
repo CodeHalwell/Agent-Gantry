@@ -310,8 +310,28 @@
       }, 200);
     });
 
+    // Handle focus to retain search state
+    searchInput.addEventListener("focus", function (e) {
+      const query = e.target.value.trim();
+      e.target.select();
+      if (query.length >= 2) {
+        const results = search(query);
+        displayResults(results);
+      }
+    });
+
     // Handle keyboard navigation in results
     searchInput.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        if (searchResults && searchResults.style.display !== "none") {
+          hideResults();
+        } else {
+          searchInput.value = "";
+        }
+        return;
+      }
+
       if (!searchResults || searchResults.style.display === "none") return;
 
       const items = searchResults.querySelectorAll(".search-result-item");
@@ -337,10 +357,6 @@
         } else if (items[0]) {
           items[0].click();
         }
-        return;
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        hideResults();
         return;
       } else {
         return;

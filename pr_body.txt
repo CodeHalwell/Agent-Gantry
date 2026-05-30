@@ -1,4 +1,4 @@
-💡 What: Replaced a list comprehension that iterated over the entire call history in `RateLimiter.get_stats()` with a fast reverse iterator that breaks early.
-🎯 Why: Iterating over an entire sliding window history is highly inefficient when checking for recent items, resulting in an O(N) operation instead of O(1).
-📊 Impact: Expected to reduce CPU time overhead for stats generation by >20x for large history sliding windows, matching the optimization already present in `_sliding_window_check()`.
-🔬 Measurement: Verify using `uv run pytest tests/test_rate_limiter.py`.
+💡 What: Added `focus` state retention to search input and improved `Escape` key quick clear.
+🎯 Why: If a user clicked away from the search input and then back to it, their search results didn't reappear, creating a UX dead end. Also, users expect `Escape` to clear a search input if the results dropdown is already closed.
+📸 Before/After: Verified via Playwright screenshots internally.
+♿ Accessibility: Improves keyboard navigation support by making it easier to quickly clear search fields using the keyboard.
