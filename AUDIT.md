@@ -1,14 +1,22 @@
 # Agent-Gantry Modernisation Audit
 
-**Date:** 2026-05-27  
+**Date:** 2026-05-31  
 **Repository:** `CodeHalwell/Agent-Gantry` · version `0.4.0`  
-**Branch:** `claude/cool-hopper-Y9M5N` (based on `sentinel/fix-ssrf-port-bypass-15808601177667804830`)  
+**Branch:** `claude/cool-hopper-4OYfr` (based on `sentinel/fix-newline-injection-18155041855923376733` — PR #218)  
 **Auditor:** Claude (claude-sonnet-4-6)
 
-> **Note on PR history.** This audit incorporates security fix PR #207 (SSRF bypass via
-> malformed URL ports, merged via `sentinel/fix-ssrf-port-bypass-15808601177667804830`) and
-> accessibility fix PR #208 (search combobox `Escape` focus retention). The audit branch
-> starts from the sentinel security branch so all current fixes are in scope.
+> **Note on PR history.** This audit incorporates:
+> - Security fix PR #207 (SSRF bypass via malformed URL ports)
+> - UX fix PR #208 (search combobox `Escape` focus retention)
+> - Performance fix PR #211 (fast reverse iteration in `RateLimiter.get_stats`)
+> - Docs fix PR #212 (smooth scrolling after dynamic anchor generation)
+> - Security fix PR #213 (SSRF bypass via `file://` scheme)
+> - Security fix PR #218 (regex bypass via newline injection in tool identifiers)
+>
+> The previous modernisation audit run (2026-05-27, `claude/cool-hopper-Y9M5N`) bumped
+> `langchain`, `langchain-openai`, and `langgraph` floors and produced the initial AUDIT.md.
+> This run (2026-05-31) is a follow-up incorporating PR #218 and four days of new package
+> releases.
 
 ---
 
@@ -16,34 +24,22 @@
 
 | Severity | Count | Areas |
 |----------|-------|-------|
-| **Must-change now** | 3 | Dependency floor bumps (langchain, langchain-openai, langgraph) |
-| **Good next-step** | 5 | Comment refresh (crewai, google-adk, google-genai, agent-framework 1.6.0 notes), AutoGen→MAF migration page |
+| **Must-change now** | 4 | Dependency floor bumps (anthropic, mcp, groq); duplicate validator removal |
+| **Good next-step** | 5 | AF 1.7.0 HarnessAgent example; semantic-kernel/google-adk isolation docs; invalid-port SSRF test; MAF migration guide |
 
-The repository is in excellent overall health for `v0.4.0`. All three provider API surfaces are
-current:
-
-- **OpenAI**: Responses API (`client.responses.create`) is the primary path. No Assistants API
-  code is present. Chat Completions is retained as a supported secondary path.
-- **Anthropic**: Messages API with correct `input_schema`, `is_error`, and all three thinking
-  modes (interleaved, extended, adaptive).
-- **Google Gemini**: `google.genai` SDK with `functionDeclarations` and correct
-  `functionResponse` correlation.
-
-The Microsoft Agent Framework integration is comprehensive and aligned with AF 1.5.0/1.6.0:
-`Agent`, `AgentExecutor`, `WorkflowBuilder`, `SequentialBuilder`, `HandoffBuilder`,
-`ContextProvider`, `FunctionMiddleware`, and `chat_middleware` are all used correctly. A
-documented workaround exists for the AF 1.6.0 ContextVar concurrency bug.
-
-Security: the SSRF bypass via malformed URL ports (`http://@:evil.com/…`) has been fixed in
-`core/security.py` and is covered by `test_ssrf_port_bypass`. The fix correctly blocks URLs
-that lack a valid hostname after port-parsing raises `ValueError`.
+The repository remains in excellent health for `v0.4.0`. All provider API surfaces are current
+and all framework integrations align with the latest stable SDKs.
 
 **Actionable items completed in this audit run:**
-1. Bump `langchain` floor `1.3.1 → 1.3.2` (latest stable).
-2. Bump `langchain-openai` floor `1.2.1 → 1.2.2` (latest stable).
-3. Bump `langgraph` floor `1.2.1 → 1.2.2` (latest stable).
-4. Update `pyproject.toml` comments for `crewai`, `google-adk`, `google-genai`.
-5. Regenerate `uv.lock` (three packages updated, no solver conflicts).
+
+1. Bump `anthropic` floor `0.104.1 → 0.105.2` (released 2026-05-29; no breaking changes).
+2. Bump `mcp` floor `1.27.1 → 1.27.2` (released 2026-05-29; patch release).
+3. Bump `groq` floor `1.2.0 → 1.4.0` (released 2026-05-28).
+4. Remove redundant `_reject_newlines` validator from `ToolDefinition` — `validate_identifiers`
+   already provides identical protection (see §7).
+5. Update `pyproject.toml` comments for `agent-framework` (1.7.0), `crewai` (1.14.6),
+   `google-genai` (2.7.0), `google-adk` (re-verified 2026-05-31).
+6. Regenerate `uv.lock` (three packages updated, no solver conflicts).
 
 ---
 
@@ -53,81 +49,74 @@ that lack a valid hostname after port-parsing raises `ValueError`.
 
 Sources verified against PyPI JSON API (cited URLs below).
 
-| Package | Current floor | Latest stable | Action | Risk |
-|---------|--------------|---------------|--------|------|
-| `agent-framework` | `>=1.5.0,<2.0.0` | `1.6.0` | Within range ✅ — update comment | Safe internal |
-| `anthropic` | `>=0.104.1` | `0.104.1` | ✅ at latest | — |
-| `autogen-agentchat` | `>=0.7.5` | `0.7.5` | ✅ at latest | — |
-| `autogen-ext[openai]` | `>=0.7.5` | `0.7.5` | ✅ at latest | — |
-| `cohere` | `>=6.0.0` | (unchecked) | No action | — |
-| `crewai` | `>=1.6.1` | `1.14.5` | Comment updated (latest is 1.14.5) | Note only |
-| `google-adk` | `>=1.14.1` | `2.1.0` | Comment updated; floor stays at 1.14.1 (langgraph conflict) | Blocked — see §2.4 |
-| `google-genai` | `>=1.75.0` | `2.6.0` | Comment updated (latest is 2.6.0); floor stays 1.75.0 | Note only |
-| `groq` | `>=1.2.0` | `1.2.0` | ✅ at latest | — |
-| `langchain` | `>=1.3.1` | `1.3.2` | **Bumped to >=1.3.2** ✅ | Safe internal |
-| `langchain-openai` | `>=1.2.1` | `1.2.2` | **Bumped to >=1.2.2** ✅ | Safe internal |
-| `langgraph` | `>=1.2.1` | `1.2.2` | **Bumped to >=1.2.2** ✅ | Safe internal |
-| `llama-index-core` | `>=0.14.22` | `0.14.22` | ✅ at latest | — |
-| `llama-index-llms-openai` | `>=0.7.7` | (unchecked) | No action | — |
-| `mcp` | `>=1.27.1` | `1.27.1` | ✅ at latest | — |
-| `openai` | `>=2.38.0` | `2.38.0` | ✅ at latest | — |
-| `semantic-kernel` | `>=1.36.0` | `1.42.0` | Comment only — OTel conflict with AF; see §2.3 | Blocked |
+| Package | Previous floor | Current floor | Latest stable | Action | Risk |
+|---------|---------------|--------------|---------------|--------|------|
+| `agent-framework` | `>=1.5.0,<2.0.0` | `>=1.5.0,<2.0.0` | `1.7.0` | Within range ✅ — comment updated | Safe internal |
+| `anthropic` | `>=0.104.1` | **`>=0.105.2`** | `0.105.2` | **Bumped** ✅ | Safe internal |
+| `autogen-agentchat` | `>=0.7.5` | `>=0.7.5` | `0.7.5` | ✅ at latest | — |
+| `autogen-ext[openai]` | `>=0.7.5` | `>=0.7.5` | `0.7.5` | ✅ at latest | — |
+| `cohere` | `>=6.0.0` | `>=6.0.0` | (unchecked) | No action | — |
+| `crewai` | `>=1.6.1` | `>=1.6.1` | `1.14.6` | Comment updated (latest 1.14.6) | Note only |
+| `google-adk` | `>=1.14.1` | `>=1.14.1` | `2.1.0` | Comment re-verified; floor unchanged (langgraph conflict) | Blocked |
+| `google-genai` | `>=1.75.0` | `>=1.75.0` | `2.7.0` | Comment updated (latest 2.7.0, 2026-05-28) | Note only |
+| `groq` | `>=1.2.0` | **`>=1.4.0`** | `1.4.0` | **Bumped** ✅ | Safe internal |
+| `langchain` | `>=1.3.2` | `>=1.3.2` | `1.3.2` | ✅ at latest | — |
+| `langchain-openai` | `>=1.2.2` | `>=1.2.2` | `1.2.2` | ✅ at latest | — |
+| `langgraph` | `>=1.2.2` | `>=1.2.2` | `1.2.2` | ✅ at latest | — |
+| `llama-index-core` | `>=0.14.22` | `>=0.14.22` | `0.14.22` | ✅ at latest | — |
+| `mcp` | `>=1.27.1` | **`>=1.27.2`** | `1.27.2` | **Bumped** ✅ | Safe internal |
+| `openai` | `>=2.38.0` | `>=2.38.0` | `2.38.0` | ✅ at latest | — |
+| `semantic-kernel` | `>=1.36.0` | `>=1.36.0` | `1.42.0` | OTel conflict with AF; floor unchanged | Blocked |
 
-**Citation sources (all verified 2026-05-27):**
-- `langchain 1.3.2`: https://pypi.org/pypi/langchain/json
-- `langchain-openai 1.2.2`: https://pypi.org/pypi/langchain-openai/json
-- `langgraph 1.2.2`: https://pypi.org/pypi/langgraph/json
-- `crewai 1.14.5`: https://pypi.org/pypi/crewai/json
-- `google-adk 2.1.0`: https://pypi.org/pypi/google-adk/json
-- `google-genai 2.6.0`: https://pypi.org/pypi/google-genai/json
-- `agent-framework 1.6.0`: https://pypi.org/pypi/agent-framework/json
-- `anthropic 0.104.1`: https://pypi.org/pypi/anthropic/json
-- `openai 2.38.0`: https://pypi.org/pypi/openai/json
-- `mcp 1.27.1`: https://pypi.org/pypi/mcp/json
-- `llama-index-core 0.14.22`: https://pypi.org/pypi/llama-index-core/json
-- `groq 1.2.0`: https://pypi.org/pypi/groq/json
+**Citation sources (all verified 2026-05-31):**
+- `anthropic 0.105.2`: https://pypi.org/pypi/anthropic/json
+- `groq 1.4.0`: https://pypi.org/pypi/groq/json
+- `mcp 1.27.2`: https://pypi.org/pypi/mcp/json
+- `google-genai 2.7.0`: https://pypi.org/pypi/google-genai/json
+- `crewai 1.14.6`: https://pypi.org/pypi/crewai/json
+- `agent-framework 1.7.0`: https://pypi.org/pypi/agent-framework/json + https://github.com/microsoft/agent-framework/releases
+- `openai 2.38.0`: https://pypi.org/pypi/openai/json (unchanged)
+- `langchain 1.3.2`, `langchain-openai 1.2.2`, `langgraph 1.2.2`: all unchanged from 2026-05-27
 
 ### 2.2 Commands applied in this run
 
 ```bash
-# Bumped floors in pyproject.toml, then regenerated the lock:
-uv lock --upgrade-package langchain \
-        --upgrade-package langchain-openai \
-        --upgrade-package langgraph
+uv lock --upgrade-package anthropic \
+        --upgrade-package mcp \
+        --upgrade-package groq
 
 # Output:
-# Updated langchain v1.3.1 -> v1.3.2
-# Updated langchain-openai v1.2.1 -> v1.2.2
-# Updated langgraph v1.2.1 -> v1.2.2
+# Updated anthropic v0.104.1 -> v0.105.2
+# Updated groq v1.2.0 -> v1.4.0
+# Updated mcp v1.27.1 -> v1.27.2
 ```
 
-No solver conflicts were raised. The three packages updated cleanly within the existing
-constraint set.
+No solver conflicts. The three packages updated cleanly within the existing constraint set.
 
-### 2.3 Blocked upgrade: `semantic-kernel ≥ 1.42.0`
+### 2.3 Agent Framework 1.7.0 — impact assessment
 
-`semantic-kernel 1.42.0` (latest stable) is blocked in the `agent-frameworks` combined extra
-because `agent-framework>=1.2.1` requires `opentelemetry-api>=1.39.0`, while older
-`semantic-kernel` versions pin a narrower range. The floor stays at `>=1.36.0`.
+AF 1.7.0 (released 2026-05-28) includes one breaking change:
 
-**Resolution path:** install `semantic-kernel` in a dedicated virtual environment without
-`agent-framework`, or wait for a `semantic-kernel` release that widens its `opentelemetry-api`
-range to include `>=1.39.0`.
+> **"Remove Python-only declarative actions and rename alias kinds to C# canonical names."**
 
-### 2.4 Blocked upgrade: `google-adk ≥ 2.x`
+Gantry does **not** use declarative actions (`@agent_framework.action()`). All Gantry tool
+wrapping uses `@agent_framework.tool()` (a `FunctionTool`, not a declarative action), so this
+breaking change does **not** affect any Gantry code.
 
-`google-adk 2.1.0` is the latest stable release (Workflow Runtime + Task API, major version
-bump). It is blocked in the combined `agent-frameworks` extra because:
+AF 1.7.0 also adds `HarnessAgent` and the background-agents harness provider — additive, and
+an interesting future integration path (see §9). The checkpoint restoration fix for
+`MessageRole` values benefits `HandoffBuilder` workflows using serialised checkpoints.
 
-1. `google-adk 2.x` (and `1.34.x` before it) requires `langgraph<0.4.8` via its extensions
-   extra, which is incompatible with `langgraph>=1.2.2` now required by this project.
-2. Potential transitive `pydantic` / `opentelemetry-api` conflicts in the 2.x internals
-   require validation in an isolated environment first.
+**Source:** https://github.com/microsoft/agent-framework/releases (verified 2026-05-31).
 
-**Standalone usage:** `pip install "agent-gantry[google-genai]" "google-adk>=2.1.0"` works in
-an environment without LangChain/LangGraph.
+### 2.4 Blocked upgrade: `semantic-kernel ≥ 1.42.0`
 
-Source: https://pypi.org/pypi/google-adk/json (verified 2026-05-27).
+Unchanged from prior audit. Floor stays at `>=1.36.0` due to OTel conflict with
+`agent-framework>=1.2.1`.
+
+### 2.5 Blocked upgrade: `google-adk ≥ 2.x`
+
+Unchanged from prior audit. Floor stays at `>=1.14.1` due to `langgraph<0.4.8` conflict.
 
 ---
 
@@ -135,372 +124,171 @@ Source: https://pypi.org/pypi/google-adk/json (verified 2026-05-27).
 
 ### 3.1 OpenAI
 
-**Finding:** No Assistants API usage found in the codebase. The Responses API
-(`client.responses.create`) is already the primary pattern. ✅
+**Status:** No changes required. ✅
 
-**Responses API usage** (`examples/llm_integration/openai_demo.py`): Correct.
-- `input=` (flat message array), `tools=` (flat schema), `previous_response_id`,
-  and `function_call_output` items are all used correctly.
-- Uses `gpt-4.1` (current model family).
+No Assistants API usage is present. The Responses API (`client.responses.create`) is the
+primary pattern in `examples/llm_integration/openai_demo.py` (Scenario A with `gpt-4.1`).
+`OpenAIResponsesAdapter` produces the correct flat schema and `function_call_output` result
+format. `OpenAIAdapter` (Chat Completions with `gpt-4o`) is retained as a secondary path.
 
-**Tool schema** (`agent_gantry/adapters/tool_spec/providers.py`, `OpenAIResponsesAdapter`):
-produces the correct flat shape:
+Assistants API sunset: **26 August 2026**. No Gantry code touches it.
 
-```python
-{"type": "function", "name": "...", "description": "...", "parameters": {...}}
-```
-
-per the Responses API specification. ✅
-
-Source: https://platform.openai.com/docs/api-reference/responses (verified 2026-05-27).
-
-**Tool result format** (`OpenAIResponsesAdapter.format_tool_result`): correctly produces:
-
-```python
-{"type": "function_call_output", "call_id": "...", "output": "..."}
-```
-✅
-
-**Chat Completions** (`OpenAIAdapter`): still supported for the `dialect="openai"` path.
-Correct format. ✅
-
-**Assistants API sunset:** August 26 2026. No code touches the Assistants API. ✅
-
-**Risk level:** Safe internal — no changes required.
+**Source:** https://platform.openai.com/docs/api-reference/responses (verified 2026-05-31).
 
 ### 3.2 Anthropic
 
-**Finding:** Messages API is used throughout with correct shapes. ✅
+**Status:** No API refactors required. Floor bumped to `0.105.2`. ✅
 
-**Tool schema** (`AnthropicAdapter.to_provider_schema`): produces correct `input_schema` field
-with optional `additionalProperties: false` injection for `strict=True` mode (documented in the
-code with a citation to `platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use`).
+Messages API throughout with correct shapes. `AnthropicAdapter.to_provider_schema` produces
+correct `input_schema` with optional `additionalProperties: false` for `strict=True`.
+`format_tool_result` correctly emits `tool_use_id` and `is_error=True`.
 
-**Tool result** (`AnthropicAdapter.format_tool_result`): correctly emits `tool_use_id` and
-`is_error=True` when the tool failed. ✅
+Three thinking modes (interleaved, extended, adaptive) in `anthropic_features.py` remain
+correctly implemented.
 
-Source: https://docs.anthropic.com/en/api/messages (verified 2026-05-27).
-
-**Thinking modes** (`agent_gantry/integrations/anthropic_features.py`): three modes implemented:
-
-| Mode | Implementation | Status |
-|------|----------------|--------|
-| `interleaved` | `anthropic-beta: interleaved-thinking-2025-05-14` header | ✅ |
-| `extended` | `thinking: {type: "enabled", budget_tokens: N}` | ✅ |
-| `adaptive` | `thinking: {type: "adaptive", effort: "low|medium|high"}` | ✅ |
-
-`claude-opus-4-7` correctly excludes `extended` thinking (not supported on that model).
-`adaptive` is correctly marked as not available on `claude-haiku-4-5`.
-
-Source: https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking (verified 2026-05-27).
-
-**Model names:** `claude-sonnet-4-6` and `claude-opus-4-7` are current production aliases. ✅
-
-**Risk level:** Safe internal — no changes required.
+**Source:** https://docs.anthropic.com/en/api/messages (verified 2026-05-31).
 
 ### 3.3 Google Gemini / Gen AI
 
-**Finding:** Correct `functionDeclarations` / `functionResponse` shapes used throughout. ✅
+**Status:** No changes required. ✅
 
-**Tool schema** (`GeminiAdapter.to_provider_schema`): produces:
-```python
-{"name": "...", "description": "...", "parameters": {...}}
-```
-which maps directly to Gemini `FunctionDeclaration`. ✅
+`GeminiAdapter` shapes are correct. `id` placed inside `functionResponse` correctly. Async
+`client.aio.models.generate_content` is correct. google-genai 2.7.0 has no breaking changes
+affecting function calling.
 
-**Tool result** (`GeminiAdapter.format_tool_result`): places `id` inside `functionResponse`
-(correct — `id` is a field on the `FunctionResponse` proto, not on `Part`):
-```python
-{"functionResponse": {"name": "...", "response": {...}, "id": "..."}}
-```
-✅
-
-Source: https://ai.google.dev/gemini-api/docs/function-calling (verified 2026-05-27).
-
-**Model names** (`google_genai_demo.py`): `gemini-2.5-flash` is current stable. ✅
-
-**Async interface** (`client.aio.models.generate_content`): correct for google-genai ≥1.x.
-The SDK's 2.x breaking changes were limited to the Interactions API surface (SSE event renames,
-`response_format` restructuring); `generate_content` and function calling are unaffected. ✅
-
-**Risk level:** Safe internal — no changes required.
+**Source:** https://ai.google.dev/gemini-api/docs/function-calling (verified 2026-05-31).
 
 ### 3.4 Mistral
 
-**Finding:** `mistralai` was quarantined on PyPI on 2026-05-12. The repo correctly migrates to
-`AsyncOpenAI(base_url="https://api.mistral.ai/v1")` and `MistralAdapter` inherits
-`OpenAIAdapter` for schema and result formats. ✅
+**Status:** No changes required. ✅
 
-**Risk level:** Safe internal — no changes required.
+Routes correctly through `AsyncOpenAI(base_url="https://api.mistral.ai/v1")`.
 
 ### 3.5 Groq
 
-**Finding:** `AsyncGroq` with `chat.completions.create()`. `GroqAdapter` inherits
-`OpenAIAdapter`. All shapes are correct. ✅
+**Status:** No API refactors required. Floor bumped to `1.4.0`. ✅
 
-**Risk level:** Safe internal — no changes required.
+`AsyncGroq` with `chat.completions.create()` remains the correct pattern.
 
 ---
 
 ## 4 · Framework Integration Refactors
 
-### 4.1 Microsoft Agent Framework (AF 1.5.0 / 1.6.0) — Priority review
+### 4.1 Microsoft Agent Framework (AF 1.5.0 – 1.7.0) — Priority review
 
-All AF integration modules align with the `agent-framework>=1.5.0,<2.0.0` GA surface.
+No refactors required. AF 1.7.0 compatibility confirmed (§2.3).
 
-#### 4.1.1 Agent construction and configuration
-
-`GantryToolBridge.build_agent` and `as_agent`
-(`agent_gantry/integrations/agent_framework_bridge.py`) construct agents via:
-
-```python
-Agent(client, instructions, name=name, tools=tools, middleware=middleware)
-```
-
-This is the idiomatic AF 1.x constructor signature. ✅
-
-`_build_callable_for_tool` uses `@agent_framework.tool(wrapper, name=..., description=...,
-approval_mode=...)` when AF is installed, producing a real `FunctionTool` with GA metadata. ✅
-
-#### 4.1.2 Workflow subsystem
-
-| Builder | Status |
+| Surface | Status |
 |---------|--------|
-| `SequentialBuilder` | ✅ `build_sequential_workflow` |
-| `HandoffBuilder` | ✅ `build_handoff_workflow` — `.participants()`, `.with_start_agent()`, `.add_handoff()` |
-| `WorkflowBuilder` + `AgentExecutor` | ✅ `build_workflow` |
-
-All three builders are imported from `agent_framework.orchestrations` ✅
-
-#### 4.1.3 Hosting / AF 1.6.0 ContextVar bug
-
-AF 1.6.0 (released 2026-05-22) enables `asyncio.ContextVar`-based instrumentation by
-default. Concurrent `Agent.run()` coroutines via `asyncio.gather()` / `TaskGroup` raise:
-
-```
-ValueError: <Token …> was created in a different Context
-```
-
-The repo already has a complete workaround:
-
-1. `disable_af_instrumentation()` in `agent_gantry/__init__.py` and
-   `agent_framework_bridge.py` — calls `agent_framework.telemetry.disable_instrumentation()`
-   when AF ≥ 1.6.0 is detected.
-2. `GantryToolBridge(disable_af_instrumentation=True)` — convenience flag to apply the
-   shim at bridge construction time.
-3. Documentation in `GantryObservabilityMiddleware` docstring.
-
-Sequential workflows (`WorkflowAgent`, `SequentialBuilder`, `HandoffBuilder`) are **not**
-affected.
-
-Source: https://pypi.org/pypi/agent-framework/json (1.6.0 release notes, verified 2026-05-27).
-
-#### 4.1.4 Middleware pipeline
-
-`GantryApprovalMiddleware`, `GantryObservabilityMiddleware`, `GantryToolChoiceMiddleware` all
-reside in `agent_gantry/integrations/agent_framework_middleware.py`. They:
-
-- Use `FunctionMiddleware` (preferred) with `ChatMiddlewareLayer` as a fallback for older
-  1.x point releases. ✅
-- Import AF lazily so the module remains usable without AF installed. ✅
-- `MiddlewareTermination` raised correctly for approval-required tools. ✅
-
-#### 4.1.5 Tools / skills / providers — `GantryContextProvider`
-
-`GantryContextProvider`
-(`agent_gantry/integrations/agent_framework_provider.py`) subclasses `ContextProvider`
-dynamically (lazy import). Per-run and per-call retrieval strategies are both implemented,
-including the `as_chat_middleware()` factory for per-call refresh. ✅
-
-`source_id` keying ensures co-operation with `SkillsProvider` and other context providers. ✅
-
-`MissingRequiredToolError` is raised at construction time when `required=[...]` names are
-absent from the gantry registry. ✅
-
-#### 4.1.6 Human-in-the-loop
-
-`_APPROVAL_REQUIRED_CAPS` maps `WRITE_DATA`, `DELETE_DATA`, `EXECUTE_CODE`, `FINANCIAL`, and
-`PII_ACCESS` capabilities to AF's `approval_mode="always_require"`, causing AF to surface an
-approval event before invocation. ✅
-
-`GantryApprovalMiddleware` raises `MiddlewareTermination` for tools flagged
-`ConfirmationRequiredError` by `SecurityPolicy`. ✅
+| Agent construction (`Agent`, `AgentExecutor`) | ✅ Correct; unaffected by 1.7.0 |
+| Workflow subsystem (`SequentialBuilder`, `HandoffBuilder`, `WorkflowBuilder`) | ✅ Correct; `MessageRole` checkpoint fix benefits `HandoffBuilder` |
+| AF 1.6.0/1.7.0 ContextVar instrumentation shim | ✅ Still required and correctly implemented |
+| Middleware pipeline (`FunctionMiddleware`, `ChatMiddlewareLayer` fallback) | ✅ Both symbols present in AF 1.7.0 |
+| `GantryContextProvider` | ✅ Unaffected by 1.7.0 |
+| Human-in-the-loop approval gates | ✅ Unaffected by 1.7.0 |
 
 **Risk level:** Safe internal — no changes required.
 
-### 4.2 LangGraph
+### 4.2 LangGraph, AutoGen, CrewAI, LlamaIndex, Semantic Kernel
 
-`examples/agent_frameworks/langgraph_example.py` uses `create_react_agent` from
-`langgraph.prebuilt` and `ChatOpenAI` from `langchain_openai`. Both are the canonical
-LangGraph 1.x patterns. ✅
-
-`fetch_framework_tools(gantry, query, framework="langgraph")` in `framework_adapters.py`
-returns OpenAI-style schemas (which LangGraph accepts natively). ✅
-
-**Risk level:** Safe internal — no changes required.
-
-### 4.3 AutoGen (AG2 0.7.5)
-
-`examples/agent_frameworks/autogen_example.py` uses `autogen_agentchat.agents.AssistantAgent`
-and `autogen_ext.models.openai.OpenAIChatCompletionClient` — the current AG2 v0.4 API. ✅
-
-The example includes a migration note flagging MAF as the successor direction and pointing to
-the MAF example for teams evaluating migration. ✅
-
-**Risk level:** Safe internal — no changes required.
-
-### 4.4 CrewAI
-
-`crewai>=1.6.1` is pinned because 1.6.1 is the highest version that co-installs with
-`agent-framework` (due to `opentelemetry-api` range conflicts in crewai ≥ 1.7.0). Standalone
-CrewAI environments can use 1.14.5 (latest stable). ✅ (comment updated in this run)
-
-### 4.5 LlamaIndex / Semantic Kernel
-
-Both are pinned at current floors (`llama-index-core>=0.14.22`, `semantic-kernel>=1.36.0`)
-and have no actionable changes at this time.
+All unchanged from prior audit (2026-05-27). No refactors required.
 
 ---
 
 ## 5 · Universal Tool-Calling Design
 
-### 5.1 `ToolSpec` contract
+No changes required. The `ToolSpec` contract (`ToolCallPayload` + `ToolSpecAdapter` protocol)
+is sound and covers all current providers:
 
-The provider-agnostic contract is implemented via:
+| Adapter | Dialect | Status |
+|---------|---------|--------|
+| `OpenAIAdapter` | `openai` | ✅ Chat Completions format |
+| `OpenAIResponsesAdapter` | `openai_responses` | ✅ Responses API flat format |
+| `AnthropicAdapter` | `anthropic` | ✅ `input_schema`, `is_error`, `tool_use_id` |
+| `GeminiAdapter` | `gemini` | ✅ `functionDeclarations`, `functionResponse.id` |
+| `MistralAdapter` | `mistral` | ✅ Inherits `OpenAIAdapter` |
+| `GroqAdapter` | `groq` | ✅ Inherits `OpenAIAdapter` |
+| `AgentFrameworkAdapter` | `agent_framework` | ✅ Inherits `OpenAIAdapter`, metadata opt |
 
-**`agent_gantry/adapters/tool_spec/base.py`**
-- `ToolCallPayload` (Pydantic model): `tool_name`, `tool_call_id`, `arguments`, `raw_payload`.
-- `ToolSpecAdapter` (Protocol): `dialect_name`, `to_provider_schema`, `from_provider_payload`,
-  `to_tool_call`, `format_tool_result`.
-
-**`agent_gantry/adapters/tool_spec/providers.py`**
-
-| Adapter | Dialect | Notes |
-|---------|---------|-------|
-| `OpenAIAdapter` | `openai` | Chat Completions — `{type: "function", function: {...}}` |
-| `OpenAIResponsesAdapter` | `openai_responses` | Responses API — flat `{type: "function", name: ...}` |
-| `AnthropicAdapter` | `anthropic` | `{name, description, input_schema}` |
-| `GeminiAdapter` | `gemini` | `{name, description, parameters}` |
-| `MistralAdapter` | `mistral` | Inherits `OpenAIAdapter` |
-| `GroqAdapter` | `groq` | Inherits `OpenAIAdapter` |
-| `AgentFrameworkAdapter` | `agent_framework` | Inherits `OpenAIAdapter`, adds `metadata` opt |
-
-### 5.2 Tool name normalisation
-
-Tool names are validated at registration via `validate_tool_name` (lowercase alphanumeric +
-underscore, 1–128 chars). All provider adapters pass the name through verbatim — no
-normalisation needed at the adapter layer. ✅
-
-### 5.3 Required vs optional arguments
-
-`AnthropicAdapter.to_provider_schema(strict=True)` injects `additionalProperties: false`
-into the schema copy (without mutating the shared `ToolDefinition`). ✅
-
-`OpenAIResponsesAdapter.to_provider_schema(strict=True)` sets `schema["strict"] = True`. ✅
-
-### 5.4 Tool call IDs
-
-| Adapter | ID field | Source |
-|---------|----------|--------|
-| `OpenAIAdapter` | `payload["id"]` | Chat Completions `tool_calls[].id` |
-| `OpenAIResponsesAdapter` | `payload["call_id"]` | Responses API `output[].call_id` |
-| `AnthropicAdapter` | `payload["id"]` | `tool_use` block `id` |
-| `GeminiAdapter` | `payload.get("id")` | Present on ≥1.x parallel calls |
-| `AgentFrameworkAdapter` | `payload.get("id") or payload.get("call_id")` | Dual-field lookup |
-
-All IDs are echoed back in `format_tool_result` to support parallel tool calls. ✅
-
-### 5.5 Parallel tool calls
-
-`GeminiAdapter.format_tool_result` places `id` inside `functionResponse`:
-```python
-{"functionResponse": {"name": "...", "response": {...}, "id": "..."}}
-```
-This is correct per the `FunctionResponse` proto schema. ✅
-
-OpenAI (both adapters) and Anthropic echo back `tool_call_id` / `call_id` / `tool_use_id`
-to the provider, enabling parallel call correlation. ✅
-
-### 5.6 Tool-result round-tripping
-
-| Adapter | Result shape |
-|---------|-------------|
-| `OpenAIAdapter` | `{role: "tool", content: "...", name: "...", tool_call_id: "..."}` |
-| `OpenAIResponsesAdapter` | `{type: "function_call_output", call_id: "...", output: "..."}` |
-| `AnthropicAdapter` | `{type: "tool_result", content: "...", tool_use_id: "...", is_error: bool}` |
-| `GeminiAdapter` | `{functionResponse: {name: "...", response: {...}, id: "..."}}` |
-
-All shapes are verified against current provider documentation. ✅
+Tool name normalisation, call ID round-tripping, parallel tool call correlation, and
+`format_tool_result` shapes are all correct and verified against current provider
+documentation. ✅
 
 ---
 
 ## 6 · Documentation and Example Updates
 
-### 6.1 `examples/fast_track_demo.py`
+All examples are current. No rewrites required.
 
-Uses `client.chat.completions.create()` (Chat Completions). This is intentional — the demo
-is a minimal "before/after" and Chat Completions remains fully supported. The Responses API
-demo is in `examples/llm_integration/openai_demo.py` (Scenario A). No change needed.
-
-### 6.2 `examples/llm_integration/openai_demo.py`
-
-Correctly shows Responses API as Scenario A with `gpt-4.1`. Chat Completions retained as
-Scenario B with `gpt-4o`. Both model names are current. ✅
-
-### 6.3 `examples/llm_integration/anthropic_demo.py`
-
-Uses `claude-sonnet-4-6` — current production model. ✅
-
-### 6.4 `examples/llm_integration/google_genai_demo.py`
-
-Uses `gemini-2.5-flash` — current stable model. ✅
-Uses `types.Part.from_function_response()` with `id` kwarg for parallel call correlation. ✅
-Uses `client.aio.models.generate_content()` async path. ✅
-
-### 6.5 `examples/agent_frameworks/autogen_example.py`
-
-Includes a migration note to MAF. The AG2 0.7.5 API usage is correct. ✅
-
-### 6.6 `examples/agent_frameworks/langgraph_example.py`
-
-Uses `create_react_agent` and `langchain_core.tools.tool` — both current LangGraph 1.x
-idioms. ✅
+| File | Model | Status |
+|------|-------|--------|
+| `examples/llm_integration/openai_demo.py` | `gpt-4.1` (Responses API), `gpt-4o` (CC) | ✅ |
+| `examples/llm_integration/anthropic_demo.py` | `claude-sonnet-4-6` | ✅ |
+| `examples/llm_integration/google_genai_demo.py` | `gemini-2.5-flash` | ✅ |
+| `examples/agent_frameworks/agent_framework_example.py` | AF 1.x `Agent`/`AgentExecutor` | ✅ |
+| `examples/agent_frameworks/autogen_example.py` | AG2 v0.4 + MAF migration note | ✅ |
+| `examples/agent_frameworks/langgraph_example.py` | `create_react_agent` + LG 1.x | ✅ |
 
 ---
 
-## 7 · Security Audit
+## 7 · Security: Duplicate Validator Consolidation
 
-### 7.1 SSRF bypass — malformed URL ports (PR #207)
+### 7.1 Finding
 
-**Fixed.** `SecurityPolicy._extract_domains` in `agent_gantry/core/security.py` now
-correctly handles URLs where `urllib.parse.urlparse(...).port` raises `ValueError`:
+PR #218 added `_reject_newlines` to `ToolDefinition` to close a regex bypass: Pydantic v2's
+Rust regex engine treats `$` as end-of-line rather than end-of-string, so the field
+constraint `pattern=r"^[a-z][a-z0-9_]*$"` on `name` would accept `"valid_name\n"`.
 
-```python
-try:
-    _ = parsed.port
-except ValueError:
-    if not parsed.hostname:
-        domains.add("<invalid_domain>")
-        continue
+However, `validate_identifiers` — a pre-existing `@field_validator` on the same three fields
+(`name`, `version`, `namespace`) — already performs an identical explicit `"\n" in v or "\r" in v`
+check. Both validators run in Pydantic v2's default `mode="after"`. The result is two
+validators doing the exact same work on every model construction and assignment.
+
+### 7.2 Fix applied
+
+**File:** `agent_gantry/schema/tool.py`
+
+```diff
+-    @field_validator("name", "version", "namespace", mode="after")
+-    @classmethod
+-    def _reject_newlines(cls, v: Any) -> Any:
+-        if isinstance(v, str) and ("\n" in v or "\r" in v):
+-            raise ValueError("Newlines are not allowed")
+-        return v
+-
+     # Capabilities & permissions
+     capabilities: list[ToolCapability] = Field(default_factory=list)
+     ...
+ 
+     @field_validator("name", "version", "namespace")
+     @classmethod
+     def validate_identifiers(cls, v: str) -> str:
+-        """Validate that identifiers do not contain newlines."""
++        """Reject newlines in identifier fields.
++
++        Pydantic v2 (Rust regex engine) treats $ as end-of-line rather than
++        end-of-string, so the pattern=r"^[a-z][a-z0-9_]*$" on `name` would
++        accept "valid_name\\n". Explicit character checks close that bypass for
++        all three identifier fields.
++        """
+         if "\n" in v or "\r" in v:
+             raise ValueError("Value cannot contain newline characters")
+         return v
 ```
 
-When `parsed.port` raises `ValueError` **and** `parsed.hostname` is `None` / empty (e.g.,
-`http://@:evil.com/etc/passwd`), the URL is blocked by adding `<invalid_domain>` to the
-domain set, which is never in the allowed list.
+**Security posture unchanged.** `validate_identifiers` blocks newlines identically to the
+removed `_reject_newlines`. The pattern constraint on `name` still prevents most malformed
+names at the Rust-engine level; `validate_identifiers` closes the `\n`-at-end bypass.
 
-**Test coverage:** `tests/test_security.py::test_ssrf_port_bypass` — passes. ✅
+**Risk level:** Safe internal.
 
-**Clarification on the general case:** For URLs with a valid hostname but an invalid port
-(e.g., `http://example.com:evil.com`), `parsed.hostname = "example.com"` and the code
-falls through to the normal hostname-extraction path, adding `"example.com"` to the
-domain set. This is correct behaviour: the true network target of such a URL is
-`example.com` (the malformed port prevents connection, so there is no SSRF risk), and
-`"example.com"` is correctly validated against the allowed list.
+### 7.3 Existing security tests
 
-### 7.2 Search combobox accessibility (PR #208)
-
-`Escape` on the search combobox now calls `e.preventDefault()` instead of
-`searchInput.blur()`, retaining focus on the input field. ✅
+| Test | Status |
+|------|--------|
+| `test_security.py::test_ssrf_port_bypass` | ✅ Passes |
+| `test_security.py` (file:// SSRF) | ✅ Passes |
+| `test_tool.py` (ToolDefinition validation) | ✅ Covers newline rejection via `validate_identifiers` |
 
 ---
 
@@ -510,34 +298,32 @@ domain set. This is correct behaviour: the true network target of such a URL is
 
 | Test | Status | Notes |
 |------|--------|-------|
-| `test_security.py::test_ssrf_port_bypass` | ✅ Exists | Covers the specific bypass vector |
-| `test_tool_spec_adapters.py` | ✅ Exists | Covers all provider adapters |
-| `test_agent_framework_integration.py` | ✅ Exists | Covers AF bridge, provider, middleware |
-| LangGraph 1.2.2 regression | ✅ No API changes | No new test needed |
-| `test_ssrf_general_invalid_port` | ⚠️ **Needs confirmation** | Optional: add test for `http://example.com:evil.com` to document the expected `"example.com"` extraction behaviour |
+| `test_tool.py` — newline rejection | ✅ Existing | Unaffected by removing `_reject_newlines` |
+| `test_security.py::test_ssrf_invalid_port_with_hostname` | ⚠️ Optional | Documents `http://example.com:evil.com` → correct hostname extraction |
+| AF 1.7.0 `HarnessAgent` example test | ⚠️ Good next step | If/when a `HarnessAgent` example is added |
 
 ### 8.2 Regeneration checklist
 
-- [x] `uv.lock` regenerated (`langchain`, `langchain-openai`, `langgraph` updated).
-- [ ] VCR recordings / golden HTTP responses — none present in this repo; not applicable.
+- [x] `uv.lock` regenerated (`anthropic`, `groq`, `mcp` updated).
+- [ ] VCR recordings / golden HTTP responses — not present; not applicable.
 - [ ] Schema snapshots — not present; not applicable.
 
 ### 8.3 Changelog-ready migration notes
 
 ```
-## [0.4.x] — 2026-05-27
+## [0.4.x] — 2026-05-31
 
 ### Changed
-- `langchain` floor bumped `>=1.3.1 → >=1.3.2` (patch; no API changes).
-- `langchain-openai` floor bumped `>=1.2.1 → >=1.2.2` (patch; no API changes).
-- `langgraph` floor bumped `>=1.2.1 → >=1.2.2` (patch; no API changes).
-- `pyproject.toml` comments updated for `crewai` (1.14.5), `google-adk` (2.1.0),
-  and `google-genai` (2.6.0) to reflect current latest stable versions.
+- `anthropic` floor bumped `>=0.104.1 → >=0.105.2` (patch series; no API changes).
+- `mcp` floor bumped `>=1.27.1 → >=1.27.2` (patch; no API changes).
+- `groq` floor bumped `>=1.2.0 → >=1.4.0` (no breaking changes).
+- `pyproject.toml` comments updated for `agent-framework` (1.7.0 impact analysis),
+  `crewai` (1.14.6), `google-genai` (2.7.0).
 
-### Fixed
-- SSRF bypass via malformed URL ports (`http://@:evil.com/…`) in
-  `SecurityPolicy._extract_domains` — URLs that lack a valid hostname after a
-  port-parsing `ValueError` are now blocked as `<invalid_domain>`.
+### Fixed (internal)
+- Removed redundant `_reject_newlines` validator from `ToolDefinition`; consolidated
+  newline-rejection logic into the pre-existing `validate_identifiers` validator with
+  an explanatory docstring. Security posture unchanged.
 ```
 
 ---
@@ -548,17 +334,19 @@ domain set. This is correct behaviour: the true network target of such a URL is
 
 | # | Change | File | Status |
 |---|--------|------|--------|
-| 1 | Bump `langchain>=1.3.2` | `pyproject.toml` | ✅ Done |
-| 2 | Bump `langchain-openai>=1.2.2` | `pyproject.toml` | ✅ Done |
-| 3 | Bump `langgraph>=1.2.2` | `pyproject.toml` | ✅ Done |
-| 4 | Regenerate `uv.lock` | `uv.lock` | ✅ Done |
+| 1 | Bump `anthropic>=0.105.2` | `pyproject.toml` | ✅ Done |
+| 2 | Bump `mcp>=1.27.2` | `pyproject.toml` | ✅ Done |
+| 3 | Bump `groq>=1.4.0` | `pyproject.toml` | ✅ Done |
+| 4 | Remove `_reject_newlines`; expand `validate_identifiers` docstring | `agent_gantry/schema/tool.py` | ✅ Done |
+| 5 | Update pyproject comments (AF 1.7.0, crewai 1.14.6, google-genai 2.7.0) | `pyproject.toml` | ✅ Done |
+| 6 | Regenerate `uv.lock` | `uv.lock` | ✅ Done |
 
 ### Good next-step improvements
 
 | # | Change | File | Risk |
 |---|--------|------|------|
-| 1 | Validate `semantic-kernel>=1.42.0` in isolation with `agent-framework`; bump floor if compatible | `pyproject.toml` | Safe with shim |
-| 2 | Validate `google-adk>=2.1.0` in standalone env; add docs page showing `google-adk 2.x` Workflow Runtime pattern | `docs/`, `examples/` | Safe with shim |
-| 3 | Add optional test for `http://example.com:evil.com` → documents expected hostname extraction behaviour | `tests/test_security.py` | Safe internal |
-| 4 | Add a MAF migration guide (`docs/migrating-from-autogen.md`) for teams moving from AutoGen/AG2 to AF 1.x | `docs/` | Documentation |
-| 5 | Assess `google-adk 2.x` Workflow Runtime as a possible replacement for custom `WorkflowAgent` wrappers in `examples/agent_frameworks/google_adk_example.py` | `examples/` | Needs confirmation |
+| 1 | Add `HarnessAgent` example showing background-agent pattern (new in AF 1.7.0) | `examples/agent_frameworks/` | Safe internal |
+| 2 | Validate `semantic-kernel>=1.42.0` in isolation with `agent-framework`; bump floor if OTel conflict resolved | `pyproject.toml` | Safe with shim |
+| 3 | Validate `google-adk>=2.1.0` standalone env; add docs page showing Workflow Runtime pattern | `docs/`, `examples/` | Needs confirmation |
+| 4 | Add `test_ssrf_invalid_port_with_hostname` to document expected hostname extraction for `http://example.com:evil.com` | `tests/test_security.py` | Safe internal |
+| 5 | Add MAF migration guide (`docs/migrating-from-autogen.md`) for AutoGen→AF 1.x teams | `docs/` | Documentation |

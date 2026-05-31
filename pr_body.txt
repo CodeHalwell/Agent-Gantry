@@ -1,4 +1,5 @@
-💡 What: Replaced a list comprehension that iterated over the entire call history in `RateLimiter.get_stats()` with a fast reverse iterator that breaks early.
-🎯 Why: Iterating over an entire sliding window history is highly inefficient when checking for recent items, resulting in an O(N) operation instead of O(1).
-📊 Impact: Expected to reduce CPU time overhead for stats generation by >20x for large history sliding windows, matching the optimization already present in `_sliding_window_check()`.
-🔬 Measurement: Verify using `uv run pytest tests/test_rate_limiter.py`.
+🚨 Severity: HIGH
+💡 Vulnerability: The `ToolDefinition.name`, `version`, and `namespace` fields lacked sufficient validation against newline injection. The Rust regex engine's `$` anchor in Pydantic's `pattern` matches the end of the line (not just the end of the string), allowing attackers to bypass validation by appending a newline (e.g., `"valid_name\n"`). This could lead to log injection or HTTP header injection vulnerabilities.
+🎯 Impact: Attackers could inject malicious newlines, bypassing expected structural constraints, leading to log spoofing or potentially HTTP response splitting in downstream systems that consume the model fields.
+🔧 Fix: Added a `@field_validator` checking for `\n` and `\r` explicitly across the entire string (using `isinstance(v, str)`) rather than relying on the regex `$` anchor.
+✅ Verification: Ran `pytest` suite ensuring all validations pass correctly and verified the new error handling correctly blocks multiline input strings.
