@@ -293,6 +293,16 @@
     `;
     document.head.appendChild(style);
 
+    // Re-display results and select text on focus
+    searchInput.addEventListener("focus", function (e) {
+      const query = e.target.value.trim();
+      e.target.select();
+      if (query.length >= 2) {
+        const results = search(query);
+        displayResults(results);
+      }
+    });
+
     // Handle search input
     let searchTimeout;
     searchInput.addEventListener("input", function (e) {
@@ -312,7 +322,19 @@
 
     // Handle keyboard navigation in results
     searchInput.addEventListener("keydown", function (e) {
-      if (!searchResults || searchResults.style.display === "none") return;
+      if (!searchResults || searchResults.style.display === "none") {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.target.value = "";
+        }
+        return;
+      }
+
+      if (e.key === "Escape") {
+        e.preventDefault();
+        hideResults();
+        return;
+      }
 
       const items = searchResults.querySelectorAll(".search-result-item");
       if (items.length === 0) return;
@@ -337,10 +359,6 @@
         } else if (items[0]) {
           items[0].click();
         }
-        return;
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        hideResults();
         return;
       } else {
         return;

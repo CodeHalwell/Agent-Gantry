@@ -88,3 +88,7 @@
 ## 2026-05-29 - [Event Binding Order for Dynamic Content]
 **Learning:** Attaching event listeners (like smooth scrolling behavior) to DOM elements using a generic selector early in the initialization sequence misses elements that are generated later dynamically (like Table of Contents or Heading anchors).
 **Action:** Always ensure that behavioral initialization functions (like `initSmoothScroll`) run *after* all functions that dynamically generate the targeted DOM nodes.
+
+## 2026-05-31 - [Search Input UX Dead Ends]
+**Learning:** When users focus back into a search input containing a previous query, failing to select the text or re-display results creates a dead end requiring manual deletion or typing to trigger a search. Additionally, pressing Escape when results are closed should clear the input to easily reset the state.
+**Action:** Add a `focus` event listener to select existing text and re-trigger searches, and handle the Escape key to clear the input if the dropdown is already hidden.
