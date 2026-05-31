@@ -105,13 +105,6 @@ class ToolDefinition(BaseModel):
     source: ToolSource = Field(default=ToolSource.PYTHON_FUNCTION)
     source_uri: str | None = Field(default=None)
 
-    @field_validator("name", "version", "namespace", mode="after")
-    @classmethod
-    def _reject_newlines(cls, v: Any) -> Any:
-        if isinstance(v, str) and ("\n" in v or "\r" in v):
-            raise ValueError("Newlines are not allowed")
-        return v
-
     # Capabilities & permissions
     capabilities: list[ToolCapability] = Field(default_factory=list)
     requires_confirmation: bool = Field(default=False)
@@ -134,7 +127,13 @@ class ToolDefinition(BaseModel):
     @field_validator("name", "version", "namespace")
     @classmethod
     def validate_identifiers(cls, v: str) -> str:
-        """Validate that identifiers do not contain newlines."""
+        """Reject newlines in identifier fields.
+
+        Pydantic v2 (Rust regex engine) treats $ as end-of-line rather than
+        end-of-string, so the pattern=r"^[a-z][a-z0-9_]*$" on `name` would
+        accept "valid_name\\n". Explicit character checks close that bypass for
+        all three identifier fields.
+        """
         if "\n" in v or "\r" in v:
             raise ValueError("Value cannot contain newline characters")
         return v
