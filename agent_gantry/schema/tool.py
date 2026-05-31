@@ -105,6 +105,13 @@ class ToolDefinition(BaseModel):
     source: ToolSource = Field(default=ToolSource.PYTHON_FUNCTION)
     source_uri: str | None = Field(default=None)
 
+    @field_validator("name", "version", "namespace", mode="after")
+    @classmethod
+    def _reject_newlines(cls, v: Any) -> Any:
+        if isinstance(v, str) and ("\n" in v or "\r" in v):
+            raise ValueError("Newlines are not allowed")
+        return v
+
     # Capabilities & permissions
     capabilities: list[ToolCapability] = Field(default_factory=list)
     requires_confirmation: bool = Field(default=False)
