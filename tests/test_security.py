@@ -47,3 +47,28 @@ def test_ssrf_port_bypass():
     for url in malicious_urls:
         with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
             sp.check_permission("test_tool", {"url": url})
+
+
+def test_ssrf_invalid_port_with_hostname():
+    from agent_gantry.core.security import SecurityPolicy, PermissionDeniedError
+    import pytest
+
+    sp = SecurityPolicy(allowed_domains=["example.com"])
+
+    # These URLs parse with a valid-looking hostname ("example.com") but carry a
+    # non-numeric port string.  urllib.parse.urlparse("http://example.com:evil.com").port
+    # raises ValueError; SecurityPolicy catches this and substitutes "<invalid_domain>",
+    # which is not in allowed_domains, so the call must be denied.
+    #
+    # This prevents SSRF bypasses where a downstream HTTP client (httpx, requests, aiohttp)
+    # strips or ignores the malformed port and uses the pre-port substring as the hostname,
+    # ultimately connecting to a different host than the one the policy intended to permit.
+    malicious_urls = [
+        "http://example.com:evil.com/etc/passwd",
+        "https://example.com:notaport/admin",
+        "http://example.com:@attacker.com/path",
+    ]
+
+    for url in malicious_urls:
+        with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
+            sp.check_permission("test_tool", {"url": url})

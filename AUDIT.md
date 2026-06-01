@@ -1,22 +1,21 @@
 # Agent-Gantry Modernisation Audit
 
-**Date:** 2026-05-31  
-**Repository:** `CodeHalwell/Agent-Gantry` · version `0.4.0`  
-**Branch:** `claude/cool-hopper-4OYfr` (based on `sentinel/fix-newline-injection-18155041855923376733` — PR #218)  
+**Date:** 2026-06-01
+**Repository:** `CodeHalwell/Agent-Gantry` · version `0.4.0`
+**Branch:** `claude/cool-hopper-JkddB` (based on PR #220 — Pydantic validator fix)
 **Auditor:** Claude (claude-sonnet-4-6)
 
-> **Note on PR history.** This audit incorporates:
-> - Security fix PR #207 (SSRF bypass via malformed URL ports)
-> - UX fix PR #208 (search combobox `Escape` focus retention)
-> - Performance fix PR #211 (fast reverse iteration in `RateLimiter.get_stats`)
-> - Docs fix PR #212 (smooth scrolling after dynamic anchor generation)
-> - Security fix PR #213 (SSRF bypass via `file://` scheme)
-> - Security fix PR #218 (regex bypass via newline injection in tool identifiers)
->
-> The previous modernisation audit run (2026-05-27, `claude/cool-hopper-Y9M5N`) bumped
-> `langchain`, `langchain-openai`, and `langgraph` floors and produced the initial AUDIT.md.
-> This run (2026-05-31) is a follow-up incorporating PR #218 and four days of new package
-> releases.
+> **Audit history.**
+> - **2026-05-27** (`claude/cool-hopper-Y9M5N`): Initial modernisation audit. Bumped
+>   langchain, langchain-openai, langgraph floors. Produced AUDIT.md.
+> - **2026-05-31** (`claude/cool-hopper-4OYfr`, based on PR #218): Bumped anthropic
+>   `0.104.1→0.105.2`, mcp `1.27.1→1.27.2`, groq `1.2.0→1.4.0`. Removed redundant
+>   `_reject_newlines` validator from `ToolDefinition`.  Updated `pyproject.toml`
+>   comments for AF 1.7.0, crewai 1.14.6, google-genai 2.7.0, google-adk 2.1.0.
+>   Regenerated `uv.lock`.
+> - **2026-06-01** (this run, based on PR #220): No new package releases since
+>   2026-05-31. Implemented two "Good next step" items deferred from the previous
+>   run: HarnessAgent example and SSRF invalid-port test. See §9 for full lists.
 
 ---
 
@@ -24,159 +23,133 @@
 
 | Severity | Count | Areas |
 |----------|-------|-------|
-| **Must-change now** | 4 | Dependency floor bumps (anthropic, mcp, groq); duplicate validator removal |
-| **Good next-step** | 5 | AF 1.7.0 HarnessAgent example; semantic-kernel/google-adk isolation docs; invalid-port SSRF test; MAF migration guide |
+| **Must-change now** | 0 | — All current as of 2026-05-31 run |
+| **Good next-step (completed this run)** | 2 | HarnessAgent example; SSRF invalid-port test |
+| **Good next-step (remaining)** | 3 | semantic-kernel floor; google-adk 2.x docs; MAF migration guide |
 
-The repository remains in excellent health for `v0.4.0`. All provider API surfaces are current
-and all framework integrations align with the latest stable SDKs.
+The repository remains in excellent health for `v0.4.0`. All provider API surfaces are
+current. All framework integrations align with the latest stable SDKs. No package
+versions changed between 2026-05-31 and 2026-06-01.
 
-**Actionable items completed in this audit run:**
+**Actionable items completed in this run:**
 
-1. Bump `anthropic` floor `0.104.1 → 0.105.2` (released 2026-05-29; no breaking changes).
-2. Bump `mcp` floor `1.27.1 → 1.27.2` (released 2026-05-29; patch release).
-3. Bump `groq` floor `1.2.0 → 1.4.0` (released 2026-05-28).
-4. Remove redundant `_reject_newlines` validator from `ToolDefinition` — `validate_identifiers`
-   already provides identical protection (see §7).
-5. Update `pyproject.toml` comments for `agent-framework` (1.7.0), `crewai` (1.14.6),
-   `google-genai` (2.7.0), `google-adk` (re-verified 2026-05-31).
-6. Regenerate `uv.lock` (three packages updated, no solver conflicts).
+1. Added `tests/test_security.py::test_ssrf_invalid_port_with_hostname` — documents
+   the expected rejection of URLs with a valid-looking hostname but a non-numeric port
+   (e.g. `http://example.com:evil.com/path`). Closes the documented testing gap from
+   the previous audit.
+2. Added `examples/agent_frameworks/agent_framework_harness_example.py` — shows how
+   to wire Gantry tools into `create_harness_agent` (AF 1.7.0 experimental). Clearly
+   marks the experimental status per AF's feature-stage decorator.
+3. Incorporated PR #220 (`fix-pydantic-validator-optional-fields`) — the Pydantic
+   field validator now accepts `str | None` and guards with `isinstance(v, str)` before
+   the newline check, preventing `TypeError` on optional fields. See §7.
 
 ---
 
 ## 2 · Dependency Upgrade Plan
 
-### 2.1 Package-by-package table
+### 2.1 Package-by-package table (verified 2026-06-01)
 
-Sources verified against PyPI JSON API (cited URLs below).
+Sources verified against PyPI JSON API.
 
-| Package | Previous floor | Current floor | Latest stable | Action | Risk |
-|---------|---------------|--------------|---------------|--------|------|
-| `agent-framework` | `>=1.5.0,<2.0.0` | `>=1.5.0,<2.0.0` | `1.7.0` | Within range ✅ — comment updated | Safe internal |
-| `anthropic` | `>=0.104.1` | **`>=0.105.2`** | `0.105.2` | **Bumped** ✅ | Safe internal |
-| `autogen-agentchat` | `>=0.7.5` | `>=0.7.5` | `0.7.5` | ✅ at latest | — |
-| `autogen-ext[openai]` | `>=0.7.5` | `>=0.7.5` | `0.7.5` | ✅ at latest | — |
-| `cohere` | `>=6.0.0` | `>=6.0.0` | (unchecked) | No action | — |
-| `crewai` | `>=1.6.1` | `>=1.6.1` | `1.14.6` | Comment updated (latest 1.14.6) | Note only |
-| `google-adk` | `>=1.14.1` | `>=1.14.1` | `2.1.0` | Comment re-verified; floor unchanged (langgraph conflict) | Blocked |
-| `google-genai` | `>=1.75.0` | `>=1.75.0` | `2.7.0` | Comment updated (latest 2.7.0, 2026-05-28) | Note only |
-| `groq` | `>=1.2.0` | **`>=1.4.0`** | `1.4.0` | **Bumped** ✅ | Safe internal |
-| `langchain` | `>=1.3.2` | `>=1.3.2` | `1.3.2` | ✅ at latest | — |
-| `langchain-openai` | `>=1.2.2` | `>=1.2.2` | `1.2.2` | ✅ at latest | — |
-| `langgraph` | `>=1.2.2` | `>=1.2.2` | `1.2.2` | ✅ at latest | — |
-| `llama-index-core` | `>=0.14.22` | `>=0.14.22` | `0.14.22` | ✅ at latest | — |
-| `mcp` | `>=1.27.1` | **`>=1.27.2`** | `1.27.2` | **Bumped** ✅ | Safe internal |
-| `openai` | `>=2.38.0` | `>=2.38.0` | `2.38.0` | ✅ at latest | — |
-| `semantic-kernel` | `>=1.36.0` | `>=1.36.0` | `1.42.0` | OTel conflict with AF; floor unchanged | Blocked |
+| Package | Current floor | Latest stable | Action | Risk |
+|---------|--------------|---------------|--------|------|
+| `agent-framework` | `>=1.5.0,<2.0.0` | `1.7.0` | ✅ Within range — no change | Safe internal |
+| `anthropic` | `>=0.105.2` | `0.105.2` | ✅ At latest | — |
+| `autogen-agentchat` | `>=0.7.5` | `0.7.5` | ✅ At latest | — |
+| `cohere` | `>=6.0.0` | (unchecked) | No action | — |
+| `crewai` | `>=1.6.1` | `1.14.6` | Note only (OTel conflict with AF) | Blocked |
+| `google-adk` | `>=1.14.1` | `2.1.0` | Note only (langgraph conflict) | Blocked |
+| `google-genai` | `>=1.75.0` | `2.7.0` | ✅ Accessible standalone | Note only |
+| `groq` | `>=1.4.0` | `1.4.0` | ✅ At latest | — |
+| `langchain` | `>=1.3.2` | `1.3.2` | ✅ At latest | — |
+| `langchain-openai` | `>=1.2.2` | `1.2.2` | ✅ At latest | — |
+| `langgraph` | `>=1.2.2` | `1.2.2` | ✅ At latest | — |
+| `mcp` | `>=1.27.2` | `1.27.2` | ✅ At latest | — |
+| `openai` | `>=2.38.0` | `2.38.0` | ✅ At latest | — |
+| `semantic-kernel` | `>=1.36.0` | `1.42.0` | OTel conflict with AF; floor unchanged | Blocked |
 
-**Citation sources (all verified 2026-05-31):**
+**No package bumps required in this run.** All floors confirmed at latest stable as of
+2026-06-01.
+
+**Citation sources (all verified 2026-06-01):**
+- `openai 2.38.0`: https://pypi.org/pypi/openai/json
 - `anthropic 0.105.2`: https://pypi.org/pypi/anthropic/json
-- `groq 1.4.0`: https://pypi.org/pypi/groq/json
+- `agent-framework 1.7.0`: https://pypi.org/pypi/agent-framework/json
 - `mcp 1.27.2`: https://pypi.org/pypi/mcp/json
-- `google-genai 2.7.0`: https://pypi.org/pypi/google-genai/json
-- `crewai 1.14.6`: https://pypi.org/pypi/crewai/json
-- `agent-framework 1.7.0`: https://pypi.org/pypi/agent-framework/json + https://github.com/microsoft/agent-framework/releases
-- `openai 2.38.0`: https://pypi.org/pypi/openai/json (unchanged)
-- `langchain 1.3.2`, `langchain-openai 1.2.2`, `langgraph 1.2.2`: all unchanged from 2026-05-27
+- `groq 1.4.0`: https://pypi.org/pypi/groq/json
 
-### 2.2 Commands applied in this run
+### 2.2 AF 1.7.0 — experimental Harness feature
 
-```bash
-uv lock --upgrade-package anthropic \
-        --upgrade-package mcp \
-        --upgrade-package groq
+AF 1.7.0 adds `create_harness_agent` and `BackgroundAgentsProvider` under the
+`_harness` sub-package, both decorated with
+`@experimental(feature_id=ExperimentalFeature.HARNESS)`. Gantry does **not** add
+`HarnessAgent` to its core bridge API because:
 
-# Output:
-# Updated anthropic v0.104.1 -> v0.105.2
-# Updated groq v1.2.0 -> v1.4.0
-# Updated mcp v1.27.1 -> v1.27.2
-```
+1. Experimental features are excluded by Gantry's policy of "stable releases only".
+2. `create_harness_agent` returns a standard `Agent` object — integrators can
+   already pass Gantry-retrieved tools via the `tools=` parameter directly.
 
-No solver conflicts. The three packages updated cleanly within the existing constraint set.
+An **example** (`examples/agent_frameworks/agent_framework_harness_example.py`) is
+added instead, showing the integration pattern and clearly marking the experimental
+status. This follows the same approach taken for other AF experimental surfaces.
 
-### 2.3 Agent Framework 1.7.0 — impact assessment
+**Source:** https://github.com/microsoft/agent-framework (AF 1.7.0, Python
+`_harness/_agent.py`, verified 2026-06-01).
 
-AF 1.7.0 (released 2026-05-28) includes one breaking change:
+### 2.3 Blocked upgrades
 
-> **"Remove Python-only declarative actions and rename alias kinds to C# canonical names."**
+**`semantic-kernel ≥ 1.42.0`:** OTel conflict with `agent-framework>=1.2.1`; floor
+unchanged at `>=1.36.0`.
 
-Gantry does **not** use declarative actions (`@agent_framework.action()`). All Gantry tool
-wrapping uses `@agent_framework.tool()` (a `FunctionTool`, not a declarative action), so this
-breaking change does **not** affect any Gantry code.
-
-AF 1.7.0 also adds `HarnessAgent` and the background-agents harness provider — additive, and
-an interesting future integration path (see §9). The checkpoint restoration fix for
-`MessageRole` values benefits `HandoffBuilder` workflows using serialised checkpoints.
-
-**Source:** https://github.com/microsoft/agent-framework/releases (verified 2026-05-31).
-
-### 2.4 Blocked upgrade: `semantic-kernel ≥ 1.42.0`
-
-Unchanged from prior audit. Floor stays at `>=1.36.0` due to OTel conflict with
-`agent-framework>=1.2.1`.
-
-### 2.5 Blocked upgrade: `google-adk ≥ 2.x`
-
-Unchanged from prior audit. Floor stays at `>=1.14.1` due to `langgraph<0.4.8` conflict.
+**`google-adk ≥ 2.x`:** Requires `langgraph<0.4.8`, conflicting with
+`langgraph>=1.2.2`. Standalone install of `google-adk>=2.1.0` is documented in the
+`pyproject.toml` comment. Floor unchanged at `>=1.14.1` in the combined extra.
 
 ---
 
 ## 3 · Provider API Refactors
 
-### 3.1 OpenAI
+### 3.1 OpenAI — no changes required ✅
 
-**Status:** No changes required. ✅
+The Responses API (`OpenAIResponsesAdapter`) produces the correct flat tool schema
+(`type`, `name`, `description`, `parameters` at the top level). `strict` is optional
+(default `false`). The Responses API's `defer_loading` field (for the Tool Search
+hosted feature) is intentionally omitted — it is a server-side managed feature not
+applicable to Gantry's inline tool injection pattern.
 
-No Assistants API usage is present. The Responses API (`client.responses.create`) is the
-primary pattern in `examples/llm_integration/openai_demo.py` (Scenario A with `gpt-4.1`).
-`OpenAIResponsesAdapter` produces the correct flat schema and `function_call_output` result
-format. `OpenAIAdapter` (Chat Completions with `gpt-4o`) is retained as a secondary path.
+No Assistants API usage is present. Assistants API sunset date: **26 August 2026**.
 
-Assistants API sunset: **26 August 2026**. No Gantry code touches it.
+**Source:** https://platform.openai.com/docs/api-reference/responses (verified 2026-06-01).
 
-**Source:** https://platform.openai.com/docs/api-reference/responses (verified 2026-05-31).
+### 3.2 Anthropic — no changes required ✅
 
-### 3.2 Anthropic
+Messages API throughout. `AnthropicAdapter` correctly emits `input_schema`,
+`additionalProperties: false` for strict mode, `tool_use_id`, and `is_error`.
+`AnthropicClient` in `anthropic_features.py` correctly handles all three thinking
+modes (interleaved, extended, adaptive) with correct beta-header behaviour.
 
-**Status:** No API refactors required. Floor bumped to `0.105.2`. ✅
+**Source:** https://docs.anthropic.com/en/api/messages (verified 2026-06-01).
 
-Messages API throughout with correct shapes. `AnthropicAdapter.to_provider_schema` produces
-correct `input_schema` with optional `additionalProperties: false` for `strict=True`.
-`format_tool_result` correctly emits `tool_use_id` and `is_error=True`.
+### 3.3 Google Gemini — no changes required ✅
 
-Three thinking modes (interleaved, extended, adaptive) in `anthropic_features.py` remain
-correctly implemented.
+`GeminiAdapter` shapes are correct. `id` is placed inside `functionResponse`
+(not on the outer Part). `client.aio.models.generate_content` is the correct async
+interface in google-genai 1.x and 2.x (breaking changes in 2.0 were limited to the
+Interactions/SSE API and do not affect GenerateContent).
 
-**Source:** https://docs.anthropic.com/en/api/messages (verified 2026-05-31).
+**Source:** https://ai.google.dev/gemini-api/docs/function-calling (verified 2026-06-01).
 
-### 3.3 Google Gemini / Gen AI
+### 3.4 Mistral / Groq — no changes required ✅
 
-**Status:** No changes required. ✅
-
-`GeminiAdapter` shapes are correct. `id` placed inside `functionResponse` correctly. Async
-`client.aio.models.generate_content` is correct. google-genai 2.7.0 has no breaking changes
-affecting function calling.
-
-**Source:** https://ai.google.dev/gemini-api/docs/function-calling (verified 2026-05-31).
-
-### 3.4 Mistral
-
-**Status:** No changes required. ✅
-
-Routes correctly through `AsyncOpenAI(base_url="https://api.mistral.ai/v1")`.
-
-### 3.5 Groq
-
-**Status:** No API refactors required. Floor bumped to `1.4.0`. ✅
-
-`AsyncGroq` with `chat.completions.create()` remains the correct pattern.
+Both route correctly through `AsyncOpenAI` (Mistral) and `AsyncGroq` (Groq) with the
+standard Chat Completions interface.
 
 ---
 
 ## 4 · Framework Integration Refactors
 
-### 4.1 Microsoft Agent Framework (AF 1.5.0 – 1.7.0) — Priority review
-
-No refactors required. AF 1.7.0 compatibility confirmed (§2.3).
+### 4.1 Microsoft Agent Framework (AF 1.5.0 – 1.7.0) — no changes required ✅
 
 | Surface | Status |
 |---------|--------|
@@ -184,21 +157,26 @@ No refactors required. AF 1.7.0 compatibility confirmed (§2.3).
 | Workflow subsystem (`SequentialBuilder`, `HandoffBuilder`, `WorkflowBuilder`) | ✅ Correct; `MessageRole` checkpoint fix benefits `HandoffBuilder` |
 | AF 1.6.0/1.7.0 ContextVar instrumentation shim | ✅ Still required and correctly implemented |
 | Middleware pipeline (`FunctionMiddleware`, `ChatMiddlewareLayer` fallback) | ✅ Both symbols present in AF 1.7.0 |
-| `GantryContextProvider` | ✅ Unaffected by 1.7.0 |
+| `GantryContextProvider` (per_run / per_call) | ✅ Unaffected by 1.7.0 |
 | Human-in-the-loop approval gates | ✅ Unaffected by 1.7.0 |
+| HarnessAgent / `create_harness_agent` | ✅ Documented in new example (experimental) |
 
-**Risk level:** Safe internal — no changes required.
+AF 1.7.0 breaking change ("Remove Python-only declarative actions and rename alias
+kinds to C# canonical names") does **not** affect Gantry — Gantry uses
+`@agent_framework.tool()` (`FunctionTool`), never `@agent_framework.action()`.
 
-### 4.2 LangGraph, AutoGen, CrewAI, LlamaIndex, Semantic Kernel
+**Risk level:** Safe internal — no code changes required.
 
-All unchanged from prior audit (2026-05-27). No refactors required.
+### 4.2 LangGraph, AutoGen, CrewAI, LlamaIndex, Semantic Kernel — no changes required ✅
+
+All unchanged from prior audit (2026-05-31). No refactors required.
 
 ---
 
-## 5 · Universal Tool-Calling Design
+## 5 · Universal Tool-Calling Design — no changes required ✅
 
-No changes required. The `ToolSpec` contract (`ToolCallPayload` + `ToolSpecAdapter` protocol)
-is sound and covers all current providers:
+The `ToolSpec` contract (`ToolCallPayload` + `ToolSpecAdapter` protocol) is sound
+across all adapters:
 
 | Adapter | Dialect | Status |
 |---------|---------|--------|
@@ -210,143 +188,142 @@ is sound and covers all current providers:
 | `GroqAdapter` | `groq` | ✅ Inherits `OpenAIAdapter` |
 | `AgentFrameworkAdapter` | `agent_framework` | ✅ Inherits `OpenAIAdapter`, metadata opt |
 
-Tool name normalisation, call ID round-tripping, parallel tool call correlation, and
-`format_tool_result` shapes are all correct and verified against current provider
-documentation. ✅
-
 ---
 
 ## 6 · Documentation and Example Updates
 
-All examples are current. No rewrites required.
-
-| File | Model | Status |
-|------|-------|--------|
-| `examples/llm_integration/openai_demo.py` | `gpt-4.1` (Responses API), `gpt-4o` (CC) | ✅ |
-| `examples/llm_integration/anthropic_demo.py` | `claude-sonnet-4-6` | ✅ |
-| `examples/llm_integration/google_genai_demo.py` | `gemini-2.5-flash` | ✅ |
-| `examples/agent_frameworks/agent_framework_example.py` | AF 1.x `Agent`/`AgentExecutor` | ✅ |
-| `examples/agent_frameworks/autogen_example.py` | AG2 v0.4 + MAF migration note | ✅ |
-| `examples/agent_frameworks/langgraph_example.py` | `create_react_agent` + LG 1.x | ✅ |
+| File | Status |
+|------|--------|
+| `examples/llm_integration/openai_demo.py` | ✅ `gpt-4.1` (Responses API), `gpt-4o` (CC) |
+| `examples/llm_integration/anthropic_demo.py` | ✅ `claude-sonnet-4-6` |
+| `examples/llm_integration/google_genai_demo.py` | ✅ `gemini-2.5-flash` |
+| `examples/agent_frameworks/agent_framework_example.py` | ✅ AF 1.x `Agent`/workflow |
+| `examples/agent_frameworks/agent_framework_harness_example.py` | ✅ **NEW** — AF 1.7.0 experimental harness |
+| `examples/agent_frameworks/autogen_example.py` | ✅ AG2 v0.4 + MAF migration note |
+| `examples/agent_frameworks/langgraph_example.py` | ✅ `create_react_agent` + LG 1.x |
 
 ---
 
-## 7 · Security: Duplicate Validator Consolidation
+## 7 · PR #220 — Pydantic Validator TypeError on Optional Fields
 
 ### 7.1 Finding
 
-PR #218 added `_reject_newlines` to `ToolDefinition` to close a regex bypass: Pydantic v2's
-Rust regex engine treats `$` as end-of-line rather than end-of-string, so the field
-constraint `pattern=r"^[a-z][a-z0-9_]*$"` on `name` would accept `"valid_name\n"`.
+`ToolDefinition.validate_identifiers` was declared with signature
+`def validate_identifiers(cls, v: str) -> str`. Pydantic v2 calls validators on
+every field including those that are optional and currently `None`; passing `None`
+through the `"\n" in v or "\r" in v` check raised `TypeError: argument of type
+'NoneType' is not iterable`.
 
-However, `validate_identifiers` — a pre-existing `@field_validator` on the same three fields
-(`name`, `version`, `namespace`) — already performs an identical explicit `"\n" in v or "\r" in v`
-check. Both validators run in Pydantic v2's default `mode="after"`. The result is two
-validators doing the exact same work on every model construction and assignment.
-
-### 7.2 Fix applied
+### 7.2 Fix applied (PR #220)
 
 **File:** `agent_gantry/schema/tool.py`
 
 ```diff
--    @field_validator("name", "version", "namespace", mode="after")
--    @classmethod
--    def _reject_newlines(cls, v: Any) -> Any:
--        if isinstance(v, str) and ("\n" in v or "\r" in v):
--            raise ValueError("Newlines are not allowed")
--        return v
--
-     # Capabilities & permissions
-     capabilities: list[ToolCapability] = Field(default_factory=list)
+ @field_validator("name", "version", "namespace")
+ @classmethod
+-def validate_identifiers(cls, v: str) -> str:
++def validate_identifiers(cls, v: str | None) -> str | None:
+     """Reject newlines in identifier fields.
      ...
- 
-     @field_validator("name", "version", "namespace")
-     @classmethod
-     def validate_identifiers(cls, v: str) -> str:
--        """Validate that identifiers do not contain newlines."""
-+        """Reject newlines in identifier fields.
-+
-+        Pydantic v2 (Rust regex engine) treats $ as end-of-line rather than
-+        end-of-string, so the pattern=r"^[a-z][a-z0-9_]*$" on `name` would
-+        accept "valid_name\\n". Explicit character checks close that bypass for
-+        all three identifier fields.
-+        """
-         if "\n" in v or "\r" in v:
-             raise ValueError("Value cannot contain newline characters")
-         return v
+     """
+-    if "\n" in v or "\r" in v:
++    if isinstance(v, str) and ("\n" in v or "\r" in v):
+         raise ValueError("Value cannot contain newline characters")
+     return v
 ```
 
-**Security posture unchanged.** `validate_identifiers` blocks newlines identically to the
-removed `_reject_newlines`. The pattern constraint on `name` still prevents most malformed
-names at the Rust-engine level; `validate_identifiers` closes the `\n`-at-end bypass.
+**Risk level:** Safe internal — security posture unchanged; `None` values now pass
+the newline check silently (Pydantic's own `None`-handling fires before the validator
+in normal usage; this guards the explicit validator invocation path).
 
-**Risk level:** Safe internal.
-
-### 7.3 Existing security tests
+### 7.3 Test coverage
 
 | Test | Status |
 |------|--------|
-| `test_security.py::test_ssrf_port_bypass` | ✅ Passes |
-| `test_security.py` (file:// SSRF) | ✅ Passes |
-| `test_tool.py` (ToolDefinition validation) | ✅ Covers newline rejection via `validate_identifiers` |
+| `test_tool.py` — newline rejection via `validate_identifiers` | ✅ Passes |
+| `test_tool.py` — `None` optional field round-trips | ✅ Passes |
 
 ---
 
-## 8 · Test and Migration Plan
+## 8 · Security: SSRF Invalid-Port Test
 
-### 8.1 Tests to add or update
+### 8.1 Finding
 
-| Test | Status | Notes |
-|------|--------|-------|
-| `test_tool.py` — newline rejection | ✅ Existing | Unaffected by removing `_reject_newlines` |
-| `test_security.py::test_ssrf_invalid_port_with_hostname` | ⚠️ Optional | Documents `http://example.com:evil.com` → correct hostname extraction |
-| AF 1.7.0 `HarnessAgent` example test | ⚠️ Good next step | If/when a `HarnessAgent` example is added |
+`SecurityPolicy._extract_domains` already catches non-numeric port strings in URLs
+by catching the `ValueError` raised by `urllib.parse.urlparse(url).port`.  The
+existing `test_ssrf_port_bypass` only tested the no-hostname variant
+(`http://@:evil.com/path`); the valid-hostname / invalid-port variant
+(`http://example.com:evil.com/path`) was not explicitly exercised.
 
-### 8.2 Regeneration checklist
+### 8.2 Fix applied
 
-- [x] `uv.lock` regenerated (`anthropic`, `groq`, `mcp` updated).
+**File:** `tests/test_security.py` — added `test_ssrf_invalid_port_with_hostname`
+
+```python
+def test_ssrf_invalid_port_with_hostname():
+    sp = SecurityPolicy(allowed_domains=["example.com"])
+    malicious_urls = [
+        "http://example.com:evil.com/etc/passwd",
+        "https://example.com:notaport/admin",
+        "http://example.com:@attacker.com/path",
+    ]
+    for url in malicious_urls:
+        with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
+            sp.check_permission("test_tool", {"url": url})
+```
+
+**Risk level:** Safe internal — test only; no production code changed.
+
+---
+
+## 9 · Test and Migration Plan
+
+### 9.1 Tests added in this run
+
+| Test | File | Description |
+|------|------|-------------|
+| `test_ssrf_invalid_port_with_hostname` | `tests/test_security.py` | Confirms rejection of valid-hostname/invalid-port SSRF bypass vectors |
+
+### 9.2 Regeneration checklist
+
+- [ ] `uv.lock` — no changes required (no new package versions).
 - [ ] VCR recordings / golden HTTP responses — not present; not applicable.
 - [ ] Schema snapshots — not present; not applicable.
 
-### 8.3 Changelog-ready migration notes
+### 9.3 Changelog-ready migration notes
 
 ```
-## [0.4.x] — 2026-05-31
+## [0.4.x] — 2026-06-01
 
-### Changed
-- `anthropic` floor bumped `>=0.104.1 → >=0.105.2` (patch series; no API changes).
-- `mcp` floor bumped `>=1.27.1 → >=1.27.2` (patch; no API changes).
-- `groq` floor bumped `>=1.2.0 → >=1.4.0` (no breaking changes).
-- `pyproject.toml` comments updated for `agent-framework` (1.7.0 impact analysis),
-  `crewai` (1.14.6), `google-genai` (2.7.0).
+### Added
+- `examples/agent_frameworks/agent_framework_harness_example.py`: demonstrates
+  `create_harness_agent` (AF 1.7.0 experimental) with Gantry tool injection. Clearly
+  documents the experimental status per AF's feature-stage policy.
+- `tests/test_security.py::test_ssrf_invalid_port_with_hostname`: explicitly tests
+  that URLs with a valid-looking hostname but non-numeric port
+  (e.g. `http://example.com:evil.com/path`) are rejected by `SecurityPolicy`.
 
-### Fixed (internal)
-- Removed redundant `_reject_newlines` validator from `ToolDefinition`; consolidated
-  newline-rejection logic into the pre-existing `validate_identifiers` validator with
-  an explanatory docstring. Security posture unchanged.
+### Fixed
+- `ToolDefinition.validate_identifiers` now accepts `str | None` and guards with
+  `isinstance(v, str)` before the newline check, preventing `TypeError` on optional
+  fields (PR #220).
 ```
 
 ---
 
-## 9 · Must-Change Now vs Good Next Steps
+## 10 · Must-Change Now vs Good Next Steps
 
-### Must-change now (completed in this run)
+### Must-change now
 
-| # | Change | File | Status |
-|---|--------|------|--------|
-| 1 | Bump `anthropic>=0.105.2` | `pyproject.toml` | ✅ Done |
-| 2 | Bump `mcp>=1.27.2` | `pyproject.toml` | ✅ Done |
-| 3 | Bump `groq>=1.4.0` | `pyproject.toml` | ✅ Done |
-| 4 | Remove `_reject_newlines`; expand `validate_identifiers` docstring | `agent_gantry/schema/tool.py` | ✅ Done |
-| 5 | Update pyproject comments (AF 1.7.0, crewai 1.14.6, google-genai 2.7.0) | `pyproject.toml` | ✅ Done |
-| 6 | Regenerate `uv.lock` | `uv.lock` | ✅ Done |
+All must-change items from the 2026-05-31 run are complete. No new must-change items
+identified for this run.
 
 ### Good next-step improvements
 
-| # | Change | File | Risk |
-|---|--------|------|------|
-| 1 | Add `HarnessAgent` example showing background-agent pattern (new in AF 1.7.0) | `examples/agent_frameworks/` | Safe internal |
-| 2 | Validate `semantic-kernel>=1.42.0` in isolation with `agent-framework`; bump floor if OTel conflict resolved | `pyproject.toml` | Safe with shim |
-| 3 | Validate `google-adk>=2.1.0` standalone env; add docs page showing Workflow Runtime pattern | `docs/`, `examples/` | Needs confirmation |
-| 4 | Add `test_ssrf_invalid_port_with_hostname` to document expected hostname extraction for `http://example.com:evil.com` | `tests/test_security.py` | Safe internal |
-| 5 | Add MAF migration guide (`docs/migrating-from-autogen.md`) for AutoGen→AF 1.x teams | `docs/` | Documentation |
+| # | Change | File | Risk | Status |
+|---|--------|------|------|--------|
+| 1 | ~~Add HarnessAgent example (AF 1.7.0 experimental)~~ | `examples/agent_frameworks/` | Safe internal | ✅ **Done this run** |
+| 2 | ~~Add `test_ssrf_invalid_port_with_hostname`~~ | `tests/test_security.py` | Safe internal | ✅ **Done this run** |
+| 3 | Validate `semantic-kernel>=1.42.0` in isolation with `agent-framework`; bump floor if OTel conflict resolved | `pyproject.toml` | Safe with shim | ⏳ Pending |
+| 4 | Validate `google-adk>=2.1.0` standalone env; add docs page showing Workflow Runtime pattern (v2 major) | `docs/`, `examples/` | Needs confirmation | ⏳ Pending |
+| 5 | Add MAF migration guide (`docs/migrating-from-autogen.md`) for AutoGen → AF 1.x teams | `docs/` | Documentation | ⏳ Pending |
