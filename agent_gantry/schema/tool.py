@@ -126,7 +126,7 @@ class ToolDefinition(BaseModel):
 
     @field_validator("name", "version", "namespace")
     @classmethod
-    def validate_identifiers(cls, v: str) -> str:
+    def validate_identifiers(cls, v: str | None) -> str | None:
         """Reject newlines in identifier fields.
 
         Pydantic v2 (Rust regex engine) treats $ as end-of-line rather than
@@ -134,7 +134,7 @@ class ToolDefinition(BaseModel):
         accept "valid_name\\n". Explicit character checks close that bypass for
         all three identifier fields.
         """
-        if "\n" in v or "\r" in v:
+        if isinstance(v, str) and ("\n" in v or "\r" in v):
             raise ValueError("Value cannot contain newline characters")
         return v
 
