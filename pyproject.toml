@@ -165,11 +165,16 @@ embeddings = [
     "sentence-transformers>=2.2.0",
 ]
 openai = [
-    # 2.38.0 (released 2026-05-21): adds service_tier to responses compact,
-    # pydantic iterator eager-validation, and workload-identity auth cleanup.
-    # No breaking changes.
+    # 2.40.0 (released 2026-06-01): adds Amazon Bedrock Responses support and
+    # allows setting Bedrock API keys directly on the client instance. No breaking
+    # changes to Chat Completions or Responses API surfaces used by Gantry.
+    # 2.39.0 (released 2026-06-01): adds workload_identity in audit logs,
+    # additional_tools in Responses API response objects (server-side hosted tool
+    # metadata), and makes ActionSearch.query optional. No breaking changes.
+    # Deprecation notice: gpt-4o and gpt-4o-mini shut down 2026-10-23; replacements
+    # are gpt-5.5 and gpt-5.4-mini respectively. gpt-4.1 is NOT deprecated.
     # Source: https://pypi.org/pypi/openai/json
-    "openai>=2.38.0",
+    "openai>=2.40.0",
 ]
 cohere = [
     # cohere 6.0.0 (2026) renamed the async client from AsyncClient to AsyncClientV2.
@@ -244,7 +249,7 @@ mistral = [
     # AsyncOpenAI(). The MistralAdapter in agent_gantry.adapters.tool_spec
     # continues to translate tool schemas correctly for both patterns.
     # Install with: pip install "agent-gantry[mistral]"
-    "openai>=2.38.0",
+    "openai>=2.40.0",
 ]
 groq = [
     # 1.4.0 (released 2026-05-28) — latest stable as of 2026-05-31.

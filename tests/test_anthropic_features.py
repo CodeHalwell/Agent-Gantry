@@ -375,3 +375,116 @@ class TestCreateAnthropicClient:
             gantry=gantry,
         )
         assert client._gantry == gantry
+
+
+class TestClaudeOpus48ThinkingGuards:
+    """
+    Documents claude-opus-4-8 (NextOpus) thinking capabilities.
+
+    claude-opus-4-8 supports adaptive thinking only; extended thinking is not
+    supported. The API-level effort default is "high". Interleaved thinking header
+    is silently ignored (deprecated for Opus 4.6+ series).
+    Source: https://platform.claude.com/docs/en/docs/about-claude/models/overview
+    """
+
+    @pytest.mark.asyncio
+    async def test_opus48_adaptive_medium_effort_payload(self):
+        """Adaptive thinking with explicit medium effort produces the correct payload."""
+        features = AnthropicFeatures(adaptive_thinking_effort="medium")
+        client = AnthropicClient(api_key="test-key", features=features)
+        mock_response = MagicMock()
+        mock_response.content = []
+        client._client.messages.create = AsyncMock(return_value=mock_response)
+
+        await client.create_message(
+            model="claude-opus-4-8",
+            messages=[{"role": "user", "content": "Hello"}],
+            auto_retrieve_tools=False,
+        )
+
+        call_kwargs = client._client.messages.create.call_args.kwargs
+        assert call_kwargs["model"] == "claude-opus-4-8"
+        assert call_kwargs["thinking"] == {"type": "adaptive", "effort": "medium"}
+
+    @pytest.mark.asyncio
+    async def test_opus48_adaptive_high_effort_payload(self):
+        """Adaptive thinking with high effort (recommended default for Opus 4.8)."""
+        features = AnthropicFeatures(adaptive_thinking_effort="high")
+        client = AnthropicClient(api_key="test-key", features=features)
+        mock_response = MagicMock()
+        mock_response.content = []
+        client._client.messages.create = AsyncMock(return_value=mock_response)
+
+        await client.create_message(
+            model="claude-opus-4-8",
+            messages=[{"role": "user", "content": "Hello"}],
+            auto_retrieve_tools=False,
+        )
+
+        call_kwargs = client._client.messages.create.call_args.kwargs
+        assert call_kwargs["thinking"]["type"] == "adaptive"
+        assert call_kwargs["thinking"]["effort"] == "high"
+
+    def test_opus48_extended_thinking_not_recommended_guard(self):
+        """AnthropicFeatures accepts extended config but Anthropic docs state it is
+        unsupported on Opus 4.8; the API will reject it at runtime. This test
+        documents that Gantry does not silently discard the config."""
+        features = AnthropicFeatures(
+            enable_extended_thinking=True,
+            thinking_budget_tokens=5000,
+        )
+        assert features.enable_extended_thinking is True
+        assert features.thinking_budget_tokens == 5000
+
+    @pytest.mark.asyncio
+    async def test_opus48_no_thinking_plain_message(self):
+        """Opus 4.8 can be called with no thinking configuration at all."""
+        client = AnthropicClient(api_key="test-key")
+        mock_response = MagicMock()
+        mock_response.content = []
+        client._client.messages.create = AsyncMock(return_value=mock_response)
+
+        await client.create_message(
+            model="claude-opus-4-8",
+            messages=[{"role": "user", "content": "Hello"}],
+            auto_retrieve_tools=False,
+        )
+
+        call_kwargs = client._client.messages.create.call_args.kwargs
+        assert call_kwargs["model"] == "claude-opus-4-8"
+        assert "thinking" not in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_opus48_adaptive_with_display_omitted(self):
+        """Adaptive thinking with display='omitted' produces the correct payload on Opus 4.8."""
+        features = AnthropicFeatures(
+            adaptive_thinking_effort="high",
+            thinking_display="omitted",
+        )
+        client = AnthropicClient(api_key="test-key", features=features)
+        mock_response = MagicMock()
+        mock_response.content = []
+        client._client.messages.create = AsyncMock(return_value=mock_response)
+
+        await client.create_message(
+            model="claude-opus-4-8",
+            messages=[{"role": "user", "content": "Hello"}],
+            auto_retrieve_tools=False,
+        )
+
+        call_kwargs = client._client.messages.create.call_args.kwargs
+        assert call_kwargs["thinking"]["type"] == "adaptive"
+        assert call_kwargs["thinking"]["effort"] == "high"
+        assert call_kwargs["thinking"]["display"] == "omitted"
+
+    @pytest.mark.asyncio
+    async def test_opus48_create_client_adaptive_high_effort(self):
+        """create_anthropic_client with adaptive thinking and high effort for Opus 4.8."""
+        client = await create_anthropic_client(
+            api_key="test-key",
+            enable_thinking="adaptive",
+            adaptive_effort="high",
+        )
+        assert client._features.adaptive_thinking_effort == "high"
+        assert client._features.enable_extended_thinking is False
+        assert client._features.enable_interleaved_thinking is False
