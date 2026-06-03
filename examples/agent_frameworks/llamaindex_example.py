@@ -51,7 +51,7 @@ async def main():
     # 4. Setup LlamaIndex Agent
     from llama_index.core.agent.workflow import ReActAgent
 
-    llm = OpenAI(model="gpt-4o")
+    llm = OpenAI(model="gpt-5.5")
     agent = ReActAgent(tools=llama_tools, llm=llm)
 
     # 5. Run Agent

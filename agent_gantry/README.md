@@ -49,7 +49,7 @@ def add(a: int, b: int) -> int:
 @with_semantic_tools(limit=3)
 async def ask_llm(prompt: str, *, tools=None):
     return await client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.5",
         messages=[{"role": "user", "content": prompt}],
         tools=tools  # Automatically populated with relevant tools
     )

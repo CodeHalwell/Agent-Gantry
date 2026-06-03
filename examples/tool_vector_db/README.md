@@ -62,7 +62,7 @@ await tools.sync()
 @with_semantic_tools(tools, limit=5, dialect="openai_responses")
 async def chat(prompt: str, **kwargs):
     return await client.responses.create(
-        model="gpt-4o-mini",
+        model="gpt-5.4-mini",
         input=prompt,
         **kwargs,  # tools injected here automatically!
     )

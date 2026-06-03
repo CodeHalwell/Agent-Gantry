@@ -40,7 +40,7 @@ client = OpenAI()
 async def generate(prompt: str, *, tools: list | None = None):
     """Generate a response with automatically selected tools."""
     return client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.5",
         messages=[{"role": "user", "content": prompt}],
         tools=tools,
     )
@@ -92,7 +92,7 @@ client = OpenAI()
 async def generate(prompt: str, *, tools: list | None = None):
     """Generate a response with automatically selected tools."""
     return client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.5",
         messages=[{"role": "user", "content": prompt}],
         tools=tools,
     )
@@ -109,7 +109,7 @@ response = await generate("What's the weather in Paris?")
 async def chat(messages: list[dict], *, tools: list | None = None):
     """Chat with automatic tool selection."""
     return client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.5",
         messages=messages,
         tools=tools,
     )

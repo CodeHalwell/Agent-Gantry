@@ -100,16 +100,16 @@ agent-frameworks = [
     # install in a separate environment without agent-framework.
     # Source: https://pypi.org/pypi/crewai/json
     "crewai>=1.6.1",
-    # langchain 1.3.2 (released 2026-05-26) — patch release; no API changes.
+    # langchain 1.3.4 (released 2026-06-02) — patch release; no API changes.
     # Source: https://pypi.org/pypi/langchain/json
-    "langchain>=1.3.2",
+    "langchain>=1.3.4",
     # langchain-openai 1.2.2 (released 2026-05-26) — patch release; no API changes.
     # Source: https://pypi.org/pypi/langchain-openai/json
     "langchain-openai>=1.2.2",
-    # langgraph 1.2.2 (released 2026-05-26) — patch release; no API changes.
-    # Floor bumped from 1.2.1 to 1.2.2.
+    # langgraph 1.2.4 (released 2026-06-02) — patch release; no API changes.
+    # Floor bumped from 1.2.2 to 1.2.4.
     # Source: https://pypi.org/pypi/langgraph/json
-    "langgraph>=1.2.2",
+    "langgraph>=1.2.4",
     "llama-index-core>=0.14.22",
     "llama-index-llms-openai>=0.7.7",
     # semantic-kernel 1.42.0 (latest stable 2026-05-15) relaxes the pydantic
@@ -177,11 +177,14 @@ openai = [
     "openai>=2.40.0",
 ]
 cohere = [
-    # cohere 6.0.0 (2026) renamed the async client from AsyncClient to AsyncClientV2.
-    # Gantry's CohereReranker now uses AsyncClientV2 (cohere.py updated accordingly).
-    # Upper bound left open — no further breaking changes are anticipated in the
-    # GenerateContent / rerank surface.
-    "cohere>=6.0.0",
+    # cohere 7.0.3 (latest stable 2026-06-03). Breaking change in 7.0.0: minimum
+    # Python version raised from ^3.8 to ^3.10 — compatible with Gantry's
+    # requires-python = ">=3.10". AsyncClientV2.rerank() API is unchanged across
+    # 6.x → 7.x; Gantry's CohereReranker import (from cohere import AsyncClientV2)
+    # continues to work without modification.
+    # Source: https://github.com/cohere-ai/cohere-python/releases
+    #         https://docs.cohere.com/v2/reference/rerank
+    "cohere>=7.0.3",
 ]
 # Individual vector store providers
 qdrant = [

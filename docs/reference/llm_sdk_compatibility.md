@@ -50,7 +50,7 @@ pip install agent-gantry[all]
 
 ### Package
 ```bash
-pip install "openai>=2.37.0"
+pip install "openai>=2.40.0"
 ```
 
 ### Client Initialization
@@ -69,7 +69,7 @@ client = OpenAI()
 #### Chat Completions
 ```python
 response = client.chat.completions.create(
-    model="gpt-4o",
+    model="gpt-5.5",
     messages=[
         {"role": "system", "content": "You are a helpful assistant."},
         {"role": "user", "content": "Hello!"}
@@ -92,8 +92,13 @@ print(response.output_text)
 
 #### Realtime API (Beta)
 ```python
-# WebSocket-based realtime conversations
-async with client.beta.realtime.connect(model="gpt-4o-realtime-preview") as conn:
+# WebSocket-based realtime conversations.
+# gpt-4o-realtime-preview was discontinued 2026-05-07; use gpt-realtime-1.5.
+# The Realtime API requires AsyncOpenAI — the sync OpenAI client does not support it.
+from openai import AsyncOpenAI
+
+async_client = AsyncOpenAI()
+async with async_client.beta.realtime.connect(model="gpt-realtime-1.5") as conn:
     await conn.send({"type": "input_audio_buffer.append", "audio": audio_data})
     async for event in conn:
         if event.type == "response.audio.delta":
@@ -133,7 +138,7 @@ tools = await gantry.retrieve_tools("What's the weather?", limit=5)
 
 # Use with OpenAI Chat Completions API
 response = client.chat.completions.create(
-    model="gpt-4o",
+    model="gpt-5.5",
     messages=[{"role": "user", "content": "What's the weather in SF?"}],
     tools=tools
 )
@@ -159,7 +164,7 @@ response = client.responses.create(
 
 ### Package
 ```bash
-pip install "openai>=2.37.0"
+pip install "openai>=2.40.0"
 ```
 
 ### Client Initialization
@@ -178,7 +183,7 @@ client = AzureOpenAI(
 #### Chat Completions
 ```python
 response = client.chat.completions.create(
-    model="gpt-4o",  # Your deployment name
+    model="gpt-5.5",  # Your deployment name
     messages=[
         {"role": "user", "content": "Hello!"}
     ]
@@ -188,7 +193,7 @@ response = client.chat.completions.create(
 #### Responses API
 ```python
 # The Responses API uses a different format for tools and responses.
-# Use gpt-4.1 for agentic / Responses API workloads (recommended over gpt-4o).
+# Use gpt-4.1 for agentic / Responses API workloads (recommended over gpt-5.5).
 response = client.responses.create(
     model="gpt-4.1",  # Your deployment name; gpt-4.1 recommended for Responses API
     input="Analyse this document and extract key points",
@@ -630,7 +635,7 @@ OpenRouter and other OpenAI-compatible providers (DeepSeek, Perplexity, Together
 
 ### Package
 ```bash
-pip install "openai>=2.37.0"
+pip install "openai>=2.40.0"
 ```
 
 ### Client Initialization
@@ -691,7 +696,7 @@ await gantry.sync()
 tools = await gantry.retrieve_tools("search the web")
 
 response = client.chat.completions.create(
-    model="openai/gpt-4o",
+    model="openai/gpt-5.5",
     messages=[{"role": "user", "content": "Search for Python tutorials"}],
     tools=tools
 )

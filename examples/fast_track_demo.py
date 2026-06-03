@@ -35,7 +35,7 @@ client = AsyncOpenAI()
 
 async def chat(prompt: str):
     return await client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.5",
         messages=[{"role": "user", "content": prompt}]
     )
 
@@ -77,7 +77,7 @@ def send_email(to: str, subject: str) -> str:
 @with_semantic_tools(limit=3)
 async def chat(prompt: str, *, tools=None):
     return await client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.5",
         messages=[{"role": "user", "content": prompt}],
         tools=tools  # Tools automatically injected here
     )
@@ -125,7 +125,7 @@ response = await chat("What's the weather in Tokyo?")
             if tools:
                 print(f"   [Agent-Gantry] Tools: {[t['function']['name'] for t in tools]}")
             return await client.chat.completions.create(
-                model="gpt-4o", messages=[{"role": "user", "content": prompt}], tools=tools
+                model="gpt-5.5", messages=[{"role": "user", "content": prompt}], tools=tools
             )
 
         # Test queries

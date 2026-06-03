@@ -56,6 +56,9 @@ class LLMConfig(BaseModel):
     """Configuration for LLM-based features (intent classification, etc.)."""
 
     provider: Literal["openai", "anthropic", "google", "mistral", "groq"] = "openai"
+    # gpt-4o-mini is deprecated (OpenAI shutdown: 2026-10-23); replace with
+    # "gpt-5.4-mini". Changing this default is a breaking API change requiring
+    # a major version bump — tracked in the modernisation audit.
     model: str = "gpt-4o-mini"
     api_key: str | None = None
     base_url: str | None = Field(default=None, description="Custom base URL (for OpenRouter, etc.)")

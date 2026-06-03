@@ -137,7 +137,7 @@ def read_file(path: str) -> str:
 @with_semantic_tools(gantry, limit=2)
 async def chat(prompt: str, *, tools=None):
     return await client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.5",
         messages=[{"role": "user", "content": prompt}],
         tools=tools  # Auto-populated by decorator
     )

@@ -52,7 +52,7 @@ async def main():
             crew_tools.append(make_crew_tool(name, desc, gantry))
 
     # 4. Define CrewAI Agent
-    llm = ChatOpenAI(model="gpt-4o")
+    llm = ChatOpenAI(model="gpt-5.5")
 
     researcher = Agent(
         role="Customer Success Researcher",

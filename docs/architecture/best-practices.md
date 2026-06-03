@@ -514,7 +514,7 @@ async def chat_with_tools(prompt: str, *, tools=None):
 
     for i in range(MAX_ITERATIONS):
         response = await client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-5.5",
             messages=messages,
             tools=tools
         )

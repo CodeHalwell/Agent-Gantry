@@ -25,7 +25,7 @@ async def main():
     await gantry.sync()
 
     # 2. Setup LLM and Tools
-    llm = ChatOpenAI(model="gpt-4o")
+    llm = ChatOpenAI(model="gpt-5.5")
 
     # Use Gantry to fetch tools for the specific query
     user_query = "How does Agent-Gantry work?"
