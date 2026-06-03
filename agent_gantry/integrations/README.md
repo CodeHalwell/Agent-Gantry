@@ -25,7 +25,7 @@ def get_weather(city: str) -> str:
 @with_semantic_tools(limit=3)
 async def chat(prompt: str, *, tools=None):
     return await client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.5",
         messages=[{"role": "user", "content": prompt}],
         tools=tools  # Agent-Gantry injects relevant tools here
     )
@@ -151,7 +151,7 @@ gantry = AgentGantry()
 # Use decorator with LangChain
 @with_semantic_tools(gantry, limit=3)
 async def chat_with_langchain(prompt: str, *, tools=None):
-    llm = ChatOpenAI(model="gpt-4o")
+    llm = ChatOpenAI(model="gpt-5.5")
     # Convert to LangChain tools and use with your agent
     # See examples/agent_frameworks/langchain_example.py for details
 ```
@@ -171,7 +171,7 @@ tools = await gantry.retrieve_tools("task description", limit=3)
 # Pass to AutoGen agent
 agent = ConversableAgent(
     name="assistant",
-    llm_config={"model": "gpt-4o", "tools": tools}
+    llm_config={"model": "gpt-5.5", "tools": tools}
 )
 ```
 

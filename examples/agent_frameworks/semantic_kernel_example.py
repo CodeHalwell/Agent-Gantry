@@ -31,7 +31,7 @@ async def main():
     kernel.add_service(
         OpenAIChatCompletion(
             service_id=service_id,
-            ai_model_id="gpt-4o",
+            ai_model_id="gpt-5.5",
             api_key=os.getenv("OPENAI_API_KEY"),
         )
     )

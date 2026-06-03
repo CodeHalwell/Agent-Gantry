@@ -53,7 +53,7 @@ async def main():
     all_tools = [t.to_dialect("openai") for t in await gantry.list_tools()]
 
     baseline_response = await client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.5",
         messages=[{"role": "user", "content": query}],
         tools=all_tools,
         tool_choice="auto",
@@ -69,7 +69,7 @@ async def main():
     print(f"Gantry selected: {[t['function']['name'] for t in optimized_tools]}")
 
     optimized_response = await client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.5",
         messages=[{"role": "user", "content": query}],
         tools=optimized_tools,
         tool_choice="auto",

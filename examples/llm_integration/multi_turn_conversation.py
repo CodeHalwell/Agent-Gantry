@@ -64,7 +64,7 @@ async def run_turn(
     tool_calls: list[Any] = []
     if client is not None:
         resp = await client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-5.5",
             messages=messages,
             tools=tools,
             tool_choice="auto",
@@ -112,7 +112,7 @@ async def run_turn(
 
     if tool_calls:
         if client is not None:
-            follow_up = await client.chat.completions.create(model="gpt-4o", messages=messages)
+            follow_up = await client.chat.completions.create(model="gpt-5.5", messages=messages)
             final = follow_up.choices[0].message.content or ""
         else:
             final = (

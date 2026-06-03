@@ -65,7 +65,7 @@ async def main():
                 print(f"  • {t['name']}")
             print()
         return await client.responses.create(
-            model="gpt-4o-mini",
+            model="gpt-5.4-mini",
             input=prompt,
             tools=tools,
         )
@@ -101,7 +101,7 @@ async def main():
     # Send tool results back to get final response
     if tool_results:
         final_response = await client.responses.create(
-            model="gpt-4o-mini",
+            model="gpt-5.4-mini",
             input=tool_results,
             previous_response_id=response.id,
         )

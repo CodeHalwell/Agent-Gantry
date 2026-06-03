@@ -476,7 +476,7 @@ set_default_gantry(gantry)
 @with_semantic_tools(limit=3, dialect="openai")
 async def chat(prompt: str, *, tools=None):
     return await client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.5",
         messages=[{"role": "user", "content": prompt}],
         tools=tools  # Automatically injected
     )

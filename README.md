@@ -105,7 +105,7 @@ def get_weather(city: str) -> str:
 @with_semantic_tools(limit=3)
 async def ask_llm(prompt: str, *, tools=None):
     return await client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.5",
         messages=[{"role": "user", "content": prompt}],
         tools=tools  # Agent-Gantry injects relevant tools here
     )
@@ -203,7 +203,7 @@ client = AsyncOpenAI()
 @with_semantic_tools(limit=3)  # Default dialect is "openai"
 async def chat(messages, *, tools=None):
     return await client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.5",
         messages=messages,
         tools=tools
     )
@@ -403,7 +403,7 @@ async def main():
     @with_semantic_tools(limit=3)
     async def generate(prompt: str, *, tools=None):
         return await client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-5.5",
             messages=[{"role": "user", "content": prompt}],
             tools=tools,
         )

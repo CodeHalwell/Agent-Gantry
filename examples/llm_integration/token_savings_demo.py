@@ -27,7 +27,7 @@ except ImportError:
     TIKTOKEN_AVAILABLE = False
 
 
-def count_tokens(tools: list[dict[str, Any]], model: str = "gpt-4o-mini") -> int:
+def count_tokens(tools: list[dict[str, Any]], model: str = "gpt-5.4-mini") -> int:
     """
     Count exact tokens for a list of tool schemas using tiktoken.
     """
@@ -174,7 +174,7 @@ async def main():
         print("--- Baseline: Query ONLY (No Tools) ---")
         try:
             response_base = await client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-5.4-mini",
                 messages=[{"role": "user", "content": user_query}],
             )
             baseline_tokens = response_base.usage.prompt_tokens
@@ -197,7 +197,7 @@ async def main():
     if client:
         try:
             response_a = await client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-5.4-mini",
                 messages=[{"role": "user", "content": user_query}],
                 tools=all_tools_schema,
                 tool_choice="auto",
@@ -235,7 +235,7 @@ async def main():
     if client:
         try:
             response_b = await client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-5.4-mini",
                 messages=[{"role": "user", "content": user_query}],
                 tools=relevant_tools_schema,
                 tool_choice="auto",

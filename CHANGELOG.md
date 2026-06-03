@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (2026-06-03 modernisation audit)
+
+- **`pyproject.toml`: bump `langchain` floor `>=1.3.2 → >=1.3.4`** — patch release;
+  no API changes to `ChatOpenAI`, `ChatAnthropic`, or `BaseTool` surfaces used by
+  Gantry's `framework_adapters.py`.
+  *Risk: safe internal — floor bump only.*
+  Source: https://pypi.org/pypi/langchain/json
+
+- **`pyproject.toml`: bump `langgraph` floor `>=1.2.2 → >=1.2.4`** — patch release;
+  graph checkpoint and serialisation fixes; `StateGraph`, `CompiledGraph`, and
+  interrupt/resume APIs unchanged. `langgraph-sdk` resolves to `0.4.2` (was `0.3.13`)
+  as a transitive consequence — not directly imported by Gantry.
+  *Risk: safe internal — floor bump only.*
+  Source: https://pypi.org/pypi/langgraph/json
+
+- **`pyproject.toml`: bump `cohere` floor `>=6.0.0 → >=7.0.3`** — cohere 7.0.0 is a
+  major release; the only breaking change is raising the minimum Python version from
+  `^3.8` to `^3.10`. Gantry already requires `python>=3.10`, so no user-facing change.
+  `AsyncClientV2.rerank()` signature and return type are unchanged.
+  *Risk: safe with shim (Python constraint already satisfied).*
+  Source: https://github.com/cohere-ai/cohere-python/releases;
+          https://docs.cohere.com/v2/reference/rerank
+
+- **`docs/reference/llm_sdk_compatibility.md`**: replace discontinued
+  `gpt-4o-realtime-preview` with `gpt-realtime-1.5`. OpenAI discontinued
+  `gpt-4o-realtime-preview` on 2026-05-07; `gpt-realtime-1.5` is the current
+  production realtime model.
+  *Risk: safe internal (documentation only).*
+  Source: https://developers.openai.com/api/docs/deprecations
+
+- **All example files and documentation**: replace `gpt-4o` → `gpt-5.5` and
+  `gpt-4o-mini` → `gpt-5.4-mini` (39 occurrences across 23 files). OpenAI has set a
+  shutdown date of **2026-10-23** for both deprecated models; replacements are the
+  GPT-5.x generation flagship models.
+  Files updated: `README.md`, `agent_gantry/README.md`, `agent_gantry/core/README.md`,
+  `agent_gantry/integrations/README.md`, `agent_gantry/schema/config.py` (comment
+  only), `agent_gantry/skills/agent-gantry/SKILL.md`,
+  `docs/reference/llm_sdk_compatibility.md`, `examples/fast_track_demo.py`,
+  `examples/llm_integration/llm_demo.py`, `examples/llm_integration/openai_demo.py`,
+  `examples/llm_integration/multi_turn_conversation.py`,
+  `examples/llm_integration/token_savings_demo.py`,
+  `examples/llm_intent_classification_example.py`,
+  `examples/observability/multi_provider_metrics_demo.py`,
+  `examples/observability/token_savings_demo.py`, `examples/project_demo/main.py`,
+  `examples/project_demo/main_persistent.py`,
+  `examples/testing_limits/real_world_30_tools_test.py`,
+  `examples/tool_vector_db/main.py`, `examples/tool_vector_db/README.md`,
+  `examples/agent_frameworks/autogen_example.py`,
+  `examples/agent_frameworks/crewai_example.py`,
+  `examples/agent_frameworks/langchain_example.py`,
+  `examples/agent_frameworks/langgraph_example.py`,
+  `examples/agent_frameworks/llamaindex_example.py`,
+  `examples/agent_frameworks/semantic_kernel_example.py`.
+  *Risk: safe internal — examples and documentation only.*
+
+### Deprecation notice (action required by 2026-10-23)
+
+- `agent_gantry/schema/config.py` default `"gpt-4o-mini"` must be migrated to
+  `"gpt-5.4-mini"` before OpenAI's 2026-10-23 shutdown. This is a **breaking change**
+  requiring a major version bump and is tracked in AUDIT.md §10.
+
 ### Added
 
 - **`disable_af_instrumentation()` helper** — new top-level function

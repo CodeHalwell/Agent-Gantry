@@ -94,7 +94,7 @@ async def main():
 
     # 4. Setup AutoGen Agent with v0.4+ API
     print("\n🤖 Setting up AutoGen AssistantAgent...")
-    model_client = OpenAIChatCompletionClient(model="gpt-4o")
+    model_client = OpenAIChatCompletionClient(model="gpt-5.5")
 
     assistant = AssistantAgent(
         name="assistant",

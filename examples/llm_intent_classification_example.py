@@ -29,7 +29,7 @@ async def main():
             use_llm_for_intent=True,
             llm=LLMConfig(
                 provider="openai",
-                model="gpt-4o-mini",
+                model="gpt-5.4-mini",
                 api_key=os.getenv("OPENAI_API_KEY"),
                 temperature=0.0,
                 max_tokens=50,
@@ -137,7 +137,7 @@ routing:
   use_llm_for_intent: true
   llm:
     provider: openai  # or anthropic, google, mistral, groq
-    model: gpt-4o-mini
+    model: gpt-5.4-mini
     api_key: ${OPENAI_API_KEY}  # or set directly
     temperature: 0.0
     max_tokens: 50
@@ -166,7 +166,7 @@ async def demo_providers():
     providers = {
         "OpenAI": {
             "provider": "openai",
-            "model": "gpt-4o-mini",
+            "model": "gpt-5.4-mini",
             "api_key_env": "OPENAI_API_KEY",
         },
         "Anthropic": {

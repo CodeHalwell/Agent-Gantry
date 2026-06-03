@@ -211,7 +211,7 @@ tools = await fetch_framework_tools(
     gantry, "search the web for X", framework="langchain", limit=5
 )
 
-llm = ChatOpenAI(model="gpt-4o").bind_tools(tools)
+llm = ChatOpenAI(model="gpt-5.5").bind_tools(tools)
 response = await llm.ainvoke("...")
 ```
 
@@ -230,7 +230,7 @@ tools = await fetch_framework_tools(
 
 agent = AssistantAgent(
     name="assistant",
-    model_client=OpenAIChatCompletionClient(model="gpt-4o"),
+    model_client=OpenAIChatCompletionClient(model="gpt-5.5"),
     tools=tools,
 )
 ```
@@ -306,7 +306,7 @@ client = AsyncOpenAI()
 @with_semantic_tools(limit=3)   # default dialect="openai"
 async def chat(prompt: str, *, tools=None):
     return await client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.5",
         messages=[{"role": "user", "content": prompt}],
         tools=tools,
     )

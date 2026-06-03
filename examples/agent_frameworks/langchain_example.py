@@ -68,7 +68,7 @@ async def main():
     # 5. Build and run a LangGraph ReAct agent
     # create_react_agent is the LangGraph-native replacement for the old
     # LangChain AgentExecutor pattern.
-    llm = ChatOpenAI(model="gpt-4o", temperature=0)
+    llm = ChatOpenAI(model="gpt-5.5", temperature=0)
     agent = create_react_agent(llm, tools=langchain_tools)
 
     print("\n--- Running LangGraph ReAct Agent with Gantry-sourced tools ---")

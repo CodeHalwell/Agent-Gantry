@@ -41,7 +41,7 @@ async def generate_response(prompt: str, tools: list | None = None):
     """LLM call that gets semantic tools injected."""
     print(tools)
     first = await client.responses.create(
-        model="gpt-4o-mini",
+        model="gpt-5.4-mini",
         input=prompt,
         tools=tools,
         tool_choice="auto",
@@ -73,7 +73,7 @@ async def generate_response(prompt: str, tools: list | None = None):
 
         # Follow up with tool results
         follow_up = await client.responses.create(
-            model="gpt-4o-mini",
+            model="gpt-5.4-mini",
             input=function_call_outputs,
             previous_response_id=first.id,
         )

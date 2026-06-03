@@ -227,7 +227,7 @@ Add the `@with_semantic_tools` decorator to automatically inject relevant tools:
     async def chat(prompt: str, *, tools=None):
         """Chat with the LLM, automatically providing relevant tools."""
         response = await client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-5.5",
             messages=[{"role": "user", "content": prompt}],
             tools=tools,  # Automatically injected by decorator
             tool_choice="auto"
@@ -350,7 +350,7 @@ async def main():
     @with_semantic_tools(limit=3, dialect="openai")
     async def chat(prompt: str, *, tools=None):
         response = await client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-5.5",
             messages=[{"role": "user", "content": prompt}],
             tools=tools,
             tool_choice="auto"

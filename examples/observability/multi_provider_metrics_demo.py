@@ -54,7 +54,7 @@ async def test_multi_provider_metrics():
     print(f"OpenAI Savings: {savings_openai.prompt_savings_pct:.1f}%")
 
     await telemetry.record_token_usage(
-        usage=savings_openai.optimized, model_name="gpt-4o", savings=savings_openai
+        usage=savings_openai.optimized, model_name="gpt-5.5", savings=savings_openai
     )
 
     print("\n✅ Multi-provider metrics test completed successfully!")

@@ -120,7 +120,7 @@ async def main() -> None:
     print(f"Gantry retrieved {len(tools_cc)} tool(s): {[t['function']['name'] for t in tools_cc]}")
 
     response_b = await client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.5",
         messages=[{"role": "user", "content": query_b}],
         tools=tools_cc,
         tool_choice="auto",
@@ -153,7 +153,7 @@ async def main() -> None:
     ):
         print(f"   [Decorator] Injected {len(tools) if tools else 0} tools")
         return await client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-5.5",
             messages=messages,
             tools=tools,
             tool_choice="auto" if tools else None,
