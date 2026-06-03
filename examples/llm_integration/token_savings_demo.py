@@ -39,7 +39,11 @@ def count_tokens(tools: list[dict[str, Any]], model: str = "gpt-5.4-mini") -> in
     try:
         encoding = tiktoken.encoding_for_model(model)
     except KeyError:
-        encoding = tiktoken.get_encoding("cl100k_base")
+        # GPT-5.x models use o200k_base; fall back to cl100k_base if unknown
+        try:
+            encoding = tiktoken.get_encoding("o200k_base")
+        except Exception:
+            encoding = tiktoken.get_encoding("cl100k_base")
 
     # Use compact separators to match API behavior closer
     json_str = json.dumps(tools, separators=(",", ":"))

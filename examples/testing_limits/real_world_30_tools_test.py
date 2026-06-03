@@ -325,7 +325,7 @@ async def main():
 
         # B. LLM Call
         if client:
-            print("   [LLM] Calling GPT-4o...")
+            print("   [LLM] Calling GPT-5.5...")
             try:
                 response = await client.chat.completions.create(
                     model="gpt-5.5",
