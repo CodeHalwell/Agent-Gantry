@@ -92,3 +92,7 @@
 ## 2026-05-31 - [Search Input UX Dead Ends]
 **Learning:** When users focus back into a search input containing a previous query, failing to select the text or re-display results creates a dead end requiring manual deletion or typing to trigger a search. Additionally, pressing Escape when results are closed should clear the input to easily reset the state.
 **Action:** Add a `focus` event listener to select existing text and re-trigger searches, and handle the Escape key to clear the input if the dropdown is already hidden.
+
+## 2026-05-32 - [Skip to Content Focus Targets]
+**Learning:** Adding a "Skip to main content" link at the top of the document is a best practice for accessibility, but it only partially works if the target element (usually `<main id="main-content">`) is not programmatically focusable. When clicked or activated via keyboard, the browser scrolls to the target, but keyboard focus stays on the skip link itself, causing the user to start tabbing through the very navigation they were trying to bypass.
+**Action:** When creating skip links, always ensure the target element has `tabindex="-1"`. This allows the browser to shift programmatic focus to the content area so subsequent `Tab` keystrokes continue from the main content.
