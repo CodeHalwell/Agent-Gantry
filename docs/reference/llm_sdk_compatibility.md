@@ -94,7 +94,11 @@ print(response.output_text)
 ```python
 # WebSocket-based realtime conversations.
 # gpt-4o-realtime-preview was discontinued 2026-05-07; use gpt-realtime-1.5.
-async with client.beta.realtime.connect(model="gpt-realtime-1.5") as conn:
+# The Realtime API requires AsyncOpenAI — the sync OpenAI client does not support it.
+from openai import AsyncOpenAI
+
+async_client = AsyncOpenAI()
+async with async_client.beta.realtime.connect(model="gpt-realtime-1.5") as conn:
     await conn.send({"type": "input_audio_buffer.append", "audio": audio_data})
     async for event in conn:
         if event.type == "response.audio.delta":
