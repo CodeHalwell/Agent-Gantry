@@ -132,6 +132,8 @@ def _detect_cross_references(
         for other, pattern in patterns.items():
             if other == tool.name:
                 continue
+            if other not in full:
+                continue
             if pattern.search(full):
                 refs.append(other)
         if refs:

@@ -112,14 +112,14 @@ agent-frameworks = [
     "langgraph>=1.2.4",
     "llama-index-core>=0.14.22",
     "llama-index-llms-openai>=0.7.7",
-    # semantic-kernel 1.42.0 (latest stable 2026-05-15) relaxes the pydantic
-    # upper bound to <2.14 (was <2.12 in <=1.41.x), but retains an opentelemetry-api
-    # version incompatibility with agent-framework on some Python versions. Until that
-    # conflict is confirmed resolved, the floor stays at >=1.36.0. Upgrade to 1.42.0
-    # in a standalone environment without agent-framework. Note: the previous pydantic
-    # conflict with google-adk 1.33.0 is now moot for semantic-kernel alone (1.42.0
-    # allows pydantic>=2.12), but google-adk 1.33.0 also requires langgraph<0.4.8
-    # which conflicts with langgraph>=1.2.0 in this extra (see google-adk comment).
+    # semantic-kernel 1.43.0 (latest stable 2026-06-04) — no API changes affecting
+    # Gantry. An opentelemetry-api version incompatibility with agent-framework persists
+    # on some Python versions. Until that conflict is confirmed resolved, the floor stays
+    # at >=1.36.0. Upgrade to 1.43.0 in a standalone environment without agent-framework.
+    # Note: the previous pydantic conflict with google-adk 1.33.0 is now moot for
+    # semantic-kernel alone (1.43.0 allows pydantic>=2.12), but google-adk 1.33.0 also
+    # requires langgraph<0.4.8 which conflicts with langgraph>=1.2.0 in this extra
+    # (see google-adk comment).
     "semantic-kernel>=1.36.0",
     # google-adk 2.1.0 (latest stable, 2026-05-22) introduced a Workflow Runtime
     # and Task API (major version bump from 1.x). Two separate conflicts prevent
@@ -165,6 +165,9 @@ embeddings = [
     "sentence-transformers>=2.2.0",
 ]
 openai = [
+    # 2.41.0 (released 2026-06-03): adds responses.moderation and
+    # chat_completions.moderation endpoints. No breaking changes to Chat Completions
+    # or Responses API surfaces used by Gantry.
     # 2.40.0 (released 2026-06-01): adds Amazon Bedrock Responses support and
     # allows setting Bedrock API keys directly on the client instance. No breaking
     # changes to Chat Completions or Responses API surfaces used by Gantry.
@@ -174,7 +177,7 @@ openai = [
     # Deprecation notice: gpt-4o and gpt-4o-mini shut down 2026-10-23; replacements
     # are gpt-5.5 and gpt-5.4-mini respectively. gpt-4.1 is NOT deprecated.
     # Source: https://pypi.org/pypi/openai/json
-    "openai>=2.40.0",
+    "openai>=2.41.0",
 ]
 cohere = [
     # cohere 7.0.3 (latest stable 2026-06-03). Breaking change in 7.0.0: minimum
@@ -230,15 +233,15 @@ anthropic = [
     "anthropic>=0.105.2",
 ]
 google-genai = [
-    # google-genai 2.7.0 (latest stable 2026-05-28) — breaking changes in 2.0.0 were
+    # google-genai 2.8.0 (latest stable 2026-06-04) — breaking changes in 2.0.0 were
     # limited to the Interactions API (SSE event renames, response_format restructuring);
     # GenerateContent and function calling are entirely unaffected across 1.x and 2.x.
     # google-adk (in the agent-frameworks extra) requires google-genai<2.0.0 across all
     # versions up to 2.0.0, so the combined all[] extra keeps a 1.x-compatible floor.
-    # The pip resolver picks the latest compatible version (2.7.0 for standalone
+    # The pip resolver picks the latest compatible version (2.8.0 for standalone
     # [google-genai] installs; >=1.75.0,<2.0.0 when google-adk is co-installed).
     # Standalone 2.x upgrade: pip install "agent-gantry[google-genai]"
-    # Source: https://pypi.org/pypi/google-genai/json (verified 2026-05-31)
+    # Source: https://pypi.org/pypi/google-genai/json (verified 2026-06-04)
     "google-genai>=1.75.0",
 ]
 google-vertexai = [
@@ -252,7 +255,7 @@ mistral = [
     # AsyncOpenAI(). The MistralAdapter in agent_gantry.adapters.tool_spec
     # continues to translate tool schemas correctly for both patterns.
     # Install with: pip install "agent-gantry[mistral]"
-    "openai>=2.40.0",
+    "openai>=2.41.0",
 ]
 groq = [
     # 1.4.0 (released 2026-05-28) — latest stable as of 2026-05-31.
