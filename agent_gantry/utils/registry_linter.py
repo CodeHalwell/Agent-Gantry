@@ -68,11 +68,7 @@ class RegistryAnalysis:
 
     @property
     def empty(self) -> bool:
-        return (
-            not self.cross_references
-            and not self.similar_pairs
-            and not self.overlapping_tags
-        )
+        return not self.cross_references and not self.similar_pairs and not self.overlapping_tags
 
     def format_text(self) -> str:
         """Human-readable rendering for the CLI."""
@@ -116,9 +112,7 @@ def _detect_cross_references(
     # don't match the tool's *own* name when it's a substring of another.
     # Short names (< 3 chars) produce too many false positives — skip them.
     patterns: dict[str, re.Pattern[str]] = {
-        n: re.compile(rf"(?<!\w){re.escape(n.lower())}(?!\w)")
-        for n in names
-        if len(n) >= 3
+        n: re.compile(rf"(?<!\w){re.escape(n.lower())}(?!\w)") for n in names if len(n) >= 3
     }
     # Tokens to scan: description + extended_description + tags + examples.
     for tool in tools:
@@ -131,6 +125,8 @@ def _detect_cross_references(
         refs: list[str] = []
         for other, pattern in patterns.items():
             if other == tool.name:
+                continue
+            if other not in full:
                 continue
             if pattern.search(full):
                 refs.append(other)
