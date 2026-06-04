@@ -1,8 +1,8 @@
 # Agent-Gantry Modernisation Audit
 
-**Date:** 2026-06-03
+**Date:** 2026-06-04
 **Repository:** `CodeHalwell/Agent-Gantry` · version `0.4.0`
-**Branch:** `claude/cool-hopper-gPA6f` (based on `main` after PR #222 — 2026-06-02 audit run)
+**Branch:** `claude/cool-hopper-ojLqy` (based on `main` after PR #223 — 2026-06-03 audit run)
 **Auditor:** Claude (claude-sonnet-4-6)
 
 > **Audit history.**
@@ -18,11 +18,16 @@
 > - **2026-06-02** (`claude/cool-hopper-R79WP`, based on main after PR #221):
 >   Bumped `openai>=2.38.0→>=2.40.0`; added `claude-opus-4-8` model capability
 >   documentation; added `TestClaudeOpus48ThinkingGuards` (6 tests).
-> - **2026-06-03** (this run, `claude/cool-hopper-gPA6f`, based on main after PR #222):
+> - **2026-06-03** (`claude/cool-hopper-gPA6f`, based on main after PR #222):
 >   Bumped `langchain>=1.3.2→>=1.3.4`, `langgraph>=1.2.2→>=1.2.4`,
 >   `cohere>=6.0.0→>=7.0.3`; fixed `gpt-4o-realtime-preview` (discontinued 2026-05-07)
 >   → `gpt-realtime-1.5`; migrated all `gpt-4o` / `gpt-4o-mini` model strings in
->   examples and docs to `gpt-5.5` / `gpt-5.4-mini`. See §1 for details.
+>   examples and docs to `gpt-5.5` / `gpt-5.4-mini`.
+> - **2026-06-04** (this run, `claude/cool-hopper-ojLqy`, based on main after PR #223):
+>   Bumped `openai>=2.40.0→>=2.41.0`; updated `google-genai` and `semantic-kernel`
+>   comments (2.8.0 and 1.43.0 respectively); fixed `ExecutionStatus.PERMISSION_DENIED`
+>   in executor (PR #225 fix); applied registry linter substring pre-check (PR #226 fix).
+>   See §1 for details.
 
 ---
 
@@ -30,56 +35,67 @@
 
 | Severity | Count | Areas |
 |----------|-------|-------|
-| **Must-change now** | 3 | langchain/langgraph floor bumps; cohere 7.x floor bump; gpt-4o-realtime-preview discontinued |
-| **Good next-step (completed this run)** | 1 | gpt-4o/gpt-4o-mini → gpt-5.5/gpt-5.4-mini migration in all examples and docs |
-| **Good next-step (remaining)** | 3 | semantic-kernel floor; google-adk 2.x docs; MAF migration guide |
+| **Must-change now** | 2 | openai floor bump; executor PERMISSION_DENIED status fix |
+| **Good next-step (completed this run)** | 1 | registry linter substring pre-check (PR #226) |
+| **Good next-step (remaining)** | 3 | semantic-kernel floor; google-adk 2.x; config.py gpt-4o-mini default |
 
-**New findings since 2026-06-01:**
+**New findings since 2026-06-03:**
 
-1. **`openai` 2.40.0 and 2.39.0** (both released 2026-06-01) — floor bumped to `>=2.40.0`.
-   No breaking changes to Chat Completions or Responses API surfaces.
-2. **`claude-opus-4-8` (NextOpus)** — new flagship Anthropic model. Supports adaptive
-   thinking only (no extended thinking). Effort defaults to `"high"`. Documentation
-   and guard tests added.
-3. **`gpt-4o` and `gpt-4o-mini` deprecated** — OpenAI announced shutdown on
-   **2026-10-23**; replacements are `gpt-5.5` and `gpt-5.4-mini` respectively.
-   Examples using these models should be migrated before that date.
-4. **OpenAI GPT-5.x model family** — `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano`
-   are now the flagship models. No Gantry code change required; examples should be
-   updated where appropriate.
-5. **All other packages** — unchanged since 2026-06-01. No further bumps required.
+1. **`openai` 2.41.0** (released 2026-06-03) — adds `responses.moderation` and
+   `chat_completions.moderation` endpoints. No breaking changes to Chat Completions or
+   Responses API surfaces used by Gantry. Floor bumped to `>=2.41.0`.
+   Source: https://github.com/openai/openai-python/releases/tag/v2.41.0
+2. **`google-genai` 2.8.0** (latest stable 2026-06-04) — released since last audit.
+   No breaking changes to `GenerateContent` or function calling. Comment updated;
+   floor unchanged (see §2.6 for the google-adk conflict blocker).
+   Source: https://pypi.org/pypi/google-genai/json
+3. **`semantic-kernel` 1.43.0** (latest stable 2026-06-04) — released since last audit.
+   No breaking changes affecting Gantry. OTel conflict with agent-framework persists;
+   floor unchanged at `>=1.36.0`. Comment updated.
+   Source: https://pypi.org/pypi/semantic-kernel/json
+4. **`ExecutionStatus.PERMISSION_DENIED` fix** (PR #225) — `_check_security_policy` in
+   `executor.py` was mapping `PermissionDeniedError` to the generic
+   `ExecutionStatus.FAILURE` instead of the specific `ExecutionStatus.PERMISSION_DENIED`,
+   misclassifying authorisation failures and breaking downstream security logging.
+   Fixed in this run. Source: PR #225 review.
+5. **Registry linter substring pre-check** (PR #226) — added `if other not in full:
+   continue` in `_detect_cross_references` before the compiled regex search, mirroring
+   the existing optimisation in `core/router.py`. Reduces CPU time for large registries
+   where most tool pairs do not cross-reference each other.
+   Source: PR #226 review.
 
 ---
 
 ## 2 · Dependency Upgrade Plan
 
-### 2.1 Package-by-package table (verified 2026-06-03)
+### 2.1 Package-by-package table (verified 2026-06-04)
 
 Sources verified against PyPI JSON API.
 
 | Package | Current floor | Latest stable | Action | Risk |
 |---------|--------------|---------------|--------|------|
-| `openai` | `>=2.40.0` | `2.40.0` | ✅ At latest | — |
+| `openai` | `>=2.40.0` → **`>=2.41.0`** | `2.41.0` | ✅ **Bumped this run** | Safe internal |
 | `agent-framework` | `>=1.5.0,<2.0.0` | `1.7.0` | ✅ Within range — no change | — |
 | `anthropic` | `>=0.105.2` | `0.105.2` | ✅ At latest | — |
 | `autogen-agentchat` | `>=0.7.5` | `0.7.5` | ✅ At latest | — |
-| `cohere` | `>=6.0.0` → **`>=7.0.3`** | `7.0.3` | ✅ **Bumped this run** | Safe with shim |
+| `cohere` | `>=7.0.3` | `7.0.3` | ✅ At latest | — |
 | `crewai` | `>=1.6.1` | `1.14.6` | Note only (OTel conflict with AF) | Blocked |
 | `google-adk` | `>=1.14.1` | `2.1.0` | Note only (langgraph conflict) | Blocked |
-| `google-genai` | `>=1.75.0` | `2.7.0` | ✅ Accessible standalone | Note only |
+| `google-genai` | `>=1.75.0` | `2.8.0` | Comment updated; floor unchanged | Note only |
 | `groq` | `>=1.4.0` | `1.4.0` | ✅ At latest | — |
-| `langchain` | `>=1.3.2` → **`>=1.3.4`** | `1.3.4` | ✅ **Bumped this run** | Safe internal |
+| `langchain` | `>=1.3.4` | `1.3.4` | ✅ At latest | — |
 | `langchain-openai` | `>=1.2.2` | `1.2.2` | ✅ At latest | — |
-| `langgraph` | `>=1.2.2` → **`>=1.2.4`** | `1.2.4` | ✅ **Bumped this run** | Safe internal |
-| `langgraph-sdk` | (transitive) | `0.4.2` | ✅ Resolved `0.3.13 → 0.4.2` in uv.lock | Transitive |
+| `langgraph` | `>=1.2.4` | `1.2.4` | ✅ At latest | — |
 | `mcp` | `>=1.27.2` | `1.27.2` | ✅ At latest | — |
-| `semantic-kernel` | `>=1.36.0` | `1.42.0` | OTel conflict with AF; floor unchanged | Blocked |
+| `semantic-kernel` | `>=1.36.0` | `1.43.0` | Comment updated; floor unchanged (OTel conflict) | Blocked |
 
-**Citation sources (all verified 2026-06-03):**
+**Citation sources (all verified 2026-06-04):**
+- `openai 2.41.0`: https://pypi.org/pypi/openai/json; https://github.com/openai/openai-python/releases/tag/v2.41.0
+- `google-genai 2.8.0`: https://pypi.org/pypi/google-genai/json
+- `semantic-kernel 1.43.0`: https://pypi.org/pypi/semantic-kernel/json
 - `langchain 1.3.4`: https://pypi.org/pypi/langchain/json
 - `langgraph 1.2.4`: https://pypi.org/pypi/langgraph/json
 - `cohere 7.0.3`: https://pypi.org/pypi/cohere/json
-- `openai 2.40.0`: https://pypi.org/pypi/openai/json
 - `anthropic 0.105.2`: https://pypi.org/pypi/anthropic/json
 - `agent-framework 1.7.0`: https://pypi.org/pypi/agent-framework/json
 - `mcp 1.27.2`: https://pypi.org/pypi/mcp/json
@@ -87,26 +103,28 @@ Sources verified against PyPI JSON API.
 - OpenAI deprecations: https://developers.openai.com/api/docs/deprecations
 - Anthropic models: https://platform.claude.com/docs/en/docs/about-claude/models/overview
 
-### 2.2 openai 2.39.0 / 2.40.0 API surface changes
+### 2.2 openai 2.39.0 / 2.40.0 / 2.41.0 API surface changes
 
-Neither release changes the Chat Completions or Responses API request/response shapes
-used by Gantry's `OpenAIAdapter` and `OpenAIResponsesAdapter`.
+None of these releases change the Chat Completions or Responses API request/response
+shapes used by Gantry's `OpenAIAdapter` and `OpenAIResponsesAdapter`.
 
-**2.39.0** adds:
-- `additional_tools` field on the Responses API **response** object — this is server-side
-  metadata about hosted tools used; Gantry does not parse response objects directly,
-  so no change needed.
-- `ActionSearch.query` made optional — affects the Action Search feature only, not used
-  by Gantry.
-- Workload identity in audit logs — server-side.
+**2.41.0** (released 2026-06-03) adds:
+- `responses.moderation` and `chat_completions.moderation` endpoints — new moderation
+  surface. Gantry does not use moderation endpoints; no change needed.
 
-**2.40.0** adds:
+**2.40.0** (released 2026-06-01) adds:
 - Amazon Bedrock Responses support — new Bedrock client path. Gantry does not currently
   target Bedrock; this is a **needs-confirmation** item if Bedrock support is planned.
 
+**2.39.0** (released 2026-06-01) adds:
+- `additional_tools` field on the Responses API **response** object — server-side
+  metadata; Gantry does not parse response objects directly, so no change needed.
+- `ActionSearch.query` made optional — Action Search feature only, not used by Gantry.
+- Workload identity in audit logs — server-side.
+
 **Risk level:** Safe internal.
 
-**Source:** https://github.com/openai/openai-python/releases (verified 2026-06-02)
+**Source:** https://github.com/openai/openai-python/releases (verified 2026-06-04)
 
 ### 2.3 langchain 1.3.4 / langgraph 1.2.4 API surface changes
 
@@ -170,11 +188,17 @@ https://developers.openai.com/api/docs/deprecations (verified 2026-06-02)
 
 ### 2.6 Blocked upgrades
 
-**`semantic-kernel ≥ 1.42.0`:** OTel conflict with `agent-framework>=1.2.1`; floor
-unchanged at `>=1.36.0`.
+**`semantic-kernel ≥ 1.43.0`:** OTel conflict with `agent-framework>=1.2.1`; floor
+unchanged at `>=1.36.0`. Comment updated in `pyproject.toml` to reflect 1.43.0 as
+latest stable (verified 2026-06-04).
 
 **`google-adk ≥ 2.x`:** Requires `langgraph<0.4.8`, conflicting with
-`langgraph>=1.2.2`. Floor unchanged at `>=1.14.1` in the combined extra.
+`langgraph>=1.2.4`. Floor unchanged at `>=1.14.1` in the combined extra. Latest
+stable remains `2.1.0` (verified 2026-06-04).
+
+**`crewai ≥ 1.14.6`:** Latest stable is `1.14.6`. `opentelemetry-api~=1.34.0` pin
+conflicts with `agent-framework>=1.2.1` (requires `opentelemetry-api>=1.39.0`). Use
+in a standalone environment without agent-framework.
 
 ---
 
@@ -337,25 +361,47 @@ Carried forward. No new security findings in this run.
 
 ### 9.1 Tests added this run
 
-| Test class | Tests | File | Description |
-|------------|-------|------|-------------|
-| `TestClaudeOpus48ThinkingGuards` | 6 | `tests/test_anthropic_features.py` | Documents adaptive/extended/plain thinking behaviour for claude-opus-4-8 |
-
-**28 tests pass** in `test_anthropic_features.py` (22 pre-existing + 6 new).
+No new tests added this run. The executor and security tests (9 tests) and linter
+tests (22 tests) all pass with the PR #225 and PR #226 fixes applied.
 
 ### 9.2 Regeneration checklist
 
-- [x] `uv.lock` — regenerated (2026-06-03); key resolved-version changes:
-  - `cohere 6.1.0 → 7.0.3`
-  - `langchain 1.3.2 → 1.3.4`
-  - `langgraph 1.2.2 → 1.2.4`
-  - `langgraph-sdk 0.3.13 → 0.4.2` (transitive)
+- [x] `uv.lock` — regenerated (2026-06-04); key resolved-version changes:
+  - `openai 2.40.0 → 2.41.0`
 - [ ] VCR recordings / golden HTTP responses — not present; not applicable.
 - [ ] Schema snapshots — not present; not applicable.
 
 ### 9.3 Changelog-ready migration notes
 
 ```
+## [0.4.x] — 2026-06-04
+
+### Fixed
+- `agent_gantry/core/executor.py`: map `PermissionDeniedError` to
+  `ExecutionStatus.PERMISSION_DENIED` (was incorrectly using `ExecutionStatus.FAILURE`),
+  restoring correct downstream security logging and status-based routing.
+  Source: PR #225.
+- `agent_gantry/utils/registry_linter.py`: add `if other not in full: continue`
+  pre-check in `_detect_cross_references` before invoking the compiled regex pattern,
+  reducing CPU time for large registries where most tool pairs do not cross-reference.
+  Source: PR #226.
+
+### Changed
+- `pyproject.toml`: bump `openai` floor `>=2.40.0 → >=2.41.0` (both `openai` and
+  `mistral` extras). openai 2.41.0 adds `responses.moderation` and
+  `chat_completions.moderation` endpoints; no breaking changes to any Gantry API surface.
+  Source: https://github.com/openai/openai-python/releases/tag/v2.41.0
+- `pyproject.toml`: update `google-genai` comment to reflect 2.8.0 as latest stable
+  (no API changes; floor unchanged). Source: https://pypi.org/pypi/google-genai/json
+- `pyproject.toml`: update `semantic-kernel` comment to reflect 1.43.0 as latest stable
+  (OTel conflict with agent-framework persists; floor unchanged at >=1.36.0).
+  Source: https://pypi.org/pypi/semantic-kernel/json
+
+### Deprecation notice (action required by 2026-10-23)
+- `agent_gantry/schema/config.py` default `"gpt-4o-mini"` must be migrated to
+  `"gpt-5.4-mini"` before OpenAI's 2026-10-23 shutdown. This is a breaking change
+  requiring a major version bump.
+
 ## [0.4.x] — 2026-06-03
 
 ### Changed
@@ -377,11 +423,6 @@ Carried forward. No new security findings in this run.
   `>=2.37.0` to `>=2.40.0` (current floor).
 - `agent_gantry/schema/config.py`: add deprecation comment on `gpt-4o-mini` default;
   the default is NOT changed (breaking change requiring a major version bump — tracked).
-
-### Deprecation notice (action required by 2026-10-23)
-- `agent_gantry/schema/config.py` default `"gpt-4o-mini"` must be migrated to
-  `"gpt-5.4-mini"` before OpenAI's 2026-10-23 shutdown. This is a breaking change
-  requiring a major version bump.
 
 ## [0.4.x] — 2026-06-02
 
@@ -410,10 +451,12 @@ Carried forward. No new security findings in this run.
 | # | Change | File | Risk | Status |
 |---|--------|------|------|--------|
 | 1 | ~~Bump `openai` floor `>=2.38.0 → >=2.40.0`~~ | `pyproject.toml` | Safe internal | ✅ Done (2026-06-02 run) |
-| 2 | ~~Bump `langchain` floor `>=1.3.2 → >=1.3.4`~~ | `pyproject.toml` | Safe internal | ✅ **Done this run** |
-| 3 | ~~Bump `langgraph` floor `>=1.2.2 → >=1.2.4`~~ | `pyproject.toml` | Safe internal | ✅ **Done this run** |
-| 4 | ~~Bump `cohere` floor `>=6.0.0 → >=7.0.3`~~ | `pyproject.toml` | Safe with shim | ✅ **Done this run** |
-| 5 | ~~Fix `gpt-4o-realtime-preview` (discontinued 2026-05-07) → `gpt-realtime-1.5`~~ | `docs/reference/llm_sdk_compatibility.md` | Safe internal | ✅ **Done this run** |
+| 2 | ~~Bump `langchain` floor `>=1.3.2 → >=1.3.4`~~ | `pyproject.toml` | Safe internal | ✅ Done (2026-06-03 run) |
+| 3 | ~~Bump `langgraph` floor `>=1.2.2 → >=1.2.4`~~ | `pyproject.toml` | Safe internal | ✅ Done (2026-06-03 run) |
+| 4 | ~~Bump `cohere` floor `>=6.0.0 → >=7.0.3`~~ | `pyproject.toml` | Safe with shim | ✅ Done (2026-06-03 run) |
+| 5 | ~~Fix `gpt-4o-realtime-preview` → `gpt-realtime-1.5`~~ | `docs/` | Safe internal | ✅ Done (2026-06-03 run) |
+| 6 | ~~Bump `openai` floor `>=2.40.0 → >=2.41.0`~~ | `pyproject.toml` | Safe internal | ✅ **Done this run** |
+| 7 | ~~Fix `ExecutionStatus.PERMISSION_DENIED` in `_check_security_policy`~~ | `core/executor.py` | Safe internal | ✅ **Done this run** |
 
 ### Good next-step improvements
 
@@ -421,8 +464,9 @@ Carried forward. No new security findings in this run.
 |---|--------|------|------|--------|
 | 1 | ~~Add `claude-opus-4-8` model capability docs~~ | `anthropic_features.py` | Safe internal | ✅ Done (2026-06-02 run) |
 | 2 | ~~Add `TestClaudeOpus48ThinkingGuards` (6 tests)~~ | `tests/test_anthropic_features.py` | Safe internal | ✅ Done (2026-06-02 run) |
-| 3 | ~~Migrate examples/docs from `gpt-4o`/`gpt-4o-mini` to `gpt-5.5`/`gpt-5.4-mini`~~ | `examples/`, `docs/`, `README.md` | Safe internal | ✅ **Done this run** (39 occurrences, 23 files) |
-| 4 | Bump `config.py` default from `gpt-4o-mini` → `gpt-5.4-mini` | `agent_gantry/schema/config.py` | Breaking — major version bump | ⏳ Pending (deadline 2026-10-23) |
-| 5 | Validate `semantic-kernel>=1.42.0` in isolation with `agent-framework`; bump floor if OTel conflict resolved | `pyproject.toml` | Safe with shim | ⏳ Pending |
-| 6 | Validate `google-adk>=2.1.0` standalone env; add docs page showing Workflow Runtime pattern (v2 major) | `docs/`, `examples/` | Needs confirmation | ⏳ Pending |
-| 7 | Add MAF migration guide (`docs/migrating-from-autogen.md`) for AutoGen → AF 1.x teams | `docs/` | Documentation | ⏳ Pending |
+| 3 | ~~Migrate examples/docs from `gpt-4o`/`gpt-4o-mini` to `gpt-5.5`/`gpt-5.4-mini`~~ | `examples/`, `docs/`, `README.md` | Safe internal | ✅ Done (2026-06-03 run, 39 occurrences, 23 files) |
+| 4 | ~~Registry linter substring pre-check~~ | `utils/registry_linter.py` | Safe internal | ✅ **Done this run** |
+| 5 | Bump `config.py` default from `gpt-4o-mini` → `gpt-5.4-mini` | `agent_gantry/schema/config.py` | Breaking — major version bump | ⏳ Pending (deadline 2026-10-23) |
+| 6 | Validate `semantic-kernel>=1.43.0` in isolation with `agent-framework`; bump floor if OTel conflict resolved | `pyproject.toml` | Safe with shim | ⏳ Pending |
+| 7 | Validate `google-adk>=2.1.0` standalone env; add docs page showing Workflow Runtime pattern (v2 major) | `docs/`, `examples/` | Needs confirmation | ⏳ Pending |
+| 8 | Add MAF migration guide (`docs/migrating-from-autogen.md`) for AutoGen → AF 1.x teams | `docs/` | Documentation | ⏳ Pending |
