@@ -1,8 +1,8 @@
 # Agent-Gantry Modernisation Audit
 
-**Date:** 2026-06-04
+**Date:** 2026-06-05
 **Repository:** `CodeHalwell/Agent-Gantry` · version `0.4.0`
-**Branch:** `claude/cool-hopper-ojLqy` (based on `main` after PR #223 — 2026-06-03 audit run)
+**Branch:** `claude/cool-hopper-0w07i` (based on `main` after PR #224 — 2026-06-04 audit run)
 **Auditor:** Claude (claude-sonnet-4-6)
 
 > **Audit history.**
@@ -23,11 +23,15 @@
 >   `cohere>=6.0.0→>=7.0.3`; fixed `gpt-4o-realtime-preview` (discontinued 2026-05-07)
 >   → `gpt-realtime-1.5`; migrated all `gpt-4o` / `gpt-4o-mini` model strings in
 >   examples and docs to `gpt-5.5` / `gpt-5.4-mini`.
-> - **2026-06-04** (this run, `claude/cool-hopper-ojLqy`, based on main after PR #223):
+> - **2026-06-04** (`claude/cool-hopper-ojLqy`, based on main after PR #223):
 >   Bumped `openai>=2.40.0→>=2.41.0`; updated `google-genai` and `semantic-kernel`
 >   comments (2.8.0 and 1.43.0 respectively); fixed `ExecutionStatus.PERMISSION_DENIED`
 >   in executor (PR #225 fix); applied registry linter substring pre-check (PR #226 fix).
->   See §1 for details.
+> - **2026-06-05** (this run, `claude/cool-hopper-0w07i`, based on main after PR #224):
+>   Updated `pyproject.toml` comment for AF 1.8.0 (released 2026-06-04, within existing
+>   `>=1.5.0,<2.0.0` constraint — no version change required); updated google-adk comment
+>   to reflect 2.2.0 as latest stable (was 2.1.0; langgraph conflict still blocks upgrade).
+>   No code changes required.  See §1 for details.
 
 ---
 
@@ -35,59 +39,58 @@
 
 | Severity | Count | Areas |
 |----------|-------|-------|
-| **Must-change now** | 2 | openai floor bump; executor PERMISSION_DENIED status fix |
-| **Good next-step (completed this run)** | 1 | registry linter substring pre-check (PR #226) |
-| **Good next-step (remaining)** | 3 | semantic-kernel floor; google-adk 2.x; config.py gpt-4o-mini default |
+| **Must-change now** | 0 | — all items from previous runs resolved |
+| **Good next-step (completed this run)** | 2 | AF 1.8.0 comment; google-adk 2.2.0 comment |
+| **Good next-step (remaining)** | 3 | semantic-kernel floor; google-adk 2.x upgrade; config.py gpt-4o-mini default |
 
-**New findings since 2026-06-03:**
+**New findings since 2026-06-04:**
 
-1. **`openai` 2.41.0** (released 2026-06-03) — adds `responses.moderation` and
-   `chat_completions.moderation` endpoints. No breaking changes to Chat Completions or
-   Responses API surfaces used by Gantry. Floor bumped to `>=2.41.0`.
-   Source: https://github.com/openai/openai-python/releases/tag/v2.41.0
-2. **`google-genai` 2.8.0** (latest stable 2026-06-04) — released since last audit.
-   No breaking changes to `GenerateContent` or function calling. Comment updated;
-   floor unchanged (see §2.6 for the google-adk conflict blocker).
-   Source: https://pypi.org/pypi/google-genai/json
-3. **`semantic-kernel` 1.43.0** (latest stable 2026-06-04) — released since last audit.
-   No breaking changes affecting Gantry. OTel conflict with agent-framework persists;
-   floor unchanged at `>=1.36.0`. Comment updated.
-   Source: https://pypi.org/pypi/semantic-kernel/json
-4. **`ExecutionStatus.PERMISSION_DENIED` fix** (PR #225) — `_check_security_policy` in
-   `executor.py` was mapping `PermissionDeniedError` to the generic
-   `ExecutionStatus.FAILURE` instead of the specific `ExecutionStatus.PERMISSION_DENIED`,
-   misclassifying authorisation failures and breaking downstream security logging.
-   Fixed in this run. Source: PR #225 review.
-5. **Registry linter substring pre-check** (PR #226) — added `if other not in full:
-   continue` in `_detect_cross_references` before the compiled regex search, mirroring
-   the existing optimisation in `core/router.py`. Reduces CPU time for large registries
-   where most tool pairs do not cross-reference each other.
-   Source: PR #226 review.
+1. **`agent-framework` 1.8.0** (released 2026-06-04 — same day as previous audit, not
+   captured in it) — adds `McpSkillsSource` for MCP-based skills discovery, progressive
+   tool exposure via `FunctionInvocationContext`, background-agent harness support, and
+   `AgentFileStore`/`FileAccessProvider`.  Bug fixes: resolves message-id collisions in
+   compaction (benefits `GantryContextProvider`), fixes unsafe serialisation of function
+   arguments in AF's observability layer (benefits `GantryToolBridge`).  Skill API
+   refactored to async resource/script lookup (experimental — not used by Gantry, which
+   uses its own `SkillRegistry`).  Sync tools now execute off the event loop; Gantry's
+   bridge already wraps all callables as async so no double-wrapping occurs.  Breaking
+   change: `github-copilot-sdk` upgraded to v1.0.0 stable (not used by Gantry).  No
+   Gantry code changes required.  `pyproject.toml` comment updated this run.
+   Source: https://pypi.org/pypi/agent-framework/json (verified 2026-06-05)
+2. **`google-adk` 2.2.0** (released since last audit, was 2.1.0) — minor release;
+   `langgraph<0.4.8` dependency conflict with Gantry's `langgraph>=1.2.4` persists.
+   Floor unchanged at `>=1.14.1`.  `pyproject.toml` comment updated to reflect 2.2.0.
+   Source: https://pypi.org/pypi/google-adk/json (verified 2026-06-05)
+
+**All packages verified against PyPI on 2026-06-05** — no other releases since the
+2026-06-04 audit.  `openai`, `anthropic`, `google-genai`, `langchain`, `langgraph`,
+`mcp`, `autogen-agentchat`, `groq`, `cohere`, `semantic-kernel` all remain at the
+versions recorded in the previous audit.  See §2 for the full table.
 
 ---
 
 ## 2 · Dependency Upgrade Plan
 
-### 2.1 Package-by-package table (verified 2026-06-04)
+### 2.1 Package-by-package table (verified 2026-06-05)
 
 Sources verified against PyPI JSON API.
 
 | Package | Current floor | Latest stable | Action | Risk |
 |---------|--------------|---------------|--------|------|
-| `openai` | `>=2.40.0` → **`>=2.41.0`** | `2.41.0` | ✅ **Bumped this run** | Safe internal |
-| `agent-framework` | `>=1.5.0,<2.0.0` | `1.7.0` | ✅ Within range — no change | — |
+| `openai` | `>=2.41.0` | `2.41.0` | ✅ At latest | — |
+| `agent-framework` | `>=1.5.0,<2.0.0` | **`1.8.0`** | ✅ Within range — comment updated this run | — |
 | `anthropic` | `>=0.105.2` | `0.105.2` | ✅ At latest | — |
 | `autogen-agentchat` | `>=0.7.5` | `0.7.5` | ✅ At latest | — |
 | `cohere` | `>=7.0.3` | `7.0.3` | ✅ At latest | — |
 | `crewai` | `>=1.6.1` | `1.14.6` | Note only (OTel conflict with AF) | Blocked |
-| `google-adk` | `>=1.14.1` | `2.1.0` | Note only (langgraph conflict) | Blocked |
-| `google-genai` | `>=1.75.0` | `2.8.0` | Comment updated; floor unchanged | Note only |
+| `google-adk` | `>=1.14.1` | **`2.2.0`** | Comment updated this run; floor unchanged (langgraph conflict) | Blocked |
+| `google-genai` | `>=1.75.0` | `2.8.0` | Comment updated prior run; floor unchanged | Note only |
 | `groq` | `>=1.4.0` | `1.4.0` | ✅ At latest | — |
 | `langchain` | `>=1.3.4` | `1.3.4` | ✅ At latest | — |
 | `langchain-openai` | `>=1.2.2` | `1.2.2` | ✅ At latest | — |
 | `langgraph` | `>=1.2.4` | `1.2.4` | ✅ At latest | — |
 | `mcp` | `>=1.27.2` | `1.27.2` | ✅ At latest | — |
-| `semantic-kernel` | `>=1.36.0` | `1.43.0` | Comment updated; floor unchanged (OTel conflict) | Blocked |
+| `semantic-kernel` | `>=1.36.0` | `1.43.0` | Comment updated prior run; floor unchanged (OTel conflict) | Blocked |
 
 **Citation sources (all verified 2026-06-04):**
 - `openai 2.41.0`: https://pypi.org/pypi/openai/json; https://github.com/openai/openai-python/releases/tag/v2.41.0
@@ -97,7 +100,7 @@ Sources verified against PyPI JSON API.
 - `langgraph 1.2.4`: https://pypi.org/pypi/langgraph/json
 - `cohere 7.0.3`: https://pypi.org/pypi/cohere/json
 - `anthropic 0.105.2`: https://pypi.org/pypi/anthropic/json
-- `agent-framework 1.7.0`: https://pypi.org/pypi/agent-framework/json
+- `agent-framework 1.8.0`: https://pypi.org/pypi/agent-framework/json
 - `mcp 1.27.2`: https://pypi.org/pypi/mcp/json
 - `groq 1.4.0`: https://pypi.org/pypi/groq/json
 - OpenAI deprecations: https://developers.openai.com/api/docs/deprecations
@@ -234,10 +237,20 @@ Both route correctly through `AsyncOpenAI` (Mistral) and `AsyncGroq` (Groq).
 
 ## 4 · Framework Integration Refactors
 
-### 4.1 Microsoft Agent Framework (AF 1.5.0 – 1.7.0) — no changes required ✅
+### 4.1 Microsoft Agent Framework (AF 1.5.0 – 1.8.0) — no changes required ✅
 
-Unchanged from 2026-06-01 audit. All middleware, bridge, and provider surfaces remain
-current against AF 1.7.0.
+All middleware, bridge, and provider surfaces verified current against AF 1.8.0 (released
+2026-06-04).  Key AF 1.8.0 notes:
+
+- `GantryToolBridge` is unaffected by the Skill API async refactor (Gantry uses its own
+  `SkillRegistry`, not AF's `SkillsProvider`).
+- `GantryToolBridge` wraps all callables as async already; AF 1.8.0's "sync tools off
+  the event loop" optimisation is a no-op for Gantry-wrapped tools — no double-wrapping.
+- AF 1.8.0's fix for unsafe serialisation of function arguments and for message-id
+  collisions in compaction both benefit `GantryToolBridge` / `GantryContextProvider`
+  without any code changes.
+- The new `FunctionInvocationContext` (progressive tool exposure) is a potential future
+  enhancement for `GantryContextProvider`; flagged as a good next-step item (#9 below).
 
 ### 4.2 LangGraph, AutoGen, CrewAI, LlamaIndex, Semantic Kernel — no changes required ✅
 
@@ -374,6 +387,26 @@ tests (22 tests) all pass with the PR #225 and PR #226 fixes applied.
 ### 9.3 Changelog-ready migration notes
 
 ```
+## [0.4.x] — 2026-06-05
+
+### Changed
+- `pyproject.toml`: update `agent-framework` comment to document AF 1.8.0 (released
+  2026-06-04, within existing `>=1.5.0,<2.0.0` constraint — no floor bump required).
+  Key AF 1.8.0 changes documented: `McpSkillsSource`, `FunctionInvocationContext`,
+  background-agent harness, `AgentFileStore`/`FileAccessProvider`; bug fixes for
+  unsafe serialisation of function arguments and message-id collisions in compaction;
+  Skill API async refactor (experimental, not used by Gantry).
+  Source: https://pypi.org/pypi/agent-framework/json (verified 2026-06-05)
+- `pyproject.toml`: update `google-adk` comment to reflect 2.2.0 as latest stable
+  (was 2.1.0; `langgraph<0.4.8` conflict with `langgraph>=1.2.4` persists; floor
+  unchanged at `>=1.14.1`; standalone install example updated to `>=2.2.0`).
+  Source: https://pypi.org/pypi/google-adk/json (verified 2026-06-05)
+
+### Deprecation notice (action required by 2026-10-23)
+- `agent_gantry/schema/config.py` default `"gpt-4o-mini"` must be migrated to
+  `"gpt-5.4-mini"` before OpenAI's 2026-10-23 shutdown. This is a breaking change
+  requiring a major version bump.
+
 ## [0.4.x] — 2026-06-04
 
 ### Fixed
@@ -455,8 +488,8 @@ tests (22 tests) all pass with the PR #225 and PR #226 fixes applied.
 | 3 | ~~Bump `langgraph` floor `>=1.2.2 → >=1.2.4`~~ | `pyproject.toml` | Safe internal | ✅ Done (2026-06-03 run) |
 | 4 | ~~Bump `cohere` floor `>=6.0.0 → >=7.0.3`~~ | `pyproject.toml` | Safe with shim | ✅ Done (2026-06-03 run) |
 | 5 | ~~Fix `gpt-4o-realtime-preview` → `gpt-realtime-1.5`~~ | `docs/` | Safe internal | ✅ Done (2026-06-03 run) |
-| 6 | ~~Bump `openai` floor `>=2.40.0 → >=2.41.0`~~ | `pyproject.toml` | Safe internal | ✅ **Done this run** |
-| 7 | ~~Fix `ExecutionStatus.PERMISSION_DENIED` in `_check_security_policy`~~ | `core/executor.py` | Safe internal | ✅ **Done this run** |
+| 6 | ~~Bump `openai` floor `>=2.40.0 → >=2.41.0`~~ | `pyproject.toml` | Safe internal | ✅ Done (2026-06-04 run) |
+| 7 | ~~Fix `ExecutionStatus.PERMISSION_DENIED` in `_check_security_policy`~~ | `core/executor.py` | Safe internal | ✅ Done (2026-06-04 run) |
 
 ### Good next-step improvements
 
@@ -465,8 +498,11 @@ tests (22 tests) all pass with the PR #225 and PR #226 fixes applied.
 | 1 | ~~Add `claude-opus-4-8` model capability docs~~ | `anthropic_features.py` | Safe internal | ✅ Done (2026-06-02 run) |
 | 2 | ~~Add `TestClaudeOpus48ThinkingGuards` (6 tests)~~ | `tests/test_anthropic_features.py` | Safe internal | ✅ Done (2026-06-02 run) |
 | 3 | ~~Migrate examples/docs from `gpt-4o`/`gpt-4o-mini` to `gpt-5.5`/`gpt-5.4-mini`~~ | `examples/`, `docs/`, `README.md` | Safe internal | ✅ Done (2026-06-03 run, 39 occurrences, 23 files) |
-| 4 | ~~Registry linter substring pre-check~~ | `utils/registry_linter.py` | Safe internal | ✅ **Done this run** |
-| 5 | Bump `config.py` default from `gpt-4o-mini` → `gpt-5.4-mini` | `agent_gantry/schema/config.py` | Breaking — major version bump | ⏳ Pending (deadline 2026-10-23) |
-| 6 | Validate `semantic-kernel>=1.43.0` in isolation with `agent-framework`; bump floor if OTel conflict resolved | `pyproject.toml` | Safe with shim | ⏳ Pending |
-| 7 | Validate `google-adk>=2.1.0` standalone env; add docs page showing Workflow Runtime pattern (v2 major) | `docs/`, `examples/` | Needs confirmation | ⏳ Pending |
-| 8 | Add MAF migration guide (`docs/migrating-from-autogen.md`) for AutoGen → AF 1.x teams | `docs/` | Documentation | ⏳ Pending |
+| 4 | ~~Registry linter substring pre-check~~ | `utils/registry_linter.py` | Safe internal | ✅ Done (2026-06-04 run) |
+| 5 | ~~Update AF comment for 1.8.0~~ | `pyproject.toml` | Safe internal | ✅ **Done this run** |
+| 6 | ~~Update google-adk comment to 2.2.0~~ | `pyproject.toml` | Safe internal | ✅ **Done this run** |
+| 7 | Bump `config.py` default from `gpt-4o-mini` → `gpt-5.4-mini` | `agent_gantry/schema/config.py` | Breaking — major version bump | ⏳ Pending (deadline 2026-10-23) |
+| 8 | Validate `semantic-kernel>=1.43.0` in isolation with `agent-framework`; bump floor if OTel conflict resolved | `pyproject.toml` | Safe with shim | ⏳ Pending |
+| 9 | Validate `google-adk>=2.2.0` standalone env; add docs page showing Workflow Runtime pattern (v2 major) | `docs/`, `examples/` | Needs confirmation | ⏳ Pending |
+| 10 | Add MAF migration guide (`docs/migrating-from-autogen.md`) for AutoGen → AF 1.x teams | `docs/` | Documentation | ⏳ Pending |
+| 11 | Explore `FunctionInvocationContext` (AF 1.8.0) for progressive tool exposure in `GantryContextProvider` | `agent_gantry/integrations/agent_framework_provider.py` | Safe with shim | ⏳ Pending |
