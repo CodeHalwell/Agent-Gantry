@@ -51,6 +51,20 @@ dev = [
 ]
 agent-frameworks = [
     # Range: >=1.5.0,<2.0.0.
+    # AF 1.8.0 (released 2026-06-04): adds McpSkillsSource for MCP-based
+    # skills discovery, progressive tool exposure via FunctionInvocationContext,
+    # background-agent harness support, and AgentFileStore / FileAccessProvider
+    # for file-access operations.  Bug fixes: resolves message-id collisions in
+    # compaction (benefits GantryContextProvider), fixes unsafe serialisation of
+    # function arguments in AF's observability layer (benefits GantryToolBridge).
+    # Skill API refactored to async resource / script lookup (experimental — not
+    # used by Gantry, which uses its own SkillRegistry).  Sync tools now execute
+    # off the event loop; Gantry's bridge already wraps all callables as async so
+    # no double-wrapping occurs.  Breaking change: github-copilot-sdk upgraded to
+    # v1.0.0 stable (not used by Gantry).  No Gantry code changes required.
+    # Source: https://pypi.org/pypi/agent-framework/json
+    #         https://github.com/microsoft/agent-framework/releases
+    #
     # AF 1.7.0 (released 2026-05-28): adds HarnessAgent / background-agents
     # harness provider, A2AAgentSession with referenced task IDs, and fixes a
     # streaming memory-growth regression in DevUI and hosted handoff argument
@@ -121,19 +135,18 @@ agent-frameworks = [
     # requires langgraph<0.4.8 which conflicts with langgraph>=1.2.0 in this extra
     # (see google-adk comment).
     "semantic-kernel>=1.36.0",
-    # google-adk 2.1.0 (latest stable, 2026-05-22) introduced a Workflow Runtime
-    # and Task API (major version bump from 1.x). Two separate conflicts prevent
-    # upgrading in this combined extra:
+    # google-adk 2.2.0 (latest stable, 2026-06-05) — minor release over 2.1.0.
+    # Two separate conflicts prevent upgrading in this combined extra:
     # (1) google-adk 2.x (like 1.34.x before it) requires langgraph<0.4.8 via
-    #     its extensions extra, which is incompatible with langgraph>=1.2.2 here.
+    #     its extensions extra, which is incompatible with langgraph>=1.2.4 here.
     #     This cannot be resolved by a simple floor bump and remains the primary
     #     blocker for google-adk 2.x in the combined agent-frameworks extra.
     # (2) Potential transitive pydantic / opentelemetry-api conflicts introduced
     #     by 2.x internals require validation in an isolated environment first.
-    # Floor stays at 1.14.1. To use google-adk 2.1.0 (latest stable), install
+    # Floor stays at 1.14.1. To use google-adk 2.2.0 (latest stable), install
     # it in a standalone environment without langchain/langgraph:
-    #   pip install "agent-gantry[google-genai]" "google-adk>=2.1.0"
-    # Source: https://pypi.org/pypi/google-adk/json (verified 2026-05-31)
+    #   pip install "agent-gantry[google-genai]" "google-adk>=2.2.0"
+    # Source: https://pypi.org/pypi/google-adk/json (verified 2026-06-05)
     "google-adk>=1.14.1",
 ]
 example-tools = [
