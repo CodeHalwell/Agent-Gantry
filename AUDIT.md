@@ -92,7 +92,7 @@ Sources verified against PyPI JSON API.
 | `mcp` | `>=1.27.2` | `1.27.2` | ✅ At latest | — |
 | `semantic-kernel` | `>=1.36.0` | `1.43.0` | Comment updated prior run; floor unchanged (OTel conflict) | Blocked |
 
-**Citation sources (all verified 2026-06-04):**
+**Citation sources (all verified 2026-06-05):**
 - `openai 2.41.0`: https://pypi.org/pypi/openai/json; https://github.com/openai/openai-python/releases/tag/v2.41.0
 - `google-genai 2.8.0`: https://pypi.org/pypi/google-genai/json
 - `semantic-kernel 1.43.0`: https://pypi.org/pypi/semantic-kernel/json
