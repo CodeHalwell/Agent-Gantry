@@ -250,7 +250,7 @@ All middleware, bridge, and provider surfaces verified current against AF 1.8.0 
   collisions in compaction both benefit `GantryToolBridge` / `GantryContextProvider`
   without any code changes.
 - The new `FunctionInvocationContext` (progressive tool exposure) is a potential future
-  enhancement for `GantryContextProvider`; flagged as a good next-step item (#9 below).
+  enhancement for `GantryContextProvider`; flagged as a good next-step item (#11 below).
 
 ### 4.2 LangGraph, AutoGen, CrewAI, LlamaIndex, Semantic Kernel — no changes required ✅
 
