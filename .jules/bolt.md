@@ -37,3 +37,6 @@
 ## 2026-05-18 - Fast reverse iteration for sorted sliding windows in stats
 **Learning:** Similar to sliding window limit checking, generating stats over a chronologically sorted collection (like the recent calls metric in `agent_gantry/core/rate_limiter.py`'s `get_stats`) using a list comprehension over the entire collection (`len([t for t in history if now - t < 60])`) is highly inefficient for large histories.
 **Action:** Use a reverse iterator (`for t in reversed(history):`) and break early when the time window condition is no longer met, converting an O(N) operation to O(1).
+## 2026-06-06 - Inline loop for vector norm calculation
+**Learning:** In Python, calculating a vector norm using a generator expression inside `math.sqrt(sum(x * x for x in vec))` incurs unnecessary generator overhead. Replacing the generator expression with a single-pass inline `for` loop `for x in vec: norm_sq += x * x` significantly improves performance by reducing overhead, similar to optimizing cosine similarity calculations.
+**Action:** When calculating norms or sums over lists in performance-critical paths, use inline `for` loops instead of generator expressions.
