@@ -1,5 +1,5 @@
 🚨 Severity: HIGH
-💡 Vulnerability: The `ToolDefinition.name`, `version`, and `namespace` fields lacked sufficient validation against newline injection. The Rust regex engine's `$` anchor in Pydantic's `pattern` matches the end of the line (not just the end of the string), allowing attackers to bypass validation by appending a newline (e.g., `"valid_name\n"`). This could lead to log injection or HTTP header injection vulnerabilities.
-🎯 Impact: Attackers could inject malicious newlines, bypassing expected structural constraints, leading to log spoofing or potentially HTTP response splitting in downstream systems that consume the model fields.
-🔧 Fix: Added a `@field_validator` checking for `\n` and `\r` explicitly across the entire string (using `isinstance(v, str)`) rather than relying on the regex `$` anchor.
-✅ Verification: Ran `pytest` suite ensuring all validations pass correctly and verified the new error handling correctly blocks multiline input strings.
+💡 Vulnerability: SSRF and local file inclusion bypass. The URL extraction regex in `SecurityPolicy._extract_domains` was case-sensitive. Attackers could supply mixed-case schemes (e.g., `FiLe:///etc/passwd` or `hTtP://evil.com`) to bypass the regex extraction completely or evade explicit scheme deny-lists because the extracted scheme retained the mixed casing. Similarly, data URIs could bypass the `re.search` check by using mixed cases.
+🎯 Impact: Attackers could bypass zero-trust security controls, leading to Server-Side Request Forgery (SSRF) and Local File Inclusion (LFI).
+🔧 Fix: Added the `re.IGNORECASE` flag to `re.finditer` for URL extraction and `re.search` for data URI detection. Added `.lower()` normalization to `parsed.scheme` and `value.lower()` before equality or inclusion checks.
+✅ Verification: Tested via python scripts and ran the existing test suite successfully.

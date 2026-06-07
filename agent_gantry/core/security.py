@@ -145,7 +145,7 @@ class SecurityPolicy:
         # and protocol-relative URLs (//example.com/path) securely,
         # avoiding matching inline comments
         url_pattern = r"(?:https?|ftps?|file)://[^\s\"\'<>]+|//(?:[a-zA-Z0-9][-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}|localhost)\b[-a-zA-Z0-9()@:%_\+.~#?&//=]*"
-        for url_match in re.finditer(url_pattern, value):
+        for url_match in re.finditer(url_pattern, value, re.IGNORECASE):
             try:
                 url = url_match.group(0)
                 # Repeatedly unquote to handle double/triple encoding bypasses
@@ -172,7 +172,7 @@ class SecurityPolicy:
                     domains.add("<invalid_domain>")
                     continue
 
-                if parsed.scheme == "file" or not parsed.hostname:
+                if parsed.scheme.lower() == "file" or not parsed.hostname:
                     domains.add("<invalid_domain>")
                 else:
                     domains.add(parsed.hostname)
@@ -180,10 +180,10 @@ class SecurityPolicy:
                 pass
 
         # Block data URIs that reference external resources
-        if re.search(r"data:\s*[^;,]+", value) and "data:" in value:
+        if re.search(r"data:\s*[^;,]+", value, re.IGNORECASE) and "data:" in value.lower():
             # data URIs themselves don't have domains, but flag if used
             # in combination with domain references
-            pass
+            domains.add("<invalid_domain>")
 
         # We deliberately don't extract plain strings that look like "example.com"
         # because this will flag filenames (e.g. "main.py") and block valid tool calls.
