@@ -491,7 +491,29 @@ class GeminiAdapter:
         *,
         is_error: bool = False,
     ) -> dict[str, Any]:
-        """Format result for Gemini function response."""
+        """Format result for Gemini function response.
+
+        Returns a raw dict representation of a Gemini FunctionResponse. In
+        practice, callers using the google-genai SDK should pass this dict's
+        ``"functionResponse"`` value into ``types.Part.from_function_response()``
+        rather than sending the raw dict directly.
+
+        .. important::
+            Gemini 3 models **mandate** a unique ``id`` in every function
+            response so the model can correlate parallel function calls with
+            their results. Always pass ``tool_call_id`` (sourced from
+            ``FunctionCall.id``) when targeting Gemini 3 models. The field
+            is omitted only when ``tool_call_id`` is ``None`` — which is
+            correct for older models that do not include an ``id`` on
+            ``FunctionCall``.
+            Source: https://ai.google.dev/gemini-api/docs/function-calling
+
+        The ``id`` field belongs inside ``functionResponse`` (it is a field on
+        the ``FunctionResponse`` proto message, not on ``Part`` itself — ``Part``
+        has no ``id`` field). Echo back the call id to support parallel calls.
+        Source: google-genai types.py — FunctionResponse.id field description:
+        "The id of the function call this response is for."
+        """
         response_content = result if isinstance(result, dict) else {"result": result}
         payload: dict[str, Any] = {
             "functionResponse": {
@@ -499,13 +521,6 @@ class GeminiAdapter:
                 "response": response_content,
             }
         }
-        # The id field belongs inside functionResponse (it is a field on the
-        # FunctionResponse proto message, not on Part itself — Part has no id
-        # field). Echo back the call id so the model can correlate parallel
-        # function calls with their results.
-        # Source: google-genai types.py — FunctionResponse.id field description:
-        # "The id of the function call this response is for"
-        # https://ai.google.dev/gemini-api/docs/function-calling
         if tool_call_id:
             payload["functionResponse"]["id"] = tool_call_id
         return payload

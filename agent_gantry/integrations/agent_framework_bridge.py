@@ -964,7 +964,7 @@ class GantryToolBridge:
         name: str,
         instructions: str,
         limit: int = 5,
-        score_threshold: float | None = None,
+        score_threshold: float | str | None = None,
         middleware: Any = None,
         cache: bool = True,
         extra_tools: list[Any] | None = None,
@@ -986,7 +986,9 @@ class GantryToolBridge:
             name: Name to give the constructed agent.
             instructions: System instructions for the agent.
             limit: Top-K tools to retrieve from Gantry.
-            score_threshold: Override the bridge-level threshold.
+            score_threshold: Override the bridge-level threshold. Accepts a
+                ``float`` (absolute cosine cutoff), ``"relative:<frac>"``
+                (e.g. ``"relative:0.8"``), or ``None`` (use bridge default).
             middleware: Optional AF middleware sequence. Accepts
                 ``GantryApprovalMiddleware`` and any AF-native middleware.
             cache: Whether to reuse cached wrappers.
@@ -1026,7 +1028,7 @@ class GantryToolBridge:
         name: str,
         instructions: str,
         limit: int = 5,
-        score_threshold: float | None = None,
+        score_threshold: float | str | None = None,
         middleware: Any = None,
         cache: bool = True,
         extra_tools: list[Any] | None = None,
@@ -1070,7 +1072,9 @@ class GantryToolBridge:
             name: Name for the agent.
             instructions: System instructions for the agent.
             limit: Top-K tools to retrieve from Gantry.
-            score_threshold: Override the bridge-level threshold.
+            score_threshold: Override the bridge-level threshold. Accepts a
+                ``float`` (absolute cosine cutoff), ``"relative:<frac>"``
+                (e.g. ``"relative:0.8"``), or ``None`` (use bridge default).
             middleware: Optional AF middleware sequence.
             cache: Whether to reuse cached tool wrappers.
             extra_tools: Additional static tools to append after Gantry-selected tools.
