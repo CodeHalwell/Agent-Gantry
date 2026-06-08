@@ -50,7 +50,7 @@ pip install agent-gantry[all]
 
 ### Package
 ```bash
-pip install "openai>=2.40.0"
+pip install "openai>=2.41.0"
 ```
 
 ### Client Initialization
@@ -164,7 +164,7 @@ response = client.responses.create(
 
 ### Package
 ```bash
-pip install "openai>=2.40.0"
+pip install "openai>=2.41.0"
 ```
 
 ### Client Initialization
@@ -258,7 +258,7 @@ response = client.chat.completions.create(
 
 ### Package
 ```bash
-pip install "anthropic>=0.101.0"
+pip install "anthropic>=0.107.1"
 ```
 
 ### Client Initialization
@@ -574,7 +574,7 @@ response = await client.chat.completions.create(
 
 ### Package
 ```bash
-pip install groq>=1.2.0
+pip install groq>=1.4.0
 ```
 
 ### Client Initialization
@@ -635,7 +635,7 @@ OpenRouter and other OpenAI-compatible providers (DeepSeek, Perplexity, Together
 
 ### Package
 ```bash
-pip install "openai>=2.40.0"
+pip install "openai>=2.41.0"
 ```
 
 ### Client Initialization

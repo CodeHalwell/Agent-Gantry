@@ -1,8 +1,8 @@
 # Agent-Gantry Modernisation Audit
 
-**Date:** 2026-06-05
+**Date:** 2026-06-08
 **Repository:** `CodeHalwell/Agent-Gantry` · version `0.4.0`
-**Branch:** `claude/cool-hopper-0w07i` (based on `main` after PR #224 — 2026-06-04 audit run)
+**Branch:** `claude/cool-hopper-cSXxx` (based on `main` after commit `be7c3b4` — 2026-06-04 audit run; includes SSRF fix, Qodana setup, SimpleEmbedder perf, and 2026-06-05 audit)
 **Auditor:** Claude (claude-sonnet-4-6)
 
 > **Audit history.**
@@ -27,11 +27,18 @@
 >   Bumped `openai>=2.40.0→>=2.41.0`; updated `google-genai` and `semantic-kernel`
 >   comments (2.8.0 and 1.43.0 respectively); fixed `ExecutionStatus.PERMISSION_DENIED`
 >   in executor (PR #225 fix); applied registry linter substring pre-check (PR #226 fix).
-> - **2026-06-05** (this run, `claude/cool-hopper-0w07i`, based on main after PR #224):
+> - **2026-06-05** (`claude/cool-hopper-0w07i`, based on main after PR #224):
 >   Updated `pyproject.toml` comment for AF 1.8.0 (released 2026-06-04, within existing
 >   `>=1.5.0,<2.0.0` constraint — no version change required); updated google-adk comment
 >   to reflect 2.2.0 as latest stable (was 2.1.0; langgraph conflict still blocks upgrade).
->   No code changes required.  See §1 for details.
+>   No code changes required.
+> - **2026-06-08** (this run, `claude/cool-hopper-cSXxx`): Bumped `anthropic>=0.105.2→>=0.107.1`
+>   (three new releases since 2026-06-05: 0.106.0 deprecated claude-opus-4-1 in SDK,
+>   0.107.0 added Managed Agents type updates, 0.107.1 fixed Foundry x-api-key header).
+>   Updated `anthropic_features.py` — replaced vague "earlier Claude 4 models" in three
+>   docstrings with explicit model list; added retirement notice for claude-sonnet-4 and
+>   claude-opus-4 (retired 2026-06-15, 7 days from now).  Updated install-pin examples in
+>   `docs/reference/llm_sdk_compatibility.md`.  Regenerated `uv.lock`.  See §1 for details.
 
 ---
 
@@ -39,67 +46,77 @@
 
 | Severity | Count | Areas |
 |----------|-------|-------|
-| **Must-change now** | 0 | — all items from previous runs resolved |
-| **Good next-step (completed this run)** | 2 | AF 1.8.0 comment; google-adk 2.2.0 comment |
+| **Must-change now** | 1 | `anthropic` floor bump `0.105.2→0.107.1` |
+| **Good next-step (completed this run)** | 2 | `anthropic_features.py` docstring precision; install-pin docs update |
 | **Good next-step (remaining)** | 3 | semantic-kernel floor; google-adk 2.x upgrade; config.py gpt-4o-mini default |
 
-**New findings since 2026-06-04:**
+**New findings since 2026-06-05:**
 
-1. **`agent-framework` 1.8.0** (released 2026-06-04 — same day as previous audit, not
-   captured in it) — adds `McpSkillsSource` for MCP-based skills discovery, progressive
-   tool exposure via `FunctionInvocationContext`, background-agent harness support, and
-   `AgentFileStore`/`FileAccessProvider`.  Bug fixes: resolves message-id collisions in
-   compaction (benefits `GantryContextProvider`), fixes unsafe serialisation of function
-   arguments in AF's observability layer (benefits `GantryToolBridge`).  Skill API
-   refactored to async resource/script lookup (experimental — not used by Gantry, which
-   uses its own `SkillRegistry`).  Sync tools now execute off the event loop; Gantry's
-   bridge already wraps all callables as async so no double-wrapping occurs.  Breaking
-   change: `github-copilot-sdk` upgraded to v1.0.0 stable (not used by Gantry).  No
-   Gantry code changes required.  `pyproject.toml` comment updated this run.
-   Source: https://pypi.org/pypi/agent-framework/json (verified 2026-06-05)
-2. **`google-adk` 2.2.0** (released since last audit, was 2.1.0) — minor release;
-   `langgraph<0.4.8` dependency conflict with Gantry's `langgraph>=1.2.4` persists.
-   Floor unchanged at `>=1.14.1`.  `pyproject.toml` comment updated to reflect 2.2.0.
-   Source: https://pypi.org/pypi/google-adk/json (verified 2026-06-05)
+1. **`anthropic` 0.107.1** (released 2026-06-07) — **must-change**: bump floor from
+   `>=0.105.2` to `>=0.107.1`.  Three new releases since the 2026-06-05 audit:
+   - **0.106.0** (2026-06-05): `claude-opus-4-1` formally marked as deprecated in the
+     SDK (retiring 2026-08-05); Foundry client `copy()`/`with_options()` fixes; schema
+     `$ref`/`$defs` transform bug fix.  `claude-opus-4-1` is not referenced in Gantry
+     source or examples — no code changes required beyond the floor bump.
+   - **0.107.0** (2026-06-06): minor type updates for Managed Agents API; no changes to
+     Messages API or tool-use surfaces used by Gantry.
+   - **0.107.1** (2026-06-07): Foundry x-api-key header authentication fix; no changes
+     to Messages API or tool-use surfaces used by Gantry.
+   No breaking changes across 0.105.2→0.107.1.  Floor bumped and `pyproject.toml`
+   comment updated this run.  `uv.lock` regenerated.
+   Source: https://pypi.org/pypi/anthropic/json (verified 2026-06-08)
+           https://github.com/anthropics/anthropic-sdk-python/releases (verified 2026-06-08)
+2. **Claude model deprecations (imminent)** — `claude-sonnet-4` (`claude-sonnet-4-20250514`)
+   and `claude-opus-4` (`claude-opus-4-20250514`) are retired on **2026-06-15** (7 days
+   from this audit). Neither model ID appears in Gantry source or examples (confirmed by
+   grep across all `.py` and `.md` files). The vague phrase "earlier Claude 4 models" in
+   three docstrings of `anthropic_features.py` has been replaced with an explicit model
+   list excluding the retiring models, and a retirement notice added.
+   `claude-opus-4-1` continues to work until 2026-08-05; added deprecation note where
+   relevant.
+   Source: https://platform.claude.com/docs/en/docs/about-claude/models/overview (verified 2026-06-08)
+           https://github.com/anthropics/anthropic-sdk-python/releases/tag/v0.106.0 (verified 2026-06-08)
 
-**All packages verified against PyPI on 2026-06-05** — no other releases since the
-2026-06-04 audit.  `openai`, `anthropic`, `google-genai`, `langchain`, `langgraph`,
-`mcp`, `autogen-agentchat`, `groq`, `cohere`, `semantic-kernel` all remain at the
-versions recorded in the previous audit.  See §2 for the full table.
+**All other packages verified against PyPI on 2026-06-08** — no releases since the
+2026-06-05 audit for `openai` (2.41.0), `agent-framework` (1.8.0), `google-genai`
+(2.8.0), `langchain` (1.3.4), `langgraph` (1.2.4), `mcp` (1.27.2), `autogen-agentchat`
+(0.7.5), `groq` (1.4.0), `cohere` (7.0.3), `langchain-openai` (1.2.2),
+`semantic-kernel` (1.43.0), `crewai` (1.14.6), `google-adk` (2.2.0).
+See §2 for the full table.
 
 ---
 
 ## 2 · Dependency Upgrade Plan
 
-### 2.1 Package-by-package table (verified 2026-06-05)
+### 2.1 Package-by-package table (verified 2026-06-08)
 
 Sources verified against PyPI JSON API.
 
 | Package | Current floor | Latest stable | Action | Risk |
 |---------|--------------|---------------|--------|------|
 | `openai` | `>=2.41.0` | `2.41.0` | ✅ At latest | — |
-| `agent-framework` | `>=1.5.0,<2.0.0` | **`1.8.0`** | ✅ Within range — comment updated this run | — |
-| `anthropic` | `>=0.105.2` | `0.105.2` | ✅ At latest | — |
+| `agent-framework` | `>=1.5.0,<2.0.0` | `1.8.0` | ✅ Within range — comment updated 2026-06-05 | — |
+| `anthropic` | `>=0.107.1` | **`0.107.1`** | ✅ **Bumped this run** (`0.105.2→0.107.1`) | Safe internal |
 | `autogen-agentchat` | `>=0.7.5` | `0.7.5` | ✅ At latest | — |
 | `cohere` | `>=7.0.3` | `7.0.3` | ✅ At latest | — |
 | `crewai` | `>=1.6.1` | `1.14.6` | Note only (OTel conflict with AF) | Blocked |
-| `google-adk` | `>=1.14.1` | **`2.2.0`** | Comment updated this run; floor unchanged (langgraph conflict) | Blocked |
-| `google-genai` | `>=1.75.0` | `2.8.0` | Comment updated prior run; floor unchanged | Note only |
+| `google-adk` | `>=1.14.1` | `2.2.0` | Comment updated 2026-06-05; floor unchanged (langgraph conflict) | Blocked |
+| `google-genai` | `>=1.75.0` | `2.8.0` | Comment updated 2026-06-04; floor unchanged | Note only |
 | `groq` | `>=1.4.0` | `1.4.0` | ✅ At latest | — |
 | `langchain` | `>=1.3.4` | `1.3.4` | ✅ At latest | — |
 | `langchain-openai` | `>=1.2.2` | `1.2.2` | ✅ At latest | — |
 | `langgraph` | `>=1.2.4` | `1.2.4` | ✅ At latest | — |
 | `mcp` | `>=1.27.2` | `1.27.2` | ✅ At latest | — |
-| `semantic-kernel` | `>=1.36.0` | `1.43.0` | Comment updated prior run; floor unchanged (OTel conflict) | Blocked |
+| `semantic-kernel` | `>=1.36.0` | `1.43.0` | Comment updated 2026-06-04; floor unchanged (OTel conflict) | Blocked |
 
-**Citation sources (all verified 2026-06-05):**
+**Citation sources (all verified 2026-06-08):**
 - `openai 2.41.0`: https://pypi.org/pypi/openai/json; https://github.com/openai/openai-python/releases/tag/v2.41.0
 - `google-genai 2.8.0`: https://pypi.org/pypi/google-genai/json
 - `semantic-kernel 1.43.0`: https://pypi.org/pypi/semantic-kernel/json
 - `langchain 1.3.4`: https://pypi.org/pypi/langchain/json
 - `langgraph 1.2.4`: https://pypi.org/pypi/langgraph/json
 - `cohere 7.0.3`: https://pypi.org/pypi/cohere/json
-- `anthropic 0.105.2`: https://pypi.org/pypi/anthropic/json
+- `anthropic 0.107.1`: https://pypi.org/pypi/anthropic/json; https://github.com/anthropics/anthropic-sdk-python/releases
 - `agent-framework 1.8.0`: https://pypi.org/pypi/agent-framework/json
 - `mcp 1.27.2`: https://pypi.org/pypi/mcp/json
 - `groq 1.4.0`: https://pypi.org/pypi/groq/json
@@ -490,6 +507,7 @@ tests (22 tests) all pass with the PR #225 and PR #226 fixes applied.
 | 5 | ~~Fix `gpt-4o-realtime-preview` → `gpt-realtime-1.5`~~ | `docs/` | Safe internal | ✅ Done (2026-06-03 run) |
 | 6 | ~~Bump `openai` floor `>=2.40.0 → >=2.41.0`~~ | `pyproject.toml` | Safe internal | ✅ Done (2026-06-04 run) |
 | 7 | ~~Fix `ExecutionStatus.PERMISSION_DENIED` in `_check_security_policy`~~ | `core/executor.py` | Safe internal | ✅ Done (2026-06-04 run) |
+| 8 | ~~Bump `anthropic` floor `>=0.105.2 → >=0.107.1`~~ | `pyproject.toml` | Safe internal | ✅ **Done this run** (2026-06-08) |
 
 ### Good next-step improvements
 
@@ -499,10 +517,12 @@ tests (22 tests) all pass with the PR #225 and PR #226 fixes applied.
 | 2 | ~~Add `TestClaudeOpus48ThinkingGuards` (6 tests)~~ | `tests/test_anthropic_features.py` | Safe internal | ✅ Done (2026-06-02 run) |
 | 3 | ~~Migrate examples/docs from `gpt-4o`/`gpt-4o-mini` to `gpt-5.5`/`gpt-5.4-mini`~~ | `examples/`, `docs/`, `README.md` | Safe internal | ✅ Done (2026-06-03 run, 39 occurrences, 23 files) |
 | 4 | ~~Registry linter substring pre-check~~ | `utils/registry_linter.py` | Safe internal | ✅ Done (2026-06-04 run) |
-| 5 | ~~Update AF comment for 1.8.0~~ | `pyproject.toml` | Safe internal | ✅ **Done this run** |
-| 6 | ~~Update google-adk comment to 2.2.0~~ | `pyproject.toml` | Safe internal | ✅ **Done this run** |
-| 7 | Bump `config.py` default from `gpt-4o-mini` → `gpt-5.4-mini` | `agent_gantry/schema/config.py` | Breaking — major version bump | ⏳ Pending (deadline 2026-10-23) |
-| 8 | Validate `semantic-kernel>=1.43.0` in isolation with `agent-framework`; bump floor if OTel conflict resolved | `pyproject.toml` | Safe with shim | ⏳ Pending |
-| 9 | Validate `google-adk>=2.2.0` standalone env; add docs page showing Workflow Runtime pattern (v2 major) | `docs/`, `examples/` | Needs confirmation | ⏳ Pending |
-| 10 | Add MAF migration guide (`docs/migrating-from-autogen.md`) for AutoGen → AF 1.x teams | `docs/` | Documentation | ⏳ Pending |
-| 11 | Explore `FunctionInvocationContext` (AF 1.8.0) for progressive tool exposure in `GantryContextProvider` | `agent_gantry/integrations/agent_framework_provider.py` | Safe with shim | ⏳ Pending |
+| 5 | ~~Update AF comment for 1.8.0~~ | `pyproject.toml` | Safe internal | ✅ Done (2026-06-05 run) |
+| 6 | ~~Update google-adk comment to 2.2.0~~ | `pyproject.toml` | Safe internal | ✅ Done (2026-06-05 run) |
+| 7 | ~~Update `anthropic_features.py` docstrings — replace vague "earlier Claude 4 models" with explicit list; add claude-sonnet-4 / claude-opus-4 retirement notice~~ | `agent_gantry/integrations/anthropic_features.py` | Safe internal | ✅ **Done this run** (2026-06-08) |
+| 8 | ~~Update install-pin docs (anthropic `0.101.0→0.107.1`, openai `2.40.0→2.41.0`, groq `1.2.0→1.4.0`)~~ | `docs/reference/llm_sdk_compatibility.md` | Safe internal | ✅ **Done this run** (2026-06-08) |
+| 9 | Bump `config.py` default from `gpt-4o-mini` → `gpt-5.4-mini` | `agent_gantry/schema/config.py` | Breaking — major version bump | ⏳ Pending (deadline 2026-10-23) |
+| 10 | Validate `semantic-kernel>=1.43.0` in isolation with `agent-framework`; bump floor if OTel conflict resolved | `pyproject.toml` | Safe with shim | ⏳ Pending |
+| 11 | Validate `google-adk>=2.2.0` standalone env; add docs page showing Workflow Runtime pattern (v2 major) | `docs/`, `examples/` | Needs confirmation | ⏳ Pending |
+| 12 | Add MAF migration guide (`docs/migrating-from-autogen.md`) for AutoGen → AF 1.x teams | `docs/` | Documentation | ⏳ Pending |
+| 13 | Explore `FunctionInvocationContext` (AF 1.8.0) for progressive tool exposure in `GantryContextProvider` | `agent_gantry/integrations/agent_framework_provider.py` | Safe with shim | ⏳ Pending |
