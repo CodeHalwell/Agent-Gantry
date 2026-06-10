@@ -197,7 +197,12 @@ class ExecutionEngine:
         end_time = datetime.now(timezone.utc)
         total_time_ms = (end_time - start_time).total_seconds() * 1000
 
-        successful = sum(1 for r in results if r.status == ExecutionStatus.SUCCESS)
+        # ⚡ Bolt: Inline loop for counting successful results to avoid generator overhead
+        successful = 0
+        for r in results:
+            if r.status == ExecutionStatus.SUCCESS:
+                successful += 1
+
         failed = len(results) - successful
 
         return BatchToolResult(

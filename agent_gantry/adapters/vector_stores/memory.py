@@ -146,7 +146,12 @@ class InMemoryVectorStore:
     async def count(self, namespace: str | None = None) -> int:
         """Count tools."""
         if namespace:
-            return sum(1 for t in self._tools.values() if t.namespace == namespace)
+            # ⚡ Bolt: Inline loop for counting to avoid generator overhead
+            count = 0
+            for t in self._tools.values():
+                if t.namespace == namespace:
+                    count += 1
+            return count
         return len(self._tools)
 
     async def health_check(self) -> bool:
