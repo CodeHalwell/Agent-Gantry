@@ -103,30 +103,22 @@ class ExecutionEngine:
             )
 
         # Check circuit breaker
-        cb_result = await self._check_circuit_breaker(
-            tool, call, queued_at, trace_id, span_id
-        )
+        cb_result = await self._check_circuit_breaker(tool, call, queued_at, trace_id, span_id)
         if cb_result:
             return cb_result
 
         # Security policy check
-        sp_result = await self._check_security_policy(
-            call, queued_at, trace_id, span_id
-        )
+        sp_result = await self._check_security_policy(call, queued_at, trace_id, span_id)
         if sp_result:
             return sp_result
 
         # Rate limiting check
-        rl_result = await self._check_rate_limit(
-            tool, call, queued_at, trace_id, span_id
-        )
+        rl_result = await self._check_rate_limit(tool, call, queued_at, trace_id, span_id)
         if rl_result:
             return rl_result
 
         # Argument validation
-        val_result = await self._validate_call_arguments(
-            tool, call, queued_at, trace_id, span_id
-        )
+        val_result = await self._validate_call_arguments(tool, call, queued_at, trace_id, span_id)
         if val_result:
             return val_result
 
@@ -197,7 +189,11 @@ class ExecutionEngine:
         end_time = datetime.now(timezone.utc)
         total_time_ms = (end_time - start_time).total_seconds() * 1000
 
-        successful = sum(1 for r in results if r.status == ExecutionStatus.SUCCESS)
+        # ⚡ Bolt: Inline for loop instead of sum(1 for...) generator for speed
+        successful = 0
+        for r in results:
+            if r.status == ExecutionStatus.SUCCESS:
+                successful += 1
         failed = len(results) - successful
 
         return BatchToolResult(
@@ -476,7 +472,9 @@ class ExecutionEngine:
         properties = schema.get("properties", {})
         required = schema.get("required", [])
 
-        def _validate_value(value: Any, val_schema: dict[str, Any], path: str) -> tuple[bool, str | None]:
+        def _validate_value(
+            value: Any, val_schema: dict[str, Any], path: str
+        ) -> tuple[bool, str | None]:
             expected_type = val_schema.get("type")
 
             if expected_type == "boolean":
@@ -516,7 +514,9 @@ class ExecutionEngine:
                     if prop_name not in obj_properties:
                         return False, f"Unknown parameter: {path}.{prop_name}"
 
-                    is_valid, err = _validate_value(prop_value, obj_properties[prop_name], f"{path}.{prop_name}")
+                    is_valid, err = _validate_value(
+                        prop_value, obj_properties[prop_name], f"{path}.{prop_name}"
+                    )
                     if not is_valid:
                         return False, err
 
