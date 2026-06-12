@@ -103,30 +103,22 @@ class ExecutionEngine:
             )
 
         # Check circuit breaker
-        cb_result = await self._check_circuit_breaker(
-            tool, call, queued_at, trace_id, span_id
-        )
+        cb_result = await self._check_circuit_breaker(tool, call, queued_at, trace_id, span_id)
         if cb_result:
             return cb_result
 
         # Security policy check
-        sp_result = await self._check_security_policy(
-            call, queued_at, trace_id, span_id
-        )
+        sp_result = await self._check_security_policy(call, queued_at, trace_id, span_id)
         if sp_result:
             return sp_result
 
         # Rate limiting check
-        rl_result = await self._check_rate_limit(
-            tool, call, queued_at, trace_id, span_id
-        )
+        rl_result = await self._check_rate_limit(tool, call, queued_at, trace_id, span_id)
         if rl_result:
             return rl_result
 
         # Argument validation
-        val_result = await self._validate_call_arguments(
-            tool, call, queued_at, trace_id, span_id
-        )
+        val_result = await self._validate_call_arguments(tool, call, queued_at, trace_id, span_id)
         if val_result:
             return val_result
 
@@ -242,6 +234,8 @@ class ExecutionEngine:
         span_id: str,
     ) -> ToolResult:
         """Execute tool handler with retries."""
+        from agent_gantry.core.security import PermissionDeniedError
+
         max_attempts = (call.retry_count or self._max_retries) + 1
         last_error: str | None = None
         last_error_type: str | None = None
@@ -262,6 +256,23 @@ class ExecutionEngine:
                     result=result_value,
                     queued_at=queued_at,
                     started_at=started_at,
+                    completed_at=completed_at,
+                    attempt_number=attempt,
+                    trace_id=trace_id,
+                    span_id=span_id,
+                )
+                if self._telemetry:
+                    await self._telemetry.record_execution(call, result)
+                return result
+            except PermissionDeniedError as e:
+                completed_at = datetime.now(timezone.utc)
+                await self._record_failure(tool)
+                result = ToolResult(
+                    tool_name=call.tool_name,
+                    status=ExecutionStatus.FAILURE,
+                    error=str(e),
+                    error_type="PermissionDeniedError",
+                    queued_at=queued_at,
                     completed_at=completed_at,
                     attempt_number=attempt,
                     trace_id=trace_id,
@@ -476,7 +487,9 @@ class ExecutionEngine:
         properties = schema.get("properties", {})
         required = schema.get("required", [])
 
-        def _validate_value(value: Any, val_schema: dict[str, Any], path: str) -> tuple[bool, str | None]:
+        def _validate_value(
+            value: Any, val_schema: dict[str, Any], path: str
+        ) -> tuple[bool, str | None]:
             expected_type = val_schema.get("type")
 
             if expected_type == "boolean":
@@ -516,7 +529,9 @@ class ExecutionEngine:
                     if prop_name not in obj_properties:
                         return False, f"Unknown parameter: {path}.{prop_name}"
 
-                    is_valid, err = _validate_value(prop_value, obj_properties[prop_name], f"{path}.{prop_name}")
+                    is_valid, err = _validate_value(
+                        prop_value, obj_properties[prop_name], f"{path}.{prop_name}"
+                    )
                     if not is_valid:
                         return False, err
 
