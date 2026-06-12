@@ -239,11 +239,19 @@ a2a = [
 ]
 # LLM provider SDK dependencies
 anthropic = [
-    # 0.105.2 (released 2026-05-29): latest stable as of 2026-05-31.
-    # 0.105.x series follows 0.104.1 (thinking-token-count streaming beta +
-    # encrypted_content compaction fix). No breaking changes across 0.104→0.105.
+    # 0.107.1 (released 2026-06-07): latest stable as of 2026-06-08. Foundry x-api-key
+    # header fix. No breaking changes to Messages API or tool-use surfaces used by Gantry.
+    # 0.107.0 (released 2026-06-06): minor type updates for Managed Agents API; no
+    # breaking changes to Messages API or tool-use surfaces used by Gantry.
+    # 0.106.0 (released 2026-06-05): claude-opus-4-1 formally marked as deprecated in
+    # SDK (retiring 2026-08-05); Foundry client copy()/with_options() fixes; schema
+    # $ref/$defs transform fix. No breaking changes to Messages API or tool-use surfaces.
+    # Note: claude-opus-4-1 is not referenced in Gantry's source or examples.
+    # 0.105.2 (released 2026-05-29): thinking-token-count streaming beta +
+    # encrypted_content compaction fix. No breaking changes across 0.104→0.105.
     # Source: https://pypi.org/pypi/anthropic/json
-    "anthropic>=0.105.2",
+    #         https://github.com/anthropics/anthropic-sdk-python/releases
+    "anthropic>=0.107.1",
 ]
 google-genai = [
     # google-genai 2.8.0 (latest stable 2026-06-04) — breaking changes in 2.0.0 were

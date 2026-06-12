@@ -31,7 +31,9 @@ class AnthropicFeatures:
     enable_interleaved_thinking: bool = False
     # Extended thinking: fixed budget via budget_tokens. Not supported on claude-opus-4-8
     # or claude-opus-4-7 (both only support adaptive thinking). Supported on
-    # claude-sonnet-4-6, claude-opus-4-6, claude-haiku-4-5, and earlier Claude 4 models.
+    # claude-sonnet-4-6, claude-opus-4-6, claude-haiku-4-5, claude-opus-4-5,
+    # claude-sonnet-4-5, and claude-opus-4-1 (deprecated — retiring 2026-08-05).
+    # Note: claude-sonnet-4 and claude-opus-4 retire on 2026-06-15.
     # Source: https://platform.claude.com/docs/en/docs/about-claude/models/overview
     enable_extended_thinking: bool = False
     thinking_budget_tokens: int | None = None
@@ -56,8 +58,10 @@ class AnthropicClient:
       Opus 4.5 / Sonnet 4.5 and earlier Claude 4 models; silently ignored on Opus 4.6+,
       Sonnet 4.6+, and Opus 4.7 where adaptive thinking is automatic)
     - Extended thinking (``thinking={type: "enabled", budget_tokens: N}``; supported on
-      claude-sonnet-4-6, claude-opus-4-6, claude-haiku-4-5, and earlier Claude 4 models;
-      **not supported on claude-opus-4-8 or claude-opus-4-7** — use adaptive thinking)
+      claude-sonnet-4-6, claude-opus-4-6, claude-haiku-4-5, claude-opus-4-5,
+      claude-sonnet-4-5, claude-opus-4-1 (deprecated, retiring 2026-08-05);
+      **not supported on claude-opus-4-8 or claude-opus-4-7** — use adaptive thinking;
+      note: claude-sonnet-4 and claude-opus-4 retire on 2026-06-15)
     - Adaptive thinking (``thinking={type: "adaptive", effort: "medium"}``; recommended
       for claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-6;
       effort defaults to "high" on Opus 4.8; not available on claude-haiku-4-5; set
@@ -89,9 +93,10 @@ class AnthropicClient:
         self._gantry = gantry
         self._features = features or AnthropicFeatures()
 
-        # The interleaved-thinking beta header is required for Opus 4.5 / Sonnet 4.5 and
-        # earlier Claude 4 models. On Opus 4.6+, Sonnet 4.6+, and Opus 4.7 the header is
-        # deprecated and silently ignored — adaptive thinking is automatic on those models.
+        # The interleaved-thinking beta header is required for Opus 4.5 / Sonnet 4.5.
+        # Note: claude-sonnet-4 and claude-opus-4 retire on 2026-06-15.
+        # On Opus 4.6+, Sonnet 4.6+, and Opus 4.7 the header is deprecated and silently
+        # ignored — adaptive thinking is automatic on those models.
         # Extended thinking does NOT need a beta header; it is activated via the `thinking`
         # parameter in each create_message() call (see below).
         extra_headers = {}

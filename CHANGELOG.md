@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (2026-06-08 modernisation audit)
+
+- **`pyproject.toml`: bump `anthropic` floor `>=0.105.2 → >=0.107.1`** — three new
+  releases since the 2026-06-05 audit.  0.106.0 formally marks `claude-opus-4-1` as
+  deprecated in the SDK (retiring 2026-08-05) and fixes Foundry client methods and a
+  schema `$ref`/`$defs` transform bug.  0.107.0 adds minor Managed Agents type updates.
+  0.107.1 fixes Foundry x-api-key header authentication.  No breaking changes to the
+  Messages API or tool-use surfaces used by Gantry across 0.105.2→0.107.1.
+  `uv.lock` regenerated: `anthropic 0.105.2 → 0.107.1`.
+  *Risk: safe internal — floor bump only.*
+  Source: https://pypi.org/pypi/anthropic/json (verified 2026-06-08)
+          https://github.com/anthropics/anthropic-sdk-python/releases (verified 2026-06-08)
+
+- **`agent_gantry/integrations/anthropic_features.py`**: replaced vague "earlier Claude
+  4 models" in three docstring locations with an explicit model list:
+  `claude-opus-4-5`, `claude-sonnet-4-5`, `claude-opus-4-1` (deprecated, retiring
+  2026-08-05). Added retirement notice for `claude-sonnet-4` and `claude-opus-4`, which
+  were retired on **2026-06-15**. Neither retiring model ID appears in Gantry source or
+  examples. Updated the interleaved-thinking beta header comment to remove reference to
+  the now-retired "earlier Claude 4 models".
+  *Risk: safe internal — documentation only.*
+  Source: https://platform.claude.com/docs/en/docs/about-claude/models/overview (verified 2026-06-08)
+
+- **`docs/reference/llm_sdk_compatibility.md`**: updated three install-pin examples:
+  `anthropic>=0.101.0 → >=0.107.1`, `openai>=2.40.0 → >=2.41.0` (two occurrences),
+  `groq>=1.2.0 → >=1.4.0`. These now match the floors declared in `pyproject.toml`.
+  *Risk: safe internal — documentation only.*
+
+### Deprecation notices
+
+- `agent_gantry/schema/config.py` default `"gpt-4o-mini"` must be migrated to
+  `"gpt-5.4-mini"` before OpenAI's 2026-10-23 shutdown. This is a **breaking change**
+  requiring a major version bump and is tracked in AUDIT.md §10.
+- `claude-opus-4-1` (`claude-opus-4-1-20250805`) was marked deprecated in the Anthropic
+  SDK (0.106.0, 2026-06-05); retirement date **2026-08-05**. Not referenced in Gantry
+  source or examples — no code action required.
+
 ### Changed (2026-06-03 modernisation audit)
 
 - **`pyproject.toml`: bump `langchain` floor `>=1.3.2 → >=1.3.4`** — patch release;
