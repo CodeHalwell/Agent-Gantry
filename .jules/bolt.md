@@ -40,3 +40,7 @@
 ## 2026-06-06 - Inline loop for vector norm calculation
 **Learning:** In Python, calculating a vector norm using a generator expression inside `math.sqrt(sum(x * x for x in vec))` incurs unnecessary generator overhead. Replacing the generator expression with a single-pass inline `for` loop `for x in vec: norm_sq += x * x` significantly improves performance by reducing overhead, similar to optimizing cosine similarity calculations.
 **Action:** When calculating norms or sums over lists in performance-critical paths, use inline `for` loops instead of generator expressions.
+
+## 2026-06-12 - Optimize generator expressions in sum() for counting
+**Learning:** In Python, using generator expressions inside sum() for counting items (e.g., sum(1 for x in iterable if condition)) incurs significant generator overhead. For performance-critical paths, replacing these with an inline for loop that manually accumulates a counter variable provides a measurable speedup.
+**Action:** Replace generator expressions used inside sum() for counting with an inline for loop.
