@@ -10,7 +10,7 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class MCPServerHealth(BaseModel):
@@ -94,6 +94,21 @@ class MCPServerDefinition(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     deprecated: bool = Field(default=False)
+
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
+    @field_validator("name", "namespace")
+    @classmethod
+    def validate_identifiers(cls, v: str | None) -> str | None:
+        """Reject newlines in identifier fields.
+
+        Pydantic v2 (Rust regex engine) treats $ as end-of-line rather than
+        end-of-string, allowing injection of newlines. Explicit character checks
+        close that bypass for all identifier fields.
+        """
+        if isinstance(v, str) and ("\n" in v or "\r" in v):
+            raise ValueError("Value cannot contain newline characters")
+        return v
 
     @property
     def qualified_name(self) -> str:
