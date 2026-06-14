@@ -51,6 +51,7 @@ from agent_gantry.query.strategies import (
     last_assistant_text,
     last_tool_result,
     last_user_text,
+    latest_activity,
     truncated,
 )
 
@@ -61,5 +62,6 @@ __all__ = [
     "last_assistant_text",
     "last_tool_result",
     "last_user_text",
+    "latest_activity",
     "truncated",
 ]

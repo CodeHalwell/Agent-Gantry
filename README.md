@@ -618,10 +618,11 @@ for server in servers:
 tools = await gantry.retrieve_tools("read my config.yaml")
 ```
 
-> **Note:** Dynamic MCP server selection and the associated semantic search APIs are currently a
-> preview/placeholder implementation. The underlying semantic search logic is not yet fully
-> implemented and behavior may change in future releases. See the dynamic MCP selection docs
-> for the current status and roadmap.
+> **Note:** Dynamic MCP server selection is implemented end-to-end: `register_mcp_server()` embeds
+> server metadata, `sync_mcp_servers()` / `retrieve_mcp_servers()` run real semantic search over
+> registered servers, and `discover_tools_from_server()` connects on demand and registers the
+> discovered tools into the registry so `retrieve_tools()` finds them. Requires the `mcp` extra
+> (`pip install agent-gantry[mcp]`). See the dynamic MCP selection docs for details.
 
 **Benefits:**
 - 🎯 **Semantic Routing**: Automatically finds relevant servers based on query context

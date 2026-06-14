@@ -871,6 +871,7 @@ class AgentGantry:
         query: str,
         limit: int = 5,
         dialect: str = "openai",
+        score_threshold: float = 0.0,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """
@@ -882,7 +883,13 @@ class AgentGantry:
             dialect: Target dialect/provider name (default: 'openai')
                 Supported: 'openai', 'openai_responses', 'anthropic', 'gemini',
                 'mistral', 'groq', 'agent_framework', 'auto'
-            **kwargs: Additional query parameters (e.g., score_threshold)
+            score_threshold: Minimum cosine score to keep a tool. Defaults to
+                ``0.0`` (no filtering) — unlike the raw :class:`ToolQuery`
+                default of ``0.5``. A 0.5 absolute cutoff silently drops correct
+                tools for embedders whose scores sit below it (e.g. MiniLM), so
+                the high-level convenience API opts out of filtering by default
+                and lets ranking + ``limit`` do the work.
+            **kwargs: Additional query parameters
 
         Returns:
             List of provider-specific tool schemas
@@ -890,7 +897,9 @@ class AgentGantry:
         from agent_gantry.schema.query import ConversationContext, ToolQuery
 
         context = ConversationContext(query=query)
-        tool_query = ToolQuery(context=context, limit=limit, **kwargs)
+        tool_query = ToolQuery(
+            context=context, limit=limit, score_threshold=score_threshold, **kwargs
+        )
         result = await self.retrieve(tool_query)
         return result.to_dialect(dialect)
 
@@ -920,6 +929,7 @@ class AgentGantry:
         query: str,
         arguments: dict[str, Any] | None = None,
         limit: int = 1,
+        score_threshold: float = 0.0,
         **kwargs: Any,
     ) -> ToolResult:
         """
@@ -953,7 +963,9 @@ class AgentGantry:
 
         # Retrieve best matching tool
         context = ConversationContext(query=query)
-        tool_query = ToolQuery(context=context, limit=limit, **kwargs)
+        tool_query = ToolQuery(
+            context=context, limit=limit, score_threshold=score_threshold, **kwargs
+        )
         result = await self.retrieve(tool_query)
 
         if not result.tools:

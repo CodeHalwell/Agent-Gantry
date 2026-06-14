@@ -38,7 +38,7 @@ async def fetch_framework_tools(
     *,
     framework: FrameworkName,
     limit: int = 5,
-    score_threshold: float = 0.5,
+    score_threshold: float = 0.0,
 ) -> list[dict[str, Any]]:
     """
     Retrieve top-k tools and emit the schema shape expected by a framework.
