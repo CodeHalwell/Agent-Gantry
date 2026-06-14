@@ -1,0 +1,111 @@
+name: Release
+
+# Automatic release on merge to main: build -> publish to PyPI -> tag ->
+# GitHub Release. Gated on the version: a release happens only when the version
+# in pyproject.toml changes (i.e. the tag v<version> doesn't already exist), so
+# ordinary merges that don't bump the version are a no-op.
+#
+# One-time setup required (see RELEASING.md):
+#   * Configure a PyPI Trusted Publisher for this repository with
+#     workflow = `release.yml` and environment = `pypi`
+#     (https://docs.pypi.org/trusted-publishers/).
+#   * Optionally protect the `pypi` GitHub Environment with required reviewers
+#     if you want a manual approval gate before each publish.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      should_release: ${{ steps.v.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version and gate on the tag
+        id: v
+        run: |
+          set -euo pipefail
+          version=$(grep -m1 -E '^version = ' pyproject.toml | sed -E 's/version = "(.*)"/\1/')
+          init=$(grep -m1 -E '^__version__' agent_gantry/__init__.py | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ "$version" != "$init" ]; then
+            echo "::error::pyproject version ($version) does not match agent_gantry/__init__.py ($init)"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git rev-parse "v$version" >/dev/null 2>&1; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "Tag v$version already exists — nothing to release."
+          else
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "Version $version is new — a release will be cut."
+          fi
+
+  release:
+    name: Build, publish, tag
+    needs: check
+    if: needs.check.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/agent-gantry
+    permissions:
+      contents: write   # push the tag and create the GitHub Release
+      id-token: write   # PyPI trusted publishing (OIDC)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Build distribution
+        run: uv build
+
+      - name: Verify package metadata
+        run: uv tool run twine check dist/*
+
+      - name: Smoke-install the wheel
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python dist/*.whl
+          .venv/bin/python -c "import agent_gantry; print('built agent-gantry', agent_gantry.__version__)"
+
+      # Publish FIRST (idempotent via skip-existing) so a later tag/release
+      # failure can't leave a published version untagged on a re-run.
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: true
+
+      - name: Tag and create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "Release v$VERSION"
+          git push origin "v$VERSION"
+          gh release create "v$VERSION" dist/* \
+            --title "v$VERSION" \
+            --generate-notes

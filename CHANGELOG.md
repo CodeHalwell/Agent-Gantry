@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-06-14
+
+### Added
+
+- **Native tool adapters for 12 agent frameworks** (`agent_gantry.integrations.frameworks`):
+  LangChain, LangGraph, LlamaIndex, CrewAI, Pydantic AI, OpenAI Agents SDK,
+  Smolagents, Haystack, Agno, AutoGen, Semantic Kernel, Google ADK. Each
+  `for_<fw>()` / `spec_to_<fw>()` builds the framework's native tool object and
+  routes execution through `gantry.execute`.
+- **Deep per-turn "live" providers** that re-select tools every turn via each
+  framework's own dynamic-tool hook — matching the Microsoft Agent Framework
+  `GantryContextProvider` depth: LlamaIndex `tool_retriever`, Pydantic AI
+  `AbstractToolset`, AutoGen `Workbench`, Google ADK `before_model_callback`,
+  LangGraph dynamic model, Semantic Kernel plugin refresh, OpenAI Agents
+  `RunHooks`. Best-effort per-call live wrappers for CrewAI/Agno/Haystack/Smolagents.
+- **`ToolRefresher`** — framework-agnostic multi-turn re-selection (recency-aware;
+  serves autonomous tool pipelines and conversational agents).
+- **Clean per-framework import namespaces**: `from agent_gantry.<framework> import …`
+  (e.g. `from agent_gantry.langchain import for_langchain`).
+- **`GantryToolset` / `ToolSpec`** shared adapter base.
+- NumPy-vectorized `InMemoryVectorStore.search` (~36–59× faster at 50–1000 tools).
+- Selection/multi-turn benchmarks and a real-package adapter CI job.
+- Automated release-on-merge-to-main workflow (build → publish to PyPI → tag → GitHub Release).
+
+### Fixed
+
+- `*args`/`**kwargs` tools are no longer emitted as required schema params.
+- `retrieve_tools` / `search_and_execute` / `fetch_framework_tools` default
+  `score_threshold` to `0.0` (was `0.5`, which silently dropped correct tools).
+- Dynamic MCP server selection documented accurately (it is functional).
+
 ## [Unreleased]
 
 ### Changed (2026-06-08 modernisation audit)
