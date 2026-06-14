@@ -85,6 +85,9 @@ async def _invoke_semantic_kernel(tool):
     return await tool.invoke(Kernel(), to="boss@x.com")
 
 
+# (id, importable module, for_<fw>, invoke). Pydantic AI is intentionally NOT
+# here — invoking its Tool needs a live agent context — and is covered build-only
+# by test_pydantic_ai_builds below.
 REAL_ADAPTERS = [
     ("langchain", "langchain_core", F.for_langchain, _invoke_langchain),
     ("langgraph", "langgraph", F.for_langgraph, _invoke_langchain),

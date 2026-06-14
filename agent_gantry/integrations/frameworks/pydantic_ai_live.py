@@ -217,6 +217,12 @@ def _build_toolset_class() -> type:
             so :meth:`call_tool` can resolve and invoke them.
             """
             query = self._query if self._query is not None else _query_from_ctx(ctx)
+            if not (query or "").strip():
+                # No retrieval signal: expose no tools rather than selecting on
+                # an empty embedding (arbitrary top-k for some embedders) —
+                # consistent with the other live providers' empty-query guards.
+                self._selected = {}
+                return {}
             specs = await self._toolset.select(
                 query,
                 limit=self._limit,
