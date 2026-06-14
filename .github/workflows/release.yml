@@ -35,8 +35,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Resolve version and gate on the tag
+      - name: Resolve version and gate on the GitHub Release
         id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           version=$(grep -m1 -E '^version = ' pyproject.toml | sed -E 's/version = "(.*)"/\1/')
@@ -46,12 +48,16 @@ jobs:
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          if git rev-parse "v$version" >/dev/null 2>&1; then
+          # Gate on the GitHub Release (not just the tag) so a re-run after a
+          # partial release — published + tagged, but `gh release create` failed
+          # — still completes the release. The release job is idempotent (PyPI
+          # skip-existing, tag created only if missing), so re-running is safe.
+          if gh release view "v$version" >/dev/null 2>&1; then
             echo "should_release=false" >> "$GITHUB_OUTPUT"
-            echo "Tag v$version already exists — nothing to release."
+            echo "Release v$version already exists — nothing to release."
           else
             echo "should_release=true" >> "$GITHUB_OUTPUT"
-            echo "Version $version is new — a release will be cut."
+            echo "Release v$version does not exist yet — it will be cut."
           fi
 
   release:
@@ -104,8 +110,14 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "v$VERSION" -m "Release v$VERSION"
-          git push origin "v$VERSION"
+          # Tag only if missing — a prior partial run may have already pushed it.
+          if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+            echo "Tag v$VERSION already exists; skipping tag creation."
+          else
+            git tag -a "v$VERSION" -m "Release v$VERSION"
+            git push origin "v$VERSION"
+          fi
+          # The check job gated on the Release being absent, so create it now.
           gh release create "v$VERSION" dist/* \
             --title "v$VERSION" \
             --generate-notes
