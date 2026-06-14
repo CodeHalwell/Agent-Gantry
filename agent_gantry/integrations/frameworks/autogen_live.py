@@ -116,6 +116,11 @@ def _build_workbench_class() -> type:
             Called by the agent on every turn. The freshly selected specs are
             cached so :meth:`call_tool` can resolve and invoke them.
             """
+            if not (self._query or "").strip():
+                # No retrieval signal: expose no tools rather than selecting on
+                # an empty embedding (arbitrary top-k for some embedders).
+                self._selected = {}
+                return []
             specs = await self._toolset.select(
                 self._query,
                 limit=self._limit,
