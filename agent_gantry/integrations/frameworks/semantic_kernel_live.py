@@ -125,7 +125,9 @@ def _set_plugin_functions(
     if callable(remover):
         try:
             remover(plugin_name)
-        except (KeyError, ValueError):
+        except KeyError:
+            # Only "plugin not found" is benign here; let validation/other
+            # errors from a future SK propagate rather than swallow them.
             pass
     else:
         plugins = getattr(kernel, "plugins", None)

@@ -299,8 +299,8 @@ class GantryAgentSession:
             namespaces=self._namespaces,
         )
 
-    async def run(self, input: Any, **run_kwargs: Any) -> Any:
-        """Re-select tools for ``input``, then run the agent and return the result.
+    async def run(self, run_input: Any, **run_kwargs: Any) -> Any:
+        """Re-select tools for ``run_input``, run the agent, return the result.
 
         Re-selects and applies the tool set before the run (immediate first-turn
         accuracy) and installs :func:`gantry_run_hooks` for the run (intra-run
@@ -310,9 +310,9 @@ class GantryAgentSession:
         hook is not installed.
         """
         agents = _require_agents()
-        await self.refresh(input)
+        await self.refresh(run_input)
         run_kwargs.setdefault("hooks", self._gantry_hooks())
-        return await agents.Runner.run(self._agent, input, **run_kwargs)
+        return await agents.Runner.run(self._agent, run_input, **run_kwargs)
 
     def _gantry_hooks(self) -> Any:
         return gantry_run_hooks(
@@ -327,14 +327,14 @@ class GantryAgentSession:
 async def run_with_gantry(
     agent: Any,
     gantry: AgentGantry,
-    input: Any,
+    run_input: Any,
     *,
     limit: int = 5,
     score_threshold: float = 0.0,
     namespaces: list[str] | None = None,
     **run_kwargs: Any,
 ) -> Any:
-    """Re-select ``agent``'s tools for ``input`` and run it once via Gantry.
+    """Re-select ``agent``'s tools for ``run_input`` and run it once via Gantry.
 
     The primary one-shot entry point: equivalent to constructing a
     :class:`GantryAgentSession` and calling :meth:`~GantryAgentSession.run` a
@@ -353,7 +353,7 @@ async def run_with_gantry(
         score_threshold=score_threshold,
         namespaces=namespaces,
     )
-    return await session.run(input, **run_kwargs)
+    return await session.run(run_input, **run_kwargs)
 
 
 __all__ = [

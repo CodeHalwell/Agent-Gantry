@@ -310,3 +310,9 @@ def gantry_toolset(
     """
     cls = _get_class()
     return cls(gantry, limit=limit, score_threshold=score_threshold)
+
+
+__all__ = [
+    "GantryToolset",  # noqa: F822 (resolved lazily via module __getattr__)
+    "gantry_toolset",
+]
