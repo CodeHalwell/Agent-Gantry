@@ -156,7 +156,14 @@ class ToolSpec:
         params: list[inspect.Parameter] = []
         for name, prop in properties.items():
             annotation = _json_type_to_python(prop.get("type") if isinstance(prop, dict) else None)
-            default = inspect.Parameter.empty if name in required else None
+            if name in required:
+                default = inspect.Parameter.empty
+            else:
+                # Annotate optional params as ``T | None`` (not just default=None):
+                # some frameworks (e.g. Semantic Kernel) decide "required" from
+                # whether the annotation is Optional, not from the default.
+                default = None
+                annotation = annotation | None
             params.append(
                 inspect.Parameter(
                     name,

@@ -5,8 +5,7 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 
 from agent_gantry import AgentGantry
-from agent_gantry.integrations.framework_adapters import fetch_framework_tools
-from agent_gantry.schema.execution import ToolCall
+from agent_gantry.integrations.frameworks import for_crewai
 
 load_dotenv()
 
@@ -22,34 +21,12 @@ async def main():
 
     await gantry.sync()
 
-    # 2. Fetch tools for the task
+    # 2. Select relevant tools and get them as native CrewAI BaseTools in one
+    #    call — for_crewai handles retrieval, conversion, and execution wiring
+    #    (no manual factory or name-based branching needed).
     user_query = "Get info for customer john@example.com"
     # Lowering threshold for SimpleEmbedder compatibility in this example
-    tools_schema = await fetch_framework_tools(
-        gantry, user_query, framework="crew_ai", score_threshold=0.1
-    )
-
-    # 3. Wrap Gantry tools for CrewAI
-    from crewai.tools import tool
-
-    def make_crew_tool(tool_name: str, tool_desc: str, gantry_instance: AgentGantry):
-        """Factory function to properly bind tool name to CrewAI tool wrapper."""
-
-        @tool(tool_name)
-        async def tool_wrapper(**kwargs):
-            result = await gantry_instance.execute(ToolCall(tool_name=tool_name, arguments=kwargs))
-            return result.result if result.status == "success" else result.error
-
-        tool_wrapper.__doc__ = tool_desc
-        return tool_wrapper
-
-    crew_tools = []
-    for ts in tools_schema:
-        name = ts["function"]["name"]
-        desc = ts["function"]["description"]
-
-        if name == "get_customer_info":
-            crew_tools.append(make_crew_tool(name, desc, gantry))
+    crew_tools = await for_crewai(gantry, user_query, limit=1, score_threshold=0.1)
 
     # 4. Define CrewAI Agent
     llm = ChatOpenAI(model="gpt-5.5")

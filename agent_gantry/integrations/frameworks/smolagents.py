@@ -9,6 +9,7 @@ requires smolagents to be installed.
 
 from __future__ import annotations
 
+import inspect
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import GantryToolset, ToolSpec
@@ -29,16 +30,42 @@ _JSON_TO_SMOLAGENTS = {
 }
 
 
-def _build_inputs(parameters: dict[str, Any]) -> dict[str, dict[str, str]]:
-    """Convert a JSON-Schema ``properties`` map into smolagents ``inputs``."""
+def _build_inputs(parameters: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Convert a JSON-Schema ``properties`` map into smolagents ``inputs``.
+
+    Optional parameters are marked ``nullable`` — smolagents requires this for
+    any input that isn't always supplied, otherwise it rejects the tool.
+    """
     properties = parameters.get("properties", {}) or {}
-    inputs: dict[str, dict[str, str]] = {}
+    required = set(parameters.get("required") or [])
+    inputs: dict[str, dict[str, Any]] = {}
     for argname, schema in properties.items():
         schema = schema or {}
         smol_type = _JSON_TO_SMOLAGENTS.get(schema.get("type"), "string")
         description = schema.get("description") or f"{argname} argument"
-        inputs[argname] = {"type": smol_type, "description": description}
+        entry: dict[str, Any] = {"type": smol_type, "description": description}
+        if argname not in required:
+            entry["nullable"] = True
+        inputs[argname] = entry
     return inputs
+
+
+def _forward_signature(parameters: dict[str, Any]) -> inspect.Signature:
+    """Build a ``forward`` signature (incl. ``self``) matching the inputs.
+
+    smolagents validates that ``forward``'s parameters equal the declared
+    ``inputs`` keys, so a bare ``**kwargs`` is rejected. We advertise the real
+    named parameters here while the body still accepts ``**kwargs``.
+    """
+    params = [inspect.Parameter("self", inspect.Parameter.POSITIONAL_OR_KEYWORD)]
+    properties = parameters.get("properties", {}) or {}
+    required = set(parameters.get("required") or [])
+    for argname in properties:
+        default = inspect.Parameter.empty if argname in required else None
+        params.append(
+            inspect.Parameter(argname, inspect.Parameter.POSITIONAL_OR_KEYWORD, default=default)
+        )
+    return inspect.Signature(params)
 
 
 def spec_to_smolagents(spec: ToolSpec) -> Any:
@@ -61,8 +88,12 @@ def spec_to_smolagents(spec: ToolSpec) -> Any:
             "Install it with `pip install smolagents`."
         ) from exc
 
-    def forward(self: Any, **kwargs: Any) -> Any:
+    def forward(self: Any, *args: Any, **kwargs: Any) -> Any:
         return spec.invoke(**kwargs)
+
+    # Advertise the real parameter names so smolagents' forward/inputs
+    # consistency check passes (it inspects forward's signature).
+    forward.__signature__ = _forward_signature(spec.parameters)  # type: ignore[attr-defined]
 
     tool_cls = type(
         "GantrySmolagentsTool",

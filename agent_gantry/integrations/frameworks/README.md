@@ -20,6 +20,8 @@ timeouts, circuit breakers, security policy all apply).
 | Haystack | `for_haystack` | `haystack.tools.Tool` |
 | Agno | `for_agno` | `agno.tools.function.Function` |
 | AutoGen / AG2 | `for_autogen`, `register_with_autogen` | callables + `register_function` |
+| Semantic Kernel | `for_semantic_kernel`, `gantry_plugin` | `KernelFunction` (`@kernel_function`) |
+| Google ADK | `for_google_adk` | `google.adk.tools.FunctionTool` |
 
 All third-party imports are **lazy** — `import agent_gantry` never requires any
 of these frameworks. A missing framework raises `ImportError` with a

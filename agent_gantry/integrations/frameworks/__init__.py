@@ -24,6 +24,10 @@ from agent_gantry.integrations.frameworks.base import (
     spec_from_tool,
 )
 from agent_gantry.integrations.frameworks.crewai import for_crewai, spec_to_crewai
+from agent_gantry.integrations.frameworks.google_adk import (
+    for_google_adk,
+    spec_to_google_adk,
+)
 from agent_gantry.integrations.frameworks.haystack import for_haystack, spec_to_haystack
 from agent_gantry.integrations.frameworks.langchain import (
     for_langchain,
@@ -44,6 +48,11 @@ from agent_gantry.integrations.frameworks.openai_agents import (
 from agent_gantry.integrations.frameworks.pydantic_ai import (
     for_pydantic_ai,
     spec_to_pydantic_ai,
+)
+from agent_gantry.integrations.frameworks.semantic_kernel import (
+    for_semantic_kernel,
+    gantry_plugin,
+    spec_to_semantic_kernel,
 )
 from agent_gantry.integrations.frameworks.smolagents import (
     for_smolagents,
@@ -86,4 +95,11 @@ __all__ = [
     "for_autogen",
     "spec_to_autogen",
     "register_with_autogen",
+    # semantic kernel
+    "for_semantic_kernel",
+    "spec_to_semantic_kernel",
+    "gantry_plugin",
+    # google adk
+    "for_google_adk",
+    "spec_to_google_adk",
 ]

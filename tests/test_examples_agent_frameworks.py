@@ -202,7 +202,11 @@ async def test_google_adk_example_runs_with_fakes(monkeypatch):
     class StubInMemorySessionService:
         pass
     class StubFunctionTool:
-        pass
+        # for_google_adk calls FunctionTool(func=callable); store it so the
+        # fake runner can invoke the tool through Gantry.
+        def __init__(self, func, **kwargs):
+            self.func = func
+            self.name = getattr(func, "__name__", "tool")
     class StubContent:
         def __init__(self, *args, **kwargs):
             pass
@@ -225,10 +229,6 @@ async def test_google_adk_example_runs_with_fakes(monkeypatch):
 
     from examples.agent_frameworks import google_adk_example as mod
 
-    class FakeFunctionTool:
-        def __init__(self, func):
-            self.func = func
-
     class FakeEvent:
         def __init__(self, text: str):
             self.content = SimpleNamespace(parts=[SimpleNamespace(text=text)])
@@ -244,9 +244,11 @@ async def test_google_adk_example_runs_with_fakes(monkeypatch):
 
         def run_async(self, *, user_id: str, session_id: str, new_message: Any) -> Any:
             async def _aiter():
-                # Execute the first tool to simulate ADK calling it
+                # Execute the first tool to simulate ADK calling it. The Gantry
+                # adapter's callable uses keyword-only params (from the JSON
+                # schema), so call by name.
                 tool = self.agent.tools[0]
-                text = await tool.func("123")
+                text = await tool.func(order_id="123")
                 yield FakeEvent(text)
 
             return _aiter()
@@ -267,11 +269,14 @@ async def test_google_adk_example_runs_with_fakes(monkeypatch):
     async def fake_execute(self, tool_call):
         return _Result({"order_id": tool_call.arguments["order_id"], "status": "shipped"})
 
-    monkeypatch.setattr(mod, "FunctionTool", FakeFunctionTool)
+    # The migrated example builds tools via for_google_adk -> the (stubbed)
+    # google.adk.tools.FunctionTool, so no module-level FunctionTool to patch.
     monkeypatch.setattr(mod, "Agent", FakeAgent)
     monkeypatch.setattr(mod, "Runner", FakeRunner)
     monkeypatch.setattr(mod, "InMemorySessionService", FakeSessionService)
     monkeypatch.setattr(mod.AgentGantry, "execute", fake_execute, raising=False)
 
     resp = await mod.run_query("status please")
-    assert "shipped" in resp
+    # The adapter returns the tool's raw result (here a dict); the fake runner
+    # surfaces it directly as the final response.
+    assert "shipped" in str(resp)

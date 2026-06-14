@@ -32,7 +32,7 @@ from autogen_ext.models.openai import OpenAIChatCompletionClient
 from dotenv import load_dotenv
 
 from agent_gantry import AgentGantry
-from agent_gantry.schema.execution import ToolCall
+from agent_gantry.integrations.frameworks import for_autogen
 
 load_dotenv()
 
@@ -55,42 +55,17 @@ async def main():
     await gantry.sync()
     print(f"✅ Registered {gantry.tool_count} tools in Agent-Gantry\n")
 
-    # 2. Retrieve tools from Gantry using semantic search
+    # 2. Define the query (tool selection happens in step 3 via for_autogen).
     user_query = "Check the system load and report back."
     print(f"🔍 Retrieving tools for: '{user_query}'")
-    # Lowering threshold for SimpleEmbedder compatibility in this example
-    retrieved_tools = await gantry.retrieve_tools(user_query, limit=3, score_threshold=0.1)
-    print(f"✅ Retrieved {len(retrieved_tools)} relevant tools\n")
 
-    # 3. Wrap Gantry tools for AutoGen (AG2)
-    def make_autogen_tool(tool_name: str, tool_desc: str, gantry_instance: AgentGantry):
-        """
-        Factory function to properly bind tool name to AutoGen tool wrapper.
-
-        AutoGen v0.4+ requires async functions with proper metadata.
-        """
-
-        async def tool_wrapper() -> str:
-            """Execute tool via Agent-Gantry."""
-            try:
-                result = await gantry_instance.execute(ToolCall(tool_name=tool_name, arguments={}))
-                if result.status == "success":
-                    return str(result.result)
-                else:
-                    return f"Error: {result.error}"
-            except Exception as e:
-                return f"Tool execution failed: {str(e)}"
-
-        tool_wrapper.__name__ = tool_name
-        tool_wrapper.__doc__ = tool_desc
-        return tool_wrapper
-
-    autogen_tools = []
-    for ts in retrieved_tools:
-        name = ts["function"]["name"]
-        desc = ts["function"].get("description", f"Execute {name}")
-        autogen_tools.append(make_autogen_tool(name, desc, gantry))
-        print(f"  📦 Wrapped tool: {name}")
+    # 3. Get AutoGen-ready callables for the selected tools. for_autogen returns
+    #    {name, description, callable} dicts; AutoGen's `tools=` wants callables.
+    #    Each callable carries a real signature and routes through gantry.execute.
+    selected = await for_autogen(gantry, user_query, limit=3, score_threshold=0.1)
+    autogen_tools = [entry["callable"] for entry in selected]
+    for entry in selected:
+        print(f"  📦 Wrapped tool: {entry['name']}")
 
     # 4. Setup AutoGen Agent with v0.4+ API
     print("\n🤖 Setting up AutoGen AssistantAgent...")
