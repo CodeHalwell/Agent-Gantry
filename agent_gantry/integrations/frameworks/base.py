@@ -19,7 +19,8 @@ framework needs plus two invocation entry points that both route through
 policy all still apply):
 
 - :meth:`ToolSpec.ainvoke` — async, ``**kwargs`` or a single dict.
-- :meth:`ToolSpec.invoke`  — sync wrapper (errors inside a running loop).
+- :meth:`ToolSpec.invoke`  — sync wrapper, safe to call even from inside a
+  running event loop (it offloads to a shared worker thread and blocks).
 
 The adapters are intentionally dependency-free at import time: the third-party
 framework is imported lazily inside the ``to_*`` builder, so ``import
@@ -29,6 +30,7 @@ agent_gantry`` never requires LangChain et al. to be installed.
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -82,8 +84,19 @@ class ToolSpec:
         Accepts either a single positional mapping (``ainvoke({"a": 1})``) or
         keyword arguments (``ainvoke(a=1)``). Raises :class:`ToolExecutionError`
         on any non-success status so framework error handling kicks in.
+
+        ``None``-valued arguments for *optional* parameters are dropped: several
+        frameworks (CrewAI, Pydantic-schema validators, …) materialize every
+        declared optional field as ``None`` when the model didn't supply it,
+        but the tool's JSON schema types those params (e.g. ``string``) and the
+        executor rejects ``None``. Dropping them lets the tool's own default
+        apply — ``None`` for a required param is kept so the error stays clear.
         """
         arguments = _coerce_arguments(args, kwargs)
+        required = set(self.parameters.get("required") or [])
+        arguments = {
+            k: v for k, v in arguments.items() if v is not None or k in required
+        }
         result = await self._gantry.execute(
             ToolCall(tool_name=self.name, arguments=arguments)
         )
@@ -109,8 +122,12 @@ class ToolSpec:
         """Return a plain async function that calls this tool by keyword.
 
         Frameworks that build their own tool object from a function (Smolagents,
-        Agno, Pydantic AI, OpenAI Agents SDK) can wrap this. The returned
-        function carries ``__name__`` / ``__doc__`` so introspection works.
+        Agno, Pydantic AI, OpenAI Agents SDK, AutoGen) can wrap this. The
+        returned function carries ``__name__`` / ``__doc__`` **and a real
+        ``__signature__``** derived from :attr:`parameters`, so frameworks that
+        introspect the signature to build the LLM tool schema see the actual
+        parameters instead of a bare ``**kwargs`` (which would surface as a
+        no-argument tool).
         """
 
         async def _fn(**kwargs: Any) -> Any:
@@ -118,7 +135,60 @@ class ToolSpec:
 
         _fn.__name__ = self.name
         _fn.__doc__ = self.description
+        _fn.__signature__ = self.python_signature()  # type: ignore[attr-defined]
+        _fn.__annotations__ = {
+            p.name: p.annotation
+            for p in _fn.__signature__.parameters.values()
+            if p.annotation is not inspect.Parameter.empty
+        }
         return _fn
+
+    def python_signature(self) -> inspect.Signature:
+        """Build an :class:`inspect.Signature` from the JSON-Schema parameters.
+
+        Each property becomes a keyword-only parameter; required properties have
+        no default, optional ones default to ``None``. JSON-Schema types are
+        mapped to Python annotations so framework introspection produces a
+        faithful tool schema.
+        """
+        properties = self.parameters.get("properties") or {}
+        required = set(self.parameters.get("required") or [])
+        params: list[inspect.Parameter] = []
+        for name, prop in properties.items():
+            annotation = _json_type_to_python(prop.get("type") if isinstance(prop, dict) else None)
+            default = inspect.Parameter.empty if name in required else None
+            params.append(
+                inspect.Parameter(
+                    name,
+                    inspect.Parameter.KEYWORD_ONLY,
+                    default=default,
+                    annotation=annotation,
+                )
+            )
+        return inspect.Signature(params)
+
+
+_JSON_TO_PYTHON: dict[str, Any] = {
+    "string": str,
+    "integer": int,
+    "number": float,
+    "boolean": bool,
+    "array": list,
+    "object": dict,
+}
+
+
+def _json_type_to_python(json_type: Any) -> Any:
+    """Map a JSON-Schema ``type`` to a Python annotation (default ``str``)."""
+    if isinstance(json_type, list):  # e.g. ["string", "null"]
+        json_type = next((t for t in json_type if t != "null"), None)
+    return _JSON_TO_PYTHON.get(json_type, str)
+
+
+# A single shared worker thread for running coroutines from sync framework
+# callbacks while an event loop is active on the calling thread. Reused across
+# invocations so we don't pay the spawn/teardown cost of a fresh pool each call.
+_SYNC_BRIDGE_POOL: Any = None
 
 
 def _run_coroutine_sync(coro: Any) -> Any:
@@ -126,7 +196,7 @@ def _run_coroutine_sync(coro: Any) -> Any:
 
     If no event loop runs on the current thread, use :func:`asyncio.run`.
     Otherwise (we're inside a running loop — e.g. a framework invoked our sync
-    tool from within its async agent loop), run the coroutine on a dedicated
+    tool from within its async agent loop), run the coroutine on a shared
     worker thread with its own loop and block for the result. This avoids the
     "coroutine attached to a different loop" / "loop already running" errors
     that a naive ``asyncio.run`` would raise.
@@ -136,10 +206,14 @@ def _run_coroutine_sync(coro: Any) -> Any:
     except RuntimeError:
         return asyncio.run(coro)
 
-    import concurrent.futures
+    global _SYNC_BRIDGE_POOL
+    if _SYNC_BRIDGE_POOL is None:
+        import concurrent.futures
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(lambda: asyncio.run(coro)).result()
+        _SYNC_BRIDGE_POOL = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="gantry-sync-bridge"
+        )
+    return _SYNC_BRIDGE_POOL.submit(lambda: asyncio.run(coro)).result()
 
 
 def _coerce_arguments(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:

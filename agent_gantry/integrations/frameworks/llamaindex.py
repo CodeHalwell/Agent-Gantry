@@ -34,15 +34,21 @@ def spec_to_llamaindex(spec: ToolSpec) -> Any:
             "install it with `pip install llama-index-core`."
         ) from exc
 
+    async_fn = spec.callable_for_signature()
+
     def _sync_fn(**kwargs: Any) -> Any:
         return spec.invoke(**kwargs)
 
     _sync_fn.__name__ = spec.name
     _sync_fn.__doc__ = spec.description
+    # Copy the real signature so LlamaIndex introspection surfaces the actual
+    # parameters instead of a bare **kwargs (no-argument) tool.
+    _sync_fn.__signature__ = async_fn.__signature__  # type: ignore[attr-defined]
+    _sync_fn.__annotations__ = dict(getattr(async_fn, "__annotations__", {}))
 
     return FunctionTool.from_defaults(
         fn=_sync_fn,
-        async_fn=spec.callable_for_signature(),
+        async_fn=async_fn,
         name=spec.name,
         description=spec.description,
     )

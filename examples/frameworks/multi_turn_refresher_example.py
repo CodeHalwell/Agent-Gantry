@@ -32,6 +32,8 @@ from agent_gantry.integrations import ToolRefresher
 
 def _embedder() -> tuple[Any, str]:
     try:
+        import sentence_transformers  # noqa: F401  (validate the install actually imports)
+
         from agent_gantry.adapters.embedders.sentence_transformers import (
             SentenceTransformersEmbedder,
         )

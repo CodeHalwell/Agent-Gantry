@@ -145,10 +145,10 @@ QUERIES: list[tuple[str, str]] = [
 
 
 def _make_tool(name: str, description: str) -> Callable[..., str]:
-    # NOTE: an explicit *optional* parameter is used deliberately. Registering a
-    # bare ``**kwargs`` function makes the schema builder emit ``kwargs`` as a
-    # *required* property, so ``execute(arguments={})`` fails validation with
-    # "Missing required parameter: kwargs" (see review finding).
+    # A simple optional parameter keeps the benchmark tools trivially callable.
+    # (Bare ``**kwargs`` tools are also fully supported — the schema builder now
+    # skips variadic params and sets ``additionalProperties: true`` — but an
+    # explicit arg keeps these example tools self-documenting.)
     def fn(arg: str = "") -> str:
         return f"called {name}({arg})"
 

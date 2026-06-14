@@ -104,6 +104,11 @@ class InMemoryVectorStore:
 
         # Normalize the query once; stored rows are already normalized.
         q = np.asarray(query_vector, dtype=np.float32)
+        # Guard against a query/stored dimension mismatch: the old per-vector
+        # loop returned 0.0 similarity for mismatched lengths, so preserve that
+        # graceful behaviour here instead of letting the matmul raise.
+        if q.ndim != 1 or q.shape[0] != self._matrix.shape[1]:
+            return []
         q_norm = float(np.linalg.norm(q))
         if q_norm == 0.0:
             return []

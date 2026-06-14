@@ -94,7 +94,11 @@ async def test_for_langchain_returns_tool_list(fake_langchain, gantry):
 
 async def test_missing_langchain_raises_helpful_error(monkeypatch, gantry):
     # Ensure the lazy import fails even if a real package is somehow present.
+    # Null BOTH the parent package and the submodule the adapter imports —
+    # nulling only the parent doesn't force failure when `langchain_core.tools`
+    # is already cached in sys.modules (e.g. langchain-core is installed).
     monkeypatch.setitem(sys.modules, "langchain_core", None)
+    monkeypatch.setitem(sys.modules, "langchain_core.tools", None)
 
     from agent_gantry.integrations.frameworks.base import GantryToolset
     from agent_gantry.integrations.frameworks.langchain import spec_to_langchain

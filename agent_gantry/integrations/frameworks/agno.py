@@ -32,11 +32,17 @@ def spec_to_agno(spec: ToolSpec) -> Any:
             "Agno support requires `agno`. Install it with `pip install agno`."
         ) from exc
 
+    async_fn = spec.callable_for_signature()
+
     def _entrypoint(**kwargs: Any) -> Any:
         return spec.invoke(**kwargs)
 
     _entrypoint.__name__ = spec.name
     _entrypoint.__doc__ = spec.description
+    # Copy the real signature so Agno introspection surfaces the actual
+    # parameters instead of a bare **kwargs (no-argument) tool.
+    _entrypoint.__signature__ = async_fn.__signature__  # type: ignore[attr-defined]
+    _entrypoint.__annotations__ = dict(getattr(async_fn, "__annotations__", {}))
 
     return Function(
         name=spec.name,

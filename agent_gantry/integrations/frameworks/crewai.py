@@ -32,19 +32,52 @@ def spec_to_crewai(spec: ToolSpec) -> Any:
             "Install it with `pip install crewai`."
         ) from exc
 
-    def _run(self: Any, **kwargs: Any) -> Any:
-        return spec.invoke(**kwargs)
+    # CrewAI's BaseTool is a Pydantic v2 model: ``name`` / ``description`` are
+    # declared fields and MUST be set via the constructor, not as bare class
+    # attributes (Pydantic rejects un-annotated field overrides). ``_run`` is
+    # the abstract method we implement; it closes over ``spec``. We also pass a
+    # generated ``args_schema`` so CrewAI surfaces the real parameters to the
+    # LLM rather than a no-argument tool.
+    class GantryCrewAITool(BaseTool):  # type: ignore[misc, valid-type]
+        def _run(self, **kwargs: Any) -> Any:
+            return spec.invoke(**kwargs)
 
-    tool_cls = type(
-        "GantryCrewAITool",
-        (BaseTool,),
-        {
-            "name": spec.name,
-            "description": spec.description,
-            "_run": _run,
-        },
-    )
-    return tool_cls()
+    kwargs: dict[str, Any] = {"name": spec.name, "description": spec.description}
+    args_schema = _build_args_schema(spec)
+    if args_schema is not None:
+        kwargs["args_schema"] = args_schema
+    return GantryCrewAITool(**kwargs)
+
+
+def _build_args_schema(spec: ToolSpec) -> Any:
+    """Build a Pydantic args model from the spec's JSON-Schema parameters.
+
+    Returns ``None`` when there are no properties (CrewAI then uses its own
+    default empty schema). Best-effort: if Pydantic model creation fails for any
+    reason, fall back to ``None`` so the tool is still usable (sans typed args).
+    """
+    properties = spec.parameters.get("properties") or {}
+    if not properties:
+        return None
+    try:
+        from pydantic import Field, create_model
+
+        from agent_gantry.integrations.frameworks.base import _json_type_to_python
+
+        required = set(spec.parameters.get("required") or [])
+        fields: dict[str, Any] = {}
+        for name, prop in properties.items():
+            annotation = _json_type_to_python(
+                prop.get("type") if isinstance(prop, dict) else None
+            )
+            description = prop.get("description", "") if isinstance(prop, dict) else ""
+            if name in required:
+                fields[name] = (annotation, Field(..., description=description))
+            else:
+                fields[name] = (annotation | None, Field(default=None, description=description))
+        return create_model(f"{spec.name}_Args", **fields)
+    except Exception:  # noqa: BLE001 - schema is best-effort
+        return None
 
 
 async def for_crewai(

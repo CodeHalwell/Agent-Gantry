@@ -58,6 +58,8 @@ def _best_embedder() -> tuple[Any, str, bool]:
     only it is available.
     """
     try:
+        import sentence_transformers  # noqa: F401  (validate the install actually imports)
+
         from agent_gantry.adapters.embedders.sentence_transformers import (
             SentenceTransformersEmbedder,
         )
@@ -257,7 +259,6 @@ async def check_autonomous_pipeline() -> tuple[bool, str]:
 
     # Result-driven chaining should advance through the pipeline. Require the
     # first step correct and the run to traverse most of the distinct stages.
-    advanced = len([p for p in picks if p in expected_order])
     distinct_stages = len(set(picks) & set(expected_order))
     ok = picks[0] == "fetch_raw_data" and distinct_stages >= 4
     return ok, f"picks={picks} distinct_pipeline_stages={distinct_stages}/5"

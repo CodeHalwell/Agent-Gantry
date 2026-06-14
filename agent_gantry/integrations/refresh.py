@@ -73,19 +73,49 @@ def _default_query_generator() -> Callable[[Iterable[Any] | None], str]:
     return latest_activity
 
 
+def _blocks_to_text(value: Any) -> str:
+    """Join text out of a list of content blocks (OpenAI/Anthropic/LangChain).
+
+    Modern message content is often a list of blocks like
+    ``[{"type": "text", "text": "..."}, {"type": "image", ...}]`` or plain
+    strings. Pull the text parts and join them; return ``""`` for non-lists.
+    """
+    if not isinstance(value, list):
+        return ""
+    parts: list[str] = []
+    for item in value:
+        if isinstance(item, str) and item.strip():
+            parts.append(item.strip())
+        elif isinstance(item, dict):
+            t = item.get("text")
+            if isinstance(t, str) and t.strip():
+                parts.append(t.strip())
+    return " ".join(parts)
+
+
 def _msg_text(msg: Any) -> str:
-    """Best-effort plain text from a message dict or object (last-resort)."""
+    """Best-effort plain text from a message dict or object (last-resort).
+
+    Handles string content and list-of-content-blocks (multi-modal / rich-text
+    messages from OpenAI, Anthropic and LangChain).
+    """
     text = getattr(msg, "text", None)
     if isinstance(text, str) and text.strip():
         return text.strip()
     content = getattr(msg, "content", None)
     if isinstance(content, str) and content.strip():
         return content.strip()
+    blocks = _blocks_to_text(content)
+    if blocks:
+        return blocks
     if isinstance(msg, dict):
         for key in ("text", "content"):
             value = msg.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
+            blocks = _blocks_to_text(value)
+            if blocks:
+                return blocks
     return ""
 
 
@@ -177,10 +207,11 @@ class ToolRefresher:
 
     @property
     def tools_used(self) -> list[str]:
-        """Tool names accumulated across turns (when ``track_used``).
+        """Tool names seen in the most recent refresh's message history.
 
-        Returns an empty list when ``track_used`` is disabled. The order is
-        first-seen; each name appears once.
+        Recomputed fresh on every refresh (no cross-conversation leakage).
+        Returns an empty list when ``track_used`` is disabled or before the
+        first refresh. Order is first-seen; each name appears once.
         """
         return list(self._tools_used)
 
@@ -289,14 +320,23 @@ class ToolRefresher:
         return ""
 
     def _accumulate_used(self, messages: list[Any]) -> None:
-        """Add tool names from tool/function-role messages to the used set."""
-        seen = set(self._tools_used)
+        """Recompute the used-tool list *fresh* from the current message history.
+
+        Recomputing (rather than appending) makes a single ``ToolRefresher``
+        safe to reuse across conversations and robust to truncated/reset
+        histories: ``tools_used`` always reflects exactly the tools present in
+        the messages passed to *this* call, never leaking state from a prior
+        run. Order is first-seen; each name appears once.
+        """
+        used: list[str] = []
+        seen: set[str] = set()
         for msg in messages:
             if _msg_role(msg) in ("tool", "function"):
                 name = _msg_tool_name(msg)
                 if name and name not in seen:
                     seen.add(name)
-                    self._tools_used.append(name)
+                    used.append(name)
+        self._tools_used = used
 
 
 __all__ = ["ToolRefresher"]
