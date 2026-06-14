@@ -16,11 +16,12 @@ from agent_gantry.integrations.frameworks.langgraph import (
     spec_to_langgraph,
 )
 
-__getattr__ = make_lazy_getattr({'create_gantry_react_agent': 'langgraph_live', 'select_tools_for_state': 'langgraph_live'})
+__getattr__ = make_lazy_getattr({'create_gantry_react_agent': 'langgraph_live', 'acreate_gantry_react_agent': 'langgraph_live', 'select_tools_for_state': 'langgraph_live'})
 
 __all__ = [
     "for_langgraph",
     "spec_to_langgraph",
     "create_gantry_react_agent",  # noqa: F822 (lazy via __getattr__)
+    "acreate_gantry_react_agent",  # noqa: F822 (lazy via __getattr__)
     "select_tools_for_state",  # noqa: F822 (lazy via __getattr__)
 ]

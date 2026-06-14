@@ -107,23 +107,29 @@ def _set_plugin_functions(
 ) -> Any:
     """Replace the ``plugin_name`` plugin on ``kernel`` with ``functions``.
 
-    Removes any existing plugin under ``plugin_name`` (``kernel.plugins`` is a
-    plain dict in SK 1.x) and registers a fresh :class:`KernelPlugin` holding
-    exactly the supplied functions — so only the freshly selected tools are
-    advertised to the model. Returns the registered plugin.
+    Removes any existing plugin under ``plugin_name`` and registers a fresh
+    :class:`KernelPlugin` holding exactly the supplied functions — so only the
+    freshly selected tools are advertised to the model. Returns the registered
+    plugin.
+
+    Removal prefers a public API (``kernel.remove_plugin``) if the installed SK
+    exposes one, falling back to mutating the ``kernel.plugins`` dict (SK 1.x has
+    no public remover). This keeps stale functions from lingering across version
+    changes that alter the plugin-collection type.
     """
     KernelPlugin = _import_kernel_plugin()  # noqa: N806
-    # Drop the previous selection so stale functions don't linger.
-    plugins = getattr(kernel, "plugins", None)
-    if isinstance(plugins, dict):
-        plugins.pop(plugin_name, None)
-    else:  # pragma: no cover - defensive for non-dict plugin collections
-        remover = getattr(kernel, "remove_plugin", None)
-        if callable(remover):
-            try:
-                remover(plugin_name)
-            except (KeyError, ValueError):
-                pass
+    # Drop the previous selection so stale functions don't linger — prefer a
+    # public removal API, fall back to the SK 1.x dict-backed collection.
+    remover = getattr(kernel, "remove_plugin", None)
+    if callable(remover):
+        try:
+            remover(plugin_name)
+        except (KeyError, ValueError):
+            pass
+    else:
+        plugins = getattr(kernel, "plugins", None)
+        if isinstance(plugins, dict):
+            plugins.pop(plugin_name, None)
     plugin = KernelPlugin(name=plugin_name, functions=list(functions.values()))
     kernel.add_plugin(plugin)
     return plugin

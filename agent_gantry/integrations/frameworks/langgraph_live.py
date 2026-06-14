@@ -167,19 +167,60 @@ def create_gantry_react_agent(
         **agent_kwargs: Forwarded verbatim to ``create_react_agent`` (e.g.
             ``prompt``, ``checkpointer``, ``state_schema``).
 
+    Note:
+        This is a **synchronous** factory; it resolves the (async) tool superset
+        on a worker thread via Gantry's sync bridge, so it is safe to call from a
+        running event loop but will block the calling thread until enumeration
+        completes. In already-async contexts (Jupyter, FastAPI startup) prefer
+        :func:`acreate_gantry_react_agent`, which awaits the enumeration directly.
+
     Returns:
         The compiled LangGraph agent (a ``Pregel`` graph) ready for
         ``.ainvoke`` / ``.invoke``.
     """
+    from agent_gantry.integrations.frameworks.base import _run_coroutine_sync
+
+    superset = _run_coroutine_sync(_all_tools(gantry))
+    return _build_react_agent(
+        model, gantry, superset, limit=limit, score_threshold=score_threshold, **agent_kwargs
+    )
+
+
+async def acreate_gantry_react_agent(
+    model: Any,
+    gantry: AgentGantry,
+    *,
+    limit: int = 5,
+    score_threshold: float = 0.0,
+    **agent_kwargs: Any,
+) -> Any:
+    """Async-native variant of :func:`create_gantry_react_agent`.
+
+    Awaits the tool-superset enumeration directly (no sync bridge), so it is the
+    right choice inside an already-running event loop (Jupyter, FastAPI startup).
+    Behaviour is otherwise identical — tools are re-selected by Gantry on every
+    model turn via LangGraph's dynamic-``model`` callable.
+    """
+    superset = await _all_tools(gantry)
+    return _build_react_agent(
+        model, gantry, superset, limit=limit, score_threshold=score_threshold, **agent_kwargs
+    )
+
+
+def _build_react_agent(
+    model: Any,
+    gantry: AgentGantry,
+    superset: list[Any],
+    *,
+    limit: int,
+    score_threshold: float,
+    **agent_kwargs: Any,
+) -> Any:
+    """Compile the dynamic-``model`` ReAct agent given a pre-resolved superset."""
     create_react_agent = _import_create_react_agent()
 
     async def _dynamic_model(state: Any, runtime: Any) -> Any:
-        """Per-turn hook: re-select Gantry tools and bind them to ``model``.
-
-        Resolved by the agent's ``call_model`` node on every turn. Returns
-        ``model.bind_tools(<selected>)`` — a ``Runnable`` exposing exactly the
-        tools Gantry chose for the current conversation state.
-        """
+        """Per-turn hook: re-select Gantry tools and bind them to ``model``."""
         selected = await select_tools_for_state(
             gantry, state, limit=limit, score_threshold=score_threshold
         )
@@ -187,19 +228,11 @@ def create_gantry_react_agent(
             return model
         return model.bind_tools(selected)
 
-    # The static tool superset must be resolved before the graph is compiled.
-    # ``create_react_agent`` is synchronous, so we resolve the (async) tool
-    # enumeration on a private event loop. Reuse Gantry's sync bridge so this is
-    # safe whether or not a loop is already running on the calling thread.
-    from agent_gantry.integrations.frameworks.base import _run_coroutine_sync
-
-    superset = _run_coroutine_sync(_all_tools(gantry))
-
-    return create_react_agent(
-        model=_dynamic_model,
-        tools=superset,
-        **agent_kwargs,
-    )
+    return create_react_agent(model=_dynamic_model, tools=superset, **agent_kwargs)
 
 
-__all__ = ["create_gantry_react_agent", "select_tools_for_state"]
+__all__ = [
+    "create_gantry_react_agent",
+    "acreate_gantry_react_agent",
+    "select_tools_for_state",
+]
