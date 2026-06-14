@@ -17,10 +17,12 @@ a fresh top-k selection appropriate to the *latest* sub-task.
 Two behaviours make this genuinely multi-turn / direction-changing:
 
 - **Query follows the conversation tail.** The default query generator is
-  ``fallback_chain(last_tool_result, last_user_text)``, so the next turn's
-  retrieval is driven by the most recent tool result if there is one, else by
-  the most recent user message. When the user pivots (weather → email →
-  currency), the surfaced tools pivot with them.
+  ``fallback_chain(last_user_text, last_tool_result)``, so the next turn's
+  retrieval is driven by the most recent user message (falling back to the
+  latest tool result). When the user pivots (weather → email → currency), the
+  surfaced tools pivot with them. For autonomous tool *pipelines* where the
+  previous tool's output should drive the next selection, pass
+  ``query_generator=fallback_chain(last_tool_result, last_user_text)``.
 - **Used tools nudge the agent forward.** When ``track_used`` is on, every
   tool/function-role message seen in the history accumulates into a
   ``tools_already_used`` set. The router applies its ``already_used_penalty``
@@ -52,14 +54,18 @@ if TYPE_CHECKING:
 
 
 def _default_query_generator() -> Callable[[Iterable[Any] | None], str]:
-    """Recommended default: latest tool result, falling back to user text.
+    """Recommended default: latest user text, falling back to tool result.
 
     Built fresh on each construction so the composed callable is never a
-    shared global. This is the same composition the Agent Framework provider
-    uses for its ``per_call`` mode — the tool result drives the next retrieval
-    when present, otherwise the latest user message does.
+    shared global. User text first makes the *conversational* case (the user
+    pivots to a new sub-task each turn) intuitive: the surfaced tools follow
+    what the user just asked for. For autonomous tool *pipelines* — where the
+    previous tool's output should pick the next tool — pass
+    ``query_generator=fallback_chain(last_tool_result, last_user_text)``
+    explicitly (this is what the Agent Framework provider's ``per_call`` mode
+    uses).
     """
-    return fallback_chain(last_tool_result, last_user_text)
+    return fallback_chain(last_user_text, last_tool_result)
 
 
 def _msg_text(msg: Any) -> str:
@@ -127,9 +133,11 @@ class ToolRefresher:
             similarities, so a non-zero default silently drops relevant tools.
         query_generator: Sync or async callable mapping the messages list to a
             retrieval query string. Defaults to
-            ``fallback_chain(last_tool_result, last_user_text)`` so retrieval is
-            driven by the latest tool result if present, else the latest user
-            text. See :mod:`agent_gantry.query` for built-in alternatives.
+            ``fallback_chain(last_user_text, last_tool_result)`` so retrieval is
+            driven by the latest user message (falling back to the latest tool
+            result) — the intuitive choice for conversational pivots. For tool
+            pipelines, pass ``fallback_chain(last_tool_result, last_user_text)``.
+            See :mod:`agent_gantry.query` for built-in alternatives.
         track_used: When ``True`` (default), scan the messages on every refresh
             for tool/function-role entries and accumulate their tool names into
             the ``tools_already_used`` set passed to selection. The router's
