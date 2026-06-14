@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 
 from agent_gantry import AgentGantry
-from agent_gantry.integrations.frameworks import for_crewai
+from agent_gantry.crewai import for_crewai
 
 load_dotenv()
 

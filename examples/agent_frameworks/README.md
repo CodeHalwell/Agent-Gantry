@@ -15,12 +15,14 @@ The general pattern is:
    security policy all apply). No manual factory or name-based branching.
 3. **Hand** the returned native tools to your agent.
 
-Native adapters live in `agent_gantry.integrations.frameworks`:
-`for_langchain`, `for_langgraph`, `for_llamaindex`, `for_crewai`,
-`for_pydantic_ai`, `for_openai_agents`, `for_smolagents`, `for_haystack`,
-`for_agno`, `for_autogen`, `for_semantic_kernel`, `for_google_adk` (and a
-matching `spec_to_<fw>` for single-tool conversion). See
-[`../frameworks/`](../frameworks/) for offline, runnable walkthroughs.
+Each framework has a clean namespace — `from agent_gantry.<framework> import for_<framework>`
+(`agent_gantry.langchain`, `agent_gantry.crewai`, `agent_gantry.llamaindex`,
+`agent_gantry.pydantic_ai`, `agent_gantry.openai_agents`, `agent_gantry.smolagents`,
+`agent_gantry.haystack`, `agent_gantry.agno`, `agent_gantry.autogen`,
+`agent_gantry.semantic_kernel`, `agent_gantry.google_adk`, `agent_gantry.langgraph`,
+`agent_gantry.agent_framework`) — re-exporting `for_<fw>` / `spec_to_<fw>` and that
+framework's deep per-turn live provider. See [`../frameworks/`](../frameworks/) for
+offline, runnable walkthroughs.
 
 For per-step (multi-turn) re-selection within one run, use `ToolRefresher`
 (`agent_gantry.integrations`) — see `../frameworks/multi_turn_refresher_example.py`.

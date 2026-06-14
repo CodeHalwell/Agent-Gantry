@@ -31,7 +31,7 @@ of these frameworks. A missing framework raises `ImportError` with a
 
 ```python
 from agent_gantry import AgentGantry
-from agent_gantry.integrations.frameworks import for_langchain
+from agent_gantry.langchain import for_langchain   # clean per-framework namespace
 
 gantry = AgentGantry()
 # ... register tools, await gantry.sync() ...
@@ -40,6 +40,14 @@ gantry = AgentGantry()
 tools = await for_langchain(gantry, "email the quarterly report to finance", limit=3)
 # hand `tools` to a LangChain/LangGraph agent
 ```
+
+Each framework has a top-level namespace — `from agent_gantry.<framework> import …`
+(`agent_gantry.langchain`, `agent_gantry.crewai`, `agent_gantry.llamaindex`,
+`agent_gantry.pydantic_ai`, `agent_gantry.openai_agents`, `agent_gantry.smolagents`,
+`agent_gantry.haystack`, `agent_gantry.agno`, `agent_gantry.autogen`,
+`agent_gantry.semantic_kernel`, `agent_gantry.google_adk`, `agent_gantry.langgraph`,
+`agent_gantry.agent_framework`) re-exporting both `for_<fw>`/`spec_to_<fw>` and that
+framework's deep live provider. Importing `agent_gantry` never pulls these in.
 
 Every `for_<fw>(gantry, query, *, limit=3, **select_kwargs)` accepts the same
 selection knobs as `GantryToolset.select` (`score_threshold`, `namespaces`,
@@ -97,7 +105,7 @@ loads these — the framework is only required when you use its provider).
 | OpenAI Agents SDK | `run_with_gantry` / `GantryAgentSession` / `gantry_run_hooks` | `RunHooks.on_llm_start` + per-run refresh |
 
 ```python
-from agent_gantry.integrations.frameworks import gantry_function_agent
+from agent_gantry.llamaindex import gantry_function_agent
 agent = gantry_function_agent(gantry, llm)   # LlamaIndex agent that re-selects tools each step
 ```
 

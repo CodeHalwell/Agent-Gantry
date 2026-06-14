@@ -32,7 +32,7 @@ from autogen_ext.models.openai import OpenAIChatCompletionClient
 from dotenv import load_dotenv
 
 from agent_gantry import AgentGantry
-from agent_gantry.integrations.frameworks import for_autogen
+from agent_gantry.autogen import for_autogen
 
 load_dotenv()
 

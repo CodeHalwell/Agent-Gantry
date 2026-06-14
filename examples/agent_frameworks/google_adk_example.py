@@ -7,7 +7,7 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 from agent_gantry import AgentGantry
-from agent_gantry.integrations.frameworks import for_google_adk
+from agent_gantry.google_adk import for_google_adk
 
 load_dotenv()
 

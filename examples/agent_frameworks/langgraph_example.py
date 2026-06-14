@@ -6,7 +6,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 
 from agent_gantry import AgentGantry
-from agent_gantry.integrations.frameworks import for_langgraph
+from agent_gantry.langgraph import for_langgraph
 
 load_dotenv()
 

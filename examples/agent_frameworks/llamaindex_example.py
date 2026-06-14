@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from llama_index.llms.openai import OpenAI
 
 from agent_gantry import AgentGantry
-from agent_gantry.integrations.frameworks import for_llamaindex
+from agent_gantry.llamaindex import for_llamaindex
 
 load_dotenv()
 
