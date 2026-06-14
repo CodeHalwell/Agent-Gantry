@@ -69,6 +69,38 @@ jobs:
           file: ./coverage.xml
           fail_ci_if_error: false
 
+  framework-adapters:
+    name: Framework adapter smoke tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      # Isolated env: the native-adapter frameworks (pydantic-ai, openai-agents,
+      # smolagents, haystack, agno) don't co-resolve with the combined
+      # agent-frameworks/nomic set, so they are NOT a project extra. Install the
+      # project (dev) then add them directly with a one-off resolution, and run
+      # the real-package adapter smoke tests. importorskip handles any that
+      # aren't present. langchain/llamaindex/crewai/SK/ADK are covered by the
+      # main `test` matrix (which installs the `agent-frameworks` extra).
+      # Resolve the project (dev) + the adapter frameworks together in ONE
+      # isolated venv, so a shared dep (pydantic/httpx/openai) is resolved to a
+      # single compatible version rather than installed-then-downgraded.
+      - name: Run adapter smoke tests
+        run: |
+          uv venv .venv-frameworks
+          uv pip install --python .venv-frameworks ".[dev]" \
+            pydantic-ai-slim openai-agents smolagents haystack-ai agno
+          .venv-frameworks/bin/python -m pytest tests/frameworks/ -v
+
   build:
     name: Verify package builds
     runs-on: ubuntu-latest

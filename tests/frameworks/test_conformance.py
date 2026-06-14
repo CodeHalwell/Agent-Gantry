@@ -54,6 +54,8 @@ ADAPTERS = [
     ("smolagents", F.for_smolagents, F.spec_to_smolagents, ["smolagents"]),
     ("haystack", F.for_haystack, F.spec_to_haystack, ["haystack", "haystack.tools"]),
     ("agno", F.for_agno, F.spec_to_agno, ["agno", "agno.tools", "agno.tools.function"]),
+    ("semantic_kernel", F.for_semantic_kernel, F.spec_to_semantic_kernel, ["semantic_kernel", "semantic_kernel.functions"]),
+    ("google_adk", F.for_google_adk, F.spec_to_google_adk, ["google.adk", "google.adk.tools"]),
 ]
 
 

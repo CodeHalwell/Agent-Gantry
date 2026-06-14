@@ -8,9 +8,24 @@ Agent-Gantry acts as a **Semantic Tool Router**. Instead of passing all your too
 
 The general pattern is:
 1. **Register** all your tools with `AgentGantry`.
-2. **Retrieve** relevant tools using `gantry.retrieve_tools(query)`.
-3. **Wrap** the retrieved tools in the framework's native tool format.
-4. **Execute** the tools via `gantry.execute(ToolCall(...))`.
+2. **Select + convert** in one call with a native adapter — e.g.
+   `tools = await for_langchain(gantry, query, limit=3)` — which retrieves the
+   relevant tools, wraps them as that framework's native tool objects, and wires
+   execution back through `gantry.execute` (retries, timeouts, circuit breakers,
+   security policy all apply). No manual factory or name-based branching.
+3. **Hand** the returned native tools to your agent.
+
+Each framework has a clean namespace — `from agent_gantry.<framework> import for_<framework>`
+(`agent_gantry.langchain`, `agent_gantry.crewai`, `agent_gantry.llamaindex`,
+`agent_gantry.pydantic_ai`, `agent_gantry.openai_agents`, `agent_gantry.smolagents`,
+`agent_gantry.haystack`, `agent_gantry.agno`, `agent_gantry.autogen`,
+`agent_gantry.semantic_kernel`, `agent_gantry.google_adk`, `agent_gantry.langgraph`,
+`agent_gantry.agent_framework`) — re-exporting `for_<fw>` / `spec_to_<fw>` and that
+framework's deep per-turn live provider. See [`../frameworks/`](../frameworks/) for
+offline, runnable walkthroughs.
+
+For per-step (multi-turn) re-selection within one run, use `ToolRefresher`
+(`agent_gantry.integrations`) — see `../frameworks/multi_turn_refresher_example.py`.
 
 ## Examples Included
 

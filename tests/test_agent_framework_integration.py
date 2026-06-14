@@ -17,6 +17,22 @@ from agent_gantry.adapters.tool_spec import DialectRegistry, ToolCallPayload, ge
 from agent_gantry.adapters.tool_spec.providers import AgentFrameworkAdapter
 from agent_gantry.schema.tool import SchemaDialect, ToolDefinition
 
+
+@pytest.fixture(autouse=True)
+def _offline_embedder(monkeypatch):
+    """Make bare ``AgentGantry()`` use the offline ``SimpleEmbedder`` so these
+    tests never download an embedder model from the HF Hub (which rate-limits /
+    flakes in CI). Retrieval here is trivial — few tools, ``score_threshold=0.0``,
+    ``limit`` above the tool count — so the toy embedder changes no assertion.
+    Tests that pass ``embedder=`` explicitly are unaffected.
+    """
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from agent_gantry.core.gantry import AgentGantry
+
+    monkeypatch.setattr(
+        AgentGantry, "_build_embedder", lambda self, config: SimpleEmbedder()
+    )
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

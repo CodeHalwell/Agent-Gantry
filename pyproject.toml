@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-gantry"
-version = "0.4.0"
+version = "0.5.0"
 description = "Universal Tool Orchestration Platform - Intelligent, secure tool orchestration for LLM-based agent systems"
 readme = "README.md"
 license = "MIT"
@@ -149,6 +149,15 @@ agent-frameworks = [
     # Source: https://pypi.org/pypi/google-adk/json (verified 2026-06-05)
     "google-adk>=1.14.1",
 ]
+# NOTE: the native-tool-adapter frameworks (pydantic-ai, openai-agents,
+# smolagents, haystack-ai, agno) are intentionally NOT a project extra: several
+# of them (e.g. openai-agents requires pydantic>=2.12.2) cannot co-resolve with
+# the `agent-frameworks` extra (pydantic<2.12 via crewai/agent-framework), and a
+# project extra must satisfy uv's *universal* lock alongside every other extra.
+# They are installed directly (in an isolated env) by the `framework-adapters`
+# CI job, which runs tests/frameworks/test_real_packages.py to guard each
+# adapter against real-API drift. langchain/langgraph/llamaindex/crewai/
+# semantic-kernel/google-adk are validated by the main matrix via `agent-frameworks`.
 example-tools = [
     "beautifulsoup4>=4.12.0",
     "cryptography>=41.0.0",

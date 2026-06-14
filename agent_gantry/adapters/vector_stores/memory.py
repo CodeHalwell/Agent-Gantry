@@ -111,8 +111,13 @@ class InMemoryVectorStore:
             return []
         q_norm = float(np.linalg.norm(q))
         if q_norm == 0.0:
-            return []
-        scores = self._matrix @ (q / q_norm)  # (n,) cosine similarities
+            # A zero query vector carries no signal. The original per-vector
+            # cosine returned 0.0 for every tool (kept by a 0.0 threshold), so
+            # an "empty"/zero query surfaces all tools rather than none. Preserve
+            # that instead of dividing by zero.
+            scores = np.zeros(self._matrix.shape[0], dtype=np.float32)
+        else:
+            scores = self._matrix @ (q / q_norm)  # (n,) cosine similarities
 
         results: list[tuple[ToolDefinition, float, str]] = []
         for idx, key in enumerate(self._matrix_keys):

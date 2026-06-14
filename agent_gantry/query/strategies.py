@@ -14,6 +14,32 @@ from collections.abc import Callable, Iterable
 from typing import Any
 
 
+def _blocks_text(value: Any) -> str:
+    """Join the text of a list of content blocks.
+
+    Handles the structured ``content`` lists used by the OpenAI Responses API /
+    Agents SDK (``[{"type": "input_text", "text": "..."}]``) and multimodal
+    messages, where each item is a string, a dict with a ``text``/``input_text``
+    field, or an object exposing ``.text``. Returns ``""`` for non-lists.
+    """
+    if not isinstance(value, (list, tuple)):
+        return ""
+    parts: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            if item.strip():
+                parts.append(item.strip())
+        elif isinstance(item, dict):
+            t = item.get("text") or item.get("input_text")
+            if isinstance(t, str) and t.strip():
+                parts.append(t.strip())
+        else:
+            t = getattr(item, "text", None)
+            if isinstance(t, str) and t.strip():
+                parts.append(t.strip())
+    return " ".join(parts)
+
+
 def _msg_text(msg: Any) -> str:
     """Pull plain text out of a message-like object.
 
@@ -44,6 +70,16 @@ def _msg_text(msg: Any) -> str:
             value = msg.get(key)
             if isinstance(value, str) and value.strip():
                 return value
+
+    # ``content`` as a list of structured blocks (OpenAI Responses input parts,
+    # multimodal messages) — pull the text parts.
+    block_text = _blocks_text(content)
+    if block_text:
+        return block_text
+    if isinstance(msg, dict):
+        block_text = _blocks_text(msg.get("content"))
+        if block_text:
+            return block_text
 
     contents = getattr(msg, "contents", None)
     if contents is None and isinstance(msg, dict):

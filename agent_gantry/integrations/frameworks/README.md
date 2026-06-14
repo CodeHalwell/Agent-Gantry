@@ -20,6 +20,8 @@ timeouts, circuit breakers, security policy all apply).
 | Haystack | `for_haystack` | `haystack.tools.Tool` |
 | Agno | `for_agno` | `agno.tools.function.Function` |
 | AutoGen / AG2 | `for_autogen`, `register_with_autogen` | callables + `register_function` |
+| Semantic Kernel | `for_semantic_kernel`, `gantry_plugin` | `KernelFunction` (`@kernel_function`) |
+| Google ADK | `for_google_adk` | `google.adk.tools.FunctionTool` |
 
 All third-party imports are **lazy** — `import agent_gantry` never requires any
 of these frameworks. A missing framework raises `ImportError` with a
@@ -29,7 +31,7 @@ of these frameworks. A missing framework raises `ImportError` with a
 
 ```python
 from agent_gantry import AgentGantry
-from agent_gantry.integrations.frameworks import for_langchain
+from agent_gantry.langchain import for_langchain   # clean per-framework namespace
 
 gantry = AgentGantry()
 # ... register tools, await gantry.sync() ...
@@ -38,6 +40,14 @@ gantry = AgentGantry()
 tools = await for_langchain(gantry, "email the quarterly report to finance", limit=3)
 # hand `tools` to a LangChain/LangGraph agent
 ```
+
+Each framework has a top-level namespace — `from agent_gantry.<framework> import …`
+(`agent_gantry.langchain`, `agent_gantry.crewai`, `agent_gantry.llamaindex`,
+`agent_gantry.pydantic_ai`, `agent_gantry.openai_agents`, `agent_gantry.smolagents`,
+`agent_gantry.haystack`, `agent_gantry.agno`, `agent_gantry.autogen`,
+`agent_gantry.semantic_kernel`, `agent_gantry.google_adk`, `agent_gantry.langgraph`,
+`agent_gantry.agent_framework`) re-exporting both `for_<fw>`/`spec_to_<fw>` and that
+framework's deep live provider. Importing `agent_gantry` never pulls these in.
 
 Every `for_<fw>(gantry, query, *, limit=3, **select_kwargs)` accepts the same
 selection knobs as `GantryToolset.select` (`score_threshold`, `namespaces`,
@@ -74,6 +84,36 @@ To force one behaviour, pass `query_generator=` explicitly — `last_user_text`
 (always the user), `last_tool_result` (always the last result), or a custom
 `fallback_chain(...)`. See `examples/frameworks/multi_turn_refresher_example.py`
 for both modes side by side.
+
+## Deep per-turn "live" providers (as embedded as Microsoft Agent Framework)
+
+The `for_<fw>` helpers above are *static*: select once, hand over a fixed tool
+list. The **live** providers go deeper — they hook each framework's own
+per-turn lifecycle so Gantry re-selects tools on **every turn**, exactly like
+`GantryContextProvider` does for Microsoft Agent Framework. Import them lazily
+from `agent_gantry.integrations.frameworks` (importing `agent_gantry` never
+loads these — the framework is only required when you use its provider).
+
+| Framework | Live entry point | Native hook |
+|---|---|---|
+| LlamaIndex | `gantry_tool_retriever` / `gantry_function_agent` | `FunctionAgent(tool_retriever=…)` (`ObjectRetriever`) |
+| Pydantic AI | `gantry_toolset` | `AbstractToolset.get_tools()` |
+| AutoGen | `gantry_workbench` | `autogen_core.tools.Workbench.list_tools()` |
+| Google ADK | `gantry_before_model_callback` / `gantry_adk_agent` | `Agent(before_model_callback=…)` |
+| LangGraph | `create_gantry_react_agent` | dynamic `model` callable (re-binds tools per turn) |
+| Semantic Kernel | `GantryFunctionProvider` / `refresh_kernel_tools` | per-invocation plugin refresh |
+| OpenAI Agents SDK | `run_with_gantry` / `GantryAgentSession` / `gantry_run_hooks` | `RunHooks.on_llm_start` + per-run refresh |
+
+```python
+from agent_gantry.llamaindex import gantry_function_agent
+agent = gantry_function_agent(gantry, llm)   # LlamaIndex agent that re-selects tools each step
+```
+
+Frameworks whose tool list is **fixed at agent construction** (CrewAI, Agno,
+Haystack, Smolagents) can't re-advertise tools mid-run; their "live" wrappers
+(`GantryLiveCrewAgent`, `GantryLiveAgnoAgent`, `gantry_haystack_tools`,
+`GantryLiveSmolAgent`) re-select and rebuild the agent on each top-level call —
+the deepest those frameworks allow.
 
 ## Shared base
 

@@ -9,12 +9,11 @@ import asyncio
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
-from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 
 from agent_gantry import AgentGantry
-from agent_gantry.schema.execution import ToolCall
+from agent_gantry.langchain import for_langchain
 
 load_dotenv()
 
@@ -38,32 +37,12 @@ async def main():
     # 2. Define the user query
     user_query = "What's the weather in London and the stock price for AAPL?"
 
-    # 3. Use Agent-Gantry to retrieve only relevant tools
+    # 3. Use Agent-Gantry to select relevant tools and get them as native
+    #    LangChain StructuredTools in one call (retrieval + conversion +
+    #    execution wiring). LangGraph's create_react_agent consumes these.
     # Lowering threshold for SimpleEmbedder compatibility in this example
-    retrieved_tools = await gantry.retrieve_tools(user_query, limit=2, score_threshold=0.1)
-    print(f"Gantry retrieved {len(retrieved_tools)} tools.")
-
-    # 4. Wrap Gantry tools as LangChain tools for use in LangGraph
-    def make_langchain_tool(tool_name: str, tool_desc: str, gantry_instance: AgentGantry):
-        """Factory that binds the captured tool_name into a LangChain tool."""
-
-        @tool
-        async def tool_wrapper(**kwargs):
-            result = await gantry_instance.execute(ToolCall(tool_name=tool_name, arguments=kwargs))
-            return result.result if result.status == "success" else result.error
-
-        tool_wrapper.__name__ = tool_name
-        tool_wrapper.__doc__ = tool_desc
-        return tool_wrapper
-
-    langchain_tools = [
-        make_langchain_tool(
-            ts["function"]["name"],
-            ts["function"]["description"],
-            gantry,
-        )
-        for ts in retrieved_tools
-    ]
+    langchain_tools = await for_langchain(gantry, user_query, limit=2, score_threshold=0.1)
+    print(f"Gantry retrieved {len(langchain_tools)} tools.")
 
     # 5. Build and run a LangGraph ReAct agent
     # create_react_agent is the LangGraph-native replacement for the old

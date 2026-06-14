@@ -124,6 +124,23 @@ def _fc(name: str, arguments: dict[str, Any], call_id: str) -> Content:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _offline_embedder(monkeypatch):
+    """Make bare ``AgentGantry()`` use the offline ``SimpleEmbedder`` so these
+    tests never download an embedder model from the HF Hub (which rate-limits /
+    flakes in CI). These tests pass all registered tools to a *scripted* client
+    (``limit=5`` over ≤3 tools, ``score_threshold=0.0``), so retrieval quality is
+    irrelevant and the toy embedder changes no assertion. Tests passing an
+    explicit ``embedder=`` (e.g. ``_KeywordEmbedder``) are unaffected.
+    """
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from agent_gantry.core.gantry import AgentGantry
+
+    monkeypatch.setattr(
+        AgentGantry, "_build_embedder", lambda self, config: SimpleEmbedder()
+    )
+
+
 @pytest.fixture
 async def gantry_with_tools() -> AgentGantry:
     gantry = AgentGantry()
