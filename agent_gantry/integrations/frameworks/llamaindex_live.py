@@ -78,82 +78,85 @@ def _query_from(str_or_query_bundle: Any) -> str:
     return str(str_or_query_bundle)
 
 
-# ``ObjectRetriever`` must be available as a real base class at class-definition
-# time. We resolve it lazily here so module import stays dependency-free; the
-# first attribute access that touches the class triggers the import.
-_ObjectRetriever = _import_object_retriever()
+_RETRIEVER_CLS: type | None = None
 
 
-class GantryToolRetriever(_ObjectRetriever):  # type: ignore[valid-type,misc]
-    """Per-turn ``ObjectRetriever`` that re-selects gantry tools every step.
+def _build_retriever_class() -> type:
+    """Build (and cache) the ``GantryToolRetriever`` subclass of ``ObjectRetriever``.
 
-    Drop this into ``FunctionAgent(tool_retriever=...)``. On every reasoning
-    step the agent calls :meth:`aretrieve` (or :meth:`retrieve`), which runs a
-    fresh semantic selection against the gantry for the current query and
-    returns the matching tools converted to LlamaIndex ``FunctionTool`` objects.
-    Each returned tool routes its invocation back through ``gantry.execute`` so
-    retries, timeouts, circuit breakers, and the security policy still apply.
-
-    Args:
-        gantry: The :class:`~agent_gantry.core.gantry.AgentGantry` providing
-            semantic retrieval and execution.
-        limit: Maximum number of tools to expose per step. Defaults to ``5``.
-        score_threshold: Minimum semantic relevance score. Defaults to ``0.0``
-            (no filtering), matching the rest of the framework adapters.
+    Deferred so importing this module never requires ``llama-index`` — the
+    subclass (which needs ``ObjectRetriever`` as a real base) is only
+    constructed when a retriever/agent is actually built. Mirrors the lazy
+    class-build used by the AutoGen / Pydantic AI live providers.
     """
+    global _RETRIEVER_CLS
+    if _RETRIEVER_CLS is not None:
+        return _RETRIEVER_CLS
 
-    def __init__(
-        self,
-        gantry: AgentGantry,
-        *,
-        limit: int = 5,
-        score_threshold: float = 0.0,
-    ) -> None:
-        # Intentionally do NOT call super().__init__(): the base class wires a
-        # static BaseRetriever + BaseObjectNodeMapping to retrieve over a
-        # pre-indexed object set. We override retrieve/aretrieve entirely and
-        # select live against the gantry, so that machinery is unused. See the
-        # module docstring for the full rationale.
-        self._gantry = gantry
-        self._toolset = GantryToolset(gantry)
-        self._limit = limit
-        self._score_threshold = score_threshold
+    object_retriever = _import_object_retriever()
 
-    # -- read-only accessors ------------------------------------------------ #
-    @property
-    def gantry(self) -> AgentGantry:
-        return self._gantry
+    class GantryToolRetriever(object_retriever):  # type: ignore[valid-type,misc]
+        """Per-turn ``ObjectRetriever`` that re-selects gantry tools every step.
 
-    @property
-    def limit(self) -> int:
-        return self._limit
-
-    @property
-    def score_threshold(self) -> float:
-        return self._score_threshold
-
-    # -- native ObjectRetriever hook ---------------------------------------- #
-    async def aretrieve(self, str_or_query_bundle: Any) -> list:
-        """Re-select tools for the current step and return ``FunctionTool``s.
-
-        This is the per-turn hook ``FunctionAgent`` awaits each step.
+        Drop this into ``FunctionAgent(tool_retriever=...)``. On every reasoning
+        step the agent calls :meth:`aretrieve` (or :meth:`retrieve`), which runs
+        a fresh semantic selection against the gantry for the current query and
+        returns the matching tools converted to LlamaIndex ``FunctionTool``
+        objects. Each routes its invocation back through ``gantry.execute`` so
+        retries, timeouts, circuit breakers, and the security policy apply.
         """
-        query = _query_from(str_or_query_bundle)
-        specs = await self._toolset.select(
-            query, limit=self._limit, score_threshold=self._score_threshold
-        )
-        return [spec_to_llamaindex(spec) for spec in specs]
 
-    def retrieve(self, str_or_query_bundle: Any) -> list:
-        """Synchronous counterpart to :meth:`aretrieve`.
+        def __init__(
+            self,
+            gantry: AgentGantry,
+            *,
+            limit: int = 5,
+            score_threshold: float = 0.0,
+        ) -> None:
+            # Intentionally do NOT call super().__init__(): the base class wires
+            # a static BaseRetriever + BaseObjectNodeMapping over a pre-indexed
+            # object set. We override retrieve/aretrieve entirely and select live
+            # against the gantry, so that machinery is unused (see module docstring).
+            self._gantry = gantry
+            self._toolset = GantryToolset(gantry)
+            self._limit = limit
+            self._score_threshold = score_threshold
 
-        Runs the same live selection from synchronous LlamaIndex call sites,
-        bridging to the async path safely whether or not an event loop is
-        already running on the current thread.
-        """
-        from agent_gantry.integrations.frameworks.base import _run_coroutine_sync
+        @property
+        def gantry(self) -> AgentGantry:
+            return self._gantry
 
-        return _run_coroutine_sync(self.aretrieve(str_or_query_bundle))
+        @property
+        def limit(self) -> int:
+            return self._limit
+
+        @property
+        def score_threshold(self) -> float:
+            return self._score_threshold
+
+        async def aretrieve(self, str_or_query_bundle: Any) -> list:
+            """Re-select tools for the current step and return ``FunctionTool``s."""
+            query = _query_from(str_or_query_bundle)
+            specs = await self._toolset.select(
+                query, limit=self._limit, score_threshold=self._score_threshold
+            )
+            return [spec_to_llamaindex(spec) for spec in specs]
+
+        def retrieve(self, str_or_query_bundle: Any) -> list:
+            """Synchronous counterpart to :meth:`aretrieve` (loop-safe bridge)."""
+            from agent_gantry.integrations.frameworks.base import _run_coroutine_sync
+
+            return _run_coroutine_sync(self.aretrieve(str_or_query_bundle))
+
+    _RETRIEVER_CLS = GantryToolRetriever
+    return _RETRIEVER_CLS
+
+
+def __getattr__(name: str) -> Any:
+    """Resolve ``GantryToolRetriever`` lazily (it subclasses a LlamaIndex type)."""
+    if name == "GantryToolRetriever":
+        return _build_retriever_class()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def gantry_tool_retriever(
@@ -161,13 +164,13 @@ def gantry_tool_retriever(
     *,
     limit: int = 5,
     score_threshold: float = 0.0,
-) -> GantryToolRetriever:
-    """Build a :class:`GantryToolRetriever` for ``gantry``.
+) -> Any:
+    """Build a ``GantryToolRetriever`` for ``gantry``.
 
     Raises:
         ImportError: If ``llama-index-core`` is not installed.
     """
-    return GantryToolRetriever(
+    return _build_retriever_class()(
         gantry, limit=limit, score_threshold=score_threshold
     )
 
@@ -214,7 +217,7 @@ def gantry_function_agent(
 
 
 __all__ = [
-    "GantryToolRetriever",
+    "GantryToolRetriever",  # noqa: F822 (resolved lazily via module __getattr__)
     "gantry_tool_retriever",
     "gantry_function_agent",
 ]

@@ -155,7 +155,11 @@ def _build_workbench_class() -> type:
             execution fails) an error :class:`~autogen_core.tools.ToolResult` is
             returned rather than raising, matching the base contract.
             """
-            spec = self._selected.get(name)
+            # Snapshot the mapping by reference: a concurrent ``list_tools`` on
+            # the same instance replaces ``self._selected`` wholesale, so binding
+            # a local reference avoids a torn read between resolve and execute.
+            selected = self._selected
+            spec = selected.get(name)
             if spec is None:
                 # Fall back to a fresh selection so a direct ``call_tool`` (no
                 # prior ``list_tools``) still resolves the current query's tools.

@@ -40,7 +40,9 @@ def spec_to_semantic_kernel(spec: ToolSpec, *, plugin_name: str = _DEFAULT_PLUGI
             "Install it with `pip install semantic-kernel`."
         ) from exc
 
-    fn = spec.callable_for_signature()
+    # SK infers a parameter's required-ness from whether its annotation is
+    # Optional (not from the default), so optional params must be `T | None`.
+    fn = spec.callable_for_signature(union_optional=True)
     # SK reads the return annotation to type the function result; default to str.
     fn.__annotations__.setdefault("return", str)
     decorated = kernel_function(name=spec.name, description=spec.description)(fn)

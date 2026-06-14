@@ -118,7 +118,7 @@ class ToolSpec:
         """
         return _run_coroutine_sync(self.ainvoke(*args, **kwargs))
 
-    def callable_for_signature(self) -> Callable[..., Any]:
+    def callable_for_signature(self, *, union_optional: bool = False) -> Callable[..., Any]:
         """Return a plain async function that calls this tool by keyword.
 
         Frameworks that build their own tool object from a function (Smolagents,
@@ -128,6 +128,11 @@ class ToolSpec:
         introspect the signature to build the LLM tool schema see the actual
         parameters instead of a bare ``**kwargs`` (which would surface as a
         no-argument tool).
+
+        ``union_optional`` annotates optional params as ``T | None``. Most
+        frameworks accept either form, but Google ADK's automatic function
+        calling rejects union types, so it defaults to off; Semantic Kernel,
+        which derives "required" from annotation optionality, opts in.
         """
 
         async def _fn(**kwargs: Any) -> Any:
@@ -135,7 +140,7 @@ class ToolSpec:
 
         _fn.__name__ = self.name
         _fn.__doc__ = self.description
-        _fn.__signature__ = self.python_signature()  # type: ignore[attr-defined]
+        _fn.__signature__ = self.python_signature(union_optional=union_optional)  # type: ignore[attr-defined]
         _fn.__annotations__ = {
             p.name: p.annotation
             for p in _fn.__signature__.parameters.values()
@@ -143,13 +148,15 @@ class ToolSpec:
         }
         return _fn
 
-    def python_signature(self) -> inspect.Signature:
+    def python_signature(self, *, union_optional: bool = False) -> inspect.Signature:
         """Build an :class:`inspect.Signature` from the JSON-Schema parameters.
 
         Each property becomes a keyword-only parameter; required properties have
         no default, optional ones default to ``None``. JSON-Schema types are
         mapped to Python annotations so framework introspection produces a
-        faithful tool schema.
+        faithful tool schema. When ``union_optional`` is set, optional params are
+        annotated ``T | None`` (needed by frameworks like Semantic Kernel that
+        infer required-ness from the annotation rather than the default).
         """
         properties = self.parameters.get("properties") or {}
         required = set(self.parameters.get("required") or [])
@@ -159,11 +166,9 @@ class ToolSpec:
             if name in required:
                 default = inspect.Parameter.empty
             else:
-                # Annotate optional params as ``T | None`` (not just default=None):
-                # some frameworks (e.g. Semantic Kernel) decide "required" from
-                # whether the annotation is Optional, not from the default.
                 default = None
-                annotation = annotation | None
+                if union_optional:
+                    annotation = annotation | None
             params.append(
                 inspect.Parameter(
                     name,

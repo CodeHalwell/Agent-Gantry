@@ -227,6 +227,11 @@ async def refresh_kernel_tools(
     under ``plugin_name``.
     """
     resolved = _query_from(query)
+    if not resolved:
+        # Mirror GantryFunctionProvider.refresh: clear the plugin rather than
+        # selecting on an empty embedding (arbitrary top-k for some embedders).
+        _set_plugin_functions(kernel, plugin_name, {})
+        return {}
     functions = await gantry_plugin(
         gantry,
         resolved,

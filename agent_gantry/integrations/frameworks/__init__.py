@@ -11,6 +11,9 @@ OpenAI Agents SDK, Smolagents, Haystack, Agno, AutoGen/AG2.
 
 from __future__ import annotations
 
+import importlib
+from typing import Any
+
 from agent_gantry.integrations.frameworks.agno import for_agno, spec_to_agno
 from agent_gantry.integrations.frameworks.autogen import (
     for_autogen,
@@ -154,12 +157,11 @@ _LIVE_EXPORTS: dict[str, str] = {
 }
 
 
-def __getattr__(name: str):  # noqa: D401 - module-level lazy attribute access
+def __getattr__(name: str) -> Any:  # noqa: D401 - module-level lazy attribute access
     """Lazily resolve deep per-turn provider symbols from their submodules."""
     module = _LIVE_EXPORTS.get(name)
     if module is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    import importlib
 
     mod = importlib.import_module(f"{__name__}.{module}")
     return getattr(mod, name)

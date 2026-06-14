@@ -90,13 +90,15 @@ jobs:
       # the real-package adapter smoke tests. importorskip handles any that
       # aren't present. langchain/llamaindex/crewai/SK/ADK are covered by the
       # main `test` matrix (which installs the `agent-frameworks` extra).
-      - name: Install dependencies
-        run: |
-          uv sync --extra dev
-          uv pip install pydantic-ai-slim openai-agents smolagents haystack-ai agno
-
+      # Resolve the project (dev) + the adapter frameworks together in ONE
+      # isolated venv, so a shared dep (pydantic/httpx/openai) is resolved to a
+      # single compatible version rather than installed-then-downgraded.
       - name: Run adapter smoke tests
-        run: uv run --no-sync pytest tests/frameworks/ -v
+        run: |
+          uv venv .venv-frameworks
+          uv pip install --python .venv-frameworks ".[dev]" \
+            pydantic-ai-slim openai-agents smolagents haystack-ai agno
+          .venv-frameworks/bin/python -m pytest tests/frameworks/ -v
 
   build:
     name: Verify package builds

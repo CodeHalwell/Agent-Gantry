@@ -34,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `*args`/`**kwargs` tools are no longer emitted as required schema params.
 - `retrieve_tools` / `search_and_execute` / `fetch_framework_tools` default
   `score_threshold` to `0.0` (was `0.5`, which silently dropped correct tools).
+  **Migration note:** pass `score_threshold=0.5` explicitly to keep the previous
+  filtering behaviour — the new default surfaces more candidate tools.
 - Dynamic MCP server selection documented accurately (it is functional).
 
 ## [Unreleased]

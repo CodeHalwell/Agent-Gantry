@@ -20,6 +20,10 @@ import os
 # Disable CrewAI / OpenTelemetry network calls before any framework import.
 os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
+# CrewAI's Agent constructor requires a model key to exist (no call is made —
+# these tests only inspect the agent's tools). Provide a dummy so construction
+# succeeds in CI where no real key is set.
+os.environ.setdefault("OPENAI_API_KEY", "sk-test-not-used")
 
 import pytest
 
