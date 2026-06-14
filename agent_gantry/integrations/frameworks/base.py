@@ -96,17 +96,14 @@ class ToolSpec:
     def invoke(self, *args: Any, **kwargs: Any) -> Any:
         """Synchronous wrapper around :meth:`ainvoke`.
 
-        Safe to call from synchronous framework code. Raises ``RuntimeError`` if
-        called from inside a running event loop (use :meth:`ainvoke` there).
+        Safe to call from synchronous framework code (CrewAI ``_run``,
+        Smolagents ``forward``, Haystack/Agno function entrypoints, …) whether
+        or not an event loop is already running on the current thread. When a
+        loop is running, the coroutine is executed on a dedicated worker thread
+        and this call blocks for the result — mirroring how those frameworks
+        invoke a synchronous tool. Prefer :meth:`ainvoke` directly in async code.
         """
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(self.ainvoke(*args, **kwargs))
-        raise RuntimeError(
-            f"{self.name}.invoke() called from a running event loop; use "
-            f"`await {self.name}.ainvoke(...)` instead."
-        )
+        return _run_coroutine_sync(self.ainvoke(*args, **kwargs))
 
     def callable_for_signature(self) -> Callable[..., Any]:
         """Return a plain async function that calls this tool by keyword.
@@ -122,6 +119,27 @@ class ToolSpec:
         _fn.__name__ = self.name
         _fn.__doc__ = self.description
         return _fn
+
+
+def _run_coroutine_sync(coro: Any) -> Any:
+    """Run an awaitable to completion from synchronous code, loop-or-not.
+
+    If no event loop runs on the current thread, use :func:`asyncio.run`.
+    Otherwise (we're inside a running loop — e.g. a framework invoked our sync
+    tool from within its async agent loop), run the coroutine on a dedicated
+    worker thread with its own loop and block for the result. This avoids the
+    "coroutine attached to a different loop" / "loop already running" errors
+    that a naive ``asyncio.run`` would raise.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(lambda: asyncio.run(coro)).result()
 
 
 def _coerce_arguments(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:

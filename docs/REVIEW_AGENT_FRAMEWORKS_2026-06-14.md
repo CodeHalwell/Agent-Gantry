@@ -197,11 +197,34 @@ sub-task — not by a fixed pre-bound tool list. The enabling machinery:
 |---|---|
 | Microsoft Agent Framework | ✅ Production-grade, multi-turn native |
 | Generic LLM SDKs (OpenAI/Anthropic/Gemini/…) | ✅ Solid via decorator + dialect transcoding |
-| LangChain/LlamaIndex/CrewAI/etc. | ⚠️ Schema-only; needs native tool-object adapters |
-| OpenAI Agents SDK / Pydantic AI / Smolagents / Haystack / Agno | ❌ Not yet supported |
+| LangChain / LangGraph / LlamaIndex / CrewAI | ✅ Native tool-object adapters (`integrations/frameworks/`) |
+| OpenAI Agents SDK / Pydantic AI / Smolagents / Haystack / Agno / AutoGen | ✅ Native adapters added |
 | Top-3-of-50 selection quality | ✅ 100% hit@3, 0.94 MRR (MiniLM) — once threshold trap avoided |
-| Multi-turn pivot in one run | ✅ Demonstrated, 7/7 distinct tools |
+| Multi-turn pivot in one run | ✅ Demonstrated, 7/7 distinct tools; `ToolRefresher` for any framework |
 | In-memory search performance | ✅ 36–59× faster (vectorized) |
-| `score_threshold=0.5` default | ❌ Silently drops correct tools — fix recommended |
-| `**kwargs` tools | ❌ Become un-executable — fix recommended |
-| Dynamic MCP server selection | ⚠️ Preview/placeholder |
+| `score_threshold=0.5` default | ✅ Fixed — convenience APIs default to 0.0 |
+| `**kwargs` tools | ✅ Fixed — `*args`/`**kwargs` no longer emitted as required |
+| Dynamic MCP server selection | ✅ Functional (facade registers discovered tools); README note was stale |
+
+## Gap-closure addendum (implemented)
+
+All gaps from the review above were implemented on this branch:
+
+- **P0 correctness:** `*args`/`**kwargs` are no longer emitted as required schema
+  properties (`schema/introspection.py`); `**kwargs` now sets
+  `additionalProperties: true`. `retrieve_tools` / `search_and_execute` /
+  `fetch_framework_tools` default `score_threshold=0.0`.
+- **P1 native adapters:** new `agent_gantry/integrations/frameworks/` subpackage
+  with a shared `GantryToolset` + `ToolSpec` base and one module per framework —
+  LangChain, LangGraph, LlamaIndex, CrewAI, Pydantic AI, OpenAI Agents SDK,
+  Smolagents, Haystack, Agno, AutoGen. Each exposes `for_<fw>()` /
+  `spec_to_<fw>()`, lazily imports its framework, and routes every invocation
+  through `gantry.execute`. `ToolSpec.invoke()` is safe inside a running event
+  loop (runs on a worker thread), so sync framework callbacks (CrewAI `_run`,
+  Smolagents `forward`, …) work in real async agent loops.
+- **P2 multi-turn everywhere:** `agent_gantry/integrations/refresh.py`
+  (`ToolRefresher`) generalizes per-call re-retrieval to any framework, honoring
+  `tools_already_used` so the agent pivots forward across turns.
+- **Tests:** per-framework adapter tests + a cross-framework conformance matrix
+  (`tests/frameworks/`) and `tests/test_refresh.py`, all using stubbed frameworks
+  so they run without the third-party packages installed.
