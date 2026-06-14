@@ -120,3 +120,12 @@ async def test_pydantic_ai_builds(gantry):
     tools = await F.for_pydantic_ai(gantry, "send an email", limit=1)
     assert tools
     assert tools[0].name == "send_email"
+
+
+async def test_autogen_builds_and_invokes(gantry):
+    """for_autogen returns plain {name, description, callable} entries (no
+    third-party framework needed); verify the callable routes through gantry."""
+    entries = await F.for_autogen(gantry, "send an email to my boss", limit=1)
+    assert entries and entries[0]["name"] == "send_email"
+    result = await entries[0]["callable"](to="boss@x.com")
+    assert "sent:boss@x.com" in str(result)

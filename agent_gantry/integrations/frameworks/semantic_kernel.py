@@ -70,9 +70,18 @@ async def gantry_plugin(
     plugin_name: str = _DEFAULT_PLUGIN,
     **select_kwargs: Any,
 ) -> dict[str, Any]:
-    """Return a ``{function_name: KernelFunction}`` plugin for the query.
+    """Return a ``{function_name: KernelFunction}`` mapping for the query.
 
-    Ready to register with ``kernel.add_plugin(plugin, plugin_name=...)``.
+    To register the functions, wrap them in a ``KernelPlugin`` (passing the dict
+    straight to ``kernel.add_plugin`` registers an *empty* plugin)::
+
+        from semantic_kernel.functions import KernelPlugin
+
+        funcs = await gantry_plugin(gantry, query)
+        kernel.add_plugin(KernelPlugin(name="gantry", functions=list(funcs.values())))
+
+    Or use :func:`~agent_gantry.integrations.frameworks.semantic_kernel_live.refresh_kernel_tools`
+    / :class:`GantryFunctionProvider`, which do this wrapping for you each turn.
     """
     functions = await for_semantic_kernel(
         gantry, query, limit=limit, plugin_name=plugin_name, **select_kwargs

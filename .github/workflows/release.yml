@@ -85,7 +85,9 @@ jobs:
         run: uv python install 3.12
 
       - name: Build distribution
-        run: uv build
+        run: |
+          rm -rf dist  # avoid uploading any stale artifacts to the release
+          uv build
 
       - name: Verify package metadata
         run: uv tool run twine check dist/*
