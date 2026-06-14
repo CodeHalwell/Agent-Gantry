@@ -7,6 +7,10 @@ signature against the declared inputs. This module builds **and invokes** each
 adapter against the *actual* installed package, skipping any framework that
 isn't present (``pytest.importorskip``). In CI (where the ``agent-frameworks``
 extra installs them) this is the guard against silent adapter breakage.
+
+Exception: Pydantic AI is **build-only** here — invoking its ``Tool`` requires
+a live agent run context, so ``test_pydantic_ai_builds`` only asserts the tool
+is constructed correctly.
 """
 
 from __future__ import annotations

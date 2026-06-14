@@ -59,6 +59,7 @@ only when the live provider is actually used.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.semantic_kernel import gantry_plugin
@@ -172,6 +173,9 @@ class GantryFunctionProvider:
         self._plugin_name = plugin_name
         self._limit = limit
         self._score_threshold = score_threshold
+        # Serialise refreshes: the remove-then-add plugin swap is not atomic, so
+        # concurrent refresh() calls on one provider could corrupt plugin state.
+        self._lock = asyncio.Lock()
 
     @property
     def plugin_name(self) -> str:
@@ -198,20 +202,21 @@ class GantryFunctionProvider:
         plugin is still refreshed to an empty set so stale functions clear).
         """
         query = _query_from(query_or_messages)
-        if not query:
-            # No extractable query: clear the plugin rather than selecting on an
-            # empty embedding (which yields arbitrary top-k for some embedders).
-            _set_plugin_functions(self._kernel, self._plugin_name, {})
-            return {}
-        functions = await gantry_plugin(
-            self._gantry,
-            query,
-            limit=self._limit,
-            plugin_name=self._plugin_name,
-            score_threshold=self._score_threshold,
-        )
-        _set_plugin_functions(self._kernel, self._plugin_name, functions)
-        return functions
+        async with self._lock:
+            if not query:
+                # No extractable query: clear the plugin rather than selecting on
+                # an empty embedding (arbitrary top-k for some embedders).
+                _set_plugin_functions(self._kernel, self._plugin_name, {})
+                return {}
+            functions = await gantry_plugin(
+                self._gantry,
+                query,
+                limit=self._limit,
+                plugin_name=self._plugin_name,
+                score_threshold=self._score_threshold,
+            )
+            _set_plugin_functions(self._kernel, self._plugin_name, functions)
+            return functions
 
 
 async def refresh_kernel_tools(

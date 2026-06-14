@@ -71,6 +71,11 @@ def _build_workbench_class() -> type:
         Provides a *dynamic* tool set: :meth:`list_tools` re-runs Gantry
         selection for the current query each call, so the tools an agent sees
         change turn-to-turn as the query (conversation focus) changes.
+
+        Single-consumer: a workbench instance is intended to back one agent's
+        turn-serialised loop. ``list_tools`` replaces the selection wholesale, so
+        sharing one instance across concurrent runs can interleave selections —
+        use a separate workbench per concurrent agent.
         """
 
         def __init__(

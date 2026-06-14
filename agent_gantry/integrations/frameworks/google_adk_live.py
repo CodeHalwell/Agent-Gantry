@@ -126,7 +126,9 @@ def _query_from_callback_context(callback_context: Any) -> str:
     #    a multi-step conversation.
     session = getattr(callback_context, "session", None)
     events = getattr(session, "events", None) or []
-    for event in reversed(list(events)):
+    # Only scan the recent tail: the latest user turn is near the end, and long
+    # conversations would otherwise pay an O(n) scan on every model request.
+    for event in reversed(list(events)[-20:]):
         if getattr(event, "author", None) != "user":
             continue
         text = _content_text(getattr(event, "content", None))
