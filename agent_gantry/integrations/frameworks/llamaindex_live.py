@@ -137,6 +137,10 @@ def _build_retriever_class() -> type:
         async def aretrieve(self, str_or_query_bundle: Any) -> list:
             """Re-select tools for the current step and return ``FunctionTool``s."""
             query = _query_from(str_or_query_bundle)
+            if not (query or "").strip():
+                # No retrieval signal: expose no tools rather than selecting on
+                # an empty embedding (consistent with the other live providers).
+                return []
             specs = await self._toolset.select(
                 query, limit=self._limit, score_threshold=self._score_threshold
             )

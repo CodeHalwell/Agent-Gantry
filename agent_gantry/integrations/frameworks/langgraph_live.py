@@ -116,6 +116,10 @@ async def select_tools_for_state(
     separately from the model callable so it can be unit-tested directly.
     """
     query = _query_from_state(state)
+    if not (query or "").strip():
+        # No retrieval signal this turn: bind no tools rather than selecting on
+        # an empty embedding (consistent with the other live providers).
+        return []
     specs = await GantryToolset(gantry).select(
         query, limit=limit, score_threshold=score_threshold
     )
