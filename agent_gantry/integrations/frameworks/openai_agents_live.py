@@ -108,6 +108,8 @@ def _query_from(query_or_input: Any) -> str:
     messages and run through :func:`~agent_gantry.query.latest_activity`, which
     derives the driving text from the most recent activity message.
     """
+    if query_or_input is None:
+        return ""
     if isinstance(query_or_input, str):
         return query_or_input
     return latest_activity(query_or_input) or ""

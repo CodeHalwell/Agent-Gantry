@@ -95,6 +95,8 @@ def _query_from(query_or_messages: Any) -> str:
     conversation history and run through :func:`latest_activity`, which derives
     the driving text from the most recent user/tool message.
     """
+    if query_or_messages is None:
+        return ""
     if isinstance(query_or_messages, str):
         return query_or_messages
     return latest_activity(query_or_messages) or ""
@@ -190,6 +192,11 @@ class GantryFunctionProvider:
         plugin is still refreshed to an empty set so stale functions clear).
         """
         query = _query_from(query_or_messages)
+        if not query:
+            # No extractable query: clear the plugin rather than selecting on an
+            # empty embedding (which yields arbitrary top-k for some embedders).
+            _set_plugin_functions(self._kernel, self._plugin_name, {})
+            return {}
         functions = await gantry_plugin(
             self._gantry,
             query,

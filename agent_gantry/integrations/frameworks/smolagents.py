@@ -58,14 +58,22 @@ def _forward_signature(parameters: dict[str, Any]) -> inspect.Signature:
     named parameters here while the body still accepts ``**kwargs``.
     """
     params = [inspect.Parameter("self", inspect.Parameter.POSITIONAL_OR_KEYWORD)]
-    properties = parameters.get("properties", {}) or {}
     required = set(parameters.get("required") or [])
-    for argname in properties:
+    # Required params (no default) MUST precede optional ones (default=None),
+    # otherwise inspect.Signature raises ValueError for POSITIONAL_OR_KEYWORD.
+    for argname in _ordered_param_names(parameters):
         default = inspect.Parameter.empty if argname in required else None
         params.append(
             inspect.Parameter(argname, inspect.Parameter.POSITIONAL_OR_KEYWORD, default=default)
         )
     return inspect.Signature(params)
+
+
+def _ordered_param_names(parameters: dict[str, Any]) -> list[str]:
+    """Property names with required params first (stable within each group)."""
+    properties = parameters.get("properties", {}) or {}
+    required = set(parameters.get("required") or [])
+    return sorted(properties, key=lambda name: name not in required)
 
 
 def spec_to_smolagents(spec: ToolSpec) -> Any:
@@ -89,6 +97,10 @@ def spec_to_smolagents(spec: ToolSpec) -> Any:
         ) from exc
 
     def forward(self: Any, *args: Any, **kwargs: Any) -> Any:
+        # Map any positional args to their parameter names (same order the
+        # advertised signature uses) so positional invocation isn't dropped.
+        for name, value in zip(_ordered_param_names(spec.parameters), args):
+            kwargs.setdefault(name, value)
         return spec.invoke(**kwargs)
 
     # Advertise the real parameter names so smolagents' forward/inputs

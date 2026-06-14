@@ -89,12 +89,22 @@ def _import_adk() -> Any:
 
 
 def _content_text(content: Any) -> str:
-    """Extract the concatenated text of a ``google.genai.types.Content``."""
+    """Extract the concatenated text of a ``google.genai.types.Content``.
+
+    Tolerates plain strings (and string parts) as well as the structured
+    ``Content`` / ``Part`` objects, so simplified test payloads don't raise.
+    """
     if content is None:
         return ""
+    if isinstance(content, str):
+        return content.strip()
     parts = getattr(content, "parts", None) or []
     chunks: list[str] = []
     for part in parts:
+        if isinstance(part, str):
+            if part.strip():
+                chunks.append(part)
+            continue
         text = getattr(part, "text", None)
         if text:
             chunks.append(text)
@@ -117,7 +127,7 @@ def _query_from_callback_context(callback_context: Any) -> str:
     session = getattr(callback_context, "session", None)
     events = getattr(session, "events", None) or []
     for event in reversed(list(events)):
-        if getattr(event, "author", None) not in ("user", None):
+        if getattr(event, "author", None) != "user":
             continue
         text = _content_text(getattr(event, "content", None))
         if text:

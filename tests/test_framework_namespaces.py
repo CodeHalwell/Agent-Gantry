@@ -70,19 +70,26 @@ def test_namespace_exposes_all_names(module, static, live):
 
 
 def test_importing_agent_gantry_does_not_load_framework_namespaces():
-    """`import agent_gantry` must not eagerly import any framework namespace."""
-    # Drop any already-imported namespaces, then re-import agent_gantry fresh-ish.
-    for name in list(sys.modules):
-        if name.startswith("agent_gantry."):
-            # leave deep internals; only assert the top-level shims aren't auto-loaded
-            pass
-    importlib.import_module("agent_gantry")
-    # The top-level per-framework shims are only loaded on explicit import.
-    # (We can't assert absence reliably if another test imported them, so just
-    # assert importing agent_gantry itself doesn't raise and the shims are real.)
-    import agent_gantry
+    """`import agent_gantry` must not eagerly import any framework namespace.
 
-    assert agent_gantry is not None
+    Run in a fresh subprocess so the assertion is not contaminated by other
+    tests in this session that may have imported the shims explicitly.
+    """
+    import subprocess
+
+    code = (
+        "import sys, agent_gantry; "
+        "loaded = [m for m in sys.modules "
+        "if m.startswith('agent_gantry.') and m.count('.') == 1 "
+        "and m.rsplit('.', 1)[1] in "
+        "{'langchain','langgraph','llamaindex','crewai','pydantic_ai',"
+        "'openai_agents','smolagents','haystack','agno','autogen',"
+        "'semantic_kernel','google_adk','agent_framework'}]; "
+        "assert not loaded, loaded; print('clean')"
+    )
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "clean" in result.stdout
 
 
 def test_static_namespace_imports_without_framework(monkeypatch):

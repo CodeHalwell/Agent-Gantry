@@ -17,8 +17,12 @@ _ROOT = Path(__file__).resolve().parent.parent
 
 def _pyproject_version() -> str:
     text = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    match = re.search(r'(?m)^version = "([^"]+)"', text)
-    assert match, "could not find version in pyproject.toml"
+    # Anchor to the [project] table so we read the package version, not some
+    # other `version = "..."` line (e.g. inside a tool config or dependency).
+    project = re.search(r"(?ms)^\[project\]\s*\n(.*?)(?=^\[)", text)
+    assert project, "could not find [project] table in pyproject.toml"
+    match = re.search(r'(?m)^version = "([^"]+)"', project.group(1))
+    assert match, "could not find version in [project] table"
     return match.group(1)
 
 
