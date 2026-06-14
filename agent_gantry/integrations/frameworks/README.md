@@ -77,6 +77,36 @@ To force one behaviour, pass `query_generator=` explicitly — `last_user_text`
 `fallback_chain(...)`. See `examples/frameworks/multi_turn_refresher_example.py`
 for both modes side by side.
 
+## Deep per-turn "live" providers (as embedded as Microsoft Agent Framework)
+
+The `for_<fw>` helpers above are *static*: select once, hand over a fixed tool
+list. The **live** providers go deeper — they hook each framework's own
+per-turn lifecycle so Gantry re-selects tools on **every turn**, exactly like
+`GantryContextProvider` does for Microsoft Agent Framework. Import them lazily
+from `agent_gantry.integrations.frameworks` (importing `agent_gantry` never
+loads these — the framework is only required when you use its provider).
+
+| Framework | Live entry point | Native hook |
+|---|---|---|
+| LlamaIndex | `gantry_tool_retriever` / `gantry_function_agent` | `FunctionAgent(tool_retriever=…)` (`ObjectRetriever`) |
+| Pydantic AI | `gantry_toolset` | `AbstractToolset.get_tools()` |
+| AutoGen | `gantry_workbench` | `autogen_core.tools.Workbench.list_tools()` |
+| Google ADK | `gantry_before_model_callback` / `gantry_adk_agent` | `Agent(before_model_callback=…)` |
+| LangGraph | `create_gantry_react_agent` | dynamic `model` callable (re-binds tools per turn) |
+| Semantic Kernel | `GantryFunctionProvider` / `refresh_kernel_tools` | per-invocation plugin refresh |
+| OpenAI Agents SDK | `run_with_gantry` / `GantryAgentSession` / `gantry_run_hooks` | `RunHooks.on_llm_start` + per-run refresh |
+
+```python
+from agent_gantry.integrations.frameworks import gantry_function_agent
+agent = gantry_function_agent(gantry, llm)   # LlamaIndex agent that re-selects tools each step
+```
+
+Frameworks whose tool list is **fixed at agent construction** (CrewAI, Agno,
+Haystack, Smolagents) can't re-advertise tools mid-run; their "live" wrappers
+(`GantryLiveCrewAgent`, `GantryLiveAgnoAgent`, `gantry_haystack_tools`,
+`GantryLiveSmolAgent`) re-select and rebuild the agent on each top-level call —
+the deepest those frameworks allow.
+
 ## Shared base
 
 `base.py` provides `GantryToolset` (selection) and `ToolSpec` (a

@@ -102,4 +102,64 @@ __all__ = [
     # google adk
     "for_google_adk",
     "spec_to_google_adk",
+    # --- deep per-turn "live" providers (lazy; see _LIVE_EXPORTS) ---
+    "gantry_tool_retriever",
+    "gantry_function_agent",
+    "gantry_toolset",
+    "gantry_workbench",
+    "gantry_before_model_callback",
+    "gantry_adk_agent",
+    "create_gantry_react_agent",
+    "select_tools_for_state",
+    "GantryFunctionProvider",
+    "refresh_kernel_tools",
+    "gantry_run_hooks",
+    "run_with_gantry",
+    "GantryAgentSession",
+    "refresh_agent_tools",
+    "gantry_crew_tools",
+    "GantryLiveCrewAgent",
+    "GantryLiveAgnoAgent",
+    "gantry_haystack_tools",
+    "GantryLiveHaystackToolInvoker",
+    "GantryLiveSmolAgent",
 ]
+
+# Deep per-turn ("live") providers re-select tools on every turn via each
+# framework's native dynamic-tool hook. Their modules build framework subclasses
+# at import time, so they are loaded LAZILY here — importing `agent_gantry` (or
+# this package) never pulls in LlamaIndex / Pydantic AI / AutoGen / etc. Access
+# triggers the import (and a clear ImportError if the framework is missing).
+_LIVE_EXPORTS: dict[str, str] = {
+    "gantry_tool_retriever": "llamaindex_live",
+    "gantry_function_agent": "llamaindex_live",
+    "gantry_toolset": "pydantic_ai_live",
+    "gantry_workbench": "autogen_live",
+    "gantry_before_model_callback": "google_adk_live",
+    "gantry_adk_agent": "google_adk_live",
+    "create_gantry_react_agent": "langgraph_live",
+    "select_tools_for_state": "langgraph_live",
+    "GantryFunctionProvider": "semantic_kernel_live",
+    "refresh_kernel_tools": "semantic_kernel_live",
+    "gantry_run_hooks": "openai_agents_live",
+    "run_with_gantry": "openai_agents_live",
+    "GantryAgentSession": "openai_agents_live",
+    "refresh_agent_tools": "openai_agents_live",
+    "gantry_crew_tools": "live_wrappers",
+    "GantryLiveCrewAgent": "live_wrappers",
+    "GantryLiveAgnoAgent": "live_wrappers",
+    "gantry_haystack_tools": "live_wrappers",
+    "GantryLiveHaystackToolInvoker": "live_wrappers",
+    "GantryLiveSmolAgent": "live_wrappers",
+}
+
+
+def __getattr__(name: str):  # noqa: D401 - module-level lazy attribute access
+    """Lazily resolve deep per-turn provider symbols from their submodules."""
+    module = _LIVE_EXPORTS.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib
+
+    mod = importlib.import_module(f"{__name__}.{module}")
+    return getattr(mod, name)
