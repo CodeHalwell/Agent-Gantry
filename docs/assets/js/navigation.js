@@ -116,7 +116,13 @@
           history.pushState(null, "", href);
 
           // Update focus for accessibility
-          target.setAttribute("tabindex", "-1");
+          if (!target.hasAttribute("tabindex")) {
+            target.setAttribute("tabindex", "-1");
+            target.addEventListener("blur", function onBlur() {
+              target.removeAttribute("tabindex");
+              target.removeEventListener("blur", onBlur);
+            });
+          }
           target.focus({ preventScroll: true });
         }
       });

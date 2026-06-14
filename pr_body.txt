@@ -1,5 +1,4 @@
-🚨 Severity: HIGH
-💡 Vulnerability: SSRF and local file inclusion bypass. The URL extraction regex in `SecurityPolicy._extract_domains` was case-sensitive. Attackers could supply mixed-case schemes (e.g., `FiLe:///etc/passwd` or `hTtP://evil.com`) to bypass the regex extraction completely or evade explicit scheme deny-lists because the extracted scheme retained the mixed casing. Similarly, data URIs could bypass the `re.search` check by using mixed cases.
-🎯 Impact: Attackers could bypass zero-trust security controls, leading to Server-Side Request Forgery (SSRF) and Local File Inclusion (LFI).
-🔧 Fix: Added the `re.IGNORECASE` flag to `re.finditer` for URL extraction and `re.search` for data URI detection. Added `.lower()` normalization to `parsed.scheme` and `value.lower()` before equality or inclusion checks.
-✅ Verification: Tested via python scripts and ran the existing test suite successfully.
+💡 What: Manually shift programmatic focus to target elements on smooth scroll (e.g., skip to main content).
+🎯 Why: Allows keyboard users to actually skip navigation, as native focus movement breaks with e.preventDefault() during smooth scrolling.
+📸 Before/After: N/A
+♿ Accessibility: Resolves keyboard trap where users had to tab through navigation again after activating skip links.

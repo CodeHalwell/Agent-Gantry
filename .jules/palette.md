@@ -96,3 +96,7 @@
 ## 2026-05-32 - [Skip to Content Focus Targets]
 **Learning:** Adding a "Skip to main content" link at the top of the document is a best practice for accessibility, but it only partially works if the target element (usually `<main id="main-content">`) is not programmatically focusable. When clicked or activated via keyboard, the browser scrolls to the target, but keyboard focus stays on the skip link itself, causing the user to start tabbing through the very navigation they were trying to bypass.
 **Action:** When creating skip links, always ensure the target element has `tabindex="-1"`. This allows the browser to shift programmatic focus to the content area so subsequent `Tab` keystrokes continue from the main content.
+
+## 2026-06-14 - [Keyboard Focus Management with Programmatic Scrolling]
+**Learning:** Intercepting anchor clicks (like "Skip to main content") with `e.preventDefault()` to apply programmatic smooth scrolling breaks native focus movement. If focus remains on the clicked link, subsequent `Tab` presses will not start from the target element, rendering the skip link ineffective for keyboard users and creating a keyboard trap.
+**Action:** When implementing programmatic smooth scrolling for in-page anchors, always manually move focus to the target element (`target.focus({ preventScroll: true })`). Ensure the element is focusable by temporarily setting `tabindex="-1"` (if it doesn't already have one) and removing it on a `blur` event.
