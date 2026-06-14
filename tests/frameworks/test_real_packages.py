@@ -11,6 +11,7 @@ extra installs them) this is the guard against silent adapter breakage.
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 
@@ -104,7 +105,7 @@ async def test_real_adapter_builds_and_invokes(name, module, adapter, invoke, ga
     assert tools, f"{name}: adapter returned no tools"
 
     result = invoke(tools[0])
-    if hasattr(result, "__await__"):
+    if inspect.isawaitable(result):
         result = await result
     assert "sent:boss@x.com" in str(result), f"{name}: invocation did not route through gantry"
 

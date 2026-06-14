@@ -175,6 +175,8 @@ class ToolSpec:
             if name in required:
                 default = inspect.Parameter.empty
             elif union_optional:
+                # `T | None` — valid at runtime on the project's floor (3.10+,
+                # enforced by ruff UP) and the form SK uses to infer optionality.
                 annotation = annotation | None
                 default = None
             elif type_matched_defaults:
