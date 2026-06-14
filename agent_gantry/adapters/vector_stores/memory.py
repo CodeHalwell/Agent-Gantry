@@ -7,6 +7,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
+import numpy as np
+
 from agent_gantry.schema.tool import ToolDefinition
 
 
@@ -29,6 +31,12 @@ class InMemoryVectorStore:
         self._fingerprints: dict[str, str] = {}
         self._metadata: dict[str, str] = {}
         self._dimension = dimension
+        # Vectorized search cache: a (n, d) L2-normalized matrix plus the row
+        # ordering. Rebuilt lazily on the next search after any mutation, so a
+        # batch of add/delete calls only pays for one rebuild. ``None`` means
+        # "stale — rebuild before use".
+        self._matrix: np.ndarray | None = None
+        self._matrix_keys: list[str] = []
 
     @property
     def dimension(self) -> int:
@@ -65,6 +73,8 @@ class InMemoryVectorStore:
                 # Store fingerprint for change detection
                 self._fingerprints[key] = tool.content_hash
                 count += 1
+        if count:
+            self._matrix = None  # invalidate vectorized cache
         return count
 
     async def search(
@@ -75,17 +85,34 @@ class InMemoryVectorStore:
         score_threshold: float | None = None,
         include_embeddings: bool = False,
     ) -> list[tuple[ToolDefinition, float]] | list[tuple[ToolDefinition, float, list[float]]]:
-        """Search for similar tools using cosine similarity."""
-        results: list[tuple[ToolDefinition, float, list[float]]] = []
+        """Search for similar tools using cosine similarity.
 
+        Cosine scores are computed in a single vectorized matmul against a
+        cached, L2-normalized embedding matrix (``query · M.T``) rather than a
+        per-tool Python loop. For a registry of *n* tools this turns the hot
+        path from ``n`` pure-Python dot products into one NumPy BLAS call,
+        which dominates retrieval latency once *n* grows past a few dozen.
+        """
         # Extract tag filters for faster set operations
         required_tags: set[str] = set()
         if filters and "tags" in filters:
             required_tags = set(filters["tags"])
 
-        for key, tool in self._tools.items():
-            embedding = self._embeddings.get(key)
-            if embedding is None:
+        self._ensure_matrix()
+        if self._matrix is None or self._matrix.shape[0] == 0:
+            return []
+
+        # Normalize the query once; stored rows are already normalized.
+        q = np.asarray(query_vector, dtype=np.float32)
+        q_norm = float(np.linalg.norm(q))
+        if q_norm == 0.0:
+            return []
+        scores = self._matrix @ (q / q_norm)  # (n,) cosine similarities
+
+        results: list[tuple[ToolDefinition, float, str]] = []
+        for idx, key in enumerate(self._matrix_keys):
+            tool = self._tools.get(key)
+            if tool is None:
                 continue
 
             # Apply filters
@@ -97,24 +124,35 @@ class InMemoryVectorStore:
                             continue
                     elif tool.namespace != ns_filter:
                         continue
-                if required_tags:
-                    if required_tags.isdisjoint(tool.tags):
-                        continue
+                if required_tags and required_tags.isdisjoint(tool.tags):
+                    continue
 
-            # Calculate cosine similarity
-            score = self._cosine_similarity(query_vector, embedding)
-
+            score = float(scores[idx])
             if score_threshold is None or score >= score_threshold:
-                results.append((tool, score, embedding))
+                results.append((tool, score, key))
 
         # Sort by score descending
         results.sort(key=lambda x: x[1], reverse=True)
 
-        # Return with or without embeddings based on parameter
         limited = results[:limit]
         if include_embeddings:
-            return limited
+            return [(tool, score, self._embeddings[key]) for tool, score, key in limited]
         return [(tool, score) for tool, score, _ in limited]
+
+    def _ensure_matrix(self) -> None:
+        """(Re)build the cached normalized embedding matrix if stale."""
+        if self._matrix is not None:
+            return
+        keys = [k for k in self._tools if self._embeddings.get(k) is not None]
+        if not keys:
+            self._matrix = np.zeros((0, 0), dtype=np.float32)
+            self._matrix_keys = []
+            return
+        mat = np.asarray([self._embeddings[k] for k in keys], dtype=np.float32)
+        norms = np.linalg.norm(mat, axis=1, keepdims=True)
+        norms[norms == 0.0] = 1.0  # avoid divide-by-zero for zero vectors
+        self._matrix = mat / norms
+        self._matrix_keys = keys
 
     async def get_by_name(self, name: str, namespace: str = "default") -> ToolDefinition | None:
         """Get a tool by name."""
@@ -128,6 +166,7 @@ class InMemoryVectorStore:
             del self._tools[key]
             self._embeddings.pop(key, None)
             self._fingerprints.pop(key, None)
+            self._matrix = None  # invalidate vectorized cache
             return True
         return False
 
