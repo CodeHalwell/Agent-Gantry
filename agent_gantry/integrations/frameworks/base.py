@@ -152,23 +152,28 @@ class ToolSpec:
         """Build an :class:`inspect.Signature` from the JSON-Schema parameters.
 
         Each property becomes a keyword-only parameter; required properties have
-        no default, optional ones default to ``None``. JSON-Schema types are
-        mapped to Python annotations so framework introspection produces a
-        faithful tool schema. When ``union_optional`` is set, optional params are
-        annotated ``T | None`` (needed by frameworks like Semantic Kernel that
-        infer required-ness from the annotation rather than the default).
+        no default. Optional properties default to a **type-matched** empty value
+        (``""`` / ``0`` / ``False`` / ``[]`` / ``{}``) rather than ``None`` —
+        Google ADK's automatic function calling rejects both union types and a
+        ``None`` default whose type doesn't match the annotation, so a
+        type-matched default keeps the param optional while satisfying it. When
+        ``union_optional`` is set instead, optional params are annotated
+        ``T | None`` with a ``None`` default (needed by Semantic Kernel, which
+        infers required-ness from the annotation rather than the default).
         """
         properties = self.parameters.get("properties") or {}
         required = set(self.parameters.get("required") or [])
         params: list[inspect.Parameter] = []
         for name, prop in properties.items():
-            annotation = _json_type_to_python(prop.get("type") if isinstance(prop, dict) else None)
+            json_type = prop.get("type") if isinstance(prop, dict) else None
+            annotation = _json_type_to_python(json_type)
             if name in required:
                 default = inspect.Parameter.empty
-            else:
+            elif union_optional:
+                annotation = annotation | None
                 default = None
-                if union_optional:
-                    annotation = annotation | None
+            else:
+                default = _typed_default(json_type)
             params.append(
                 inspect.Parameter(
                     name,
@@ -188,6 +193,27 @@ _JSON_TO_PYTHON: dict[str, Any] = {
     "array": list,
     "object": dict,
 }
+
+# Scalar "empty" default per JSON-Schema type, used to mark an optional
+# parameter without a None default (which strict validators like Google ADK
+# reject as incompatible with a non-Optional annotation).
+_SCALAR_DEFAULTS: dict[str, Any] = {
+    "string": "",
+    "integer": 0,
+    "number": 0.0,
+    "boolean": False,
+}
+
+
+def _typed_default(json_type: Any) -> Any:
+    """Return a fresh, type-matched empty default for an optional parameter."""
+    if isinstance(json_type, list):  # e.g. ["string", "null"]
+        json_type = next((t for t in json_type if t != "null"), None)
+    if json_type == "array":
+        return []
+    if json_type == "object":
+        return {}
+    return _SCALAR_DEFAULTS.get(json_type, "")
 
 
 def _json_type_to_python(json_type: Any) -> Any:
