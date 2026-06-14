@@ -211,7 +211,7 @@ class GantryFunctionProvider:
 async def refresh_kernel_tools(
     gantry: AgentGantry,
     kernel: Any,
-    query: str,
+    query: Any,
     *,
     plugin_name: str = _DEFAULT_PLUGIN,
     limit: int = 5,

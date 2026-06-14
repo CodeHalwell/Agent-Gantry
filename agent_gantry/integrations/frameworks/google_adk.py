@@ -37,7 +37,9 @@ def spec_to_google_adk(spec: ToolSpec) -> Any:
             "Install it with `pip install google-adk`."
         ) from exc
 
-    return FunctionTool(func=spec.callable_for_signature())
+    # ADK's automatic function calling rejects `T | None` and `None`-typed
+    # defaults, so opt into type-matched empty defaults for optional params.
+    return FunctionTool(func=spec.callable_for_signature(type_matched_defaults=True))
 
 
 async def for_google_adk(

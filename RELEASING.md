@@ -12,8 +12,9 @@ no manual `uv publish` step. The workflow is `.github/workflows/release.yml`.
 2. Add a `CHANGELOG.md` entry for the new version.
 3. Open a PR and merge it to `main`.
 4. On the push to `main`, `release.yml`:
-   - checks the version and **only proceeds if the tag `v<version>` doesn't
-     already exist** (so ordinary merges that don't bump the version are a no-op);
+   - checks the version and **only proceeds if the GitHub Release `v<version>`
+     doesn't already exist** (so ordinary merges that don't bump the version are
+     a no-op, and a re-run after a partial failure can complete the release);
    - builds the sdist + wheel and runs `twine check`;
    - smoke-installs the wheel and imports it;
    - **publishes to PyPI** via trusted publishing (`skip-existing` keeps re-runs safe);
@@ -35,6 +36,13 @@ Trusted publishing (no long-lived tokens) must be configured once:
    by the release job. Leave it without required reviewers for fully hands-off
    releases, or add required reviewers if you want a manual approval gate before
    each publish.
+3. **GitHub → Settings → Branches → protect `main`**: require the CI status
+   checks (`test`, `lint`, `Framework adapter smoke tests`, `Verify package
+   builds`) to pass before merging. The release runs on push to `main` and is
+   independent of the CI workflow, so branch protection is what guarantees a
+   commit reaching `main` has already passed CI before it can be published.
+   (`release.yml` still builds, `twine check`s, and smoke-installs the wheel
+   before publishing as a final safety net.)
 
 > The existing `publish.yml` (manual `workflow_dispatch` to TestPyPI/PyPI) is
 > retained for ad-hoc/test publishes and is unaffected. If you prefer API tokens

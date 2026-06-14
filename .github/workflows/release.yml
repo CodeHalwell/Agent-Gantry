@@ -41,7 +41,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          version=$(grep -m1 -E '^version = ' pyproject.toml | sed -E 's/version = "(.*)"/\1/')
+          # Read the version from the [project] table specifically (not the
+          # first stray `version = "..."` line), matching test_version_consistency.
+          version=$(python3 -c "import re,pathlib;t=pathlib.Path('pyproject.toml').read_text();s=re.search(r'(?ms)^\[project\]\s*\n(.*?)(?=^\[)',t).group(1);print(re.search(r'(?m)^version = \"([^\"]+)\"',s).group(1))")
           init=$(grep -m1 -E '^__version__' agent_gantry/__init__.py | sed -E 's/.*"([^"]+)".*/\1/')
           if [ "$version" != "$init" ]; then
             echo "::error::pyproject version ($version) does not match agent_gantry/__init__.py ($init)"

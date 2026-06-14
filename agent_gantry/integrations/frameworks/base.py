@@ -118,7 +118,9 @@ class ToolSpec:
         """
         return _run_coroutine_sync(self.ainvoke(*args, **kwargs))
 
-    def callable_for_signature(self, *, union_optional: bool = False) -> Callable[..., Any]:
+    def callable_for_signature(
+        self, *, union_optional: bool = False, type_matched_defaults: bool = False
+    ) -> Callable[..., Any]:
         """Return a plain async function that calls this tool by keyword.
 
         Frameworks that build their own tool object from a function (Smolagents,
@@ -129,10 +131,8 @@ class ToolSpec:
         parameters instead of a bare ``**kwargs`` (which would surface as a
         no-argument tool).
 
-        ``union_optional`` annotates optional params as ``T | None``. Most
-        frameworks accept either form, but Google ADK's automatic function
-        calling rejects union types, so it defaults to off; Semantic Kernel,
-        which derives "required" from annotation optionality, opts in.
+        ``union_optional`` (Semantic Kernel) and ``type_matched_defaults``
+        (Google ADK) are opt-in signature tweaks — see :meth:`python_signature`.
         """
 
         async def _fn(**kwargs: Any) -> Any:
@@ -140,7 +140,9 @@ class ToolSpec:
 
         _fn.__name__ = self.name
         _fn.__doc__ = self.description
-        _fn.__signature__ = self.python_signature(union_optional=union_optional)  # type: ignore[attr-defined]
+        _fn.__signature__ = self.python_signature(  # type: ignore[attr-defined]
+            union_optional=union_optional, type_matched_defaults=type_matched_defaults
+        )
         _fn.__annotations__ = {
             p.name: p.annotation
             for p in _fn.__signature__.parameters.values()
@@ -148,18 +150,21 @@ class ToolSpec:
         }
         return _fn
 
-    def python_signature(self, *, union_optional: bool = False) -> inspect.Signature:
+    def python_signature(
+        self, *, union_optional: bool = False, type_matched_defaults: bool = False
+    ) -> inspect.Signature:
         """Build an :class:`inspect.Signature` from the JSON-Schema parameters.
 
         Each property becomes a keyword-only parameter; required properties have
-        no default. Optional properties default to a **type-matched** empty value
-        (``""`` / ``0`` / ``False`` / ``[]`` / ``{}``) rather than ``None`` —
-        Google ADK's automatic function calling rejects both union types and a
-        ``None`` default whose type doesn't match the annotation, so a
-        type-matched default keeps the param optional while satisfying it. When
-        ``union_optional`` is set instead, optional params are annotated
-        ``T | None`` with a ``None`` default (needed by Semantic Kernel, which
-        infers required-ness from the annotation rather than the default).
+        no default. By default optional properties default to ``None``. Two
+        opt-in modes adapt the signature for stricter frameworks:
+
+        - ``union_optional``: annotate optional params ``T | None`` (Semantic
+          Kernel infers required-ness from the annotation, not the default).
+        - ``type_matched_defaults``: default optional params to a type-matched
+          empty value (``""`` / ``0`` / ``False`` / ``[]`` / ``{}``) instead of
+          ``None`` (Google ADK's automatic function calling rejects both union
+          types and a ``None`` default whose type mismatches the annotation).
         """
         properties = self.parameters.get("properties") or {}
         required = set(self.parameters.get("required") or [])
@@ -172,8 +177,10 @@ class ToolSpec:
             elif union_optional:
                 annotation = annotation | None
                 default = None
-            else:
+            elif type_matched_defaults:
                 default = _typed_default(json_type)
+            else:
+                default = None
             params.append(
                 inspect.Parameter(
                     name,
