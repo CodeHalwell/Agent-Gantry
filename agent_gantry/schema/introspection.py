@@ -51,10 +51,23 @@ def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
 
     properties: dict[str, Any] = {}
     required: list[str] = []
+    allow_additional = False
 
     for param_name, param in sig.parameters.items():
         # Skip self and cls parameters
         if param_name in ("self", "cls"):
+            continue
+
+        # *args / **kwargs are not named JSON-Schema properties. Emitting them
+        # as properties (with no default, hence "required") makes the tool
+        # impossible to call with a normal argument dict — e.g. a bare
+        # ``def f(**kwargs)`` would reject ``execute(arguments={})`` with
+        # "Missing required parameter: kwargs". Skip them instead; a
+        # ``**kwargs`` simply means extra keys are allowed.
+        if param.kind is inspect.Parameter.VAR_KEYWORD:
+            allow_additional = True
+            continue
+        if param.kind is inspect.Parameter.VAR_POSITIONAL:
             continue
 
         param_type = type_hints.get(param_name, str)
@@ -65,11 +78,14 @@ def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
         if param.default is inspect.Parameter.empty:
             required.append(param_name)
 
-    return {
+    schema: dict[str, Any] = {
         "type": "object",
         "properties": properties,
         "required": required,
     }
+    if allow_additional:
+        schema["additionalProperties"] = True
+    return schema
 
 
 def _type_to_json_schema(param_type: Any) -> dict[str, Any]:
