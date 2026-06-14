@@ -547,3 +547,61 @@ async def test_cached_embedder_persists_across_instances(tmp_path):
     assert v3 == [v1[0]]
     assert second.hits == 1 and second.misses == 0
     second.close()
+
+
+# ---------------------------------------------------------------------------
+# latest_activity: recency-aware generator that serves both autonomous and
+# conversational agents (the ToolRefresher default).
+# ---------------------------------------------------------------------------
+
+
+def test_latest_activity_prefers_newest_user_message():
+    """Conversational: the most recent user message drives the query."""
+    from agent_gantry.query import latest_activity
+
+    messages = [
+        {"role": "user", "content": "what's the weather?"},
+        {"role": "assistant", "content": "calling get_weather"},
+        {"role": "tool", "name": "get_weather", "content": "sunny 21C"},
+        {"role": "user", "content": "now send an email to my boss"},
+    ]
+    assert latest_activity(messages) == "now send an email to my boss"
+
+
+def test_latest_activity_uses_tool_result_when_it_is_newest():
+    """Autonomous: with no newer user message, the latest tool result drives it."""
+    from agent_gantry.query import latest_activity
+
+    messages = [
+        {"role": "user", "content": "build a model from the data"},
+        {"role": "assistant", "content": "calling clean_dataset"},
+        {"role": "tool", "name": "clean_dataset", "content": "dataset ready to train a model"},
+    ]
+    # Returns the tool result content (not the older user message).
+    assert latest_activity(messages) == "dataset ready to train a model"
+
+
+def test_latest_activity_skips_empty_assistant_tool_call_stub():
+    """An empty assistant tool-call stub must not blank out the query."""
+    from agent_gantry.query import latest_activity
+
+    messages = [
+        {"role": "user", "content": "summarize this article"},
+        {"role": "assistant", "content": ""},  # tool-call stub, no text
+    ]
+    assert latest_activity(messages) == "summarize this article"
+
+
+def test_latest_activity_truncates_long_tool_result():
+    from agent_gantry.query import latest_activity
+
+    long_result = "x" * 2000
+    messages = [{"role": "tool", "name": "t", "content": long_result}]
+    assert len(latest_activity(messages, max_chars=100)) == 100
+
+
+def test_latest_activity_empty_history():
+    from agent_gantry.query import latest_activity
+
+    assert latest_activity([]) == ""
+    assert latest_activity(None) == ""

@@ -167,6 +167,54 @@ def last_tool_result(
     return ""
 
 
+def latest_activity(
+    messages: Iterable[Any] | None,
+    *,
+    max_chars: int = 500,
+) -> str:
+    """Return text from the single most recent *activity* message.
+
+    This is the recency-aware generator: it drives retrieval from whatever just
+    happened, regardless of role — so it serves **both** modes of agent
+    operation without a fixed precedence:
+
+    - **Conversational agents.** When the user has just spoken, the newest
+      message is their request, so retrieval follows the new sub-task. (User
+      pivots → tools pivot.)
+    - **Autonomous agents / tool pipelines.** When the agent is chaining tools
+      with no fresh user input, the newest message is the last tool's result,
+      so the *next* tool is selected from what the previous one produced.
+
+    It walks from the end of the conversation and returns the text of the first
+    ``user`` or ``tool``/``function`` message it finds (skipping the empty
+    tool-call stub ``assistant`` messages many frameworks emit). User text is
+    returned verbatim; a tool result is returned as its raw content snippet
+    (capped at ``max_chars``) so the *content* — not the tool's name — drives
+    the next selection. Falls back to the latest assistant text, then empty.
+
+    Args:
+        messages: Conversation history (most recent message last).
+        max_chars: Cap on characters taken from a tool result. Defaults to 500.
+
+    Returns:
+        The driving query text for the current turn, or the empty string.
+    """
+    if not messages:
+        return ""
+    for msg in reversed(list(messages)):
+        role = _msg_role(msg)
+        if role in ("user", ""):
+            text = _msg_text(msg)
+            if text.strip():
+                return text.strip()
+        elif role in ("tool", "function"):
+            text = _msg_text(msg)
+            if text.strip():
+                return text.strip()[:max_chars]
+    # Nothing concrete in the tail — fall back to the model's latest planning.
+    return last_assistant_text(messages)
+
+
 def concatenate_recent(
     messages: Iterable[Any] | None,
     *,

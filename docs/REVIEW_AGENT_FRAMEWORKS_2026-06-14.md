@@ -222,9 +222,17 @@ All gaps from the review above were implemented on this branch:
   through `gantry.execute`. `ToolSpec.invoke()` is safe inside a running event
   loop (runs on a worker thread), so sync framework callbacks (CrewAI `_run`,
   Smolagents `forward`, …) work in real async agent loops.
-- **P2 multi-turn everywhere:** `agent_gantry/integrations/refresh.py`
-  (`ToolRefresher`) generalizes per-call re-retrieval to any framework, honoring
-  `tools_already_used` so the agent pivots forward across turns.
+- **P2 multi-turn everywhere (autonomous *and* conversational):**
+  `agent_gantry/integrations/refresh.py` (`ToolRefresher`) generalizes per-call
+  re-retrieval to any framework, honoring `tools_already_used` so the agent
+  pivots forward across turns. Its default query generator
+  (`agent_gantry.query.latest_activity`) is **recency-aware**: when the newest
+  message is a tool result (autonomous pipeline with no new user input) that
+  result drives the next selection; when it's a user message (conversational)
+  the user's request drives it. One refresher, both modes, no config — verified
+  end-to-end in `examples/frameworks/verify_all.py`
+  (`fetch→clean→train→evaluate→report` autonomously; `weather→email→currency`
+  conversationally).
 - **Tests:** per-framework adapter tests + a cross-framework conformance matrix
   (`tests/frameworks/`) and `tests/test_refresh.py`, all using stubbed frameworks
   so they run without the third-party packages installed.

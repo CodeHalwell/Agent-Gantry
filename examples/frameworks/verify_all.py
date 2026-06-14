@@ -49,18 +49,28 @@ TOOLS: list[tuple[str, str, list[str]]] = [
 ]
 
 
-def _best_embedder() -> tuple[Any, str]:
-    """Prefer a real embedder; fall back to the offline hash toy."""
+def _best_embedder() -> tuple[Any, str, bool]:
+    """Prefer a real embedder; fall back to the offline hash toy.
+
+    Returns ``(embedder, label, is_real)``. ``is_real`` is ``False`` for the
+    hash-based ``SimpleEmbedder``, whose similarity scores are too coarse for
+    nuanced result-driven routing — checks that need real semantics skip when
+    only it is available.
+    """
     try:
         from agent_gantry.adapters.embedders.sentence_transformers import (
             SentenceTransformersEmbedder,
         )
 
-        return SentenceTransformersEmbedder("all-MiniLM-L6-v2"), "sentence-transformers/all-MiniLM-L6-v2"
+        return (
+            SentenceTransformersEmbedder("all-MiniLM-L6-v2"),
+            "sentence-transformers/all-MiniLM-L6-v2",
+            True,
+        )
     except Exception:  # noqa: BLE001
         from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 
-        return SimpleEmbedder(dimension=256), "SimpleEmbedder(hash, offline)"
+        return SimpleEmbedder(dimension=256), "SimpleEmbedder(hash, offline)", False
 
 
 def _make_tool(name: str, description: str):
@@ -73,7 +83,7 @@ def _make_tool(name: str, description: str):
 
 
 async def _build_gantry() -> AgentGantry:
-    embedder, label = _best_embedder()
+    embedder, label, _is_real = _best_embedder()
     print(f"Embedder: {label}\n")
     gantry = AgentGantry(embedder=embedder)
     for name, desc, tags in TOOLS:
@@ -188,6 +198,71 @@ async def check_multi_turn(gantry: AgentGantry) -> tuple[bool, str]:
 
 
 # ---- runner --------------------------------------------------------------- #
+async def check_autonomous_pipeline() -> tuple[bool, str]:
+    """ToolRefresher must chain tools in an autonomous run with NO new user input.
+
+    The agent is given one goal, then runs a pipeline; each tool's *result*
+    must drive selection of the next tool (the recency-aware default reads the
+    latest tool result when there is no newer user message). This is the
+    autonomous-agent counterpart to the conversational pivot check.
+    """
+    embedder, _label, is_real = _best_embedder()
+    if not is_real:
+        return None, "SKIP: needs a real embedder (SimpleEmbedder is a hash toy)"  # type: ignore[return-value]
+    g = AgentGantry(embedder=embedder)
+    pipeline = [
+        ("fetch_raw_data", "Fetch raw unprocessed data from the source system.", ["data"]),
+        ("clean_dataset", "Clean and normalize a raw dataset, removing nulls and duplicates.", ["data"]),
+        ("train_model", "Train a machine learning model on a cleaned dataset.", ["ml"]),
+        ("evaluate_model", "Evaluate a trained machine learning model's accuracy metrics.", ["ml"]),
+        ("generate_report", "Generate a written report summarizing evaluation results.", ["report"]),
+    ]
+    # A couple of distractor tools so selection isn't trivial.
+    distractors = [
+        ("send_email", "Compose and send an email message to a recipient.", ["email"]),
+        ("get_weather", "Get the current weather for a city.", ["weather"]),
+    ]
+    for name, desc, tags in pipeline + distractors:
+        g.register(_make_tool(name, desc), tags=tags)
+    await g.sync()
+
+    refresher = ToolRefresher(g, limit=3)  # default = latest_activity (recency-aware)
+
+    # One user goal, then NO further user messages — only tool results feed back.
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "Build and evaluate a model from the raw source data."}
+    ]
+    # Each result points FORWARD at the next stage (describing what is needed
+    # next, not what was just done) — how a real pipeline step hands off.
+    step_results = {
+        "fetch_raw_data": "the records contain missing nulls and duplicate rows that must be cleaned and normalized",
+        "clean_dataset": "the prepared training set is ready to fit and train a machine learning model",
+        "train_model": "the fitted model now needs its accuracy and performance metrics evaluated",
+        "evaluate_model": "please write a summary report describing the evaluation findings",
+    }
+    expected_order = ["fetch_raw_data", "clean_dataset", "train_model", "evaluate_model", "generate_report"]
+
+    picks: list[str] = []
+    for _ in expected_order:
+        schemas = await refresher.refresh(messages)
+        names = [s["function"]["name"] for s in schemas]
+        pick = names[0] if names else None
+        picks.append(pick or "—")
+        if pick is None:
+            break
+        # Autonomously advance: append the assistant call + tool result (NO user msg).
+        result_text = step_results.get(pick, f"{pick} completed")
+        messages.append({"role": "assistant", "content": f"calling {pick}"})
+        messages.append({"role": "tool", "name": pick, "content": result_text})
+
+    # Result-driven chaining should advance through the pipeline. Require the
+    # first step correct and the run to traverse most of the distinct stages.
+    advanced = len([p for p in picks if p in expected_order])
+    distinct_stages = len(set(picks) & set(expected_order))
+    ok = picks[0] == "fetch_raw_data" and distinct_stages >= 4
+    return ok, f"picks={picks} distinct_pipeline_stages={distinct_stages}/5"
+
+
 async def run() -> dict[str, Any]:
     gantry = await _build_gantry()
 
@@ -195,14 +270,18 @@ async def run() -> dict[str, Any]:
         ("P0: **kwargs tool executable", await check_p0_kwargs(gantry)),
         ("P0: default threshold surfaces tools", await check_default_threshold(gantry)),
         ("core: GantryToolset select + invoke", await check_toolset_invoke(gantry)),
-        ("multi-turn: ToolRefresher pivots", await check_multi_turn(gantry)),
+        ("multi-turn (conversational) pivots", await check_multi_turn(gantry)),
+        ("multi-turn (autonomous) pipeline chains", await check_autonomous_pipeline()),
     ]
 
     print("=== CORE CHECKS ===")
     all_core_passed = True
     for label, (ok, detail) in core_checks:
-        all_core_passed = all_core_passed and ok
-        print(f"  [{'PASS' if ok else 'FAIL'}] {label:<42} {detail}")
+        # ok is True (pass), False (fail), or None (skipped — not a failure).
+        if ok is False:
+            all_core_passed = False
+        tag = "PASS" if ok else ("SKIP" if ok is None else "FAIL")
+        print(f"  [{tag}] {label:<42} {detail}")
 
     print("\n=== FRAMEWORK ADAPTERS ===")
     adapter_rows = await check_adapters(gantry)

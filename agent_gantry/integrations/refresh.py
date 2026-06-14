@@ -16,13 +16,14 @@ a fresh top-k selection appropriate to the *latest* sub-task.
 
 Two behaviours make this genuinely multi-turn / direction-changing:
 
-- **Query follows the conversation tail.** The default query generator is
-  ``fallback_chain(last_user_text, last_tool_result)``, so the next turn's
-  retrieval is driven by the most recent user message (falling back to the
-  latest tool result). When the user pivots (weather → email → currency), the
-  surfaced tools pivot with them. For autonomous tool *pipelines* where the
-  previous tool's output should drive the next selection, pass
-  ``query_generator=fallback_chain(last_tool_result, last_user_text)``.
+- **Query follows the conversation tail (recency-aware).** The default query
+  generator is :func:`~agent_gantry.query.latest_activity`, which drives
+  retrieval from whatever happened *most recently* — the newest user message
+  **or** the newest tool result. This serves both modes with no config:
+  autonomous agents chaining tools select the next tool from the previous
+  tool's *result*; conversational agents pivot with each new user message. The
+  two are not exclusive — a tool chain *inside* a conversational turn is driven
+  by its results, then the next user message takes over.
 - **Used tools nudge the agent forward.** When ``track_used`` is on, every
   tool/function-role message seen in the history accumulates into a
   ``tools_already_used`` set. The router applies its ``already_used_penalty``
@@ -46,7 +47,7 @@ from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import GantryToolset, ToolSpec
-from agent_gantry.query import fallback_chain, last_tool_result, last_user_text
+from agent_gantry.query import latest_activity
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 
 if TYPE_CHECKING:
@@ -54,18 +55,22 @@ if TYPE_CHECKING:
 
 
 def _default_query_generator() -> Callable[[Iterable[Any] | None], str]:
-    """Recommended default: latest user text, falling back to tool result.
+    """Recommended default: :func:`~agent_gantry.query.latest_activity`.
 
-    Built fresh on each construction so the composed callable is never a
-    shared global. User text first makes the *conversational* case (the user
-    pivots to a new sub-task each turn) intuitive: the surfaced tools follow
-    what the user just asked for. For autonomous tool *pipelines* — where the
-    previous tool's output should pick the next tool — pass
-    ``query_generator=fallback_chain(last_tool_result, last_user_text)``
-    explicitly (this is what the Agent Framework provider's ``per_call`` mode
-    uses).
+    Recency-aware, so it serves **both** autonomous and conversational agents
+    with no configuration:
+
+    - **Autonomous / tool pipelines:** when the newest message is a tool result
+      (the agent is chaining tools with no new user input), the *content of
+      that result* drives the next selection.
+    - **Conversational:** when the newest message is the user's, their new
+      request drives selection.
+
+    To force a single behaviour, pass ``query_generator`` explicitly — e.g.
+    ``last_user_text`` (always the user), ``last_tool_result`` (always the last
+    result), or ``fallback_chain(...)`` for a custom precedence.
     """
-    return fallback_chain(last_user_text, last_tool_result)
+    return latest_activity
 
 
 def _msg_text(msg: Any) -> str:
@@ -133,11 +138,11 @@ class ToolRefresher:
             similarities, so a non-zero default silently drops relevant tools.
         query_generator: Sync or async callable mapping the messages list to a
             retrieval query string. Defaults to
-            ``fallback_chain(last_user_text, last_tool_result)`` so retrieval is
-            driven by the latest user message (falling back to the latest tool
-            result) — the intuitive choice for conversational pivots. For tool
-            pipelines, pass ``fallback_chain(last_tool_result, last_user_text)``.
-            See :mod:`agent_gantry.query` for built-in alternatives.
+            :func:`~agent_gantry.query.latest_activity` (recency-aware: the
+            newest user message *or* tool result drives selection), which works
+            for both autonomous tool pipelines and conversational agents. Pass
+            ``last_user_text`` / ``last_tool_result`` / ``fallback_chain(...)``
+            to force a specific behaviour. See :mod:`agent_gantry.query`.
         track_used: When ``True`` (default), scan the messages on every refresh
             for tool/function-role entries and accumulate their tool names into
             the ``tools_already_used`` set passed to selection. The router's

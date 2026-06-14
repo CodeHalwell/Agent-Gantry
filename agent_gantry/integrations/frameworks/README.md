@@ -44,7 +44,7 @@ selection knobs as `GantryToolset.select` (`score_threshold`, `namespaces`,
 `tools_already_used`). Need one conversion at a time? Use `spec_to_<fw>(spec)`
 with specs from `GantryToolset(gantry).select(query)`.
 
-## Multi-turn re-selection (any framework)
+## Multi-turn re-selection — autonomous *and* conversational
 
 `ToolRefresher` generalizes the Microsoft Agent Framework provider's per-call
 retrieval to any framework: re-rank the whole registry on every turn so the
@@ -60,6 +60,20 @@ refresher = ToolRefresher(gantry, limit=3, dialect="openai")
 tools = await refresher.refresh(messages)        # dialect schemas
 specs = await refresher.refresh_specs(messages)  # ToolSpec objects
 ```
+
+The default query generator (`agent_gantry.query.latest_activity`) is
+**recency-aware**, so one refresher serves both styles with no configuration:
+
+- **Autonomous agents / tool pipelines** — when the newest message is a tool
+  result (the agent is chaining tools with no new user input), that result's
+  *content* selects the next tool: `fetch → clean → train → evaluate → report`.
+- **Conversational agents** — when the newest message is the user's, their new
+  request selects the next tool: `weather → flights → hotel → email`.
+
+To force one behaviour, pass `query_generator=` explicitly — `last_user_text`
+(always the user), `last_tool_result` (always the last result), or a custom
+`fallback_chain(...)`. See `examples/frameworks/multi_turn_refresher_example.py`
+for both modes side by side.
 
 ## Shared base
 
