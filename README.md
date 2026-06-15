@@ -18,68 +18,76 @@ Agent-Gantry is a Python library and service for intelligent, secure tool orches
 
 ## Installation
 
+Agent-Gantry uses **uv** as its package manager, with `pip` as a supported fallback.
+
 ```bash
+uv add agent-gantry          # in a uv project
+# or, ad-hoc / outside a project:
+uv pip install agent-gantry
+# fallback without uv:
 pip install agent-gantry
 ```
 
 For development:
 
 ```bash
-pip install agent-gantry[dev]
+uv add "agent-gantry[dev]"   # fallback: pip install "agent-gantry[dev]"
 ```
 
 ### Optional: install the bundled Claude Skill
 
-Agent-Gantry ships a Claude Skill — a self-contained reference an agent can read to learn the library — bundled inside the wheel. Install it next to your other skills with one command:
+Agent-Gantry ships a Claude Skill — a self-contained reference following the [Anthropic Agent Skills](https://docs.claude.com/en/docs/agents-and-tools/agent-skills/overview) format that an agent can read to learn the library — bundled inside the wheel. Install it with one command:
 
 ```bash
-agent-gantry install-skill --target ./skills
+uv run agent-gantry install-skill --claude        # → ~/.claude/skills (Claude Code finds it automatically)
+uv run agent-gantry install-skill --target ./skills   # → a project-local skills/ dir
+# fallback without uv: drop the `uv run` prefix once agent-gantry is on PATH
 ```
 
-This drops a `skills/agent-gantry/` directory in your project. Wire it into an AF agent via `SkillsProvider(skill_paths=["./skills"])` or point Claude Code at it directly. To use the bundled copy without copying:
+`--claude` drops `agent-gantry/` into Claude's personal skills directory so Claude Code discovers it with no further wiring. `--target` drops a `skills/agent-gantry/` directory wherever you point it — wire that into an AF agent via `SkillsProvider(skill_paths=["./skills"])`. To use the bundled copy in place without copying:
 
 ```python
 from agent_gantry.skills import skill_path
 print(skill_path())  # /…/site-packages/agent_gantry/skills/agent-gantry
 ```
 
-The skill covers each integration (Microsoft Agent Framework, LangChain, AutoGen, CrewAI, LlamaIndex, Semantic Kernel, Google ADK, plain SDK use), the new introspection APIs, and a debugging playbook.
+The skill covers every integration (Microsoft Agent Framework, plus native adapters for LangChain, LangGraph, LlamaIndex, CrewAI, Pydantic AI, OpenAI Agents SDK, Smolagents, Haystack, Agno, AutoGen, Semantic Kernel, Google ADK, and plain SDK use), the `ToolRefresher` multi-turn API, the introspection APIs, and a debugging playbook.
 
 ### LLM Provider SDKs
 
-Install with specific LLM provider support:
+Install with specific LLM provider support (uv shown; swap `uv add` for `pip install` as a fallback):
 
 ```bash
 # All LLM providers
-pip install agent-gantry[llm-providers]
+uv add "agent-gantry[llm-providers]"
 
 # Individual providers
-pip install agent-gantry[openai]        # OpenAI, Azure OpenAI, OpenRouter
-pip install agent-gantry[anthropic]     # Anthropic (Claude)
-pip install agent-gantry[google-genai]  # Google GenAI
-pip install agent-gantry[google-vertexai]  # Google Vertex AI
-pip install agent-gantry[mistral]       # Mistral AI
-pip install agent-gantry[groq]          # Groq
+uv add "agent-gantry[openai]"        # OpenAI, Azure OpenAI, OpenRouter
+uv add "agent-gantry[anthropic]"     # Anthropic (Claude)
+uv add "agent-gantry[google-genai]"  # Google GenAI
+uv add "agent-gantry[google-vertexai]"  # Google Vertex AI
+uv add "agent-gantry[mistral]"       # Mistral AI
+uv add "agent-gantry[groq]"          # Groq
 
 # Everything
-pip install agent-gantry[all]
+uv add "agent-gantry[all]"
 ```
 
 See [docs/llm_sdk_compatibility.md](docs/llm_sdk_compatibility.md) for detailed provider documentation.
 
 ### Optional components
 
-- **Vector stores**: `pip install agent-gantry[vector-stores]` (Qdrant/Chroma stubs)
-- **Local persistence (LanceDB)**: `pip install agent-gantry[lancedb]`
-- **Local embeddings (Nomic Matryoshka)**: `pip install agent-gantry[nomic]`
-- **Agent framework integrations**: `pip install agent-gantry[agent-frameworks]` (LangChain, AutoGen, CrewAI, LlamaIndex, Semantic Kernel, etc.)
-- **Example extras**: `pip install agent-gantry[example-tools]` for optional libraries used by the example scripts
-- **Protocols**: `pip install agent-gantry[mcp]` and `pip install agent-gantry[a2a]`
+- **Vector stores**: `uv add "agent-gantry[vector-stores]"` (Qdrant/Chroma stubs)
+- **Local persistence (LanceDB)**: `uv add "agent-gantry[lancedb]"`
+- **Local embeddings (Nomic Matryoshka)**: `uv add "agent-gantry[nomic]"`
+- **Agent framework integrations**: `uv add "agent-gantry[agent-frameworks]"` (LangChain, AutoGen, CrewAI, LlamaIndex, Semantic Kernel, etc.)
+- **Example extras**: `uv add "agent-gantry[example-tools]"` for optional libraries used by the example scripts
+- **Protocols**: `uv add "agent-gantry[mcp]"` and `uv add "agent-gantry[a2a]"`
 
 Combine as needed, e.g.:
 
 ```bash
-pip install agent-gantry[lancedb,nomic,mcp,a2a]
+uv add "agent-gantry[lancedb,nomic,mcp,a2a]"   # fallback: pip install "agent-gantry[lancedb,nomic,mcp,a2a]"
 ```
 
 ## Quick Start: The "Plug and Play" Experience
@@ -302,8 +310,8 @@ decision = await provider.dry_run_retrieve("the user's actual query")
 For registry-level mistakes — descriptions that name other tools, near-duplicate tools, overly generic tags — run the linter:
 
 ```bash
-agent-gantry lint
-agent-gantry sim factorial fibonacci   # cosine similarity between two tools
+uv run agent-gantry lint
+uv run agent-gantry sim factorial fibonacci   # cosine similarity between two tools
 ```
 
 ### Robust score thresholds for long queries
@@ -622,7 +630,7 @@ tools = await gantry.retrieve_tools("read my config.yaml")
 > server metadata, `sync_mcp_servers()` / `retrieve_mcp_servers()` run real semantic search over
 > registered servers, and `discover_tools_from_server()` connects on demand and registers the
 > discovered tools into the registry so `retrieve_tools()` finds them. Requires the `mcp` extra
-> (`pip install agent-gantry[mcp]`). See the dynamic MCP selection docs for details.
+> (`uv add "agent-gantry[mcp]"`, or `pip install "agent-gantry[mcp]"`). See the dynamic MCP selection docs for details.
 
 **Benefits:**
 - 🎯 **Semantic Routing**: Automatically finds relevant servers based on query context
@@ -750,15 +758,15 @@ See `examples/a2a_integration_demo.py` for a complete demonstration.
 
 ## CLI
 
-A lightweight CLI ships with the package for quick inspection and diagnostics:
+A lightweight CLI ships with the package for quick inspection and diagnostics. Inside a uv project, prefix with `uv run`; drop the prefix when `agent-gantry` is already on `PATH`:
 
 ```bash
-agent-gantry list                              # list registered tools
-agent-gantry search "refund an order" --limit 3
-agent-gantry lint                              # detect tool-description authoring mistakes
-agent-gantry sim factorial fibonacci           # cosine similarity between two tools
-agent-gantry sync --dry-run                    # which tools would (re-)embed and why
-agent-gantry install-skill --target ./skills   # install the bundled Claude Skill
+uv run agent-gantry list                              # list registered tools
+uv run agent-gantry search "refund an order" --limit 3
+uv run agent-gantry lint                              # detect tool-description authoring mistakes
+uv run agent-gantry sim factorial fibonacci           # cosine similarity between two tools
+uv run agent-gantry sync --dry-run                    # which tools would (re-)embed and why
+uv run agent-gantry install-skill --claude            # install the bundled Claude Skill into ~/.claude/skills
 ```
 
 `lint` flags three patterns that silently degrade routing quality: tool descriptions that name *other* registered tools (the embedding pulls them toward the wrong queries), pairs of tools with >0.85 cosine similarity (probably should be merged or differentiated), and tags that appear on more than half the registry (low discriminative value). Exit code is `1` when any issues are flagged, `0` when the registry is clean — so it drops into any CI runner that respects exit codes.

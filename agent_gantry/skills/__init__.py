@@ -49,7 +49,8 @@ def skill_path() -> Path:
             f"Agent-Gantry skill directory not found at {path!s}. "
             "This usually means the package was installed from a source "
             "tree that doesn't include skills/. Reinstall via "
-            "'pip install agent-gantry' to get the bundled skill."
+            "'uv add agent-gantry' (or 'pip install agent-gantry') to get "
+            "the bundled skill."
         )
     return path
 

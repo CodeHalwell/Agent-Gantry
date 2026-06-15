@@ -52,7 +52,7 @@ def disable_af_instrumentation() -> bool:
     return _impl()
 
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 __all__ = [
     "AgentGantry",
     "GantryContextProvider",
