@@ -36,8 +36,11 @@ from agent_gantry.utils.render import render_result
 # Library logging hygiene: attach a NullHandler to the package root logger so
 # importing agent_gantry never configures handlers or levels on the
 # application's behalf. Output is opt-in via the consumer's own logging config
-# or agent_gantry.enable_console_logging().
-_logging.getLogger("agent_gantry").addHandler(_logging.NullHandler())
+# or agent_gantry.enable_console_logging(). Guarded so a module reload (REPLs,
+# hot-reload dev servers, some test setups) doesn't stack duplicate handlers.
+_ag_root_logger = _logging.getLogger("agent_gantry")
+if not any(isinstance(_h, _logging.NullHandler) for _h in _ag_root_logger.handlers):
+    _ag_root_logger.addHandler(_logging.NullHandler())
 
 
 def disable_af_instrumentation() -> bool:

@@ -24,12 +24,19 @@ logger = logging.getLogger("agent_gantry")
 
 _CONSOLE_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
+# Marker attribute set on the handler this helper installs, so we can detect
+# "did *we* already add a console handler?" without subclass-sniffing. A plain
+# isinstance(StreamHandler) check would also match an app's FileHandler
+# (FileHandler subclasses StreamHandler), causing us to skip attaching real
+# console output when only a file handler is configured.
+_CONSOLE_HANDLER_FLAG = "_agent_gantry_console_handler"
+
 
 def enable_console_logging(level: int = logging.INFO) -> None:
     """Opt in to human-readable console output for the ``agent_gantry`` logger.
 
-    Attaches a :class:`~logging.StreamHandler` (at most once) and sets the
-    logger level. This is the explicit, consumer-driven replacement for the
+    Attaches a console :class:`~logging.StreamHandler` (at most once) and sets
+    the logger level. This is the explicit, consumer-driven replacement for the
     handler/level side effect that :class:`ConsoleTelemetryAdapter` used to
     perform on construction.
 
@@ -38,13 +45,18 @@ def enable_console_logging(level: int = logging.INFO) -> None:
     (see ``agent_gantry/__init__.py``). Call this helper from a script, demo,
     or CLI when you actually want Gantry's telemetry/INFO lines on the console;
     an embedding application should configure its own logging instead.
+
+    Idempotent: a second call won't stack another console handler. It only
+    considers handlers *this* helper installed, so an app that already has a
+    :class:`~logging.FileHandler` still gets a console handler here.
     """
-    if not any(
-        isinstance(h, logging.StreamHandler) and not isinstance(h, logging.NullHandler)
-        for h in logger.handlers
-    ):
+    already_attached = any(
+        getattr(h, _CONSOLE_HANDLER_FLAG, False) for h in logger.handlers
+    )
+    if not already_attached:
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter(_CONSOLE_FORMAT))
+        setattr(handler, _CONSOLE_HANDLER_FLAG, True)
         logger.addHandler(handler)
     logger.setLevel(level)
 

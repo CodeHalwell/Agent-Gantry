@@ -70,8 +70,8 @@ from __future__ import annotations
 
 import inspect
 import logging
-from collections import deque
 from collections.abc import Callable
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.agent_framework_bridge import (
@@ -87,6 +87,9 @@ from agent_gantry.utils.render import render_result
 
 # Rolling cap on retained per-round retrieval decisions (see `selections`).
 _MAX_SELECTION_HISTORY = 200
+
+# Max kept tools shown in a single trace line before eliding the remainder.
+_TRACE_SURFACED_CAP = 5
 
 _DEFAULT_PER_RUN_QUERY = last_user_text
 
@@ -375,9 +378,19 @@ class GantryContextProvider:
                 self._query_kwargs = dict(query_kwargs)
                 self._source_id = source_id
                 self._verbose = verbose
-                self._last_selection: RetrievalDecision | None = None
-                self._selections: deque[RetrievalDecision] = deque(
-                    maxlen=_MAX_SELECTION_HISTORY
+                # Per-task run-state held in ContextVars (not plain attributes)
+                # so a single provider shared across concurrent agent.run()
+                # calls — e.g. a multi-user server — doesn't interleave its
+                # selection history or trace round counter. The vars are
+                # per-instance (created here, once per provider) so multiple
+                # providers stay independent; same-task reads still see the
+                # value (post-run introspection works), while a copied context
+                # (asyncio.gather / create_task) gets isolation for free.
+                self._last_selection_var: ContextVar[RetrievalDecision | None] = (
+                    ContextVar("gantry_last_selection", default=None)
+                )
+                self._selections_var: ContextVar[tuple[RetrievalDecision, ...]] = (
+                    ContextVar("gantry_selections", default=())
                 )
                 # One-shot warnings: we don't want to spam the log every
                 # round even when the misconfiguration persists.
@@ -430,23 +443,33 @@ class GantryContextProvider:
                 every chat-middleware tick (per_call mode). Read this from
                 middleware, tests, or interactive sessions to diagnose
                 "why did the LLM not see tool X this round?".
+
+                Backed by a :class:`~contextvars.ContextVar`: the value is
+                scoped to the current task/context, so concurrent
+                ``agent.run()`` calls on a shared provider don't clobber each
+                other. A read in the same task that ran the agent (the usual
+                post-run introspection) still sees the latest decision.
                 """
-                return self._last_selection
+                return self._last_selection_var.get()
 
             @property
             def selections(self) -> tuple[RetrievalDecision, ...]:
                 """Per-round retrieval history, oldest first (bounded window).
 
-                ``last_selection`` is a single mutable slot, so reading it from
-                *function* middleware is inherently laggy — it holds whatever
-                the latest chat round selected, which is not guaranteed to be
-                the round that produced the call you're handling. ``selections``
-                keeps the full per-round sequence (capped at
+                ``last_selection`` is a single most-recent slot, so reading it
+                from *function* middleware is inherently laggy — it holds
+                whatever the latest chat round selected, which is not guaranteed
+                to be the round that produced the call you're handling.
+                ``selections`` keeps the full per-round sequence (capped at
                 ``_MAX_SELECTION_HISTORY``) so a trace or audit can correlate
                 "what was surfaced" with "what the model then called" across the
                 whole run instead of just the last round.
+
+                Like :attr:`last_selection`, this is task-scoped via a
+                ``ContextVar`` — each concurrent run accumulates its own
+                history rather than interleaving into one shared list.
                 """
-                return tuple(self._selections)
+                return self._selections_var.get()
 
             # ----- AF lifecycle ------------------------------------------
             async def before_run(
@@ -611,18 +634,30 @@ class GantryContextProvider:
                 """
                 function_middleware_decorator = _import_function_middleware()
                 provider = self
-                state = {"round": 0}
+                # Round counter in a ContextVar (not a shared closure dict) so
+                # concurrent runs each get their own sequence instead of
+                # interleaving / accumulating one global count.
+                round_var: ContextVar[int] = ContextVar(
+                    "gantry_trace_round", default=0
+                )
 
                 @function_middleware_decorator
                 async def _gantry_trace(context: Any, call_next: Any) -> None:
-                    state["round"] += 1
-                    n = state["round"]
+                    n = round_var.get() + 1
+                    round_var.set(n)
                     surfaced = ""
                     selection = provider.last_selection
                     if selection is not None:
-                        surfaced = "  [surfaced: " + ", ".join(
-                            f"{c.name}:{c.score:.2f}" for c in selection.candidates
-                        ) + "]"
+                        # Show only the tools that actually made the surface
+                        # (kept), capped — `candidates` is the full ranked list
+                        # incl. threshold-dropped entries, which would mislabel
+                        # and bloat the line.
+                        kept = selection.kept
+                        shown = kept[:_TRACE_SURFACED_CAP]
+                        rendered = ", ".join(f"{c.name}:{c.score:.2f}" for c in shown)
+                        if len(kept) > len(shown):
+                            rendered += f", +{len(kept) - len(shown)} more"
+                        surfaced = f"  [surfaced: {rendered}]"
                     name = getattr(getattr(context, "function", None), "name", "?")
                     try:
                         args: Any = dict(context.arguments)
@@ -749,10 +784,10 @@ class GantryContextProvider:
                 fresh, _ = await self._collect_tools(
                     messages, include_dynamic=True
                 )
-                # _collect_tools sets self._last_selection on every
-                # dynamic refresh, so the per-call middleware path
-                # automatically exposes the latest decision via the
-                # provider's `last_selection` property.
+                # _collect_tools updates the last-selection / selections
+                # ContextVars on every dynamic refresh, so the per-call
+                # middleware path automatically exposes the latest decision via
+                # the provider's `last_selection` / `selections` properties.
                 gantry_names = self._all_known_tool_names()
                 static_names = {
                     _tool_name(t) for t in self._static_tools if _tool_name(t)
@@ -918,8 +953,13 @@ class GantryContextProvider:
                     static_count += 1
 
                 if include_dynamic and decision is not None:
-                    self._last_selection = decision
-                    self._selections.append(decision)
+                    self._last_selection_var.set(decision)
+                    # ContextVar holds an immutable tuple; bound it by slicing
+                    # so history stays capped without a shared mutable deque.
+                    history = self._selections_var.get()
+                    self._selections_var.set(
+                        (history + (decision,))[-_MAX_SELECTION_HISTORY:]
+                    )
                     if self._verbose:
                         logger.info("gantry: %s", decision.summary())
 

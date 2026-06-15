@@ -34,6 +34,7 @@ import asyncio
 import hashlib
 import secrets
 import string
+import uuid
 from datetime import datetime, timezone
 from typing import Annotated
 
@@ -89,6 +90,10 @@ def build_gantry() -> AgentGantry:
         allowed = set("0123456789+-*/(). ")
         if not set(expression) <= allowed:
             return "ERROR: unsupported characters in expression"
+        # NOTE: demo only. The char allow-list above is what keeps this safe-ish;
+        # `{"__builtins__": {}}` alone is NOT a sandbox (attribute access on
+        # reachable objects can still escape in CPython). Don't copy eval() into
+        # production — use the stdlib-based `calculate` tool in tools/ instead.
         return str(eval(expression, {"__builtins__": {}}, {}))  # noqa: S307 - demo only
 
     @gantry.register(
@@ -105,8 +110,6 @@ def build_gantry() -> AgentGantry:
     )
     def generate_uuid() -> str:
         """Generate a random UUID (version 4) identifier."""
-        import uuid
-
         return str(uuid.uuid4())
 
     @gantry.register(

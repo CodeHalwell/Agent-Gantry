@@ -228,6 +228,54 @@ class TestGantryContextProvider:
         assert len(ctx.tools) > 1
 
     @pytest.mark.asyncio
+    async def test_per_call_refresh_preserves_foreign_skill_tools(
+        self, gantry_with_tools: AgentGantry
+    ) -> None:
+        """The per-call refresh must keep tools from other providers.
+
+        This is the load-bearing guarantee for coexisting with AF
+        ``SkillsProvider``: every chat round the middleware rebuilds the tool
+        list, dropping *gantry-known* stale tools and re-adding the fresh
+        top-k — but anything foreign (skill tools, another provider's tools)
+        must survive untouched so skills keep working.
+        """
+        provider = GantryContextProvider(
+            gantry_with_tools, top_k=2, query_strategy="per_call"
+        )
+
+        class _SkillTool:
+            # Foreign: a name that is NOT in the gantry registry, standing in
+            # for a tool injected by AF SkillsProvider.
+            name = "summarise_skill"
+
+        class _StaleGantryTool:
+            # Gantry-known: simulates a previous round's injected tool that
+            # should be refreshed (not duplicated), never the skill.
+            name = "get_weather"
+
+        skill_tool = _SkillTool()
+
+        class _ChatCtx:
+            def __init__(self) -> None:
+                self.options = {"tools": [skill_tool, _StaleGantryTool()]}
+                self.messages = [_user_msg("weather in Paris")]
+
+        ctx = _ChatCtx()
+        await provider._refresh_tools_on_chat_context(ctx)
+
+        names = [
+            getattr(t, "name", None) or getattr(t, "__name__", "?")
+            for t in ctx.options["tools"]
+        ]
+        # The skill tool survived the per-round rebuild — skills still work.
+        assert "summarise_skill" in names
+        # The stale gantry tool was not duplicated (dropped or refreshed to one).
+        assert names.count("get_weather") <= 1
+        # A fresh gantry selection was injected alongside the skill.
+        gantry_tool_names = {"get_weather", "book_flight", "lookup_user", "issue_refund"}
+        assert any(n in gantry_tool_names for n in names)
+
+    @pytest.mark.asyncio
     async def test_retrieval_failure_is_swallowed(
         self, gantry_with_tools: AgentGantry, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -511,3 +559,82 @@ class TestSelectionsAndTrace:
         per_call.attach_to(agent, trace=True)
         # per_call attaches both the chat refresher and the trace middleware.
         assert len(agent.middleware) == 2
+
+    @pytest.mark.asyncio
+    async def test_selections_isolated_across_concurrent_tasks(
+        self, gantry_with_tools: AgentGantry
+    ) -> None:
+        """A provider shared across concurrent runs must not interleave history.
+
+        ContextVar-backed state means each task (asyncio.gather wraps each
+        coroutine in a Task, which copies the context) accumulates only its own
+        selections rather than appending into one shared list.
+        """
+        import asyncio
+
+        provider = GantryContextProvider(gantry_with_tools, top_k=2)
+
+        async def run_once(query: str) -> tuple:
+            ctx = af.SessionContext(input_messages=[_user_msg(query)])
+            await provider.before_run(
+                agent=None, session=None, context=ctx, state={}
+            )
+            # Read within the same task: should see exactly this run's history.
+            return provider.selections
+
+        a, b = await asyncio.gather(
+            run_once("weather in Paris"),
+            run_once("issue a refund"),
+        )
+        assert len(a) == 1
+        assert len(b) == 1
+
+    @pytest.mark.asyncio
+    async def test_trace_surfaced_shows_only_kept_capped(
+        self, gantry_with_tools: AgentGantry
+    ) -> None:
+        """The trace line lists kept candidates only, capped, not the full list."""
+        from agent_gantry.integrations.agent_framework_bridge import (
+            RetrievalCandidate,
+            RetrievalDecision,
+        )
+
+        provider = GantryContextProvider(gantry_with_tools, top_k=2)
+        # Hand-build a decision: 7 kept + 1 dropped.
+        kept = [
+            RetrievalCandidate(
+                name=f"tool_{i}",
+                qualified_name=f"default.tool_{i}",
+                score=0.9 - i * 0.01,
+                kept=True,
+            )
+            for i in range(7)
+        ]
+        dropped = RetrievalCandidate(
+            name="dropped_tool",
+            qualified_name="default.dropped_tool",
+            score=0.01,
+            kept=False,
+        )
+        decision = RetrievalDecision(query="q", candidates=[*kept, dropped])
+        provider._last_selection_var.set(decision)
+
+        lines: list[str] = []
+        middleware = provider.trace(render=False, printer=lines.append)
+
+        class _FakeFn:
+            name = "tool_0"
+
+        class _FakeCtx:
+            function = _FakeFn()
+            arguments: dict = {}
+            result = "ok"
+
+        async def _call_next() -> None:
+            return None
+
+        await middleware(_FakeCtx(), _call_next)
+        line = "\n".join(lines)
+        assert "dropped_tool" not in line          # dropped candidate excluded
+        assert "+2 more" in line                    # 7 kept, capped at 5 -> +2
+        assert line.count(":0.") <= 6               # 5 shown scores (+ guard)

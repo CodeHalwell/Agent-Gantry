@@ -947,6 +947,16 @@ class AgentGantry:
         Exceptions raised by a callback are caught and logged (never propagated
         into the tool run), so a broken listener cannot break execution.
 
+        Timing: in :meth:`execute` the event fires as soon as that call
+        finishes. In :meth:`execute_batch` events are emitted *after the whole
+        batch completes* — one per call, paired with its result by index — so
+        for a ``parallel`` batch they arrive together at the end rather than in
+        completion order (the per-call ``latency_ms`` values are still
+        accurate).
+
+        Registering the same callable twice registers it twice (it will fire
+        twice); the returned unsubscribe removes one registration.
+
         Args:
             callback: A callable accepting a single ``ToolCallEvent`` argument.
 
@@ -972,6 +982,9 @@ class AgentGantry:
         """
         if not self._tool_call_callbacks:
             return
+        # Local import: the execution schema is runtime-imported inside methods
+        # throughout this module (it's only TYPE_CHECKING-imported at the top),
+        # and the guard above means this only runs when a listener exists.
         from agent_gantry.schema.execution import ToolCallEvent
 
         event = ToolCallEvent(call=call, result=result)

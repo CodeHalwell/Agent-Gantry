@@ -215,3 +215,51 @@ class TestLoggingHygiene:
                     lg.removeHandler(h)
             lg.setLevel(level_before)
             assert list(lg.handlers) == handlers_before
+
+    def test_console_adapter_attach_handler_opt_in(self) -> None:
+        from agent_gantry.observability.console import ConsoleTelemetryAdapter
+
+        lg = logging.getLogger("agent_gantry")
+        handlers_before = list(lg.handlers)
+        level_before = lg.level
+        try:
+            ConsoleTelemetryAdapter(log_level=logging.DEBUG, attach_handler=True)
+            streams = [
+                h
+                for h in lg.handlers
+                if getattr(h, "_agent_gantry_console_handler", False)
+            ]
+            assert len(streams) == 1
+            assert lg.level == logging.DEBUG
+        finally:
+            for h in list(lg.handlers):
+                if getattr(h, "_agent_gantry_console_handler", False):
+                    lg.removeHandler(h)
+            lg.setLevel(level_before)
+            assert list(lg.handlers) == handlers_before
+
+    def test_enable_console_logging_with_only_file_handler(
+        self, tmp_path: object
+    ) -> None:
+        # An app whose only handler is a FileHandler (a StreamHandler subclass)
+        # must still get a real console handler — the false-positive Copilot fix.
+        lg = logging.getLogger("agent_gantry")
+        handlers_before = list(lg.handlers)
+        level_before = lg.level
+        file_handler = logging.FileHandler(str(tmp_path) + "/app.log")
+        lg.addHandler(file_handler)
+        try:
+            ag.enable_console_logging(logging.INFO)
+            console = [
+                h
+                for h in lg.handlers
+                if getattr(h, "_agent_gantry_console_handler", False)
+            ]
+            assert len(console) == 1
+        finally:
+            for h in list(lg.handlers):
+                if getattr(h, "_agent_gantry_console_handler", False) or h is file_handler:
+                    lg.removeHandler(h)
+            file_handler.close()
+            lg.setLevel(level_before)
+            assert list(lg.handlers) == handlers_before

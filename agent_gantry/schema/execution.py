@@ -88,6 +88,11 @@ class BatchToolResult(BaseModel):
 class ToolCallEvent:
     """A completed tool execution, delivered to ``gantry.on_tool_call`` callbacks.
 
+    Intentionally a ``@dataclass`` rather than a Pydantic ``BaseModel`` like the
+    rest of this module: it is an ephemeral, in-process event (never serialised
+    or validated), so a frozen dataclass keeps it allocation-cheap on the
+    ``execute`` hot path. Don't "promote" it to a BaseModel without reason.
+
     Framework-agnostic: every call routed through
     :meth:`~agent_gantry.core.gantry.AgentGantry.execute` (and each call in a
     batch) emits one of these once execution finishes — successfully or not —
