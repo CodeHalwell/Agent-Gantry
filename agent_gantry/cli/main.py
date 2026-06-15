@@ -11,6 +11,11 @@ import sys
 from agent_gantry import AgentGantry
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 
+# Default skill install target, and Claude Code's personal skills directory
+# (searched at startup). install_to() expands the leading ~ via Path.expanduser().
+_DEFAULT_SKILL_TARGET = "./skills"
+_CLAUDE_SKILLS_DIR = "~/.claude/skills"
+
 
 def _load_demo_tools(gantry: AgentGantry) -> None:
     """Register a small set of demo tools for CLI usage."""
@@ -94,13 +99,14 @@ def main(argv: list[str] | None = None) -> int:
     skill_dest = skill_parser.add_mutually_exclusive_group()
     skill_dest.add_argument(
         "--target",
-        default="./skills",
-        help="Destination directory (default: ./skills). Mutually exclusive with --claude.",
+        default=None,
+        help=f"Destination directory (default: {_DEFAULT_SKILL_TARGET}). "
+        "Mutually exclusive with --claude.",
     )
     skill_dest.add_argument(
         "--claude",
         action="store_true",
-        help="Install into Claude's personal skills directory (~/.claude/skills) "
+        help=f"Install into Claude's personal skills directory ({_CLAUDE_SKILLS_DIR}) "
         "so Claude Code discovers it automatically.",
     )
     skill_parser.add_argument(
@@ -183,10 +189,7 @@ def main(argv: list[str] | None = None) -> int:
             except FileNotFoundError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
-        # --target keeps its "./skills" default even when --claude is set
-        # (argparse always applies defaults), so branch on --claude explicitly.
-        # install_to() expands the leading ~ via Path.expanduser().
-        target = "~/.claude/skills" if args.claude else args.target
+        target = _CLAUDE_SKILLS_DIR if args.claude else (args.target or _DEFAULT_SKILL_TARGET)
         try:
             dst = install_to(target, overwrite=args.overwrite)
         except FileExistsError as exc:
