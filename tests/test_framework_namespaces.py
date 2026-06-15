@@ -77,8 +77,10 @@ def test_adapter_imports_without_framework(module, cls_name, mods, monkeypatch):
     """
     for mod_name in mods:
         monkeypatch.setitem(sys.modules, mod_name, None)
-    # Force a fresh import of the shim with the framework masked out.
-    sys.modules.pop(module, None)
+    # Force a fresh import of the shim with the framework masked out. Use
+    # monkeypatch.delitem so the eviction is rolled back after the test (a bare
+    # sys.modules.pop would leak the masked module into later tests).
+    monkeypatch.delitem(sys.modules, module, raising=False)
     mod = importlib.import_module(module)
     adapter = getattr(mod, cls_name)
     assert isinstance(adapter, type)
@@ -117,9 +119,13 @@ def test_importing_agent_gantry_does_not_load_third_party_frameworks():
     import subprocess
 
     third_party = [
+        # agent frameworks
         "agent_framework", "langchain_core", "langgraph", "llama_index",
         "crewai", "pydantic_ai", "agents", "smolagents", "haystack", "agno",
         "semantic_kernel", "google.adk",
+        # LLM provider SDKs — the LLM adapters never import them (they only emit
+        # schemas via gantry.retrieve_tools), so none should load on import.
+        "openai", "anthropic", "groq", "mistralai", "google.generativeai",
     ]
     code = (
         "import sys, agent_gantry; "
