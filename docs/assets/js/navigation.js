@@ -118,6 +118,10 @@
           // Update focus for accessibility
           target.setAttribute("tabindex", "-1");
           target.focus({ preventScroll: true });
+
+          target.addEventListener("blur", function () {
+            target.removeAttribute("tabindex");
+          }, { once: true });
         }
       });
     });

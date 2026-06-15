@@ -96,3 +96,7 @@
 ## 2026-05-32 - [Skip to Content Focus Targets]
 **Learning:** Adding a "Skip to main content" link at the top of the document is a best practice for accessibility, but it only partially works if the target element (usually `<main id="main-content">`) is not programmatically focusable. When clicked or activated via keyboard, the browser scrolls to the target, but keyboard focus stays on the skip link itself, causing the user to start tabbing through the very navigation they were trying to bypass.
 **Action:** When creating skip links, always ensure the target element has `tabindex="-1"`. This allows the browser to shift programmatic focus to the content area so subsequent `Tab` keystrokes continue from the main content.
+
+## 2026-05-33 - [Cleanup Tabindex on Smooth Scroll Blur]
+**Learning:** When intercepting anchor clicks with `e.preventDefault()` to apply programmatic smooth scrolling, manually moving focus to the target element (`target.focus()`) requires temporarily setting `tabindex="-1"`. If this attribute is not removed when the element loses focus, it permanently alters the element's focusability state, which can negatively impact accessibility and standard tab ordering for interactive elements.
+**Action:** When temporarily adding `tabindex="-1"` to manage focus during smooth scrolling, always attach a `blur` event listener to the target element (using `{ once: true }`) that calls `removeAttribute("tabindex")` to clean up the DOM state.
