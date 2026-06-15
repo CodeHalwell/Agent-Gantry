@@ -1,0 +1,5 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+import ProviderMatrix from '../../components/ProviderMatrix';
+---
+<DocsLayout title="Frameworks | Agent-Gantry"><h1>Framework integrations</h1><p class="lead">Agent-Gantry is designed to be the shared tool layer below many agent frameworks.</p><ProviderMatrix /><h2>Microsoft Agent Framework</h2><p>Use Gantry context providers and tool bridges to surface only relevant tools during a run. For Agent Framework 1.6+ concurrent workflows, call <code>disable_af_instrumentation()</code> before agent construction if upstream ContextVar instrumentation conflicts with parallel runs.</p><h2>Native adapters</h2><p>Adapters and examples exist for LangChain, LangGraph, LlamaIndex, CrewAI, AutoGen, Semantic Kernel, Google ADK, Pydantic AI, OpenAI Agents SDK, Smolagents, Haystack, and Agno. Use isolated environments when upstream dependency constraints conflict.</p></DocsLayout>
