@@ -2,18 +2,18 @@
 import DocsLayout from '../../layouts/DocsLayout.astro';
 import ProviderMatrix from '../../components/ProviderMatrix';
 const guides = [
-  ['LangChain', '/Agent-Gantry/docs/frameworks/langchain/', '/Agent-Gantry/docs/frameworks/langchain/advanced/'],
-  ['LangGraph', '/Agent-Gantry/docs/frameworks/langgraph/', '/Agent-Gantry/docs/frameworks/langgraph/advanced/'],
-  ['LlamaIndex', '/Agent-Gantry/docs/frameworks/llamaindex/', '/Agent-Gantry/docs/frameworks/llamaindex/advanced/'],
-  ['CrewAI', '/Agent-Gantry/docs/frameworks/crewai/', '/Agent-Gantry/docs/frameworks/crewai/advanced/'],
-  ['AutoGen', '/Agent-Gantry/docs/frameworks/autogen/', '/Agent-Gantry/docs/frameworks/autogen/advanced/'],
-  ['Semantic Kernel', '/Agent-Gantry/docs/frameworks/semantic-kernel/', '/Agent-Gantry/docs/frameworks/semantic-kernel/advanced/'],
-  ['Google ADK', '/Agent-Gantry/docs/frameworks/google-adk/', '/Agent-Gantry/docs/frameworks/google-adk/advanced/'],
-  ['Pydantic AI', '/Agent-Gantry/docs/frameworks/pydantic-ai/', '/Agent-Gantry/docs/frameworks/pydantic-ai/advanced/'],
-  ['OpenAI Agents SDK', '/Agent-Gantry/docs/frameworks/openai-agents/', '/Agent-Gantry/docs/frameworks/openai-agents/advanced/'],
-  ['Smolagents', '/Agent-Gantry/docs/frameworks/smolagents/', '/Agent-Gantry/docs/frameworks/smolagents/advanced/'],
-  ['Haystack', '/Agent-Gantry/docs/frameworks/haystack/', '/Agent-Gantry/docs/frameworks/haystack/advanced/'],
-  ['Agno', '/Agent-Gantry/docs/frameworks/agno/', '/Agent-Gantry/docs/frameworks/agno/advanced/'],
+  ['LangChain', '/Agent-Gantry/docs/frameworks/langchain/'],
+  ['LangGraph', '/Agent-Gantry/docs/frameworks/langgraph/'],
+  ['LlamaIndex', '/Agent-Gantry/docs/frameworks/llamaindex/'],
+  ['CrewAI', '/Agent-Gantry/docs/frameworks/crewai/'],
+  ['AutoGen', '/Agent-Gantry/docs/frameworks/autogen/'],
+  ['Semantic Kernel', '/Agent-Gantry/docs/frameworks/semantic-kernel/'],
+  ['Google ADK', '/Agent-Gantry/docs/frameworks/google-adk/'],
+  ['Pydantic AI', '/Agent-Gantry/docs/frameworks/pydantic-ai/'],
+  ['OpenAI Agents SDK', '/Agent-Gantry/docs/frameworks/openai-agents/'],
+  ['Smolagents', '/Agent-Gantry/docs/frameworks/smolagents/'],
+  ['Haystack', '/Agent-Gantry/docs/frameworks/haystack/'],
+  ['Agno', '/Agent-Gantry/docs/frameworks/agno/'],
 ];
 ---
 <DocsLayout title="Frameworks | Agent-Gantry">
@@ -24,7 +24,7 @@ const guides = [
   <h2>Framework-by-framework guides</h2>
   <p>Each guide is organized as a two-page learning path in one place: a <strong>basic page</strong> for setup, registration, and a first tool call, followed by an <strong>advanced page</strong> for dynamic tool selection, LLM calls, observability, and deployment patterns.</p>
   <div class="grid">
-    {guides.map(([name, href, advancedHref]) => <div class="card guide-card"><h3>{name}</h3><p>Basic usage, advanced orchestration, and LLM-call guidance.</p><p><a class="pill" href={href}>Basic guide</a><a class="pill" href={advancedHref}>Advanced guide</a></p></div>)}
+    {guides.map(([name, href]) => <a class="card guide-card" href={href}><h3>{name}</h3><p>Basic usage, advanced orchestration, and LLM-call guidance.</p></a>)}
   </div>
 
   <h2>Recommended integration model</h2>
