@@ -1,5 +1,37 @@
 ---
 import DocsLayout from '../../layouts/DocsLayout.astro';
 import ProviderMatrix from '../../components/ProviderMatrix';
+const guides = [
+  ['LangChain', '/Agent-Gantry/docs/frameworks/langchain/', '/Agent-Gantry/docs/frameworks/langchain/advanced/'],
+  ['LangGraph', '/Agent-Gantry/docs/frameworks/langgraph/', '/Agent-Gantry/docs/frameworks/langgraph/advanced/'],
+  ['LlamaIndex', '/Agent-Gantry/docs/frameworks/llamaindex/', '/Agent-Gantry/docs/frameworks/llamaindex/advanced/'],
+  ['CrewAI', '/Agent-Gantry/docs/frameworks/crewai/', '/Agent-Gantry/docs/frameworks/crewai/advanced/'],
+  ['AutoGen', '/Agent-Gantry/docs/frameworks/autogen/', '/Agent-Gantry/docs/frameworks/autogen/advanced/'],
+  ['Semantic Kernel', '/Agent-Gantry/docs/frameworks/semantic-kernel/', '/Agent-Gantry/docs/frameworks/semantic-kernel/advanced/'],
+  ['Google ADK', '/Agent-Gantry/docs/frameworks/google-adk/', '/Agent-Gantry/docs/frameworks/google-adk/advanced/'],
+  ['Pydantic AI', '/Agent-Gantry/docs/frameworks/pydantic-ai/', '/Agent-Gantry/docs/frameworks/pydantic-ai/advanced/'],
+  ['OpenAI Agents SDK', '/Agent-Gantry/docs/frameworks/openai-agents/', '/Agent-Gantry/docs/frameworks/openai-agents/advanced/'],
+  ['Smolagents', '/Agent-Gantry/docs/frameworks/smolagents/', '/Agent-Gantry/docs/frameworks/smolagents/advanced/'],
+  ['Haystack', '/Agent-Gantry/docs/frameworks/haystack/', '/Agent-Gantry/docs/frameworks/haystack/advanced/'],
+  ['Agno', '/Agent-Gantry/docs/frameworks/agno/', '/Agent-Gantry/docs/frameworks/agno/advanced/'],
+];
 ---
-<DocsLayout title="Frameworks | Agent-Gantry"><h1>Framework integrations</h1><p class="lead">Agent-Gantry is designed to be the shared tool layer below many agent frameworks.</p><ProviderMatrix /><h2>Microsoft Agent Framework</h2><p>Use Gantry context providers and tool bridges to surface only relevant tools during a run. For Agent Framework 1.6+ concurrent workflows, call <code>disable_af_instrumentation()</code> before agent construction if upstream ContextVar instrumentation conflicts with parallel runs.</p><h2>Native adapters</h2><p>Adapters and examples exist for LangChain, LangGraph, LlamaIndex, CrewAI, AutoGen, Semantic Kernel, Google ADK, Pydantic AI, OpenAI Agents SDK, Smolagents, Haystack, and Agno. Use isolated environments when upstream dependency constraints conflict.</p></DocsLayout>
+<DocsLayout title="Frameworks | Agent-Gantry">
+  <h1>Framework integrations</h1>
+  <p class="lead">Agent-Gantry is designed to be the shared tool layer below many agent frameworks. These guides show how to expose the same trusted tool registry, retrieval strategy, and LLM routing policy from basic prototypes through production-grade agent systems.</p>
+  <ProviderMatrix />
+
+  <h2>Framework-by-framework guides</h2>
+  <p>Each guide is organized as a two-page learning path in one place: a <strong>basic page</strong> for setup, registration, and a first tool call, followed by an <strong>advanced page</strong> for dynamic tool selection, LLM calls, observability, and deployment patterns.</p>
+  <div class="grid">
+    {guides.map(([name, href, advancedHref]) => <div class="card guide-card"><h3>{name}</h3><p>Basic usage, advanced orchestration, and LLM-call guidance.</p><p><a class="pill" href={href}>Basic guide</a><a class="pill" href={advancedHref}>Advanced guide</a></p></div>)}
+  </div>
+
+  <h2>Recommended integration model</h2>
+  <div class="step"><h3>Start with the shared registry</h3><p>Register Python callables once in Agent-Gantry, attach metadata, and export framework-specific tool objects only at the boundary of the selected framework.</p></div>
+  <div class="step"><h3>Keep LLM calls behind adapters</h3><p>Use the framework for conversation state and agent loops, then route model calls through your provider policy so usage tracking, cost controls, and fallback rules remain consistent.</p></div>
+  <div class="step"><h3>Add advanced controls last</h3><p>Introduce semantic tool retrieval, reranking, MCP/A2A executors, and tracing after the basic path has stable tests.</p></div>
+
+  <h2>Microsoft Agent Framework</h2>
+  <p>Use Gantry context providers and tool bridges to surface only relevant tools during a run. For Agent Framework 1.6+ concurrent workflows, call <code>disable_af_instrumentation()</code> before agent construction if upstream ContextVar instrumentation conflicts with parallel runs.</p>
+</DocsLayout>
