@@ -947,12 +947,15 @@ class AgentGantry:
         Exceptions raised by a callback are caught and logged (never propagated
         into the tool run), so a broken listener cannot break execution.
 
-        Timing: in :meth:`execute` the event fires as soon as that call
-        finishes. In :meth:`execute_batch` events are emitted *after the whole
-        batch completes* — one per call, paired with its result by index — so
-        for a ``parallel`` batch they arrive together at the end rather than in
-        completion order (the per-call ``latency_ms`` values are still
-        accurate).
+        .. note::
+           **Batch timing differs from single execute.** In :meth:`execute`
+           the event fires the instant that call finishes. In
+           :meth:`execute_batch` events are emitted *after the whole batch
+           completes* — one per call, paired with its result by index — so for
+           a ``parallel`` batch they all arrive together at the end rather than
+           in completion order. The per-call ``ToolCallEvent.latency_ms`` is
+           still accurate; only the *delivery* time is batched, which matters
+           if you timestamp events for latency dashboards.
 
         Registering the same callable twice registers it twice (it will fire
         twice); the returned unsubscribe removes one registration.
@@ -982,9 +985,10 @@ class AgentGantry:
         """
         if not self._tool_call_callbacks:
             return
-        # Local import: the execution schema is runtime-imported inside methods
-        # throughout this module (it's only TYPE_CHECKING-imported at the top),
-        # and the guard above means this only runs when a listener exists.
+        # Local import: ToolCallEvent isn't imported at module top (the
+        # execution-schema imports there are TYPE_CHECKING-only). Importing it
+        # here — after the early-return guard above — also keeps it off the
+        # path entirely when no listeners are registered.
         from agent_gantry.schema.execution import ToolCallEvent
 
         event = ToolCallEvent(call=call, result=result)

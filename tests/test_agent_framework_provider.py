@@ -590,6 +590,36 @@ class TestSelectionsAndTrace:
         assert len(b) == 1
 
     @pytest.mark.asyncio
+    async def test_selections_visible_after_write_in_child_task(
+        self, gantry_with_tools: AgentGantry
+    ) -> None:
+        """Post-run introspection must survive a write in a copied context.
+
+        ``asyncio.create_task`` copies the context, so a ``ContextVar.set``
+        inside the child is invisible to the parent — which is exactly what
+        happens if AF runs ``agent.run()`` in an internal task. The
+        plain-attribute fallback must keep ``selections`` / ``last_selection``
+        readable from the parent afterwards (otherwise the documented
+        post-run introspection silently returns empty).
+        """
+        import asyncio
+
+        provider = GantryContextProvider(gantry_with_tools, top_k=2)
+
+        async def child() -> None:
+            ctx = af.SessionContext(input_messages=[_user_msg("weather in Paris")])
+            await provider.before_run(
+                agent=None, session=None, context=ctx, state={}
+            )
+
+        # Drive the run inside a child task (copied context), await from parent.
+        await asyncio.create_task(child())
+
+        # The parent never saw the ContextVar write; the fallback must cover it.
+        assert provider.last_selection is not None
+        assert len(provider.selections) >= 1
+
+    @pytest.mark.asyncio
     async def test_trace_surfaced_shows_only_kept_capped(
         self, gantry_with_tools: AgentGantry
     ) -> None:

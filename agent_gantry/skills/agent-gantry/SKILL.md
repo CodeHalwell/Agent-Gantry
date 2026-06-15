@@ -499,6 +499,8 @@ unsubscribe = gantry.on_tool_call(log_call)   # sync or async callbacks; returns
 
 Callbacks are error-isolated — a raising listener never breaks the tool run — and failed tools still emit an event (`event.ok is False`). `ToolCallEvent` carries `.call`, `.result`, and the convenience accessors `.tool_name`, `.status`, `.ok`, `.latency_ms`.
 
+> **Batch timing:** events fire immediately for each `gantry.execute`, but for `gantry.execute_batch` they're emitted *after the whole batch finishes* (one per call, paired by index). `latency_ms` stays accurate; only delivery is batched — relevant if you timestamp events for a latency dashboard.
+
 ### Rendering tool results
 
 `render_result(result, *, limit=None, collapse_whitespace=False)` turns any result — including AF `Content`-block lists, bytes, dicts, or arbitrary objects — into readable text for logs/UIs. The trace middleware uses it internally.

@@ -30,8 +30,10 @@ tool, round 2 surfaces the hashing tool.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import hashlib
+import operator
 import secrets
 import string
 import uuid
@@ -46,6 +48,36 @@ from agent_gantry import AgentGantry, ToolCallEvent, render_result
 from agent_gantry.agent_framework import AgentFrameworkAdapter
 
 load_dotenv()
+
+
+# Safe arithmetic via an AST walk — deliberately *not* eval(). `{"__builtins__":
+# {}}` is not a sandbox in CPython, and examples get copy-pasted into real code,
+# so the tool below evaluates a whitelisted node set instead.
+_ARITH_BINOPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.Pow: operator.pow,
+    ast.Mod: operator.mod,
+}
+_ARITH_UNARY = {ast.UAdd: operator.pos, ast.USub: operator.neg}
+
+
+def _safe_arith(expression: str) -> str:
+    def _ev(node: ast.AST) -> float:
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return node.value
+        if isinstance(node, ast.BinOp) and type(node.op) in _ARITH_BINOPS:
+            return _ARITH_BINOPS[type(node.op)](_ev(node.left), _ev(node.right))
+        if isinstance(node, ast.UnaryOp) and type(node.op) in _ARITH_UNARY:
+            return _ARITH_UNARY[type(node.op)](_ev(node.operand))
+        raise ValueError("unsupported expression")
+
+    try:
+        return str(_ev(ast.parse(expression, mode="eval").body))
+    except Exception:  # noqa: BLE001 - any parse/eval error → friendly message
+        return "ERROR: could not evaluate expression"
 
 
 # ---------------------------------------------------------------------------
@@ -86,15 +118,8 @@ def build_gantry() -> AgentGantry:
         examples=["what is 12 * (4 + 3)?", "compute 2 to the power of 10"],
     )
     def calculate(expression: Annotated[str, "An arithmetic expression"]) -> str:
-        """Evaluate a simple arithmetic expression."""
-        allowed = set("0123456789+-*/(). ")
-        if not set(expression) <= allowed:
-            return "ERROR: unsupported characters in expression"
-        # NOTE: demo only. The char allow-list above is what keeps this safe-ish;
-        # `{"__builtins__": {}}` alone is NOT a sandbox (attribute access on
-        # reachable objects can still escape in CPython). Don't copy eval() into
-        # production — use the stdlib-based `calculate` tool in tools/ instead.
-        return str(eval(expression, {"__builtins__": {}}, {}))  # noqa: S307 - demo only
+        """Evaluate a simple arithmetic expression (safe AST walk, no eval())."""
+        return _safe_arith(expression)
 
     @gantry.register(
         tags=["time", "date", "clock", "calendar"],

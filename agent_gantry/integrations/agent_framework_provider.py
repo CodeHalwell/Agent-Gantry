@@ -381,17 +381,24 @@ class GantryContextProvider:
                 # Per-task run-state held in ContextVars (not plain attributes)
                 # so a single provider shared across concurrent agent.run()
                 # calls — e.g. a multi-user server — doesn't interleave its
-                # selection history or trace round counter. The vars are
-                # per-instance (created here, once per provider) so multiple
-                # providers stay independent; same-task reads still see the
-                # value (post-run introspection works), while a copied context
-                # (asyncio.gather / create_task) gets isolation for free.
+                # selection history. The vars are per-instance (created here,
+                # once per provider) so multiple providers stay independent.
                 self._last_selection_var: ContextVar[RetrievalDecision | None] = (
                     ContextVar("gantry_last_selection", default=None)
                 )
                 self._selections_var: ContextVar[tuple[RetrievalDecision, ...]] = (
                     ContextVar("gantry_selections", default=())
                 )
+                # Plain-attribute fallbacks. A run driven inside a *child* task
+                # (AF may wrap agent.run() in asyncio.create_task, which copies
+                # the context) writes the ContextVar in that copy — invisible to
+                # the caller's context, which would make post-run
+                # `provider.selections` reads silently empty. So we also stash
+                # the latest *coherent* snapshot here (last-writer-wins, never
+                # interleaved — it mirrors one task's ContextVar value) and read
+                # it only when the context-local value is unset.
+                self._last_selection_plain: RetrievalDecision | None = None
+                self._selections_plain: tuple[RetrievalDecision, ...] = ()
                 # One-shot warnings: we don't want to spam the log every
                 # round even when the misconfiguration persists.
                 self._warned_about_missing_chat_middleware = False
@@ -447,10 +454,14 @@ class GantryContextProvider:
                 Backed by a :class:`~contextvars.ContextVar`: the value is
                 scoped to the current task/context, so concurrent
                 ``agent.run()`` calls on a shared provider don't clobber each
-                other. A read in the same task that ran the agent (the usual
-                post-run introspection) still sees the latest decision.
+                other's in-context reads. When the context-local value is unset
+                — e.g. a post-run read from the parent task after AF ran the
+                agent in a child task whose context copy we can't see — this
+                falls back to the latest coherent snapshot so introspection
+                never goes silently empty.
                 """
-                return self._last_selection_var.get()
+                in_context = self._last_selection_var.get()
+                return in_context if in_context is not None else self._last_selection_plain
 
             @property
             def selections(self) -> tuple[RetrievalDecision, ...]:
@@ -467,9 +478,13 @@ class GantryContextProvider:
 
                 Like :attr:`last_selection`, this is task-scoped via a
                 ``ContextVar`` — each concurrent run accumulates its own
-                history rather than interleaving into one shared list.
+                history rather than interleaving into one shared list — with a
+                plain-attribute fallback so a post-run read from a different
+                task still sees the latest run's (coherent, non-interleaved)
+                history instead of an empty tuple.
                 """
-                return self._selections_var.get()
+                in_context = self._selections_var.get()
+                return in_context if in_context else self._selections_plain
 
             # ----- AF lifecycle ------------------------------------------
             async def before_run(
@@ -622,6 +637,10 @@ class GantryContextProvider:
                 Attach it alongside the provider, either via
                 ``provider.attach_to(agent, trace=True)`` or by adding
                 ``provider.trace()`` to ``Agent(middleware=[...])``.
+
+                Call this once and store the result; each call allocates a fresh
+                round-counter ``ContextVar`` (ContextVars are not reclaimed like
+                ordinary objects), so don't call it in a loop.
 
                 Args:
                     render: Print the post-call result preview line. Default
@@ -956,10 +975,14 @@ class GantryContextProvider:
                     self._last_selection_var.set(decision)
                     # ContextVar holds an immutable tuple; bound it by slicing
                     # so history stays capped without a shared mutable deque.
-                    history = self._selections_var.get()
-                    self._selections_var.set(
-                        (history + (decision,))[-_MAX_SELECTION_HISTORY:]
-                    )
+                    history = (
+                        self._selections_var.get() + (decision,)
+                    )[-_MAX_SELECTION_HISTORY:]
+                    self._selections_var.set(history)
+                    # Mirror to the plain fallbacks (coherent snapshot for
+                    # cross-task post-run introspection; see the properties).
+                    self._last_selection_plain = decision
+                    self._selections_plain = history
                     if self._verbose:
                         logger.info("gantry: %s", decision.summary())
 

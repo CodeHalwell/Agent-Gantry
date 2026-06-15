@@ -106,7 +106,12 @@ class ToolCallEvent:
 
     @property
     def tool_name(self) -> str:
-        """Name of the tool that was executed."""
+        """Name of the tool that was executed.
+
+        Prefers ``result.tool_name`` and falls back to ``call.tool_name`` only
+        defensively (the result name is normally always populated; the fallback
+        covers any error path that produced a result without one).
+        """
         return self.result.tool_name or self.call.tool_name
 
     @property
