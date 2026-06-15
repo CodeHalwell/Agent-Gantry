@@ -386,8 +386,12 @@ class GantryContextProvider:
                 self._last_selection_var: ContextVar[RetrievalDecision | None] = (
                     ContextVar("gantry_last_selection", default=None)
                 )
-                self._selections_var: ContextVar[tuple[RetrievalDecision, ...]] = (
-                    ContextVar("gantry_selections", default=())
+                # Default None (not ()) so we can tell "never set in this
+                # context" (-> fall back to the plain snapshot) apart from
+                # "reset for a fresh run, nothing retrieved yet" (-> return ()
+                # without leaking the previous run's history).
+                self._selections_var: ContextVar[tuple[RetrievalDecision, ...] | None] = (
+                    ContextVar("gantry_selections", default=None)
                 )
                 # Plain-attribute fallbacks. A run driven inside a *child* task
                 # (AF may wrap agent.run() in asyncio.create_task, which copies
@@ -484,15 +488,19 @@ class GantryContextProvider:
                 "what was surfaced" with "what the model then called" across the
                 whole run instead of just the last round.
 
-                Like :attr:`last_selection`, this is task-scoped via a
-                ``ContextVar`` — each concurrent run accumulates its own
-                history rather than interleaving into one shared list — with a
+                Scoped to a single ``agent.run`` — :meth:`before_run` resets the
+                history at the start of each run, so a shared provider doesn't
+                bleed one run's (or one user's) selections into the next. (This
+                differs from :attr:`last_selection`, which is the single
+                latest decision and is not reset.) Task-scoped via a
+                ``ContextVar`` — each concurrent run accumulates its own history
+                rather than interleaving into one shared list — with a
                 plain-attribute fallback so a post-run read from a different
                 task still sees the latest run's (coherent, non-interleaved)
                 history instead of an empty tuple.
                 """
                 in_context = self._selections_var.get()
-                return in_context if in_context else self._selections_plain
+                return in_context if in_context is not None else self._selections_plain
 
             # ----- AF lifecycle ------------------------------------------
             async def before_run(
@@ -503,6 +511,15 @@ class GantryContextProvider:
                 context: Any,
                 state: dict[str, Any],
             ) -> None:
+                # Run boundary: scope the selection history to this run so a
+                # shared provider doesn't carry the previous run's (or user's)
+                # selections forward. Reset both the context-local var and the
+                # cross-task plain snapshot; per_run appends below, per_call
+                # appends via the chat middleware. last_selection is the single
+                # latest decision and is deliberately not reset.
+                self._selections_var.set(())
+                self._selections_plain = ()
+
                 # per_call mode requires the chat middleware to do the
                 # actual per-round refresh. If the user forgot to attach
                 # it, the agent silently degrades to per_run behaviour
@@ -983,8 +1000,10 @@ class GantryContextProvider:
                     self._last_selection_var.set(decision)
                     # ContextVar holds an immutable tuple; bound it by slicing
                     # so history stays capped without a shared mutable deque.
+                    # `or ()` covers a refresh in a context where before_run
+                    # never reset the var (default None).
                     history = (
-                        self._selections_var.get() + (decision,)
+                        (self._selections_var.get() or ()) + (decision,)
                     )[-_MAX_SELECTION_HISTORY:]
                     self._selections_var.set(history)
                     # Mirror to the plain fallbacks (coherent snapshot for

@@ -452,22 +452,49 @@ class TestSelectionsAndTrace:
     """Per-round selection history and the built-in console trace middleware."""
 
     @pytest.mark.asyncio
-    async def test_selections_accumulate_across_rounds(
+    async def test_selections_accumulate_across_rounds_within_a_run(
         self, gantry_with_tools: AgentGantry
     ) -> None:
-        """Every dynamic retrieval appends to the bounded selections history."""
-        provider = GantryContextProvider(gantry_with_tools, top_k=2)
+        """Within one run, each chat round appends to the selection history."""
+        provider = GantryContextProvider(
+            gantry_with_tools, top_k=2, query_strategy="per_call"
+        )
 
+        # Run start: before_run resets; per_call doesn't retrieve here.
+        ctx = af.SessionContext(input_messages=[_user_msg("weather in Paris")])
+        await provider.before_run(agent=None, session=None, context=ctx, state={})
         assert provider.selections == ()
+
+        class _ChatCtx:
+            def __init__(self, messages: list) -> None:
+                self.options: dict = {"tools": []}
+                self.messages = messages
+
+        # Two chat rounds within the *same* run accumulate (no reset between).
         for query in ("weather in Paris", "issue a refund"):
-            ctx = af.SessionContext(input_messages=[_user_msg(query)])
-            await provider.before_run(
-                agent=None, session=None, context=ctx, state={}
-            )
+            await provider._refresh_tools_on_chat_context(_ChatCtx([_user_msg(query)]))
 
         assert len(provider.selections) == 2
         # last_selection is always the most recent entry in the history.
         assert provider.selections[-1] is provider.last_selection
+
+    @pytest.mark.asyncio
+    async def test_selections_reset_each_run(
+        self, gantry_with_tools: AgentGantry
+    ) -> None:
+        """A new run (before_run) starts the history fresh — no cross-run bleed."""
+        provider = GantryContextProvider(gantry_with_tools, top_k=2)
+
+        ctx_a = af.SessionContext(input_messages=[_user_msg("weather in Paris")])
+        await provider.before_run(agent=None, session=None, context=ctx_a, state={})
+        assert len(provider.selections) == 1
+        first_query = provider.selections[-1].query
+
+        ctx_b = af.SessionContext(input_messages=[_user_msg("issue a refund")])
+        await provider.before_run(agent=None, session=None, context=ctx_b, state={})
+        # Reset, not appended: only run B's selection is present (not 1 + 1).
+        assert len(provider.selections) == 1
+        assert provider.selections[-1].query != first_query
 
     @pytest.mark.asyncio
     async def test_selections_is_immutable_snapshot(

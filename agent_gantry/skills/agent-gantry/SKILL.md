@@ -476,7 +476,7 @@ provider.attach_to(agent, trace=True)
 
 ### Per-round selection history
 
-`provider.last_selection` is a single mutable slot. `provider.selections` is the full per-round history (oldest first, bounded), so you can audit what was surfaced at *each* step, not just the last:
+`provider.last_selection` is a single mutable slot. `provider.selections` is the per-round history for the **current run** (oldest first, bounded; reset at the start of each `agent.run`), so you can audit what was surfaced at *each* step of a run, not just the last:
 
 ```python
 for i, decision in enumerate(provider.selections, start=1):
