@@ -481,13 +481,14 @@ with a warning so shared modules can be safely combined.
 - **Multi-Protocol Support**: Native support for MCP (Model Context Protocol) and A2A (Agent-to-Agent)
 - **Schema Transcoding**: Automatic conversion between OpenAI, Anthropic, and Gemini tool formats
 - **LLM Provider Compatibility**: Works with OpenAI, Azure OpenAI, Anthropic, Google GenAI, Vertex AI, Mistral, Groq, OpenRouter — plus any OpenAI-compatible endpoint via `api_base`
-- **First-class introspection**: `RetrievalDecision`, `provider.last_selection`, `provider.dry_run_retrieve(query)`, verbose mode — debug routing without writing middleware
+- **First-class introspection**: `RetrievalDecision`, `provider.last_selection`, `provider.selections` (per-round history), `provider.dry_run_retrieve(query)`, verbose mode — debug routing without writing middleware
+- **Built-in tracing & events**: `provider.trace()` / `attach_to(agent, trace=True)` for a readable per-round console trace, `gantry.on_tool_call(cb)` for framework-agnostic tool-call events (`ToolCallEvent`), and `render_result(...)` to stringify any tool result — no hand-rolled middleware
 - **Length-robust thresholds**: `score_threshold="relative:0.8"` keeps anything within 80% of the top score, surviving long pipeline-style queries that collapse absolute cosine cutoffs
 - **Registry linter**: `agent-gantry lint` flags tool descriptions that pull each other into the wrong queries (cross-references, near-duplicates, generic tags)
 - **Persistent embedding cache**: `CachedEmbedder` wraps any embedder with a SQLite cache so cold starts don't re-embed everything
 - **Bundled Claude Skill**: ship usage docs to your agents via `agent-gantry install-skill` or `from agent_gantry.skills import skill_path`
 - **Circuit Breakers**: Automatic failure detection and recovery
-- **Observability**: Built-in structured logging and telemetry for tracing and metrics, including `gantry.bridge_retrieval` spans carrying the full ranked candidate list
+- **Observability**: Structured telemetry for tracing and metrics, including `gantry.bridge_retrieval` spans carrying the full ranked candidate list. The library configures no logging itself (NullHandler at import) — opt into console output with `enable_console_logging()`
 - **Zero-Trust Security**: Capability-based permissions and policy enforcement
 - **Modular tool loading**: Import and deduplicate tool registries from other modules or packages
 - **Local persistence & skills**: LanceDB-backed tool/skill storage, Matryoshka embeddings, and skill schemas for prompt guidance

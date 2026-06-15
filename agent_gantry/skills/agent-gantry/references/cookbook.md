@@ -141,8 +141,10 @@ for c in decision.candidates:
 
 # Step 3: After a real run, what did the LLM actually see?
 result = await agent.run("...")
-print(provider.last_selection.summary())
+print(provider.last_selection.summary())     # the latest round
 print(provider.last_selection.injected)
+for i, d in enumerate(provider.selections, 1):  # every round, oldest first
+    print(f"  round {i}: {d.summary()}")
 
 # Step 4: Threshold issue?
 # If "filtered out all N candidates" WARNING appears in logs, lower or switch
@@ -221,3 +223,48 @@ tools_top5 = await bridge.get_tools("the query", limit=5)         # gantry top-5
 ```
 
 `tests/test_token_savings_and_accuracy.py` in the repo is a full reference benchmark.
+
+## Recipe 10: Trace tool calls + framework-agnostic event logging (0.8.0+)
+
+Goal: see which tool the model calls each round (and what the router surfaced), and capture every tool call for logging/metrics — without hand-rolling middleware.
+
+```python
+from agent_framework import Agent
+from agent_framework.openai import OpenAIChatClient
+from agent_gantry import AgentGantry, ToolCallEvent, render_result
+from agent_gantry.agent_framework import AgentFrameworkAdapter
+
+gantry = AgentGantry()
+# ... register tools, await gantry.sync() ...
+
+# Framework-agnostic: fires once per gantry.execute, regardless of framework.
+def log_call(event: ToolCallEvent) -> None:
+    status = "ok" if event.ok else f"FAILED ({event.result.error})"
+    print(f"    · {event.tool_name} -> {status} ({event.latency_ms:.0f} ms)")
+
+gantry.on_tool_call(log_call)   # returns an unsubscribe() callable
+
+provider = AgentFrameworkAdapter(gantry).context_provider(
+    top_k=3, query_strategy="per_call",
+)
+agent = Agent(OpenAIChatClient(), "You are a helpful assistant.")
+
+# One call wires the provider, the per-call retrieval middleware, AND a console
+# trace ("round N: tool(args) [surfaced: ...] -> result preview").
+provider.attach_to(agent, trace=True)
+
+response = await agent.run("Generate a secure password, then hash it with SHA-256.")
+print(render_result(response.text, limit=500))
+
+# Per-round introspection — what was offered at each step, not just the last.
+for i, decision in enumerate(provider.selections, start=1):
+    print(f"round {i}: {decision.summary()}")
+```
+
+The trace middleware is `provider.trace()` under the hood; pass `render=False`,
+`printer=logger.info`, or `limit=...` to tune it. Logging is opt-in
+(`enable_console_logging()`); the `on_tool_call` and trace output above use plain
+`print`, so they show regardless.
+
+A runnable version lives at
+`examples/agent_frameworks/agent_framework_trace_events_example.py`.

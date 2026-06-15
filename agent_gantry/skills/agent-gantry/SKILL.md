@@ -54,6 +54,10 @@ This skill is the canonical reference for using the library. Read the section th
 
 5. **`query_strategy="per_call"` re-runs retrieval every chat-completion round.** This is the right choice for multi-step agents. Pair it with `provider.attach_to(agent)` or `middleware=[provider.as_chat_middleware()]`. Without the middleware, `per_call` silently degrades to `per_run` and the provider will warn you once.
 
+6. **Observability ships built-in — don't hand-roll it.** `provider.trace()` (or `provider.attach_to(agent, trace=True)`) prints a readable per-round line of what was called and surfaced; `provider.selections` keeps the per-round retrieval history; `gantry.on_tool_call(cb)` fires a `ToolCallEvent` after every `gantry.execute` for framework-agnostic logging/metrics; `render_result(...)` stringifies any tool result. See [Observability & tracing](#observability--tracing).
+
+7. **Importing `agent_gantry` configures no logging.** As of 0.8.0 the library attaches a `NullHandler` and never sets handlers or levels on your behalf, so a default `AgentGantry()` is silent. Opt into console output with `enable_console_logging()` (or your own logging config).
+
 ## Installing
 
 This project uses **uv** as its package manager; `pip` works as a fallback. Inside a uv project use `uv add`; for an ad-hoc environment use `uv pip install`.
@@ -165,8 +169,13 @@ Or use the one-call helper:
 
 ```python
 agent = Agent(OpenAIChatClient(), "...")
-provider.attach_to(agent)        # appends provider + middleware in one shot
+provider.attach_to(agent)                 # appends provider + middleware in one shot
+provider.attach_to(agent, trace=True)     # ...and a console trace of every tool call
 ```
+
+`trace=True` also installs the built-in trace middleware (see
+[Observability & tracing](#observability--tracing)) — the library-owned
+replacement for hand-rolled `@function_middleware` logging.
 
 ### Pinning tools that must always be visible
 
@@ -447,6 +456,64 @@ uv run agent-gantry install-skill --claude            # install THIS skill into 
 2. Pairs of tools with >0.85 cosine similarity (probably should be one tool, or differentiated).
 3. Tags that appear on more than half the registry (low discriminative value).
 
+## Observability & tracing
+
+As of 0.8.0 the library ships the tracing/logging glue you'd otherwise hand-roll. Reach for these before writing custom middleware.
+
+### Console trace — one readable line per tool call
+
+`provider.trace()` returns an AF *function* middleware; `attach_to(agent, trace=True)` installs it (plus the per-call retrieval middleware) in one call. For every tool the model invokes it prints the round, the call, the router's surfaced set, and a preview of the result:
+
+```python
+provider = AgentFrameworkAdapter(gantry).context_provider(top_k=3, query_strategy="per_call")
+agent = Agent(OpenAIChatClient(), "...")
+provider.attach_to(agent, trace=True)
+# >>> round 1: generate_password({'length': 20})  [surfaced: generate_password:0.62, ...]
+# <<< round 1: generate_password -> Xk9$mP2v...
+```
+
+`provider.trace(render=False, printer=logger.info, limit=200)` tunes it: skip the result line, redirect the sink (e.g. to a logger), or change the preview length.
+
+### Per-round selection history
+
+`provider.last_selection` is a single mutable slot. `provider.selections` is the full per-round history (oldest first, bounded), so you can audit what was surfaced at *each* step, not just the last:
+
+```python
+for i, decision in enumerate(provider.selections, start=1):
+    print(f"round {i}: {decision.summary()}")
+```
+
+### Framework-agnostic tool-call events
+
+`gantry.on_tool_call(callback)` fires after **every** `gantry.execute` (and once per call in `execute_batch`) with a `ToolCallEvent`. Because `execute` is the single choke point every framework adapter routes through, this gives logging/metrics across LangChain, CrewAI, AF, direct calls — with no per-framework middleware:
+
+```python
+from agent_gantry import ToolCallEvent
+
+def log_call(event: ToolCallEvent) -> None:
+    status = "ok" if event.ok else f"FAILED ({event.result.error})"
+    print(f"{event.tool_name} -> {status} ({event.latency_ms:.0f} ms)")
+
+unsubscribe = gantry.on_tool_call(log_call)   # sync or async callbacks; returns an unsubscribe fn
+```
+
+Callbacks are error-isolated — a raising listener never breaks the tool run — and failed tools still emit an event (`event.ok is False`). `ToolCallEvent` carries `.call`, `.result`, and the convenience accessors `.tool_name`, `.status`, `.ok`, `.latency_ms`.
+
+### Rendering tool results
+
+`render_result(result, *, limit=None, collapse_whitespace=False)` turns any result — including AF `Content`-block lists, bytes, dicts, or arbitrary objects — into readable text for logs/UIs. The trace middleware uses it internally.
+
+### Logging
+
+The library configures no logging (a `NullHandler` is attached at import). To see Gantry's own INFO lines on the console, opt in once:
+
+```python
+from agent_gantry import enable_console_logging
+enable_console_logging()   # attaches a console handler + sets the agent_gantry level
+```
+
+Telemetry (`ConsoleTelemetryAdapter`, the default) still emits structured records; they flow to whatever handlers your app configured. There's nothing to silence anymore — a default `AgentGantry()` is quiet.
+
 ## Debugging routing
 
 When a user says "the LLM doesn't see my tool" / "my surface is empty" / "wrong tools are being selected", use these in order:
@@ -464,7 +531,7 @@ for c in decision.candidates:
     print(c.name, c.score, c.kept)  # full ranked list, kept/dropped flag
 ```
 
-`RetrievalDecision` carries: the query, every candidate the gantry returned, the threshold mode used, the effective numeric cutoff, and the final injected list.
+`RetrievalDecision` carries: the query, every candidate the gantry returned, the threshold mode used, the effective numeric cutoff, and the final injected list. For the **per-round history** (not just the latest), use `provider.selections` — see [Observability & tracing](#observability--tracing).
 
 ### 2. `provider.dry_run_retrieve(query)` — same code path as live, no agent
 
@@ -541,6 +608,7 @@ This catches the headline mistakes: a tool description that names another tool (
 | `top_k=6` but I see 8 tools | Skills / `always_include` / `static_tools` add on top of dynamic top_k | Expected; subtract those |
 | Cold-start re-embeds every time | Default `InMemoryVectorStore` is ephemeral | Wrap embedder in `CachedEmbedder` or use `[lancedb]` |
 | OpenAI embedder can't reach my proxy | Custom base_url not configured | Pass `api_base=...` in `EmbedderConfig` or set `OPENAI_BASE_URL` |
+| No telemetry / INFO logs appear (0.8.0+) | Library no longer configures logging by default | Call `enable_console_logging()` or configure your own handler on the `agent_gantry` logger |
 
 ## Persistent embedding cache
 
@@ -587,10 +655,17 @@ from agent_gantry import (
     with_semantic_tools,          # decorator for plain LLM SDK calls
     set_default_gantry,           # bind a gantry to with_semantic_tools
     create_default_gantry,        # quick factory (auto-picks Nomic if available)
+    render_result,                # stringify any tool result (incl. AF Content lists)
+    enable_console_logging,       # opt into console output (lib configures no logging)
     ToolCall, ToolResult,
+    ToolCallEvent,                # delivered to gantry.on_tool_call(callback)
     ToolQuery, ConversationContext,
     ToolCapability, ToolCost, ToolDefinition, ToolHealth, ToolSource,
 )
+# Observability built-ins (0.8.0+):
+#   gantry.on_tool_call(cb)            -> framework-agnostic ToolCallEvent stream
+#   provider.trace() / attach_to(..., trace=True)  -> console trace middleware
+#   provider.selections                -> per-round RetrievalDecision history
 from agent_gantry.integrations import (
     GantryToolBridge,             # static AF bridge + workflow builders
     GantryApprovalMiddleware,

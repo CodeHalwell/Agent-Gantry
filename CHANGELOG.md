@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-06-15
+
+### Added
+
+- **Built-in console trace middleware for the Agent Framework provider.**
+  `GantryContextProvider.trace()` returns an AF *function* middleware that prints
+  a readable per-round line — `>>> round N: tool(args)  [surfaced: name:score, …]`
+  then `<<< round N: tool -> <result preview>` — using `last_selection` for the
+  surfaced set and `render_result` for the preview. `provider.attach_to(agent,
+  trace=True)` wires it (and the per-call retrieval middleware) in one call. This
+  replaces hand-rolled `@function_middleware` trace glue.
+- **`agent_gantry.render_result(result, *, limit=None, collapse_whitespace=False)`**
+  — a framework-agnostic helper that renders any tool result (including Agent
+  Framework `Content`-block lists, bytes, dicts, and arbitrary objects) to
+  readable text for logs and traces.
+- **Per-round retrieval history.** `GantryContextProvider.selections` exposes the
+  bounded sequence of `RetrievalDecision`s (oldest first), so callers can
+  correlate *what was surfaced* with *what the model called* across the whole run
+  rather than only the latest round. `last_selection` remains the single
+  most-recent slot.
+- **Framework-agnostic tool-call event hook.** `AgentGantry.on_tool_call(callback)`
+  registers a listener (sync or async) fired with a `ToolCallEvent(call, result)`
+  after every `gantry.execute` — and once per call in `execute_batch`. Because
+  `execute` is the single choke point every framework adapter flows through, one
+  registration yields logging/metrics across all of them. Callbacks are
+  error-isolated (a raising listener never breaks the tool run) and the method
+  returns an unsubscribe callable. `ToolCallEvent` is exported from `agent_gantry`.
+- **`agent_gantry.enable_console_logging(level=logging.INFO)`** — explicit opt-in
+  that attaches a console handler (once) and sets the `agent_gantry` logger level,
+  replacing the implicit handler/level side effect that `ConsoleTelemetryAdapter`
+  used to perform on construction.
+
+### Changed
+
+- **Logging hygiene (behaviour change).** Importing `agent_gantry` now attaches a
+  `logging.NullHandler` to the package logger, and `ConsoleTelemetryAdapter` no
+  longer adds a handler or raises the logger level as a side effect of
+  construction. A default `AgentGantry()` therefore no longer emits INFO
+  "Span started" / "Tool execution" lines or clobbers the root log level —
+  telemetry records simply propagate to whatever logging the application
+  configured (a `NullHandler` swallows them if none). Opt back into console output
+  with `agent_gantry.enable_console_logging()`, or construct
+  `ConsoleTelemetryAdapter(attach_handler=True)` for the old direct-construction
+  convenience.
+
 ## [0.7.0] - 2026-06-15
 
 ### Changed
@@ -1194,7 +1239,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.1.4...v0.2.0
