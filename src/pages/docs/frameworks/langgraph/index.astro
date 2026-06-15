@@ -1,0 +1,37 @@
+---
+import DocsLayout from '../../../../layouts/DocsLayout.astro';
+---
+<DocsLayout title="LangGraph guide | Agent-Gantry">
+  <p class="eyebrow">Framework guide</p>
+  <h1>LangGraph</h1>
+  <p class="lead">Use Agent-Gantry with stateful graphs with conditional tool nodes. This page covers basic setup and the first production-friendly path; continue to the advanced page for dynamic retrieval, LLM calls, and operations.</p>
+  <p><a class="pill" href="/Agent-Gantry/docs/frameworks/langgraph/advanced/">Advanced LangGraph usage →</a></p>
+
+  <h2>Basic page: register once, adapt at the edge</h2>
+  <ol>
+    <li>Create a Gantry instance near application startup.</li>
+    <li>Register deterministic Python functions with descriptions and input schemas.</li>
+    <li>Export framework-native tools for LangGraph immediately before constructing the agent, graph, pipeline, or crew.</li>
+    <li>Keep authorization, rate limits, and audit metadata in Gantry instead of duplicating it inside framework glue code.</li>
+  </ol>
+  <pre><code>from agent_gantry import AgentGantry
+from agent_gantry.langgraph import LangGraphAdapter
+
+gantry = AgentGantry()
+
+def get_order_status(order_id: str) -> str:
+    """Return the current shipping status for an order."""
+    return "in_transit"
+
+gantry.register_tool(get_order_status, tags=["support", "orders"])
+adapter = LangGraphAdapter(gantry)
+framework_tools = await adapter.select("check an order", limit=3)  # Native LangGraph adapter export.
+</code></pre>
+
+  <h2>First tool-calling loop</h2>
+  <p>Let LangGraph own the conversation lifecycle while Gantry owns the tool catalog. Start with a small tool set and assert that the framework receives only safe, documented functions.</p>
+  <div class="callout"><strong>Basic testing checklist:</strong> verify tool names, JSON schemas, auth metadata, and a happy-path invocation before wiring a live model.</div>
+
+  <h2>Basic LLM call guidance</h2>
+  <p>For early prototypes, use the model client already recommended by LangGraph. Wrap that client with a thin policy function that records model name, prompt tokens, completion tokens, tool calls, and latency. Once the integration stabilizes, move the policy into Agent-Gantry's LLM adapter layer so other frameworks share the same rules.</p>
+</DocsLayout>
