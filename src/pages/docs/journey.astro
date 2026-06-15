@@ -1,5 +1,19 @@
 ---
 import DocsLayout from '../../layouts/DocsLayout.astro';
 import ToolJourney from '../../components/ToolJourney';
+import { buildHighlightedJourneyStages } from '../../lib/journey';
+
+const stages = await buildHighlightedJourneyStages();
 ---
-<DocsLayout title="Implementation Journey | Agent-Gantry"><h1>The implementation journey</h1><p class="lead">The fastest way to adopt Agent-Gantry is to start as a decorator around an existing LLM call, then graduate to persistent retrieval, governance, observability, and protocol bridges.</p><ToolJourney client:load /><div class="journey"><div class="step"><h2>Prototype with in-memory routing</h2><p>Use the default in-memory vector store and simple embedder. This validates tool descriptions, tags, and score thresholds without external infrastructure.</p></div><div class="step"><h2>Make retrieval durable</h2><p>Add LanceDB for local persistence or Qdrant, Chroma, and pgvector for deployed search. Add OpenAI, Nomic, or sentence-transformers embeddings when lexical matching is not enough.</p></div><div class="step"><h2>Normalize provider schemas</h2><p>Keep one Python tool registry and emit provider-specific schemas for OpenAI-compatible APIs, Anthropic, Gemini, framework adapters, MCP, and A2A.</p></div><div class="step"><h2>Govern execution</h2><p>Use capabilities, security policy checks, rate limits, timeouts, retries, circuit breakers, and callbacks to keep tool invocation observable and bounded.</p></div><div class="step"><h2>Scale teams and agents</h2><p>Publish tools through MCP, compose A2A executors, install the bundled Claude Skill, and expose the same registry across Microsoft Agent Framework and popular Python agent frameworks.</p></div></div></DocsLayout>
+<DocsLayout title="Implementation Journey | Agent-Gantry">
+  <h1>The implementation journey</h1>
+  <p class="lead">The fastest way to adopt Agent-Gantry is to start as a decorator around an existing LLM call, then graduate to persistent retrieval, governance, observability, and protocol bridges.</p>
+  <ToolJourney client:load stages={stages} />
+  <div class="journey">
+    <div class="step"><h2>Prototype with in-memory routing</h2><p>Use the default in-memory vector store and simple embedder. This validates tool descriptions, tags, and score thresholds without external infrastructure.</p></div>
+    <div class="step"><h2>Make retrieval durable</h2><p>Add LanceDB for local persistence or Qdrant, Chroma, and pgvector for deployed search. Add OpenAI, Nomic, or sentence-transformers embeddings when lexical matching is not enough.</p></div>
+    <div class="step"><h2>Normalize provider schemas</h2><p>Keep one Python tool registry and emit provider-specific schemas for OpenAI-compatible APIs, Anthropic, Gemini, framework adapters, MCP, and A2A.</p></div>
+    <div class="step"><h2>Govern execution</h2><p>Use capabilities, security policy checks, rate limits, timeouts, retries, circuit breakers, and callbacks to keep tool invocation observable and bounded.</p></div>
+    <div class="step"><h2>Scale teams and agents</h2><p>Publish tools through MCP, compose A2A executors, install the bundled Claude Skill, and expose the same registry across Microsoft Agent Framework and popular Python agent frameworks.</p></div>
+  </div>
+</DocsLayout>

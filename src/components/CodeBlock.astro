@@ -1,0 +1,17 @@
+---
+import { highlightCode } from '../lib/highlight';
+
+interface Props {
+  code: string;
+  lang?: string;
+  title?: string;
+}
+
+const { code, lang = 'python', title } = Astro.props;
+const html = await highlightCode(code, lang);
+---
+
+<figure class="code-block">
+  {title && <figcaption class="code-title">{title}</figcaption>}
+  <Fragment set:html={html} />
+</figure>

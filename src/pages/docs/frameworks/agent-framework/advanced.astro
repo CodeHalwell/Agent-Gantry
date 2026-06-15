@@ -1,0 +1,118 @@
+---
+import DocsLayout from '../../../../layouts/DocsLayout.astro';
+import CodeBlock from '../../../../components/CodeBlock.astro';
+---
+<DocsLayout title="Advanced Microsoft Agent Framework guide | Agent-Gantry" description="Per-call tool routing, orchestration, middleware, and production patterns for Microsoft Agent Framework + Agent-Gantry.">
+  <p class="eyebrow">Advanced framework guide</p>
+  <h1>Advanced Microsoft Agent Framework</h1>
+  <p class="lead">Scale from per-run retrieval to multi-step agents that re-select tools every chat round, wire multi-agent workflows, and add governance middleware without leaving AF's native APIs.</p>
+  <p><a class="pill" href="/Agent-Gantry/docs/frameworks/agent-framework/">← Basic Agent Framework usage</a></p>
+
+  <h2>Per-call mode: re-select tools every chat round</h2>
+  <p>Use <code>query_strategy="per_call"</code> when the agent chains multiple tool calls in one run and needs a different tool surface at each stage. The paired chat middleware is <strong>required</strong> — without it, per-call mode silently degrades to per-run and Gantry logs a one-time warning.</p>
+
+  <CodeBlock lang="python" title="Per-call routing with middleware" code={`from agent_framework import Agent
+from agent_framework.openai import OpenAIChatClient
+from agent_gantry.agent_framework import AgentFrameworkAdapter
+
+provider = AgentFrameworkAdapter(gantry).context_provider(
+    top_k=3,
+    query_strategy="per_call",
+)
+
+agent = Agent(
+    OpenAIChatClient(),
+    "You are a multi-step assistant.",
+    context_providers=[provider],
+    middleware=[provider.as_chat_middleware()],  # required for per_call
+)
+
+# Or attach in one call:
+# provider.attach_to(agent, trace=True)`} />
+
+  <h2>Pin required and static tools</h2>
+  <CodeBlock lang="python" code={`provider = AgentFrameworkAdapter(gantry).context_provider(
+    top_k=5,
+    required=["validate_input"],       # MissingRequiredToolError if absent
+    always_include=["log_event"],      # warn + skip if absent
+    static_tools=[some_af_native_tool],  # AF @tool callables outside Gantry
+)`} />
+
+  <h2>Multi-agent orchestration</h2>
+  <p>Drop Gantry-equipped agents into <code>SequentialBuilder</code>, <code>HandoffBuilder</code>, or <code>WorkflowBuilder</code>. Each participant's <code>run</code> fires its own provider pipeline, so every agent gets tools tailored to its role and the current conversation state.</p>
+
+  <CodeBlock lang="python" code={`from agent_framework.orchestrations import SequentialBuilder
+from agent_gantry import GantryContextProvider
+
+triage = Agent(
+    client,
+    "You triage customer requests.",
+    name="Triage",
+    context_providers=[GantryContextProvider(gantry, top_k=2)],
+)
+resolver = Agent(
+    client,
+    "Resolve the issue using available tools.",
+    name="Resolver",
+    context_providers=[GantryContextProvider(gantry, top_k=3)],
+)
+
+workflow = SequentialBuilder(participants=[triage, resolver]).build()
+result = await workflow.run("My flight was cancelled, please rebook.")`} />
+
+  <h2>GantryToolBridge workflow patterns</h2>
+  <p>For fan-out routing where each node receives its own semantically-selected tool slice, use <code>GantryToolBridge.build_workflow(...)</code> or the one-liner helpers <code>build_handoff_workflow</code> / <code>build_sequential_workflow</code>.</p>
+
+  <CodeBlock lang="python" code={`from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+from agent_gantry.integrations.agent_framework_middleware import (
+    GantryApprovalMiddleware,
+    GantryObservabilityMiddleware,
+)
+
+bridge = GantryToolBridge(gantry)
+middleware = [
+    GantryApprovalMiddleware(security_policy),
+    GantryObservabilityMiddleware(gantry),
+]
+
+workflow_agent = await bridge.build_workflow(
+    agent_specs=[
+        dict(client=client, query="triage classify routing", name="Triage", limit=2, ...),
+        dict(client=client, query="billing invoices", name="Billing", limit=2, middleware=middleware, ...),
+    ],
+    edges=[("Triage", "Billing", lambda ctx: "invoice" in str(ctx).lower())],
+    workflow_name="CustomerServiceWorkflow",
+)`} />
+
+  <h2>Approval and observability middleware</h2>
+  <p>Route destructive tools through AF approval mode and emit structured telemetry on every tool invocation:</p>
+
+  <CodeBlock lang="python" code={`from agent_gantry.core.security import SecurityPolicy
+from agent_gantry.schema.tool import ToolCapability
+
+@gantry.register(capabilities=[ToolCapability.DELETE_DATA])
+def delete_user_account(user_id: str) -> str:
+    """Delete a user account. Destructive; requires human approval."""
+    return f"deleted:{user_id}"
+
+policy = SecurityPolicy(require_confirmation=["delete_*", "refund_*"])
+middleware = [
+    AgentFrameworkAdapter(gantry).approval_middleware(policy),
+    AgentFrameworkAdapter(gantry).observability_middleware(),
+]`} />
+
+  <h2>AF 1.6+ concurrent workflows</h2>
+  <p>AF 1.6.0 enables ContextVar-based instrumentation by default. Sequential workflows are unaffected. If you run truly concurrent workflows via <code>asyncio.gather()</code> or <code>TaskGroup</code>, call <code>disable_af_instrumentation()</code> at startup or pass <code>disable_af_instrumentation=True</code> to <code>GantryToolBridge</code>.</p>
+
+  <CodeBlock lang="python" code={`from agent_gantry import disable_af_instrumentation
+
+disable_af_instrumentation()  # before constructing concurrent workflow agents`} />
+
+  <h2>Production patterns</h2>
+  <ul>
+    <li><strong>Observability:</strong> use <code>provider.attach_to(agent, trace=True)</code> for built-in console trace middleware, or <code>gantry.on_tool_call(...)</code> event hooks.</li>
+    <li><strong>Selection history:</strong> inspect <code>provider.selections</code> after multi-step runs to debug routing.</li>
+    <li><strong>Score thresholds:</strong> start with <code>score_threshold=0.0</code>; use <code>score_threshold="relative:0.8"</code> for length-robust filtering on long prompts.</li>
+    <li><strong>Evaluation:</strong> replay representative prompts with fixed tool snapshots before enabling dynamic per-call retrieval in production.</li>
+  </ul>
+</DocsLayout>

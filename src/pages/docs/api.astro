@@ -1,9 +1,26 @@
 ---
 import DocsLayout from '../../layouts/DocsLayout.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
 ---
-<DocsLayout title="API Reference | Agent-Gantry"><h1>API reference</h1><h2>Primary imports</h2><pre><code>from agent_gantry import (
+<DocsLayout title="API Reference | Agent-Gantry">
+  <h1>API reference</h1>
+  <h2>Primary imports</h2>
+  <CodeBlock lang="python" code={`from agent_gantry import (
     AgentGantry, create_default_gantry, with_semantic_tools,
     set_default_gantry, ToolCall, ToolResult, ToolDefinition,
     GantryContextProvider, enable_console_logging,
-)</code></pre><h2>AgentGantry</h2><ul><li><code>register(...)</code>: register a callable as a tool, with tags, capabilities, metadata, and schema inference.</li><li><code>sync()</code>: synchronize tool definitions to the configured vector store.</li><li><code>retrieve(...)</code> / <code>retrieve_tools(...)</code>: retrieve relevant tools for a query and return internal or provider-specific schemas.</li><li><code>execute(ToolCall)</code>: execute a selected call through the execution engine.</li><li><code>close()</code>: release vector store, telemetry, and protocol resources.</li></ul><h2>Decorator path</h2><p><code>with_semantic_tools</code> wraps existing async generation functions and injects a <code>tools</code> argument based on the prompt parameter.</p><h2>CLI</h2><pre><code>agent-gantry install-skill --claude
-agent-gantry install-skill --target ./skills</code></pre></DocsLayout>
+)`} />
+  <h2>AgentGantry</h2>
+  <ul>
+    <li><code>register(...)</code>: register a callable as a tool, with tags, capabilities, metadata, and schema inference.</li>
+    <li><code>sync()</code>: synchronize tool definitions to the configured vector store.</li>
+    <li><code>retrieve(...)</code> / <code>retrieve_tools(...)</code>: retrieve relevant tools for a query and return internal or provider-specific schemas.</li>
+    <li><code>execute(ToolCall)</code>: execute a selected call through the execution engine.</li>
+    <li><code>close()</code>: release vector store, telemetry, and protocol resources.</li>
+  </ul>
+  <h2>Decorator path</h2>
+  <p><code>with_semantic_tools</code> wraps existing async generation functions and injects a <code>tools</code> argument based on the prompt parameter.</p>
+  <h2>CLI</h2>
+  <CodeBlock lang="bash" code={`agent-gantry install-skill --claude
+agent-gantry install-skill --target ./skills`} />
+</DocsLayout>

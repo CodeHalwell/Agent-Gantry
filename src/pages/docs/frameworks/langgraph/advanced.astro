@@ -1,5 +1,6 @@
 ---
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
+import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
 <DocsLayout title="Advanced LangGraph guide | Agent-Gantry">
   <p class="eyebrow">Advanced framework guide</p>
@@ -9,24 +10,24 @@ import DocsLayout from '../../../../layouts/DocsLayout.astro';
 
   <h2>Advanced page: dynamic tool selection</h2>
   <p>Before each LangGraph run, ask Gantry for a context-aware subset of tools. Combine request metadata, tenant policy, semantic similarity, and reranker results so the agent sees a concise, relevant tool surface.</p>
-  <pre><code>candidate_tools = gantry.select_tools(
+  <CodeBlock lang="python" code={`candidate_tools = gantry.select_tools(
     query=user_message,
     tags=["support"],
     limit=8,
 )
 framework_tools = [LangGraphAdapter.convert(spec) for spec in candidate_tools]
-</code></pre>
+`} />
 
   <h2>LLM calls and model policy</h2>
   <p>Centralize LLM calls when LangGraph supports custom model clients; otherwise add middleware around the framework call. The policy should select the provider, enforce budget ceilings, redact sensitive fields, emit token metrics, and decide whether tool results should be summarized before returning to the model.</p>
-  <pre><code>response = llm_policy.complete(
+  <CodeBlock lang="python" code={`response = llm_policy.complete(
     framework="LangGraph",
     model="primary-or-fallback-model",
     messages=messages,
     tools=framework_tools,
     trace_id=trace_id,
 )
-</code></pre>
+`} />
 
   <h2>Production patterns</h2>
   <ul>

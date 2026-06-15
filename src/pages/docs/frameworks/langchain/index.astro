@@ -1,5 +1,6 @@
 ---
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
+import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
 <DocsLayout title="LangChain guide | Agent-Gantry">
   <p class="eyebrow">Framework guide</p>
@@ -14,7 +15,8 @@ import DocsLayout from '../../../../layouts/DocsLayout.astro';
     <li>Export framework-native tools for LangChain immediately before constructing the agent, graph, pipeline, or crew.</li>
     <li>Keep authorization, rate limits, and audit metadata in Gantry instead of duplicating it inside framework glue code.</li>
   </ol>
-  <pre><code>from agent_gantry import AgentGantry
+
+  <CodeBlock lang="python" code={`from agent_gantry import AgentGantry
 from agent_gantry.langchain import LangChainAdapter
 
 gantry = AgentGantry()
@@ -25,8 +27,7 @@ def get_order_status(order_id: str) -> str:
 
 gantry.register_tool(get_order_status, tags=["support", "orders"])
 adapter = LangChainAdapter(gantry)
-framework_tools = await adapter.select("check an order", limit=3)  # Native LangChain adapter export.
-</code></pre>
+framework_tools = await adapter.select("check an order", limit=3)`} />
 
   <h2>First tool-calling loop</h2>
   <p>Let LangChain own the conversation lifecycle while Gantry owns the tool catalog. Start with a small tool set and assert that the framework receives only safe, documented functions.</p>

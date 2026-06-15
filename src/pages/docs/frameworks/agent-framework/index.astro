@@ -1,0 +1,102 @@
+---
+import DocsLayout from '../../../../layouts/DocsLayout.astro';
+import CodeBlock from '../../../../components/CodeBlock.astro';
+---
+<DocsLayout title="Microsoft Agent Framework guide | Agent-Gantry" description="Integrate Agent-Gantry with Microsoft Agent Framework 1.x using GantryContextProvider and GantryToolBridge.">
+  <p class="eyebrow">Framework guide</p>
+  <h1>Microsoft Agent Framework</h1>
+  <p class="lead">Agent-Gantry's native integration for Microsoft Agent Framework (AF 1.5+). Attach semantic tool routing as an AF <code>ContextProvider</code> so each <code>agent.run(...)</code> surfaces only the top-k relevant tools — without stuffing the full registry into every model call.</p>
+  <p><a class="pill" href="/Agent-Gantry/docs/frameworks/agent-framework/advanced/">Advanced Agent Framework usage →</a></p>
+
+  <h2>Install</h2>
+  <CodeBlock lang="bash" code={`uv add "agent-gantry[agent-frameworks]"
+# or: pip install "agent-gantry[agent-frameworks]"`} />
+
+  <h2>Basic page: GantryContextProvider (recommended)</h2>
+  <p>The idiomatic path is <code>GantryContextProvider</code> (via <code>AgentFrameworkAdapter</code>). AF calls <code>before_run</code> on every invocation, retrieves semantically relevant tools from Gantry, and injects them into the session — no pre-baked tool list required.</p>
+  <ol>
+    <li>Register tools with <code>@gantry.register</code> and <code>await gantry.sync()</code>.</li>
+    <li>Attach <code>GantryContextProvider</code> to your AF <code>Agent</code>.</li>
+    <li>Run the agent normally — tool selection happens per run (or per chat round in advanced mode).</li>
+  </ol>
+
+  <CodeBlock lang="python" title="Per-run dynamic tool selection" code={`import asyncio
+
+from agent_framework import Agent
+from agent_framework.openai import OpenAIChatClient
+from agent_gantry import AgentGantry, GantryContextProvider
+
+gantry = AgentGantry()
+
+@gantry.register
+def get_weather(city: str) -> str:
+    """Get the current weather for a city."""
+    return f"Weather in {city}: Sunny, 22°C"
+
+@gantry.register
+def book_flight(origin: str, destination: str) -> str:
+    """Book a flight between two cities."""
+    return f"Booked flight: {origin} -> {destination}"
+
+async def main():
+    await gantry.sync()
+
+    agent = Agent(
+        OpenAIChatClient(),
+        "You are a helpful concierge. Use tools to fulfil requests.",
+        context_providers=[
+            GantryContextProvider(gantry, top_k=3, score_threshold=0.0),
+        ],
+    )
+
+    result = await agent.run("What's the weather in Tokyo?")
+    print(result.text)
+
+asyncio.run(main())`} />
+
+  <h2>Coexist with AF SkillsProvider</h2>
+  <p><code>GantryContextProvider</code> and AF's <code>SkillsProvider</code> are sibling context providers with distinct <code>source_id</code> values. AF merges their tools and instructions — neither overwrites the other.</p>
+
+  <CodeBlock lang="python" code={`from agent_framework import Agent, Skill, SkillsProvider
+from agent_gantry import GantryContextProvider
+
+summarise_skill = Skill(
+    name="summarise",
+    description="Summarise the conversation so far.",
+    content="When asked, produce a 3-bullet recap.",
+)
+
+agent = Agent(
+    OpenAIChatClient(),
+    "You are a customer-service assistant.",
+    context_providers=[
+        GantryContextProvider(
+            gantry,
+            top_k=3,
+            skills=True,                      # pin Gantry skill-bound tools
+            always_include=["lookup_user"],   # always surface this tool
+        ),
+        SkillsProvider(skills=[summarise_skill]),
+    ],
+)`} />
+
+  <h2>Static tool bridge (fixed tool set at construction)</h2>
+  <p>When the tool surface is known upfront, use <code>GantryToolBridge</code> to bake tools once at agent construction. Useful for orchestration builders that need a first-class <code>Agent</code> with a fixed schema.</p>
+
+  <CodeBlock lang="python" code={`from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+
+bridge = GantryToolBridge(gantry, score_threshold=0.1)
+agent = await bridge.as_agent(
+    OpenAIChatClient(),
+    query="billing invoices payments",
+    name="BillingAgent",
+    instructions="Handle billing and invoice questions.",
+    limit=3,
+)`} />
+
+  <h2>Basic testing checklist</h2>
+  <div class="callout"><strong>Before wiring a live model:</strong> verify tool names and JSON schemas reach the agent, confirm destructive tools carry the right capabilities, and run a happy-path tool call through <code>gantry.execute</code>.</div>
+
+  <h2>Next steps</h2>
+  <p>See the <a href="/Agent-Gantry/docs/frameworks/agent-framework/advanced/">advanced guide</a> for per-call re-selection, workflow orchestration, approval middleware, observability, and AF 1.6 concurrent-workflow notes.</p>
+</DocsLayout>

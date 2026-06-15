@@ -1,6 +1,25 @@
 ---
 import DocsLayout from '../../layouts/DocsLayout.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Operations | Agent-Gantry"><h1>Operations guide</h1><p class="lead">A production tool layer needs visibility, safety controls, and repeatable debugging.</p><h2>Security checklist</h2><ul><li>Give tools narrow names, clear docstrings, and explicit typed arguments.</li><li>Tag tools by domain and capability so retrieval and policy decisions are explainable.</li><li>Use security policies for sensitive operations, rate limits for load control, and circuit breakers for unstable dependencies.</li><li>Log tool-call events and attach tracing through console, OpenTelemetry, or Prometheus adapters.</li></ul><h2>Debug retrieval</h2><pre><code>result = await gantry.retrieve(query)
+<DocsLayout title="Operations | Agent-Gantry">
+  <h1>Operations guide</h1>
+  <p class="lead">A production tool layer needs visibility, safety controls, and repeatable debugging.</p>
+  <h2>Security checklist</h2>
+  <ul>
+    <li>Give tools narrow names, clear docstrings, and explicit typed arguments.</li>
+    <li>Tag tools by domain and capability so retrieval and policy decisions are explainable.</li>
+    <li>Use security policies for sensitive operations, rate limits for load control, and circuit breakers for unstable dependencies.</li>
+    <li>Log tool-call events and attach tracing through console, OpenTelemetry, or Prometheus adapters.</li>
+  </ul>
+  <h2>Debug retrieval</h2>
+  <CodeBlock lang="python" code={`result = await gantry.retrieve(query)
 for candidate in result.tools:
-    print(candidate.tool.name, candidate.score, candidate.reason)</code></pre><h2>Release checklist</h2><ul><li>Run unit tests and framework adapter tests relevant to your extras.</li><li>Build the Astro docs site with <code>npm run build</code>.</li><li>Preview docs styling with <code>npm run preview</code> when changing user-facing pages.</li></ul></DocsLayout>
+    print(candidate.tool.name, candidate.score, candidate.reason)`} />
+  <h2>Release checklist</h2>
+  <ul>
+    <li>Run unit tests and framework adapter tests relevant to your extras.</li>
+    <li>Build the Astro docs site with <code>npm run build</code>.</li>
+    <li>Preview docs styling with <code>npm run preview</code> when changing user-facing pages.</li>
+  </ul>
+</DocsLayout>

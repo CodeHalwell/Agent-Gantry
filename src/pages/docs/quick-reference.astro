@@ -1,7 +1,11 @@
 ---
 import DocsLayout from '../../layouts/DocsLayout.astro';
+import CodeBlock from '../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Quick Reference | Agent-Gantry"><h1>Quick reference</h1><pre><code>uv add agent-gantry
+<DocsLayout title="Quick Reference | Agent-Gantry">
+  <h1>Quick reference</h1>
+  <CodeBlock lang="python" title="Minimum viable setup" code={`# Install
+uv add agent-gantry
 uv add "agent-gantry[openai,lancedb,nomic,mcp,a2a]"
 
 from agent_gantry import AgentGantry, with_semantic_tools, set_default_gantry
@@ -16,5 +20,5 @@ def search_docs(query: str) -> str:
 
 @with_semantic_tools(limit=5, dialect="openai")
 async def generate(prompt: str, *, tools=None):
-    ...
-</code></pre></DocsLayout>
+    ...`} />
+</DocsLayout>
