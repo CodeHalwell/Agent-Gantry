@@ -1,0 +1,20 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+<DocsLayout title="Quick Reference | Agent-Gantry"><h1>Quick reference</h1><pre><code>uv add agent-gantry
+uv add "agent-gantry[openai,lancedb,nomic,mcp,a2a]"
+
+from agent_gantry import AgentGantry, with_semantic_tools, set_default_gantry
+
+gantry = AgentGantry()
+set_default_gantry(gantry)
+
+@gantry.register(tags=["search"])
+def search_docs(query: str) -> str:
+    """Search internal documentation."""
+    return "..."
+
+@with_semantic_tools(limit=5, dialect="openai")
+async def generate(prompt: str, *, tools=None):
+    ...
+</code></pre></DocsLayout>

@@ -1,17 +1,21 @@
-# Documentation index
+# Agent-Gantry documentation
 
-This folder is the main documentation hub for Agent-Gantry. Start with `index.md` for navigation,
-then dive into topic-specific guides. Most documents contain runnable snippets that align with the
-examples under `examples/`.
+The documentation has been upgraded from a static Jekyll-style folder to an **Astro + React + TypeScript** site.
 
-- `index.md`: High-level navigation and quick links into the docs set.
-- `configuration.md`: Reference for `AgentGantryConfig` with YAML examples and module-based loading patterns.
-- `local_persistence_and_skills.md`: How to use LanceDB/Nomic locally and store skills.
-- `vector_store_llm_integration.md`: End-to-end guide for building a large tool vector store and
-  wiring it into OpenAI, Google GenAI, and Claude SDKs.
-- `semantic_tool_decorator.md`: Automatic semantic tool selection for LLM calls.
-- `cli.md`: Usage of the bundled `agent-gantry` CLI.
-- `llm_sdk_compatibility.md`: Notes on SDK expectations across major LLM providers.
-- `issue_template_implementation.md`: Guidance on writing implementation plans for new features.
-- `architecture/overview.md`: High-level system architecture and design principles.
-- `architecture/best-practices.md`: Security, performance, and reliability recommendations.
+## Develop locally
+
+```bash
+npm install
+npm run dev
+```
+
+## Build and verify
+
+```bash
+npm run build
+npm run preview
+```
+
+The source pages live in `src/pages`, shared visual structure lives in `src/layouts`, interactive React components live in `src/components`, and global styling lives in `src/styles/global.css`.
+
+Legacy markdown files remain in this folder as historical reference and audit material while the rich docs experience is served by Astro.

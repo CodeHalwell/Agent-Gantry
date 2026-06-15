@@ -1,0 +1,23 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+<DocsLayout title="Getting Started | Agent-Gantry"><h1>Getting started</h1><p class="lead">Install Agent-Gantry, register your first tools, retrieve only relevant schemas, and execute chosen tool calls safely.</p><h2>Install</h2><pre><code>uv add agent-gantry
+uv add "agent-gantry[openai,lancedb,nomic,mcp,a2a]"
+# pip install agent-gantry also works</code></pre><h2>1. Create a gantry</h2><pre><code>from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
+
+gantry = AgentGantry()
+set_default_gantry(gantry)</code></pre><h2>2. Register ordinary functions</h2><pre><code>@gantry.register(tags=["weather", "demo"])
+def get_weather(city: str) -> str:
+    """Get the current weather for a city."""
+    return f"The weather in &#123;city&#125; is 72°F and sunny."</code></pre><h2>3. Wrap an LLM call</h2><pre><code>@with_semantic_tools(limit=3, dialect="openai")
+async def ask_llm(prompt: str, *, tools=None):
+    return await client.chat.completions.create(
+        model="gpt-5.5",
+        messages=[&#123;"role": "user", "content": prompt&#125;],
+        tools=tools,
+    )</code></pre><div class="callout"><strong>What happens automatically?</strong> Gantry fingerprints registered tools, syncs them to the configured vector store, retrieves semantically relevant definitions, converts schemas to the requested provider dialect, and leaves execution under your control or the Gantry execution engine.</div><h2>4. Execute a selected tool</h2><pre><code>from agent_gantry.schema.execution import ToolCall
+
+result = await gantry.execute(ToolCall(
+    tool_name="get_weather",
+    arguments=&#123;"city": "San Francisco"&#125;,
+))</code></pre><h2>Next steps</h2><div class="grid"><a class="card" href="/Agent-Gantry/docs/journey/"><h3>Implementation journey</h3><p>Build from local prototype to production runtime.</p></a><a class="card" href="/Agent-Gantry/docs/frameworks/"><h3>Framework integrations</h3><p>Bridge Gantry into your preferred agent stack.</p></a></div></DocsLayout>
