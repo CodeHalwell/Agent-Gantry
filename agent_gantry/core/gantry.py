@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import inspect
 import logging
 import uuid
 from collections.abc import Callable, Sequence
@@ -179,6 +180,8 @@ class AgentGantry:
         self._pending_tools: list[ToolDefinition] = []
         self._pending_mcp_servers: list[MCPServerDefinition] = []
         self._tool_handlers: dict[str, Callable[..., Any]] = {}
+        # Framework-agnostic post-execution callbacks (see on_tool_call).
+        self._tool_call_callbacks: list[Callable[..., Any]] = []
         self._initialized = False
         self._synced = False  # Track if we've done initial sync check
         self._mcp_synced = False  # Track if MCP servers are synced
@@ -920,9 +923,85 @@ class AgentGantry:
 
         if self._telemetry:
             async with self._telemetry.span("tool_execution", {"tool_name": call.tool_name}):
-                return await self._executor.execute(call)
+                result = await self._executor.execute(call)
         else:
-            return await self._executor.execute(call)
+            result = await self._executor.execute(call)
+
+        await self._emit_tool_call(call, result)
+        return result
+
+    def on_tool_call(self, callback: Callable[..., Any]) -> Callable[[], None]:
+        """Register a callback fired after every tool execution.
+
+        This is the framework-agnostic observability seam: every call routed
+        through :meth:`execute` (and each call in :meth:`execute_batch`) invokes
+        the registered callbacks with a single
+        :class:`~agent_gantry.schema.execution.ToolCallEvent` once the call
+        finishes — whether it succeeded, failed, timed out, or was denied.
+        Because ``execute`` is the single choke point every framework adapter
+        flows through, one ``on_tool_call`` registration yields logging/metrics
+        across LangChain, CrewAI, Agent Framework, direct calls, and the rest —
+        no per-framework middleware required.
+
+        Callbacks may be sync or async and are invoked in registration order.
+        Exceptions raised by a callback are caught and logged (never propagated
+        into the tool run), so a broken listener cannot break execution.
+
+        .. note::
+           **Batch timing differs from single execute.** In :meth:`execute`
+           the event fires the instant that call finishes. In
+           :meth:`execute_batch` events are emitted *after the whole batch
+           completes* — one per call, paired with its result by index — so for
+           a ``parallel`` batch they all arrive together at the end rather than
+           in completion order. The per-call ``ToolCallEvent.latency_ms`` is
+           still accurate; only the *delivery* time is batched, which matters
+           if you timestamp events for latency dashboards.
+
+        Registering the same callable twice registers it twice (it will fire
+        twice); the returned unsubscribe removes one registration.
+
+        Args:
+            callback: A callable accepting a single ``ToolCallEvent`` argument.
+
+        Returns:
+            An unsubscribe function; call it to remove the registration.
+        """
+        self._tool_call_callbacks.append(callback)
+
+        def _unsubscribe() -> None:
+            try:
+                self._tool_call_callbacks.remove(callback)
+            except ValueError:
+                pass
+
+        return _unsubscribe
+
+    async def _emit_tool_call(self, call: ToolCall, result: ToolResult) -> None:
+        """Build a ``ToolCallEvent`` and dispatch it to registered callbacks.
+
+        Error-isolated: a callback raising must never affect the tool result or
+        sibling callbacks. Awaitable return values are awaited so async
+        listeners work transparently.
+        """
+        if not self._tool_call_callbacks:
+            return
+        # Local import: ToolCallEvent isn't imported at module top (the
+        # execution-schema imports there are TYPE_CHECKING-only). Importing it
+        # here — after the early-return guard above — also keeps it off the
+        # path entirely when no listeners are registered.
+        from agent_gantry.schema.execution import ToolCallEvent
+
+        event = ToolCallEvent(call=call, result=result)
+        for callback in list(self._tool_call_callbacks):
+            try:
+                outcome = callback(event)
+                if inspect.isawaitable(outcome):
+                    await outcome
+            except Exception:
+                logger.exception(
+                    "on_tool_call callback %r raised; continuing.",
+                    getattr(callback, "__name__", callback),
+                )
 
     async def search_and_execute(
         self,
@@ -1002,9 +1081,21 @@ class AgentGantry:
 
         if self._telemetry:
             async with self._telemetry.span("batch_execution", {"count": len(batch.calls)}):
-                return await self._executor.execute_batch(batch)
+                batch_result = await self._executor.execute_batch(batch)
         else:
-            return await self._executor.execute_batch(batch)
+            batch_result = await self._executor.execute_batch(batch)
+
+        if self._tool_call_callbacks:
+            # Results align with calls by index for every strategy: parallel
+            # gather preserves order, and sequential (incl. fail_fast early
+            # break) yields an aligned prefix, so zip pairs them correctly.
+            # Events are delivered here, after the whole batch finishes — but
+            # each ToolResult.latency_ms was measured by the executor at that
+            # call's own completion, so per-call latency stays accurate even
+            # though delivery is batched. Don't timestamp events at this point.
+            for call, result in zip(batch.calls, batch_result.results):
+                await self._emit_tool_call(call, result)
+        return batch_result
 
     async def add_mcp_server(self, config: MCPServerConfig) -> int:
         """

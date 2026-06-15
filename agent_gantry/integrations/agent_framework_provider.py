@@ -71,6 +71,7 @@ from __future__ import annotations
 import inspect
 import logging
 from collections.abc import Callable
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.agent_framework_bridge import (
@@ -82,6 +83,13 @@ from agent_gantry.query import (
     last_tool_result,
     last_user_text,
 )
+from agent_gantry.utils.render import render_result
+
+# Rolling cap on retained per-round retrieval decisions (see `selections`).
+_MAX_SELECTION_HISTORY = 200
+
+# Max kept tools shown in a single trace line before eliding the remainder.
+_TRACE_SURFACED_CAP = 5
 
 _DEFAULT_PER_RUN_QUERY = last_user_text
 
@@ -135,6 +143,18 @@ def _import_chat_middleware() -> Any:
             "pip install 'agent-gantry[agent-frameworks]'"
         ) from exc
     return chat_middleware
+
+
+def _import_function_middleware() -> Any:
+    """Lazily import :func:`agent_framework.function_middleware`."""
+    try:
+        from agent_framework import function_middleware
+    except ImportError as exc:  # pragma: no cover - depends on install
+        raise ImportError(
+            "GantryContextProvider.trace() requires the 'agent-framework' "
+            "package. Install with: pip install 'agent-gantry[agent-frameworks]'"
+        ) from exc
+    return function_middleware
 
 
 def _tool_name(tool: Any) -> str:
@@ -358,7 +378,39 @@ class GantryContextProvider:
                 self._query_kwargs = dict(query_kwargs)
                 self._source_id = source_id
                 self._verbose = verbose
-                self._last_selection: RetrievalDecision | None = None
+                # Per-task run-state held in ContextVars (not plain attributes)
+                # so a single provider shared across concurrent agent.run()
+                # calls — e.g. a multi-user server — doesn't interleave its
+                # selection history. The vars are per-instance (created here,
+                # once per provider) so multiple providers stay independent.
+                self._last_selection_var: ContextVar[RetrievalDecision | None] = (
+                    ContextVar("gantry_last_selection", default=None)
+                )
+                # Default None (not ()) so we can tell "never set in this
+                # context" (-> fall back to the plain snapshot) apart from
+                # "reset for a fresh run, nothing retrieved yet" (-> return ()
+                # without leaking the previous run's history).
+                self._selections_var: ContextVar[tuple[RetrievalDecision, ...] | None] = (
+                    ContextVar("gantry_selections", default=None)
+                )
+                # Plain-attribute fallbacks. A run driven inside a *child* task
+                # (AF may wrap agent.run() in asyncio.create_task, which copies
+                # the context) writes the ContextVar in that copy — invisible to
+                # the caller's context, which would make post-run
+                # `provider.selections` reads silently empty. So we also stash
+                # the latest *coherent* snapshot here (last-writer-wins, never
+                # interleaved — it mirrors one task's ContextVar value) and read
+                # it only when the context-local value is unset.
+                self._last_selection_plain: RetrievalDecision | None = None
+                self._selections_plain: tuple[RetrievalDecision, ...] = ()
+                # Trace round counter, allocated once per provider (not per
+                # trace() call) — ContextVars aren't GC'd, so a fresh one per
+                # call would leak in a server that builds the middleware
+                # repeatedly. Context-scoped so concurrent runs count
+                # independently.
+                self._trace_round_var: ContextVar[int] = ContextVar(
+                    "gantry_trace_round", default=0
+                )
                 # One-shot warnings: we don't want to spam the log every
                 # round even when the misconfiguration persists.
                 self._warned_about_missing_chat_middleware = False
@@ -410,8 +462,45 @@ class GantryContextProvider:
                 every chat-middleware tick (per_call mode). Read this from
                 middleware, tests, or interactive sessions to diagnose
                 "why did the LLM not see tool X this round?".
+
+                Backed by a :class:`~contextvars.ContextVar`: the value is
+                scoped to the current task/context, so concurrent
+                ``agent.run()`` calls on a shared provider don't clobber each
+                other's in-context reads. When the context-local value is unset
+                — e.g. a post-run read from the parent task after AF ran the
+                agent in a child task whose context copy we can't see — this
+                falls back to the latest coherent snapshot so introspection
+                never goes silently empty.
                 """
-                return self._last_selection
+                in_context = self._last_selection_var.get()
+                return in_context if in_context is not None else self._last_selection_plain
+
+            @property
+            def selections(self) -> tuple[RetrievalDecision, ...]:
+                """Per-round retrieval history, oldest first (bounded window).
+
+                ``last_selection`` is a single most-recent slot, so reading it
+                from *function* middleware is inherently laggy — it holds
+                whatever the latest chat round selected, which is not guaranteed
+                to be the round that produced the call you're handling.
+                ``selections`` keeps the full per-round sequence (capped at
+                ``_MAX_SELECTION_HISTORY``) so a trace or audit can correlate
+                "what was surfaced" with "what the model then called" across the
+                whole run instead of just the last round.
+
+                Scoped to a single ``agent.run`` — :meth:`before_run` resets the
+                history at the start of each run, so a shared provider doesn't
+                bleed one run's (or one user's) selections into the next. (This
+                differs from :attr:`last_selection`, which is the single
+                latest decision and is not reset.) Task-scoped via a
+                ``ContextVar`` — each concurrent run accumulates its own history
+                rather than interleaving into one shared list — with a
+                plain-attribute fallback so a post-run read from a different
+                task still sees the latest run's (coherent, non-interleaved)
+                history instead of an empty tuple.
+                """
+                in_context = self._selections_var.get()
+                return in_context if in_context is not None else self._selections_plain
 
             # ----- AF lifecycle ------------------------------------------
             async def before_run(
@@ -422,6 +511,15 @@ class GantryContextProvider:
                 context: Any,
                 state: dict[str, Any],
             ) -> None:
+                # Run boundary: scope the selection history to this run so a
+                # shared provider doesn't carry the previous run's (or user's)
+                # selections forward. Reset both the context-local var and the
+                # cross-task plain snapshot; per_run appends below, per_call
+                # appends via the chat middleware. last_selection is the single
+                # latest decision and is deliberately not reset.
+                self._selections_var.set(())
+                self._selections_plain = ()
+
                 # per_call mode requires the chat middleware to do the
                 # actual per-round refresh. If the user forgot to attach
                 # it, the agent silently degrades to per_run behaviour
@@ -460,8 +558,8 @@ class GantryContextProvider:
                     )
 
             # ----- Setup helpers -----------------------------------------
-            def attach_to(self, agent: Any) -> Any:
-                """Register this provider and its chat middleware on ``agent``.
+            def attach_to(self, agent: Any, *, trace: bool = False) -> Any:
+                """Register this provider and its middleware on ``agent``.
 
                 Single-call helper for the common ``per_call`` setup. Does
                 the dance of appending to ``agent.context_providers`` and
@@ -473,6 +571,13 @@ class GantryContextProvider:
                 ``query_strategy='per_call'`` — in ``per_run`` mode it's
                 a no-op and would just add overhead. The context
                 provider is always attached.
+
+                Args:
+                    agent: The AF agent to attach to.
+                    trace: When ``True``, also attach :meth:`trace` (a function
+                        middleware) so every tool call prints a readable
+                        per-round line — the built-in replacement for
+                        hand-rolled trace glue. Defaults to ``False``.
                 """
                 # context_providers
                 providers_attr = self._first_present_attr(
@@ -500,33 +605,119 @@ class GantryContextProvider:
                         type(agent).__name__,
                     )
 
-                # middleware (per_call only)
+                # middleware: per-call chat refresher (per_call only) plus the
+                # console trace (when requested). Both live in AF's single
+                # `middleware` list and attach together.
+                to_add: list[Any] = []
                 if self._query_strategy == "per_call":
+                    to_add.append(self.as_chat_middleware())
+                if trace:
+                    to_add.append(self.trace())
+
+                if to_add:
                     middleware_attr = self._first_present_attr(
                         agent, ("middleware", "_middleware")
                     )
-                    mw = self.as_chat_middleware()
                     if middleware_attr is not None:
                         current_mw = getattr(agent, middleware_attr) or []
                         try:
-                            setattr(agent, middleware_attr, [*current_mw, mw])
+                            setattr(agent, middleware_attr, [*current_mw, *to_add])
                         except (AttributeError, TypeError):
                             try:
-                                current_mw.append(mw)
+                                for mw in to_add:
+                                    current_mw.append(mw)
                             except Exception:
                                 logger.warning(
                                     "GantryContextProvider.attach_to: could "
-                                    "not attach chat middleware to agent %r.",
+                                    "not attach middleware to agent %r.",
                                     type(agent).__name__,
                                 )
                     else:
                         logger.warning(
                             "GantryContextProvider.attach_to: agent %r has "
-                            "no middleware attribute; chat middleware was "
-                            "not attached.",
+                            "no middleware attribute; middleware was not "
+                            "attached.",
                             type(agent).__name__,
                         )
                 return agent
+
+            # ----- Console trace middleware ------------------------------
+            def trace(
+                self,
+                *,
+                render: bool = True,
+                printer: Callable[[str], None] = print,
+                limit: int = 200,
+            ) -> Any:
+                """Return an AF *function* middleware that prints a per-call trace.
+
+                This is the library-owned replacement for the hand-rolled
+                ``trace_tool_calls`` + ``_preview`` glue. For every tool the
+                agent invokes it prints one line before the call —
+                ``>>> round N: tool(args)  [surfaced: name:score, …]`` — using
+                :attr:`last_selection` for the surfaced set, and (when
+                ``render`` is ``True``) one line after with a short preview of
+                the result via :func:`~agent_gantry.render_result`.
+
+                Attach it alongside the provider, either via
+                ``provider.attach_to(agent, trace=True)`` or by adding
+                ``provider.trace()`` to ``Agent(middleware=[...])``.
+
+                Cheap to call (the round counter lives on the provider, not the
+                returned middleware), but attach just one trace middleware per
+                agent — multiple share the provider's counter and would
+                interleave round numbers.
+
+                Args:
+                    render: Print the post-call result preview line. Default
+                        ``True``.
+                    printer: Sink for the rendered lines. Defaults to
+                        :func:`print`; pass ``logger.info`` or a custom callable
+                        to redirect.
+                    limit: Max characters of the result preview before
+                        truncation. Default ``200``.
+                """
+                function_middleware_decorator = _import_function_middleware()
+                provider = self
+                # Per-provider round counter (allocated in __init__, not here),
+                # context-scoped so concurrent runs count independently without
+                # a shared closure dict and without leaking a ContextVar per
+                # trace() call.
+                round_var = self._trace_round_var
+
+                @function_middleware_decorator
+                async def _gantry_trace(context: Any, call_next: Any) -> None:
+                    n = round_var.get() + 1
+                    round_var.set(n)
+                    surfaced = ""
+                    selection = provider.last_selection
+                    if selection is not None:
+                        # Show only the tools that actually made the surface
+                        # (kept), capped — `candidates` is the full ranked list
+                        # incl. threshold-dropped entries, which would mislabel
+                        # and bloat the line.
+                        kept = selection.kept
+                        shown = kept[:_TRACE_SURFACED_CAP]
+                        rendered = ", ".join(f"{c.name}:{c.score:.2f}" for c in shown)
+                        if len(kept) > len(shown):
+                            rendered += f", +{len(kept) - len(shown)} more"
+                        surfaced = f"  [surfaced: {rendered}]"
+                    name = getattr(getattr(context, "function", None), "name", "?")
+                    try:
+                        args: Any = dict(context.arguments)
+                    except (TypeError, ValueError):
+                        args = getattr(context, "arguments", None)
+                    printer(f">>> round {n}: {name}({args}){surfaced}")
+                    await call_next()
+                    if render:
+                        preview = render_result(
+                            getattr(context, "result", None),
+                            limit=limit,
+                            collapse_whitespace=True,
+                        )
+                        printer(f"<<< round {n}: {name} -> {preview}")
+
+                return _gantry_trace
 
             @staticmethod
             def _first_present_attr(obj: Any, names: tuple[str, ...]) -> str | None:
@@ -637,10 +828,10 @@ class GantryContextProvider:
                 fresh, _ = await self._collect_tools(
                     messages, include_dynamic=True
                 )
-                # _collect_tools sets self._last_selection on every
-                # dynamic refresh, so the per-call middleware path
-                # automatically exposes the latest decision via the
-                # provider's `last_selection` property.
+                # _collect_tools updates the last-selection / selections
+                # ContextVars on every dynamic refresh, so the per-call
+                # middleware path automatically exposes the latest decision via
+                # the provider's `last_selection` / `selections` properties.
                 gantry_names = self._all_known_tool_names()
                 static_names = {
                     _tool_name(t) for t in self._static_tools if _tool_name(t)
@@ -806,7 +997,19 @@ class GantryContextProvider:
                     static_count += 1
 
                 if include_dynamic and decision is not None:
-                    self._last_selection = decision
+                    self._last_selection_var.set(decision)
+                    # ContextVar holds an immutable tuple; bound it by slicing
+                    # so history stays capped without a shared mutable deque.
+                    # `or ()` covers a refresh in a context where before_run
+                    # never reset the var (default None).
+                    history = (
+                        (self._selections_var.get() or ()) + (decision,)
+                    )[-_MAX_SELECTION_HISTORY:]
+                    self._selections_var.set(history)
+                    # Mirror to the plain fallbacks (coherent snapshot for
+                    # cross-task post-run introspection; see the properties).
+                    self._last_selection_plain = decision
+                    self._selections_plain = history
                     if self._verbose:
                         logger.info("gantry: %s", decision.summary())
 

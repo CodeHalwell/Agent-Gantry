@@ -22,6 +22,7 @@ class TestConsoleTelemetryAdapterMethods:
     async def test_record_retrieval(self, caplog: pytest.LogCaptureFixture) -> None:
         """Test record_retrieval logs expected information."""
         adapter = ConsoleTelemetryAdapter(log_level=logging.INFO)
+        caplog.set_level(logging.INFO, logger="agent_gantry")
 
         context = ConversationContext(query="What is the weather?")
         query = ToolQuery(context=context, limit=3)
@@ -60,6 +61,7 @@ class TestConsoleTelemetryAdapterMethods:
     async def test_record_execution_success(self, caplog: pytest.LogCaptureFixture) -> None:
         """Test record_execution for a successful execution."""
         adapter = ConsoleTelemetryAdapter(log_level=logging.INFO)
+        caplog.set_level(logging.INFO, logger="agent_gantry")
 
         call = ToolCall(tool_name="get_weather", arguments={"location": "Tokyo"})
 
@@ -93,6 +95,7 @@ class TestConsoleTelemetryAdapterMethods:
     async def test_record_execution_error(self, caplog: pytest.LogCaptureFixture) -> None:
         """Test record_execution for an execution with an error."""
         adapter = ConsoleTelemetryAdapter(log_level=logging.INFO)
+        caplog.set_level(logging.INFO, logger="agent_gantry")
 
         call = ToolCall(tool_name="get_weather", arguments={"location": "Tokyo"})
 
@@ -128,6 +131,7 @@ class TestConsoleTelemetryAdapterMethods:
     async def test_record_health_change(self, caplog: pytest.LogCaptureFixture) -> None:
         """Test record_health_change logs normal health changes."""
         adapter = ConsoleTelemetryAdapter(log_level=logging.INFO)
+        caplog.set_level(logging.INFO, logger="agent_gantry")
 
         old_health = ToolHealth(success_rate=1.0, consecutive_failures=0)
         new_health = ToolHealth(success_rate=0.8, consecutive_failures=1)
@@ -149,6 +153,7 @@ class TestConsoleTelemetryAdapterMethods:
     async def test_record_health_change_circuit_breaker(self, caplog: pytest.LogCaptureFixture) -> None:
         """Test record_health_change logs with WARNING when circuit breaker opens."""
         adapter = ConsoleTelemetryAdapter(log_level=logging.INFO)
+        caplog.set_level(logging.INFO, logger="agent_gantry")
 
         old_health = ToolHealth(success_rate=0.5, consecutive_failures=2)
         new_health = ToolHealth(success_rate=0.3, consecutive_failures=3, circuit_breaker_open=True)
@@ -166,6 +171,7 @@ class TestConsoleTelemetryAdapterMethods:
     async def test_span(self, caplog: pytest.LogCaptureFixture) -> None:
         """Test span context manager logs start and complete events."""
         adapter = ConsoleTelemetryAdapter(log_level=logging.INFO)
+        caplog.set_level(logging.INFO, logger="agent_gantry")
 
         async with adapter.span("test_span", attributes={"key": "value"}):
             pass
