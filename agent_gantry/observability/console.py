@@ -22,29 +22,65 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("agent_gantry")
 
+_CONSOLE_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+
+def enable_console_logging(level: int = logging.INFO) -> None:
+    """Opt in to human-readable console output for the ``agent_gantry`` logger.
+
+    Attaches a :class:`~logging.StreamHandler` (at most once) and sets the
+    logger level. This is the explicit, consumer-driven replacement for the
+    handler/level side effect that :class:`ConsoleTelemetryAdapter` used to
+    perform on construction.
+
+    A library must never configure logging on the application's behalf, so
+    importing ``agent_gantry`` only attaches a :class:`~logging.NullHandler`
+    (see ``agent_gantry/__init__.py``). Call this helper from a script, demo,
+    or CLI when you actually want Gantry's telemetry/INFO lines on the console;
+    an embedding application should configure its own logging instead.
+    """
+    if not any(
+        isinstance(h, logging.StreamHandler) and not isinstance(h, logging.NullHandler)
+        for h in logger.handlers
+    ):
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter(_CONSOLE_FORMAT))
+        logger.addHandler(handler)
+    logger.setLevel(level)
+
 
 class ConsoleTelemetryAdapter:
     """
     Console-based telemetry adapter for development.
 
-    Logs all telemetry events to console using structured logging.
+    Emits every telemetry event as a structured log record on the
+    ``agent_gantry`` logger. By default it does **not** attach a handler or
+    change the logger level — that is the application's responsibility (or
+    opt in via ``attach_handler=True`` / :func:`enable_console_logging`).
+    Records simply propagate to whatever handlers the consumer configured,
+    and are swallowed by the package ``NullHandler`` if none are.
     """
 
-    def __init__(self, log_level: int = logging.INFO) -> None:
+    def __init__(
+        self,
+        log_level: int = logging.INFO,
+        *,
+        attach_handler: bool = False,
+    ) -> None:
         """
         Initialize console telemetry adapter.
 
         Args:
-            log_level: Logging level to use
+            log_level: Logging level used when emitting records.
+            attach_handler: When ``True``, attach a console
+                :class:`~logging.StreamHandler` and raise the ``agent_gantry``
+                logger to ``log_level`` (the legacy convenience behaviour).
+                Defaults to ``False`` so the adapter never mutates the shared
+                logger as a side effect of construction.
         """
         self.log_level = log_level
-        if not logger.handlers:
-            handler = logging.StreamHandler()
-            handler.setFormatter(
-                logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-            )
-            logger.addHandler(handler)
-            logger.setLevel(log_level)
+        if attach_handler:
+            enable_console_logging(log_level)
 
     @asynccontextmanager
     async def span(

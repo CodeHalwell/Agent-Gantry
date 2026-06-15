@@ -398,3 +398,116 @@ class TestGantryContextProvider:
             gantry_with_tools, score_threshold="relative:0.8"
         )
         assert provider.score_threshold == "relative:0.8"
+
+
+class TestSelectionsAndTrace:
+    """Per-round selection history and the built-in console trace middleware."""
+
+    @pytest.mark.asyncio
+    async def test_selections_accumulate_across_rounds(
+        self, gantry_with_tools: AgentGantry
+    ) -> None:
+        """Every dynamic retrieval appends to the bounded selections history."""
+        provider = GantryContextProvider(gantry_with_tools, top_k=2)
+
+        assert provider.selections == ()
+        for query in ("weather in Paris", "issue a refund"):
+            ctx = af.SessionContext(input_messages=[_user_msg(query)])
+            await provider.before_run(
+                agent=None, session=None, context=ctx, state={}
+            )
+
+        assert len(provider.selections) == 2
+        # last_selection is always the most recent entry in the history.
+        assert provider.selections[-1] is provider.last_selection
+
+    @pytest.mark.asyncio
+    async def test_selections_is_immutable_snapshot(
+        self, gantry_with_tools: AgentGantry
+    ) -> None:
+        """The property returns a tuple copy, not the internal deque."""
+        provider = GantryContextProvider(gantry_with_tools, top_k=2)
+        ctx = af.SessionContext(input_messages=[_user_msg("weather in Paris")])
+        await provider.before_run(agent=None, session=None, context=ctx, state={})
+        assert isinstance(provider.selections, tuple)
+
+    @pytest.mark.asyncio
+    async def test_trace_middleware_prints_call_and_result(
+        self, gantry_with_tools: AgentGantry
+    ) -> None:
+        """trace() prints a before/after line and the router's surfaced set."""
+        provider = GantryContextProvider(gantry_with_tools, top_k=2)
+        # Seed a selection so the surfaced list is populated.
+        ctx = af.SessionContext(input_messages=[_user_msg("weather in Paris")])
+        await provider.before_run(agent=None, session=None, context=ctx, state={})
+
+        lines: list[str] = []
+        middleware = provider.trace(printer=lines.append)
+
+        class _FakeFn:
+            name = "get_weather"
+
+        class _FakeCtx:
+            function = _FakeFn()
+            arguments = {"city": "Paris"}
+            result = "Weather: Paris"
+
+        calls = {"n": 0}
+
+        async def _call_next() -> None:
+            calls["n"] += 1
+
+        await middleware(_FakeCtx(), _call_next)
+
+        assert calls["n"] == 1
+        joined = "\n".join(lines)
+        assert "round 1" in joined
+        assert "get_weather" in joined
+        assert "Weather: Paris" in joined
+        assert "surfaced:" in joined
+
+    @pytest.mark.asyncio
+    async def test_trace_render_false_skips_result_line(
+        self, gantry_with_tools: AgentGantry
+    ) -> None:
+        provider = GantryContextProvider(gantry_with_tools, top_k=2)
+        lines: list[str] = []
+        middleware = provider.trace(render=False, printer=lines.append)
+
+        class _FakeFn:
+            name = "get_weather"
+
+        class _FakeCtx:
+            function = _FakeFn()
+            arguments = {"city": "Paris"}
+            result = "Weather: Paris"
+
+        async def _call_next() -> None:
+            return None
+
+        await middleware(_FakeCtx(), _call_next)
+        # Only the pre-call ">>>" line, no post-call "<<<" preview.
+        assert any(line.startswith(">>>") for line in lines)
+        assert not any(line.startswith("<<<") for line in lines)
+
+    @pytest.mark.asyncio
+    async def test_attach_to_trace_adds_trace_middleware(
+        self, gantry_with_tools: AgentGantry
+    ) -> None:
+        """attach_to(trace=True) wires the trace middleware alongside the rest."""
+
+        class FakeAgent:
+            context_providers: list = []
+            middleware: list = []
+
+        # per_run: no chat middleware, so trace is the only one attached.
+        per_run = GantryContextProvider(gantry_with_tools)
+        per_run.attach_to(FakeAgent(), trace=True)
+
+        agent = FakeAgent()
+        per_call = GantryContextProvider(
+            gantry_with_tools, query_strategy="per_call"
+        )
+        per_call.attach_to(agent, trace=True)
+        # per_call attaches both the chat refresher and the trace middleware.
+        assert len(agent.middleware) == 2

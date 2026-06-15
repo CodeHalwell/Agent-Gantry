@@ -169,6 +169,7 @@ class TestConsoleTelemetryAdapterTokenUsage:
         import logging
 
         adapter = ConsoleTelemetryAdapter(log_level=logging.INFO)
+        caplog.set_level(logging.INFO, logger="agent_gantry")
         usage = ProviderUsage(prompt_tokens=100, completion_tokens=50, total_tokens=150)
 
         await adapter.record_token_usage(
@@ -192,6 +193,7 @@ class TestConsoleTelemetryAdapterTokenUsage:
         import logging
 
         adapter = ConsoleTelemetryAdapter(log_level=logging.INFO)
+        caplog.set_level(logging.INFO, logger="agent_gantry")
         usage = ProviderUsage(prompt_tokens=100, completion_tokens=50, total_tokens=150)
         baseline = ProviderUsage(prompt_tokens=200, completion_tokens=50, total_tokens=250)
         savings = TokenSavings(
@@ -222,6 +224,7 @@ class TestConsoleTelemetryAdapterTokenUsage:
         import logging
 
         adapter = ConsoleTelemetryAdapter(log_level=logging.INFO)
+        caplog.set_level(logging.INFO, logger="agent_gantry")
         usage = ProviderUsage(prompt_tokens=100, completion_tokens=50, total_tokens=150)
 
         await adapter.record_token_usage(usage, model_name="gpt-4", savings=None, trace_id=None)
@@ -237,6 +240,7 @@ class TestConsoleTelemetryAdapterTokenUsage:
         import logging
 
         adapter = ConsoleTelemetryAdapter(log_level=logging.INFO)
+        caplog.set_level(logging.INFO, logger="agent_gantry")
         usage = ProviderUsage(prompt_tokens=100, completion_tokens=50, total_tokens=150)
         baseline = ProviderUsage(prompt_tokens=300, completion_tokens=50, total_tokens=350)
         savings = TokenSavings(

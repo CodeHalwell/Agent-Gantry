@@ -6,6 +6,7 @@ Models for tool calls, results, and batch operations.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
@@ -81,3 +82,39 @@ class BatchToolResult(BaseModel):
     total_time_ms: float
     successful_count: int
     failed_count: int
+
+
+@dataclass(frozen=True)
+class ToolCallEvent:
+    """A completed tool execution, delivered to ``gantry.on_tool_call`` callbacks.
+
+    Framework-agnostic: every call routed through
+    :meth:`~agent_gantry.core.gantry.AgentGantry.execute` (and each call in a
+    batch) emits one of these once execution finishes — successfully or not —
+    regardless of which agent framework (if any) drove the call. This is the
+    single seam for cross-framework logging and metrics; the convenience
+    accessors mirror the most-used fields of the underlying result.
+    """
+
+    call: ToolCall
+    result: ToolResult
+
+    @property
+    def tool_name(self) -> str:
+        """Name of the tool that was executed."""
+        return self.result.tool_name or self.call.tool_name
+
+    @property
+    def status(self) -> ExecutionStatus:
+        """Terminal status of the execution."""
+        return self.result.status
+
+    @property
+    def ok(self) -> bool:
+        """``True`` when the call completed successfully."""
+        return self.result.status == ExecutionStatus.SUCCESS
+
+    @property
+    def latency_ms(self) -> float:
+        """Execution latency in milliseconds (0.0 if not started)."""
+        return self.result.latency_ms

@@ -6,6 +6,8 @@ Intelligent, secure tool orchestration for LLM-based agent systems.
 Core Philosophy: Context is precious. Execution is sacred. Trust is earned.
 """
 
+import logging as _logging
+
 from agent_gantry.core.gantry import AgentGantry, create_default_gantry
 from agent_gantry.integrations.agent_framework_bridge import (
     RetrievalCandidate,
@@ -19,7 +21,8 @@ from agent_gantry.integrations.semantic_tools import (
     set_default_gantry,
     with_semantic_tools,
 )
-from agent_gantry.schema.execution import ToolCall, ToolResult
+from agent_gantry.observability.console import enable_console_logging
+from agent_gantry.schema.execution import ToolCall, ToolCallEvent, ToolResult
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 from agent_gantry.schema.tool import (
     ToolCapability,
@@ -28,6 +31,13 @@ from agent_gantry.schema.tool import (
     ToolHealth,
     ToolSource,
 )
+from agent_gantry.utils.render import render_result
+
+# Library logging hygiene: attach a NullHandler to the package root logger so
+# importing agent_gantry never configures handlers or levels on the
+# application's behalf. Output is opt-in via the consumer's own logging config
+# or agent_gantry.enable_console_logging().
+_logging.getLogger("agent_gantry").addHandler(_logging.NullHandler())
 
 
 def disable_af_instrumentation() -> bool:
@@ -61,9 +71,12 @@ __all__ = [
     "RetrievalDecision",
     "create_default_gantry",
     "disable_af_instrumentation",
+    "enable_console_logging",
+    "render_result",
     "with_semantic_tools",
     "set_default_gantry",
     "ToolCall",
+    "ToolCallEvent",
     "ToolResult",
     "ToolQuery",
     "ConversationContext",
