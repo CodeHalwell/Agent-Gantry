@@ -55,16 +55,20 @@ This skill is the canonical reference for using the library. Read the section th
 
 ## Installing
 
+This project uses **uv** as its package manager; `pip` works as a fallback. Inside a uv project use `uv add`; for an ad-hoc environment use `uv pip install`.
+
 ```bash
-pip install agent-gantry                # core
-pip install "agent-gantry[nomic]"       # local embeddings (recommended)
-pip install "agent-gantry[openai]"      # OpenAI/Azure embeddings + custom OpenAI-compatible base_url
-pip install "agent-gantry[agent-frameworks]"  # Microsoft AF, LangChain, AutoGen, CrewAI, LlamaIndex, Semantic Kernel, Google ADK
-pip install "agent-gantry[lancedb]"     # disk-persistent vector store
-pip install "agent-gantry[mcp]"         # MCP client/server
-pip install "agent-gantry[a2a]"         # A2A agent
-pip install "agent-gantry[all]"         # everything
+uv add agent-gantry                     # core (in a uv project)
+uv add "agent-gantry[nomic]"            # local embeddings (recommended)
+uv add "agent-gantry[openai]"           # OpenAI/Azure embeddings + custom OpenAI-compatible base_url
+uv add "agent-gantry[agent-frameworks]" # Microsoft AF, LangChain, AutoGen, CrewAI, LlamaIndex, Semantic Kernel, Google ADK
+uv add "agent-gantry[lancedb]"          # disk-persistent vector store
+uv add "agent-gantry[mcp]"              # MCP client/server
+uv add "agent-gantry[a2a]"              # A2A agent
+uv add "agent-gantry[all]"              # everything
 ```
+
+Not in a uv project? Swap `uv add` for `uv pip install`. No uv at all? Fall back to `pip install "agent-gantry[...]"` — the extras are identical.
 
 The `[nomic]` extra is the recommended default for getting started — local, free, and accurate enough for production. `SimpleEmbedder` (the fallback when no embedder extra is installed) is hash-based and only useful for tests.
 
@@ -380,15 +384,15 @@ Skills exposed: `tool_discovery` (semantic search) and `tool_execution` (run a t
 
 ## CLI
 
-The `agent-gantry` command ships with the package:
+The `agent-gantry` command ships with the package. Inside a uv project, prefix with `uv run` (e.g. `uv run agent-gantry list`); the bare `agent-gantry` form works when the package is on `PATH` (pip install or an activated venv).
 
 ```bash
-agent-gantry list                              # list registered demo tools
-agent-gantry search "refund order" --limit 3   # semantic search
-agent-gantry lint                              # detect tool-description authoring mistakes
-agent-gantry sim toolA toolB                   # cosine similarity between two tools
-agent-gantry sync --dry-run                    # which tools would (re-)embed and why
-agent-gantry install-skill --claude            # install THIS skill into ~/.claude/skills
+uv run agent-gantry list                              # list registered demo tools
+uv run agent-gantry search "refund order" --limit 3   # semantic search
+uv run agent-gantry lint                              # detect tool-description authoring mistakes
+uv run agent-gantry sim toolA toolB                   # cosine similarity between two tools
+uv run agent-gantry sync --dry-run                    # which tools would (re-)embed and why
+uv run agent-gantry install-skill --claude            # install THIS skill into ~/.claude/skills
 ```
 
 `lint` flags three patterns that silently degrade routing quality:

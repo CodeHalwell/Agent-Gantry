@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   name set). Frontmatter still follows the Anthropic Agent Skills format
   (`name`/`description` only). Skill trigger description expanded to the new frameworks.
 
+- **Install/usage instructions now lead with uv** (with pip kept as an explicit
+  fallback) across the bundled skill, `README.md`, and the `skill_path()` error hint —
+  `uv add "agent-gantry[...]"` for dependencies and `uv run agent-gantry ...` for the CLI.
+
 ### Added
 
 - **`agent-gantry install-skill --claude`** installs the bundled skill straight into
