@@ -249,6 +249,8 @@ Every adapter has the identical signature `for_<fw>(gantry, query, *, limit=3, *
 | Semantic Kernel | `for_semantic_kernel`, `gantry_plugin` | `@kernel_function` `KernelFunction` | `from agent_gantry.semantic_kernel import for_semantic_kernel` |
 | Google ADK | `for_google_adk` | `google.adk.tools.FunctionTool` | `from agent_gantry.google_adk import for_google_adk` |
 
+The secondary symbols in the *Static adapter* column import from the same namespace, e.g. `from agent_gantry.semantic_kernel import for_semantic_kernel, gantry_plugin` and `from agent_gantry.autogen import for_autogen, register_with_autogen`.
+
 Need one conversion at a time (you already hold the selected specs)? Use `spec_to_<fw>(spec)` with specs from `GantryToolset(gantry).select(query, limit=...)`.
 
 ```python
