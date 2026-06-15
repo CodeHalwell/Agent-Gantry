@@ -66,11 +66,11 @@ async def gantry():
 
 async def test_spec_to_langchain_builds_native_tool(fake_langchain, gantry):
     from agent_gantry.integrations.frameworks.base import GantryToolset
-    from agent_gantry.integrations.frameworks.langchain import spec_to_langchain
+    from agent_gantry.langchain import LangChainAdapter
 
     specs = await GantryToolset(gantry).select("send an email", limit=1)
     spec = specs[0]
-    tool = spec_to_langchain(spec)
+    tool = LangChainAdapter.convert(spec)
 
     assert tool.name == spec.name == "send_email"
     assert tool.description == spec.description == "Send an email message to a recipient."
@@ -82,9 +82,9 @@ async def test_spec_to_langchain_builds_native_tool(fake_langchain, gantry):
 
 
 async def test_for_langchain_returns_tool_list(fake_langchain, gantry):
-    from agent_gantry.integrations.frameworks.langchain import for_langchain
+    from agent_gantry.langchain import LangChainAdapter
 
-    tools = await for_langchain(gantry, "send an email", limit=2)
+    tools = await LangChainAdapter(gantry).select("send an email", limit=2)
 
     assert isinstance(tools, list)
     assert len(tools) >= 1
@@ -101,8 +101,8 @@ async def test_missing_langchain_raises_helpful_error(monkeypatch, gantry):
     monkeypatch.setitem(sys.modules, "langchain_core.tools", None)
 
     from agent_gantry.integrations.frameworks.base import GantryToolset
-    from agent_gantry.integrations.frameworks.langchain import spec_to_langchain
+    from agent_gantry.langchain import LangChainAdapter
 
     specs = await GantryToolset(gantry).select("send an email", limit=1)
     with pytest.raises(ImportError, match="pip install langchain-core"):
-        spec_to_langchain(specs[0])
+        LangChainAdapter.convert(specs[0])

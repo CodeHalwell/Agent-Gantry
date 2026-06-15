@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from llama_index.llms.openai import OpenAI
 
 from agent_gantry import AgentGantry
-from agent_gantry.llamaindex import for_llamaindex
+from agent_gantry.llamaindex import LlamaIndexAdapter
 
 load_dotenv()
 
@@ -24,7 +24,9 @@ async def main():
     #    in one call (retrieval + conversion + execution wiring).
     user_query = "What are the preferences for user 'dev_123'?"
     # Lowering threshold for SimpleEmbedder compatibility in this example
-    llama_tools = await for_llamaindex(gantry, user_query, limit=1, score_threshold=0.1)
+    llama_tools = await LlamaIndexAdapter(gantry).select(
+        user_query, limit=1, score_threshold=0.1
+    )
 
     # 4. Setup LlamaIndex Agent
     from llama_index.core.agent.workflow import ReActAgent

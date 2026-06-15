@@ -50,9 +50,9 @@ Goal: route a large registry into a non-AF framework (LangChain, CrewAI, Pydanti
 Static slice (select once, native tool objects):
 
 ```python
-from agent_gantry.langchain import for_langchain   # clean per-framework namespace
+from agent_gantry.langchain import LangChainAdapter   # clean per-framework namespace
 
-tools = await for_langchain(gantry, "email the quarterly report", limit=3)
+tools = await LangChainAdapter(gantry).select("email the quarterly report", limit=3)
 llm = ChatOpenAI(model="gpt-5.5").bind_tools(tools)   # native StructuredTools
 ```
 
@@ -71,7 +71,7 @@ while not done:
 
 The default `latest_activity` query generator is recency-aware: a tool result drives the next selection in an autonomous pipeline (`fetch → clean → train → report`), while a new user message drives it in a chat agent (`weather → flights → hotel`). Pin one with `query_generator=last_user_text` or `last_tool_result`.
 
-For frameworks with a native per-turn hook (LlamaIndex, Pydantic AI, AutoGen, Google ADK, LangGraph, Semantic Kernel, OpenAI Agents SDK), prefer the deep **live** provider instead of `ToolRefresher` — e.g. `from agent_gantry.llamaindex import gantry_function_agent`.
+For frameworks with a native per-turn hook (LlamaIndex, Pydantic AI, AutoGen, Google ADK, LangGraph, Semantic Kernel, OpenAI Agents SDK), prefer the deep **live** adapter method instead of `ToolRefresher` — e.g. `from agent_gantry.llamaindex import LlamaIndexAdapter` then `LlamaIndexAdapter(gantry).function_agent(llm)`.
 
 ## Recipe 2: Pipe a custom embedding endpoint (Requesty / OpenRouter / vLLM)
 

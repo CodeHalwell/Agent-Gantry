@@ -42,10 +42,10 @@ Usage
 
     from agent_gantry import AgentGantry
     from agent_gantry.integrations.frameworks.langgraph_live import (
-        create_gantry_react_agent,
+        _create_gantry_react_agent,
     )
 
-    agent = create_gantry_react_agent(chat_model, gantry, limit=5)
+    agent = _create_gantry_react_agent(chat_model, gantry, limit=5)
     result = await agent.ainvoke({"messages": [("user", "what's the weather?")]})
 
 The ``langgraph`` / ``langchain-core`` imports are lazy so ``import agent_gantry``
@@ -58,7 +58,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import GantryToolset, spec_from_tool
-from agent_gantry.integrations.frameworks.langchain import spec_to_langchain
+from agent_gantry.integrations.frameworks.langchain import _spec_to_langchain
 from agent_gantry.query import latest_activity
 
 if TYPE_CHECKING:
@@ -101,7 +101,7 @@ def _query_from_state(state: Any) -> str:
     return latest_activity(messages) or ""
 
 
-async def select_tools_for_state(
+async def _select_tools_for_state(
     gantry: AgentGantry,
     state: Any,
     *,
@@ -123,7 +123,7 @@ async def select_tools_for_state(
     specs = await GantryToolset(gantry).select(
         query, limit=limit, score_threshold=score_threshold
     )
-    return [spec_to_langchain(s) for s in specs]
+    return [_spec_to_langchain(s) for s in specs]
 
 
 async def _all_tools(gantry: AgentGantry) -> list[Any]:
@@ -134,10 +134,10 @@ async def _all_tools(gantry: AgentGantry) -> list[Any]:
     pick (LangGraph requires bound tools to be a subset of this set).
     """
     definitions = await gantry.list_tools()
-    return [spec_to_langchain(spec_from_tool(gantry, d)) for d in definitions]
+    return [_spec_to_langchain(spec_from_tool(gantry, d)) for d in definitions]
 
 
-def create_gantry_react_agent(
+def _create_gantry_react_agent(
     model: Any,
     gantry: AgentGantry,
     *,
@@ -176,7 +176,7 @@ def create_gantry_react_agent(
         on a worker thread via Gantry's sync bridge, so it is safe to call from a
         running event loop but will block the calling thread until enumeration
         completes. In already-async contexts (Jupyter, FastAPI startup) prefer
-        :func:`acreate_gantry_react_agent`, which awaits the enumeration directly.
+        :func:`_acreate_gantry_react_agent`, which awaits the enumeration directly.
 
     Returns:
         The compiled LangGraph agent (a ``Pregel`` graph) ready for
@@ -190,7 +190,7 @@ def create_gantry_react_agent(
     )
 
 
-async def acreate_gantry_react_agent(
+async def _acreate_gantry_react_agent(
     model: Any,
     gantry: AgentGantry,
     *,
@@ -198,7 +198,7 @@ async def acreate_gantry_react_agent(
     score_threshold: float = 0.0,
     **agent_kwargs: Any,
 ) -> Any:
-    """Async-native variant of :func:`create_gantry_react_agent`.
+    """Async-native variant of :func:`_create_gantry_react_agent`.
 
     Awaits the tool-superset enumeration directly (no sync bridge), so it is the
     right choice inside an already-running event loop (Jupyter, FastAPI startup).
@@ -225,7 +225,7 @@ def _build_react_agent(
 
     async def _dynamic_model(state: Any, runtime: Any) -> Any:
         """Per-turn hook: re-select Gantry tools and bind them to ``model``."""
-        selected = await select_tools_for_state(
+        selected = await _select_tools_for_state(
             gantry, state, limit=limit, score_threshold=score_threshold
         )
         if not selected:
@@ -236,7 +236,7 @@ def _build_react_agent(
 
 
 __all__ = [
-    "create_gantry_react_agent",
-    "acreate_gantry_react_agent",
-    "select_tools_for_state",
+    "_create_gantry_react_agent",
+    "_acreate_gantry_react_agent",
+    "_select_tools_for_state",
 ]

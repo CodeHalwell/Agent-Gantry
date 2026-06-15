@@ -1,11 +1,13 @@
 """
 OpenAI + Agent-Gantry integration demo.
 
-Demonstrates four scenarios:
+Demonstrates five scenarios:
 A. Responses API – recommended for agentic workloads (OpenAI's primary surface)
 B. Dynamic retrieval via Chat Completions (still supported)
 C. Static tool list (small toolsets)
 D. Decorator-based automatic injection (recommended for wrappers)
+E. The typed ``OpenAIAdapter`` – a thin, provider-specific wrapper around
+   ``gantry.retrieve_tools(..., dialect="openai")``
 
 OpenAI positioned the Responses API as the forward direction for agents and
 published a sunset timeline for the Assistants API (August 2026). Scenario A
@@ -169,6 +171,26 @@ async def main() -> None:
         print(f"LLM decided to call: {tool_calls_d[0].function.name}")
     else:
         print("LLM did not call any tools.")
+
+    # --- Scenario E: Typed OpenAIAdapter (provider-specific convenience) ---
+    # OpenAIAdapter(gantry).tools(query, limit=n) is exactly equivalent to
+    # gantry.retrieve_tools(query, limit=n, dialect="openai") — the dialect is
+    # baked in, so you get OpenAI chat-completions schemas with no string param.
+    # Use .responses_tools(...) for the flat Responses API schema (Scenario A).
+    print("\n--- Scenario E: Typed OpenAIAdapter ---")
+    from agent_gantry.openai import OpenAIAdapter
+
+    adapter = OpenAIAdapter(gantry)
+    query_e = "What's the weather in Berlin?"
+    print(f"User Query: '{query_e}'")
+
+    tools_cc_e = await adapter.tools(query_e, limit=1, score_threshold=score_threshold)
+    print(f"  chat-completions schema: {[t['function']['name'] for t in tools_cc_e]}")
+
+    tools_resp_e = await adapter.responses_tools(
+        query_e, limit=1, score_threshold=score_threshold
+    )
+    print(f"  responses schema:        {[t['name'] for t in tools_resp_e]}")
 
 
 if __name__ == "__main__":

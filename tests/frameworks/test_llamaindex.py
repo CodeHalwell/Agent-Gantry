@@ -15,10 +15,7 @@ import pytest
 
 from agent_gantry import AgentGantry
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.integrations.frameworks.llamaindex import (
-    for_llamaindex,
-    spec_to_llamaindex,
-)
+from agent_gantry.llamaindex import LlamaIndexAdapter
 
 
 @pytest.fixture
@@ -79,7 +76,7 @@ async def test_spec_to_llamaindex_captures_metadata(
     gantry: AgentGantry, fake_llama_index: type
 ) -> None:
     spec = await _first_spec(gantry)
-    tool = spec_to_llamaindex(spec)
+    tool = LlamaIndexAdapter.convert(spec)
 
     assert tool.name == "send_email"
     assert tool.description == "Send an email message to a recipient."
@@ -91,7 +88,7 @@ async def test_spec_to_llamaindex_async_fn_executes(
     gantry: AgentGantry, fake_llama_index: type
 ) -> None:
     spec = await _first_spec(gantry)
-    tool = spec_to_llamaindex(spec)
+    tool = LlamaIndexAdapter.convert(spec)
 
     result = await tool.async_fn(to="boss@x.com")
     assert result == "sent:boss@x.com"
@@ -100,7 +97,7 @@ async def test_spec_to_llamaindex_async_fn_executes(
 async def test_for_llamaindex_maps_all_specs(
     gantry: AgentGantry, fake_llama_index: type
 ) -> None:
-    tools = await for_llamaindex(gantry, "send an email", limit=5)
+    tools = await LlamaIndexAdapter(gantry).select("send an email", limit=5)
 
     assert len(tools) >= 1
     names = {t.name for t in tools}
@@ -131,4 +128,4 @@ def test_spec_to_llamaindex_missing_dependency(
             return _fn
 
     with pytest.raises(ImportError, match="pip install llama-index-core"):
-        spec_to_llamaindex(_DummySpec())
+        LlamaIndexAdapter.convert(_DummySpec())

@@ -7,6 +7,7 @@ Core Philosophy: Context is precious. Execution is sacred. Trust is earned.
 """
 
 from agent_gantry.core.gantry import AgentGantry, create_default_gantry
+from agent_gantry.integrations.agent_framework_adapter import AgentFrameworkAdapter
 from agent_gantry.integrations.agent_framework_bridge import (
     RetrievalCandidate,
     RetrievalDecision,
@@ -52,9 +53,10 @@ def disable_af_instrumentation() -> bool:
     return _impl()
 
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 __all__ = [
     "AgentGantry",
+    "AgentFrameworkAdapter",
     "GantryContextProvider",
     "MissingRequiredToolError",
     "RetrievalCandidate",

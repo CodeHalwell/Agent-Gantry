@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 
 from agent_gantry import AgentGantry
-from agent_gantry.crewai import for_crewai
+from agent_gantry.crewai import CrewAIAdapter
 
 load_dotenv()
 
@@ -22,11 +22,13 @@ async def main():
     await gantry.sync()
 
     # 2. Select relevant tools and get them as native CrewAI BaseTools in one
-    #    call — for_crewai handles retrieval, conversion, and execution wiring
-    #    (no manual factory or name-based branching needed).
+    #    call — CrewAIAdapter.select handles retrieval, conversion, and
+    #    execution wiring (no manual factory or name-based branching needed).
     user_query = "Get info for customer john@example.com"
     # Lowering threshold for SimpleEmbedder compatibility in this example
-    crew_tools = await for_crewai(gantry, user_query, limit=1, score_threshold=0.1)
+    crew_tools = await CrewAIAdapter(gantry).select(
+        user_query, limit=1, score_threshold=0.1
+    )
 
     # 4. Define CrewAI Agent
     llm = ChatOpenAI(model="gpt-5.5")

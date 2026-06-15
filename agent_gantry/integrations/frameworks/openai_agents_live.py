@@ -1,9 +1,10 @@
 """DEEP per-turn dynamic-tool provider for the OpenAI Agents SDK.
 
 Where :mod:`agent_gantry.integrations.frameworks.openai_agents` exposes the
-*static* helpers (``for_openai_agents`` / ``spec_to_openai_agents``) — you
-select a slice of tools once and hand the resulting ``FunctionTool`` list to an
-:class:`agents.Agent` — this module wires Agent-Gantry into the SDK as a
+*static* slice (:class:`OpenAIAgentsAdapter.select` /
+:meth:`OpenAIAgentsAdapter.convert`) — you select a slice of tools once and hand
+the resulting ``FunctionTool`` list to an :class:`agents.Agent` — this module
+wires Agent-Gantry into the SDK as a
 **live** tool source so the agent's tool set is **re-selected by Gantry as the
 conversation progresses**, matching the depth of the Microsoft Agent Framework
 ``GantryContextProvider`` as closely as this SDK allows.
@@ -19,7 +20,7 @@ lifecycle hook, ``RunHooks.on_llm_start`` (and the per-agent
 Because ``agent.tools`` is a plain mutable list, two complementary mechanisms
 give genuine per-turn re-selection:
 
-1. **Mid-run (hook-driven), via** :func:`gantry_run_hooks`. The returned
+1. **Mid-run (hook-driven), via** :func:`_gantry_run_hooks`. The returned
    :class:`agents.RunHooks` re-selects tools from the run's current input and
    rewrites ``agent.tools`` in place on every ``on_llm_start``. The SDK snapshots
    tools at the *start* of each turn and fires ``on_llm_start`` *within* that
@@ -29,7 +30,7 @@ give genuine per-turn re-selection:
    deepest the SDK natively supports.
 
 2. **Per-run (loop-driven), via** :class:`GantryAgentSession` /
-   :func:`run_with_gantry`. Re-selects tools from the run input and updates
+   :func:`_run_with_gantry`. Re-selects tools from the run input and updates
    ``agent.tools`` **before** each ``Runner.run`` call, so the new selection is
    in force on the very *first* turn of that run. Driving a multi-turn
    conversation as a sequence of runs (the common chat pattern) yields immediate,
@@ -38,7 +39,7 @@ give genuine per-turn re-selection:
 
 Both update ``agent.tools`` in place (an ``agent.clone(tools=...)`` variant is
 also offered) and route every tool call back through ``gantry.execute`` via the
-:class:`~agents.FunctionTool` objects built by ``spec_to_openai_agents`` — so
+:class:`~agents.FunctionTool` objects built by ``_spec_to_openai_agents`` — so
 retries, timeouts, circuit breakers, and the security policy still apply.
 
 The ``agents`` import is lazy (only inside the builders / hook), so ``import
@@ -51,22 +52,21 @@ Usage
 
     from agents import Agent, Runner
     from agent_gantry import AgentGantry
-    from agent_gantry.integrations.frameworks.openai_agents_live import (
-        gantry_run_hooks, run_with_gantry, GantryAgentSession,
-    )
+    from agent_gantry.openai_agents import OpenAIAgentsAdapter
 
+    adapter = OpenAIAgentsAdapter(gantry)
     agent = Agent(name="assistant", tools=[])
 
     # Per-run (immediate first-turn re-selection) — primary entry point:
-    result = await run_with_gantry(agent, gantry, "what's the weather in Paris?")
+    result = await adapter.run(agent, "what's the weather in Paris?")
 
     # ...or hold a session across a multi-turn chat:
-    session = GantryAgentSession(agent, gantry, limit=5)
+    session = adapter.session(agent, limit=5)
     r1 = await session.run("what's the weather in Paris?")   # weather tools
     r2 = await session.run("now email that to my boss")      # email tools
 
     # ...or hand the hook to a single Runner.run for intra-run dynamism:
-    await Runner.run(agent, input, hooks=gantry_run_hooks(gantry, agent))
+    await Runner.run(agent, input, hooks=adapter.run_hooks(agent))
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import GantryToolset
-from agent_gantry.integrations.frameworks.openai_agents import spec_to_openai_agents
+from agent_gantry.integrations.frameworks.openai_agents import _spec_to_openai_agents
 from agent_gantry.query import latest_activity
 
 if TYPE_CHECKING:
@@ -115,7 +115,7 @@ def _query_from(query_or_input: Any) -> str:
     return latest_activity(query_or_input) or ""
 
 
-async def select_function_tools(
+async def _select_function_tools(
     gantry: AgentGantry,
     query_or_input: Any,
     *,
@@ -139,7 +139,7 @@ async def select_function_tools(
     if not query:
         # No extractable text (empty/None input, or only non-text items): expose
         # no tools rather than selecting on an empty embedding, which yields an
-        # arbitrary top-k for some embedders. refresh_agent_tools then clears
+        # arbitrary top-k for some embedders. _refresh_agent_tools then clears
         # agent.tools instead of surfacing unrelated functions.
         return []
     specs = await GantryToolset(gantry).select(
@@ -148,10 +148,10 @@ async def select_function_tools(
         score_threshold=score_threshold,
         namespaces=namespaces,
     )
-    return [spec_to_openai_agents(spec) for spec in specs]
+    return [_spec_to_openai_agents(spec) for spec in specs]
 
 
-async def refresh_agent_tools(
+async def _refresh_agent_tools(
     agent: Any,
     gantry: AgentGantry,
     query_or_input: Any,
@@ -170,7 +170,7 @@ async def refresh_agent_tools(
     Raises:
         ImportError: If ``openai-agents`` is not installed.
     """
-    tools = await select_function_tools(
+    tools = await _select_function_tools(
         gantry,
         query_or_input,
         limit=limit,
@@ -183,7 +183,7 @@ async def refresh_agent_tools(
     return tools
 
 
-def gantry_run_hooks(
+def _gantry_run_hooks(
     gantry: AgentGantry,
     agent: Any,
     *,
@@ -201,7 +201,7 @@ def gantry_run_hooks(
     per-turn dynamism with no application code between turns.
 
     For immediate first-turn accuracy, combine this with
-    :func:`run_with_gantry` / :class:`GantryAgentSession`, which re-select
+    :func:`_run_with_gantry` / :class:`GantryAgentSession`, which re-select
     *before* the run starts.
 
     Raises:
@@ -221,7 +221,7 @@ def gantry_run_hooks(
         ) -> None:
             # ``input_items`` is the model input for the upcoming call: the full
             # running conversation. Derive the query from its latest activity.
-            await refresh_agent_tools(
+            await _refresh_agent_tools(
                 hook_agent if hook_agent is not None else agent,
                 gantry,
                 input_items,
@@ -242,7 +242,7 @@ class GantryAgentSession:
     1. derives a retrieval query from the supplied input (latest activity),
     2. re-selects the top-k relevant tools and rewrites ``agent.tools`` in place
        **before** the run, so the new selection is in force on the first turn,
-    3. installs :func:`gantry_run_hooks` for the run so any *additional* turns
+    3. installs :func:`_gantry_run_hooks` for the run so any *additional* turns
        inside that run (tool-call loops) also track the conversation,
     4. delegates to ``agents.Runner.run`` and returns its ``RunResult``.
 
@@ -290,7 +290,7 @@ class GantryAgentSession:
         without immediately running (e.g. to inspect the chosen tools). Returns
         the freshly selected :class:`agents.FunctionTool` list.
         """
-        return await refresh_agent_tools(
+        return await _refresh_agent_tools(
             self._agent,
             self._gantry,
             query_or_input,
@@ -303,7 +303,7 @@ class GantryAgentSession:
         """Re-select tools for ``run_input``, run the agent, return the result.
 
         Re-selects and applies the tool set before the run (immediate first-turn
-        accuracy) and installs :func:`gantry_run_hooks` for the run (intra-run
+        accuracy) and installs :func:`_gantry_run_hooks` for the run (intra-run
         per-turn dynamism). Extra ``run_kwargs`` are forwarded to
         ``agents.Runner.run`` (``context``, ``max_turns``, ``session``, …). If
         the caller supplies their own ``hooks`` it is respected and the Gantry
@@ -315,7 +315,7 @@ class GantryAgentSession:
         return await agents.Runner.run(self._agent, run_input, **run_kwargs)
 
     def _gantry_hooks(self) -> Any:
-        return gantry_run_hooks(
+        return _gantry_run_hooks(
             self._gantry,
             self._agent,
             limit=self._limit,
@@ -324,7 +324,7 @@ class GantryAgentSession:
         )
 
 
-async def run_with_gantry(
+async def _run_with_gantry(
     agent: Any,
     gantry: AgentGantry,
     run_input: Any,
@@ -340,7 +340,7 @@ async def run_with_gantry(
     :class:`GantryAgentSession` and calling :meth:`~GantryAgentSession.run` a
     single time. Re-selects tools from the input's latest activity and updates
     ``agent.tools`` **before** the run (so the first turn already sees the right
-    tools), installs :func:`gantry_run_hooks` for intra-run dynamism, then
+    tools), installs :func:`_gantry_run_hooks` for intra-run dynamism, then
     delegates to ``agents.Runner.run``. Extra ``run_kwargs`` are forwarded.
 
     Raises:
@@ -358,8 +358,8 @@ async def run_with_gantry(
 
 __all__ = [
     "GantryAgentSession",
-    "gantry_run_hooks",
-    "refresh_agent_tools",
-    "run_with_gantry",
-    "select_function_tools",
+    "_gantry_run_hooks",
+    "_refresh_agent_tools",
+    "_run_with_gantry",
+    "_select_function_tools",
 ]

@@ -1,11 +1,11 @@
 """Deep, per-turn dynamic-tool provider for AutoGen (autogen-core).
 
-This is the *live* AutoGen integration — the deep counterpart to the
-schema/registration helpers in :mod:`agent_gantry.integrations.frameworks.autogen`
-(``for_autogen`` / ``register_with_autogen``). Where ``for_autogen`` selects a
-tool slice **once** and hands AutoGen a static set of callables, this module
-plugs Gantry directly into AutoGen's native dynamic-tool hook so the tool set is
-re-selected from the registry on **every turn**.
+This is the *live* AutoGen integration — the deep counterpart to the static
+slice and registration provided by :class:`~agent_gantry.integrations.frameworks.autogen.AutoGenAdapter`
+(its ``select`` / ``register`` methods). Where those select a tool slice
+**once** and hand AutoGen a static set of callables, this module plugs Gantry
+directly into AutoGen's native dynamic-tool hook so the tool set is re-selected
+from the registry on **every turn**.
 
 The native hook is :class:`autogen_core.tools.Workbench` — a tool provider an
 ``AssistantAgent`` consumes. On each turn the agent calls
@@ -20,7 +20,7 @@ circuit breakers and the security policy), wrapping the output in a
 
 Drive the per-turn behaviour by updating the query between turns::
 
-    wb = gantry_workbench(gantry, limit=5)
+    wb = AutoGenAdapter(gantry).workbench(limit=5)
     wb.set_query("send an email to the team")
     tools = await wb.list_tools()          # email tools surface
     result = await wb.call_tool("send_email", {"to": "team@x.com"})
@@ -236,18 +236,7 @@ def _get_class() -> type:
     return _GANTRY_WORKBENCH_CLASS
 
 
-def __getattr__(name: str) -> Any:
-    """Expose ``GantryWorkbench`` lazily so the base class is built on access.
-
-    ``from ...autogen_live import GantryWorkbench`` triggers this and builds the
-    real ``Workbench`` subclass on demand, keeping import-time dependency-free.
-    """
-    if name == "GantryWorkbench":
-        return _get_class()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-def gantry_workbench(
+def _gantry_workbench(
     gantry: AgentGantry,
     *,
     query: str = "",
@@ -271,3 +260,18 @@ def gantry_workbench(
         limit=limit,
         score_threshold=score_threshold,
     )
+
+
+__all__ = ["_gantry_workbench"]
+
+
+def __getattr__(name: str) -> Any:
+    """Expose the dynamically-built ``GantryWorkbench`` subclass lazily.
+
+    It subclasses ``autogen_core.tools.Workbench``, so it's built on first access
+    to keep ``import`` dependency-free. Internal/advanced use (e.g. ``isinstance``
+    checks); the public entry point is ``AutoGenAdapter.workbench(...)``.
+    """
+    if name == "GantryWorkbench":
+        return _get_class()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

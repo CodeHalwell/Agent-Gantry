@@ -1,26 +1,15 @@
 """Agent-Gantry × CrewAI.
 
-Clean per-framework imports::
+Clean per-framework import::
 
-    from agent_gantry.crewai import for_crewai, gantry_crew_tools
+    from agent_gantry.crewai import CrewAIAdapter
 
-Re-exports CrewAI's static adapter (select + convert) and the deep per-turn "live" provider. Importing
-this module does not require CrewAI until you actually call into it.
+Importing this module never requires CrewAI to be installed; the framework is
+imported lazily when you call an adapter method.
 """
 
 from __future__ import annotations
 
-from agent_gantry._framework_ns import make_lazy_getattr
-from agent_gantry.integrations.frameworks.crewai import (
-    for_crewai,
-    spec_to_crewai,
-)
+from agent_gantry.integrations.frameworks.crewai import CrewAIAdapter
 
-__getattr__ = make_lazy_getattr({'gantry_crew_tools': 'live_wrappers', 'GantryLiveCrewAgent': 'live_wrappers'})
-
-__all__ = [
-    "for_crewai",
-    "spec_to_crewai",
-    "gantry_crew_tools",  # noqa: F822 (lazy via __getattr__)
-    "GantryLiveCrewAgent",  # noqa: F822 (lazy via __getattr__)
-]
+__all__ = ["CrewAIAdapter"]

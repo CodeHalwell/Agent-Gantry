@@ -59,19 +59,19 @@ async def gantry():
 
 
 def test_spec_to_langgraph_is_langchain_wrapper():
-    from agent_gantry.integrations.frameworks.langchain import spec_to_langchain
-    from agent_gantry.integrations.frameworks.langgraph import spec_to_langgraph
+    from agent_gantry.integrations.frameworks.langchain import _spec_to_langchain
+    from agent_gantry.integrations.frameworks.langgraph import _spec_to_langgraph
 
-    assert spec_to_langgraph is spec_to_langchain
+    assert _spec_to_langgraph is _spec_to_langchain
 
 
 async def test_spec_to_langgraph_builds_native_tool(fake_langchain, gantry):
     from agent_gantry.integrations.frameworks.base import GantryToolset
-    from agent_gantry.integrations.frameworks.langgraph import spec_to_langgraph
+    from agent_gantry.langgraph import LangGraphAdapter
 
     specs = await GantryToolset(gantry).select("send an email", limit=1)
     spec = specs[0]
-    tool = spec_to_langgraph(spec)
+    tool = LangGraphAdapter.convert(spec)
 
     assert tool.name == spec.name == "send_email"
     assert tool.description == spec.description
@@ -81,9 +81,9 @@ async def test_spec_to_langgraph_builds_native_tool(fake_langchain, gantry):
 
 
 async def test_for_langgraph_returns_tool_list(fake_langchain, gantry):
-    from agent_gantry.integrations.frameworks.langgraph import for_langgraph
+    from agent_gantry.langgraph import LangGraphAdapter
 
-    tools = await for_langgraph(gantry, "send an email", limit=2)
+    tools = await LangGraphAdapter(gantry).select("send an email", limit=2)
 
     assert isinstance(tools, list)
     assert len(tools) >= 1

@@ -1,25 +1,15 @@
 """Agent-Gantry × Pydantic AI.
 
-Clean per-framework imports::
+Clean per-framework import::
 
-    from agent_gantry.pydantic_ai import for_pydantic_ai, gantry_toolset
+    from agent_gantry.pydantic_ai import PydanticAIAdapter
 
-Re-exports Pydantic AI's static adapter (select + convert) and the deep per-turn "live" provider. Importing
-this module does not require Pydantic AI until you actually call into it.
+Importing this module never requires Pydantic AI to be installed; the framework
+is imported lazily when you call an adapter method.
 """
 
 from __future__ import annotations
 
-from agent_gantry._framework_ns import make_lazy_getattr
-from agent_gantry.integrations.frameworks.pydantic_ai import (
-    for_pydantic_ai,
-    spec_to_pydantic_ai,
-)
+from agent_gantry.integrations.frameworks.pydantic_ai import PydanticAIAdapter
 
-__getattr__ = make_lazy_getattr({'gantry_toolset': 'pydantic_ai_live'})
-
-__all__ = [
-    "for_pydantic_ai",
-    "spec_to_pydantic_ai",
-    "gantry_toolset",  # noqa: F822 (lazy via __getattr__)
-]
+__all__ = ["PydanticAIAdapter"]

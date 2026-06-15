@@ -8,29 +8,34 @@ genuinely per-turn integrations). Once you hand one of these frameworks a list o
 tools and build the agent, that list is frozen for the whole run.
 
 So "as deep as the framework allows" here is **per top-level call**, not
-per-intra-run turn. The wrappers below re-run Gantry selection for the query of
+per-intra-run turn. The builders below re-run Gantry selection for the query of
 *each* new call (each CrewAI task, each Agno run, each Haystack invocation, each
 Smolagents run), convert the freshly selected tools to the framework's native
 objects, and (re)build the agent / tool set for that call. Between calls the tool
 surface tracks the new query; *within* a single agent run it stays fixed — that
 is the deepest these frameworks permit.
 
-All selection and native-tool conversion is delegated to the existing
-``for_crewai`` / ``for_agno`` / ``for_haystack`` / ``for_smolagents`` adapters;
-nothing here re-implements either. Each framework import is lazy (performed
-inside the helper/class), so ``import agent_gantry`` never requires any of these
-frameworks to be installed; a missing one raises ``ImportError`` with the right
-``pip install`` hint.
+These builders are returned by the per-call ``agent_builder`` /
+``tool_invoker_builder`` methods on the framework adapters
+(:class:`~agent_gantry.crewai.CrewAIAdapter`,
+:class:`~agent_gantry.agno.AgnoAdapter`,
+:class:`~agent_gantry.haystack.HaystackAdapter`,
+:class:`~agent_gantry.smolagents.SmolagentsAdapter`). All selection and
+native-tool conversion is delegated to the existing ``_for_crewai`` / ``_for_agno``
+/ ``_for_haystack`` / ``_for_smolagents`` adapters; nothing here re-implements
+either. Each framework import is lazy (performed inside the helper/class), so
+``import agent_gantry`` never requires any of these frameworks to be installed; a
+missing one raises ``ImportError`` with the right ``pip install`` hint.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.agno import for_agno
-from agent_gantry.integrations.frameworks.crewai import for_crewai
-from agent_gantry.integrations.frameworks.haystack import for_haystack
-from agent_gantry.integrations.frameworks.smolagents import for_smolagents
+from agent_gantry.integrations.frameworks.agno import _for_agno
+from agent_gantry.integrations.frameworks.crewai import _for_crewai
+from agent_gantry.integrations.frameworks.haystack import _for_haystack
+from agent_gantry.integrations.frameworks.smolagents import _for_smolagents
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
@@ -39,28 +44,6 @@ if TYPE_CHECKING:
 # --------------------------------------------------------------------------- #
 # CrewAI
 # --------------------------------------------------------------------------- #
-async def gantry_crew_tools(
-    gantry: AgentGantry,
-    query: str,
-    *,
-    limit: int = 5,
-    score_threshold: float = 0.0,
-) -> list[Any]:
-    """Select CrewAI ``BaseTool`` objects for ``query`` (per-call selection).
-
-    A thin, explicitly-named alias over :func:`for_crewai` that makes the
-    "re-select for *this* call" intent obvious at the call site. Call it once per
-    CrewAI task with that task's query, then pass the result into
-    ``crewai.Agent(tools=...)`` / ``Task``.
-
-    Raises:
-        ImportError: If ``crewai`` is not installed.
-    """
-    return await for_crewai(
-        gantry, query, limit=limit, score_threshold=score_threshold
-    )
-
-
 class GantryLiveCrewAgent:
     """Rebuild a fresh ``crewai.Agent`` per call, with tools re-selected by Gantry.
 
@@ -69,6 +52,8 @@ class GantryLiveCrewAgent:
     the tools Gantry selects for that call's query. The role / goal / backstory /
     llm (and any extra ``crewai.Agent`` kwargs) are configured once on the
     constructor and reused for every rebuild.
+
+    Obtain one via ``CrewAIAdapter(gantry).agent_builder(...)``.
 
     Args:
         gantry: The :class:`~agent_gantry.core.gantry.AgentGantry` to select from.
@@ -102,7 +87,7 @@ class GantryLiveCrewAgent:
 
     async def select_tools(self, query: str) -> list[Any]:
         """Re-select this call's CrewAI tools for ``query``."""
-        return await gantry_crew_tools(
+        return await _for_crewai(
             self._gantry,
             query,
             limit=self._limit,
@@ -147,6 +132,8 @@ class GantryLiveAgnoAgent:
     tools Gantry selects for that call's query. The model (and any extra Agno
     ``Agent`` kwargs) are configured once on the constructor.
 
+    Obtain one via ``AgnoAdapter(gantry).agent_builder(...)``.
+
     Args:
         gantry: The :class:`~agent_gantry.core.gantry.AgentGantry` to select from.
         model: Optional Agno model passed straight to ``Agent``.
@@ -172,7 +159,7 @@ class GantryLiveAgnoAgent:
 
     async def select_tools(self, query: str) -> list[Any]:
         """Re-select this call's Agno ``Function`` tools for ``query``."""
-        return await for_agno(
+        return await _for_agno(
             self._gantry,
             query,
             limit=self._limit,
@@ -202,34 +189,14 @@ class GantryLiveAgnoAgent:
 # --------------------------------------------------------------------------- #
 # Haystack
 # --------------------------------------------------------------------------- #
-async def gantry_haystack_tools(
-    gantry: AgentGantry,
-    query: str,
-    *,
-    limit: int = 5,
-    score_threshold: float = 0.0,
-) -> list[Any]:
-    """Select Haystack ``Tool`` objects for ``query`` (per-call selection).
-
-    Haystack ``ToolInvoker`` / tool-using pipelines take their tool list at
-    construction, so build this list afresh per call and feed it into a new
-    ``ToolInvoker(tools=...)`` (or pipeline build). A thin, explicitly-named
-    alias over :func:`for_haystack`.
-
-    Raises:
-        ImportError: If ``haystack-ai`` is not installed.
-    """
-    return await for_haystack(
-        gantry, query, limit=limit, score_threshold=score_threshold
-    )
-
-
 class GantryLiveHaystackToolInvoker:
     """Rebuild a fresh Haystack ``ToolInvoker`` per call with re-selected tools.
 
     Haystack fixes a ``ToolInvoker``'s tools at construction, so this builder
     constructs a new ``ToolInvoker`` for every call via :meth:`build`, each time
     wiring in the tools Gantry selects for that call's query.
+
+    Obtain one via ``HaystackAdapter(gantry).tool_invoker_builder(...)``.
 
     Args:
         gantry: The :class:`~agent_gantry.core.gantry.AgentGantry` to select from.
@@ -253,7 +220,7 @@ class GantryLiveHaystackToolInvoker:
 
     async def select_tools(self, query: str) -> list[Any]:
         """Re-select this call's Haystack ``Tool`` list for ``query``."""
-        return await gantry_haystack_tools(
+        return await _for_haystack(
             self._gantry,
             query,
             limit=self._limit,
@@ -290,6 +257,8 @@ class GantryLiveSmolAgent:
     query. The model (and any extra agent kwargs) are configured once on the
     constructor.
 
+    Obtain one via ``SmolagentsAdapter(gantry).agent_builder(...)``.
+
     Args:
         gantry: The :class:`~agent_gantry.core.gantry.AgentGantry` to select from.
         model: The smolagents model passed straight to the agent.
@@ -319,7 +288,7 @@ class GantryLiveSmolAgent:
 
     async def select_tools(self, query: str) -> list[Any]:
         """Re-select this call's smolagents ``Tool`` objects for ``query``."""
-        return await for_smolagents(
+        return await _for_smolagents(
             self._gantry,
             query,
             limit=self._limit,
@@ -349,14 +318,8 @@ class GantryLiveSmolAgent:
 
 
 __all__ = [
-    # crewai
-    "gantry_crew_tools",
     "GantryLiveCrewAgent",
-    # agno
     "GantryLiveAgnoAgent",
-    # haystack
-    "gantry_haystack_tools",
     "GantryLiveHaystackToolInvoker",
-    # smolagents
     "GantryLiveSmolAgent",
 ]

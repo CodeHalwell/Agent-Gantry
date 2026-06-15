@@ -1,14 +1,14 @@
 """Cross-framework conformance matrix for the native tool adapters.
 
-Every adapter in ``agent_gantry.integrations.frameworks`` must honor the same
-contract regardless of which third-party framework it targets:
+Every ``<Framework>Adapter`` in ``agent_gantry.integrations.frameworks`` must
+honor the same contract regardless of which third-party framework it targets:
 
-1. It exposes ``for_<fw>`` (async select+convert) and ``spec_to_<fw>`` (single
-   convert), both importable without the framework installed.
-2. ``for_<fw>`` runs semantic selection against a real gantry and returns one
+1. It exposes ``select`` (async select+convert) and ``convert`` (single convert
+   staticmethod), both importable without the framework installed.
+2. ``select`` runs semantic selection against a real gantry and returns one
    native object per selected tool (verified through a per-framework stub).
-3. ``spec_to_<fw>`` raises a clean ``ImportError`` carrying a ``pip install``
-   hint when the framework is absent — not ``AttributeError`` / ``KeyError``.
+3. ``convert`` raises a clean ``ImportError`` carrying a ``pip install`` hint
+   when the framework is absent — not ``AttributeError`` / ``KeyError``.
 
 This locks the uniform surface so a new adapter can't silently drift.
 """
@@ -43,30 +43,30 @@ async def gantry():
     return g
 
 
-# (framework key, for_* fn, spec_to_* fn, module name(s) the lazy import needs)
+# (framework key, Adapter class, module name(s) the lazy import needs)
 ADAPTERS = [
-    ("langchain", F.for_langchain, F.spec_to_langchain, ["langchain_core", "langchain_core.tools"]),
-    ("langgraph", F.for_langgraph, F.spec_to_langgraph, ["langchain_core", "langchain_core.tools"]),
-    ("llamaindex", F.for_llamaindex, F.spec_to_llamaindex, ["llama_index", "llama_index.core", "llama_index.core.tools"]),
-    ("crewai", F.for_crewai, F.spec_to_crewai, ["crewai", "crewai.tools"]),
-    ("pydantic_ai", F.for_pydantic_ai, F.spec_to_pydantic_ai, ["pydantic_ai", "pydantic_ai.tools"]),
-    ("openai_agents", F.for_openai_agents, F.spec_to_openai_agents, ["agents"]),
-    ("smolagents", F.for_smolagents, F.spec_to_smolagents, ["smolagents"]),
-    ("haystack", F.for_haystack, F.spec_to_haystack, ["haystack", "haystack.tools"]),
-    ("agno", F.for_agno, F.spec_to_agno, ["agno", "agno.tools", "agno.tools.function"]),
-    ("semantic_kernel", F.for_semantic_kernel, F.spec_to_semantic_kernel, ["semantic_kernel", "semantic_kernel.functions"]),
-    ("google_adk", F.for_google_adk, F.spec_to_google_adk, ["google.adk", "google.adk.tools"]),
+    ("langchain", F.LangChainAdapter, ["langchain_core", "langchain_core.tools"]),
+    ("langgraph", F.LangGraphAdapter, ["langchain_core", "langchain_core.tools"]),
+    ("llamaindex", F.LlamaIndexAdapter, ["llama_index", "llama_index.core", "llama_index.core.tools"]),
+    ("crewai", F.CrewAIAdapter, ["crewai", "crewai.tools"]),
+    ("pydantic_ai", F.PydanticAIAdapter, ["pydantic_ai", "pydantic_ai.tools"]),
+    ("openai_agents", F.OpenAIAgentsAdapter, ["agents"]),
+    ("smolagents", F.SmolagentsAdapter, ["smolagents"]),
+    ("haystack", F.HaystackAdapter, ["haystack", "haystack.tools"]),
+    ("agno", F.AgnoAdapter, ["agno", "agno.tools", "agno.tools.function"]),
+    ("semantic_kernel", F.SemanticKernelAdapter, ["semantic_kernel", "semantic_kernel.functions"]),
+    ("google_adk", F.GoogleADKAdapter, ["google.adk", "google.adk.tools"]),
 ]
 
 
-@pytest.mark.parametrize("name,for_fn,spec_fn,modules", ADAPTERS, ids=[a[0] for a in ADAPTERS])
-def test_adapter_exposes_uniform_surface(name, for_fn, spec_fn, modules):
-    assert callable(for_fn), f"{name}: for_{name} not callable"
-    assert callable(spec_fn), f"{name}: spec_to_{name} not callable"
+@pytest.mark.parametrize("name,adapter_cls,modules", ADAPTERS, ids=[a[0] for a in ADAPTERS])
+def test_adapter_exposes_uniform_surface(name, adapter_cls, modules):
+    assert callable(getattr(adapter_cls, "select", None)), f"{name}: {adapter_cls.__name__}.select missing"
+    assert callable(getattr(adapter_cls, "convert", None)), f"{name}: {adapter_cls.__name__}.convert missing"
 
 
-@pytest.mark.parametrize("name,for_fn,spec_fn,modules", ADAPTERS, ids=[a[0] for a in ADAPTERS])
-def test_missing_framework_raises_clean_importerror(name, for_fn, spec_fn, modules, monkeypatch):
+@pytest.mark.parametrize("name,adapter_cls,modules", ADAPTERS, ids=[a[0] for a in ADAPTERS])
+def test_missing_framework_raises_clean_importerror(name, adapter_cls, modules, monkeypatch):
     # Ensure the framework's import resolves to "not installed".
     for mod in modules:
         monkeypatch.setitem(sys.modules, mod, None)
@@ -84,7 +84,7 @@ def test_missing_framework_raises_clean_importerror(name, for_fn, spec_fn, modul
         _namespace="default",
     )
     with pytest.raises(ImportError):
-        spec_fn(dummy)
+        adapter_cls.convert(dummy)
 
 
 def _install_stub(monkeypatch, modules: list[str], attrs: dict[str, object]) -> None:
@@ -98,7 +98,7 @@ def _install_stub(monkeypatch, modules: list[str], attrs: dict[str, object]) -> 
 
 
 async def test_for_each_framework_selects_and_converts(gantry, monkeypatch):
-    """Smoke every ``for_<fw>`` end-to-end with a permissive captured stub."""
+    """Smoke every adapter's ``select`` end-to-end with a permissive captured stub."""
 
     captured: dict[str, list] = {}
 
@@ -115,10 +115,10 @@ async def test_for_each_framework_selects_and_converts(gantry, monkeypatch):
     lc.from_function = staticmethod(lambda **kw: types.SimpleNamespace(**kw))
 
     cases = [
-        ("langchain", F.for_langchain, ["langchain_core", "langchain_core.tools"], {"StructuredTool": lc}),
-        ("langgraph", F.for_langgraph, ["langchain_core", "langchain_core.tools"], {"StructuredTool": lc}),
+        ("langchain", F.LangChainAdapter, ["langchain_core", "langchain_core.tools"], {"StructuredTool": lc}),
+        ("langgraph", F.LangGraphAdapter, ["langchain_core", "langchain_core.tools"], {"StructuredTool": lc}),
     ]
-    for fw, for_fn, modules, attrs in cases:
+    for fw, adapter_cls, modules, attrs in cases:
         _install_stub(monkeypatch, modules, attrs)
-        tools = await for_fn(gantry, "send an email to my boss", limit=2)
+        tools = await adapter_cls(gantry).select("send an email to my boss", limit=2)
         assert len(tools) >= 1, f"{fw}: expected at least one converted tool"

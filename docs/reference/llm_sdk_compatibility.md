@@ -158,6 +158,22 @@ response = client.responses.create(
 )
 ```
 
+#### One-class adapter (convenience)
+
+`OpenAIAdapter` bakes in the OpenAI dialect so you don't pass `dialect=` by hand.
+`.tools(...)` returns Chat Completions schemas; `.responses_tools(...)` returns
+Responses API schemas.
+
+```python
+from agent_gantry.openai import OpenAIAdapter
+
+# Equivalent to gantry.retrieve_tools("What's the weather?", limit=5, dialect="openai")
+tools = await OpenAIAdapter(gantry).tools("What's the weather?", limit=5)
+
+# Equivalent to dialect="openai_responses"
+tools_responses = await OpenAIAdapter(gantry).responses_tools("What's the weather?", limit=5)
+```
+
 ---
 
 ## Azure OpenAI
@@ -334,6 +350,25 @@ response = client.messages.create(
 )
 ```
 
+#### One-class adapter (convenience)
+
+`AnthropicAdapter` bakes in the Anthropic dialect, so a single `.tools(...)` call
+returns tools already shaped as `{"name", "description", "input_schema"}`.
+
+```python
+from agent_gantry.anthropic import AnthropicAdapter
+
+# Equivalent to gantry.retrieve_tools("search for data", limit=5, dialect="anthropic")
+anthropic_tools = await AnthropicAdapter(gantry).tools("search for data", limit=5)
+
+response = client.messages.create(
+    model="claude-sonnet-4-6",
+    max_tokens=1024,
+    tools=anthropic_tools,
+    messages=[{"role": "user", "content": "Search for user data"}],
+)
+```
+
 ---
 
 ## Google GenAI
@@ -422,6 +457,22 @@ response = await client.aio.models.generate_content(
 )
 ```
 
+#### One-class adapter (convenience)
+
+`GeminiAdapter` bakes in the Gemini dialect; `.tools(...)` returns the same
+`{"name", "description", "parameters"}` dicts as `dialect="gemini"`, ready to wrap
+in `FunctionDeclaration`.
+
+```python
+from google.genai import types
+from agent_gantry.gemini import GeminiAdapter
+
+# Equivalent to gantry.retrieve_tools("calculate something", limit=5, dialect="gemini")
+gemini_dicts = await GeminiAdapter(gantry).tools("calculate something", limit=5)
+gemini_funcs = [types.FunctionDeclaration(**d) for d in gemini_dicts]
+tool_config = types.GenerateContentConfig(tools=[types.Tool(function_declarations=gemini_funcs)])
+```
+
 ---
 
 ## Google Vertex AI
@@ -505,6 +556,25 @@ model = GenerativeModel(
 response = model.generate_content("What's AAPL stock price?")
 ```
 
+#### One-class adapter (convenience)
+
+`VertexAIAdapter` bakes in the Gemini dialect (Vertex shares the same schema);
+`.tools(...)` returns dicts ready to unpack into `FunctionDeclaration`.
+
+```python
+from vertexai.generative_models import GenerativeModel, Tool, FunctionDeclaration
+from agent_gantry.vertexai import VertexAIAdapter
+
+# Equivalent to gantry.retrieve_tools("stock price", limit=5, dialect="gemini")
+vertex_dicts = await VertexAIAdapter(gantry).tools("stock price", limit=5)
+vertex_functions = [FunctionDeclaration(**d) for d in vertex_dicts]
+
+model = GenerativeModel(
+    "gemini-2.5-flash",
+    tools=[Tool(function_declarations=vertex_functions)],
+)
+```
+
 ---
 
 ## Mistral
@@ -559,6 +629,26 @@ await gantry.sync()
 
 # Gantry's default dialect produces OpenAI-compatible function schemas.
 tools = await gantry.retrieve_tools("send notification")
+
+client = AsyncOpenAI(api_key="your-key", base_url="https://api.mistral.ai/v1")
+response = await client.chat.completions.create(
+    model="mistral-large-latest",
+    messages=[{"role": "user", "content": "Notify the team"}],
+    tools=tools,
+)
+```
+
+#### One-class adapter (convenience)
+
+`MistralAdapter` bakes in the Mistral dialect (OpenAI-compatible function schemas),
+so `.tools(...)` drops straight into the `openai` SDK's `tools=` argument.
+
+```python
+from openai import AsyncOpenAI
+from agent_gantry.mistral import MistralAdapter
+
+# Equivalent to gantry.retrieve_tools("send notification", limit=5, dialect="mistral")
+tools = await MistralAdapter(gantry).tools("send notification", limit=5)
 
 client = AsyncOpenAI(api_key="your-key", base_url="https://api.mistral.ai/v1")
 response = await client.chat.completions.create(
@@ -624,6 +714,26 @@ response = client.chat.completions.create(
     model="llama-3.3-70b-versatile",
     messages=[{"role": "user", "content": "Analyze: I love this!"}],
     tools=tools
+)
+```
+
+#### One-class adapter (convenience)
+
+`GroqAdapter` bakes in the Groq dialect (OpenAI-compatible function schemas), so
+`.tools(...)` works directly with the `groq` SDK's `tools=` argument.
+
+```python
+from groq import Groq
+from agent_gantry.groq import GroqAdapter
+
+# Equivalent to gantry.retrieve_tools("analyze text", limit=5, dialect="groq")
+tools = await GroqAdapter(gantry).tools("analyze text", limit=5)
+
+client = Groq()
+response = client.chat.completions.create(
+    model="llama-3.3-70b-versatile",
+    messages=[{"role": "user", "content": "Analyze: I love this!"}],
+    tools=tools,
 )
 ```
 

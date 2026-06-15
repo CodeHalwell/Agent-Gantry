@@ -85,30 +85,30 @@ async def _invoke_semantic_kernel(tool):
     return await tool.invoke(Kernel(), to="boss@x.com")
 
 
-# (id, importable module, for_<fw>, invoke). Pydantic AI is intentionally NOT
-# here — invoking its Tool needs a live agent context — and is covered build-only
-# by test_pydantic_ai_builds below.
+# (id, importable module, Adapter class, invoke). Pydantic AI is intentionally
+# NOT here — invoking its Tool needs a live agent context — and is covered
+# build-only by test_pydantic_ai_builds below.
 REAL_ADAPTERS = [
-    ("langchain", "langchain_core", F.for_langchain, _invoke_langchain),
-    ("langgraph", "langgraph", F.for_langgraph, _invoke_langchain),
-    ("llamaindex", "llama_index.core", F.for_llamaindex, _invoke_llamaindex),
-    ("crewai", "crewai", F.for_crewai, _invoke_crewai),
-    ("smolagents", "smolagents", F.for_smolagents, _invoke_smolagents),
-    ("haystack", "haystack", F.for_haystack, _invoke_haystack),
-    ("agno", "agno", F.for_agno, _invoke_agno),
-    ("openai_agents", "agents", F.for_openai_agents, _invoke_openai_agents),
-    ("google_adk", "google.adk", F.for_google_adk, _invoke_google_adk),
-    ("semantic_kernel", "semantic_kernel", F.for_semantic_kernel, _invoke_semantic_kernel),
+    ("langchain", "langchain_core", F.LangChainAdapter, _invoke_langchain),
+    ("langgraph", "langgraph", F.LangGraphAdapter, _invoke_langchain),
+    ("llamaindex", "llama_index.core", F.LlamaIndexAdapter, _invoke_llamaindex),
+    ("crewai", "crewai", F.CrewAIAdapter, _invoke_crewai),
+    ("smolagents", "smolagents", F.SmolagentsAdapter, _invoke_smolagents),
+    ("haystack", "haystack", F.HaystackAdapter, _invoke_haystack),
+    ("agno", "agno", F.AgnoAdapter, _invoke_agno),
+    ("openai_agents", "agents", F.OpenAIAgentsAdapter, _invoke_openai_agents),
+    ("google_adk", "google.adk", F.GoogleADKAdapter, _invoke_google_adk),
+    ("semantic_kernel", "semantic_kernel", F.SemanticKernelAdapter, _invoke_semantic_kernel),
 ]
 
 
 @pytest.mark.parametrize(
-    "name,module,adapter,invoke", REAL_ADAPTERS, ids=[a[0] for a in REAL_ADAPTERS]
+    "name,module,adapter_cls,invoke", REAL_ADAPTERS, ids=[a[0] for a in REAL_ADAPTERS]
 )
-async def test_real_adapter_builds_and_invokes(name, module, adapter, invoke, gantry):
+async def test_real_adapter_builds_and_invokes(name, module, adapter_cls, invoke, gantry):
     pytest.importorskip(module, reason=f"{name} not installed")
 
-    tools = await adapter(gantry, "send an email to my boss", limit=1)
+    tools = await adapter_cls(gantry).select("send an email to my boss", limit=1)
     assert tools, f"{name}: adapter returned no tools"
 
     result = invoke(tools[0])
@@ -120,15 +120,15 @@ async def test_real_adapter_builds_and_invokes(name, module, adapter, invoke, ga
 async def test_pydantic_ai_builds(gantry):
     """Pydantic AI tool build (its run path needs an agent context, so just build)."""
     pytest.importorskip("pydantic_ai", reason="pydantic-ai not installed")
-    tools = await F.for_pydantic_ai(gantry, "send an email", limit=1)
+    tools = await F.PydanticAIAdapter(gantry).select("send an email", limit=1)
     assert tools
     assert tools[0].name == "send_email"
 
 
 async def test_autogen_builds_and_invokes(gantry):
-    """for_autogen returns plain {name, description, callable} entries (no
-    third-party framework needed); verify the callable routes through gantry."""
-    entries = await F.for_autogen(gantry, "send an email to my boss", limit=1)
+    """AutoGenAdapter.select returns plain {name, description, callable} entries
+    (no third-party framework needed); verify the callable routes through gantry."""
+    entries = await F.AutoGenAdapter(gantry).select("send an email to my boss", limit=1)
     assert entries and entries[0]["name"] == "send_email"
     result = await entries[0]["callable"](to="boss@x.com")
     assert "sent:boss@x.com" in str(result)

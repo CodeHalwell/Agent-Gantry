@@ -6,7 +6,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 
 from agent_gantry import AgentGantry
-from agent_gantry.langgraph import for_langgraph
+from agent_gantry.langgraph import LangGraphAdapter
 
 load_dotenv()
 
@@ -29,7 +29,9 @@ async def main():
     # LangGraph consumes) in one call — retrieval + conversion + execution.
     user_query = "How does Agent-Gantry work?"
     # Lowering threshold for SimpleEmbedder compatibility in this example
-    gantry_tools = await for_langgraph(gantry, user_query, limit=2, score_threshold=0.1)
+    gantry_tools = await LangGraphAdapter(gantry).select(
+        user_query, limit=2, score_threshold=0.1
+    )
     print(f"Gantry retrieved {len(gantry_tools)} tools.")
 
     # 3. Build the Agent using LangGraph's create_react_agent (LangGraph 1.x)

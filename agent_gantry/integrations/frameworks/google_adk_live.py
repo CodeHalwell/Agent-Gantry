@@ -1,7 +1,7 @@
 """Per-turn dynamic-tool provider for Google ADK (the *deep* integration).
 
 Where :mod:`agent_gantry.integrations.frameworks.google_adk` exposes the
-*static* path — ``for_google_adk`` selects a fixed slice of tools once and you
+*static* path — ``_for_google_adk`` selects a fixed slice of tools once and you
 hand them to ``Agent(tools=[...])`` — this module wires Agent-Gantry into ADK's
 native per-request hook so the tool surface is re-selected **before every model
 request**. Each reasoning turn, the latest user content is matched against
@@ -26,13 +26,13 @@ registration needed.
 
     from agent_gantry import AgentGantry
     from agent_gantry.integrations.frameworks.google_adk_live import (
-        gantry_adk_agent,
+        _gantry_adk_agent,
     )
 
     gantry = AgentGantry()
     # ... register tools, await gantry.sync() ...
 
-    agent = gantry_adk_agent(
+    agent = _gantry_adk_agent(
         gantry,
         model="gemini-2.0-flash",
         name="assistant",
@@ -46,14 +46,14 @@ Or attach the callback to a hand-built agent:
 
     from google.adk.agents import Agent
     from agent_gantry.integrations.frameworks.google_adk_live import (
-        gantry_before_model_callback,
+        _gantry_before_model_callback,
     )
 
     agent = Agent(
         model="gemini-2.0-flash",
         name="assistant",
         tools=[],
-        before_model_callback=gantry_before_model_callback(gantry, limit=5),
+        before_model_callback=_gantry_before_model_callback(gantry, limit=5),
     )
 """
 
@@ -63,7 +63,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import GantryToolset
-from agent_gantry.integrations.frameworks.google_adk import spec_to_google_adk
+from agent_gantry.integrations.frameworks.google_adk import _spec_to_google_adk
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
@@ -171,7 +171,7 @@ async def _inject_selected_tools(
         )
         return []
 
-    tools = [spec_to_google_adk(spec) for spec in specs]
+    tools = [_spec_to_google_adk(spec) for spec in specs]
     if not tools:
         return []
 
@@ -186,7 +186,7 @@ async def _inject_selected_tools(
     return injected
 
 
-def gantry_before_model_callback(
+def _gantry_before_model_callback(
     gantry: AgentGantry,
     *,
     limit: int = 5,
@@ -236,7 +236,7 @@ def gantry_before_model_callback(
     return _callback
 
 
-def gantry_adk_agent(
+def _gantry_adk_agent(
     gantry: AgentGantry,
     *,
     model: Any,
@@ -249,10 +249,10 @@ def gantry_adk_agent(
     """Build an ADK ``Agent`` wired for per-turn dynamic tool selection.
 
     Constructs ``Agent(model=model, name=name, instruction=instruction,
-    tools=[], before_model_callback=gantry_before_model_callback(...))``. The
+    tools=[], before_model_callback=_gantry_before_model_callback(...))``. The
     agent ships with *no* statically registered tools — the callback injects the
     relevant slice before every model request (see
-    :func:`gantry_before_model_callback`).
+    :func:`_gantry_before_model_callback`).
 
     Args:
         gantry: The :class:`~agent_gantry.core.gantry.AgentGantry` instance.
@@ -276,11 +276,11 @@ def gantry_adk_agent(
         name=name,
         instruction=instruction,
         tools=[],
-        before_model_callback=gantry_before_model_callback(
+        before_model_callback=_gantry_before_model_callback(
             gantry, limit=limit, score_threshold=score_threshold
         ),
         **agent_kwargs,
     )
 
 
-__all__ = ["gantry_before_model_callback", "gantry_adk_agent"]
+__all__ = ["_gantry_before_model_callback", "_gantry_adk_agent"]

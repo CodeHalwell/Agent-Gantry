@@ -4,6 +4,8 @@ Selects a relevant slice of Gantry tools and wraps each as a CrewAI
 ``BaseTool`` — the native tool object CrewAI agents introspect
 (name / description) and invoke via ``_run``. The ``crewai`` import is lazy so
 ``import agent_gantry`` never requires CrewAI to be installed.
+
+Public entry point: :class:`CrewAIAdapter`.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
 
 
-def spec_to_crewai(spec: ToolSpec) -> Any:
+def _spec_to_crewai(spec: ToolSpec) -> Any:
     """Wrap a :class:`ToolSpec` as a CrewAI ``BaseTool``.
 
     The ``crewai`` import happens here, lazily, so callers without CrewAI
@@ -80,7 +82,7 @@ def _build_args_schema(spec: ToolSpec) -> Any:
         return None
 
 
-async def for_crewai(
+async def _for_crewai(
     gantry: AgentGantry,
     query: str,
     *,
@@ -89,4 +91,39 @@ async def for_crewai(
 ) -> list[Any]:
     """Select tools for ``query`` and return them as CrewAI ``BaseTool``s."""
     specs = await GantryToolset(gantry).select(query, limit=limit, **select_kwargs)
-    return [spec_to_crewai(s) for s in specs]
+    return [_spec_to_crewai(s) for s in specs]
+
+
+class CrewAIAdapter:
+    """Route Gantry-selected tools into CrewAI.
+
+    Static slice (``crewai.tools.BaseTool`` objects) plus per-call live helpers
+    (CrewAI fixes an agent's tools at construction, so the live path rebuilds a
+    fresh agent per call). Every call routes through ``gantry.execute``.
+    """
+
+    def __init__(self, gantry: AgentGantry, *, default_limit: int = 3) -> None:
+        self._gantry = gantry
+        self._default_limit = default_limit
+
+    @staticmethod
+    def convert(spec: ToolSpec) -> Any:
+        """Wrap a single :class:`ToolSpec` as a CrewAI ``BaseTool``."""
+        return _spec_to_crewai(spec)
+
+    async def select(self, query: str, *, limit: int | None = None, **select_kwargs: Any) -> list[Any]:
+        """Select tools for ``query`` as CrewAI ``BaseTool``s (static slice)."""
+        return await _for_crewai(self._gantry, query, limit=self._default_limit if limit is None else limit, **select_kwargs)
+
+    async def live_tools(self, query: str, *, limit: int = 5, score_threshold: float = 0.0) -> list[Any]:
+        """Re-select CrewAI ``BaseTool``s for THIS call's ``query`` (per-call selection)."""
+        return await _for_crewai(self._gantry, query, limit=limit, score_threshold=score_threshold)
+
+    def agent_builder(self, *, limit: int = 5, score_threshold: float = 0.0, **agent_kwargs: Any) -> Any:
+        """Return a builder that rebuilds a fresh ``crewai.Agent`` per call with re-selected tools.
+
+        ``agent_kwargs`` (role/goal/backstory/llm/...) are forwarded to the builder.
+        Call ``await builder.build(query)`` per task.
+        """
+        from agent_gantry.integrations.frameworks.live_wrappers import GantryLiveCrewAgent
+        return GantryLiveCrewAgent(self._gantry, limit=limit, score_threshold=score_threshold, **agent_kwargs)

@@ -1,21 +1,15 @@
 """Agent-Gantry × LangChain.
 
-Clean per-framework imports::
+Clean per-framework import::
 
-    from agent_gantry.langchain import for_langchain
+    from agent_gantry.langchain import LangChainAdapter
 
-Re-exports LangChain's static adapter (select + convert). Importing this module
-does not require LangChain until you actually call into it.
+Importing this module never requires LangChain to be installed; the framework is
+imported lazily when you call an adapter method.
 """
 
 from __future__ import annotations
 
-from agent_gantry.integrations.frameworks.langchain import (
-    for_langchain,
-    spec_to_langchain,
-)
+from agent_gantry.integrations.frameworks.langchain import LangChainAdapter
 
-__all__ = [
-    "for_langchain",
-    "spec_to_langchain",
-]
+__all__ = ["LangChainAdapter"]

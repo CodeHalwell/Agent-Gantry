@@ -27,10 +27,7 @@ from google.genai import types
 
 from agent_gantry import AgentGantry
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.integrations.frameworks.google_adk_live import (
-    gantry_adk_agent,
-    gantry_before_model_callback,
-)
+from agent_gantry.integrations.frameworks.google_adk import GoogleADKAdapter
 
 
 @pytest.fixture
@@ -78,7 +75,7 @@ def _injected_declaration_names(llm_request: LlmRequest) -> set[str]:
 
 
 async def test_callback_injects_weather_tool_for_weather_turn(gantry):
-    callback = gantry_before_model_callback(gantry, limit=2)
+    callback = GoogleADKAdapter(gantry).before_model_callback(limit=2)
     llm_request = LlmRequest()
 
     result = await callback(
@@ -96,7 +93,7 @@ async def test_callback_injects_weather_tool_for_weather_turn(gantry):
 
 
 async def test_callback_reselects_email_tool_for_email_turn(gantry):
-    callback = gantry_before_model_callback(gantry, limit=2)
+    callback = GoogleADKAdapter(gantry).before_model_callback(limit=2)
     llm_request = LlmRequest()
 
     await callback(
@@ -111,7 +108,7 @@ async def test_callback_reselects_email_tool_for_email_turn(gantry):
 
 async def test_per_turn_reselection_changes_tool_surface(gantry):
     """Each model request gets a freshly selected slice of tools."""
-    callback = gantry_before_model_callback(gantry, limit=1)
+    callback = GoogleADKAdapter(gantry).before_model_callback(limit=1)
 
     weather_req = LlmRequest()
     await callback(_context_with_text("weather forecast for the city"), weather_req)
@@ -126,7 +123,7 @@ async def test_per_turn_reselection_changes_tool_surface(gantry):
 
 
 async def test_empty_query_injects_nothing(gantry):
-    callback = gantry_before_model_callback(gantry, limit=3)
+    callback = GoogleADKAdapter(gantry).before_model_callback(limit=3)
     llm_request = LlmRequest()
 
     # No user_content and no session -> empty query -> no injection.
@@ -139,8 +136,7 @@ async def test_empty_query_injects_nothing(gantry):
 async def test_gantry_adk_agent_builds_agent_with_no_static_tools(gantry):
     from google.adk.agents import Agent
 
-    agent = gantry_adk_agent(
-        gantry,
+    agent = GoogleADKAdapter(gantry).agent(
         model="gemini-2.0-flash",
         name="assistant",
         instruction="You are helpful.",

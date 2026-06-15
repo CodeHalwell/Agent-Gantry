@@ -100,6 +100,29 @@ async def main():
 
     await chat_with_mistral("Translate 'Good Morning' to Spanish")
 
+    # --- Scenario: Typed MistralAdapter (provider-specific convenience) ---
+    # MistralAdapter(gantry).tools(query, limit=n) bakes in dialect="mistral",
+    # which yields the same OpenAI-style function schema Mistral's endpoint
+    # accepts — so it drops straight into the OpenAI-compatible client above.
+    print("\n--- Scenario: Typed MistralAdapter ---")
+    from agent_gantry.mistral import MistralAdapter
+
+    query_adapter = "Translate 'Thank you' to German"
+    print(f"User Query: '{query_adapter}'")
+
+    tools_adapter = await MistralAdapter(gantry).tools(query_adapter, limit=1, score_threshold=0.1)
+    print(f"Gantry retrieved {len(tools_adapter)} tool(s)")
+
+    response_adapter = await client.chat.completions.create(
+        model="mistral-large-latest",
+        messages=[{"role": "user", "content": query_adapter}],
+        tools=tools_adapter,
+        tool_choice="auto",
+    )
+    if response_adapter.choices[0].message.tool_calls:
+        tc = response_adapter.choices[0].message.tool_calls[0]
+        print(f"Mistral (via adapter) called: {tc.function.name}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

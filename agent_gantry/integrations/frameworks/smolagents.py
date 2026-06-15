@@ -5,6 +5,8 @@ Selects a relevant slice of Gantry tools and wraps each as a HuggingFace
 (``name`` / ``description`` / ``inputs`` / ``output_type``) and invoke via
 ``forward``. The ``smolagents`` import is lazy so ``import agent_gantry`` never
 requires smolagents to be installed.
+
+Public entry point: :class:`SmolagentsAdapter`.
 """
 
 from __future__ import annotations
@@ -76,7 +78,7 @@ def _ordered_param_names(parameters: dict[str, Any]) -> list[str]:
     return sorted(properties, key=lambda name: name not in required)
 
 
-def spec_to_smolagents(spec: ToolSpec) -> Any:
+def _spec_to_smolagents(spec: ToolSpec) -> Any:
     """Wrap a :class:`ToolSpec` as a smolagents ``Tool``.
 
     The ``smolagents`` import happens here, lazily, so callers without
@@ -124,7 +126,7 @@ def spec_to_smolagents(spec: ToolSpec) -> Any:
     return tool_cls()
 
 
-async def for_smolagents(
+async def _for_smolagents(
     gantry: AgentGantry,
     query: str,
     *,
@@ -133,4 +135,56 @@ async def for_smolagents(
 ) -> list[Any]:
     """Select tools for ``query`` and return them as smolagents ``Tool``s."""
     specs = await GantryToolset(gantry).select(query, limit=limit, **select_kwargs)
-    return [spec_to_smolagents(s) for s in specs]
+    return [_spec_to_smolagents(s) for s in specs]
+
+
+class SmolagentsAdapter:
+    """Route Gantry-selected tools into smolagents.
+
+    Static slice (``smolagents.Tool`` objects) plus a per-call live builder
+    (smolagents fixes tools at construction, so it rebuilds the agent per call).
+    Every call routes through ``gantry.execute``.
+    """
+
+    def __init__(self, gantry: AgentGantry, *, default_limit: int = 3) -> None:
+        self._gantry = gantry
+        self._default_limit = default_limit
+
+    @staticmethod
+    def convert(spec: ToolSpec) -> Any:
+        """Wrap a single :class:`ToolSpec` as a smolagents ``Tool``."""
+        return _spec_to_smolagents(spec)
+
+    async def select(
+        self, query: str, *, limit: int | None = None, **select_kwargs: Any
+    ) -> list[Any]:
+        """Select tools for ``query`` as smolagents ``Tool``s (static slice)."""
+        return await _for_smolagents(
+            self._gantry,
+            query,
+            limit=self._default_limit if limit is None else limit,
+            **select_kwargs,
+        )
+
+    def agent_builder(
+        self,
+        *,
+        limit: int = 5,
+        score_threshold: float = 0.0,
+        **agent_kwargs: Any,
+    ) -> Any:
+        """Return a builder that rebuilds a fresh smolagents agent per call with re-selected tools.
+
+        ``agent_kwargs`` (model/agent_cls/...) are forwarded. Call
+        ``await builder.build(query)`` per run.
+        """
+        from agent_gantry.integrations.frameworks.live_wrappers import (
+            GantryLiveSmolAgent,
+        )
+
+        return GantryLiveSmolAgent(
+            self._gantry,
+            limit=limit,
+            score_threshold=score_threshold,
+            **agent_kwargs,
+        )

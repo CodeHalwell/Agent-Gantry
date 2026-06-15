@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-15
+
+### Changed
+
+- **BREAKING — framework & LLM integrations are now one class per integration.**
+  The free functions (`for_<framework>()`, `spec_to_<framework>()`) and the
+  assorted live helpers (`gantry_workbench`, `gantry_toolset`,
+  `gantry_tool_retriever`, `gantry_function_agent`, `create_gantry_react_agent`,
+  `acreate_gantry_react_agent`, `select_tools_for_state`, `gantry_plugin`,
+  `refresh_kernel_tools`, `register_with_autogen`, `gantry_before_model_callback`,
+  `gantry_adk_agent`, `gantry_run_hooks`, `run_with_gantry`, `refresh_agent_tools`,
+  `select_function_tools`, `gantry_crew_tools`, `gantry_haystack_tools`) were
+  **removed** in favour of a single `<Framework>Adapter` class per framework,
+  imported from the same clean namespace
+  (`from agent_gantry.langchain import LangChainAdapter`). Each adapter exposes
+  `await adapter.select(query, limit=...)` (was `for_<fw>`), the
+  `adapter.convert(spec)` staticmethod (was `spec_to_<fw>`), and that framework's
+  deep per-turn live capability as methods — e.g.
+  `GoogleADKAdapter(gantry).agent(...)` / `.before_model_callback(...)`,
+  `LlamaIndexAdapter(gantry).function_agent(llm)` / `.tool_retriever()`,
+  `AutoGenAdapter(gantry).workbench()` / `.register(...)`,
+  `PydanticAIAdapter(gantry).toolset()`,
+  `LangGraphAdapter(gantry).react_agent(model)` / `.areact_agent(model)`,
+  `OpenAIAgentsAdapter(gantry).run(...)` / `.session(...)` / `.run_hooks(...)`,
+  `SemanticKernelAdapter(gantry).plugin(...)` / `.function_provider(kernel)`,
+  and `CrewAIAdapter(gantry).agent_builder(...)` / `.live_tools(...)` for the
+  fixed-tool frameworks (CrewAI/Agno/Haystack/Smolagents).
+- **Microsoft Agent Framework gains a unified `AgentFrameworkAdapter`**
+  (`from agent_gantry.agent_framework import AgentFrameworkAdapter`) whose methods
+  build the `GantryContextProvider` (`.context_provider(...)`), `GantryToolBridge`
+  (`.tool_bridge(...)`), and the approval / observability / tool-choice middleware.
+  The underlying classes remain importable as the returned types.
+
+### Added
+
+- **One-class LLM SDK adapters** — `OpenAIAdapter`, `AnthropicAdapter`,
+  `GeminiAdapter`, `GroqAdapter`, `VertexAIAdapter`, `MistralAdapter`
+  (e.g. `from agent_gantry.openai import OpenAIAdapter`). `await adapter.tools(query,
+  limit=...)` returns tool schemas in that provider's dialect (equivalent to
+  `gantry.retrieve_tools(query, dialect="...")`); `OpenAIAdapter.responses_tools(...)`
+  emits the OpenAI Responses API shape.
+
+### Removed
+
+- The internal `agent_gantry._framework_ns` lazy-namespace helper — folded into the
+  adapter classes, whose methods import their third-party framework lazily on use,
+  so `import agent_gantry` (and `import agent_gantry.<framework>`) stays
+  dependency-free.
+
 ## [0.6.0] - 2026-06-15
 
 ### Changed

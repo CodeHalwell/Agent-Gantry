@@ -16,9 +16,11 @@ from semantic_kernel import Kernel  # noqa: E402
 
 from agent_gantry import AgentGantry  # noqa: E402
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder  # noqa: E402
+from agent_gantry.integrations.frameworks.semantic_kernel import (  # noqa: E402
+    SemanticKernelAdapter,
+)
 from agent_gantry.integrations.frameworks.semantic_kernel_live import (  # noqa: E402
     GantryFunctionProvider,
-    refresh_kernel_tools,
 )
 
 
@@ -96,13 +98,15 @@ async def test_selected_kernel_function_executes_through_gantry(gantry):
 
 
 async def test_refresh_kernel_tools_convenience(gantry):
-    """The free function performs a single per-turn refresh equivalently."""
+    """The adapter performs a single per-turn refresh equivalently."""
     kernel = Kernel()
 
-    selected = await refresh_kernel_tools(gantry, kernel, "add two numbers", limit=1)
+    selected = await SemanticKernelAdapter(gantry).refresh(
+        kernel, "add two numbers", limit=1
+    )
     assert "add" in selected
     assert _plugin_function_names(kernel) == {"add"}
 
     # A second call re-selects and replaces the plugin contents.
-    await refresh_kernel_tools(gantry, kernel, "send an email", limit=1)
+    await SemanticKernelAdapter(gantry).refresh(kernel, "send an email", limit=1)
     assert _plugin_function_names(kernel) == {"send_email"}

@@ -4,6 +4,7 @@ Anthropic (Claude) + Agent-Gantry integration demo.
 Demonstrates how to use Agent-Gantry with Anthropic's Claude API, including:
 - Dynamic tool retrieval with Anthropic schema conversion
 - Using the @with_semantic_tools decorator with dialect="anthropic"
+- The typed AnthropicAdapter convenience wrapper
 - Tool execution handling specific to Anthropic's response format
 """
 
@@ -118,6 +119,34 @@ async def main() -> None:
     for block in response_dec.content:
         if block.type == "tool_use":
             print(f"Claude decided to call: {block.name}")
+
+    # --- Scenario C: Typed AnthropicAdapter (provider-specific convenience) ---
+    # AnthropicAdapter(gantry).tools(query, limit=n) bakes in dialect="anthropic",
+    # so it returns ready-to-send Claude tool schemas in one call — equivalent to
+    # the retrieve + to_dialect("anthropic") dance shown in Scenario A.
+    print("\n--- Scenario C: Typed AnthropicAdapter ---")
+    from agent_gantry.anthropic import AnthropicAdapter
+
+    query_c = "Check the database server status"
+    print(f"User Query: '{query_c}'")
+
+    anthropic_tools_c = await AnthropicAdapter(gantry).tools(
+        query_c, limit=1, score_threshold=0.1
+    )
+    print(f"Gantry retrieved {len(anthropic_tools_c)} tool(s): "
+          f"{[t['name'] for t in anthropic_tools_c]}")
+
+    response_c = await client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1024,
+        messages=[{"role": "user", "content": query_c}],
+        tools=anthropic_tools_c,
+    )
+    for block in response_c.content:
+        if block.type == "tool_use":
+            print(f"Claude decided to call: {block.name}({block.input})")
+            result = await gantry.execute(ToolCall(tool_name=block.name, arguments=block.input))
+            print(f"Execution Result: {result.result}")
 
 
 if __name__ == "__main__":

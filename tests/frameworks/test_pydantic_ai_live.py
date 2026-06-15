@@ -26,10 +26,8 @@ from pydantic_ai.usage import RunUsage
 
 from agent_gantry import AgentGantry
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.integrations.frameworks.pydantic_ai_live import (
-    GantryToolset,
-    gantry_toolset,
-)
+from agent_gantry.integrations.frameworks.pydantic_ai_live import GantryToolset
+from agent_gantry.pydantic_ai import PydanticAIAdapter
 
 
 @pytest.fixture
@@ -67,7 +65,7 @@ def _ctx(prompt: str) -> RunContext:
 
 
 async def test_toolset_is_real_abstract_toolset(gantry):
-    ts = gantry_toolset(gantry, limit=5)
+    ts = PydanticAIAdapter(gantry).toolset(limit=5)
     assert isinstance(ts, AbstractToolset)
     assert isinstance(ts, GantryToolset)
     # Required abstract member.
@@ -75,7 +73,7 @@ async def test_toolset_is_real_abstract_toolset(gantry):
 
 
 async def test_get_tools_reselects_per_turn_from_context(gantry):
-    ts = gantry_toolset(gantry, limit=2)
+    ts = PydanticAIAdapter(gantry).toolset(limit=2)
 
     # Run 1: a weather-focused prompt surfaces the weather tool def.
     weather_tools = await ts.get_tools(_ctx("what is the weather forecast for the city"))
@@ -97,7 +95,7 @@ async def test_get_tools_reselects_per_turn_from_context(gantry):
 
 
 async def test_get_tools_honours_explicit_query_override(gantry):
-    ts = gantry_toolset(gantry, limit=2)
+    ts = PydanticAIAdapter(gantry).toolset(limit=2)
     ts.set_query("send an email message to a recipient")
 
     # The explicit override wins even though the context prompt is about math.
@@ -106,7 +104,7 @@ async def test_get_tools_honours_explicit_query_override(gantry):
 
 
 async def test_call_tool_executes_through_gantry(gantry):
-    ts = gantry_toolset(gantry, limit=3)
+    ts = PydanticAIAdapter(gantry).toolset(limit=3)
     ctx = _ctx("what is the weather forecast for the city")
     tools = await ts.get_tools(ctx)
 
@@ -117,7 +115,7 @@ async def test_call_tool_executes_through_gantry(gantry):
 
 
 async def test_call_tool_without_prior_get_tools_reselects(gantry):
-    ts = gantry_toolset(gantry, limit=3)
+    ts = PydanticAIAdapter(gantry).toolset(limit=3)
     ctx = _ctx("send an email message to a recipient")
 
     # No prior get_tools; call_tool runs a fresh selection from the context.

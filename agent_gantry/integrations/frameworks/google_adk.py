@@ -5,6 +5,8 @@ Development Kit ``FunctionTool`` — the native tool object an ADK agent
 introspects (from the callable's name, docstring and signature) and invokes.
 The ``google.adk`` import is lazy so ``import agent_gantry`` never requires ADK
 to be installed.
+
+Public entry point: :class:`GoogleADKAdapter`.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
 
 
-def spec_to_google_adk(spec: ToolSpec) -> Any:
+def _spec_to_google_adk(spec: ToolSpec) -> Any:
     """Wrap a :class:`ToolSpec` as a Google ADK ``FunctionTool``.
 
     ADK builds the LLM tool schema by introspecting the wrapped callable's
@@ -42,7 +44,7 @@ def spec_to_google_adk(spec: ToolSpec) -> Any:
     return FunctionTool(func=spec.callable_for_signature(type_matched_defaults=True))
 
 
-async def for_google_adk(
+async def _for_google_adk(
     gantry: AgentGantry,
     query: str,
     *,
@@ -51,4 +53,70 @@ async def for_google_adk(
 ) -> list[Any]:
     """Select tools for ``query`` and return them as ADK ``FunctionTool``s."""
     specs = await GantryToolset(gantry).select(query, limit=limit, **select_kwargs)
-    return [spec_to_google_adk(s) for s in specs]
+    return [_spec_to_google_adk(s) for s in specs]
+
+
+class GoogleADKAdapter:
+    """Route Gantry-selected tools into Google ADK.
+
+    Static slice (``google.adk.tools.FunctionTool`` objects) plus deep per-turn
+    live wiring (re-selects tools before every model request). Every call routes
+    through ``gantry.execute``.
+    """
+
+    def __init__(self, gantry: AgentGantry, *, default_limit: int = 3) -> None:
+        self._gantry = gantry
+        self._default_limit = default_limit
+
+    @staticmethod
+    def convert(spec: ToolSpec) -> Any:
+        """Wrap a single :class:`ToolSpec` as a Google ADK ``FunctionTool``."""
+        return _spec_to_google_adk(spec)
+
+    async def select(
+        self, query: str, *, limit: int | None = None, **select_kwargs: Any
+    ) -> list[Any]:
+        """Select tools for ``query`` as ADK ``FunctionTool``s (static slice)."""
+        return await _for_google_adk(
+            self._gantry,
+            query,
+            limit=self._default_limit if limit is None else limit,
+            **select_kwargs,
+        )
+
+    def before_model_callback(
+        self, *, limit: int = 5, score_threshold: float = 0.0
+    ) -> Any:
+        """Build an ADK ``before_model_callback`` that injects Gantry tools per turn."""
+        from agent_gantry.integrations.frameworks.google_adk_live import (
+            _gantry_before_model_callback,
+        )
+
+        return _gantry_before_model_callback(
+            self._gantry, limit=limit, score_threshold=score_threshold
+        )
+
+    def agent(
+        self,
+        *,
+        model: Any,
+        name: str,
+        instruction: str = "",
+        limit: int = 5,
+        score_threshold: float = 0.0,
+        **agent_kwargs: Any,
+    ) -> Any:
+        """Build an ADK ``Agent`` wired for per-turn dynamic tool selection (tools=[] + callback)."""
+        from agent_gantry.integrations.frameworks.google_adk_live import (
+            _gantry_adk_agent,
+        )
+
+        return _gantry_adk_agent(
+            self._gantry,
+            model=model,
+            name=name,
+            instruction=instruction,
+            limit=limit,
+            score_threshold=score_threshold,
+            **agent_kwargs,
+        )

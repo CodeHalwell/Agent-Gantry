@@ -20,11 +20,11 @@ from agents import Agent, FunctionTool  # noqa: E402
 
 from agent_gantry import AgentGantry  # noqa: E402
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder  # noqa: E402
+from agent_gantry.integrations.frameworks.openai_agents import (  # noqa: E402
+    OpenAIAgentsAdapter,
+)
 from agent_gantry.integrations.frameworks.openai_agents_live import (  # noqa: E402
     GantryAgentSession,
-    gantry_run_hooks,
-    refresh_agent_tools,
-    select_function_tools,
 )
 
 
@@ -58,7 +58,7 @@ def _tool_names(agent: Agent) -> set[str]:
 async def test_hook_reselects_agent_tools_per_turn(gantry):
     """on_llm_start re-selects and rewrites agent.tools as the input changes."""
     agent = Agent(name="assistant", tools=[])
-    hooks = gantry_run_hooks(gantry, agent, limit=1)
+    hooks = OpenAIAgentsAdapter(gantry).run_hooks(agent, limit=1)
 
     # Turn 1: a weather conversation -> the weather tool is now in agent.tools.
     weather_input = [{"role": "user", "content": "what is the weather in Paris today"}]
@@ -93,13 +93,15 @@ async def test_refresh_accepts_message_history(gantry):
         {"role": "assistant", "content": "hi, how can I help?"},
         {"role": "user", "content": "please send an email to the team"},
     ]
-    await refresh_agent_tools(agent, gantry, history, limit=1)
+    await OpenAIAgentsAdapter(gantry).refresh(agent, history, limit=1)
     assert "send_email" in _tool_names(agent)
 
 
 async def test_selected_function_tool_routes_through_gantry(gantry):
     """A selected FunctionTool's on_invoke_tool runs the real tool via gantry."""
-    tools = await select_function_tools(gantry, "weather forecast for a city", limit=1)
+    tools = await OpenAIAgentsAdapter(gantry).select_function_tools(
+        "weather forecast for a city", limit=1
+    )
     weather = next(t for t in tools if t.name == "get_weather")
 
     result = await weather.on_invoke_tool(None, json.dumps({"city": "Berlin"}))
@@ -111,6 +113,6 @@ async def test_tools_mutated_in_place(gantry):
     agent = Agent(name="assistant", tools=[])
     original_list = agent.tools
 
-    await refresh_agent_tools(agent, gantry, "add two numbers", limit=1)
+    await OpenAIAgentsAdapter(gantry).refresh(agent, "add two numbers", limit=1)
     assert agent.tools is original_list  # same list object, updated contents
     assert _tool_names(agent) == {"add"}

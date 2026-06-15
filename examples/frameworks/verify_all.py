@@ -9,9 +9,9 @@ functions:
 2. **Universal core**: ``GantryToolset.select`` returns ranked ``ToolSpec``s and
    both ``ainvoke`` (async) and ``invoke`` (sync, even inside a running loop)
    route through ``gantry.execute``.
-3. **Native adapters**: each ``for_<framework>`` helper builds native tool
-   objects when the framework is installed, or reports SKIP with a clean
-   ``ImportError`` when it is not — proving the lazy-import contract.
+3. **Native adapters**: each ``<Framework>Adapter(gantry).select(...)`` builds
+   native tool objects when the framework is installed, or reports SKIP with a
+   clean ``ImportError`` when it is not — proving the lazy-import contract.
 4. **Multi-turn**: ``ToolRefresher`` re-selects a *different* tool as the task
    pivots across turns within one run, and accumulates used tools.
 
@@ -133,21 +133,21 @@ async def check_adapters(gantry: AgentGantry) -> list[tuple[str, bool, str]]:
     from agent_gantry.integrations import frameworks as F
 
     adapters = [
-        ("langchain", F.for_langchain),
-        ("langgraph", F.for_langgraph),
-        ("llamaindex", F.for_llamaindex),
-        ("crewai", F.for_crewai),
-        ("pydantic_ai", F.for_pydantic_ai),
-        ("openai_agents", F.for_openai_agents),
-        ("smolagents", F.for_smolagents),
-        ("haystack", F.for_haystack),
-        ("agno", F.for_agno),
-        ("autogen", F.for_autogen),
+        ("langchain", F.LangChainAdapter),
+        ("langgraph", F.LangGraphAdapter),
+        ("llamaindex", F.LlamaIndexAdapter),
+        ("crewai", F.CrewAIAdapter),
+        ("pydantic_ai", F.PydanticAIAdapter),
+        ("openai_agents", F.OpenAIAgentsAdapter),
+        ("smolagents", F.SmolagentsAdapter),
+        ("haystack", F.HaystackAdapter),
+        ("agno", F.AgnoAdapter),
+        ("autogen", F.AutoGenAdapter),
     ]
     rows: list[tuple[str, bool, str]] = []
-    for name, fn in adapters:
+    for name, adapter_cls in adapters:
         try:
-            native = await fn(gantry, "deploy the payments service", limit=2)
+            native = await adapter_cls(gantry).select("deploy the payments service", limit=2)
             rows.append((name, True, f"built {len(native)} native tool(s)"))
         except ImportError as exc:
             # Not installed: the lazy-import contract held — this is a SKIP,
