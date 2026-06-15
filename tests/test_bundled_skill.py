@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 
 import pytest
+import yaml
 
 from agent_gantry.cli.main import main
 from agent_gantry.skills import install_to, skill_path
@@ -22,15 +23,15 @@ _DESCRIPTION_MAX = 1024
 
 
 def _read_frontmatter(skill_md: Path) -> dict[str, str]:
-    """Parse the simple ``name``/``description`` YAML frontmatter from SKILL.md."""
+    """Parse the ``name``/``description`` YAML frontmatter from SKILL.md."""
     text = skill_md.read_text(encoding="utf-8")
     assert text.startswith("---"), "SKILL.md must open with a YAML frontmatter block"
     _, frontmatter, _body = text.split("---", 2)
-    name = re.search(r"^name:\s*(.+)$", frontmatter, re.MULTILINE)
-    description = re.search(r"^description:\s*(.+)", frontmatter, re.MULTILINE | re.DOTALL)
-    assert name is not None, "frontmatter is missing required 'name'"
-    assert description is not None, "frontmatter is missing required 'description'"
-    return {"name": name.group(1).strip(), "description": description.group(1).strip()}
+    data = yaml.safe_load(frontmatter)
+    assert isinstance(data, dict), "frontmatter must be a YAML mapping"
+    assert "name" in data, "frontmatter is missing required 'name'"
+    assert "description" in data, "frontmatter is missing required 'description'"
+    return {"name": str(data["name"]).strip(), "description": str(data["description"]).strip()}
 
 
 def test_skill_path_resolves_to_bundled_skill() -> None:
@@ -76,6 +77,34 @@ def test_cli_install_skill_command(tmp_path: Path, capsys: pytest.CaptureFixture
     assert exit_code == 0
     assert (target / "agent-gantry" / "SKILL.md").is_file()
     assert "Installed Agent-Gantry skill" in capsys.readouterr().out
+
+
+def test_cli_install_skill_claude_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--claude` installs into ~/.claude/skills, expanding ~ via expanduser()."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    # Path.expanduser() reads HOME on POSIX and USERPROFILE on Windows.
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
+
+    exit_code = main(["install-skill", "--claude"])
+    assert exit_code == 0
+    assert (fake_home / ".claude" / "skills" / "agent-gantry" / "SKILL.md").is_file()
+    # No literal "~" directory leaked into the cwd.
+    assert not Path("~").exists()
+    assert "Installed Agent-Gantry skill" in capsys.readouterr().out
+
+
+def test_cli_install_skill_rejects_target_and_claude_together(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--target and --claude are mutually exclusive (argparse exits with code 2)."""
+    with pytest.raises(SystemExit) as exc:
+        main(["install-skill", "--target", "./x", "--claude"])
+    assert exc.value.code == 2
+    assert "not allowed with" in capsys.readouterr().err
 
 
 def test_cli_install_skill_print_path(capsys: pytest.CaptureFixture[str]) -> None:

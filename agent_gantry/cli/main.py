@@ -91,12 +91,13 @@ def main(argv: list[str] | None = None) -> int:
         "install-skill",
         help="Install the bundled Agent-Gantry Claude Skill into a target directory",
     )
-    skill_parser.add_argument(
+    skill_dest = skill_parser.add_mutually_exclusive_group()
+    skill_dest.add_argument(
         "--target",
         default="./skills",
-        help="Destination directory (default: ./skills). Ignored when --claude is set.",
+        help="Destination directory (default: ./skills).",
     )
-    skill_parser.add_argument(
+    skill_dest.add_argument(
         "--claude",
         action="store_true",
         help="Install into Claude's personal skills directory (~/.claude/skills) "
