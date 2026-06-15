@@ -81,6 +81,15 @@ def test_cli_install_skill_command(tmp_path: Path, capsys: pytest.CaptureFixture
     assert "Installed Agent-Gantry skill" in capsys.readouterr().out
 
 
+def test_cli_install_skill_default_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With neither --target nor --claude, the default ./skills target is used."""
+    monkeypatch.chdir(tmp_path)
+    assert main(["install-skill"]) == 0
+    assert (tmp_path / "skills" / "agent-gantry" / "SKILL.md").is_file()
+
+
 def test_cli_install_skill_claude_flag(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
