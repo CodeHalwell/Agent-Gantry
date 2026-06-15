@@ -1,0 +1,8 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+<DocsLayout title="Providers | Agent-Gantry"><h1>LLM providers and tool schema dialects</h1><p class="lead">Register tools once, then emit provider-specific schemas for the SDK your application already uses.</p><div class="grid"><section class="card"><h3>OpenAI-compatible</h3><p>OpenAI, Azure OpenAI, OpenRouter, and Mistral through an OpenAI-compatible base URL.</p></section><section class="card"><h3>Anthropic</h3><p>Claude tool-use schemas, Anthropic feature helpers, and a bundled Claude Skill.</p></section><section class="card"><h3>Google</h3><p>Google GenAI and Vertex AI tool/schema conversion paths.</p></section><section class="card"><h3>Groq</h3><p>Groq provider support for OpenAI-style tool calling.</p></section></div><pre><code>tools = await gantry.retrieve_tools(
+    "Find recent invoices and summarize totals",
+    limit=8,
+    dialect="anthropic",  # or openai / gemini
+)</code></pre></DocsLayout>

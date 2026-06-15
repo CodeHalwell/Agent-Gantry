@@ -1,0 +1,19 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+<DocsLayout title="Configuration | Agent-Gantry"><h1>Configuration</h1><p class="lead">Agent-Gantry works with zero configuration, but production systems usually configure routing, persistence, execution, telemetry, and provider extras.</p><pre><code>from agent_gantry import AgentGantry
+from agent_gantry.schema.config import AgentGantryConfig
+
+config = AgentGantryConfig(
+    vector_store=&#123;"provider": "lancedb", "path": ".gantry/tools.lance"&#125;,
+    embedder=&#123;"provider": "nomic"&#125;,
+    routing=&#123;"score_threshold": 0.5, "use_llm_for_intent": False&#125;,
+    execution=&#123;"default_timeout_ms": 30000, "max_retries": 2&#125;,
+    telemetry=&#123;"provider": "console"&#125;,
+)
+gantry = AgentGantry(config=config)</code></pre><h2>Common extras</h2><pre><code>uv add "agent-gantry[openai]"          # OpenAI, Azure OpenAI, OpenRouter
+uv add "agent-gantry[anthropic]"       # Claude tools
+uv add "agent-gantry[google-genai]"    # Gemini function calling
+uv add "agent-gantry[lancedb,nomic]"   # local durable semantic search
+uv add "agent-gantry[mcp,a2a]"         # protocol bridges
+uv add "agent-gantry[agent-frameworks]"</code></pre></DocsLayout>

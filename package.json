@@ -1,0 +1,21 @@
+{
+  "name": "agent-gantry-docs",
+  "version": "0.8.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev --host 0.0.0.0",
+    "build": "astro check && astro build",
+    "preview": "astro preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@astrojs/check": "^0.9.9",
+    "@astrojs/react": "^4.4.2",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "astro": "^5.18.2",
+    "react": "latest",
+    "react-dom": "latest",
+    "typescript": "latest"
+  }
+}

@@ -93,3 +93,7 @@ Thumbs.db
 Claude.md
 .claude
 code_review/
+
+# JavaScript / Astro docs
+node_modules/
+.astro/
