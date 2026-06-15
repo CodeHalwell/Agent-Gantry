@@ -291,7 +291,7 @@ class MyVectorStore(VectorStoreAdapter):
 2. Update `with_semantic_tools` decorator in `integrations/semantic_tools.py`
 3. Add tests in `tests/test_llm_sdk_compatibility.py`
 4. Create example in `examples/llm_integration/`
-5. Update `docs/llm_sdk_compatibility.md`
+5. Update the LLM SDK compatibility docs in `src/pages/docs/`
 
 ## Key Principles
 

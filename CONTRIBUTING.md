@@ -203,7 +203,7 @@ async def test_retrieve_tools_returns_relevant_results(gantry, sample_tools):
 
 - Update README.md if adding user-facing features
 - Add examples to `examples/` directory for new integrations
-- Update relevant documentation in `docs/` directory
+- Update relevant documentation in the Astro site under `src/pages/`
 - Keep CHANGELOG.md updated with your changes
 
 ## Pull Request Process
