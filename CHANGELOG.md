@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-15
+
 ### Changed
 
-- **Bundled Claude Skill refreshed for v0.5.0** (`agent_gantry/skills/agent-gantry/SKILL.md`):
+- **Bundled Claude Skill refreshed for the v0.5.0+ API surface** (`agent_gantry/skills/agent-gantry/SKILL.md`):
   rewrote the framework integration guidance around the native `for_<framework>`
   adapters and clean per-framework import namespaces (`from agent_gantry.langchain
   import for_langchain`), added the five frameworks introduced in 0.5.0 (Pydantic AI,
