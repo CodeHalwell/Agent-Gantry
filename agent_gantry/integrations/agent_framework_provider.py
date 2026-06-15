@@ -399,6 +399,14 @@ class GantryContextProvider:
                 # it only when the context-local value is unset.
                 self._last_selection_plain: RetrievalDecision | None = None
                 self._selections_plain: tuple[RetrievalDecision, ...] = ()
+                # Trace round counter, allocated once per provider (not per
+                # trace() call) — ContextVars aren't GC'd, so a fresh one per
+                # call would leak in a server that builds the middleware
+                # repeatedly. Context-scoped so concurrent runs count
+                # independently.
+                self._trace_round_var: ContextVar[int] = ContextVar(
+                    "gantry_trace_round", default=0
+                )
                 # One-shot warnings: we don't want to spam the log every
                 # round even when the misconfiguration persists.
                 self._warned_about_missing_chat_middleware = False
@@ -638,9 +646,10 @@ class GantryContextProvider:
                 ``provider.attach_to(agent, trace=True)`` or by adding
                 ``provider.trace()`` to ``Agent(middleware=[...])``.
 
-                Call this once and store the result; each call allocates a fresh
-                round-counter ``ContextVar`` (ContextVars are not reclaimed like
-                ordinary objects), so don't call it in a loop.
+                Cheap to call (the round counter lives on the provider, not the
+                returned middleware), but attach just one trace middleware per
+                agent — multiple share the provider's counter and would
+                interleave round numbers.
 
                 Args:
                     render: Print the post-call result preview line. Default
@@ -653,12 +662,11 @@ class GantryContextProvider:
                 """
                 function_middleware_decorator = _import_function_middleware()
                 provider = self
-                # Round counter in a ContextVar (not a shared closure dict) so
-                # concurrent runs each get their own sequence instead of
-                # interleaving / accumulating one global count.
-                round_var: ContextVar[int] = ContextVar(
-                    "gantry_trace_round", default=0
-                )
+                # Per-provider round counter (allocated in __init__, not here),
+                # context-scoped so concurrent runs count independently without
+                # a shared closure dict and without leaking a ContextVar per
+                # trace() call.
+                round_var = self._trace_round_var
 
                 @function_middleware_decorator
                 async def _gantry_trace(context: Any, call_next: Any) -> None:

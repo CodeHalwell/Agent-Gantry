@@ -1089,6 +1089,10 @@ class AgentGantry:
             # Results align with calls by index for every strategy: parallel
             # gather preserves order, and sequential (incl. fail_fast early
             # break) yields an aligned prefix, so zip pairs them correctly.
+            # Events are delivered here, after the whole batch finishes — but
+            # each ToolResult.latency_ms was measured by the executor at that
+            # call's own completion, so per-call latency stays accurate even
+            # though delivery is batched. Don't timestamp events at this point.
             for call, result in zip(batch.calls, batch_result.results):
                 await self._emit_tool_call(call, result)
         return batch_result

@@ -92,6 +92,26 @@ class TestOnToolCall:
         assert len(good) == 1
 
     @pytest.mark.asyncio
+    async def test_double_registration_fires_twice(self, gantry: AgentGantry) -> None:
+        # Documented behaviour: registering the same callable twice fires it
+        # twice; one unsubscribe removes one registration. Guards against a
+        # future switch to a set-backed registry.
+        calls: list[str] = []
+
+        def cb(ev: ToolCallEvent) -> None:
+            calls.append(ev.tool_name)
+
+        gantry.on_tool_call(cb)
+        unsub = gantry.on_tool_call(cb)
+
+        await gantry.execute(ToolCall(tool_name="add", arguments={"a": 1, "b": 1}))
+        assert len(calls) == 2  # fired once per registration
+
+        unsub()  # removes one registration only
+        await gantry.execute(ToolCall(tool_name="add", arguments={"a": 1, "b": 1}))
+        assert len(calls) == 3
+
+    @pytest.mark.asyncio
     async def test_unsubscribe(self, gantry: AgentGantry) -> None:
         events: list[ToolCallEvent] = []
         unsubscribe = gantry.on_tool_call(events.append)
