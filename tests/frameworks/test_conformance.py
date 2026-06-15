@@ -122,3 +122,10 @@ async def test_for_each_framework_selects_and_converts(gantry, monkeypatch):
         _install_stub(monkeypatch, modules, attrs)
         tools = await adapter_cls(gantry).select("send an email to my boss", limit=2)
         assert len(tools) >= 1, f"{fw}: expected at least one converted tool"
+
+    # AutoGen's convert/select are import-free (they return registrable dict
+    # mappings, not a native framework object), so smoke them with no stub.
+    ag_tools = await F.AutoGenAdapter(gantry).select("send an email to my boss", limit=2)
+    assert ag_tools and all("callable" in t for t in ag_tools), (
+        "autogen: expected registrable mappings with a callable"
+    )

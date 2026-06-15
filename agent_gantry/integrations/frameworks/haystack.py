@@ -87,11 +87,15 @@ class HaystackAdapter:
         )
 
     async def live_tools(
-        self, query: str, *, limit: int | None = None, score_threshold: float = 0.0
+        self, query: str, *, limit: int | None = None, **select_kwargs: Any
     ) -> list[Any]:
-        """Re-select Haystack ``Tool``s for THIS call's ``query`` (per-call selection)."""
+        """Re-select Haystack ``Tool``s for THIS call's ``query`` (per-call selection).
+
+        Same selection surface as :meth:`select` (``score_threshold``,
+        ``namespaces``, ``tools_already_used`` via ``**select_kwargs``).
+        """
         return await _for_haystack(
-            self._gantry, query, limit=self._default_limit if limit is None else limit, score_threshold=score_threshold
+            self._gantry, query, limit=self._default_limit if limit is None else limit, **select_kwargs
         )
 
     def tool_invoker_builder(

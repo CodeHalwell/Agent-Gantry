@@ -104,3 +104,29 @@ def test_importing_agent_gantry_does_not_load_framework_namespaces():
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "clean" in result.stdout
+
+
+def test_importing_agent_gantry_does_not_load_third_party_frameworks():
+    """`import agent_gantry` must not eagerly import any third-party framework/SDK.
+
+    The Microsoft Agent Framework primitives (``GantryContextProvider``,
+    ``RetrievalDecision``) are imported at the top level of ``agent_gantry``, so
+    this guards that they — and every adapter — keep their third-party imports
+    lazy. Runs in a fresh subprocess (frameworks may be installed in CI).
+    """
+    import subprocess
+
+    third_party = [
+        "agent_framework", "langchain_core", "langgraph", "llama_index",
+        "crewai", "pydantic_ai", "agents", "smolagents", "haystack", "agno",
+        "semantic_kernel", "google.adk",
+    ]
+    code = (
+        "import sys, agent_gantry; "
+        f"third = {third_party!r}; "
+        "loaded = [m for m in third if m in sys.modules]; "
+        "assert not loaded, loaded; print('clean')"
+    )
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "clean" in result.stdout

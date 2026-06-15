@@ -115,9 +115,13 @@ class CrewAIAdapter:
         """Select tools for ``query`` as CrewAI ``BaseTool``s (static slice)."""
         return await _for_crewai(self._gantry, query, limit=self._default_limit if limit is None else limit, **select_kwargs)
 
-    async def live_tools(self, query: str, *, limit: int | None = None, score_threshold: float = 0.0) -> list[Any]:
-        """Re-select CrewAI ``BaseTool``s for THIS call's ``query`` (per-call selection)."""
-        return await _for_crewai(self._gantry, query, limit=self._default_limit if limit is None else limit, score_threshold=score_threshold)
+    async def live_tools(self, query: str, *, limit: int | None = None, **select_kwargs: Any) -> list[Any]:
+        """Re-select CrewAI ``BaseTool``s for THIS call's ``query`` (per-call selection).
+
+        Same selection surface as :meth:`select` (``score_threshold``,
+        ``namespaces``, ``tools_already_used`` via ``**select_kwargs``).
+        """
+        return await _for_crewai(self._gantry, query, limit=self._default_limit if limit is None else limit, **select_kwargs)
 
     def agent_builder(self, *, limit: int | None = None, score_threshold: float = 0.0, **agent_kwargs: Any) -> Any:
         """Return a builder that rebuilds a fresh ``crewai.Agent`` per call with re-selected tools.
