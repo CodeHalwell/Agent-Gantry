@@ -301,7 +301,7 @@ class GantryToolset:
         toolset = GantryToolset(gantry)
         specs = await toolset.select("send an email", limit=3)
         # turn the specs into a framework's native objects via that framework's
-        # adapter (each exposes a ``convert`` classmethod):
+        # adapter (each exposes a ``convert`` staticmethod):
         from agent_gantry.langchain import LangChainAdapter
         lc_tools = [LangChainAdapter.convert(s) for s in specs]
     """

@@ -45,7 +45,7 @@ def _spec_to_openai_agents(spec: ToolSpec) -> Any:
         from agents import FunctionTool
     except ImportError as exc:  # pragma: no cover - exercised via fake module
         raise ImportError(
-            "The OpenAI Agents SDK is required for _spec_to_openai_agents; "
+            "The OpenAI Agents SDK is required for OpenAIAgentsAdapter; "
             "install it with `pip install openai-agents`."
         ) from exc
 
@@ -105,7 +105,7 @@ class OpenAIAgentsAdapter:
         agent: Any,
         run_input: Any,
         *,
-        limit: int = 5,
+        limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
         **run_kwargs: Any,
@@ -119,7 +119,7 @@ class OpenAIAgentsAdapter:
             agent,
             self._gantry,
             run_input,
-            limit=limit,
+            limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
             **run_kwargs,
@@ -129,7 +129,7 @@ class OpenAIAgentsAdapter:
         self,
         agent: Any,
         *,
-        limit: int = 5,
+        limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
     ) -> Any:
@@ -141,7 +141,7 @@ class OpenAIAgentsAdapter:
         return GantryAgentSession(
             agent,
             self._gantry,
-            limit=limit,
+            limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
         )
@@ -150,7 +150,7 @@ class OpenAIAgentsAdapter:
         self,
         agent: Any,
         *,
-        limit: int = 5,
+        limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
     ) -> Any:
@@ -162,7 +162,7 @@ class OpenAIAgentsAdapter:
         return _gantry_run_hooks(
             self._gantry,
             agent,
-            limit=limit,
+            limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
         )
@@ -172,7 +172,7 @@ class OpenAIAgentsAdapter:
         agent: Any,
         query_or_input: Any,
         *,
-        limit: int = 5,
+        limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
     ) -> list[Any]:
@@ -185,7 +185,7 @@ class OpenAIAgentsAdapter:
             agent,
             self._gantry,
             query_or_input,
-            limit=limit,
+            limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
         )
@@ -194,7 +194,7 @@ class OpenAIAgentsAdapter:
         self,
         query_or_input: Any,
         *,
-        limit: int = 5,
+        limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
     ) -> list[Any]:
@@ -206,7 +206,7 @@ class OpenAIAgentsAdapter:
         return await _select_function_tools(
             self._gantry,
             query_or_input,
-            limit=limit,
+            limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
         )

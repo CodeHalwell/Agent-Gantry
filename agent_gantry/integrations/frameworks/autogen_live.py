@@ -262,9 +262,6 @@ def _gantry_workbench(
     )
 
 
-__all__ = ["_gantry_workbench"]
-
-
 def __getattr__(name: str) -> Any:
     """Expose the dynamically-built ``GantryWorkbench`` subclass lazily.
 

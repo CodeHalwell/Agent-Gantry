@@ -85,7 +85,7 @@ class GoogleADKAdapter:
         )
 
     def before_model_callback(
-        self, *, limit: int = 5, score_threshold: float = 0.0
+        self, *, limit: int | None = None, score_threshold: float = 0.0
     ) -> Any:
         """Build an ADK ``before_model_callback`` that injects Gantry tools per turn."""
         from agent_gantry.integrations.frameworks.google_adk_live import (
@@ -93,7 +93,7 @@ class GoogleADKAdapter:
         )
 
         return _gantry_before_model_callback(
-            self._gantry, limit=limit, score_threshold=score_threshold
+            self._gantry, limit=self._default_limit if limit is None else limit, score_threshold=score_threshold
         )
 
     def agent(
@@ -102,7 +102,7 @@ class GoogleADKAdapter:
         model: Any,
         name: str,
         instruction: str = "",
-        limit: int = 5,
+        limit: int | None = None,
         score_threshold: float = 0.0,
         **agent_kwargs: Any,
     ) -> Any:
@@ -116,7 +116,7 @@ class GoogleADKAdapter:
             model=model,
             name=name,
             instruction=instruction,
-            limit=limit,
+            limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             **agent_kwargs,
         )

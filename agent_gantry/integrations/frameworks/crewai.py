@@ -115,15 +115,15 @@ class CrewAIAdapter:
         """Select tools for ``query`` as CrewAI ``BaseTool``s (static slice)."""
         return await _for_crewai(self._gantry, query, limit=self._default_limit if limit is None else limit, **select_kwargs)
 
-    async def live_tools(self, query: str, *, limit: int = 5, score_threshold: float = 0.0) -> list[Any]:
+    async def live_tools(self, query: str, *, limit: int | None = None, score_threshold: float = 0.0) -> list[Any]:
         """Re-select CrewAI ``BaseTool``s for THIS call's ``query`` (per-call selection)."""
-        return await _for_crewai(self._gantry, query, limit=limit, score_threshold=score_threshold)
+        return await _for_crewai(self._gantry, query, limit=self._default_limit if limit is None else limit, score_threshold=score_threshold)
 
-    def agent_builder(self, *, limit: int = 5, score_threshold: float = 0.0, **agent_kwargs: Any) -> Any:
+    def agent_builder(self, *, limit: int | None = None, score_threshold: float = 0.0, **agent_kwargs: Any) -> Any:
         """Return a builder that rebuilds a fresh ``crewai.Agent`` per call with re-selected tools.
 
         ``agent_kwargs`` (role/goal/backstory/llm/...) are forwarded to the builder.
         Call ``await builder.build(query)`` per task.
         """
         from agent_gantry.integrations.frameworks.live_wrappers import GantryLiveCrewAgent
-        return GantryLiveCrewAgent(self._gantry, limit=limit, score_threshold=score_threshold, **agent_kwargs)
+        return GantryLiveCrewAgent(self._gantry, limit=self._default_limit if limit is None else limit, score_threshold=score_threshold, **agent_kwargs)

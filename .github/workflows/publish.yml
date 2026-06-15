@@ -118,6 +118,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+          skip-existing: true
 
       # On a manual publish, record the release in git: tag the checked-out commit
       # and cut a GitHub Release from the version in pyproject.toml. When the run

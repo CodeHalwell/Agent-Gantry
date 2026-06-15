@@ -140,7 +140,7 @@ class AutoGenAdapter:
         )
 
     def workbench(
-        self, *, query: str = "", limit: int = 5, score_threshold: float = 0.0
+        self, *, query: str = "", limit: int | None = None, score_threshold: float = 0.0
     ) -> Any:
         """Build a live ``Workbench`` for per-turn dynamic tool provision (``AssistantAgent``)."""
         from agent_gantry.integrations.frameworks.autogen_live import _gantry_workbench
@@ -148,6 +148,6 @@ class AutoGenAdapter:
         return _gantry_workbench(
             self._gantry,
             query=query,
-            limit=limit,
+            limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
         )

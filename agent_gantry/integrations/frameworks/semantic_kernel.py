@@ -124,7 +124,7 @@ class SemanticKernelAdapter:
         self,
         query: str,
         *,
-        limit: int = 5,
+        limit: int | None = None,
         plugin_name: str = _DEFAULT_PLUGIN,
         score_threshold: float = 0.0,
         **select_kwargs: Any,
@@ -133,7 +133,7 @@ class SemanticKernelAdapter:
         return await _gantry_plugin(
             self._gantry,
             query,
-            limit=limit,
+            limit=self._default_limit if limit is None else limit,
             plugin_name=plugin_name,
             score_threshold=score_threshold,
             **select_kwargs,
@@ -144,7 +144,7 @@ class SemanticKernelAdapter:
         kernel: Any,
         *,
         plugin_name: str = _DEFAULT_PLUGIN,
-        limit: int = 5,
+        limit: int | None = None,
         score_threshold: float = 0.0,
     ) -> Any:
         """Build a live ``GantryFunctionProvider`` whose ``refresh(history)`` re-selects functions per turn."""
@@ -156,7 +156,7 @@ class SemanticKernelAdapter:
             self._gantry,
             kernel,
             plugin_name=plugin_name,
-            limit=limit,
+            limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
         )
 
@@ -166,7 +166,7 @@ class SemanticKernelAdapter:
         query: Any,
         *,
         plugin_name: str = _DEFAULT_PLUGIN,
-        limit: int = 5,
+        limit: int | None = None,
         score_threshold: float = 0.0,
     ) -> dict[str, Any]:
         """Re-select tools for ``query`` and rebuild ``kernel``'s gantry plugin once."""
@@ -179,6 +179,6 @@ class SemanticKernelAdapter:
             kernel,
             query,
             plugin_name=plugin_name,
-            limit=limit,
+            limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
         )

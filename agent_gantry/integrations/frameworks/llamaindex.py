@@ -32,7 +32,7 @@ def _spec_to_llamaindex(spec: ToolSpec) -> Any:
         from llama_index.core.tools import FunctionTool
     except ImportError as exc:  # pragma: no cover - exercised via fake module
         raise ImportError(
-            "LlamaIndex is required for spec_to_llamaindex; "
+            "LlamaIndex is required for LlamaIndexAdapter; "
             "install it with `pip install llama-index-core`."
         ) from exc
 
@@ -96,7 +96,7 @@ class LlamaIndexAdapter:
         )
 
     def tool_retriever(
-        self, *, limit: int = 5, score_threshold: float = 0.0
+        self, *, limit: int | None = None, score_threshold: float = 0.0
     ) -> Any:
         """Build a live per-turn ``ObjectRetriever`` for ``FunctionAgent(tool_retriever=...)``."""
         from agent_gantry.integrations.frameworks.llamaindex_live import (
@@ -104,7 +104,7 @@ class LlamaIndexAdapter:
         )
 
         return _gantry_tool_retriever(
-            self._gantry, limit=limit, score_threshold=score_threshold
+            self._gantry, limit=self._default_limit if limit is None else limit, score_threshold=score_threshold
         )
 
     def function_agent(
@@ -112,7 +112,7 @@ class LlamaIndexAdapter:
         llm: Any,
         *,
         name: str = "gantry_agent",
-        limit: int = 5,
+        limit: int | None = None,
         score_threshold: float = 0.0,
         **agent_kwargs: Any,
     ) -> Any:
@@ -125,7 +125,7 @@ class LlamaIndexAdapter:
             self._gantry,
             llm,
             name=name,
-            limit=limit,
+            limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             **agent_kwargs,
         )

@@ -306,9 +306,6 @@ def _gantry_toolset(
     return cls(gantry, limit=limit, score_threshold=score_threshold)
 
 
-__all__ = ["_gantry_toolset"]
-
-
 def __getattr__(name: str) -> Any:
     """Expose the dynamically-built ``GantryToolset`` subclass lazily.
 

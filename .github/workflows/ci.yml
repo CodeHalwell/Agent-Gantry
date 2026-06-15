@@ -17,6 +17,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check version sync (pyproject.toml == agent_gantry/__init__.py)
+        run: |
+          set -euo pipefail
+          version=$(grep -m1 -E '^version = ' pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          init=$(grep -m1 -E '^__version__' agent_gantry/__init__.py | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ "$version" != "$init" ]; then
+            echo "::error::pyproject version ($version) != agent_gantry/__init__.py ($init)"
+            exit 1
+          fi
+          echo "version sync OK: $version"
+
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 

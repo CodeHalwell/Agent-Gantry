@@ -256,4 +256,4 @@ async def _refresh_kernel_tools(
     return functions
 
 
-__all__ = ["GantryFunctionProvider", "_refresh_kernel_tools"]
+__all__ = ["GantryFunctionProvider"]

@@ -96,7 +96,12 @@ class GroqAdapter(_LLMToolAdapter):
 
 
 class VertexAIAdapter(_LLMToolAdapter):
-    """Google Vertex AI (Gemini function declarations)."""
+    """Google Vertex AI — Gemini function declarations.
+
+    Separate class from :class:`GeminiAdapter` (the two target different vendor
+    SDK entry points: ``google-genai`` vs ``vertexai``) but they emit the same
+    ``"gemini"`` schema dialect.
+    """
 
     dialect = "gemini"
 

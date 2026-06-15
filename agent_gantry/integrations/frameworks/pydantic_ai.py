@@ -92,12 +92,12 @@ class PydanticAIAdapter:
             **select_kwargs,
         )
 
-    def toolset(self, *, limit: int = 5, score_threshold: float = 0.0) -> Any:
+    def toolset(self, *, limit: int | None = None, score_threshold: float = 0.0) -> Any:
         """Build a live ``AbstractToolset`` for per-turn dynamic selection (``Agent(toolsets=[...])``)."""
         from agent_gantry.integrations.frameworks.pydantic_ai_live import (
             _gantry_toolset,
         )
 
         return _gantry_toolset(
-            self._gantry, limit=limit, score_threshold=score_threshold
+            self._gantry, limit=self._default_limit if limit is None else limit, score_threshold=score_threshold
         )

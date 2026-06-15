@@ -199,7 +199,7 @@ def _gantry_function_agent(
         from llama_index.core.agent.workflow import FunctionAgent
     except ImportError as exc:  # pragma: no cover - exercised when absent
         raise ImportError(
-            "LlamaIndex is required for gantry_function_agent; "
+            "LlamaIndex is required for LlamaIndexAdapter.function_agent; "
             "install it with `pip install llama-index-core`."
         ) from exc
 
@@ -211,9 +211,6 @@ def _gantry_function_agent(
         ),
         **agent_kwargs,
     )
-
-
-__all__ = ["_gantry_tool_retriever", "_gantry_function_agent"]
 
 
 def __getattr__(name: str) -> Any:

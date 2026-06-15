@@ -87,15 +87,15 @@ class HaystackAdapter:
         )
 
     async def live_tools(
-        self, query: str, *, limit: int = 5, score_threshold: float = 0.0
+        self, query: str, *, limit: int | None = None, score_threshold: float = 0.0
     ) -> list[Any]:
         """Re-select Haystack ``Tool``s for THIS call's ``query`` (per-call selection)."""
         return await _for_haystack(
-            self._gantry, query, limit=limit, score_threshold=score_threshold
+            self._gantry, query, limit=self._default_limit if limit is None else limit, score_threshold=score_threshold
         )
 
     def tool_invoker_builder(
-        self, *, limit: int = 5, score_threshold: float = 0.0, **invoker_kwargs: Any
+        self, *, limit: int | None = None, score_threshold: float = 0.0, **invoker_kwargs: Any
     ) -> Any:
         """Return a builder that rebuilds a fresh ``ToolInvoker`` per call with re-selected tools.
 
@@ -108,7 +108,7 @@ class HaystackAdapter:
 
         return GantryLiveHaystackToolInvoker(
             self._gantry,
-            limit=limit,
+            limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             **invoker_kwargs,
         )

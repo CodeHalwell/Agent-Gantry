@@ -169,7 +169,7 @@ class SmolagentsAdapter:
     def agent_builder(
         self,
         *,
-        limit: int = 5,
+        limit: int | None = None,
         score_threshold: float = 0.0,
         **agent_kwargs: Any,
     ) -> Any:
@@ -184,7 +184,7 @@ class SmolagentsAdapter:
 
         return GantryLiveSmolAgent(
             self._gantry,
-            limit=limit,
+            limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             **agent_kwargs,
         )

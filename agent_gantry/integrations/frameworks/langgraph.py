@@ -21,6 +21,7 @@ from agent_gantry.integrations.frameworks.langchain import (
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
+    from agent_gantry.integrations.frameworks.base import ToolSpec
 
 # A LangGraph node accepts LangChain BaseTool objects, so the per-spec wrapper
 # is identical to the LangChain one.
@@ -57,7 +58,7 @@ class LangGraphAdapter:
         self._default_limit = default_limit
 
     @staticmethod
-    def convert(spec: Any) -> Any:
+    def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a LangChain ``StructuredTool``."""
         return _spec_to_langgraph(spec)
 
@@ -77,7 +78,7 @@ class LangGraphAdapter:
         self,
         model: Any,
         *,
-        limit: int = 5,
+        limit: int | None = None,
         score_threshold: float = 0.0,
         **agent_kwargs: Any,
     ) -> Any:
@@ -93,7 +94,7 @@ class LangGraphAdapter:
         return _create_gantry_react_agent(
             model,
             self._gantry,
-            limit=limit,
+            limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             **agent_kwargs,
         )
@@ -102,7 +103,7 @@ class LangGraphAdapter:
         self,
         model: Any,
         *,
-        limit: int = 5,
+        limit: int | None = None,
         score_threshold: float = 0.0,
         **agent_kwargs: Any,
     ) -> Any:
@@ -114,13 +115,13 @@ class LangGraphAdapter:
         return await _acreate_gantry_react_agent(
             model,
             self._gantry,
-            limit=limit,
+            limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             **agent_kwargs,
         )
 
     async def select_for_state(
-        self, state: Any, *, limit: int = 5, score_threshold: float = 0.0
+        self, state: Any, *, limit: int | None = None, score_threshold: float = 0.0
     ) -> list[Any]:
         """Re-select tools for a LangGraph agent ``state`` (per-turn primitive)."""
         from agent_gantry.integrations.frameworks.langgraph_live import (
@@ -128,5 +129,5 @@ class LangGraphAdapter:
         )
 
         return await _select_tools_for_state(
-            self._gantry, state, limit=limit, score_threshold=score_threshold
+            self._gantry, state, limit=self._default_limit if limit is None else limit, score_threshold=score_threshold
         )
