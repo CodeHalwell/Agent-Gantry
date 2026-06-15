@@ -97,6 +97,23 @@ def test_cli_install_skill_claude_flag(
     assert "Installed Agent-Gantry skill" in capsys.readouterr().out
 
 
+def test_cli_install_skill_claude_overwrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A second --claude install with --overwrite replaces the existing copy."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
+
+    assert main(["install-skill", "--claude"]) == 0
+    # Without --overwrite the second install must refuse (non-zero exit).
+    assert main(["install-skill", "--claude"]) == 2
+    # With --overwrite it succeeds and the skill is still present.
+    assert main(["install-skill", "--claude", "--overwrite"]) == 0
+    assert (fake_home / ".claude" / "skills" / "agent-gantry" / "SKILL.md").is_file()
+
+
 def test_cli_install_skill_rejects_target_and_claude_together(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

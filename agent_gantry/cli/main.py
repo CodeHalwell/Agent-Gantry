@@ -95,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
     skill_dest.add_argument(
         "--target",
         default="./skills",
-        help="Destination directory (default: ./skills).",
+        help="Destination directory (default: ./skills). Mutually exclusive with --claude.",
     )
     skill_dest.add_argument(
         "--claude",
