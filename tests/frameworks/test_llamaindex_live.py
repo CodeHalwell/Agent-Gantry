@@ -19,8 +19,8 @@ from agent_gantry import AgentGantry  # noqa: E402
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder  # noqa: E402
 from agent_gantry.integrations.frameworks.llamaindex_live import (  # noqa: E402
     GantryToolRetriever,
-    gantry_tool_retriever,
 )
+from agent_gantry.llamaindex import LlamaIndexAdapter  # noqa: E402
 
 
 @pytest.fixture
@@ -47,7 +47,7 @@ async def gantry() -> AgentGantry:
 
 
 async def test_factory_builds_object_retriever(gantry: AgentGantry) -> None:
-    retriever = gantry_tool_retriever(gantry, limit=5)
+    retriever = LlamaIndexAdapter(gantry).tool_retriever(limit=5)
     assert isinstance(retriever, GantryToolRetriever)
     # It is a genuine ObjectRetriever subtype so FunctionAgent accepts it.
     from llama_index.core.objects import ObjectRetriever
@@ -59,7 +59,7 @@ async def test_per_turn_reselection_weather_then_email(
     gantry: AgentGantry,
 ) -> None:
     """Same retriever, different queries -> different tools (per-turn deep)."""
-    retriever = gantry_tool_retriever(gantry, limit=1)
+    retriever = LlamaIndexAdapter(gantry).tool_retriever(limit=1)
 
     weather_tools = await retriever.aretrieve("what's the weather in Paris?")
     weather_names = {t.metadata.name for t in weather_tools}
@@ -76,7 +76,7 @@ async def test_per_turn_reselection_weather_then_email(
 async def test_returned_objects_are_real_function_tools(
     gantry: AgentGantry,
 ) -> None:
-    retriever = gantry_tool_retriever(gantry, limit=5)
+    retriever = LlamaIndexAdapter(gantry).tool_retriever(limit=5)
     tools = await retriever.aretrieve("what's the weather in Tokyo?")
     assert tools
     for t in tools:
@@ -84,7 +84,7 @@ async def test_returned_objects_are_real_function_tools(
 
 
 async def test_invocation_routes_through_gantry(gantry: AgentGantry) -> None:
-    retriever = gantry_tool_retriever(gantry, limit=1)
+    retriever = LlamaIndexAdapter(gantry).tool_retriever(limit=1)
     tools = await retriever.aretrieve("what's the weather in Berlin?")
     by_name = {t.metadata.name: t for t in tools}
     assert "get_weather" in by_name, list(by_name)
@@ -97,7 +97,7 @@ async def test_invocation_routes_through_gantry(gantry: AgentGantry) -> None:
 
 
 async def test_sync_retrieve_matches_async(gantry: AgentGantry) -> None:
-    retriever = gantry_tool_retriever(gantry, limit=1)
+    retriever = LlamaIndexAdapter(gantry).tool_retriever(limit=1)
     tools = retriever.retrieve("convert 100 USD to EUR")
     names = {t.metadata.name for t in tools}
     assert "convert_currency" in names, names

@@ -11,9 +11,7 @@ from agent_gantry import AgentGantry
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 from agent_gantry.integrations.frameworks.base import GantryToolset
 from agent_gantry.integrations.frameworks.semantic_kernel import (
-    for_semantic_kernel,
-    gantry_plugin,
-    spec_to_semantic_kernel,
+    SemanticKernelAdapter,
 )
 
 
@@ -67,7 +65,7 @@ def fake_sk(monkeypatch):
 
 
 async def test_spec_to_semantic_kernel_builds_and_routes(gantry, fake_sk):
-    kf = (await for_semantic_kernel(gantry, "send an email", limit=1))[0]
+    kf = (await SemanticKernelAdapter(gantry).select("send an email", limit=1))[0]
     assert kf.name == "send_email"
     assert kf.plugin_name == "gantry"
     # the decorated method carries a real signature + return annotation
@@ -76,7 +74,9 @@ async def test_spec_to_semantic_kernel_builds_and_routes(gantry, fake_sk):
 
 
 async def test_gantry_plugin_returns_name_keyed_dict(gantry, fake_sk):
-    plugin = await gantry_plugin(gantry, "send an email", limit=1, plugin_name="mail")
+    plugin = await SemanticKernelAdapter(gantry).plugin(
+        "send an email", limit=1, plugin_name="mail"
+    )
     assert "send_email" in plugin
     assert plugin["send_email"].plugin_name == "mail"
 
@@ -86,4 +86,4 @@ async def test_missing_semantic_kernel_raises_helpful_error(monkeypatch, gantry)
     monkeypatch.setitem(sys.modules, "semantic_kernel.functions", None)
     specs = await GantryToolset(gantry).select("send an email", limit=1)
     with pytest.raises(ImportError, match="pip install semantic-kernel"):
-        spec_to_semantic_kernel(specs[0])
+        SemanticKernelAdapter.convert(specs[0])

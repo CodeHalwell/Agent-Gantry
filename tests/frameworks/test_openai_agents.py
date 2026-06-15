@@ -58,11 +58,11 @@ async def gantry():
 
 async def test_spec_to_openai_agents_builds_native_tool(fake_agents, gantry):
     from agent_gantry.integrations.frameworks.base import GantryToolset
-    from agent_gantry.integrations.frameworks.openai_agents import spec_to_openai_agents
+    from agent_gantry.integrations.frameworks.openai_agents import OpenAIAgentsAdapter
 
     specs = await GantryToolset(gantry).select("send an email", limit=1)
     spec = specs[0]
-    tool = spec_to_openai_agents(spec)
+    tool = OpenAIAgentsAdapter.convert(spec)
 
     assert tool.name == spec.name == "send_email"
     assert tool.description == spec.description == "Send an email message to a recipient."
@@ -83,9 +83,9 @@ async def test_spec_to_openai_agents_builds_native_tool(fake_agents, gantry):
 
 
 async def test_for_openai_agents_returns_tool_list(fake_agents, gantry):
-    from agent_gantry.integrations.frameworks.openai_agents import for_openai_agents
+    from agent_gantry.integrations.frameworks.openai_agents import OpenAIAgentsAdapter
 
-    tools = await for_openai_agents(gantry, "send an email", limit=2)
+    tools = await OpenAIAgentsAdapter(gantry).select("send an email", limit=2)
 
     assert isinstance(tools, list)
     assert len(tools) >= 1
@@ -99,8 +99,8 @@ async def test_missing_openai_agents_raises_helpful_error(monkeypatch, gantry):
     monkeypatch.setitem(sys.modules, "agents", None)
 
     from agent_gantry.integrations.frameworks.base import GantryToolset
-    from agent_gantry.integrations.frameworks.openai_agents import spec_to_openai_agents
+    from agent_gantry.integrations.frameworks.openai_agents import OpenAIAgentsAdapter
 
     specs = await GantryToolset(gantry).select("send an email", limit=1)
     with pytest.raises(ImportError, match="pip install openai-agents"):
-        spec_to_openai_agents(specs[0])
+        OpenAIAgentsAdapter.convert(specs[0])

@@ -67,12 +67,12 @@ async def gantry():
 
 
 async def test_spec_to_crewai_builds_native_tool(fake_crewai, gantry):
+    from agent_gantry.crewai import CrewAIAdapter
     from agent_gantry.integrations.frameworks.base import GantryToolset
-    from agent_gantry.integrations.frameworks.crewai import spec_to_crewai
 
     specs = await GantryToolset(gantry).select("send an email", limit=1)
     spec = specs[0]
-    tool = spec_to_crewai(spec)
+    tool = CrewAIAdapter.convert(spec)
 
     assert tool.name == spec.name == "send_email"
     assert (
@@ -88,9 +88,9 @@ async def test_spec_to_crewai_builds_native_tool(fake_crewai, gantry):
 
 
 async def test_for_crewai_returns_tool_list(fake_crewai, gantry):
-    from agent_gantry.integrations.frameworks.crewai import for_crewai
+    from agent_gantry.crewai import CrewAIAdapter
 
-    tools = await for_crewai(gantry, "send an email", limit=2)
+    tools = await CrewAIAdapter(gantry).select("send an email", limit=2)
 
     assert isinstance(tools, list)
     assert len(tools) >= 1
@@ -103,9 +103,9 @@ async def test_missing_crewai_raises_helpful_error(monkeypatch, gantry):
     monkeypatch.setitem(sys.modules, "crewai", None)
     monkeypatch.setitem(sys.modules, "crewai.tools", None)
 
+    from agent_gantry.crewai import CrewAIAdapter
     from agent_gantry.integrations.frameworks.base import GantryToolset
-    from agent_gantry.integrations.frameworks.crewai import spec_to_crewai
 
     specs = await GantryToolset(gantry).select("send an email", limit=1)
     with pytest.raises(ImportError, match="pip install crewai"):
-        spec_to_crewai(specs[0])
+        CrewAIAdapter.convert(specs[0])

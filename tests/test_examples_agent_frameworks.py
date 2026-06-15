@@ -202,8 +202,8 @@ async def test_google_adk_example_runs_with_fakes(monkeypatch):
     class StubInMemorySessionService:
         pass
     class StubFunctionTool:
-        # for_google_adk calls FunctionTool(func=callable); store it so the
-        # fake runner can invoke the tool through Gantry.
+        # GoogleADKAdapter.select calls FunctionTool(func=callable); store it so
+        # the fake runner can invoke the tool through Gantry.
         def __init__(self, func, **kwargs):
             self.func = func
             self.name = getattr(func, "__name__", "tool")
@@ -269,8 +269,9 @@ async def test_google_adk_example_runs_with_fakes(monkeypatch):
     async def fake_execute(self, tool_call):
         return _Result({"order_id": tool_call.arguments["order_id"], "status": "shipped"})
 
-    # The migrated example builds tools via for_google_adk -> the (stubbed)
-    # google.adk.tools.FunctionTool, so no module-level FunctionTool to patch.
+    # The migrated example builds tools via GoogleADKAdapter.select -> the
+    # (stubbed) google.adk.tools.FunctionTool, so no module-level FunctionTool
+    # to patch.
     monkeypatch.setattr(mod, "Agent", FakeAgent)
     monkeypatch.setattr(mod, "Runner", FakeRunner)
     monkeypatch.setattr(mod, "InMemorySessionService", FakeSessionService)

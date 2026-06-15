@@ -8,20 +8,20 @@ timeouts, circuit breakers, security policy all apply).
 
 ## Supported frameworks
 
-| Framework | `for_*` helper | Native object |
+| Framework | Adapter class | Native object |
 |---|---|---|
-| LangChain | `for_langchain` | `langchain_core.tools.StructuredTool` |
-| LangGraph | `for_langgraph` | LangChain `StructuredTool` (LangGraph consumes these) |
-| LlamaIndex | `for_llamaindex` | `llama_index.core.tools.FunctionTool` |
-| CrewAI | `for_crewai` | `crewai.tools.BaseTool` subclass |
-| Pydantic AI | `for_pydantic_ai` | `pydantic_ai.tools.Tool` |
-| OpenAI Agents SDK | `for_openai_agents` | `agents.FunctionTool` |
-| Smolagents | `for_smolagents` | `smolagents.Tool` subclass |
-| Haystack | `for_haystack` | `haystack.tools.Tool` |
-| Agno | `for_agno` | `agno.tools.function.Function` |
-| AutoGen / AG2 | `for_autogen`, `register_with_autogen` | callables + `register_function` |
-| Semantic Kernel | `for_semantic_kernel`, `gantry_plugin` | `KernelFunction` (`@kernel_function`) |
-| Google ADK | `for_google_adk` | `google.adk.tools.FunctionTool` |
+| LangChain | `LangChainAdapter` | `langchain_core.tools.StructuredTool` |
+| LangGraph | `LangGraphAdapter` | LangChain `StructuredTool` (LangGraph consumes these) |
+| LlamaIndex | `LlamaIndexAdapter` | `llama_index.core.tools.FunctionTool` |
+| CrewAI | `CrewAIAdapter` | `crewai.tools.BaseTool` subclass |
+| Pydantic AI | `PydanticAIAdapter` | `pydantic_ai.tools.Tool` |
+| OpenAI Agents SDK | `OpenAIAgentsAdapter` | `agents.FunctionTool` |
+| Smolagents | `SmolagentsAdapter` | `smolagents.Tool` subclass |
+| Haystack | `HaystackAdapter` | `haystack.tools.Tool` |
+| Agno | `AgnoAdapter` | `agno.tools.function.Function` |
+| AutoGen / AG2 | `AutoGenAdapter` (`.select`, `.register`) | callables + `register_function` |
+| Semantic Kernel | `SemanticKernelAdapter` (`.select`, `.plugin`) | `KernelFunction` (`@kernel_function`) |
+| Google ADK | `GoogleADKAdapter` | `google.adk.tools.FunctionTool` |
 
 All third-party imports are **lazy** — `import agent_gantry` never requires any
 of these frameworks. A missing framework raises `ImportError` with a
@@ -31,13 +31,13 @@ of these frameworks. A missing framework raises `ImportError` with a
 
 ```python
 from agent_gantry import AgentGantry
-from agent_gantry.langchain import for_langchain   # clean per-framework namespace
+from agent_gantry.langchain import LangChainAdapter   # clean per-framework namespace
 
 gantry = AgentGantry()
 # ... register tools, await gantry.sync() ...
 
 # Select the top-3 relevant tools and get them as LangChain StructuredTools:
-tools = await for_langchain(gantry, "email the quarterly report to finance", limit=3)
+tools = await LangChainAdapter(gantry).select("email the quarterly report to finance", limit=3)
 # hand `tools` to a LangChain/LangGraph agent
 ```
 
@@ -46,13 +46,14 @@ Each framework has a top-level namespace — `from agent_gantry.<framework> impo
 `agent_gantry.pydantic_ai`, `agent_gantry.openai_agents`, `agent_gantry.smolagents`,
 `agent_gantry.haystack`, `agent_gantry.agno`, `agent_gantry.autogen`,
 `agent_gantry.semantic_kernel`, `agent_gantry.google_adk`, `agent_gantry.langgraph`,
-`agent_gantry.agent_framework`) re-exporting both `for_<fw>`/`spec_to_<fw>` and that
-framework's deep live provider. Importing `agent_gantry` never pulls these in.
+`agent_gantry.agent_framework`) re-exporting that framework's `<Framework>Adapter`
+class (which carries both the static `.select`/`.convert` and the deep live
+methods). Importing `agent_gantry` never pulls these in.
 
-Every `for_<fw>(gantry, query, *, limit=3, **select_kwargs)` accepts the same
-selection knobs as `GantryToolset.select` (`score_threshold`, `namespaces`,
-`tools_already_used`). Need one conversion at a time? Use `spec_to_<fw>(spec)`
-with specs from `GantryToolset(gantry).select(query)`.
+Every `<Adapter>(gantry).select(query, *, limit=3, **select_kwargs)` accepts the
+same selection knobs as `GantryToolset.select` (`score_threshold`, `namespaces`,
+`tools_already_used`). Need one conversion at a time? Use the staticmethod
+`<Adapter>.convert(spec)` with specs from `GantryToolset(gantry).select(query)`.
 
 ## Multi-turn re-selection — autonomous *and* conversational
 
@@ -87,8 +88,8 @@ for both modes side by side.
 
 ## Deep per-turn "live" providers (as embedded as Microsoft Agent Framework)
 
-The `for_<fw>` helpers above are *static*: select once, hand over a fixed tool
-list. The **live** providers go deeper — they hook each framework's own
+The `<Adapter>.select` methods above are *static*: select once, hand over a fixed
+tool list. The **live** methods go deeper — they hook each framework's own
 per-turn lifecycle so Gantry re-selects tools on **every turn**, exactly like
 `GantryContextProvider` does for Microsoft Agent Framework. Import them lazily
 from `agent_gantry.integrations.frameworks` (importing `agent_gantry` never
@@ -96,23 +97,25 @@ loads these — the framework is only required when you use its provider).
 
 | Framework | Live entry point | Native hook |
 |---|---|---|
-| LlamaIndex | `gantry_tool_retriever` / `gantry_function_agent` | `FunctionAgent(tool_retriever=…)` (`ObjectRetriever`) |
-| Pydantic AI | `gantry_toolset` | `AbstractToolset.get_tools()` |
-| AutoGen | `gantry_workbench` | `autogen_core.tools.Workbench.list_tools()` |
-| Google ADK | `gantry_before_model_callback` / `gantry_adk_agent` | `Agent(before_model_callback=…)` |
-| LangGraph | `create_gantry_react_agent` | dynamic `model` callable (re-binds tools per turn) |
-| Semantic Kernel | `GantryFunctionProvider` / `refresh_kernel_tools` | per-invocation plugin refresh |
-| OpenAI Agents SDK | `run_with_gantry` / `GantryAgentSession` / `gantry_run_hooks` | `RunHooks.on_llm_start` + per-run refresh |
+| LlamaIndex | `LlamaIndexAdapter(gantry).tool_retriever()` / `.function_agent(llm)` | `FunctionAgent(tool_retriever=…)` (`ObjectRetriever`) |
+| Pydantic AI | `PydanticAIAdapter(gantry).toolset()` | `AbstractToolset.get_tools()` |
+| AutoGen | `AutoGenAdapter(gantry).workbench()` | `autogen_core.tools.Workbench.list_tools()` |
+| Google ADK | `GoogleADKAdapter(gantry).before_model_callback()` / `.agent()` | `Agent(before_model_callback=…)` |
+| LangGraph | `LangGraphAdapter(gantry).react_agent(model)` | dynamic `model` callable (re-binds tools per turn) |
+| Semantic Kernel | `SemanticKernelAdapter(gantry).function_provider(kernel)` / `.refresh(kernel, query)` | per-invocation plugin refresh |
+| OpenAI Agents SDK | `OpenAIAgentsAdapter(gantry).run(agent, run_input)` / `.session(agent)` / `.run_hooks(agent)` | `RunHooks.on_llm_start` + per-run refresh |
 
 ```python
-from agent_gantry.llamaindex import gantry_function_agent
-agent = gantry_function_agent(gantry, llm)   # LlamaIndex agent that re-selects tools each step
+from agent_gantry.llamaindex import LlamaIndexAdapter
+agent = LlamaIndexAdapter(gantry).function_agent(llm)   # LlamaIndex agent that re-selects tools each step
 ```
 
 Frameworks whose tool list is **fixed at agent construction** (CrewAI, Agno,
-Haystack, Smolagents) can't re-advertise tools mid-run; their "live" wrappers
-(`GantryLiveCrewAgent`, `GantryLiveAgnoAgent`, `gantry_haystack_tools`,
-`GantryLiveSmolAgent`) re-select and rebuild the agent on each top-level call —
+Haystack, Smolagents) can't re-advertise tools mid-run; their "live" wrappers —
+obtained via `CrewAIAdapter(gantry).agent_builder(...)`,
+`AgnoAdapter(gantry).agent_builder(...)`, `SmolagentsAdapter(gantry).agent_builder(...)`,
+and `HaystackAdapter(gantry).tool_invoker_builder(...)` (or `HaystackAdapter(gantry).live_tools(query)`
+for tools alone) — re-select and rebuild the agent on each top-level call —
 the deepest those frameworks allow.
 
 ## Shared base

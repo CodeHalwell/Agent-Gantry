@@ -101,8 +101,13 @@ jobs:
       name: pypi
       url: https://pypi.org/p/agent-gantry
     permissions:
-      id-token: write
+      id-token: write   # PyPI trusted publishing (OIDC)
+      contents: write   # create + push the v<version> tag and GitHub Release
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
@@ -113,3 +118,30 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+          skip-existing: true
+
+      # On a manual publish, record the release in git: tag the checked-out commit
+      # and cut a GitHub Release from the version in pyproject.toml. When the run
+      # was triggered by a GitHub Release being *published*, the tag/release
+      # already exist, so this step is skipped. Both the tag and the release are
+      # created only when missing, so re-running a partially-failed publish is safe.
+      - name: Tag and create GitHub Release
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(python3 -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git rev-parse "v$version" >/dev/null 2>&1; then
+            echo "Tag v$version already exists; skipping tag creation."
+          else
+            git tag -a "v$version" -m "Release v$version"
+            git push origin "v$version"
+          fi
+          if gh release view "v$version" >/dev/null 2>&1; then
+            echo "Release v$version already exists; skipping."
+          else
+            gh release create "v$version" dist/* --title "v$version" --generate-notes
+          fi

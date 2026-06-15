@@ -1,6 +1,6 @@
 """Tests for the deep, per-turn LangGraph dynamic-tool provider.
 
-Exercises :func:`create_gantry_react_agent` against the *real* installed
+Exercises :meth:`LangGraphAdapter.react_agent` against the *real* installed
 ``langgraph.prebuilt.create_react_agent`` API surface: the agent must re-select
 tools from Gantry on every model turn via the dynamic-``model`` callable and bind
 exactly those tools to the chat model (so the tools advertised to the LLM change
@@ -24,10 +24,7 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 
 from agent_gantry import AgentGantry
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.integrations.frameworks.langgraph_live import (
-    create_gantry_react_agent,
-    select_tools_for_state,
-)
+from agent_gantry.langgraph import LangGraphAdapter
 
 
 class RecordingChatModel(BaseChatModel):
@@ -88,7 +85,7 @@ async def gantry():
 async def test_select_tools_for_weather_state(gantry):
     """Weather-oriented state selects the weather StructuredTool."""
     state = {"messages": [HumanMessage(content="what's the weather in Paris?")]}
-    tools = await select_tools_for_state(gantry, state, limit=1)
+    tools = await LangGraphAdapter(gantry).select_for_state(state, limit=1)
     assert tools, "expected at least one tool to be selected"
     assert tools[0].name == "get_weather"
 
@@ -96,7 +93,7 @@ async def test_select_tools_for_weather_state(gantry):
 async def test_select_tools_for_email_state(gantry):
     """Email-oriented state selects the email StructuredTool (per-turn pivot)."""
     state = {"messages": [HumanMessage(content="send an email to my boss")]}
-    tools = await select_tools_for_state(gantry, state, limit=1)
+    tools = await LangGraphAdapter(gantry).select_for_state(state, limit=1)
     assert tools, "expected at least one tool to be selected"
     assert tools[0].name == "send_email"
 
@@ -104,7 +101,7 @@ async def test_select_tools_for_email_state(gantry):
 async def test_selected_tool_routes_through_gantry(gantry):
     """The selected StructuredTool executes via Gantry."""
     state = {"messages": [HumanMessage(content="weather forecast for Tokyo")]}
-    tools = await select_tools_for_state(gantry, state, limit=1)
+    tools = await LangGraphAdapter(gantry).select_for_state(state, limit=1)
     assert await tools[0].coroutine(city="Tokyo") == "weather:Tokyo:sunny"
 
 
@@ -115,7 +112,7 @@ async def test_react_agent_binds_weather_tool_per_turn(gantry):
     """Driving the compiled agent binds the weather tool for a weather state."""
     model = RecordingChatModel()
     model.bound_tool_names.clear()
-    agent = create_gantry_react_agent(model, gantry, limit=1)
+    agent = LangGraphAdapter(gantry).react_agent(model, limit=1)
 
     await agent.ainvoke(
         {"messages": [HumanMessage(content="what's the weather in Paris?")]}
@@ -130,7 +127,7 @@ async def test_react_agent_binds_email_tool_per_turn(gantry):
     """Re-selection: an email state binds the email tool, not weather."""
     model = RecordingChatModel()
     model.bound_tool_names.clear()
-    agent = create_gantry_react_agent(model, gantry, limit=1)
+    agent = LangGraphAdapter(gantry).react_agent(model, limit=1)
 
     await agent.ainvoke(
         {"messages": [HumanMessage(content="send an email to my boss")]}

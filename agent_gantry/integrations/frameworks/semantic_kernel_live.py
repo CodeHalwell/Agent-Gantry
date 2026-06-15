@@ -1,9 +1,9 @@
 """DEEP per-turn dynamic-tool provider for Semantic Kernel.
 
-Where :mod:`agent_gantry.integrations.frameworks.semantic_kernel` exposes the
-*static* helpers (``for_semantic_kernel`` / ``gantry_plugin``) — you select a
-slice of tools once and register them on a :class:`~semantic_kernel.Kernel` —
-this module wires Agent-Gantry into Semantic Kernel as a **live, per-turn**
+Where :class:`~agent_gantry.integrations.frameworks.semantic_kernel.SemanticKernelAdapter`
+exposes the *static* slice (``select`` / ``plugin``) — you select a slice of
+tools once and register them on a :class:`~semantic_kernel.Kernel` — this module
+wires Agent-Gantry into Semantic Kernel as a **live, per-turn**
 tool source, matching the depth of the Microsoft Agent Framework
 ``GantryContextProvider``: the set of functions the model can call is
 **re-selected by Gantry on every invocation**.
@@ -49,7 +49,7 @@ Usage
     await provider.refresh(history)        # history: messages or a query string
     response = await agent.get_response(messages=history)
 
-The free function :func:`refresh_kernel_tools` does the same once, for callers
+The free function :func:`_refresh_kernel_tools` does the same once, for callers
 that prefer not to hold a provider instance.
 
 The ``semantic_kernel`` import is lazy so ``import agent_gantry`` never requires
@@ -62,7 +62,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.semantic_kernel import gantry_plugin
+from agent_gantry.integrations.frameworks.semantic_kernel import _gantry_plugin
 from agent_gantry.query import latest_activity
 
 if TYPE_CHECKING:
@@ -210,7 +210,7 @@ class GantryFunctionProvider:
                 # an empty embedding (arbitrary top-k for some embedders).
                 _set_plugin_functions(self._kernel, self._plugin_name, {})
                 return {}
-            functions = await gantry_plugin(
+            functions = await _gantry_plugin(
                 self._gantry,
                 query,
                 limit=self._limit,
@@ -221,7 +221,7 @@ class GantryFunctionProvider:
             return functions
 
 
-async def refresh_kernel_tools(
+async def _refresh_kernel_tools(
     gantry: AgentGantry,
     kernel: Any,
     query: Any,
@@ -245,7 +245,7 @@ async def refresh_kernel_tools(
         # selecting on an empty embedding (arbitrary top-k for some embedders).
         _set_plugin_functions(kernel, plugin_name, {})
         return {}
-    functions = await gantry_plugin(
+    functions = await _gantry_plugin(
         gantry,
         resolved,
         limit=limit,
@@ -256,4 +256,4 @@ async def refresh_kernel_tools(
     return functions
 
 
-__all__ = ["GantryFunctionProvider", "refresh_kernel_tools"]
+__all__ = ["GantryFunctionProvider"]

@@ -60,9 +60,9 @@ def fake_autogen(monkeypatch):
 
 
 async def test_for_autogen_returns_mappings(gantry):
-    from agent_gantry.integrations.frameworks.autogen import for_autogen
+    from agent_gantry.autogen import AutoGenAdapter
 
-    tools = await for_autogen(gantry, "send an email", limit=2)
+    tools = await AutoGenAdapter(gantry).select("send an email", limit=2)
 
     assert isinstance(tools, list)
     assert len(tools) >= 1
@@ -77,11 +77,11 @@ async def test_for_autogen_returns_mappings(gantry):
 
 
 async def test_spec_to_autogen_shape(gantry):
-    from agent_gantry.integrations.frameworks.autogen import spec_to_autogen
+    from agent_gantry.autogen import AutoGenAdapter
     from agent_gantry.integrations.frameworks.base import GantryToolset
 
     specs = await GantryToolset(gantry).select("send an email", limit=1)
-    mapping = spec_to_autogen(specs[0])
+    mapping = AutoGenAdapter.convert(specs[0])
 
     assert set(mapping) == {"name", "description", "callable"}
     assert mapping["name"] == "send_email"
@@ -91,13 +91,13 @@ async def test_spec_to_autogen_shape(gantry):
 
 
 async def test_register_with_autogen_records_names(fake_autogen, gantry):
-    from agent_gantry.integrations.frameworks.autogen import register_with_autogen
+    from agent_gantry.autogen import AutoGenAdapter
 
     caller = object()
     executor = object()
 
-    names = await register_with_autogen(
-        gantry, "send an email", caller=caller, executor=executor, limit=2
+    names = await AutoGenAdapter(gantry).register(
+        "send an email", caller=caller, executor=executor, limit=2
     )
 
     assert isinstance(names, list)
@@ -113,12 +113,12 @@ async def test_register_with_autogen_records_names(fake_autogen, gantry):
 
 
 async def test_missing_autogen_raises_helpful_error(monkeypatch, gantry):
-    from agent_gantry.integrations.frameworks.autogen import register_with_autogen
+    from agent_gantry.autogen import AutoGenAdapter
 
     # Ensure the lazy import fails even if a real package is somehow present.
     monkeypatch.setitem(sys.modules, "autogen", None)
 
     with pytest.raises(ImportError, match="pip install pyautogen"):
-        await register_with_autogen(
-            gantry, "send an email", caller=object(), executor=object()
+        await AutoGenAdapter(gantry).register(
+            "send an email", caller=object(), executor=object()
         )

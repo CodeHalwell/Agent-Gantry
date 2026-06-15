@@ -5,9 +5,7 @@ Selects a relevant slice of Gantry tools and wraps each as a Semantic Kernel
 agents invoke. The ``semantic_kernel`` import is lazy so ``import agent_gantry``
 never requires SK to be installed.
 
-Use :func:`for_semantic_kernel` to get ``KernelFunction`` objects, or
-:func:`gantry_plugin` to get a plugin dict (``{name: KernelFunction}``) ready
-for ``kernel.add_plugin(plugin, plugin_name=...)``.
+Public entry point: :class:`SemanticKernelAdapter`.
 """
 
 from __future__ import annotations
@@ -22,7 +20,7 @@ if TYPE_CHECKING:
 _DEFAULT_PLUGIN = "gantry"
 
 
-def spec_to_semantic_kernel(spec: ToolSpec, *, plugin_name: str = _DEFAULT_PLUGIN) -> Any:
+def _spec_to_semantic_kernel(spec: ToolSpec, *, plugin_name: str = _DEFAULT_PLUGIN) -> Any:
     """Wrap a :class:`ToolSpec` as a Semantic Kernel ``KernelFunction``.
 
     The callable handed to SK carries a real ``__signature__`` (derived from the
@@ -49,7 +47,7 @@ def spec_to_semantic_kernel(spec: ToolSpec, *, plugin_name: str = _DEFAULT_PLUGI
     return KernelFunctionFromMethod(method=decorated, plugin_name=plugin_name)
 
 
-async def for_semantic_kernel(
+async def _for_semantic_kernel(
     gantry: AgentGantry,
     query: str,
     *,
@@ -59,10 +57,10 @@ async def for_semantic_kernel(
 ) -> list[Any]:
     """Select tools for ``query`` and return them as SK ``KernelFunction``s."""
     specs = await GantryToolset(gantry).select(query, limit=limit, **select_kwargs)
-    return [spec_to_semantic_kernel(s, plugin_name=plugin_name) for s in specs]
+    return [_spec_to_semantic_kernel(s, plugin_name=plugin_name) for s in specs]
 
 
-async def gantry_plugin(
+async def _gantry_plugin(
     gantry: AgentGantry,
     query: str,
     *,
@@ -77,13 +75,110 @@ async def gantry_plugin(
 
         from semantic_kernel.functions import KernelPlugin
 
-        funcs = await gantry_plugin(gantry, query)
+        funcs = await _gantry_plugin(gantry, query)
         kernel.add_plugin(KernelPlugin(name="gantry", functions=list(funcs.values())))
 
-    Or use :func:`~agent_gantry.integrations.frameworks.semantic_kernel_live.refresh_kernel_tools`
+    Or use :func:`~agent_gantry.integrations.frameworks.semantic_kernel_live._refresh_kernel_tools`
     / :class:`GantryFunctionProvider`, which do this wrapping for you each turn.
     """
-    functions = await for_semantic_kernel(
+    functions = await _for_semantic_kernel(
         gantry, query, limit=limit, plugin_name=plugin_name, **select_kwargs
     )
     return {f.name: f for f in functions}
+
+
+class SemanticKernelAdapter:
+    """Route Gantry-selected tools into Semantic Kernel.
+
+    Static slice (``KernelFunction`` objects / a plugin dict) plus a deep per-turn
+    live plugin refresh. Every call routes through ``gantry.execute``.
+    """
+
+    def __init__(self, gantry: AgentGantry, *, default_limit: int = 3) -> None:
+        self._gantry = gantry
+        self._default_limit = default_limit
+
+    @staticmethod
+    def convert(spec: ToolSpec, *, plugin_name: str = _DEFAULT_PLUGIN) -> Any:
+        """Wrap a single :class:`ToolSpec` as a Semantic Kernel ``KernelFunction``."""
+        return _spec_to_semantic_kernel(spec, plugin_name=plugin_name)
+
+    async def select(
+        self,
+        query: str,
+        *,
+        limit: int | None = None,
+        plugin_name: str = _DEFAULT_PLUGIN,
+        **select_kwargs: Any,
+    ) -> list[Any]:
+        """Select tools for ``query`` as SK ``KernelFunction``s (static slice)."""
+        return await _for_semantic_kernel(
+            self._gantry,
+            query,
+            limit=self._default_limit if limit is None else limit,
+            plugin_name=plugin_name,
+            **select_kwargs,
+        )
+
+    async def plugin(
+        self,
+        query: str,
+        *,
+        limit: int | None = None,
+        plugin_name: str = _DEFAULT_PLUGIN,
+        score_threshold: float = 0.0,
+        **select_kwargs: Any,
+    ) -> dict[str, Any]:
+        """Return a ``{function_name: KernelFunction}`` mapping for ``query``."""
+        return await _gantry_plugin(
+            self._gantry,
+            query,
+            limit=self._default_limit if limit is None else limit,
+            plugin_name=plugin_name,
+            score_threshold=score_threshold,
+            **select_kwargs,
+        )
+
+    def function_provider(
+        self,
+        kernel: Any,
+        *,
+        plugin_name: str = _DEFAULT_PLUGIN,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+    ) -> Any:
+        """Build a live ``GantryFunctionProvider`` whose ``refresh(history)`` re-selects functions per turn."""
+        from agent_gantry.integrations.frameworks.semantic_kernel_live import (
+            GantryFunctionProvider,
+        )
+
+        return GantryFunctionProvider(
+            self._gantry,
+            kernel,
+            plugin_name=plugin_name,
+            limit=self._default_limit if limit is None else limit,
+            score_threshold=score_threshold,
+        )
+
+    async def refresh(
+        self,
+        kernel: Any,
+        query: Any,
+        *,
+        plugin_name: str = _DEFAULT_PLUGIN,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+    ) -> dict[str, Any]:
+        """Re-select tools for ``query`` and rebuild ``kernel``'s gantry plugin once."""
+        from agent_gantry.integrations.frameworks.semantic_kernel_live import (
+            _refresh_kernel_tools,
+        )
+
+        return await _refresh_kernel_tools(
+            self._gantry,
+            kernel,
+            query,
+            plugin_name=plugin_name,
+            limit=self._default_limit if limit is None else limit,
+            score_threshold=score_threshold,
+        )

@@ -66,12 +66,12 @@ async def gantry():
 
 
 async def test_spec_to_agno_builds_native_tool(fake_agno, gantry):
-    from agent_gantry.integrations.frameworks.agno import spec_to_agno
+    from agent_gantry.agno import AgnoAdapter
     from agent_gantry.integrations.frameworks.base import GantryToolset
 
     specs = await GantryToolset(gantry).select("send an email", limit=1)
     spec = specs[0]
-    fn = spec_to_agno(spec)
+    fn = AgnoAdapter.convert(spec)
 
     assert fn.name == spec.name == "send_email"
     assert fn.description == spec.description == "Send an email message to a recipient."
@@ -86,9 +86,9 @@ async def test_spec_to_agno_builds_native_tool(fake_agno, gantry):
 
 
 async def test_for_agno_returns_function_list(fake_agno, gantry):
-    from agent_gantry.integrations.frameworks.agno import for_agno
+    from agent_gantry.agno import AgnoAdapter
 
-    tools = await for_agno(gantry, "send an email", limit=2)
+    tools = await AgnoAdapter(gantry).select("send an email", limit=2)
 
     assert isinstance(tools, list)
     assert len(tools) >= 1
@@ -100,9 +100,9 @@ async def test_missing_agno_raises_helpful_error(monkeypatch, gantry):
     # Ensure the lazy import fails even if a real package is somehow present.
     monkeypatch.setitem(sys.modules, "agno.tools.function", None)
 
-    from agent_gantry.integrations.frameworks.agno import spec_to_agno
+    from agent_gantry.agno import AgnoAdapter
     from agent_gantry.integrations.frameworks.base import GantryToolset
 
     specs = await GantryToolset(gantry).select("send an email", limit=1)
     with pytest.raises(ImportError, match="pip install agno"):
-        spec_to_agno(specs[0])
+        AgnoAdapter.convert(specs[0])

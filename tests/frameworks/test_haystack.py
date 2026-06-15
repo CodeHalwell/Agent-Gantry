@@ -63,12 +63,12 @@ async def gantry():
 
 
 async def test_spec_to_haystack_builds_native_tool(fake_haystack, gantry):
+    from agent_gantry.haystack import HaystackAdapter
     from agent_gantry.integrations.frameworks.base import GantryToolset
-    from agent_gantry.integrations.frameworks.haystack import spec_to_haystack
 
     specs = await GantryToolset(gantry).select("send an email", limit=1)
     spec = specs[0]
-    tool = spec_to_haystack(spec)
+    tool = HaystackAdapter.convert(spec)
 
     assert tool.name == spec.name == "send_email"
     assert (
@@ -86,9 +86,9 @@ async def test_spec_to_haystack_builds_native_tool(fake_haystack, gantry):
 
 
 async def test_for_haystack_returns_tool_list(fake_haystack, gantry):
-    from agent_gantry.integrations.frameworks.haystack import for_haystack
+    from agent_gantry.haystack import HaystackAdapter
 
-    tools = await for_haystack(gantry, "send an email", limit=2)
+    tools = await HaystackAdapter(gantry).select("send an email", limit=2)
 
     assert isinstance(tools, list)
     assert len(tools) >= 1
@@ -101,9 +101,9 @@ async def test_missing_haystack_raises_helpful_error(monkeypatch, gantry):
     monkeypatch.setitem(sys.modules, "haystack", None)
     monkeypatch.setitem(sys.modules, "haystack.tools", None)
 
+    from agent_gantry.haystack import HaystackAdapter
     from agent_gantry.integrations.frameworks.base import GantryToolset
-    from agent_gantry.integrations.frameworks.haystack import spec_to_haystack
 
     specs = await GantryToolset(gantry).select("send an email", limit=1)
     with pytest.raises(ImportError, match="pip install haystack-ai"):
-        spec_to_haystack(specs[0])
+        HaystackAdapter.convert(specs[0])

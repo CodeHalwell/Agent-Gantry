@@ -1,25 +1,15 @@
 """Agent-Gantry × Smolagents.
 
-Clean per-framework imports::
+Clean per-framework import::
 
-    from agent_gantry.smolagents import for_smolagents, GantryLiveSmolAgent
+    from agent_gantry.smolagents import SmolagentsAdapter
 
-Re-exports Smolagents's static adapter (select + convert) and the deep per-turn "live" provider. Importing
-this module does not require Smolagents until you actually call into it.
+Importing this module never requires smolagents to be installed; it is imported
+lazily when you call an adapter method.
 """
 
 from __future__ import annotations
 
-from agent_gantry._framework_ns import make_lazy_getattr
-from agent_gantry.integrations.frameworks.smolagents import (
-    for_smolagents,
-    spec_to_smolagents,
-)
+from agent_gantry.integrations.frameworks.smolagents import SmolagentsAdapter
 
-__getattr__ = make_lazy_getattr({'GantryLiveSmolAgent': 'live_wrappers'})
-
-__all__ = [
-    "for_smolagents",
-    "spec_to_smolagents",
-    "GantryLiveSmolAgent",  # noqa: F822 (lazy via __getattr__)
-]
+__all__ = ["SmolagentsAdapter"]

@@ -1,8 +1,8 @@
 """LlamaIndex *live* per-turn tool provider (deep integration).
 
 This is the **deep**, per-turn counterpart to the static
-:func:`~agent_gantry.integrations.frameworks.llamaindex.for_llamaindex`
-helper. Where ``for_llamaindex`` selects a tool slice **once** and hands a
+:meth:`~agent_gantry.integrations.frameworks.llamaindex.LlamaIndexAdapter.select`
+slice. Where the static slice selects a tool slice **once** and hands a
 frozen list to the agent, this module re-selects the relevant tools **on every
 reasoning step** by plugging into LlamaIndex's own native lifecycle hook.
 
@@ -33,7 +33,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import GantryToolset
-from agent_gantry.integrations.frameworks.llamaindex import spec_to_llamaindex
+from agent_gantry.integrations.frameworks.llamaindex import _spec_to_llamaindex
 from agent_gantry.query import latest_activity
 
 if TYPE_CHECKING:
@@ -144,7 +144,7 @@ def _build_retriever_class() -> type:
             specs = await self._toolset.select(
                 query, limit=self._limit, score_threshold=self._score_threshold
             )
-            return [spec_to_llamaindex(spec) for spec in specs]
+            return [_spec_to_llamaindex(spec) for spec in specs]
 
         def retrieve(self, str_or_query_bundle: Any) -> list:
             """Synchronous counterpart to :meth:`aretrieve` (loop-safe bridge)."""
@@ -156,14 +156,7 @@ def _build_retriever_class() -> type:
     return _RETRIEVER_CLS
 
 
-def __getattr__(name: str) -> Any:
-    """Resolve ``GantryToolRetriever`` lazily (it subclasses a LlamaIndex type)."""
-    if name == "GantryToolRetriever":
-        return _build_retriever_class()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-def gantry_tool_retriever(
+def _gantry_tool_retriever(
     gantry: AgentGantry,
     *,
     limit: int = 5,
@@ -179,7 +172,7 @@ def gantry_tool_retriever(
     )
 
 
-def gantry_function_agent(
+def _gantry_function_agent(
     gantry: AgentGantry,
     llm: Any,
     *,
@@ -195,7 +188,7 @@ def gantry_function_agent(
         FunctionAgent(
             name=name,
             llm=llm,
-            tool_retriever=gantry_tool_retriever(gantry, limit=limit, ...),
+            tool_retriever=_gantry_tool_retriever(gantry, limit=limit, ...),
             **agent_kwargs,
         )
 
@@ -206,22 +199,28 @@ def gantry_function_agent(
         from llama_index.core.agent.workflow import FunctionAgent
     except ImportError as exc:  # pragma: no cover - exercised when absent
         raise ImportError(
-            "LlamaIndex is required for gantry_function_agent; "
+            "LlamaIndex is required for LlamaIndexAdapter.function_agent; "
             "install it with `pip install llama-index-core`."
         ) from exc
 
     return FunctionAgent(
         name=name,
         llm=llm,
-        tool_retriever=gantry_tool_retriever(
+        tool_retriever=_gantry_tool_retriever(
             gantry, limit=limit, score_threshold=score_threshold
         ),
         **agent_kwargs,
     )
 
 
-__all__ = [
-    "GantryToolRetriever",  # noqa: F822 (resolved lazily via module __getattr__)
-    "gantry_tool_retriever",
-    "gantry_function_agent",
-]
+def __getattr__(name: str) -> Any:
+    """Expose the dynamically-built ``GantryToolRetriever`` subclass lazily.
+
+    It subclasses ``llama_index.core.objects.ObjectRetriever``, so it's built on
+    first access to keep ``import`` dependency-free. Internal/advanced use (e.g.
+    ``isinstance`` checks); the public entry point is
+    ``LlamaIndexAdapter.tool_retriever(...)``.
+    """
+    if name == "GantryToolRetriever":
+        return _build_retriever_class()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

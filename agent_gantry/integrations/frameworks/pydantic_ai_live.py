@@ -3,7 +3,7 @@
 This is the *live* Pydantic AI integration — the deep counterpart to the
 schema/wrapping helpers in
 :mod:`agent_gantry.integrations.frameworks.pydantic_ai`
-(``for_pydantic_ai`` / ``spec_to_pydantic_ai``). Where ``for_pydantic_ai``
+(``_for_pydantic_ai`` / ``_spec_to_pydantic_ai``). Where ``_for_pydantic_ai``
 selects a tool slice **once** and hands Pydantic AI a static list of ``Tool``
 objects, this module plugs Gantry directly into Pydantic AI's native
 dynamic-tool hook so the tool set is re-selected from the registry on **every
@@ -27,7 +27,7 @@ The per-turn query is derived from the run context, so the tools an agent sees
 change run-to-run as the conversation focus shifts — no manual ``set_query``
 needed (though one is provided for driving selection without a full context)::
 
-    toolset = gantry_toolset(gantry, limit=5)
+    toolset = _gantry_toolset(gantry, limit=5)
     agent = Agent(model, toolsets=[toolset])
     await agent.run("send an email to the team")   # email tools surface
 
@@ -286,19 +286,7 @@ def _get_class() -> type:
     return _GANTRY_TOOLSET_CLASS
 
 
-def __getattr__(name: str) -> Any:
-    """Expose ``GantryToolset`` lazily so the base class is built on access.
-
-    ``from ...pydantic_ai_live import GantryToolset`` triggers this and builds
-    the real ``AbstractToolset`` subclass on demand, keeping import-time
-    dependency-free.
-    """
-    if name == "GantryToolset":
-        return _get_class()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-def gantry_toolset(
+def _gantry_toolset(
     gantry: AgentGantry,
     *,
     limit: int = 5,
@@ -318,7 +306,13 @@ def gantry_toolset(
     return cls(gantry, limit=limit, score_threshold=score_threshold)
 
 
-__all__ = [
-    "GantryToolset",  # noqa: F822 (resolved lazily via module __getattr__)
-    "gantry_toolset",
-]
+def __getattr__(name: str) -> Any:
+    """Expose the dynamically-built ``GantryToolset`` subclass lazily.
+
+    It subclasses ``pydantic_ai.toolsets.AbstractToolset``, so it's built on first
+    access to keep ``import`` dependency-free. Internal/advanced use (e.g.
+    ``isinstance`` checks); the public entry point is ``PydanticAIAdapter.toolset(...)``.
+    """
+    if name == "GantryToolset":
+        return _get_class()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

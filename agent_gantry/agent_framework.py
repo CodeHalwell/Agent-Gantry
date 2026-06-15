@@ -1,18 +1,22 @@
 """Agent-Gantry × Microsoft Agent Framework.
 
-Clean per-framework imports::
+Clean per-framework import::
 
-    from agent_gantry.agent_framework import GantryContextProvider
+    from agent_gantry.agent_framework import AgentFrameworkAdapter
 
-Re-exports the first-class Microsoft Agent Framework integration — the
+``AgentFrameworkAdapter`` is the one-class entry point — its methods build the
 ``GantryContextProvider`` (per-run / per-call dynamic tool injection), the
 ``GantryToolBridge``, and the approval / observability / tool-choice middleware.
-Importing this module does not require ``agent-framework`` until you call into
-it (the framework is imported lazily by the underlying bridge/provider).
+Those underlying types are also re-exported here for type annotations and for
+holding the objects the adapter returns.
+
+Importing this module never requires ``agent-framework``; the framework is
+imported lazily by the underlying bridge / provider / middleware when used.
 """
 
 from __future__ import annotations
 
+from agent_gantry.integrations.agent_framework_adapter import AgentFrameworkAdapter
 from agent_gantry.integrations.agent_framework_bridge import (
     GantryToolBridge,
     RetrievalCandidate,
@@ -29,6 +33,7 @@ from agent_gantry.integrations.agent_framework_provider import (
 )
 
 __all__ = [
+    "AgentFrameworkAdapter",
     "GantryApprovalMiddleware",
     "GantryContextProvider",
     "GantryObservabilityMiddleware",

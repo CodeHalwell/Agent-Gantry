@@ -100,6 +100,29 @@ async def main():
     # The decorator handles the retrieval logic internally
     await chat_with_groq("Calculate the factorial of 10")
 
+    # --- Scenario: Typed GroqAdapter (provider-specific convenience) ---
+    # GroqAdapter(gantry).tools(query, limit=n) is equivalent to
+    # gantry.retrieve_tools(query, limit=n, dialect="groq"). Groq is
+    # OpenAI-compatible, so the schemas drop straight into chat.completions.
+    print("\n--- Scenario: Typed GroqAdapter ---")
+    from agent_gantry.groq import GroqAdapter
+
+    query_adapter = "Calculate the factorial of 7"
+    print(f"User Query: '{query_adapter}'")
+
+    tools_adapter = await GroqAdapter(gantry).tools(query_adapter, limit=1, score_threshold=0.1)
+    print(f"Gantry retrieved {len(tools_adapter)} tool(s)")
+
+    response_adapter = await client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": query_adapter}],
+        tools=tools_adapter,
+        tool_choice="auto",
+    )
+    if response_adapter.choices[0].message.tool_calls:
+        tc = response_adapter.choices[0].message.tool_calls[0]
+        print(f"Groq (via adapter) called: {tc.function.name}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

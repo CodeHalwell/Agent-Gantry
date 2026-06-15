@@ -16,10 +16,7 @@ import pytest
 
 from agent_gantry import AgentGantry
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.integrations.frameworks.smolagents import (
-    for_smolagents,
-    spec_to_smolagents,
-)
+from agent_gantry.smolagents import SmolagentsAdapter
 
 
 @pytest.fixture
@@ -67,7 +64,7 @@ async def test_spec_to_smolagents_captures_metadata(
     gantry: AgentGantry, fake_smolagents: type
 ) -> None:
     spec = await _first_spec(gantry)
-    tool = spec_to_smolagents(spec)
+    tool = SmolagentsAdapter.convert(spec)
 
     assert tool.name == "send_email"
     assert tool.description == "Send an email message to a recipient."
@@ -79,7 +76,7 @@ async def test_spec_to_smolagents_inputs_shape(
     gantry: AgentGantry, fake_smolagents: type
 ) -> None:
     spec = await _first_spec(gantry)
-    tool = spec_to_smolagents(spec)
+    tool = SmolagentsAdapter.convert(spec)
 
     assert isinstance(tool.inputs, dict)
     assert tool.inputs, "inputs should not be empty"
@@ -107,7 +104,7 @@ def test_spec_to_smolagents_forward_executes(fake_smolagents: type) -> None:
         return await _first_spec(g)
 
     spec = asyncio.run(_build_spec())
-    tool = spec_to_smolagents(spec)
+    tool = SmolagentsAdapter.convert(spec)
 
     assert tool.forward(to="boss@x.com") == "sent:boss@x.com"
 
@@ -115,7 +112,7 @@ def test_spec_to_smolagents_forward_executes(fake_smolagents: type) -> None:
 async def test_for_smolagents_maps_all_specs(
     gantry: AgentGantry, fake_smolagents: type
 ) -> None:
-    tools = await for_smolagents(gantry, "send an email", limit=5)
+    tools = await SmolagentsAdapter(gantry).select("send an email", limit=5)
 
     assert len(tools) >= 1
     names = {t.name for t in tools}
@@ -140,4 +137,4 @@ def test_spec_to_smolagents_missing_dependency(
             return None
 
     with pytest.raises(ImportError, match="pip install smolagents"):
-        spec_to_smolagents(_DummySpec())
+        SmolagentsAdapter.convert(_DummySpec())

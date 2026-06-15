@@ -7,7 +7,7 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 from agent_gantry import AgentGantry
-from agent_gantry.google_adk import for_google_adk
+from agent_gantry.google_adk import GoogleADKAdapter
 
 load_dotenv()
 
@@ -29,12 +29,12 @@ async def run_query(query: str) -> str:
 
     # 2) Select relevant tools and get them as native ADK FunctionTools in one
     #    call (retrieval + conversion + execution wiring).
-    adk_tools = await for_google_adk(gantry, query, limit=1, score_threshold=0.1)
+    adk_tools = await GoogleADKAdapter(gantry).select(query, limit=1, score_threshold=0.1)
 
     # 4) Build ADK agent and runner
     adk_agent = Agent(
         model="gemini-2.5-flash",
-        name="gantry_adk_agent",
+        name="order_status_agent",
         instruction="You are a helpful agent that can look up order statuses via tools.",
         tools=adk_tools,
     )

@@ -29,12 +29,12 @@ import pytest
 
 from agent_gantry import AgentGantry
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+from agent_gantry.crewai import CrewAIAdapter
+from agent_gantry.haystack import HaystackAdapter
 from agent_gantry.integrations.frameworks.live_wrappers import (
     GantryLiveAgnoAgent,
     GantryLiveCrewAgent,
     GantryLiveSmolAgent,
-    gantry_crew_tools,
-    gantry_haystack_tools,
 )
 
 WEATHER_QUERY = "what is the weather forecast for the city today"
@@ -86,10 +86,10 @@ async def test_crewai_reselects_tools_per_call(gantry):
 async def test_crewai_helper_alias_reselects(gantry):
     pytest.importorskip("crewai")
 
-    weather_tools = await gantry_crew_tools(gantry, WEATHER_QUERY, limit=1)
+    weather_tools = await CrewAIAdapter(gantry).live_tools(WEATHER_QUERY, limit=1)
     assert "get_weather" in _names(weather_tools)
 
-    email_tools = await gantry_crew_tools(gantry, EMAIL_QUERY, limit=1)
+    email_tools = await CrewAIAdapter(gantry).live_tools(EMAIL_QUERY, limit=1)
     assert "send_email" in _names(email_tools)
 
 
@@ -124,10 +124,10 @@ async def test_agno_reselects_tools_per_call(gantry):
 async def test_haystack_reselects_tools_per_call(gantry):
     pytest.importorskip("haystack")
 
-    weather_tools = await gantry_haystack_tools(gantry, WEATHER_QUERY, limit=1)
+    weather_tools = await HaystackAdapter(gantry).live_tools(WEATHER_QUERY, limit=1)
     assert "get_weather" in _names(weather_tools)
 
-    email_tools = await gantry_haystack_tools(gantry, EMAIL_QUERY, limit=1)
+    email_tools = await HaystackAdapter(gantry).live_tools(EMAIL_QUERY, limit=1)
     assert "send_email" in _names(email_tools)
 
 

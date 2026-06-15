@@ -10,10 +10,7 @@ import pytest
 from agent_gantry import AgentGantry
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 from agent_gantry.integrations.frameworks.base import GantryToolset
-from agent_gantry.integrations.frameworks.google_adk import (
-    for_google_adk,
-    spec_to_google_adk,
-)
+from agent_gantry.integrations.frameworks.google_adk import GoogleADKAdapter
 
 
 @pytest.fixture
@@ -53,7 +50,7 @@ def fake_adk(monkeypatch):
 
 
 async def test_spec_to_google_adk_builds_and_routes(gantry, fake_adk):
-    tool = (await for_google_adk(gantry, "send an email", limit=1))[0]
+    tool = (await GoogleADKAdapter(gantry).select("send an email", limit=1))[0]
     assert tool.name == "send_email"
     # The wrapped func carries a real signature derived from the JSON schema.
     import inspect
@@ -64,7 +61,7 @@ async def test_spec_to_google_adk_builds_and_routes(gantry, fake_adk):
 
 
 async def test_for_google_adk_maps_all(gantry, fake_adk):
-    tools = await for_google_adk(gantry, "math add numbers", limit=2)
+    tools = await GoogleADKAdapter(gantry).select("math add numbers", limit=2)
     assert len(tools) == 2
 
 
@@ -73,4 +70,4 @@ async def test_missing_google_adk_raises_helpful_error(monkeypatch, gantry):
     monkeypatch.setitem(sys.modules, "google.adk.tools", None)
     specs = await GantryToolset(gantry).select("send an email", limit=1)
     with pytest.raises(ImportError, match="pip install google-adk"):
-        spec_to_google_adk(specs[0])
+        GoogleADKAdapter.convert(specs[0])

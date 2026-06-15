@@ -89,11 +89,11 @@ async def gantry():
 
 async def test_spec_to_pydantic_ai_uses_from_schema(fake_pydantic_ai, gantry):
     from agent_gantry.integrations.frameworks.base import GantryToolset
-    from agent_gantry.integrations.frameworks.pydantic_ai import spec_to_pydantic_ai
+    from agent_gantry.pydantic_ai import PydanticAIAdapter
 
     specs = await GantryToolset(gantry).select("send an email", limit=1)
     spec = specs[0]
-    tool = spec_to_pydantic_ai(spec)
+    tool = PydanticAIAdapter.convert(spec)
 
     assert isinstance(tool, _FakeToolFromSchema)
     assert tool.name == spec.name == "send_email"
@@ -109,11 +109,11 @@ async def test_spec_to_pydantic_ai_falls_back_without_from_schema(
     fake_pydantic_ai_no_schema, gantry
 ):
     from agent_gantry.integrations.frameworks.base import GantryToolset
-    from agent_gantry.integrations.frameworks.pydantic_ai import spec_to_pydantic_ai
+    from agent_gantry.pydantic_ai import PydanticAIAdapter
 
     specs = await GantryToolset(gantry).select("send an email", limit=1)
     spec = specs[0]
-    tool = spec_to_pydantic_ai(spec)
+    tool = PydanticAIAdapter.convert(spec)
 
     assert isinstance(tool, _FakeToolNoSchema)
     assert tool.name == spec.name == "send_email"
@@ -124,9 +124,9 @@ async def test_spec_to_pydantic_ai_falls_back_without_from_schema(
 
 
 async def test_for_pydantic_ai_returns_tool_list(fake_pydantic_ai, gantry):
-    from agent_gantry.integrations.frameworks.pydantic_ai import for_pydantic_ai
+    from agent_gantry.pydantic_ai import PydanticAIAdapter
 
-    tools = await for_pydantic_ai(gantry, "send an email", limit=2)
+    tools = await PydanticAIAdapter(gantry).select("send an email", limit=2)
 
     assert isinstance(tools, list)
     assert len(tools) >= 1
@@ -136,7 +136,7 @@ async def test_for_pydantic_ai_returns_tool_list(fake_pydantic_ai, gantry):
 
 async def test_missing_pydantic_ai_raises_helpful_error(monkeypatch, gantry):
     from agent_gantry.integrations.frameworks.base import GantryToolset
-    from agent_gantry.integrations.frameworks.pydantic_ai import spec_to_pydantic_ai
+    from agent_gantry.pydantic_ai import PydanticAIAdapter
 
     # Ensure the lazy import fails even if a real package is somehow present.
     monkeypatch.setitem(sys.modules, "pydantic_ai", None)
@@ -144,4 +144,4 @@ async def test_missing_pydantic_ai_raises_helpful_error(monkeypatch, gantry):
 
     specs = await GantryToolset(gantry).select("send an email", limit=1)
     with pytest.raises(ImportError, match="pip install pydantic-ai"):
-        spec_to_pydantic_ai(specs[0])
+        PydanticAIAdapter.convert(specs[0])

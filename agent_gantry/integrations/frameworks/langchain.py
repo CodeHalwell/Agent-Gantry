@@ -4,6 +4,8 @@ Selects a relevant slice of Gantry tools and wraps each as a LangChain
 ``StructuredTool`` — the native tool object LangChain agents introspect
 (name / description / args schema) and invoke. The ``langchain-core`` import is
 lazy so ``import agent_gantry`` never requires LangChain to be installed.
+
+Public entry point: :class:`LangChainAdapter`.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
 
 
-def spec_to_langchain(spec: ToolSpec) -> Any:
+def _spec_to_langchain(spec: ToolSpec) -> Any:
     """Wrap a :class:`ToolSpec` as a LangChain ``StructuredTool``.
 
     The ``langchain_core`` import happens here, lazily, so callers without
@@ -42,7 +44,7 @@ def spec_to_langchain(spec: ToolSpec) -> Any:
     )
 
 
-async def for_langchain(
+async def _for_langchain(
     gantry: AgentGantry,
     query: str,
     *,
@@ -51,4 +53,45 @@ async def for_langchain(
 ) -> list[Any]:
     """Select tools for ``query`` and return them as LangChain ``StructuredTool``s."""
     specs = await GantryToolset(gantry).select(query, limit=limit, **select_kwargs)
-    return [spec_to_langchain(s) for s in specs]
+    return [_spec_to_langchain(s) for s in specs]
+
+
+class LangChainAdapter:
+    """Route Gantry-selected tools into LangChain.
+
+    Construct with a gantry, then :meth:`select` a relevant slice of tools as
+    native LangChain ``StructuredTool`` objects (each call still routed through
+    ``gantry.execute`` so retries, timeouts, circuit breakers, and the security
+    policy apply)::
+
+        from agent_gantry.langchain import LangChainAdapter
+
+        adapter = LangChainAdapter(gantry)
+        tools = await adapter.select("email the quarterly report", limit=3)
+        llm = ChatOpenAI(model="gpt-5.5").bind_tools(tools)
+    """
+
+    def __init__(self, gantry: AgentGantry, *, default_limit: int = 3) -> None:
+        self._gantry = gantry
+        self._default_limit = default_limit
+
+    @staticmethod
+    def convert(spec: ToolSpec) -> Any:
+        """Wrap a single :class:`ToolSpec` as a LangChain ``StructuredTool``."""
+        return _spec_to_langchain(spec)
+
+    async def select(
+        self, query: str, *, limit: int | None = None, **select_kwargs: Any
+    ) -> list[Any]:
+        """Select tools for ``query`` as LangChain ``StructuredTool``s.
+
+        ``limit`` defaults to the adapter's ``default_limit``. Extra keyword
+        arguments (``score_threshold``, ``namespaces``, ``tools_already_used``)
+        are forwarded to the underlying semantic selection.
+        """
+        return await _for_langchain(
+            self._gantry,
+            query,
+            limit=self._default_limit if limit is None else limit,
+            **select_kwargs,
+        )

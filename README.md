@@ -266,6 +266,28 @@ async def chat(messages, *, tools=None):
     )
 ```
 
+#### One-class adapters (per provider)
+
+Prefer not to thread `dialect=` through your code? Each LLM provider also ships a
+small adapter class that bakes the dialect in — `await OpenAIAdapter(gantry).tools(query)`
+is equivalent to `await gantry.retrieve_tools(query, dialect="openai")`:
+
+```python
+from agent_gantry.openai import OpenAIAdapter        # .tools(...) / .responses_tools(...)
+from agent_gantry.anthropic import AnthropicAdapter
+from agent_gantry.gemini import GeminiAdapter
+from agent_gantry.vertexai import VertexAIAdapter
+from agent_gantry.mistral import MistralAdapter
+from agent_gantry.groq import GroqAdapter
+
+tools = await OpenAIAdapter(gantry).tools("What's the weather in SF?", limit=3)
+```
+
+Agent frameworks follow the same one-class pattern — e.g.
+`from agent_gantry.langchain import LangChainAdapter` then
+`tools = await LangChainAdapter(gantry).select("...", limit=3)`, and
+`LlamaIndexAdapter(gantry).function_agent(llm)` for a live LlamaIndex agent.
+
 See [docs/llm_sdk_compatibility.md](docs/llm_sdk_compatibility.md) for detailed integration guides.
 
 ### Microsoft Agent Framework (native integration)

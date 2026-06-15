@@ -156,6 +156,36 @@ async def main():
         for fn in response_dec.function_calls:
             print(f"Gemini decided to call: {fn.name}")
 
+    # --- Scenario: Typed GeminiAdapter (provider-specific convenience) ---
+    # GeminiAdapter(gantry).tools(query, limit=n) bakes in dialect="gemini" and
+    # returns {"name", "description", "parameters"} dicts ready to feed straight
+    # into types.FunctionDeclaration — no retrieve + to_dialect("gemini") needed.
+    print("\n--- Scenario: Typed GeminiAdapter ---")
+    from agent_gantry.gemini import GeminiAdapter
+
+    query_adapter = "Find documents about project gamma"
+    print(f"User Query: '{query_adapter}'")
+
+    tool_dicts = await GeminiAdapter(gantry).tools(query_adapter, limit=1, score_threshold=0.1)
+    print(f"Gantry retrieved {len(tool_dicts)} tool(s)")
+
+    if tool_dicts:
+        decls = [
+            types.FunctionDeclaration(
+                name=t["name"], description=t["description"], parameters=t["parameters"]
+            )
+            for t in tool_dicts
+        ]
+        cfg_adapter = types.GenerateContentConfig(
+            tools=[types.Tool(function_declarations=decls)]
+        )
+        response_adapter = await client.aio.models.generate_content(
+            model="gemini-2.5-flash", contents=query_adapter, config=cfg_adapter
+        )
+        if response_adapter.function_calls:
+            for fn in response_adapter.function_calls:
+                print(f"Gemini (via adapter) called: {fn.name}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

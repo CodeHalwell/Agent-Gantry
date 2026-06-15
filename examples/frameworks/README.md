@@ -7,7 +7,7 @@ framework required (uninstalled frameworks are skipped cleanly).
 
 | File | What it does |
 |---|---|
-| `verify_all.py` | **Verification harness.** Asserts the P0 fixes, the universal `GantryToolset`/`ToolSpec` core, every `for_<framework>` adapter (built or cleanly skipped), and the multi-turn `ToolRefresher` pivot. Exits non-zero on any core failure. |
+| `verify_all.py` | **Verification harness.** Asserts the P0 fixes, the universal `GantryToolset`/`ToolSpec` core, every `<Framework>Adapter` (built or cleanly skipped), and the multi-turn `ToolRefresher` pivot. Exits non-zero on any core failure. |
 | `universal_adapters_example.py` | Readable walkthrough: select once with `GantryToolset`, invoke a `ToolSpec`, then export the selection to every framework's native tool object. |
 | `multi_turn_refresher_example.py` | Direction-changing tool selection within one run via `ToolRefresher`. |
 
@@ -29,10 +29,11 @@ installed) and falls back to the offline `SimpleEmbedder`. Install a framework
 - **Select** → `GantryToolset(gantry).select(query, limit=3)` returns ranked
   `ToolSpec`s. Each `ToolSpec` is invocable directly (`ainvoke`/`invoke`) and
   routes through `gantry.execute`.
-- **Export** → `for_langchain` / `for_llamaindex` / `for_crewai` /
-  `for_pydantic_ai` / `for_openai_agents` / `for_smolagents` / `for_haystack` /
-  `for_agno` / `for_autogen` / `for_langgraph` build that framework's native
-  tool object.
+- **Export** → `LangChainAdapter(gantry).select(query, limit=3)` (and
+  `LlamaIndexAdapter` / `CrewAIAdapter` / `PydanticAIAdapter` / `OpenAIAgentsAdapter` /
+  `SmolagentsAdapter` / `HaystackAdapter` / `AgnoAdapter` / `AutoGenAdapter` /
+  `LangGraphAdapter`) build that framework's native tool objects; use
+  `<Adapter>.convert(spec)` for a single `ToolSpec`.
 - **Multi-turn** → `ToolRefresher(gantry).refresh(messages)` re-selects fresh
   each turn so the agent can pivot to a different tool as the task changes.
 

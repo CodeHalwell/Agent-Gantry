@@ -32,7 +32,7 @@ from autogen_ext.models.openai import OpenAIChatCompletionClient
 from dotenv import load_dotenv
 
 from agent_gantry import AgentGantry
-from agent_gantry.autogen import for_autogen
+from agent_gantry.autogen import AutoGenAdapter
 
 load_dotenv()
 
@@ -55,14 +55,15 @@ async def main():
     await gantry.sync()
     print(f"✅ Registered {gantry.tool_count} tools in Agent-Gantry\n")
 
-    # 2. Define the query (tool selection happens in step 3 via for_autogen).
+    # 2. Define the query (tool selection happens in step 3 via the adapter).
     user_query = "Check the system load and report back."
     print(f"🔍 Retrieving tools for: '{user_query}'")
 
-    # 3. Get AutoGen-ready callables for the selected tools. for_autogen returns
-    #    {name, description, callable} dicts; AutoGen's `tools=` wants callables.
-    #    Each callable carries a real signature and routes through gantry.execute.
-    selected = await for_autogen(gantry, user_query, limit=3, score_threshold=0.1)
+    # 3. Get AutoGen-ready callables for the selected tools. AutoGenAdapter.select
+    #    returns {name, description, callable} dicts; AutoGen's `tools=` wants
+    #    callables. Each callable carries a real signature and routes through
+    #    gantry.execute.
+    selected = await AutoGenAdapter(gantry).select(user_query, limit=3, score_threshold=0.1)
     autogen_tools = [entry["callable"] for entry in selected]
     for entry in selected:
         print(f"  📦 Wrapped tool: {entry['name']}")

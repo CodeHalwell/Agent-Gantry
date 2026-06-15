@@ -9,9 +9,9 @@ introspect and call it — while every invocation still routes through
 This example runs offline (no LLM). It shows:
 
 1. The framework-neutral core: ``GantryToolset.select`` → ``ToolSpec`` → invoke.
-2. The per-framework exporters: ``for_langchain`` / ``for_crewai`` / … which
-   build native objects when the framework is installed (skipped cleanly here
-   if it is not).
+2. The per-framework adapters: ``LangChainAdapter`` / ``CrewAIAdapter`` / … whose
+   ``.select(query, limit=...)`` builds native objects when the framework is
+   installed (skipped cleanly here if it is not).
 
 Run::
 
@@ -66,25 +66,27 @@ async def main() -> None:
     print("  invoke :", top.invoke(to="finance@acme.com"))  # safe inside the loop
 
     # 2) Export to each framework ----------------------------------------- #
+    # One ``<Framework>Adapter`` class per framework; ``adapter.select(query,
+    # limit=...)`` selects and builds the native tool objects in one async call.
     from agent_gantry.integrations import frameworks as F
 
-    exporters = {
-        "langchain": F.for_langchain,
-        "langgraph": F.for_langgraph,
-        "llamaindex": F.for_llamaindex,
-        "crewai": F.for_crewai,
-        "pydantic_ai": F.for_pydantic_ai,
-        "openai_agents": F.for_openai_agents,
-        "smolagents": F.for_smolagents,
-        "haystack": F.for_haystack,
-        "agno": F.for_agno,
-        "autogen": F.for_autogen,
+    adapters = {
+        "langchain": F.LangChainAdapter,
+        "langgraph": F.LangGraphAdapter,
+        "llamaindex": F.LlamaIndexAdapter,
+        "crewai": F.CrewAIAdapter,
+        "pydantic_ai": F.PydanticAIAdapter,
+        "openai_agents": F.OpenAIAgentsAdapter,
+        "smolagents": F.SmolagentsAdapter,
+        "haystack": F.HaystackAdapter,
+        "agno": F.AgnoAdapter,
+        "autogen": F.AutoGenAdapter,
     }
 
     print("\nExport the selection to each framework's native tool object:")
-    for name, exporter in exporters.items():
+    for name, adapter_cls in adapters.items():
         try:
-            native = await exporter(gantry, "email the report to finance", limit=2)
+            native = await adapter_cls(gantry).select("email the report to finance", limit=2)
             kind = type(native[0]).__name__ if native else "—"
             print(f"  [built] {name:<14} -> {len(native)} x {kind}")
         except ImportError:

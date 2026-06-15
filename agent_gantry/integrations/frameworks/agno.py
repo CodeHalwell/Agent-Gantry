@@ -4,6 +4,8 @@ Selects a relevant slice of Gantry tools and wraps each as an Agno
 ``Function`` — the native tool object an Agno agent introspects (name /
 description / JSON-schema parameters) and invokes. The ``agno`` import is lazy
 so ``import agent_gantry`` never requires Agno to be installed.
+
+Public entry point: :class:`AgnoAdapter`.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
 
 
-def spec_to_agno(spec: ToolSpec) -> Any:
+def _spec_to_agno(spec: ToolSpec) -> Any:
     """Wrap a :class:`ToolSpec` as an Agno ``Function``.
 
     Agno calls the ``entrypoint`` with the tool arguments as keyword arguments,
@@ -52,7 +54,7 @@ def spec_to_agno(spec: ToolSpec) -> Any:
     )
 
 
-async def for_agno(
+async def _for_agno(
     gantry: AgentGantry,
     query: str,
     *,
@@ -61,4 +63,54 @@ async def for_agno(
 ) -> list[Any]:
     """Select tools for ``query`` and return them as Agno ``Function``s."""
     specs = await GantryToolset(gantry).select(query, limit=limit, **select_kwargs)
-    return [spec_to_agno(s) for s in specs]
+    return [_spec_to_agno(s) for s in specs]
+
+
+class AgnoAdapter:
+    """Route Gantry-selected tools into Agno.
+
+    Static slice (``agno.tools.function.Function`` objects) plus a per-call live
+    builder (Agno fixes tools at construction). Every call routes through ``gantry.execute``.
+    """
+
+    def __init__(self, gantry: AgentGantry, *, default_limit: int = 3) -> None:
+        self._gantry = gantry
+        self._default_limit = default_limit
+
+    @staticmethod
+    def convert(spec: ToolSpec) -> Any:
+        """Wrap a single :class:`ToolSpec` as an Agno ``Function``."""
+        return _spec_to_agno(spec)
+
+    async def select(
+        self, query: str, *, limit: int | None = None, **select_kwargs: Any
+    ) -> list[Any]:
+        """Select tools for ``query`` as Agno ``Function``s (static slice)."""
+        return await _for_agno(
+            self._gantry,
+            query,
+            limit=self._default_limit if limit is None else limit,
+            **select_kwargs,
+        )
+
+    def agent_builder(
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        **agent_kwargs: Any,
+    ) -> Any:
+        """Return a builder that rebuilds a fresh ``agno.agent.Agent`` per call with re-selected tools.
+
+        ``agent_kwargs`` (model/...) are forwarded. Call ``await builder.build(query)`` per run.
+        """
+        from agent_gantry.integrations.frameworks.live_wrappers import (
+            GantryLiveAgnoAgent,
+        )
+
+        return GantryLiveAgnoAgent(
+            self._gantry,
+            limit=self._default_limit if limit is None else limit,
+            score_threshold=score_threshold,
+            **agent_kwargs,
+        )

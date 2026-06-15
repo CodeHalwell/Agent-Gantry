@@ -7,6 +7,8 @@ circuit breakers, and the security policy still apply.
 
 The ``llama_index`` import is lazy (performed inside the builder) so that
 ``import agent_gantry`` never requires LlamaIndex to be installed.
+
+Public entry point: :class:`LlamaIndexAdapter`.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ if TYPE_CHECKING:
     from agent_gantry.integrations.frameworks.base import ToolSpec
 
 
-def spec_to_llamaindex(spec: ToolSpec) -> Any:
+def _spec_to_llamaindex(spec: ToolSpec) -> Any:
     """Convert a :class:`ToolSpec` into a LlamaIndex ``FunctionTool``.
 
     Raises:
@@ -30,7 +32,7 @@ def spec_to_llamaindex(spec: ToolSpec) -> Any:
         from llama_index.core.tools import FunctionTool
     except ImportError as exc:  # pragma: no cover - exercised via fake module
         raise ImportError(
-            "LlamaIndex is required for spec_to_llamaindex; "
+            "LlamaIndex is required for LlamaIndexAdapter; "
             "install it with `pip install llama-index-core`."
         ) from exc
 
@@ -54,7 +56,7 @@ def spec_to_llamaindex(spec: ToolSpec) -> Any:
     )
 
 
-async def for_llamaindex(
+async def _for_llamaindex(
     gantry: AgentGantry,
     query: str,
     *,
@@ -63,4 +65,67 @@ async def for_llamaindex(
 ) -> list:
     """Select tools for ``query`` and return them as LlamaIndex ``FunctionTool``s."""
     specs = await GantryToolset(gantry).select(query, limit=limit, **select_kwargs)
-    return [spec_to_llamaindex(spec) for spec in specs]
+    return [_spec_to_llamaindex(spec) for spec in specs]
+
+
+class LlamaIndexAdapter:
+    """Route Gantry-selected tools into LlamaIndex.
+
+    Static slice (``FunctionTool`` objects) plus deep per-turn live wiring
+    (re-selects tools every reasoning step), both routed through ``gantry.execute``.
+    """
+
+    def __init__(self, gantry: AgentGantry, *, default_limit: int = 3) -> None:
+        self._gantry = gantry
+        self._default_limit = default_limit
+
+    @staticmethod
+    def convert(spec: ToolSpec) -> Any:
+        """Wrap a single :class:`ToolSpec` as a LlamaIndex ``FunctionTool``."""
+        return _spec_to_llamaindex(spec)
+
+    async def select(
+        self, query: str, *, limit: int | None = None, **select_kwargs: Any
+    ) -> list[Any]:
+        """Select tools for ``query`` as LlamaIndex ``FunctionTool``s (static slice)."""
+        return await _for_llamaindex(
+            self._gantry,
+            query,
+            limit=self._default_limit if limit is None else limit,
+            **select_kwargs,
+        )
+
+    def tool_retriever(
+        self, *, limit: int | None = None, score_threshold: float = 0.0
+    ) -> Any:
+        """Build a live per-turn ``ObjectRetriever`` for ``FunctionAgent(tool_retriever=...)``."""
+        from agent_gantry.integrations.frameworks.llamaindex_live import (
+            _gantry_tool_retriever,
+        )
+
+        return _gantry_tool_retriever(
+            self._gantry, limit=self._default_limit if limit is None else limit, score_threshold=score_threshold
+        )
+
+    def function_agent(
+        self,
+        llm: Any,
+        *,
+        name: str = "gantry_agent",
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        **agent_kwargs: Any,
+    ) -> Any:
+        """Build a ``FunctionAgent`` wired to a live per-turn gantry retriever."""
+        from agent_gantry.integrations.frameworks.llamaindex_live import (
+            _gantry_function_agent,
+        )
+
+        return _gantry_function_agent(
+            self._gantry,
+            llm,
+            name=name,
+            limit=self._default_limit if limit is None else limit,
+            score_threshold=score_threshold,
+            **agent_kwargs,
+        )
