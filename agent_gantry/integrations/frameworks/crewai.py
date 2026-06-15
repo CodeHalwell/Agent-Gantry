@@ -111,23 +111,47 @@ class CrewAIAdapter:
         """Wrap a single :class:`ToolSpec` as a CrewAI ``BaseTool``."""
         return _spec_to_crewai(spec)
 
-    async def select(self, query: str, *, limit: int | None = None, **select_kwargs: Any) -> list[Any]:
+    async def select(
+        self, query: str, *, limit: int | None = None, **select_kwargs: Any
+    ) -> list[Any]:
         """Select tools for ``query`` as CrewAI ``BaseTool``s (static slice)."""
-        return await _for_crewai(self._gantry, query, limit=self._default_limit if limit is None else limit, **select_kwargs)
+        return await _for_crewai(
+            self._gantry,
+            query,
+            limit=self._default_limit if limit is None else limit,
+            **select_kwargs,
+        )
 
-    async def live_tools(self, query: str, *, limit: int | None = None, **select_kwargs: Any) -> list[Any]:
+    async def live_tools(
+        self, query: str, *, limit: int | None = None, **select_kwargs: Any
+    ) -> list[Any]:
         """Re-select CrewAI ``BaseTool``s for THIS call's ``query`` (per-call selection).
 
-        Same selection surface as :meth:`select` (``score_threshold``,
-        ``namespaces``, ``tools_already_used`` via ``**select_kwargs``).
+        Behaviourally identical to :meth:`select` (same selection surface:
+        ``score_threshold`` / ``namespaces`` / ``tools_already_used`` via
+        ``**select_kwargs``); provided as a clearly-named entry point for the
+        "re-select fresh for each task" idiom on CrewAI's fixed tool set.
         """
-        return await _for_crewai(self._gantry, query, limit=self._default_limit if limit is None else limit, **select_kwargs)
+        return await _for_crewai(
+            self._gantry,
+            query,
+            limit=self._default_limit if limit is None else limit,
+            **select_kwargs,
+        )
 
-    def agent_builder(self, *, limit: int | None = None, score_threshold: float = 0.0, **agent_kwargs: Any) -> Any:
+    def agent_builder(
+        self, *, limit: int | None = None, score_threshold: float = 0.0, **agent_kwargs: Any
+    ) -> Any:
         """Return a builder that rebuilds a fresh ``crewai.Agent`` per call with re-selected tools.
 
         ``agent_kwargs`` (role/goal/backstory/llm/...) are forwarded to the builder.
         Call ``await builder.build(query)`` per task.
         """
         from agent_gantry.integrations.frameworks.live_wrappers import GantryLiveCrewAgent
-        return GantryLiveCrewAgent(self._gantry, limit=self._default_limit if limit is None else limit, score_threshold=score_threshold, **agent_kwargs)
+
+        return GantryLiveCrewAgent(
+            self._gantry,
+            limit=self._default_limit if limit is None else limit,
+            score_threshold=score_threshold,
+            **agent_kwargs,
+        )

@@ -51,6 +51,12 @@ class AgentFrameworkAdapter:
         # Per-call (multi-step) tool injection:
         provider = af.context_provider(top_k=3, query_strategy="per_call")
         provider.attach_to(agent)
+
+    :meth:`tool_bridge` returns a concrete :class:`GantryToolBridge`. The other
+    methods (:meth:`context_provider` and the ``*_middleware`` factories) return
+    the lazily-built ``agent_framework``-native objects produced by Gantry's
+    factory classes, so their annotated return type is ``Any`` — the concrete
+    type is the dynamically-generated AF subclass, not the Gantry factory class.
     """
 
     def __init__(self, gantry: AgentGantry, *, default_top_k: int = 5) -> None:
@@ -71,7 +77,7 @@ class AgentFrameworkAdapter:
             **kwargs,
         )
 
-    def tool_bridge(self, **kwargs: Any) -> Any:
+    def tool_bridge(self, **kwargs: Any) -> GantryToolBridge:
         """Build a ``GantryToolBridge`` (query-time tool retrieval / agent building)."""
         return GantryToolBridge(self._gantry, **kwargs)
 

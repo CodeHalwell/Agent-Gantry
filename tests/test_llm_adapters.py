@@ -84,3 +84,27 @@ async def test_tools_forwards_score_threshold_and_kwargs() -> None:
     call = gantry.calls[-1]
     assert call["score_threshold"] == 0.5
     assert call["namespaces"] == ["x"]
+
+
+async def test_dialects_resolve_against_real_gantry() -> None:
+    """Each adapter's dialect resolves end-to-end against a real gantry (not mocked).
+
+    Confirms the dialect strings — including ``groq`` / ``mistral`` / ``gemini`` —
+    are registered in the schema-dialect registry and produce real provider
+    schemas (i.e. ``retrieve_tools(dialect=...)`` doesn't raise or mis-route).
+    """
+    from agent_gantry import AgentGantry
+
+    gantry = AgentGantry()
+
+    @gantry.register(tags=["weather"])
+    def get_weather(city: str) -> str:
+        """Get the weather for a city."""
+        return "sunny"
+
+    await gantry.sync()
+
+    for adapter_cls, _dialect in _ADAPTERS:
+        tools = await adapter_cls(gantry).tools("what's the weather?", limit=1)
+        assert isinstance(tools, list) and tools, f"{adapter_cls.__name__}: no tools"
+        assert isinstance(tools[0], dict), f"{adapter_cls.__name__}: not a schema dict"

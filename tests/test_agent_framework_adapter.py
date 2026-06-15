@@ -31,3 +31,11 @@ def test_adapter_exposes_expected_methods() -> None:
         "tool_choice_middleware",
     ):
         assert callable(getattr(adapter, name)), name
+
+
+def test_tool_bridge_returns_concrete_gantry_tool_bridge() -> None:
+    """tool_bridge() builds a concrete GantryToolBridge — no agent-framework needed."""
+    from agent_gantry.agent_framework import GantryToolBridge
+
+    bridge = AgentFrameworkAdapter(object()).tool_bridge()
+    assert isinstance(bridge, GantryToolBridge)

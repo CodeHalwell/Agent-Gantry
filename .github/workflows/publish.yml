@@ -118,6 +118,9 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+          # Idempotent re-runs: PyPI is append-only and the tag/release step below
+          # is the authoritative record, so skipping an already-published version
+          # (e.g. when re-running after a tag/release-step failure) is safe.
           skip-existing: true
 
       # On a manual publish, record the release in git: tag the checked-out commit
@@ -131,7 +134,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          version=$(python3 -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          version=$(grep -m1 -E '^version = ' pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')
           git config --local user.name "github-actions[bot]"
           git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if git rev-parse "v$version" >/dev/null 2>&1; then

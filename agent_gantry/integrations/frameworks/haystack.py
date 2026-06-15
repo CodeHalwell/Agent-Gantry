@@ -91,11 +91,16 @@ class HaystackAdapter:
     ) -> list[Any]:
         """Re-select Haystack ``Tool``s for THIS call's ``query`` (per-call selection).
 
-        Same selection surface as :meth:`select` (``score_threshold``,
-        ``namespaces``, ``tools_already_used`` via ``**select_kwargs``).
+        Behaviourally identical to :meth:`select` (same selection surface:
+        ``score_threshold`` / ``namespaces`` / ``tools_already_used`` via
+        ``**select_kwargs``); provided as a clearly-named entry point for the
+        "re-select fresh for each call" idiom on Haystack's fixed tool set.
         """
         return await _for_haystack(
-            self._gantry, query, limit=self._default_limit if limit is None else limit, **select_kwargs
+            self._gantry,
+            query,
+            limit=self._default_limit if limit is None else limit,
+            **select_kwargs,
         )
 
     def tool_invoker_builder(
