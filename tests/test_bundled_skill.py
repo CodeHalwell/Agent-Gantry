@@ -26,7 +26,9 @@ def _read_frontmatter(skill_md: Path) -> dict[str, str]:
     """Parse the ``name``/``description`` YAML frontmatter from SKILL.md."""
     text = skill_md.read_text(encoding="utf-8")
     assert text.startswith("---"), "SKILL.md must open with a YAML frontmatter block"
-    _, frontmatter, _body = text.split("---", 2)
+    # Split only on lines that are exactly "---" so a literal "---" inside the
+    # description can never carve up the frontmatter incorrectly.
+    _, frontmatter, _body = re.split(r"^---\s*$", text, maxsplit=2, flags=re.MULTILINE)
     data = yaml.safe_load(frontmatter)
     assert isinstance(data, dict), "frontmatter must be a YAML mapping"
     assert "name" in data, "frontmatter is missing required 'name'"
@@ -120,8 +122,11 @@ def test_cli_install_skill_rejects_target_and_claude_together(
     """--target and --claude are mutually exclusive (argparse exits with code 2)."""
     with pytest.raises(SystemExit) as exc:
         main(["install-skill", "--target", "./x", "--claude"])
+    # Exit code 2 is argparse's documented "usage error" contract; the exact
+    # wording of the conflict message is an internal detail, so assert only that
+    # the offending option is named in stderr rather than pinning the phrasing.
     assert exc.value.code == 2
-    assert "not allowed with" in capsys.readouterr().err
+    assert "--claude" in capsys.readouterr().err
 
 
 def test_cli_install_skill_print_path(capsys: pytest.CaptureFixture[str]) -> None:

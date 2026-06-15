@@ -183,6 +183,9 @@ def main(argv: list[str] | None = None) -> int:
             except FileNotFoundError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
+        # --target keeps its "./skills" default even when --claude is set
+        # (argparse always applies defaults), so branch on --claude explicitly.
+        # install_to() expands the leading ~ via Path.expanduser().
         target = "~/.claude/skills" if args.claude else args.target
         try:
             dst = install_to(target, overwrite=args.overwrite)
