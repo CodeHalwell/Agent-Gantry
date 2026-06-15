@@ -1,0 +1,13 @@
+---
+import '../styles/global.css';
+interface Link { label: string; href: string }
+interface Section { section: string; links: Link[] }
+const { title = 'Agent-Gantry Docs', description = 'Universal tool orchestration for LLM agents.' } = Astro.props;
+const nav: Section[] = [
+  { section: 'Start', links: [{label:'Home',href:'/Agent-Gantry/'},{label:'Quickstart',href:'/Agent-Gantry/docs/getting-started/'},{label:'Implementation Journey',href:'/Agent-Gantry/docs/journey/'}]},
+  { section: 'Core', links: [{label:'Architecture',href:'/Agent-Gantry/docs/architecture/'},{label:'Configuration',href:'/Agent-Gantry/docs/configuration/'},{label:'API Reference',href:'/Agent-Gantry/docs/api/'}]},
+  { section: 'Integrations', links: [{label:'Frameworks',href:'/Agent-Gantry/docs/frameworks/'},{label:'Providers',href:'/Agent-Gantry/docs/providers/'},{label:'Operations',href:'/Agent-Gantry/docs/operations/'}]},
+];
+---
+<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width"/><meta name="description" content={description}/><title>{title}</title></head>
+<body><div class="shell"><aside class="sidebar"><a class="brand" href="/Agent-Gantry/"><span class="logo"></span><span><h1>Agent-Gantry</h1><p>v0.8.0 docs</p></span></a>{nav.map(({section,links})=><div class="nav-section"><h2>{section}</h2>{links.map(({label,href})=><a href={href}>{label}</a>)}</div>)}<div class="nav-section"><h2>Project</h2><a href="https://github.com/CodeHalwell/Agent-Gantry">GitHub</a><a href="/Agent-Gantry/docs/quick-reference/">Quick reference</a></div></aside><main class="main"><div class="topbar"><span>Context is precious. Execution is sacred. Trust is earned.</span><span class="pill">Python 3.10–3.13</span></div><div class="content"><slot /></div><footer class="footer">Built with Astro, React, and TypeScript. Documentation reflects Agent-Gantry 0.8.0.</footer></main></div></body></html>
