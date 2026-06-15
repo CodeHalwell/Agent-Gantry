@@ -30,20 +30,21 @@ pip install agent-gantry[dev]
 
 ### Optional: install the bundled Claude Skill
 
-Agent-Gantry ships a Claude Skill — a self-contained reference an agent can read to learn the library — bundled inside the wheel. Install it next to your other skills with one command:
+Agent-Gantry ships a Claude Skill — a self-contained reference following the [Anthropic Agent Skills](https://docs.claude.com/en/docs/agents-and-tools/agent-skills/overview) format that an agent can read to learn the library — bundled inside the wheel. Install it with one command:
 
 ```bash
-agent-gantry install-skill --target ./skills
+agent-gantry install-skill --claude        # → ~/.claude/skills (Claude Code finds it automatically)
+agent-gantry install-skill --target ./skills   # → a project-local skills/ dir
 ```
 
-This drops a `skills/agent-gantry/` directory in your project. Wire it into an AF agent via `SkillsProvider(skill_paths=["./skills"])` or point Claude Code at it directly. To use the bundled copy without copying:
+`--claude` drops `agent-gantry/` into Claude's personal skills directory so Claude Code discovers it with no further wiring. `--target` drops a `skills/agent-gantry/` directory wherever you point it — wire that into an AF agent via `SkillsProvider(skill_paths=["./skills"])`. To use the bundled copy in place without copying:
 
 ```python
 from agent_gantry.skills import skill_path
 print(skill_path())  # /…/site-packages/agent_gantry/skills/agent-gantry
 ```
 
-The skill covers each integration (Microsoft Agent Framework, LangChain, AutoGen, CrewAI, LlamaIndex, Semantic Kernel, Google ADK, plain SDK use), the new introspection APIs, and a debugging playbook.
+The skill covers every integration (Microsoft Agent Framework, plus native adapters for LangChain, LangGraph, LlamaIndex, CrewAI, Pydantic AI, OpenAI Agents SDK, Smolagents, Haystack, Agno, AutoGen, Semantic Kernel, Google ADK, and plain SDK use), the `ToolRefresher` multi-turn API, the introspection APIs, and a debugging playbook.
 
 ### LLM Provider SDKs
 
@@ -758,7 +759,7 @@ agent-gantry search "refund an order" --limit 3
 agent-gantry lint                              # detect tool-description authoring mistakes
 agent-gantry sim factorial fibonacci           # cosine similarity between two tools
 agent-gantry sync --dry-run                    # which tools would (re-)embed and why
-agent-gantry install-skill --target ./skills   # install the bundled Claude Skill
+agent-gantry install-skill --claude            # install the bundled Claude Skill into ~/.claude/skills
 ```
 
 `lint` flags three patterns that silently degrade routing quality: tool descriptions that name *other* registered tools (the embedding pulls them toward the wrong queries), pairs of tools with >0.85 cosine similarity (probably should be merged or differentiated), and tags that appear on more than half the registry (low discriminative value). Exit code is `1` when any issues are flagged, `0` when the registry is clean — so it drops into any CI runner that respects exit codes.

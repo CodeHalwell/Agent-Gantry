@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Bundled Claude Skill refreshed for v0.5.0** (`agent_gantry/skills/agent-gantry/SKILL.md`):
+  rewrote the framework integration guidance around the native `for_<framework>`
+  adapters and clean per-framework import namespaces (`from agent_gantry.langchain
+  import for_langchain`), added the five frameworks introduced in 0.5.0 (Pydantic AI,
+  OpenAI Agents SDK, Smolagents, Haystack, Agno), documented the deep per-turn "live"
+  providers and the `ToolRefresher` multi-turn API, and corrected the stale
+  `fetch_framework_tools` examples (the previous `framework="langchain"/"autogen"/
+  "llamaindex"` names were never valid and now point at the schema-only adapter's real
+  name set). Frontmatter still follows the Anthropic Agent Skills format
+  (`name`/`description` only). Skill trigger description expanded to the new frameworks.
+
+### Added
+
+- **`agent-gantry install-skill --claude`** installs the bundled skill straight into
+  `~/.claude/skills` so Claude Code discovers it with no further wiring (previously the
+  command only supported `--target <dir>`).
+
 ## [0.5.0] - 2026-06-14
 
 ### Added

@@ -1,6 +1,6 @@
 ---
 name: agent-gantry
-description: Use this skill when the user is writing or debugging code that uses the `agent-gantry` Python library (semantic tool routing for LLM agents). Triggers on `import agent_gantry`, mentions of `AgentGantry`, `GantryContextProvider`, `GantryToolBridge`, `gantry.register`, `with_semantic_tools`, tool retrieval / surfacing problems with Microsoft Agent Framework, LangChain, AutoGen, CrewAI, LlamaIndex, Semantic Kernel, Google ADK, A2A, or MCP. Use proactively when the code imports `agent_gantry` even if the user did not explicitly invoke the skill.
+description: Use this skill when the user is writing or debugging code that uses the `agent-gantry` Python library (semantic tool routing for LLM agents). Triggers on `import agent_gantry`, mentions of `AgentGantry`, `GantryContextProvider`, `GantryToolBridge`, `gantry.register`, `with_semantic_tools`, `for_langchain`/`for_crewai`/other `for_<framework>` adapters, `ToolRefresher`, or tool retrieval / surfacing problems with Microsoft Agent Framework, LangChain, LangGraph, AutoGen, CrewAI, LlamaIndex, Pydantic AI, OpenAI Agents SDK, Smolagents, Haystack, Agno, Semantic Kernel, Google ADK, A2A, or MCP. Use proactively when the code imports `agent_gantry` even if the user did not explicitly invoke the skill.
 ---
 
 # Agent-Gantry
@@ -14,16 +14,30 @@ This skill is the canonical reference for using the library. Read the section th
 | User's framework | API to use | Section |
 |---|---|---|
 | Microsoft Agent Framework (AF 1.x) | `GantryContextProvider` (dynamic, per-turn or per-call) or `GantryToolBridge` (static) | [Microsoft Agent Framework](#microsoft-agent-framework) |
-| LangChain / LangGraph | `fetch_framework_tools(..., framework="langchain")` then pass to `bind_tools` | [LangChain](#langchain--langgraph) |
-| AutoGen | `fetch_framework_tools(..., framework="autogen")` | [AutoGen](#autogen) |
-| CrewAI | `fetch_framework_tools(..., framework="crewai")` | [CrewAI](#crewai) |
-| LlamaIndex | `fetch_framework_tools(..., framework="llamaindex")` | [LlamaIndex](#llamaindex) |
-| Semantic Kernel | `fetch_framework_tools(..., framework="semantic_kernel")` | [Semantic Kernel](#semantic-kernel) |
-| Google ADK | `fetch_framework_tools(..., framework="google_adk")` | [Google ADK](#google-adk) |
+| LangChain | `for_langchain(gantry, query, limit=...)` → `bind_tools` | [Native framework adapters](#native-framework-adapters) |
+| LangGraph | `for_langgraph(...)` (static) or `create_gantry_react_agent(...)` (live) | [Native framework adapters](#native-framework-adapters) |
+| LlamaIndex | `for_llamaindex(...)` (static) or `gantry_function_agent(...)` (live) | [Native framework adapters](#native-framework-adapters) |
+| CrewAI | `for_crewai(...)` | [Native framework adapters](#native-framework-adapters) |
+| Pydantic AI | `for_pydantic_ai(...)` (static) or `gantry_toolset(...)` (live) | [Native framework adapters](#native-framework-adapters) |
+| OpenAI Agents SDK | `for_openai_agents(...)` (static) or `run_with_gantry(...)` (live) | [Native framework adapters](#native-framework-adapters) |
+| Smolagents | `for_smolagents(...)` | [Native framework adapters](#native-framework-adapters) |
+| Haystack | `for_haystack(...)` | [Native framework adapters](#native-framework-adapters) |
+| Agno | `for_agno(...)` | [Native framework adapters](#native-framework-adapters) |
+| AutoGen / AG2 | `for_autogen(...)` / `register_with_autogen(...)` (static) or `gantry_workbench(...)` (live) | [Native framework adapters](#native-framework-adapters) |
+| Semantic Kernel | `for_semantic_kernel(...)` / `gantry_plugin(...)` | [Native framework adapters](#native-framework-adapters) |
+| Google ADK | `for_google_adk(...)` (static) or `gantry_adk_agent(...)` (live) | [Native framework adapters](#native-framework-adapters) |
+| Any framework, re-select every turn | `ToolRefresher(gantry).refresh(messages)` | [Multi-turn re-selection](#multi-turn-re-selection-toolrefresher) |
 | Plain OpenAI / Anthropic / Gemini SDK | `@with_semantic_tools(dialect=...)` decorator | [LLM-SDK direct](#llm-sdk-direct) |
 | MCP server (expose Gantry as MCP) | `gantry.serve_mcp(mode="dynamic")` | [MCP](#mcp) |
 | A2A (expose Gantry as an A2A agent) | `gantry.serve_a2a(...)` | [A2A](#a2a) |
 | CLI inspection / linting | `agent-gantry lint / sim / sync --dry-run` | [CLI](#cli) |
+
+> **Native adapters vs. `fetch_framework_tools`.** As of v0.5.0 the per-framework
+> `for_<fw>()` helpers return the framework's **native tool objects** (e.g. a
+> LangChain `StructuredTool`, a CrewAI `BaseTool`), with execution routed through
+> `gantry.execute` (retries, timeouts, circuit breakers, security policy). Prefer
+> these. `fetch_framework_tools` still exists but only emits OpenAI-shape JSON
+> schemas and supports a smaller name set — see [its note](#schema-only-adapter-fetch_framework_tools).
 
 ## Core concepts (read first)
 
@@ -31,7 +45,9 @@ This skill is the canonical reference for using the library. Read the section th
 
 2. **`await gantry.sync()` embeds every tool.** Fingerprint-based change detection means only modified tools re-embed on subsequent calls. With paid embedders, wrap the embedder in `CachedEmbedder` to persist across cold starts.
 
-3. **`gantry.retrieve(...)` returns a `RetrievalResult`.** That's the universal API. The high-level integrations (`GantryContextProvider`, `GantryToolBridge`, `fetch_framework_tools`, `@with_semantic_tools`) are thin wrappers around it that emit framework-specific schema shapes.
+3. **`gantry.retrieve(...)` returns a `RetrievalResult`.** That's the universal API. The high-level integrations (`GantryContextProvider`, `GantryToolBridge`, the `for_<fw>` native adapters, `ToolRefresher`, `@with_semantic_tools`) are thin wrappers around it that emit framework-specific shapes.
+
+   Every native adapter is `for_<fw>(gantry, query, *, limit=3, **select_kwargs)` and shares the same selection knobs (`score_threshold`, `namespaces`, `tools_already_used`). Import it from the clean per-framework namespace — `from agent_gantry.langchain import for_langchain`. Importing `agent_gantry` never pulls in any third-party framework; the import is lazy and raises a `pip install ...` hint only when you call the adapter.
 
 4. **`score_threshold` is opt-in filtering.** Default is `0.0` (no filtering). Use `score_threshold="relative:0.8"` for length-robust filtering — that keeps anything within 80% of the top score. Fixed absolute cutoffs degrade badly on long, instruction-style queries because the embedding gets diluted.
 
@@ -197,90 +213,98 @@ agent = Agent(
 )
 ```
 
-## LangChain / LangGraph
+## Native framework adapters
+
+For LangChain, LangGraph, LlamaIndex, CrewAI, Pydantic AI, OpenAI Agents SDK, Smolagents, Haystack, Agno, AutoGen/AG2, Semantic Kernel, and Google ADK, use the native `for_<fw>` adapter. It selects the top-K relevant tools and returns the framework's **native tool objects**, with every call still routed through `gantry.execute`.
 
 ```python
-from langchain_openai import ChatOpenAI
 from agent_gantry import AgentGantry
-from agent_gantry.integrations import fetch_framework_tools
+from agent_gantry.langchain import for_langchain     # clean per-framework namespace
 
 gantry = AgentGantry()
 # ... register tools, await gantry.sync() ...
 
-tools = await fetch_framework_tools(
-    gantry, "search the web for X", framework="langchain", limit=5
-)
-
-llm = ChatOpenAI(model="gpt-5.5").bind_tools(tools)
-response = await llm.ainvoke("...")
+tools = await for_langchain(gantry, "email the quarterly report to finance", limit=3)
+# hand `tools` straight to a LangChain agent / ChatModel.bind_tools(tools)
 ```
 
-LangGraph: build the tools the same way, then add them to the graph's `ToolNode` or pass to `create_react_agent(llm, tools)`.
+Every adapter has the identical signature `for_<fw>(gantry, query, *, limit=3, **select_kwargs)` and the same per-framework namespace (`agent_gantry.<framework>`):
 
-## AutoGen
+| Framework | Static adapter | Native object | Namespace import |
+|---|---|---|---|
+| LangChain | `for_langchain` | `StructuredTool` | `from agent_gantry.langchain import for_langchain` |
+| LangGraph | `for_langgraph` | LangChain `StructuredTool` | `from agent_gantry.langgraph import for_langgraph` |
+| LlamaIndex | `for_llamaindex` | `FunctionTool` | `from agent_gantry.llamaindex import for_llamaindex` |
+| CrewAI | `for_crewai` | `crewai.tools.BaseTool` | `from agent_gantry.crewai import for_crewai` |
+| Pydantic AI | `for_pydantic_ai` | `pydantic_ai.tools.Tool` | `from agent_gantry.pydantic_ai import for_pydantic_ai` |
+| OpenAI Agents SDK | `for_openai_agents` | `agents.FunctionTool` | `from agent_gantry.openai_agents import for_openai_agents` |
+| Smolagents | `for_smolagents` | `smolagents.Tool` | `from agent_gantry.smolagents import for_smolagents` |
+| Haystack | `for_haystack` | `haystack.tools.Tool` | `from agent_gantry.haystack import for_haystack` |
+| Agno | `for_agno` | `agno.tools.function.Function` | `from agent_gantry.agno import for_agno` |
+| AutoGen / AG2 | `for_autogen`, `register_with_autogen` | callables + `register_function` | `from agent_gantry.autogen import for_autogen` |
+| Semantic Kernel | `for_semantic_kernel`, `gantry_plugin` | `@kernel_function` `KernelFunction` | `from agent_gantry.semantic_kernel import for_semantic_kernel` |
+| Google ADK | `for_google_adk` | `google.adk.tools.FunctionTool` | `from agent_gantry.google_adk import for_google_adk` |
+
+Need one conversion at a time (you already hold the selected specs)? Use `spec_to_<fw>(spec)` with specs from `GantryToolset(gantry).select(query, limit=...)`.
 
 ```python
-from autogen_agentchat.agents import AssistantAgent
-from autogen_ext.models.openai import OpenAIChatCompletionClient
-from agent_gantry.integrations import fetch_framework_tools
+from agent_gantry.integrations.frameworks import GantryToolset, spec_to_crewai
 
-tools = await fetch_framework_tools(
-    gantry, "math operations", framework="autogen", limit=3
-)
-
-agent = AssistantAgent(
-    name="assistant",
-    model_client=OpenAIChatCompletionClient(model="gpt-5.5"),
-    tools=tools,
-)
+specs = await GantryToolset(gantry).select("research and writing", limit=4)
+crew_tools = [spec_to_crewai(s) for s in specs]
 ```
 
-## CrewAI
+### Deep per-turn "live" providers
+
+The `for_<fw>` helpers are *static* — select once, hand over a fixed list. The **live** providers hook each framework's own per-turn lifecycle so Gantry re-selects tools on **every turn**, matching `GantryContextProvider` depth for Microsoft Agent Framework. Import them lazily from the per-framework namespace.
 
 ```python
-from crewai import Agent, Task, Crew
-from agent_gantry.integrations import fetch_framework_tools
-
-tools = await fetch_framework_tools(
-    gantry, "research and writing", framework="crewai", limit=4
-)
-
-researcher = Agent(
-    role="Researcher",
-    goal="Find accurate information",
-    backstory="...",
-    tools=tools,
-)
+from agent_gantry.llamaindex import gantry_function_agent
+agent = gantry_function_agent(gantry, llm)   # re-selects tools each step
 ```
 
-## LlamaIndex
+| Framework | Live entry point | Native hook |
+|---|---|---|
+| LlamaIndex | `gantry_tool_retriever` / `gantry_function_agent` | `FunctionAgent(tool_retriever=…)` |
+| Pydantic AI | `gantry_toolset` | `AbstractToolset.get_tools()` |
+| AutoGen | `gantry_workbench` | `Workbench.list_tools()` |
+| Google ADK | `gantry_before_model_callback` / `gantry_adk_agent` | `Agent(before_model_callback=…)` |
+| LangGraph | `create_gantry_react_agent` / `acreate_gantry_react_agent` | dynamic `model` callable (re-binds tools per turn) |
+| Semantic Kernel | `GantryFunctionProvider` / `refresh_kernel_tools` | per-invocation plugin refresh |
+| OpenAI Agents SDK | `run_with_gantry` / `GantryAgentSession` / `gantry_run_hooks` | `RunHooks.on_llm_start` + per-run refresh |
+
+Frameworks whose tool list is **fixed at agent construction** (CrewAI, Agno, Haystack, Smolagents) can't re-advertise tools mid-run; their live wrappers (`GantryLiveCrewAgent`, `GantryLiveAgnoAgent`, `gantry_haystack_tools`, `GantryLiveSmolAgent`, all under `agent_gantry.integrations.frameworks`) re-select and rebuild the agent on each top-level call.
+
+## Multi-turn re-selection (ToolRefresher)
+
+`ToolRefresher` generalizes the per-call retrieval pattern to **any** framework without a native live hook: re-rank the whole registry on every turn so the agent can pivot tools as the task changes.
 
 ```python
-from llama_index.llms.openai import OpenAI
-from agent_gantry.integrations import fetch_framework_tools
+from agent_gantry.integrations import ToolRefresher
 
-tools = await fetch_framework_tools(
-    gantry, "data retrieval", framework="llamaindex", limit=3
-)
-# LlamaIndex consumes OpenAI-shape tool schemas directly.
+refresher = ToolRefresher(gantry, limit=3, dialect="openai")
+
+# Each turn, pass the running message list. Selection is recomputed fresh and
+# tools already used are deprioritized so the agent keeps moving forward.
+tools = await refresher.refresh(messages)        # dialect schemas
+specs = await refresher.refresh_specs(messages)  # ToolSpec objects
 ```
 
-## Semantic Kernel
+The default query generator (`agent_gantry.query.latest_activity`) is **recency-aware**, so one refresher serves both styles with no config:
+
+- **Autonomous agents / tool pipelines** — newest message is a tool result, so that result's *content* selects the next tool (`fetch → clean → train → evaluate → report`).
+- **Conversational agents** — newest message is the user's, so their new request drives selection (`weather → flights → hotel → email`).
+
+Force one behaviour with `query_generator=last_user_text` or `last_tool_result`.
+
+## Schema-only adapter (`fetch_framework_tools`)
+
+The legacy adapter returns OpenAI-shape JSON schemas (not native objects) and supports a smaller, hyphen/underscore-sensitive name set: `"langgraph"`, `"semantic-kernel"`, `"crew_ai"`, `"google_adk"`, `"strands"`, `"agent_framework"`. Prefer `for_<fw>` for the frameworks listed above; reach for this only when you want raw schemas (e.g. a framework that just wants OpenAI tool dicts).
 
 ```python
 from agent_gantry.integrations import fetch_framework_tools
 
-tools = await fetch_framework_tools(
-    gantry, "translate documents", framework="semantic_kernel", limit=3
-)
-```
-
-## Google ADK
-
-```python
-from agent_gantry.integrations import fetch_framework_tools
-
-tools = await fetch_framework_tools(
+schemas = await fetch_framework_tools(
     gantry, "code execution", framework="google_adk", limit=3
 )
 ```
@@ -364,6 +388,7 @@ agent-gantry search "refund order" --limit 3   # semantic search
 agent-gantry lint                              # detect tool-description authoring mistakes
 agent-gantry sim toolA toolB                   # cosine similarity between two tools
 agent-gantry sync --dry-run                    # which tools would (re-)embed and why
+agent-gantry install-skill --claude            # install THIS skill into ~/.claude/skills
 ```
 
 `lint` flags three patterns that silently degrade routing quality:
@@ -496,8 +521,9 @@ Cache is keyed by `(embedder_id, sha256(text))` — different models / dimension
 | `fallback_chain(*gens)` | Try each in order until one returns non-empty |
 | `keyword_focused` | Long instructional queries dilute the signal |
 | `truncated(gen, max_chars=200)` | Cap the query length, defaults to keeping the tail |
+| `latest_activity` (default for `ToolRefresher`) | Recency-aware: picks user text *or* last tool result, whichever is newest |
 
-Default for `query_strategy="per_call"` is `fallback_chain(last_tool_result, last_user_text)` — it adapts as the agent reasons.
+Default for `query_strategy="per_call"` is `fallback_chain(last_tool_result, last_user_text)` — it adapts as the agent reasons. `ToolRefresher` defaults to `latest_activity`, which serves autonomous and conversational agents alike.
 
 ## API reference quick-card
 
@@ -520,12 +546,23 @@ from agent_gantry.integrations import (
     GantryApprovalMiddleware,
     GantryObservabilityMiddleware,
     GantryToolChoiceMiddleware,   # round-by-round tool_choice modulation
-    fetch_framework_tools,        # multi-framework adapter (OpenAI-shape)
+    ToolRefresher,                # framework-agnostic multi-turn re-selection
+    fetch_framework_tools,        # legacy schema-only adapter (OpenAI-shape)
 )
+from agent_gantry.integrations.frameworks import (
+    GantryToolset,                # selection core behind every for_<fw>
+    ToolSpec,                     # framework-neutral tool handle (.ainvoke/.invoke)
+    spec_from_tool,
+    for_langchain, for_langgraph, for_llamaindex, for_crewai,
+    for_pydantic_ai, for_openai_agents, for_smolagents, for_haystack,
+    for_agno, for_autogen, for_semantic_kernel, for_google_adk,
+    # ...and matching spec_to_<fw> converters.
+)
+# Or the clean per-framework namespace: from agent_gantry.langchain import for_langchain
 from agent_gantry.query import (
     last_user_text, last_assistant_text, last_tool_result,
     concatenate_recent, fallback_chain,
-    keyword_focused, truncated,
+    keyword_focused, truncated, latest_activity,
 )
 from agent_gantry.adapters.embedders.cached import CachedEmbedder
 from agent_gantry.utils.registry_linter import (

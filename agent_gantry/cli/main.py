@@ -94,12 +94,18 @@ def main(argv: list[str] | None = None) -> int:
     skill_parser.add_argument(
         "--target",
         default="./skills",
-        help="Destination directory (default: ./skills).",
+        help="Destination directory (default: ./skills). Ignored when --claude is set.",
+    )
+    skill_parser.add_argument(
+        "--claude",
+        action="store_true",
+        help="Install into Claude's personal skills directory (~/.claude/skills) "
+        "so Claude Code discovers it automatically.",
     )
     skill_parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="Replace an existing agent-gantry directory in --target.",
+        help="Replace an existing agent-gantry directory in the target.",
     )
     skill_parser.add_argument(
         "--print-path",
@@ -176,8 +182,9 @@ def main(argv: list[str] | None = None) -> int:
             except FileNotFoundError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
+        target = "~/.claude/skills" if args.claude else args.target
         try:
-            dst = install_to(args.target, overwrite=args.overwrite)
+            dst = install_to(target, overwrite=args.overwrite)
         except FileExistsError as exc:
             print(f"error: {exc}", file=sys.stderr)
             print("  Re-run with --overwrite to replace.", file=sys.stderr)
