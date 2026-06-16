@@ -8,7 +8,6 @@ OpenAPI operation, or A2A agent skill).
 from __future__ import annotations
 
 import hashlib
-import warnings
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal
@@ -16,20 +15,6 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agent_gantry.schema.base import HealthMetrics, reject_newlines
-
-
-def _warn_schema_deprecation(method: str, dialect: str) -> None:
-    """Emit the deprecation warning shared by the legacy ``to_*_schema`` methods.
-
-    ``stacklevel=3`` so the warning points at the user's call site
-    (caller -> ``to_*_schema`` -> here) rather than this helper.
-    """
-    warnings.warn(
-        f"{method}() is deprecated, use to_dialect('{dialect}') instead. "
-        "This method will be removed in version 1.0.",
-        DeprecationWarning,
-        stacklevel=3,
-    )
 
 
 class SchemaDialect(str, Enum):
@@ -164,36 +149,6 @@ class ToolDefinition(BaseModel):
         """
         content = f"{self.name}:{self.version}:{self.description}:{self.parameters_schema}"
         return hashlib.sha256(content.encode()).hexdigest()[:16]
-
-    def to_openai_schema(self) -> dict[str, Any]:
-        """
-        Convert to OpenAI function calling format.
-
-        .. deprecated::
-            Use ``to_dialect("openai")`` instead. Will be removed in 1.0.
-        """
-        _warn_schema_deprecation("to_openai_schema", "openai")
-        return self.to_dialect("openai")
-
-    def to_anthropic_schema(self) -> dict[str, Any]:
-        """
-        Convert to Anthropic tool format.
-
-        .. deprecated::
-            Use ``to_dialect("anthropic")`` instead. Will be removed in 1.0.
-        """
-        _warn_schema_deprecation("to_anthropic_schema", "anthropic")
-        return self.to_dialect("anthropic")
-
-    def to_gemini_schema(self) -> dict[str, Any]:
-        """
-        Convert to Gemini function format.
-
-        .. deprecated::
-            Use ``to_dialect("gemini")`` instead. Will be removed in 1.0.
-        """
-        _warn_schema_deprecation("to_gemini_schema", "gemini")
-        return self.to_dialect("gemini")
 
     def to_dialect(self, dialect: SchemaDialect | str, **options: Any) -> dict[str, Any]:
         """
