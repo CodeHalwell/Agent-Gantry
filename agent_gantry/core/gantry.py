@@ -126,14 +126,22 @@ class AgentGantry:
         self._mcp_registry = None
         self._mcp_router = None
         self._mcp_manager = None
-        # All imports AND constructions live in one try so a partially installed
-        # MCP stack (any of the three failing) degrades to None across the board
-        # rather than leaving a half-wired trio or raising.
+
+        # Tier 1 — the optional 'mcp' package being absent is the expected, quiet
+        # path: log at DEBUG and leave MCP disabled.
         try:
             from agent_gantry.core.mcp_manager import MCPManager
             from agent_gantry.core.mcp_registry import MCPRegistry
             from agent_gantry.core.mcp_router import MCPRouter
+        except ImportError:
+            logger.debug("MCP support not available (install 'mcp' package to enable)")
+            return
 
+        # Tier 2 — with the package importable, a construction failure is
+        # unexpected (broken/partial install). Surface it at WARNING rather than
+        # hiding it at DEBUG, but still degrade to no-MCP across the board so a
+        # bad MCP stack never crashes AgentGantry() construction.
+        try:
             self._mcp_registry = MCPRegistry()
             self._mcp_router = MCPRouter(
                 vector_store=self._vector_store,
@@ -147,10 +155,8 @@ class AgentGantry:
                 router=self._mcp_router,
                 get_embedder_id=self._sync_manager.get_embedder_id,
             )
-        except ImportError:
-            logger.debug("MCP support not available (install 'mcp' package to enable)")
-            # Re-null in case registry/router were assigned before a later
-            # construction (e.g. MCPManager) raised — leave no half-wired trio.
+        except Exception:
+            logger.warning("MCP components failed to initialize; MCP disabled.", exc_info=True)
             self._mcp_registry = None
             self._mcp_router = None
             self._mcp_manager = None
