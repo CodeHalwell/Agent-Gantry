@@ -9,8 +9,7 @@ import CodeBlock from '../../../../components/CodeBlock.astro';
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/agent-framework/advanced/">Advanced Agent Framework usage →</a></p>
 
   <h2>Install</h2>
-  <CodeBlock lang="bash" code={`uv add "agent-gantry[agent-frameworks]"
-# or: pip install "agent-gantry[agent-frameworks]"`} />
+  <CodeBlock lang="bash" code={`uv add "agent-gantry[agent-frameworks]"`} />
 
   <h2>Basic page: GantryContextProvider (recommended)</h2>
   <p>The idiomatic path is <code>GantryContextProvider</code> (via <code>AgentFrameworkAdapter</code>). AF calls <code>before_run</code> on every invocation, retrieves semantically relevant tools from Gantry, and injects them into the session — no pre-baked tool list required.</p>

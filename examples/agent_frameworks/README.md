@@ -33,6 +33,7 @@ For per-step (multi-turn) re-selection within one run, use `ToolRefresher`
 
 - `agent_framework_provider_example.py` — **recommended**: AF-native integration via `GantryContextProvider`. The provider plugs into `Agent(context_providers=[...])` and dynamically injects the top-k tools for each `agent.run(...)` — no pre-baking, coexists with `SkillsProvider`, and flows through every workflow builder unchanged. Includes a `skills=True` flag for always-on skill-bound tools and an `always_include` pin list.
 - `agent_framework_trace_events_example.py` — **per-call routing with built-in observability**. Shows the multi-step pattern (`query_strategy="per_call"`) where the tool surface re-selects every chat round, wired with one `provider.attach_to(agent, trace=True)` call. Demonstrates the library's batteries-included observability: the built-in console **trace** middleware (no hand-rolled `@function_middleware`), the framework-agnostic `gantry.on_tool_call(...)` **event hook**, per-round `provider.selections` history, and `agent_gantry.render_result(...)`. Uses stdlib-only tools, so it runs without extra API keys (beyond your chat client).
+- `agent_framework_tui_demo.py` — **Textual TUI dashboard** for screenshots and demos. Three-panel view: full tool registry, per-round semantic selection (via `GantryContextProvider.dry_run_retrieve`), and execution log (`gantry.execute`). Press **D** for a scripted two-step demo (no API key); press **L** for a live AF agent when `OPENAI_API_KEY` is set. From this repo: `uv sync --extra agent-frameworks && uv pip install textual`, then `uv run examples/agent_frameworks/agent_framework_tui_demo.py`. Optional: `--embedder nomic` for stronger retrieval (requires `agent-gantry[nomic]`; embeddings sync before the TUI starts).
 - `agent_framework_example.py`: Microsoft Agent Framework **1.5.0** integration via `GantryToolBridge` (still useful when the tool set is *static* and known at agent-construction time). Demonstrates three construction patterns:
   1. `bridge.build_agent(client, query, ...)` — convenience one-liner via `client.as_agent()`.
   2. `bridge.as_agent(client, query, ...)` — direct `Agent(client, ...)` construction; preferred for `WorkflowBuilder` because the result is a first-class `Agent`.
@@ -51,18 +52,17 @@ For per-step (multi-turn) re-selection within one run, use `ToolRefresher`
 You can install all framework integrations at once or install individual frameworks as needed.
 
 ```bash
-# Option 1: Install all framework dependencies with pip
-pip install "agent-gantry[agent-frameworks]"
+# Option 1: Install all framework dependencies (uv project)
+uv add "agent-gantry[agent-frameworks]"
 
-# Option 2: Install individual frameworks with pip
-pip install agent-gantry langchain langchain-openai langgraph
-pip install agent-gantry crewai
-pip install agent-gantry autogen-agentchat autogen-ext[openai]
+# Option 2: Install individual frameworks
+uv add agent-gantry langchain langchain-openai langgraph
+uv add agent-gantry crewai
+uv add agent-gantry autogen-agentchat "autogen-ext[openai]"
 # etc.
 
-# Option 3: If using uv for project dependency management
-uv add langchain langchain-openai langgraph crewai autogen-agentchat autogen-ext[openai] \
-	llama-index-core llama-index-llms-openai semantic-kernel agent-framework google-adk
+# Option 3: Developing in the agent-gantry repo
+uv sync --extra agent-frameworks
 ```
 
 **Note on Python Version:** These examples are verified on **Python 3.13**, but should work on any supported Agent-Gantry version (**Python 3.10+**).
