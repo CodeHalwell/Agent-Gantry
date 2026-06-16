@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-16
+
+### Removed
+
+- **BREAKING — `ToolDefinition.to_openai_schema()`, `to_anthropic_schema()`, and
+  `to_gemini_schema()` removed.** These were thin deprecated shims over
+  `to_dialect()` with no internal or example callers. Use
+  `ToolDefinition.to_dialect("openai" | "anthropic" | "gemini", ...)` instead.
+  (`Skill` / `SkillRegistry.to_anthropic_schema` is a separate, actively-used
+  method and is unchanged.)
+
+### Fixed
+
+- **MCP initialisation no longer masks real failures.** `AgentGantry` now
+  separates the *import* guard from the *construction* guard: an expected-absent
+  MCP install is logged at DEBUG and degrades silently to no-MCP, while an
+  unexpected construction failure (e.g. a broken/partial `mcp` install) is logged
+  at WARNING with a traceback instead of being swallowed at DEBUG. Either way
+  `AgentGantry()` still constructs successfully.
+- **`GantryContextProvider` is a class again.** It is now a thin class whose
+  `__new__` delegates to a cached implementation class, so it remains valid in
+  type annotations and `isinstance()` checks return `False` rather than raising
+  `TypeError`. The `score_threshold` property is now typed `float | str` to match
+  the config (relative-threshold strings are valid).
+
+### Changed
+
+- **Internal refactors with no public-API impact.** `AgentGantry.__init__` was
+  decomposed into focused builders and the adapter/embedder factories extracted to
+  `agent_gantry/core/factories.py`; a shared `BaseFrameworkAdapter` removes the
+  per-framework boilerplate across the framework adapters; the Agent Framework
+  provider and tool bridge were split into smaller helpers with the implementation
+  class cached via `functools.cache`; and the schema layer now shares a single
+  newline validator and a common health-metric base.
+
+### Documentation
+
+- Migrated the documentation site from Jekyll to an Astro build, added
+  per-framework guide pages, and added an Agent Framework TUI example.
+
 ## [0.8.0] - 2026-06-15
 
 ### Added
@@ -1239,7 +1279,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.5.0...v0.6.0
