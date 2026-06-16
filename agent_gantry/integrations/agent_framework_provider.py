@@ -68,6 +68,7 @@ primitive (``WorkflowBuilder``, ``SequentialBuilder``, ``HandoffBuilder``,
 
 from __future__ import annotations
 
+import functools
 import inspect
 import logging
 from collections.abc import Callable
@@ -172,33 +173,21 @@ async def _maybe_await(value: Any) -> Any:
     return value
 
 
-# Cache the synthesized impl class per AF base type. Keyed by the base class
-# identity, so a test that swaps a stubbed ``ContextProvider`` for a different
-# one gets its own entry rather than a stale subclass. (Hot-reloading the real
-# AF base mid-process would return the cached subclass; not a concern in normal
-# use, where the base is imported once.)
-_IMPL_CLASS_CACHE: dict[type, type] = {}
-
-
+@functools.cache
 def _build_impl_class(base: type) -> type:
     """Build (and cache) the concrete ``ContextProvider`` subclass.
 
     ``base`` is :class:`agent_framework.ContextProvider`, imported lazily, so
     the subclass cannot be declared at module top level. It holds no per-call
     state — every value is passed to ``__init__`` — so one class is built per
-    base type and reused across all provider instances.
-    """
-    cached = _IMPL_CLASS_CACHE.get(base)
-    if cached is not None:
-        return cached
+    base type and reused across all provider instances. ``functools.cache`` keys
+    on the base identity and is thread-safe (including free-threaded builds), so
+    the slow path runs at most once per base.
 
-    # No lock: a concurrent first-call race just builds the class twice and the
-    # loser is GC'd — both are equivalent, so this is benign and a lock would be
-    # overkill for a once-per-base construction. (Atomic under CPython's GIL;
-    # would only ever build a redundant class, never corrupt the cache.)
-    #
-    # NOTE: the class body below is long (the full provider implementation);
-    # it lives in a function only because ``base`` is resolved lazily at runtime.
+    NOTE: the class body below is long (the full provider implementation); it
+    lives in a function only because ``base`` is resolved lazily at runtime.
+    """
+
     class _GantryContextProviderImpl(base):  # type: ignore[misc,valid-type]
         """Concrete ContextProvider subclass; see :class:`GantryContextProvider`."""
 
@@ -1004,7 +993,6 @@ def _build_impl_class(base: type) -> type:
                 return lookup(name)
             return None
 
-    _IMPL_CLASS_CACHE[base] = _GantryContextProviderImpl
     return _GantryContextProviderImpl
 
 
