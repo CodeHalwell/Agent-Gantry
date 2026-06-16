@@ -348,83 +348,55 @@ def _tool_approval_mode(tool_def: ToolDefinition) -> str | None:
     return None
 
 
-def _build_callable_for_tool(
-    tool_def: ToolDefinition,
-    gantry: AgentGantry,
-    *,
-    as_function_tool: bool | None = None,
-) -> Any:
+def _build_tool_execute(
+    tool_name: str, gantry: AgentGantry
+) -> Callable[..., Awaitable[str]]:
+    """Build the async callable that runs ``tool_name`` through ``gantry.execute``.
+
+    Any exception or failed ToolResult is converted into a JSON ``{"error": ...}``
+    string so the real root cause survives Agent Framework's tool runner — which
+    otherwise replaces an uncaught error with the opaque ``"Error: Function
+    failed."`` string when ``include_detailed_errors`` is off (the default).
     """
-    Build a Python callable wrapping a Gantry tool for Microsoft Agent Framework.
-
-    The callable is created with proper type annotations (using ``Annotated``
-    and Pydantic ``Field``) so that AF can auto-generate the correct function
-    schema for the LLM. This avoids sending raw JSON schemas and lets AF's
-    native function-tool infrastructure handle serialisation.
-
-    When ``agent-framework`` is importable and ``as_function_tool`` is not
-    ``False``, the callable is wrapped with ``@agent_framework.tool`` so AF
-    receives a real ``FunctionTool`` with full GA metadata
-    (``approval_mode`` derived from Gantry capabilities, description,
-    name). When AF is not installed, a plain typed async callable is
-    returned; AF 1.0 still auto-wraps those at agent construction time.
-
-    Args:
-        tool_def: The Gantry ToolDefinition to wrap.
-        gantry: The AgentGantry instance for execution.
-        as_function_tool: If ``True``, always wrap with ``@agent_framework.tool``
-            (raises ImportError when AF isn't available). If ``False``, always
-            return a bare callable. ``None`` (default) auto-detects.
-
-    Returns:
-        Either an ``agent_framework.FunctionTool`` or a bare async callable,
-        both accepted by ``Agent(tools=[...])``.
-    """
-    tool_name = tool_def.name
-    tool_desc = tool_def.description
-    params_schema = tool_def.parameters_schema
-
-    # Extract parameter info from the JSON Schema
-    properties = params_schema.get("properties", {})
-    required_params = set(params_schema.get("required", []))
 
     async def _execute(**kwargs: Any) -> str:
-        # Surface any underlying exception as a structured error string. If
-        # ``gantry.execute`` itself raises (e.g. a cross-event-loop
-        # asyncio.Lock blowup, a connection error, an unexpected validation
-        # error in the executor) the exception would otherwise propagate
-        # into Agent Framework's tool runner, which replaces it with the
-        # opaque ``"Error: Function failed."`` string when
-        # ``include_detailed_errors`` is off (the default). That makes
-        # debugging extremely hard for integrators. We convert any exception
-        # into a JSON ``{"error": "..."}`` payload so the model — and the
-        # human reading the trace — sees the real root cause.
         try:
-            result = await gantry.execute(
-                ToolCall(tool_name=tool_name, arguments=kwargs)
-            )
+            result = await gantry.execute(ToolCall(tool_name=tool_name, arguments=kwargs))
         except Exception as exc:
-            return json.dumps(
-                {"error": f"{type(exc).__name__}: {exc}"}
-            )
+            return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
         if result.status.value == "success":
             val = result.result
             return val if isinstance(val, str) else json.dumps(val)
         # Failed ToolResult: prefer the recorded error/error_type, otherwise
-        # fall back to a clear default — never the ambiguous original
-        # "Tool execution failed" with no context.
+        # fall back to a clear default — never an ambiguous message with no context.
         error_text = result.error or "tool execution failed (no error message)"
         if result.error_type and result.error_type not in error_text:
             error_text = f"{result.error_type}: {error_text}"
         return json.dumps({"error": error_text})
 
-    # Build the wrapper with proper annotations for AF
-    # AF inspects __name__, __doc__, and __annotations__ to generate schemas.
-    # Two separate named functions avoid the mypy "conditional function variant"
-    # error that arises when the same name is assigned in both if/else branches
-    # with incompatible signatures.
+    return _execute
+
+
+def _build_typed_wrapper(
+    tool_name: str,
+    tool_desc: str,
+    properties: dict[str, Any],
+    required_params: set[str],
+    execute: Callable[..., Awaitable[str]],
+) -> Callable[..., Awaitable[str]]:
+    """Wrap ``execute`` in a callable that carries AF-introspectable metadata.
+
+    AF reads ``__name__`` / ``__doc__`` / ``__annotations__`` (via the synthesized
+    ``__signature__``) to build the LLM function schema, so the wrapper exposes the
+    tool's real parameters (annotated with ``Annotated[type, Field(...)]``) instead
+    of a bare ``**kwargs``. Parameterless tools use a zero-arg variant to avoid
+    surfacing a spurious ``**kwargs``. Two separately named inner functions avoid
+    the mypy "conditional function variant" error from assigning incompatible
+    signatures to one name.
+    """
+
     async def _wrapper_no_args() -> str:
-        return await _execute()
+        return await execute()
 
     async def _wrapper_with_args(*args: Any, **kwargs: Any) -> str:
         param_names = list(properties.keys())
@@ -438,7 +410,7 @@ def _build_callable_for_tool(
                 p_name = param_names[idx]
                 if p_name not in kwargs:
                     kwargs[p_name] = value
-        return await _execute(**kwargs)
+        return await execute(**kwargs)
 
     wrapper: Callable[..., Awaitable[str]]
     if len(properties) == 0:
@@ -467,11 +439,23 @@ def _build_callable_for_tool(
     wrapper.__name__ = tool_name
     wrapper.__qualname__ = tool_name
     wrapper.__doc__ = tool_desc
+    return wrapper
 
-    # Optionally upgrade to a real AF FunctionTool so approval_mode and the
-    # rest of the GA metadata flows through. AF 1.0 also accepts bare
-    # callables (it auto-wraps them at Agent(tools=...) time), so the
-    # fallback path remains fully functional for environments without AF.
+
+def _maybe_wrap_as_function_tool(
+    wrapper: Callable[..., Awaitable[str]],
+    tool_def: ToolDefinition,
+    as_function_tool: bool | None,
+) -> Any:
+    """Optionally upgrade a bare callable to a real AF ``FunctionTool``.
+
+    Wrapping with ``@agent_framework.tool`` propagates GA metadata
+    (``approval_mode`` derived from Gantry capabilities, name, description).
+    ``as_function_tool``: ``False`` always returns the bare callable; ``True``
+    requires AF (raises ImportError if absent); ``None`` auto-detects, falling
+    back to the bare callable when AF isn't installed (AF 1.0 auto-wraps those at
+    agent-construction time).
+    """
     if as_function_tool is False:
         return wrapper
 
@@ -484,14 +468,50 @@ def _build_callable_for_tool(
             )
         return wrapper
 
-    approval_mode = _tool_approval_mode(tool_def)
-    decorated = af_tool(
+    return af_tool(
         wrapper,
-        name=tool_name,
-        description=tool_desc,
-        approval_mode=approval_mode,
+        name=tool_def.name,
+        description=tool_def.description,
+        approval_mode=_tool_approval_mode(tool_def),
     )
-    return decorated
+
+
+def _build_callable_for_tool(
+    tool_def: ToolDefinition,
+    gantry: AgentGantry,
+    *,
+    as_function_tool: bool | None = None,
+) -> Any:
+    """
+    Build a Python callable wrapping a Gantry tool for Microsoft Agent Framework.
+
+    The callable carries proper type annotations (via ``Annotated`` + Pydantic
+    ``Field``) so AF auto-generates the correct function schema for the LLM
+    instead of receiving a raw JSON schema. When ``agent-framework`` is
+    importable and ``as_function_tool`` is not ``False`` the callable is wrapped
+    as a real ``FunctionTool``; otherwise a plain typed async callable is
+    returned (AF 1.0 auto-wraps those at agent construction time).
+
+    Args:
+        tool_def: The Gantry ToolDefinition to wrap.
+        gantry: The AgentGantry instance for execution.
+        as_function_tool: If ``True``, always wrap with ``@agent_framework.tool``
+            (raises ImportError when AF isn't available). If ``False``, always
+            return a bare callable. ``None`` (default) auto-detects.
+
+    Returns:
+        Either an ``agent_framework.FunctionTool`` or a bare async callable,
+        both accepted by ``Agent(tools=[...])``.
+    """
+    params_schema = tool_def.parameters_schema
+    properties = params_schema.get("properties", {})
+    required_params = set(params_schema.get("required", []))
+
+    execute = _build_tool_execute(tool_def.name, gantry)
+    wrapper = _build_typed_wrapper(
+        tool_def.name, tool_def.description, properties, required_params, execute
+    )
+    return _maybe_wrap_as_function_tool(wrapper, tool_def, as_function_tool)
 
 
 def _json_type_to_python(json_type: str) -> type:
@@ -778,6 +798,33 @@ class GantryToolBridge:
         )
         return tools
 
+    def _warn_all_candidates_filtered(
+        self, query: str, candidate_count: int, decision: RetrievalDecision
+    ) -> None:
+        """Log a WARNING when the threshold dropped every candidate.
+
+        Reports *which* cutoff dropped them — the configured threshold plus the
+        resolved cutoff in relative mode — so an empty tool surface is
+        diagnosable rather than silent.
+        """
+        if (
+            decision.threshold_mode.startswith("relative")
+            and decision.effective_threshold is not None
+        ):
+            threshold_repr = (
+                f"{decision.threshold} (cutoff={decision.effective_threshold:.3f})"
+            )
+        else:
+            threshold_repr = repr(decision.threshold)
+        logger.warning(
+            "GantryToolBridge: score_threshold %s filtered out all %d "
+            "candidates for query %r. Top scores: %s",
+            threshold_repr,
+            candidate_count,
+            query[:80],
+            ", ".join(f"{c.name}:{c.score:.3f}" for c in decision.candidates[:5]),
+        )
+
     async def get_tools_with_decision(
         self,
         query: str,
@@ -841,31 +888,10 @@ class GantryToolBridge:
             except Exception:  # pragma: no cover - defensive
                 pass
 
-            # If threshold filtered everything out, surface a WARNING so
-            # users don't see "empty surface" without context. Always log
-            # the configured threshold (and the resolved cutoff for the
-            # relative mode) so the message explains *which* cutoff
-            # dropped the candidates, not just the mode name.
+            # If the threshold filtered everything out, surface a WARNING so
+            # users don't see an "empty surface" without context.
             if result.tools and not kept_top:
-                if decision.threshold_mode.startswith("relative") and (
-                    decision.effective_threshold is not None
-                ):
-                    threshold_repr = (
-                        f"{decision.threshold} "
-                        f"(cutoff={decision.effective_threshold:.3f})"
-                    )
-                else:
-                    threshold_repr = repr(decision.threshold)
-                logger.warning(
-                    "GantryToolBridge: score_threshold %s filtered out all %d "
-                    "candidates for query %r. Top scores: %s",
-                    threshold_repr,
-                    len(result.tools),
-                    query[:80],
-                    ", ".join(
-                        f"{c.name}:{c.score:.3f}" for c in decision.candidates[:5]
-                    ),
-                )
+                self._warn_all_candidates_filtered(query, len(result.tools), decision)
 
             logger.debug(
                 "GantryToolBridge: selected %d/%d tools for query '%s'",
@@ -1104,6 +1130,16 @@ class GantryToolBridge:
 
         return Agent(client, instructions, **agent_kwargs)
 
+    async def _build_agents_from_specs(
+        self, agent_specs: list[dict[str, Any]], *, cache: bool
+    ) -> list[Any]:
+        """Construct one AF agent per spec via :meth:`as_agent`, preserving order.
+
+        Shared by the workflow builders. Callers that need a name->agent map
+        zip the result back against ``agent_specs``.
+        """
+        return [await self.as_agent(cache=cache, **dict(spec)) for spec in agent_specs]
+
     async def build_sequential_workflow(
         self,
         agent_specs: list[dict[str, Any]],
@@ -1148,12 +1184,7 @@ class GantryToolBridge:
         _require_af_installed("build_sequential_workflow")
         from agent_framework.orchestrations import SequentialBuilder
 
-        ordered: list[Any] = []
-        for spec in agent_specs:
-            spec = dict(spec)
-            agent = await self.as_agent(cache=cache, **spec)
-            ordered.append(agent)
-
+        ordered = await self._build_agents_from_specs(agent_specs, cache=cache)
         if not ordered:
             raise ValueError("agent_specs must contain at least one agent.")
 
@@ -1211,14 +1242,10 @@ class GantryToolBridge:
         _require_af_installed("build_handoff_workflow")
         from agent_framework.orchestrations import HandoffBuilder
 
-        built: dict[str, Any] = {}
-        ordered: list[Any] = []
-        for spec in agent_specs:
-            spec = dict(spec)
-            agent_name: str = spec["name"]
-            agent = await self.as_agent(cache=cache, **spec)
-            built[agent_name] = agent
-            ordered.append(agent)
+        ordered = await self._build_agents_from_specs(agent_specs, cache=cache)
+        built: dict[str, Any] = {
+            spec["name"]: agent for spec, agent in zip(agent_specs, ordered)
+        }
 
         if not ordered:
             raise ValueError("agent_specs must contain at least one agent.")
@@ -1318,14 +1345,10 @@ class GantryToolBridge:
         _require_af_installed("build_workflow")
         from agent_framework import AgentExecutor, WorkflowAgent, WorkflowBuilder
 
-        built_agents: dict[str, Any] = {}
-        ordered_agents: list[Any] = []
-        for spec in agent_specs:
-            spec = dict(spec)
-            agent_name: str = spec["name"]
-            agent = await self.as_agent(cache=cache, **spec)
-            built_agents[agent_name] = agent
-            ordered_agents.append(agent)
+        ordered_agents = await self._build_agents_from_specs(agent_specs, cache=cache)
+        built_agents: dict[str, Any] = {
+            spec["name"]: agent for spec, agent in zip(agent_specs, ordered_agents)
+        }
 
         if not ordered_agents:
             raise ValueError("agent_specs must contain at least one agent.")
