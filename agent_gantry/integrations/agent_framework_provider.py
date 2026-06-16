@@ -172,6 +172,11 @@ async def _maybe_await(value: Any) -> Any:
     return value
 
 
+# Cache the synthesized impl class per AF base type. Keyed by the base class
+# identity, so a test that swaps a stubbed ``ContextProvider`` for a different
+# one gets its own entry rather than a stale subclass. (Hot-reloading the real
+# AF base mid-process would return the cached subclass; not a concern in normal
+# use, where the base is imported once.)
 _IMPL_CLASS_CACHE: dict[type, type] = {}
 
 

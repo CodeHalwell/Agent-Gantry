@@ -799,7 +799,7 @@ class GantryToolBridge:
         return tools
 
     def _warn_all_candidates_filtered(
-        self, query: str, candidate_count: int, decision: RetrievalDecision
+        self, query: str, total_candidates: int, decision: RetrievalDecision
     ) -> None:
         """Log a WARNING when the threshold dropped every candidate.
 
@@ -820,7 +820,7 @@ class GantryToolBridge:
             "GantryToolBridge: score_threshold %s filtered out all %d "
             "candidates for query %r. Top scores: %s",
             threshold_repr,
-            candidate_count,
+            total_candidates,
             query[:80],
             ", ".join(f"{c.name}:{c.score:.3f}" for c in decision.candidates[:5]),
         )

@@ -358,7 +358,12 @@ class BaseFrameworkAdapter:
 
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
-        """Wrap a single :class:`ToolSpec` as the framework's native tool object."""
+        """Wrap a single :class:`ToolSpec` as the framework's native tool object.
+
+        Subclasses must re-declare this as a ``@staticmethod`` (it is part of the
+        public API — callers use ``SomeAdapter.convert(spec)`` without an
+        instance — and :meth:`select` dispatches through ``self.convert``).
+        """
         raise NotImplementedError
 
     async def select(
