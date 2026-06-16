@@ -12,7 +12,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import GantryToolset, ToolSpec
+from agent_gantry.integrations.frameworks.base import (
+    BaseFrameworkAdapter,
+    GantryToolset,
+    ToolSpec,
+)
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
@@ -94,7 +98,7 @@ async def _for_crewai(
     return [_spec_to_crewai(s) for s in specs]
 
 
-class CrewAIAdapter:
+class CrewAIAdapter(BaseFrameworkAdapter):
     """Route Gantry-selected tools into CrewAI.
 
     Static slice (``crewai.tools.BaseTool`` objects) plus per-call live helpers
@@ -102,18 +106,10 @@ class CrewAIAdapter:
     fresh agent per call). Every call routes through ``gantry.execute``.
     """
 
-    def __init__(self, gantry: AgentGantry, *, default_limit: int = 3) -> None:
-        self._gantry = gantry
-        self._default_limit = default_limit
-
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a CrewAI ``BaseTool``."""
         return _spec_to_crewai(spec)
-
-    async def select(self, query: str, *, limit: int | None = None, **select_kwargs: Any) -> list[Any]:
-        """Select tools for ``query`` as CrewAI ``BaseTool``s (static slice)."""
-        return await _for_crewai(self._gantry, query, limit=self._default_limit if limit is None else limit, **select_kwargs)
 
     async def live_tools(self, query: str, *, limit: int | None = None, **select_kwargs: Any) -> list[Any]:
         """Re-select CrewAI ``BaseTool``s for THIS call's ``query`` (per-call selection).

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from agent_gantry.integrations.frameworks.base import BaseFrameworkAdapter
 from agent_gantry.integrations.frameworks.langchain import (
     _for_langchain,
     _spec_to_langchain,
@@ -39,7 +40,7 @@ async def _for_langgraph(
     return await _for_langchain(gantry, query, limit=limit, **select_kwargs)
 
 
-class LangGraphAdapter:
+class LangGraphAdapter(BaseFrameworkAdapter):
     """Route Gantry-selected tools into LangGraph.
 
     Static slice (LangChain ``BaseTool`` objects for a ``ToolNode`` / prebuilt
@@ -53,25 +54,10 @@ class LangGraphAdapter:
         agent = await adapter.areact_agent(chat_model, limit=5)           # live
     """
 
-    def __init__(self, gantry: AgentGantry, *, default_limit: int = 3) -> None:
-        self._gantry = gantry
-        self._default_limit = default_limit
-
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a LangChain ``StructuredTool``."""
         return _spec_to_langgraph(spec)
-
-    async def select(
-        self, query: str, *, limit: int | None = None, **select_kwargs: Any
-    ) -> list[Any]:
-        """Select tools for ``query`` as LangChain ``BaseTool``s (static slice)."""
-        return await _for_langgraph(
-            self._gantry,
-            query,
-            limit=self._default_limit if limit is None else limit,
-            **select_kwargs,
-        )
 
     # -- deep per-turn (live) -------------------------------------------- #
     def react_agent(

@@ -12,7 +12,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import GantryToolset, ToolSpec
+from agent_gantry.integrations.frameworks.base import (
+    BaseFrameworkAdapter,
+    GantryToolset,
+    ToolSpec,
+)
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
@@ -87,16 +91,12 @@ async def _gantry_plugin(
     return {f.name: f for f in functions}
 
 
-class SemanticKernelAdapter:
+class SemanticKernelAdapter(BaseFrameworkAdapter):
     """Route Gantry-selected tools into Semantic Kernel.
 
     Static slice (``KernelFunction`` objects / a plugin dict) plus a deep per-turn
     live plugin refresh. Every call routes through ``gantry.execute``.
     """
-
-    def __init__(self, gantry: AgentGantry, *, default_limit: int = 3) -> None:
-        self._gantry = gantry
-        self._default_limit = default_limit
 
     @staticmethod
     def convert(spec: ToolSpec, *, plugin_name: str = _DEFAULT_PLUGIN) -> Any:

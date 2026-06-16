@@ -15,6 +15,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from agent_gantry.schema.base import reject_newlines
+
 
 class SkillCategory(str, Enum):
     """Categories for organizing skills."""
@@ -80,18 +82,7 @@ class Skill(BaseModel):
 
     model_config = ConfigDict(extra="ignore", validate_assignment=True)
 
-    @field_validator("name", "namespace")
-    @classmethod
-    def validate_identifiers(cls, v: str | None) -> str | None:
-        """Reject newlines in identifier fields.
-
-        Pydantic v2 (Rust regex engine) treats $ as end-of-line rather than
-        end-of-string, allowing injection of newlines. Explicit character checks
-        close that bypass for all identifier fields.
-        """
-        if isinstance(v, str) and ("\n" in v or "\r" in v):
-            raise ValueError("Value cannot contain newline characters")
-        return v
+    _reject_newline_identifiers = field_validator("name", "namespace")(reject_newlines)
 
     @property
     def qualified_name(self) -> str:

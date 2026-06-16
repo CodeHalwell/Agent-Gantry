@@ -13,7 +13,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import GantryToolset, ToolSpec
+from agent_gantry.integrations.frameworks.base import (
+    BaseFrameworkAdapter,
+    GantryToolset,
+    ToolSpec,
+)
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
@@ -56,7 +60,7 @@ async def _for_google_adk(
     return [_spec_to_google_adk(s) for s in specs]
 
 
-class GoogleADKAdapter:
+class GoogleADKAdapter(BaseFrameworkAdapter):
     """Route Gantry-selected tools into Google ADK.
 
     Static slice (``google.adk.tools.FunctionTool`` objects) plus deep per-turn
@@ -64,25 +68,10 @@ class GoogleADKAdapter:
     through ``gantry.execute``.
     """
 
-    def __init__(self, gantry: AgentGantry, *, default_limit: int = 3) -> None:
-        self._gantry = gantry
-        self._default_limit = default_limit
-
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a Google ADK ``FunctionTool``."""
         return _spec_to_google_adk(spec)
-
-    async def select(
-        self, query: str, *, limit: int | None = None, **select_kwargs: Any
-    ) -> list[Any]:
-        """Select tools for ``query`` as ADK ``FunctionTool``s (static slice)."""
-        return await _for_google_adk(
-            self._gantry,
-            query,
-            limit=self._default_limit if limit is None else limit,
-            **select_kwargs,
-        )
 
     def before_model_callback(
         self, *, limit: int | None = None, score_threshold: float = 0.0

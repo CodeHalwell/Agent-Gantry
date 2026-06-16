@@ -18,7 +18,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import GantryToolset, ToolSpec
+from agent_gantry.integrations.frameworks.base import (
+    BaseFrameworkAdapter,
+    GantryToolset,
+    ToolSpec,
+)
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
@@ -92,7 +96,7 @@ async def _register_with_autogen(
     return names
 
 
-class AutoGenAdapter:
+class AutoGenAdapter(BaseFrameworkAdapter):
     """Route Gantry-selected tools into AutoGen / AG2.
 
     Static slice (registrable callable mappings), direct registration with
@@ -100,25 +104,10 @@ class AutoGenAdapter:
     routes through ``gantry.execute``.
     """
 
-    def __init__(self, gantry: AgentGantry, *, default_limit: int = 3) -> None:
-        self._gantry = gantry
-        self._default_limit = default_limit
-
     @staticmethod
     def convert(spec: ToolSpec) -> dict[str, Any]:
         """Describe a single :class:`ToolSpec` as an AutoGen-registrable mapping."""
         return _spec_to_autogen(spec)
-
-    async def select(
-        self, query: str, *, limit: int | None = None, **select_kwargs: Any
-    ) -> list[dict[str, Any]]:
-        """Select tools for ``query`` as AutoGen-registrable mappings (static slice)."""
-        return await _for_autogen(
-            self._gantry,
-            query,
-            limit=self._default_limit if limit is None else limit,
-            **select_kwargs,
-        )
 
     async def register(
         self,

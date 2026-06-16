@@ -134,10 +134,9 @@ def _offline_embedder(monkeypatch):
     explicit ``embedder=`` (e.g. ``_KeywordEmbedder``) are unaffected.
     """
     from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-    from agent_gantry.core.gantry import AgentGantry
 
     monkeypatch.setattr(
-        AgentGantry, "_build_embedder", lambda self, config: SimpleEmbedder()
+        "agent_gantry.core.gantry.build_embedder", lambda config: SimpleEmbedder()
     )
 
 

@@ -14,28 +14,25 @@ import uuid
 from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from time import perf_counter
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
-from agent_gantry.adapters.embedders.openai import AzureOpenAIEmbedder, OpenAIEmbedder
+from agent_gantry.adapters.embedders.openai import OpenAIEmbedder
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
 from agent_gantry.core.executor import ExecutionEngine
+from agent_gantry.core.factories import (
+    build_embedder,
+    build_reranker,
+    build_telemetry,
+    build_vector_store,
+)
 from agent_gantry.core.registry import ToolRegistry
 from agent_gantry.core.router import RoutingWeights, SemanticRouter
 from agent_gantry.core.security import SecurityPolicy
-from agent_gantry.observability.console import ConsoleTelemetryAdapter, NoopTelemetryAdapter
-from agent_gantry.observability.opentelemetry_adapter import (
-    OpenTelemetryAdapter,
-    PrometheusTelemetryAdapter,
-)
 from agent_gantry.schema.config import (
     A2AAgentConfig,
     AgentGantryConfig,
     EmbedderConfig,
     MCPServerConfig,
-    RerankerConfig,
-    TelemetryConfig,
-    VectorStoreConfig,
 )
 from agent_gantry.schema.introspection import build_parameters_schema
 from agent_gantry.schema.mcp import MCPServerDefinition
@@ -47,6 +44,7 @@ if TYPE_CHECKING:
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
     from agent_gantry.adapters.rerankers.base import RerankerAdapter
     from agent_gantry.adapters.vector_stores.base import VectorStoreAdapter
+    from agent_gantry.core.rate_limiter import RateLimiter
     from agent_gantry.observability.telemetry import TelemetryAdapter
     from agent_gantry.schema.execution import BatchToolCall, BatchToolResult, ToolCall, ToolResult
 
@@ -94,45 +92,62 @@ class AgentGantry:
             security_policy: Security policy for permission checks
         """
         self._config = config or AgentGantryConfig()
-        self._vector_store = vector_store or self._build_vector_store(self._config.vector_store)
-        self._embedder = embedder or self._build_embedder(self._config.embedder)
-        self._reranker = reranker or self._build_reranker(self._config.reranker)
-        self._telemetry = telemetry or self._build_telemetry(self._config.telemetry)
+        self._vector_store = vector_store or build_vector_store(self._config.vector_store)
+        self._embedder = embedder or build_embedder(self._config.embedder)
+        self._reranker = reranker or build_reranker(self._config.reranker)
+        self._telemetry = telemetry or build_telemetry(self._config.telemetry)
         self._security_policy = security_policy or SecurityPolicy()
         self._registry = ToolRegistry()
 
-        # Initialize MCP registry and router for dynamic server selection.
-        # These imports are kept inside __init__ to avoid requiring the 'mcp'
-        # package at module level (it's an optional dependency).
+        # SyncManager has no optional-dependency requirements and the MCP
+        # manager depends on it, so build it before wiring MCP support.
         from agent_gantry.core.sync_manager import SyncManager
 
+        self._sync_manager = SyncManager(
+            vector_store=self._vector_store,
+            embedder=self._embedder,
+            registry=self._registry,
+        )
+
+        self._create_mcp_components()
+        self._llm_client = self._create_llm_client()
+        self._router = self._create_router()
+        self._rate_limiter = self._create_rate_limiter()
+        self._executor = self._create_executor()
+        self._init_runtime_state(modules, module_attr)
+
+    def _create_mcp_components(self) -> None:
+        """Wire the optional MCP registry/router/manager trio.
+
+        MCP is an optional dependency: if the ``mcp`` package is unavailable the
+        three attributes stay ``None`` and MCP features degrade gracefully. The
+        manager depends on :attr:`_sync_manager`, so this runs after it exists.
+        """
         self._mcp_registry = None
         self._mcp_router = None
         self._mcp_manager = None
 
+        # Tier 1 — the optional 'mcp' package being absent is the expected, quiet
+        # path: log at DEBUG and leave MCP disabled.
         try:
             from agent_gantry.core.mcp_manager import MCPManager
             from agent_gantry.core.mcp_registry import MCPRegistry
             from agent_gantry.core.mcp_router import MCPRouter
+        except ImportError:
+            logger.debug("MCP support not available (install 'mcp' package to enable)")
+            return
 
+        # Tier 2 — with the package importable, a construction failure is
+        # unexpected (broken/partial install). Surface it at WARNING rather than
+        # hiding it at DEBUG, but still degrade to no-MCP across the board so a
+        # bad MCP stack never crashes AgentGantry() construction.
+        try:
             self._mcp_registry = MCPRegistry()
             self._mcp_router = MCPRouter(
                 vector_store=self._vector_store,
                 embedder=self._embedder,
                 registry=self._mcp_registry,
             )
-        except ImportError:
-            logger.debug("MCP support not available (install 'mcp' package to enable)")
-
-        # Managers for decomposed responsibilities
-        self._sync_manager = SyncManager(
-            vector_store=self._vector_store,
-            embedder=self._embedder,
-            registry=self._registry,
-        )
-        if self._mcp_registry and self._mcp_router:
-            from agent_gantry.core.mcp_manager import MCPManager
-
             self._mcp_manager = MCPManager(
                 vector_store=self._vector_store,
                 embedder=self._embedder,
@@ -140,34 +155,46 @@ class AgentGantry:
                 router=self._mcp_router,
                 get_embedder_id=self._sync_manager.get_embedder_id,
             )
+        except Exception:
+            logger.warning("MCP components failed to initialize; MCP disabled.", exc_info=True)
+            self._mcp_registry = None
+            self._mcp_router = None
+            self._mcp_manager = None
 
-        # Initialize LLM client for intent classification if enabled
-        self._llm_client = None
-        if self._config.routing.use_llm_for_intent:
-            from agent_gantry.adapters.llm_client import LLMClient
+    def _create_llm_client(self) -> Any:
+        """Build the optional LLM client used for intent classification."""
+        if not self._config.routing.use_llm_for_intent:
+            return None
+        from agent_gantry.adapters.llm_client import LLMClient
 
-            try:
-                self._llm_client = LLMClient(self._config.routing.llm)
-            except Exception as e:
-                logger.warning(f"Failed to initialize LLM client for intent classification: {e}")
+        try:
+            return LLMClient(self._config.routing.llm)
+        except Exception as e:
+            logger.warning(f"Failed to initialize LLM client for intent classification: {e}")
+            return None
 
-        routing_weights = RoutingWeights(**self._config.routing.weights)
-        self._router = SemanticRouter(
+    def _create_router(self) -> SemanticRouter:
+        """Build the semantic router from routing config."""
+        return SemanticRouter(
             vector_store=self._vector_store,
             embedder=self._embedder,
             reranker=self._reranker,
-            weights=routing_weights,
+            weights=RoutingWeights(**self._config.routing.weights),
             llm_client=self._llm_client,
             use_llm_for_intent=self._config.routing.use_llm_for_intent,
         )
-        # Build rate limiter from config
+
+    def _create_rate_limiter(self) -> RateLimiter | None:
+        """Build the optional rate limiter from execution config."""
+        if not self._config.execution.rate_limit.enabled:
+            return None
         from agent_gantry.core.rate_limiter import RateLimiter
 
-        self._rate_limiter: RateLimiter | None = None
-        if self._config.execution.rate_limit.enabled:
-            self._rate_limiter = RateLimiter(self._config.execution.rate_limit)
+        return RateLimiter(self._config.execution.rate_limit)
 
-        self._executor = ExecutionEngine(
+    def _create_executor(self) -> ExecutionEngine:
+        """Build the execution engine from execution config."""
+        return ExecutionEngine(
             registry=self._registry,
             default_timeout_ms=self._config.execution.default_timeout_ms,
             max_retries=self._config.execution.max_retries,
@@ -177,6 +204,16 @@ class AgentGantry:
             telemetry=self._telemetry,
             rate_limiter=self._rate_limiter,
         )
+
+    def _init_runtime_state(
+        self, modules: Sequence[str] | None, module_attr: str
+    ) -> None:
+        """Initialise the mutable buffers, handler maps, callbacks, and flags.
+
+        ``modules`` is stored for explicit async initialization later (via
+        ``collect_tools_from_modules`` or ``AgentGantry.from_modules``); it is
+        not loaded here because import + embedding is async.
+        """
         self._pending_tools: list[ToolDefinition] = []
         self._pending_mcp_servers: list[MCPServerDefinition] = []
         self._tool_handlers: dict[str, Callable[..., Any]] = {}
@@ -185,15 +222,8 @@ class AgentGantry:
         self._initialized = False
         self._synced = False  # Track if we've done initial sync check
         self._mcp_synced = False  # Track if MCP servers are synced
-        self._modules: Sequence[str] | None = None
-        self._module_attr: str | None = None
-
-        if modules:
-            # Store modules configuration for explicit async initialization.
-            # Users should call `collect_tools_from_modules` in an async context
-            # or use `AgentGantry.from_modules(...)` if available.
-            self._modules = modules
-            self._module_attr = module_attr
+        self._modules: Sequence[str] | None = modules or None
+        self._module_attr: str | None = module_attr if modules else None
 
     async def close(self) -> None:
         """
@@ -1646,123 +1676,6 @@ class AgentGantry:
                 results["telemetry"] = False
 
         return results
-
-    def _build_vector_store(self, config: VectorStoreConfig) -> VectorStoreAdapter:
-        """Construct a vector store adapter from configuration."""
-        if config.type == "qdrant":
-            from agent_gantry.adapters.vector_stores.remote import QdrantVectorStore
-
-            if not config.url:
-                raise ValueError("Qdrant requires 'url' in configuration")
-            return cast(
-                "VectorStoreAdapter",
-                QdrantVectorStore(
-                    url=config.url,
-                    api_key=config.api_key,
-                    collection_name=config.collection_name,
-                    dimension=config.dimension or 1536,
-                ),
-            )
-        if config.type == "chroma":
-            from agent_gantry.adapters.vector_stores.remote import ChromaVectorStore
-
-            return cast(
-                "VectorStoreAdapter",
-                ChromaVectorStore(
-                    url=config.url,
-                    collection_name=config.collection_name,
-                    persist_directory=config.db_path,
-                ),
-            )
-        if config.type == "pgvector":
-            from agent_gantry.adapters.vector_stores.remote import PGVectorStore
-
-            if not config.url:
-                raise ValueError("PGVector requires 'url' (connection string) in configuration")
-            return cast(
-                "VectorStoreAdapter",
-                PGVectorStore(
-                    url=config.url,
-                    table_name=config.collection_name,
-                    dimension=config.dimension or 1536,
-                ),
-            )
-        if config.type == "lancedb":
-            from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
-
-            return cast(
-                "VectorStoreAdapter",
-                LanceDBVectorStore(
-                    db_path=config.db_path,
-                    tools_table=config.collection_name,
-                    dimension=config.dimension or 768,
-                ),
-            )
-        return InMemoryVectorStore()
-
-    def _build_embedder(self, config: EmbedderConfig) -> EmbeddingAdapter:
-        """Construct an embedder from configuration."""
-        if config.type == "openai" and config.api_key:
-            return OpenAIEmbedder(config)
-        if config.type == "azure" and config.api_key:
-            return AzureOpenAIEmbedder(config)
-        if config.type == "nomic":
-            from agent_gantry.adapters.embedders.nomic import NomicEmbedder
-
-            return NomicEmbedder(
-                model=config.model or "nomic-ai/nomic-embed-text-v1.5",
-                dimension=config.dimension,
-                task_type=config.task_type or "search_document",
-            )
-        if config.type == "sentence_transformers":
-            try:
-                import sentence_transformers as _st  # noqa: F401
-
-                from agent_gantry.adapters.embedders.sentence_transformers import (
-                    SentenceTransformersEmbedder,
-                )
-
-                return SentenceTransformersEmbedder(
-                    model=config.model or "all-MiniLM-L6-v2",
-                    dimension=config.dimension,
-                )
-            except ImportError:
-                logger.debug(
-                    "sentence-transformers not available, falling back to SimpleEmbedder"
-                )
-        return SimpleEmbedder()
-
-    def _build_reranker(self, config: RerankerConfig) -> RerankerAdapter | None:
-        """Construct a reranker from configuration."""
-        if not config.enabled:
-            return None
-        if config.type == "cohere":
-            from agent_gantry.adapters.rerankers.cohere import CohereReranker
-
-            return CohereReranker(model=config.model)
-        if config.type == "cross_encoder":
-            from agent_gantry.adapters.rerankers.cross_encoder import CrossEncoderReranker
-
-            return CrossEncoderReranker(
-                model=config.model or "cross-encoder/ms-marco-MiniLM-L-6-v2",
-            )
-        return None
-
-    def _build_telemetry(self, config: TelemetryConfig) -> TelemetryAdapter:
-        """Construct telemetry adapter from configuration."""
-        if not config.enabled:
-            return NoopTelemetryAdapter()
-        if config.type == "opentelemetry":
-            return OpenTelemetryAdapter(
-                service_name=config.service_name,
-                otlp_endpoint=config.otlp_endpoint,
-            )
-        if config.type == "prometheus":
-            return PrometheusTelemetryAdapter(
-                service_name=config.service_name,
-                prometheus_port=config.prometheus_port,
-            )
-        return ConsoleTelemetryAdapter()
 
 
 def create_default_gantry(dimension: int = 256) -> AgentGantry:

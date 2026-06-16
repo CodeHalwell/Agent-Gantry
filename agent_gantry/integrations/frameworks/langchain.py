@@ -12,7 +12,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import GantryToolset, ToolSpec
+from agent_gantry.integrations.frameworks.base import (
+    BaseFrameworkAdapter,
+    GantryToolset,
+    ToolSpec,
+)
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
@@ -56,7 +60,7 @@ async def _for_langchain(
     return [_spec_to_langchain(s) for s in specs]
 
 
-class LangChainAdapter:
+class LangChainAdapter(BaseFrameworkAdapter):
     """Route Gantry-selected tools into LangChain.
 
     Construct with a gantry, then :meth:`select` a relevant slice of tools as
@@ -71,27 +75,7 @@ class LangChainAdapter:
         llm = ChatOpenAI(model="gpt-5.5").bind_tools(tools)
     """
 
-    def __init__(self, gantry: AgentGantry, *, default_limit: int = 3) -> None:
-        self._gantry = gantry
-        self._default_limit = default_limit
-
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a LangChain ``StructuredTool``."""
         return _spec_to_langchain(spec)
-
-    async def select(
-        self, query: str, *, limit: int | None = None, **select_kwargs: Any
-    ) -> list[Any]:
-        """Select tools for ``query`` as LangChain ``StructuredTool``s.
-
-        ``limit`` defaults to the adapter's ``default_limit``. Extra keyword
-        arguments (``score_threshold``, ``namespaces``, ``tools_already_used``)
-        are forwarded to the underlying semantic selection.
-        """
-        return await _for_langchain(
-            self._gantry,
-            query,
-            limit=self._default_limit if limit is None else limit,
-            **select_kwargs,
-        )

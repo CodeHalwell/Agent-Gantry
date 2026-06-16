@@ -13,7 +13,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import GantryToolset, ToolSpec
+from agent_gantry.integrations.frameworks.base import (
+    BaseFrameworkAdapter,
+    GantryToolset,
+    ToolSpec,
+)
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
@@ -58,7 +62,7 @@ async def _for_haystack(
     return [_spec_to_haystack(s) for s in specs]
 
 
-class HaystackAdapter:
+class HaystackAdapter(BaseFrameworkAdapter):
     """Route Gantry-selected tools into Haystack.
 
     Static slice (``haystack.tools.Tool`` objects) plus per-call live helpers
@@ -66,25 +70,10 @@ class HaystackAdapter:
     through ``gantry.execute``.
     """
 
-    def __init__(self, gantry: AgentGantry, *, default_limit: int = 3) -> None:
-        self._gantry = gantry
-        self._default_limit = default_limit
-
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a Haystack ``Tool``."""
         return _spec_to_haystack(spec)
-
-    async def select(
-        self, query: str, *, limit: int | None = None, **select_kwargs: Any
-    ) -> list[Any]:
-        """Select tools for ``query`` as Haystack ``Tool``s (static slice)."""
-        return await _for_haystack(
-            self._gantry,
-            query,
-            limit=self._default_limit if limit is None else limit,
-            **select_kwargs,
-        )
 
     async def live_tools(
         self, query: str, *, limit: int | None = None, **select_kwargs: Any

@@ -14,7 +14,11 @@ from __future__ import annotations
 import inspect
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import GantryToolset, ToolSpec
+from agent_gantry.integrations.frameworks.base import (
+    BaseFrameworkAdapter,
+    GantryToolset,
+    ToolSpec,
+)
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
@@ -138,7 +142,7 @@ async def _for_smolagents(
     return [_spec_to_smolagents(s) for s in specs]
 
 
-class SmolagentsAdapter:
+class SmolagentsAdapter(BaseFrameworkAdapter):
     """Route Gantry-selected tools into smolagents.
 
     Static slice (``smolagents.Tool`` objects) plus a per-call live builder
@@ -146,25 +150,10 @@ class SmolagentsAdapter:
     Every call routes through ``gantry.execute``.
     """
 
-    def __init__(self, gantry: AgentGantry, *, default_limit: int = 3) -> None:
-        self._gantry = gantry
-        self._default_limit = default_limit
-
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a smolagents ``Tool``."""
         return _spec_to_smolagents(spec)
-
-    async def select(
-        self, query: str, *, limit: int | None = None, **select_kwargs: Any
-    ) -> list[Any]:
-        """Select tools for ``query`` as smolagents ``Tool``s (static slice)."""
-        return await _for_smolagents(
-            self._gantry,
-            query,
-            limit=self._default_limit if limit is None else limit,
-            **select_kwargs,
-        )
 
     def agent_builder(
         self,
