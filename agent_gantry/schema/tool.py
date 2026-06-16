@@ -8,6 +8,7 @@ OpenAPI operation, or A2A agent skill).
 from __future__ import annotations
 
 import hashlib
+import warnings
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal
@@ -23,8 +24,6 @@ def _warn_schema_deprecation(method: str, dialect: str) -> None:
     ``stacklevel=3`` so the warning points at the user's call site
     (caller -> ``to_*_schema`` -> here) rather than this helper.
     """
-    import warnings
-
     warnings.warn(
         f"{method}() is deprecated, use to_dialect('{dialect}') instead. "
         "This method will be removed in version 1.0.",

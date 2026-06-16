@@ -1135,8 +1135,12 @@ class GantryToolBridge:
     ) -> list[Any]:
         """Construct one AF agent per spec via :meth:`as_agent`, preserving order.
 
-        Shared by the workflow builders. Callers that need a name->agent map
-        zip the result back against ``agent_specs``.
+        Shared by the workflow builders. Callers that need a name->agent map zip
+        the result back against ``agent_specs`` (a key lookup on the original
+        spec is safe; the ``dict(spec)`` copy is only to avoid mutating the
+        caller's dict via ``**`` expansion). Built sequentially to preserve the
+        original construction order and per-agent error semantics — agent specs
+        are few, so this is not a latency concern worth ``asyncio.gather``.
         """
         return [await self.as_agent(cache=cache, **dict(spec)) for spec in agent_specs]
 

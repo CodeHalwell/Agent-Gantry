@@ -74,6 +74,20 @@ class TestRejectNewlines:
             reject_newlines(bad)
 
 
+class TestBuildImplClassCache:
+    def test_same_base_returns_cached_class(self) -> None:
+        from agent_gantry.integrations.agent_framework_provider import _build_impl_class
+
+        class _FakeContextProvider:
+            def __init__(self, *, source_id: str) -> None:
+                self.source_id = source_id
+
+        cls1 = _build_impl_class(_FakeContextProvider)
+        cls2 = _build_impl_class(_FakeContextProvider)
+        assert cls1 is cls2
+        assert issubclass(cls1, _FakeContextProvider)
+
+
 class TestHealthMetrics:
     def test_defaults(self) -> None:
         h = HealthMetrics()
