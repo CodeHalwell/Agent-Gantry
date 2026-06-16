@@ -14,6 +14,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from agent_gantry.schema.base import HealthMetrics, reject_newlines
+
 
 class SchemaDialect(str, Enum):
     """Schema dialects for different LLM providers."""
@@ -61,15 +63,11 @@ class ToolCost(BaseModel):
     context_tokens: int = Field(default=0, description="Tokens added when selected")
 
 
-class ToolHealth(BaseModel):
+class ToolHealth(HealthMetrics):
     """Runtime health metrics for a tool."""
 
-    success_rate: float = Field(default=1.0, ge=0.0, le=1.0)
     avg_latency_ms: float = Field(default=0.0)
     total_calls: int = Field(default=0)
-    consecutive_failures: int = Field(default=0)
-    last_success: datetime | None = None
-    last_failure: datetime | None = None
     circuit_breaker_open: bool = Field(default=False)
 
 
@@ -124,19 +122,9 @@ class ToolDefinition(BaseModel):
 
     model_config = ConfigDict(extra="ignore", validate_assignment=True)
 
-    @field_validator("name", "version", "namespace")
-    @classmethod
-    def validate_identifiers(cls, v: str | None) -> str | None:
-        """Reject newlines in identifier fields.
-
-        Pydantic v2 (Rust regex engine) treats $ as end-of-line rather than
-        end-of-string, so the pattern=r"^[a-z][a-z0-9_]*$" on `name` would
-        accept "valid_name\\n". Explicit character checks close that bypass for
-        all three identifier fields.
-        """
-        if isinstance(v, str) and ("\n" in v or "\r" in v):
-            raise ValueError("Value cannot contain newline characters")
-        return v
+    _reject_newline_identifiers = field_validator("name", "version", "namespace")(
+        reject_newlines
+    )
 
     @field_validator("name")
     @classmethod
