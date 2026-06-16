@@ -149,6 +149,8 @@ class AgentGantry:
             )
         except ImportError:
             logger.debug("MCP support not available (install 'mcp' package to enable)")
+            # Re-null in case registry/router were assigned before a later
+            # construction (e.g. MCPManager) raised — leave no half-wired trio.
             self._mcp_registry = None
             self._mcp_router = None
             self._mcp_manager = None

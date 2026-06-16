@@ -11,6 +11,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+__all__ = ["HealthMetrics", "reject_newlines"]
+
 
 def reject_newlines(value: str | None) -> str | None:
     """Reject newline characters in identifier fields.

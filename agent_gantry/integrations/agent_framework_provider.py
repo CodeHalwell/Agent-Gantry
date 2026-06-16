@@ -192,6 +192,9 @@ def _build_impl_class(base: type) -> type:
     if cached is not None:
         return cached
 
+    # No lock: a concurrent first-call race just builds the class twice and the
+    # loser is GC'd — both are equivalent, so this is benign and a lock would be
+    # overkill for a once-per-base construction.
     class _GantryContextProviderImpl(base):  # type: ignore[misc,valid-type]
         """Concrete ContextProvider subclass; see :class:`GantryContextProvider`."""
 
