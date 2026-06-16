@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import GantryToolset
+from agent_gantry.integrations.frameworks.base import BaseFrameworkAdapter, GantryToolset
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
@@ -68,32 +68,17 @@ async def _for_llamaindex(
     return [_spec_to_llamaindex(spec) for spec in specs]
 
 
-class LlamaIndexAdapter:
+class LlamaIndexAdapter(BaseFrameworkAdapter):
     """Route Gantry-selected tools into LlamaIndex.
 
     Static slice (``FunctionTool`` objects) plus deep per-turn live wiring
     (re-selects tools every reasoning step), both routed through ``gantry.execute``.
     """
 
-    def __init__(self, gantry: AgentGantry, *, default_limit: int = 3) -> None:
-        self._gantry = gantry
-        self._default_limit = default_limit
-
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a LlamaIndex ``FunctionTool``."""
         return _spec_to_llamaindex(spec)
-
-    async def select(
-        self, query: str, *, limit: int | None = None, **select_kwargs: Any
-    ) -> list[Any]:
-        """Select tools for ``query`` as LlamaIndex ``FunctionTool``s (static slice)."""
-        return await _for_llamaindex(
-            self._gantry,
-            query,
-            limit=self._default_limit if limit is None else limit,
-            **select_kwargs,
-        )
 
     def tool_retriever(
         self, *, limit: int | None = None, score_threshold: float = 0.0

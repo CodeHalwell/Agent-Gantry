@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import GantryToolset
+from agent_gantry.integrations.frameworks.base import BaseFrameworkAdapter, GantryToolset
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
@@ -73,32 +73,17 @@ async def _for_openai_agents(
     return [_spec_to_openai_agents(spec) for spec in specs]
 
 
-class OpenAIAgentsAdapter:
+class OpenAIAgentsAdapter(BaseFrameworkAdapter):
     """Route Gantry-selected tools into the OpenAI Agents SDK.
 
     Static slice (``agents.FunctionTool`` objects) plus deep live re-selection as
     the conversation progresses. Every tool call routes through ``gantry.execute``.
     """
 
-    def __init__(self, gantry: AgentGantry, *, default_limit: int = 3) -> None:
-        self._gantry = gantry
-        self._default_limit = default_limit
-
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as an OpenAI Agents ``FunctionTool``."""
         return _spec_to_openai_agents(spec)
-
-    async def select(
-        self, query: str, *, limit: int | None = None, **select_kwargs: Any
-    ) -> list[Any]:
-        """Select tools for ``query`` as OpenAI Agents ``FunctionTool``s (static slice)."""
-        return await _for_openai_agents(
-            self._gantry,
-            query,
-            limit=self._default_limit if limit is None else limit,
-            **select_kwargs,
-        )
 
     async def run(
         self,

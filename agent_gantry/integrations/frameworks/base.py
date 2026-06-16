@@ -340,3 +340,41 @@ class GantryToolset:
         return [
             spec_from_tool(self._gantry, st.tool, st.semantic_score) for st in result.tools
         ]
+
+
+class BaseFrameworkAdapter:
+    """Shared base for native per-framework tool adapters.
+
+    Subclasses implement the :meth:`convert` staticmethod (one ``ToolSpec`` →
+    one framework-native tool object). This base supplies the parts every
+    adapter shares — construction and the ``select`` → ``convert`` pipeline —
+    so each concrete adapter only declares ``convert`` plus any
+    framework-specific helpers (agent builders, live retrievers, …).
+    """
+
+    def __init__(self, gantry: AgentGantry, *, default_limit: int = 3) -> None:
+        self._gantry = gantry
+        self._default_limit = default_limit
+
+    @staticmethod
+    def convert(spec: ToolSpec) -> Any:
+        """Wrap a single :class:`ToolSpec` as the framework's native tool object."""
+        raise NotImplementedError
+
+    async def select(
+        self, query: str, *, limit: int | None = None, **select_kwargs: Any
+    ) -> list[Any]:
+        """Select tools for ``query`` as the framework's native tool objects.
+
+        ``limit`` defaults to the adapter's ``default_limit``. Extra keyword
+        arguments (``score_threshold``, ``namespaces``, ``tools_already_used``)
+        are forwarded to the underlying semantic selection. Each call still
+        routes through ``gantry.execute`` so retries, timeouts, circuit
+        breakers, and the security policy apply.
+        """
+        specs = await GantryToolset(self._gantry).select(
+            query,
+            limit=self._default_limit if limit is None else limit,
+            **select_kwargs,
+        )
+        return [self.convert(s) for s in specs]
