@@ -17,6 +17,22 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from agent_gantry.schema.base import HealthMetrics, reject_newlines
 
 
+def _warn_schema_deprecation(method: str, dialect: str) -> None:
+    """Emit the deprecation warning shared by the legacy ``to_*_schema`` methods.
+
+    ``stacklevel=3`` so the warning points at the user's call site
+    (caller -> ``to_*_schema`` -> here) rather than this helper.
+    """
+    import warnings
+
+    warnings.warn(
+        f"{method}() is deprecated, use to_dialect('{dialect}') instead. "
+        "This method will be removed in version 1.0.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+
+
 class SchemaDialect(str, Enum):
     """Schema dialects for different LLM providers."""
 
@@ -157,14 +173,7 @@ class ToolDefinition(BaseModel):
         .. deprecated::
             Use ``to_dialect("openai")`` instead. Will be removed in 1.0.
         """
-        import warnings
-
-        warnings.warn(
-            "to_openai_schema() is deprecated, use to_dialect('openai') instead. "
-            "This method will be removed in version 1.0.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+        _warn_schema_deprecation("to_openai_schema", "openai")
         return self.to_dialect("openai")
 
     def to_anthropic_schema(self) -> dict[str, Any]:
@@ -174,14 +183,7 @@ class ToolDefinition(BaseModel):
         .. deprecated::
             Use ``to_dialect("anthropic")`` instead. Will be removed in 1.0.
         """
-        import warnings
-
-        warnings.warn(
-            "to_anthropic_schema() is deprecated, use to_dialect('anthropic') instead. "
-            "This method will be removed in version 1.0.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+        _warn_schema_deprecation("to_anthropic_schema", "anthropic")
         return self.to_dialect("anthropic")
 
     def to_gemini_schema(self) -> dict[str, Any]:
@@ -191,14 +193,7 @@ class ToolDefinition(BaseModel):
         .. deprecated::
             Use ``to_dialect("gemini")`` instead. Will be removed in 1.0.
         """
-        import warnings
-
-        warnings.warn(
-            "to_gemini_schema() is deprecated, use to_dialect('gemini') instead. "
-            "This method will be removed in version 1.0.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+        _warn_schema_deprecation("to_gemini_schema", "gemini")
         return self.to_dialect("gemini")
 
     def to_dialect(self, dialect: SchemaDialect | str, **options: Any) -> dict[str, Any]:
