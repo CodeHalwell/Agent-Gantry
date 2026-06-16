@@ -126,7 +126,11 @@ class AgentGantry:
         self._mcp_registry = None
         self._mcp_router = None
         self._mcp_manager = None
+        # All imports AND constructions live in one try so a partially installed
+        # MCP stack (any of the three failing) degrades to None across the board
+        # rather than leaving a half-wired trio or raising.
         try:
+            from agent_gantry.core.mcp_manager import MCPManager
             from agent_gantry.core.mcp_registry import MCPRegistry
             from agent_gantry.core.mcp_router import MCPRouter
 
@@ -136,19 +140,18 @@ class AgentGantry:
                 embedder=self._embedder,
                 registry=self._mcp_registry,
             )
+            self._mcp_manager = MCPManager(
+                vector_store=self._vector_store,
+                embedder=self._embedder,
+                registry=self._mcp_registry,
+                router=self._mcp_router,
+                get_embedder_id=self._sync_manager.get_embedder_id,
+            )
         except ImportError:
             logger.debug("MCP support not available (install 'mcp' package to enable)")
-            return
-
-        from agent_gantry.core.mcp_manager import MCPManager
-
-        self._mcp_manager = MCPManager(
-            vector_store=self._vector_store,
-            embedder=self._embedder,
-            registry=self._mcp_registry,
-            router=self._mcp_router,
-            get_embedder_id=self._sync_manager.get_embedder_id,
-        )
+            self._mcp_registry = None
+            self._mcp_router = None
+            self._mcp_manager = None
 
     def _create_llm_client(self) -> Any:
         """Build the optional LLM client used for intent classification."""

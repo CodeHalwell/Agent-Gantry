@@ -4,8 +4,11 @@ These factories translate the declarative ``*Config`` models into concrete
 adapter instances (vector store, embedder, reranker, telemetry). They are kept
 out of :class:`~agent_gantry.core.gantry.AgentGantry` because they hold no
 instance state — each is a pure ``config -> adapter`` mapping — which keeps the
-facade focused on orchestration. Backend-specific imports stay lazy so the base
-install never requires the optional dependencies.
+facade focused on orchestration. Imports for the optional backends (Qdrant,
+Chroma, PGVector, LanceDB, Nomic, sentence-transformers, Cohere, …) stay lazy —
+inside the branch that needs them — so the base install never requires them; the
+always-available adapters (in-memory store, simple/OpenAI embedders, telemetry)
+are imported at module load.
 """
 
 from __future__ import annotations

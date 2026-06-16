@@ -274,7 +274,7 @@ def _build_impl_class(base: type) -> type:
             return self._top_k
 
         @property
-        def score_threshold(self) -> float:
+        def score_threshold(self) -> float | str:
             return self._score_threshold
 
         @property
@@ -996,24 +996,7 @@ def _build_impl_class(base: type) -> type:
     return _GantryContextProviderImpl
 
 
-def GantryContextProvider(  # noqa: N802 - factory keeps the public PascalCase API name
-    gantry: AgentGantry,
-    *,
-    top_k: int = 5,
-    score_threshold: float | str = 0.0,
-    query_strategy: str = "per_run",
-    query_generator: Callable[..., Any] | None = None,
-    skills: bool = False,
-    skill_registry: SkillRegistry | None = None,
-    always_include: list[str] | None = None,
-    required: list[str] | None = None,
-    static_tools: list[Any] | None = None,
-    as_function_tool: bool | None = None,
-    source_id: str = "agent_gantry",
-    bridge: GantryToolBridge | None = None,
-    verbose: bool = False,
-    **query_kwargs: Any,
-) -> Any:
+class GantryContextProvider:
     """AF context provider that injects semantically-selected Gantry tools.
 
     Constructing the provider returns an instance of the dynamically
@@ -1123,79 +1106,99 @@ def GantryContextProvider(  # noqa: N802 - factory keeps the public PascalCase A
                 middleware=[provider.as_chat_middleware()],
             )
     """
-    if query_strategy not in ("per_run", "per_call"):
-        raise ValueError(
-            f"query_strategy must be 'per_run' or 'per_call', got {query_strategy!r}"
-        )
 
-    context_provider_cls = _import_context_provider()
-
-    bridge = bridge or GantryToolBridge(
-        gantry,
-        score_threshold=score_threshold,
-        as_function_tool=as_function_tool,
-    )
-    always_include = list(always_include or [])
-    required = list(required or [])
-    static_tools_list: list[Any] = list(static_tools or [])
-
-    # Default query generator depends on strategy: per_call wants
-    # round-to-round adaptation, so the historical last_user_text
-    # default (which returns the same string every round) would
-    # silently disable the very thing per_call enables.
-    if query_generator is None:
-        if query_strategy == "per_call":
-            query_generator = _default_per_call_query()
-        else:
-            query_generator = _DEFAULT_PER_RUN_QUERY
-    elif (
-        query_strategy == "per_call"
-        and query_generator is last_user_text
-    ):
-        logger.warning(
-            "GantryContextProvider: query_strategy='per_call' was set "
-            "but query_generator=last_user_text returns the same string "
-            "every round, defeating per-call adaptation. Consider "
-            "fallback_chain(last_tool_result, last_user_text) instead."
-        )
-
-    if required:
-        known = gantry.list_tools_sync()
-        available = {t.name for t in known} | {
-            f"{t.namespace}.{t.name}" for t in known
-        }
-        missing = [name for name in required if name not in available]
-        if missing:
-            raise MissingRequiredToolError(
-                f"GantryContextProvider: required tool(s) not found in gantry: "
-                f"{missing}. Did you forget to register them, or is there a typo?"
+    def __new__(
+        cls,
+        gantry: AgentGantry,
+        *,
+        top_k: int = 5,
+        score_threshold: float | str = 0.0,
+        query_strategy: str = "per_run",
+        query_generator: Callable[..., Any] | None = None,
+        skills: bool = False,
+        skill_registry: SkillRegistry | None = None,
+        always_include: list[str] | None = None,
+        required: list[str] | None = None,
+        static_tools: list[Any] | None = None,
+        as_function_tool: bool | None = None,
+        source_id: str = "agent_gantry",
+        bridge: GantryToolBridge | None = None,
+        verbose: bool = False,
+        **query_kwargs: Any,
+    ) -> Any:
+        if query_strategy not in ("per_run", "per_call"):
+            raise ValueError(
+                f"query_strategy must be 'per_run' or 'per_call', got {query_strategy!r}"
             )
 
-    # Combine for "always inject" set; required is a strict superset.
-    always_include_effective: list[str] = []
-    seen_ai: set[str] = set()
-    for n in (*required, *always_include):
-        if n not in seen_ai:
-            seen_ai.add(n)
-            always_include_effective.append(n)
-    impl_cls = _build_impl_class(context_provider_cls)
-    return impl_cls(
-        gantry=gantry,
-        bridge=bridge,
-        top_k=top_k,
-        score_threshold=score_threshold,
-        query_strategy=query_strategy,
-        query_generator=query_generator,
-        skills=skills,
-        skill_registry=skill_registry,
-        always_include_effective=always_include_effective,
-        declared_always_include=always_include,
-        required=required,
-        static_tools=static_tools_list,
-        query_kwargs=query_kwargs,
-        source_id=source_id,
-        verbose=verbose,
-    )
+        context_provider_cls = _import_context_provider()
+
+        bridge = bridge or GantryToolBridge(
+            gantry,
+            score_threshold=score_threshold,
+            as_function_tool=as_function_tool,
+        )
+        always_include = list(always_include or [])
+        required = list(required or [])
+        static_tools_list: list[Any] = list(static_tools or [])
+
+        # Default query generator depends on strategy: per_call wants
+        # round-to-round adaptation, so the historical last_user_text
+        # default (which returns the same string every round) would
+        # silently disable the very thing per_call enables.
+        if query_generator is None:
+            if query_strategy == "per_call":
+                query_generator = _default_per_call_query()
+            else:
+                query_generator = _DEFAULT_PER_RUN_QUERY
+        elif (
+            query_strategy == "per_call"
+            and query_generator is last_user_text
+        ):
+            logger.warning(
+                "GantryContextProvider: query_strategy='per_call' was set "
+                "but query_generator=last_user_text returns the same string "
+                "every round, defeating per-call adaptation. Consider "
+                "fallback_chain(last_tool_result, last_user_text) instead."
+            )
+
+        if required:
+            known = gantry.list_tools_sync()
+            available = {t.name for t in known} | {
+                f"{t.namespace}.{t.name}" for t in known
+            }
+            missing = [name for name in required if name not in available]
+            if missing:
+                raise MissingRequiredToolError(
+                    f"GantryContextProvider: required tool(s) not found in gantry: "
+                    f"{missing}. Did you forget to register them, or is there a typo?"
+                )
+
+        # Combine for "always inject" set; required is a strict superset.
+        always_include_effective: list[str] = []
+        seen_ai: set[str] = set()
+        for n in (*required, *always_include):
+            if n not in seen_ai:
+                seen_ai.add(n)
+                always_include_effective.append(n)
+        impl_cls = _build_impl_class(context_provider_cls)
+        return impl_cls(
+            gantry=gantry,
+            bridge=bridge,
+            top_k=top_k,
+            score_threshold=score_threshold,
+            query_strategy=query_strategy,
+            query_generator=query_generator,
+            skills=skills,
+            skill_registry=skill_registry,
+            always_include_effective=always_include_effective,
+            declared_always_include=always_include,
+            required=required,
+            static_tools=static_tools_list,
+            query_kwargs=query_kwargs,
+            source_id=source_id,
+            verbose=verbose,
+        )
 
 
 __all__ = ["GantryContextProvider", "MissingRequiredToolError"]
