@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
     from agent_gantry.adapters.rerankers.base import RerankerAdapter
     from agent_gantry.adapters.vector_stores.base import VectorStoreAdapter
+    from agent_gantry.core.rate_limiter import RateLimiter
     from agent_gantry.observability.telemetry import TelemetryAdapter
     from agent_gantry.schema.execution import BatchToolCall, BatchToolResult, ToolCall, ToolResult
 
@@ -98,17 +99,34 @@ class AgentGantry:
         self._security_policy = security_policy or SecurityPolicy()
         self._registry = ToolRegistry()
 
-        # Initialize MCP registry and router for dynamic server selection.
-        # These imports are kept inside __init__ to avoid requiring the 'mcp'
-        # package at module level (it's an optional dependency).
+        # SyncManager has no optional-dependency requirements and the MCP
+        # manager depends on it, so build it before wiring MCP support.
         from agent_gantry.core.sync_manager import SyncManager
 
+        self._sync_manager = SyncManager(
+            vector_store=self._vector_store,
+            embedder=self._embedder,
+            registry=self._registry,
+        )
+
+        self._create_mcp_components()
+        self._llm_client = self._create_llm_client()
+        self._router = self._create_router()
+        self._rate_limiter = self._create_rate_limiter()
+        self._executor = self._create_executor()
+        self._init_runtime_state(modules, module_attr)
+
+    def _create_mcp_components(self) -> None:
+        """Wire the optional MCP registry/router/manager trio.
+
+        MCP is an optional dependency: if the ``mcp`` package is unavailable the
+        three attributes stay ``None`` and MCP features degrade gracefully. The
+        manager depends on :attr:`_sync_manager`, so this runs after it exists.
+        """
         self._mcp_registry = None
         self._mcp_router = None
         self._mcp_manager = None
-
         try:
-            from agent_gantry.core.mcp_manager import MCPManager
             from agent_gantry.core.mcp_registry import MCPRegistry
             from agent_gantry.core.mcp_router import MCPRouter
 
@@ -120,51 +138,52 @@ class AgentGantry:
             )
         except ImportError:
             logger.debug("MCP support not available (install 'mcp' package to enable)")
+            return
 
-        # Managers for decomposed responsibilities
-        self._sync_manager = SyncManager(
+        from agent_gantry.core.mcp_manager import MCPManager
+
+        self._mcp_manager = MCPManager(
             vector_store=self._vector_store,
             embedder=self._embedder,
-            registry=self._registry,
+            registry=self._mcp_registry,
+            router=self._mcp_router,
+            get_embedder_id=self._sync_manager.get_embedder_id,
         )
-        if self._mcp_registry and self._mcp_router:
-            from agent_gantry.core.mcp_manager import MCPManager
 
-            self._mcp_manager = MCPManager(
-                vector_store=self._vector_store,
-                embedder=self._embedder,
-                registry=self._mcp_registry,
-                router=self._mcp_router,
-                get_embedder_id=self._sync_manager.get_embedder_id,
-            )
+    def _create_llm_client(self) -> Any:
+        """Build the optional LLM client used for intent classification."""
+        if not self._config.routing.use_llm_for_intent:
+            return None
+        from agent_gantry.adapters.llm_client import LLMClient
 
-        # Initialize LLM client for intent classification if enabled
-        self._llm_client = None
-        if self._config.routing.use_llm_for_intent:
-            from agent_gantry.adapters.llm_client import LLMClient
+        try:
+            return LLMClient(self._config.routing.llm)
+        except Exception as e:
+            logger.warning(f"Failed to initialize LLM client for intent classification: {e}")
+            return None
 
-            try:
-                self._llm_client = LLMClient(self._config.routing.llm)
-            except Exception as e:
-                logger.warning(f"Failed to initialize LLM client for intent classification: {e}")
-
-        routing_weights = RoutingWeights(**self._config.routing.weights)
-        self._router = SemanticRouter(
+    def _create_router(self) -> SemanticRouter:
+        """Build the semantic router from routing config."""
+        return SemanticRouter(
             vector_store=self._vector_store,
             embedder=self._embedder,
             reranker=self._reranker,
-            weights=routing_weights,
+            weights=RoutingWeights(**self._config.routing.weights),
             llm_client=self._llm_client,
             use_llm_for_intent=self._config.routing.use_llm_for_intent,
         )
-        # Build rate limiter from config
+
+    def _create_rate_limiter(self) -> RateLimiter | None:
+        """Build the optional rate limiter from execution config."""
+        if not self._config.execution.rate_limit.enabled:
+            return None
         from agent_gantry.core.rate_limiter import RateLimiter
 
-        self._rate_limiter: RateLimiter | None = None
-        if self._config.execution.rate_limit.enabled:
-            self._rate_limiter = RateLimiter(self._config.execution.rate_limit)
+        return RateLimiter(self._config.execution.rate_limit)
 
-        self._executor = ExecutionEngine(
+    def _create_executor(self) -> ExecutionEngine:
+        """Build the execution engine from execution config."""
+        return ExecutionEngine(
             registry=self._registry,
             default_timeout_ms=self._config.execution.default_timeout_ms,
             max_retries=self._config.execution.max_retries,
@@ -174,6 +193,16 @@ class AgentGantry:
             telemetry=self._telemetry,
             rate_limiter=self._rate_limiter,
         )
+
+    def _init_runtime_state(
+        self, modules: Sequence[str] | None, module_attr: str
+    ) -> None:
+        """Initialise the mutable buffers, handler maps, callbacks, and flags.
+
+        ``modules`` is stored for explicit async initialization later (via
+        ``collect_tools_from_modules`` or ``AgentGantry.from_modules``); it is
+        not loaded here because import + embedding is async.
+        """
         self._pending_tools: list[ToolDefinition] = []
         self._pending_mcp_servers: list[MCPServerDefinition] = []
         self._tool_handlers: dict[str, Callable[..., Any]] = {}
@@ -182,15 +211,8 @@ class AgentGantry:
         self._initialized = False
         self._synced = False  # Track if we've done initial sync check
         self._mcp_synced = False  # Track if MCP servers are synced
-        self._modules: Sequence[str] | None = None
-        self._module_attr: str | None = None
-
-        if modules:
-            # Store modules configuration for explicit async initialization.
-            # Users should call `collect_tools_from_modules` in an async context
-            # or use `AgentGantry.from_modules(...)` if available.
-            self._modules = modules
-            self._module_attr = module_attr
+        self._modules: Sequence[str] | None = modules or None
+        self._module_attr: str | None = module_attr if modules else None
 
     async def close(self) -> None:
         """
