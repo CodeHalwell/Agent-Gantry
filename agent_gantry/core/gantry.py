@@ -14,28 +14,25 @@ import uuid
 from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from time import perf_counter
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
-from agent_gantry.adapters.embedders.openai import AzureOpenAIEmbedder, OpenAIEmbedder
+from agent_gantry.adapters.embedders.openai import OpenAIEmbedder
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
 from agent_gantry.core.executor import ExecutionEngine
+from agent_gantry.core.factories import (
+    build_embedder,
+    build_reranker,
+    build_telemetry,
+    build_vector_store,
+)
 from agent_gantry.core.registry import ToolRegistry
 from agent_gantry.core.router import RoutingWeights, SemanticRouter
 from agent_gantry.core.security import SecurityPolicy
-from agent_gantry.observability.console import ConsoleTelemetryAdapter, NoopTelemetryAdapter
-from agent_gantry.observability.opentelemetry_adapter import (
-    OpenTelemetryAdapter,
-    PrometheusTelemetryAdapter,
-)
 from agent_gantry.schema.config import (
     A2AAgentConfig,
     AgentGantryConfig,
     EmbedderConfig,
     MCPServerConfig,
-    RerankerConfig,
-    TelemetryConfig,
-    VectorStoreConfig,
 )
 from agent_gantry.schema.introspection import build_parameters_schema
 from agent_gantry.schema.mcp import MCPServerDefinition
@@ -94,10 +91,10 @@ class AgentGantry:
             security_policy: Security policy for permission checks
         """
         self._config = config or AgentGantryConfig()
-        self._vector_store = vector_store or self._build_vector_store(self._config.vector_store)
-        self._embedder = embedder or self._build_embedder(self._config.embedder)
-        self._reranker = reranker or self._build_reranker(self._config.reranker)
-        self._telemetry = telemetry or self._build_telemetry(self._config.telemetry)
+        self._vector_store = vector_store or build_vector_store(self._config.vector_store)
+        self._embedder = embedder or build_embedder(self._config.embedder)
+        self._reranker = reranker or build_reranker(self._config.reranker)
+        self._telemetry = telemetry or build_telemetry(self._config.telemetry)
         self._security_policy = security_policy or SecurityPolicy()
         self._registry = ToolRegistry()
 
@@ -1646,123 +1643,6 @@ class AgentGantry:
                 results["telemetry"] = False
 
         return results
-
-    def _build_vector_store(self, config: VectorStoreConfig) -> VectorStoreAdapter:
-        """Construct a vector store adapter from configuration."""
-        if config.type == "qdrant":
-            from agent_gantry.adapters.vector_stores.remote import QdrantVectorStore
-
-            if not config.url:
-                raise ValueError("Qdrant requires 'url' in configuration")
-            return cast(
-                "VectorStoreAdapter",
-                QdrantVectorStore(
-                    url=config.url,
-                    api_key=config.api_key,
-                    collection_name=config.collection_name,
-                    dimension=config.dimension or 1536,
-                ),
-            )
-        if config.type == "chroma":
-            from agent_gantry.adapters.vector_stores.remote import ChromaVectorStore
-
-            return cast(
-                "VectorStoreAdapter",
-                ChromaVectorStore(
-                    url=config.url,
-                    collection_name=config.collection_name,
-                    persist_directory=config.db_path,
-                ),
-            )
-        if config.type == "pgvector":
-            from agent_gantry.adapters.vector_stores.remote import PGVectorStore
-
-            if not config.url:
-                raise ValueError("PGVector requires 'url' (connection string) in configuration")
-            return cast(
-                "VectorStoreAdapter",
-                PGVectorStore(
-                    url=config.url,
-                    table_name=config.collection_name,
-                    dimension=config.dimension or 1536,
-                ),
-            )
-        if config.type == "lancedb":
-            from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
-
-            return cast(
-                "VectorStoreAdapter",
-                LanceDBVectorStore(
-                    db_path=config.db_path,
-                    tools_table=config.collection_name,
-                    dimension=config.dimension or 768,
-                ),
-            )
-        return InMemoryVectorStore()
-
-    def _build_embedder(self, config: EmbedderConfig) -> EmbeddingAdapter:
-        """Construct an embedder from configuration."""
-        if config.type == "openai" and config.api_key:
-            return OpenAIEmbedder(config)
-        if config.type == "azure" and config.api_key:
-            return AzureOpenAIEmbedder(config)
-        if config.type == "nomic":
-            from agent_gantry.adapters.embedders.nomic import NomicEmbedder
-
-            return NomicEmbedder(
-                model=config.model or "nomic-ai/nomic-embed-text-v1.5",
-                dimension=config.dimension,
-                task_type=config.task_type or "search_document",
-            )
-        if config.type == "sentence_transformers":
-            try:
-                import sentence_transformers as _st  # noqa: F401
-
-                from agent_gantry.adapters.embedders.sentence_transformers import (
-                    SentenceTransformersEmbedder,
-                )
-
-                return SentenceTransformersEmbedder(
-                    model=config.model or "all-MiniLM-L6-v2",
-                    dimension=config.dimension,
-                )
-            except ImportError:
-                logger.debug(
-                    "sentence-transformers not available, falling back to SimpleEmbedder"
-                )
-        return SimpleEmbedder()
-
-    def _build_reranker(self, config: RerankerConfig) -> RerankerAdapter | None:
-        """Construct a reranker from configuration."""
-        if not config.enabled:
-            return None
-        if config.type == "cohere":
-            from agent_gantry.adapters.rerankers.cohere import CohereReranker
-
-            return CohereReranker(model=config.model)
-        if config.type == "cross_encoder":
-            from agent_gantry.adapters.rerankers.cross_encoder import CrossEncoderReranker
-
-            return CrossEncoderReranker(
-                model=config.model or "cross-encoder/ms-marco-MiniLM-L-6-v2",
-            )
-        return None
-
-    def _build_telemetry(self, config: TelemetryConfig) -> TelemetryAdapter:
-        """Construct telemetry adapter from configuration."""
-        if not config.enabled:
-            return NoopTelemetryAdapter()
-        if config.type == "opentelemetry":
-            return OpenTelemetryAdapter(
-                service_name=config.service_name,
-                otlp_endpoint=config.otlp_endpoint,
-            )
-        if config.type == "prometheus":
-            return PrometheusTelemetryAdapter(
-                service_name=config.service_name,
-                prometheus_port=config.prometheus_port,
-            )
-        return ConsoleTelemetryAdapter()
 
 
 def create_default_gantry(dimension: int = 256) -> AgentGantry:
