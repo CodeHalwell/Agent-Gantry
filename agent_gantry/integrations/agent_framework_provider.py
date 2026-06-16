@@ -194,7 +194,11 @@ def _build_impl_class(base: type) -> type:
 
     # No lock: a concurrent first-call race just builds the class twice and the
     # loser is GC'd — both are equivalent, so this is benign and a lock would be
-    # overkill for a once-per-base construction.
+    # overkill for a once-per-base construction. (Atomic under CPython's GIL;
+    # would only ever build a redundant class, never corrupt the cache.)
+    #
+    # NOTE: the class body below is long (the full provider implementation);
+    # it lives in a function only because ``base`` is resolved lazily at runtime.
     class _GantryContextProviderImpl(base):  # type: ignore[misc,valid-type]
         """Concrete ContextProvider subclass; see :class:`GantryContextProvider`."""
 

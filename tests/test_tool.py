@@ -162,3 +162,25 @@ class TestToolHealth:
         assert health.success_rate == 1.0
         assert health.total_calls == 0
         assert health.circuit_breaker_open is False
+
+
+class TestSchemaDeprecation:
+    """The legacy ``to_*_schema`` shims must still warn and delegate to ``to_dialect``."""
+
+    @pytest.mark.parametrize(
+        ("method", "dialect"),
+        [
+            ("to_openai_schema", "openai"),
+            ("to_anthropic_schema", "anthropic"),
+            ("to_gemini_schema", "gemini"),
+        ],
+    )
+    def test_legacy_schema_methods_warn_and_delegate(self, method: str, dialect: str) -> None:
+        tool = ToolDefinition(
+            name="dep_tool",
+            description="A tool for exercising the deprecation shims.",
+            parameters_schema={"type": "object", "properties": {}},
+        )
+        with pytest.warns(DeprecationWarning, match=dialect):
+            result = getattr(tool, method)()
+        assert result == tool.to_dialect(dialect)
