@@ -44,3 +44,6 @@
 ## 2026-06-12 - Optimize generator expressions in sum() for counting
 **Learning:** In Python, using generator expressions inside sum() for counting items (e.g., sum(1 for x in iterable if condition)) incurs significant generator overhead. For performance-critical paths, replacing these with an inline for loop that manually accumulates a counter variable provides a measurable speedup.
 **Action:** Replace generator expressions used inside sum() for counting with an inline for loop.
+## 2026-06-25 - Fast cleanup of sorted sliding windows via slicing
+**Learning:** For chronologically sorted lists acting as sliding windows (like `self._request_timestamps` in rate limiting), using a list comprehension (`[t for t in history if now - t < 60]`) to filter old entries forces evaluation of the entire list, resulting in $O(N)$ operations on every append. This scales poorly in high-throughput loops.
+**Action:** Replace the $O(N)$ list comprehension with a forward search to find the index of the first valid element, then perform a single fast slice `history = history[split_idx:]`. Because the list is sorted, this short-circuits evaluation early and drops expired entries efficiently.
