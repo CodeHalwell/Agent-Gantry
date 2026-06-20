@@ -378,7 +378,7 @@ class ExecutionEngine:
             except PermissionDeniedError as e:
                 result = ToolResult(
                     tool_name=call.tool_name,
-                    status=ExecutionStatus.PERMISSION_DENIED,
+                    status=ExecutionStatus.FAILURE,
                     error=str(e),
                     error_type="PermissionDeniedError",
                     queued_at=queued_at,
