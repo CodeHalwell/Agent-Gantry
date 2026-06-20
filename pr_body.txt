@@ -1,5 +1,4 @@
-🚨 Severity: HIGH
-💡 Vulnerability: SSRF and local file inclusion bypass. The URL extraction regex in `SecurityPolicy._extract_domains` was case-sensitive. Attackers could supply mixed-case schemes (e.g., `FiLe:///etc/passwd` or `hTtP://evil.com`) to bypass the regex extraction completely or evade explicit scheme deny-lists because the extracted scheme retained the mixed casing. Similarly, data URIs could bypass the `re.search` check by using mixed cases.
-🎯 Impact: Attackers could bypass zero-trust security controls, leading to Server-Side Request Forgery (SSRF) and Local File Inclusion (LFI).
-🔧 Fix: Added the `re.IGNORECASE` flag to `re.finditer` for URL extraction and `re.search` for data URI detection. Added `.lower()` normalization to `parsed.scheme` and `value.lower()` before equality or inclusion checks.
-✅ Verification: Tested via python scripts and ran the existing test suite successfully.
+💡 What: Optimized the sliding window rate limiter in SecurityPolicy.check_permission by replacing an O(N) list comprehension with a fast forward-search and index slice.
+🎯 Why: When calculating counts over a chronologically sorted collection, iterating over the entire list with a comprehension is O(N). By finding the split index and breaking early, we reduce the overhead and take advantage of python slice optimizations.
+📊 Impact: Reduces CPU time for sliding window cleanup operations, making rate limiting faster.
+🔬 Measurement: Check the updated python unit test execution time or run microbenchmarks on agent_gantry.core.security.SecurityPolicy.check_permission under heavy load.
