@@ -40,4 +40,30 @@ const nav: Section[] = [
 ];
 ---
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width"/><meta name="description" content={description}/><title>{title}</title></head>
-<body><a href="#main-content" class="skip-link">Skip to main content</a><div class="shell"><aside class="sidebar"><a class="brand" href="/Agent-Gantry/"><span class="logo"></span><span><h1>Agent-Gantry</h1><p>v0.8.0 docs</p></span></a>{nav.map(({section,links})=><div class="nav-section"><h2>{section}</h2>{links.map(({label,href})=><a href={href}>{label}</a>)}</div>)}<div class="nav-section"><h2>Project</h2><a href="https://github.com/CodeHalwell/Agent-Gantry">GitHub</a><a href="/Agent-Gantry/docs/quick-reference/">Quick reference</a></div></aside><main class="main" id="main-content" tabindex="-1"><div class="topbar"><span>Context is precious. Execution is sacred. Trust is earned.</span><span class="pill">Python 3.10–3.13</span></div><div class="content"><slot /></div><footer class="footer">Built with Astro, React, and TypeScript. Documentation reflects Agent-Gantry 0.8.0.</footer></main></div></body></html>
+<body><a href="#main-content" class="skip-link">Skip to main content</a><div class="shell"><aside class="sidebar"><a class="brand" href="/Agent-Gantry/"><span class="logo"></span><span><h1>Agent-Gantry</h1><p>v0.8.0 docs</p></span></a><nav aria-label="Sidebar navigation">
+        {nav.map(({section,links})=>{
+          const sectionId = `nav-${section.toLowerCase().replace(/\s+/g, '-')}`;
+          return (
+            <div class="nav-section">
+              <h2 id={sectionId}>{section}</h2>
+              <ul aria-labelledby={sectionId} role="list" style="list-style:none;padding:0;margin:0">
+                {links.map(({label,href})=>{
+                  const isActive = Astro.url.pathname === href || Astro.url.pathname === href + '/';
+                  return (
+                    <li>
+                      <a href={href} aria-current={isActive ? 'page' : undefined}>{label}</a>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          );
+        })}
+        <div class="nav-section">
+          <h2 id="nav-project">Project</h2>
+          <ul aria-labelledby="nav-project" role="list" style="list-style:none;padding:0;margin:0">
+            <li><a href="https://github.com/CodeHalwell/Agent-Gantry">GitHub</a></li>
+            <li><a href="/Agent-Gantry/docs/quick-reference/" aria-current={Astro.url.pathname === '/Agent-Gantry/docs/quick-reference/' ? 'page' : undefined}>Quick reference</a></li>
+          </ul>
+        </div>
+        </nav></aside><main class="main" id="main-content" tabindex="-1"><div class="topbar"><span>Context is precious. Execution is sacred. Trust is earned.</span><span class="pill">Python 3.10–3.13</span></div><div class="content"><slot /></div><footer class="footer">Built with Astro, React, and TypeScript. Documentation reflects Agent-Gantry 0.8.0.</footer></main></div></body></html>
