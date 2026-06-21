@@ -102,7 +102,15 @@ class SecurityPolicy:
         """
         if self.max_requests_per_minute > 0:
             now = time.time()
-            self._request_timestamps = [t for t in self._request_timestamps if now - t < 60]
+            # ⚡ Bolt: Fast sliding window cleanup using index slice instead of O(N) comprehension
+            split_idx = 0
+            for t in self._request_timestamps:
+                if now - t < 60:
+                    break
+                split_idx += 1
+            if split_idx > 0:
+                self._request_timestamps = self._request_timestamps[split_idx:]
+
             if len(self._request_timestamps) >= self.max_requests_per_minute:
                 raise PermissionDeniedError(
                     f"Rate limit exceeded: maximum {self.max_requests_per_minute} requests per minute allowed."
