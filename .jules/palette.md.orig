@@ -96,7 +96,3 @@
 ## 2026-05-32 - [Skip to Content Focus Targets]
 **Learning:** Adding a "Skip to main content" link at the top of the document is a best practice for accessibility, but it only partially works if the target element (usually `<main id="main-content">`) is not programmatically focusable. When clicked or activated via keyboard, the browser scrolls to the target, but keyboard focus stays on the skip link itself, causing the user to start tabbing through the very navigation they were trying to bypass.
 **Action:** When creating skip links, always ensure the target element has `tabindex="-1"`. This allows the browser to shift programmatic focus to the content area so subsequent `Tab` keystrokes continue from the main content.
-
-## 2026-06-21 - [Semantic Navigation List Structure]
-**Learning:** When using map functions to render lists of links under headers in a sidebar, rendering flat anchor tags without an enclosing unordered list (<ul>) prevents screen readers from understanding the grouping and item count, even if aria-labelledby is used on a generic container.
-**Action:** Always wrap dynamically mapped groups of navigation links in semantic <ul> and <li> elements. When styling these to match existing UI, ensure you strip default list styles using CSS classes rather than inline styles if possible, and ensure the pattern is applied consistently to all similar static sections in the same component.
