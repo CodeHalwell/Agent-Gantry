@@ -44,3 +44,6 @@
 ## 2026-06-12 - Optimize generator expressions in sum() for counting
 **Learning:** In Python, using generator expressions inside sum() for counting items (e.g., sum(1 for x in iterable if condition)) incurs significant generator overhead. For performance-critical paths, replacing these with an inline for loop that manually accumulates a counter variable provides a measurable speedup.
 **Action:** Replace generator expressions used inside sum() for counting with an inline for loop.
+## 2026-06-23 - Optimize sliding window histories
+**Learning:** Using `list.pop(0)` for rolling histories incurs O(N) overhead because all subsequent elements must be shifted in memory. This creates a bottleneck in tight loops or long-running instances.
+**Action:** Use `collections.deque(maxlen=N)` for O(1) appending and automatic truncation from either end.
