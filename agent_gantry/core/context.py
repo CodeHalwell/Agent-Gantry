@@ -6,6 +6,8 @@ Manages conversation state for context-aware routing.
 
 from __future__ import annotations
 
+from collections import deque
+
 from agent_gantry.schema.query import ConversationContext
 from agent_gantry.schema.tool import ToolCapability
 
@@ -34,7 +36,7 @@ class ConversationContextManager:
             user_capabilities: User's allowed capabilities
         """
         self._max_messages = max_recent_messages
-        self._recent_messages: list[dict[str, str]] = []
+        self._recent_messages: deque[dict[str, str]] = deque(maxlen=max_recent_messages)
         self._tools_used: list[str] = []
         self._tools_failed: list[str] = []
         self._conversation_summary: str | None = None
@@ -49,8 +51,6 @@ class ConversationContextManager:
             content: Message content
         """
         self._recent_messages.append({"role": role, "content": content})
-        if len(self._recent_messages) > self._max_messages:
-            self._recent_messages.pop(0)
 
     def record_tool_used(self, tool_name: str) -> None:
         """
@@ -94,7 +94,7 @@ class ConversationContextManager:
         return ConversationContext(
             query=query,
             conversation_summary=self._conversation_summary,
-            recent_messages=self._recent_messages.copy(),
+            recent_messages=list(self._recent_messages),
             tools_already_used=self._tools_used.copy(),
             tools_failed=self._tools_failed.copy(),
             user_capabilities=self._user_capabilities,
@@ -102,7 +102,7 @@ class ConversationContextManager:
 
     def reset(self) -> None:
         """Reset the conversation context."""
-        self._recent_messages = []
+        self._recent_messages.clear()
         self._tools_used = []
         self._tools_failed = []
         self._conversation_summary = None
