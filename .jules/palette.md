@@ -100,3 +100,7 @@
 ## 2024-06-17 - Accessible Sidebar Navigation
 **Learning:** When building complex sidebar navigation with categorized sections (e.g., using `<div>` for titles above `<ul>` submenus), always associate navigation section titles with their respective submenus by assigning an `id` to the title and adding `aria-labelledby="[id]"` to the `<ul>` element to ensure screen readers properly announce the category context.
 **Action:** Apply this pattern using `<nav>` tags, structured `<ul>` / `<li>` lists, and `aria-labelledby` attributes for complex sectioned navigations.
+
+## 2026-06-01 - [ARIA Tablist for Interactive Switchers]
+**Learning:** When building interactive components that switch between content sections (like a journey map), standard buttons alone leave screen readers without context about the relationship between the controls and the content.
+**Action:** Always implement the ARIA tablist pattern (`role="tablist"`, `role="tab"`, `aria-selected`, `role="tabpanel"`) and ensure the tabpanel has `tabIndex={0}` so keyboard users can shift focus to the newly revealed content.

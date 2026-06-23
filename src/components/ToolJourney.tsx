@@ -10,10 +10,14 @@ export default function ToolJourney({ stages }: Props) {
 
   return (
     <div className="card">
-      <div className="grid">
+      <div className="grid" role="tablist" aria-label="Implementation stages">
         {stages.map((s, i) => (
           <button
             key={s.title}
+            role="tab"
+            aria-selected={i === active}
+            aria-controls="journey-tabpanel"
+            id={`journey-tab-${i}`}
             onClick={() => setActive(i)}
             style={{
               padding: '1rem',
@@ -32,14 +36,21 @@ export default function ToolJourney({ stages }: Props) {
           </button>
         ))}
       </div>
-      <h3>{stage.title}</h3>
-      <p className="lead" style={{ fontSize: '1rem' }}>
-        {stage.detail}
-      </p>
-      <figure
-        className="code-block"
-        dangerouslySetInnerHTML={{ __html: stage.codeHtml }}
-      />
+      <div
+        role="tabpanel"
+        id="journey-tabpanel"
+        aria-labelledby={`journey-tab-${active}`}
+        tabIndex={0}
+      >
+        <h3>{stage.title}</h3>
+        <p className="lead" style={{ fontSize: '1rem' }}>
+          {stage.detail}
+        </p>
+        <figure
+          className="code-block"
+          dangerouslySetInnerHTML={{ __html: stage.codeHtml }}
+        />
+      </div>
     </div>
   );
 }
