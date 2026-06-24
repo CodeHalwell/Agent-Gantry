@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from agent_gantry.schema.base import reject_newlines
 
 
 class AgentSkill(BaseModel):
@@ -23,6 +25,8 @@ class AgentSkill(BaseModel):
     description: str = Field(..., description="Detailed description of what the skill does")
     input_modes: list[str] = Field(default=["text"], description="Supported input types")
     output_modes: list[str] = Field(default=["text"], description="Supported output types")
+
+    _reject_newline_identifiers = field_validator("id", "name")(reject_newlines)
 
 
 class AgentCard(BaseModel):
@@ -45,6 +49,8 @@ class AgentCard(BaseModel):
         default=None, description="Authentication configuration"
     )
     provider: dict[str, str] = Field(default_factory=dict, description="Provider information")
+
+    _reject_newline_identifiers = field_validator("name", "version")(reject_newlines)
 
 
 class TaskMessagePart(BaseModel):
