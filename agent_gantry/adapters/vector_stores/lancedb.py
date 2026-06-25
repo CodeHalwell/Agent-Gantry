@@ -311,6 +311,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
             ValueError: If tools and embeddings have different lengths or
                        if embedding dimensions don't match configured dimension
         """
+
         def to_record(tool: ToolDefinition, embedding: list[float], now: str) -> dict[str, Any]:
             return {
                 "id": f"{tool.namespace}.{tool.name}",
@@ -354,6 +355,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
             ValueError: If skills and embeddings have different lengths or
                        if embedding dimensions don't match configured dimension
         """
+
         def to_record(skill: Skill, embedding: list[float], now: str) -> dict[str, Any]:
             return {
                 "id": f"{skill.namespace}.{skill.name}",
@@ -686,16 +688,13 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
             _validate_identifier(namespace, "namespace")
 
         try:
-            # Use to_arrow for listing (doesn't require pandas)
-            table = self._tools_table.to_arrow()
-            records = table.to_pylist()
-
-            # Filter by namespace if specified
+            query = self._tools_table.query()
             if namespace:
-                records = [r for r in records if r.get("namespace") == namespace]
+                safe_ns = _escape_sql_string(namespace)
+                query = query.where(f"namespace = '{safe_ns}'")
 
-            # Apply pagination
-            records = records[offset : offset + limit]
+            table = query.limit(limit).offset(offset).to_arrow()
+            records = table.to_pylist()
 
             return [
                 ToolDefinition.model_validate_json(r["tool_json"])
@@ -734,17 +733,20 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
             _validate_identifier(category, "category")
 
         try:
-            table = self._skills_table.to_arrow()
-            records = table.to_pylist()
-
-            # Filter by namespace and category
+            query = self._skills_table.query()
+            filters = []
             if namespace:
-                records = [r for r in records if r.get("namespace") == namespace]
+                safe_ns = _escape_sql_string(namespace)
+                filters.append(f"namespace = '{safe_ns}'")
             if category:
-                records = [r for r in records if r.get("category") == category]
+                safe_cat = _escape_sql_string(category)
+                filters.append(f"category = '{safe_cat}'")
 
-            # Apply pagination
-            records = records[offset : offset + limit]
+            if filters:
+                query = query.where(" AND ".join(filters))
+
+            table = query.limit(limit).offset(offset).to_arrow()
+            records = table.to_pylist()
 
             return [
                 Skill.model_validate_json(r["skill_json"])
@@ -773,10 +775,8 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
 
         try:
             if namespace:
-                # For namespace filtering, we need to scan records
-                table = self._tools_table.to_arrow()
-                records = table.to_pylist()
-                return len([r for r in records if r.get("namespace") == namespace])
+                safe_ns = _escape_sql_string(namespace)
+                return int(self._tools_table.count_rows(f"namespace = '{safe_ns}'"))
             # Use count_rows() for efficient counting when no filter
             return int(self._tools_table.count_rows())
         except Exception as e:
@@ -801,9 +801,8 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
 
         try:
             if namespace:
-                table = self._skills_table.to_arrow()
-                records = table.to_pylist()
-                return len([r for r in records if r.get("namespace") == namespace])
+                safe_ns = _escape_sql_string(namespace)
+                return int(self._skills_table.count_rows(f"namespace = '{safe_ns}'"))
             return int(self._skills_table.count_rows())
         except Exception as e:
             logger.warning(f"Error counting skills: {e}")
@@ -958,4 +957,3 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
     def dimension(self) -> int:
         """Return the vector dimension."""
         return self._dimension
-

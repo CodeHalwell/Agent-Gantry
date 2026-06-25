@@ -47,3 +47,6 @@
 ## 2026-06-23 - Optimize sliding window histories
 **Learning:** Using `list.pop(0)` for rolling histories incurs O(N) overhead because all subsequent elements must be shifted in memory. This creates a bottleneck in tight loops or long-running instances.
 **Action:** Use `collections.deque(maxlen=N)` for O(1) appending and automatic truncation from either end.
+## 2024-05-30 - LanceDB Mixins Pagination Optimization
+**Learning:** In LanceDB table read operations (`list_all` and `list_all_skills`), reading the entire table into memory via `table.to_pylist()` and then manually slicing it with `records = records[offset : offset + limit]` creates a huge memory bottleneck for large datasets.
+**Action:** Use LanceDB native `.query().where(...).limit(...).offset(...).to_arrow().to_pylist()` instead of loading all rows into a Python list and filtering/slicing in memory.
