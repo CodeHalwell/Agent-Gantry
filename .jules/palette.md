@@ -104,3 +104,7 @@
 ## 2026-06-01 - [ARIA Tablist for Interactive Switchers]
 **Learning:** When building interactive components that switch between content sections (like a journey map), standard buttons alone leave screen readers without context about the relationship between the controls and the content.
 **Action:** Always implement the ARIA tablist pattern (`role="tablist"`, `role="tab"`, `aria-selected`, `role="tabpanel"`) and ensure the tabpanel has `tabIndex={0}` so keyboard users can shift focus to the newly revealed content.
+
+## 2026-06-28 - [Semantic Lists for Visual Badges]
+**Learning:** When displaying groups of inline visual badges or 'pills' (like tags or categories), wrapping them in a semantic list structure (`<ul role="list">` and `<li>`) and applying CSS flexbox for wrapping, rather than using flat `<span>` or `<div>` elements, ensures screen readers announce the item count and boundaries correctly.
+**Action:** Always wrap visual pill or badge collections in an unordered list, ensuring `list-style: none` is applied and flex wrap is used for responsive layout.
