@@ -342,16 +342,12 @@ class LanceDBToolsMixin:
             _validate_identifier(namespace, "namespace")
 
         try:
-            # Use to_arrow for listing (doesn't require pandas)
-            table = self._tools_table.to_arrow()  # type: ignore
-            records = table.to_pylist()
-
-            # Filter by namespace if specified
+            query = self._tools_table.search()  # type: ignore
             if namespace:
-                records = [r for r in records if r.get("namespace") == namespace]
+                escaped_namespace = _escape_sql_string(namespace)
+                query = query.where(f"namespace = '{escaped_namespace}'")
 
-            # Apply pagination
-            records = records[offset : offset + limit]
+            records = query.limit(limit).offset(offset).to_arrow().to_pylist()
 
             return [
                 ToolDefinition.model_validate_json(r["tool_json"])
@@ -380,10 +376,8 @@ class LanceDBToolsMixin:
 
         try:
             if namespace:
-                # For namespace filtering, we need to scan records
-                table = self._tools_table.to_arrow()  # type: ignore
-                records = table.to_pylist()
-                return len([r for r in records if r.get("namespace") == namespace])
+                escaped_namespace = _escape_sql_string(namespace)
+                return int(self._tools_table.count_rows(f"namespace = '{escaped_namespace}'"))  # type: ignore
             # Use count_rows() for efficient counting when no filter
             return int(self._tools_table.count_rows())  # type: ignore
         except Exception as e:
@@ -703,17 +697,16 @@ class LanceDBSkillsMixin:
             _validate_identifier(category, "category")
 
         try:
-            table = self._skills_table.to_arrow()  # type: ignore
-            records = table.to_pylist()
-
-            # Filter by namespace and category
+            query = self._skills_table.search()  # type: ignore
+            conditions = []
             if namespace:
-                records = [r for r in records if r.get("namespace") == namespace]
+                conditions.append(f"namespace = '{_escape_sql_string(namespace)}'")
             if category:
-                records = [r for r in records if r.get("category") == category]
+                conditions.append(f"category = '{_escape_sql_string(category)}'")
+            if conditions:
+                query = query.where(" AND ".join(conditions))
 
-            # Apply pagination
-            records = records[offset : offset + limit]
+            records = query.limit(limit).offset(offset).to_arrow().to_pylist()
 
             return [
                 Skill.model_validate_json(r["skill_json"])
@@ -742,9 +735,8 @@ class LanceDBSkillsMixin:
 
         try:
             if namespace:
-                table = self._skills_table.to_arrow()  # type: ignore
-                records = table.to_pylist()
-                return len([r for r in records if r.get("namespace") == namespace])
+                escaped_namespace = _escape_sql_string(namespace)
+                return int(self._skills_table.count_rows(f"namespace = '{escaped_namespace}'"))  # type: ignore
             return int(self._skills_table.count_rows())  # type: ignore
         except Exception as e:
             logger.warning(f"Error counting skills: {e}")
