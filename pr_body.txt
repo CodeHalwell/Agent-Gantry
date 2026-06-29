@@ -1,4 +1,4 @@
-💡 What: Optimized the sliding window rate limiter in SecurityPolicy.check_permission by replacing an O(N) list comprehension with a fast forward-search and index slice.
-🎯 Why: When calculating counts over a chronologically sorted collection, iterating over the entire list with a comprehension is O(N). By finding the split index and breaking early, we reduce the overhead and take advantage of python slice optimizations.
-📊 Impact: Reduces CPU time for sliding window cleanup operations, making rate limiting faster.
-🔬 Measurement: Check the updated python unit test execution time or run microbenchmarks on agent_gantry.core.security.SecurityPolicy.check_permission under heavy load.
+💡 What: Wrapped the flat list of provider matrix 'pill' spans in a semantic `<ul>` and `<li>` structure.
+🎯 Why: Screen readers previously read the inline spans as a single continuous string without indicating the number of items or boundaries between them.
+📸 Before/After: Visual layout remains completely unchanged (using inline flex styles), but the DOM is now properly structured.
+♿ Accessibility: Added `<ul role="list">` and `<li>` to ensure screen readers announce item counts and boundaries.
