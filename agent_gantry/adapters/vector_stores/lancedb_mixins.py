@@ -380,10 +380,8 @@ class LanceDBToolsMixin:
 
         try:
             if namespace:
-                # For namespace filtering, we need to scan records
-                table = self._tools_table.to_arrow()  # type: ignore
-                records = table.to_pylist()
-                return len([r for r in records if r.get("namespace") == namespace])
+                escaped_ns = _escape_sql_string(namespace)
+                return int(self._tools_table.count_rows(f"namespace = '{escaped_ns}'"))  # type: ignore
             # Use count_rows() for efficient counting when no filter
             return int(self._tools_table.count_rows())  # type: ignore
         except Exception as e:
@@ -742,9 +740,8 @@ class LanceDBSkillsMixin:
 
         try:
             if namespace:
-                table = self._skills_table.to_arrow()  # type: ignore
-                records = table.to_pylist()
-                return len([r for r in records if r.get("namespace") == namespace])
+                escaped_ns = _escape_sql_string(namespace)
+                return int(self._skills_table.count_rows(f"namespace = '{escaped_ns}'"))  # type: ignore
             return int(self._skills_table.count_rows())  # type: ignore
         except Exception as e:
             logger.warning(f"Error counting skills: {e}")

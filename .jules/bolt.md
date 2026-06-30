@@ -47,3 +47,7 @@
 ## 2026-06-23 - Optimize sliding window histories
 **Learning:** Using `list.pop(0)` for rolling histories incurs O(N) overhead because all subsequent elements must be shifted in memory. This creates a bottleneck in tight loops or long-running instances.
 **Action:** Use `collections.deque(maxlen=N)` for O(1) appending and automatic truncation from either end.
+
+## 2026-06-30 - Native filtering for LanceDB counts
+**Learning:** When querying LanceDB tables in Python, avoiding loading the entire table into memory via `table.to_pylist()` for filtering or counting (e.g., `len([r for r in records if r.get("namespace") == namespace])`), as it creates an O(N) memory bottleneck on large datasets. LanceDB provides native optimized filtering.
+**Action:** Use LanceDB's native `count_rows(filter)` method with properly escaped conditions to push operations to the database level, converting O(N) memory/CPU overhead to a fast DB operation.

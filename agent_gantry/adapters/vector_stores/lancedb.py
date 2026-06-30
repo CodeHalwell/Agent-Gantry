@@ -311,6 +311,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
             ValueError: If tools and embeddings have different lengths or
                        if embedding dimensions don't match configured dimension
         """
+
         def to_record(tool: ToolDefinition, embedding: list[float], now: str) -> dict[str, Any]:
             return {
                 "id": f"{tool.namespace}.{tool.name}",
@@ -354,6 +355,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
             ValueError: If skills and embeddings have different lengths or
                        if embedding dimensions don't match configured dimension
         """
+
         def to_record(skill: Skill, embedding: list[float], now: str) -> dict[str, Any]:
             return {
                 "id": f"{skill.namespace}.{skill.name}",
@@ -773,10 +775,8 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
 
         try:
             if namespace:
-                # For namespace filtering, we need to scan records
-                table = self._tools_table.to_arrow()
-                records = table.to_pylist()
-                return len([r for r in records if r.get("namespace") == namespace])
+                escaped_ns = _escape_sql_string(namespace)
+                return int(self._tools_table.count_rows(f"namespace = '{escaped_ns}'"))
             # Use count_rows() for efficient counting when no filter
             return int(self._tools_table.count_rows())
         except Exception as e:
@@ -801,9 +801,8 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
 
         try:
             if namespace:
-                table = self._skills_table.to_arrow()
-                records = table.to_pylist()
-                return len([r for r in records if r.get("namespace") == namespace])
+                escaped_ns = _escape_sql_string(namespace)
+                return int(self._skills_table.count_rows(f"namespace = '{escaped_ns}'"))
             return int(self._skills_table.count_rows())
         except Exception as e:
             logger.warning(f"Error counting skills: {e}")
@@ -958,4 +957,3 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
     def dimension(self) -> int:
         """Return the vector dimension."""
         return self._dimension
-
