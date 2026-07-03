@@ -108,3 +108,7 @@
 ## 2026-10-25 - [Semantic Grouping for Pill Badges]
 **Learning:** When displaying groups of inline visual badges or pills (like tags or categories), flat `<span>` or `<div>` elements cause screen readers to read them as an unstructured text block. By wrapping them in a semantic `<ul role="list">` and `<li>` structure, screen readers will properly announce the item count and boundaries.
 **Action:** Always wrap visual pill or tag groups in a `<ul role="list">` and apply CSS flexbox for wrapping to maintain visual layout while providing semantic meaning.
+
+## 2026-07-03 - [Active State Indication in Navigation]
+**Learning:** Users can lose their sense of location in documentation sites if the sidebar navigation does not visually indicate the currently active page. Even if the 'aria-current' attribute is set in the HTML for screen readers, visual users need a corresponding CSS style to benefit from the context.
+**Action:** Always provide a visual active state for navigation links matching the 'aria-current="page"' attribute (e.g., using a distinct background or text color) to maintain spatial context for sighted users.
