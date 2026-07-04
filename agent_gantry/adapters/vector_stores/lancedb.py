@@ -686,16 +686,12 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
             _validate_identifier(namespace, "namespace")
 
         try:
-            # Use to_arrow for listing (doesn't require pandas)
-            table = self._tools_table.to_arrow()
-            records = table.to_pylist()
-
-            # Filter by namespace if specified
+            # ⚡ Bolt: Push pagination and filtering to LanceDB engine instead of loading full table into memory
+            query = self._tools_table.search()
             if namespace:
-                records = [r for r in records if r.get("namespace") == namespace]
+                query = query.where(f"namespace = '{_escape_sql_string(namespace)}'")
 
-            # Apply pagination
-            records = records[offset : offset + limit]
+            records = query.limit(limit).offset(offset).to_arrow().to_pylist()
 
             return [
                 ToolDefinition.model_validate_json(r["tool_json"])
@@ -734,17 +730,20 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
             _validate_identifier(category, "category")
 
         try:
-            table = self._skills_table.to_arrow()
-            records = table.to_pylist()
+            # ⚡ Bolt: Push pagination and filtering to LanceDB engine instead of loading full table into memory
+            query = self._skills_table.search()
 
-            # Filter by namespace and category
+            # Combine filters
+            conditions = []
             if namespace:
-                records = [r for r in records if r.get("namespace") == namespace]
+                conditions.append(f"namespace = '{_escape_sql_string(namespace)}'")
             if category:
-                records = [r for r in records if r.get("category") == category]
+                conditions.append(f"category = '{_escape_sql_string(category)}'")
 
-            # Apply pagination
-            records = records[offset : offset + limit]
+            if conditions:
+                query = query.where(" AND ".join(conditions))
+
+            records = query.limit(limit).offset(offset).to_arrow().to_pylist()
 
             return [
                 Skill.model_validate_json(r["skill_json"])
@@ -773,10 +772,8 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
 
         try:
             if namespace:
-                # For namespace filtering, we need to scan records
-                table = self._tools_table.to_arrow()
-                records = table.to_pylist()
-                return len([r for r in records if r.get("namespace") == namespace])
+                # ⚡ Bolt: Use LanceDB native filtered count instead of loading full table into memory
+                return int(self._tools_table.count_rows(f"namespace = '{_escape_sql_string(namespace)}'"))
             # Use count_rows() for efficient counting when no filter
             return int(self._tools_table.count_rows())
         except Exception as e:
@@ -801,9 +798,8 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
 
         try:
             if namespace:
-                table = self._skills_table.to_arrow()
-                records = table.to_pylist()
-                return len([r for r in records if r.get("namespace") == namespace])
+                # ⚡ Bolt: Use LanceDB native filtered count instead of loading full table into memory
+                return int(self._skills_table.count_rows(f"namespace = '{_escape_sql_string(namespace)}'"))
             return int(self._skills_table.count_rows())
         except Exception as e:
             logger.warning(f"Error counting skills: {e}")
