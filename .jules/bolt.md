@@ -50,3 +50,6 @@
 ## 2026-06-25 - Push LanceDB operations to database engine
 **Learning:** When querying LanceDB tables in Python, loading the entire table into memory via `table.to_arrow().to_pylist()` for filtering, counting, or pagination creates an O(N) memory bottleneck on large datasets.
 **Action:** Use LanceDB native query builders like `search().where(condition).limit(limit).offset(offset).to_list()` and `count_rows(condition)` instead of pulling the data into Python lists.
+## 2026-07-06 - Push LanceDB operations to database engine
+**Learning:** When querying LanceDB tables in Python, loading the entire table into memory via `table.to_arrow().to_pylist()` for filtering, counting, or pagination creates an O(N) memory bottleneck on large datasets.
+**Action:** Use LanceDB native query builders like `search().where(condition).limit(limit).offset(offset).to_list()` and `count_rows(condition)` instead of pulling the data into Python lists.
