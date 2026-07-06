@@ -108,3 +108,10 @@
 ## 2026-10-25 - [Semantic Grouping for Pill Badges]
 **Learning:** When displaying groups of inline visual badges or pills (like tags or categories), flat `<span>` or `<div>` elements cause screen readers to read them as an unstructured text block. By wrapping them in a semantic `<ul role="list">` and `<li>` structure, screen readers will properly announce the item count and boundaries.
 **Action:** Always wrap visual pill or tag groups in a `<ul role="list">` and apply CSS flexbox for wrapping to maintain visual layout while providing semantic meaning.
+## 2024-06-25 - [Navigation Active State Styles]
+**Learning:** When using `aria-current="page"` to semantically indicate the active navigation link to screen readers, it is crucial to ensure there is a corresponding visual CSS state (e.g., `.nav-section a[aria-current="page"] { color: var(--accent); }`) so that sighted users also receive clear spatial context about their current location.
+**Action:** Always write a corresponding CSS rule targeting `[aria-current="page"]` alongside the implementation of semantic active states in navigation.
+
+## 2024-06-25 - [Global Focus Visibility]
+**Learning:** Relying on default browser focus outlines or removing them without a replacement leaves keyboard navigators unable to see which element is currently active. A global `:focus-visible` rule provides a fallback outline for all interactive elements, ensuring base compliance and a better keyboard UX.
+**Action:** Always implement a global `:focus-visible` CSS rule (e.g., `outline: 2px solid var(--accent)`) at the root of the application's stylesheet to guarantee a clear visual indicator for keyboard navigation.
