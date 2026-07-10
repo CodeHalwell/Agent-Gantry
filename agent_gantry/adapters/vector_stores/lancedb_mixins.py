@@ -816,8 +816,13 @@ class LanceDBMetadataMixin:
         await self._ensure_initialized()  # type: ignore
 
         try:
-            table = self._tools_table.to_arrow()  # type: ignore
-            records = table.to_pylist()
+            records = (
+                self._tools_table.search()
+                .select(["id", "fingerprint"])
+                .limit(None)
+                .to_arrow()
+                .to_pylist()
+            )  # type: ignore
             return {r["id"]: r.get("fingerprint", "") for r in records}
         except Exception as e:
             logger.debug(f"get_stored_fingerprints failed: {e}")
