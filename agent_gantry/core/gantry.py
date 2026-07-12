@@ -501,14 +501,28 @@ class AgentGantry:
             await self._vector_store.initialize()
             self._initialized = True
 
-    async def add_tool(self, tool: ToolDefinition) -> None:
+    async def add_tool(
+        self, tool: ToolDefinition, handler: Callable[..., Any] | None = None
+    ) -> None:
         """
-        Add a tool definition directly.
+        Add a tool definition directly, optionally wiring an execution handler.
 
         Args:
             tool: The tool definition to add
+            handler: Optional callable that executes the tool. When provided,
+                it is registered exactly like the ``register()`` decorator wires
+                a decorated function's handler, so the tool is immediately
+                executable via :meth:`execute` (security, retries, telemetry —
+                the same path as ``@gantry.register``ed tools). Omit this for
+                sources that dispatch through their own executor instead of a
+                registry-held handler (MCP/A2A discovery already do this, and
+                keep working unchanged since ``handler`` defaults to ``None``).
         """
         self._pending_tools.append(tool)
+        if handler is not None:
+            key = f"{tool.namespace}.{tool.name}"
+            self._registry.register_handler(key, handler)
+            self._tool_handlers[tool.name] = handler
         if self._config.auto_sync:
             await self.sync()
 

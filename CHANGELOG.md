@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Reverse-direction framework importers** — `agent_gantry.integrations.importers`
+  adds `register_langchain_tools`, `register_crewai_tools`, and
+  `register_llamaindex_tools`, the missing other half of every
+  `<Framework>Adapter` (which only ever *exported* Gantry tools outward).
+  Each coroutine converts existing `langchain_core.tools.BaseTool`,
+  `crewai.tools.BaseTool`, or `llama_index.core.tools.FunctionTool` objects
+  into `ToolDefinition`s (new `ToolSource.FRAMEWORK`) with an execution
+  handler wired through `gantry.add_tool(tool, handler=...)` — a new optional
+  `handler` parameter on `AgentGantry.add_tool()` — so imported tools run
+  through the normal `gantry.execute()` path (security policy, retries,
+  circuit breakers, telemetry) exactly like `@gantry.register`-ed ones, gain
+  semantic routing, and are re-exportable to any *other* framework via the
+  existing export adapters. Malformed/unrecognized tools are skipped with a
+  logged warning rather than aborting the batch; an empty `tools` argument
+  raises. See `agent_gantry/integrations/README.md` ("Importing existing
+  framework tools") and `examples/frameworks/importers_example.py`.
 - **Native AWS Strands Agents adapter** — `StrandsAdapter`
   (`from agent_gantry.strands import StrandsAdapter`), joining the per-framework
   `<Framework>Adapter` family. `await adapter.select(query, limit=...)` /

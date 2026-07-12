@@ -198,8 +198,76 @@ agent = Agent(
 )
 ```
 
+## Importing existing framework tools
+
+Everything above **exports** Gantry tools to a framework. `importers.py` is
+the other half: it **imports** tool objects you already built with LangChain,
+CrewAI, or LlamaIndex into Gantry's own registry, so they gain semantic
+routing, the security policy, rate limiting, retries, circuit breakers, and
+telemetry — and become re-exportable to any *other* framework via the
+adapters above. "Register once, use anywhere" only holds if tools can enter
+Gantry from outside it, not just leave it.
+
+```python
+from agent_gantry import AgentGantry
+from agent_gantry.integrations.importers import register_langchain_tools
+
+gantry = AgentGantry()
+
+from langchain_core.tools import tool
+
+@tool
+def get_weather(city: str) -> str:
+    """Get the current weather for a city."""
+    return f"Sunny in {city}"
+
+count = await register_langchain_tools(gantry, [get_weather], tags=["weather"])
+await gantry.sync()
+
+# Executes through the normal gantry.execute() path — security policy,
+# retries, circuit breakers, telemetry — exactly like @gantry.register.
+from agent_gantry.schema.execution import ToolCall
+result = await gantry.execute(ToolCall(tool_name="get_weather", arguments={"city": "Paris"}))
+```
+
+`register_crewai_tools` and `register_llamaindex_tools` are the same shape,
+for `crewai.tools.BaseTool` and `llama_index.core.tools.FunctionTool`
+respectively. Each coroutine:
+
+- Lazily imports its framework (`import agent_gantry` never requires
+  langchain-core/crewai/llama-index-core; the `ImportError` only fires when a
+  `register_*_tools` call is actually made).
+- Extracts `name` / `description` / parameter schema from the native object
+  (`args_schema.model_json_schema()` for LangChain/CrewAI,
+  `metadata.get_parameters_dict()` for LlamaIndex) and normalizes the name to
+  Gantry's `^[a-z][a-z0-9_]*$` (the original name is preserved in
+  `source_uri` and `metadata["native_name"]`).
+- Wraps the native tool's own invocation method (`ainvoke` / `_run` /
+  `acall`) as the Gantry execution handler, registered via
+  `gantry.add_tool(tool, handler=...)` — the same mechanism `@gantry.register`
+  uses internally, so imported tools are indistinguishable from native ones
+  at execution time.
+- Skips (with a logged `WARNING`, not an exception) any object that isn't the
+  expected native type or that fails to convert, so one malformed tool in a
+  batch doesn't sink the rest. Raises `ValueError` only if `tools` itself is
+  empty.
+- Tags the tool `source=ToolSource.FRAMEWORK` so telemetry/governance can
+  tell it apart from `@gantry.register`-ed (`PYTHON_FUNCTION`) or
+  MCP/A2A-discovered tools.
+
+Known fidelity losses: LangChain's `return_direct` / instance-level
+`callbacks` have no Gantry equivalent (preserved in `ToolDefinition.metadata`
+for inspection only); CrewAI's `BaseTool.run()` usage-count bookkeeping and
+console print are bypassed since the handler calls `_run` directly; LlamaIndex
+tools that `require_context` will fail at execution time since Gantry does
+not supply a `Context`. See `agent_gantry/integrations/importers.py` for the
+full per-framework docstrings.
+
+Runnable example: `examples/frameworks/importers_example.py`.
+
 ## Modules
 
+- `importers.py`: Reverse-direction importers — `register_langchain_tools`, `register_crewai_tools`, `register_llamaindex_tools` (see above).
 - `semantic_tools.py`: Core `with_semantic_tools` decorator and `SemanticToolSelector` class for automatic tool injection
 - `framework_adapters.py`: Legacy helper (`fetch_framework_tools`) for converting tools to OpenAI-shape JSON schemas for a small set of frameworks (LangGraph, Semantic Kernel, CrewAI, Google ADK, Strands). Prefer the native `frameworks/strands.py` `StrandsAdapter` (see below) for Strands — it returns real `DecoratedFunctionTool` objects with execution wired through `gantry.execute`, and supports genuine per-turn re-selection via `BeforeModelCallEvent`.
 - `agent_framework_bridge.py`: Microsoft Agent Framework 1.0 GA bridge — `GantryToolBridge` wraps Gantry tools as AF `FunctionTool`s with `approval_mode` auto-derived from Gantry `ToolCapability`. Exposes three agent construction helpers:
