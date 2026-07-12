@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import (
+    DEFAULT_TOOL_LIMIT,
     BaseFrameworkAdapter,
     GantryToolset,
     ToolSpec,
@@ -90,7 +91,7 @@ async def _for_crewai(
     gantry: AgentGantry,
     query: str,
     *,
-    limit: int = 3,
+    limit: int = DEFAULT_TOOL_LIMIT,
     **select_kwargs: Any,
 ) -> list[Any]:
     """Select tools for ``query`` and return them as CrewAI ``BaseTool``s."""

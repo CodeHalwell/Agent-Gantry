@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import (
+    DEFAULT_TOOL_LIMIT,
     BaseFrameworkAdapter,
     GantryToolset,
     ToolSpec,
@@ -46,7 +47,7 @@ async def _for_autogen(
     gantry: AgentGantry,
     query: str,
     *,
-    limit: int = 3,
+    limit: int = DEFAULT_TOOL_LIMIT,
     **select_kwargs: Any,
 ) -> list[dict[str, Any]]:
     """Select tools for ``query`` and return AutoGen-registrable mappings."""
@@ -60,7 +61,7 @@ async def _register_with_autogen(
     *,
     caller: Any,
     executor: Any,
-    limit: int = 3,
+    limit: int = DEFAULT_TOOL_LIMIT,
     **select_kwargs: Any,
 ) -> list[str]:
     """Select tools and register each with AutoGen's caller/executor agents.

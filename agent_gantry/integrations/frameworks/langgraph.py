@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import BaseFrameworkAdapter
+from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT, BaseFrameworkAdapter
 from agent_gantry.integrations.frameworks.langchain import (
     _for_langchain,
     _spec_to_langchain,
@@ -33,7 +33,7 @@ async def _for_langgraph(
     gantry: AgentGantry,
     query: str,
     *,
-    limit: int = 3,
+    limit: int = DEFAULT_TOOL_LIMIT,
     **select_kwargs: Any,
 ) -> list[Any]:
     """Select tools for ``query`` as LangChain ``BaseTool``s for a LangGraph node."""

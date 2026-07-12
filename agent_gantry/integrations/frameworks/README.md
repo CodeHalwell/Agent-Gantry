@@ -51,10 +51,12 @@ Each framework has a top-level namespace — `from agent_gantry.<framework> impo
 class (which carries both the static `.select`/`.convert` and the deep live
 methods). Importing `agent_gantry` never pulls these in.
 
-Every `<Adapter>(gantry).select(query, *, limit=3, **select_kwargs)` accepts the
-same selection knobs as `GantryToolset.select` (`score_threshold`, `namespaces`,
-`tools_already_used`). Need one conversion at a time? Use the staticmethod
-`<Adapter>.convert(spec)` with specs from `GantryToolset(gantry).select(query)`.
+Every `<Adapter>(gantry).select(query, *, limit=None, score_threshold=0.0,
+namespaces=None, tools_already_used=None)` accepts the same explicit selection
+knobs as `GantryToolset.select` — `limit` defaults to the adapter's
+`default_limit` (5, `DEFAULT_TOOL_LIMIT` in `base.py`) when omitted. Need one
+conversion at a time? Use the staticmethod `<Adapter>.convert(spec)` with specs
+from `GantryToolset(gantry).select(query)`.
 
 ## Multi-turn re-selection — autonomous *and* conversational
 

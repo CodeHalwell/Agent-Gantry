@@ -27,6 +27,7 @@ from agent_gantry.integrations.agent_framework_middleware import (
     GantryToolChoiceMiddleware,
 )
 from agent_gantry.integrations.agent_framework_provider import GantryContextProvider
+from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
@@ -53,7 +54,7 @@ class AgentFrameworkAdapter:
         provider.attach_to(agent)
     """
 
-    def __init__(self, gantry: AgentGantry, *, default_top_k: int = 5) -> None:
+    def __init__(self, gantry: AgentGantry, *, default_top_k: int = DEFAULT_TOOL_LIMIT) -> None:
         self._gantry = gantry
         self._default_top_k = default_top_k
 

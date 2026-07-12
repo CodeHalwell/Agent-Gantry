@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import (
+    DEFAULT_TOOL_LIMIT,
     BaseFrameworkAdapter,
     GantryToolset,
     ToolSpec,
@@ -55,7 +56,7 @@ async def _for_semantic_kernel(
     gantry: AgentGantry,
     query: str,
     *,
-    limit: int = 3,
+    limit: int = DEFAULT_TOOL_LIMIT,
     plugin_name: str = _DEFAULT_PLUGIN,
     **select_kwargs: Any,
 ) -> list[Any]:
@@ -68,7 +69,7 @@ async def _gantry_plugin(
     gantry: AgentGantry,
     query: str,
     *,
-    limit: int = 3,
+    limit: int = DEFAULT_TOOL_LIMIT,
     plugin_name: str = _DEFAULT_PLUGIN,
     **select_kwargs: Any,
 ) -> dict[str, Any]:
@@ -109,15 +110,25 @@ class SemanticKernelAdapter(BaseFrameworkAdapter):
         *,
         limit: int | None = None,
         plugin_name: str = _DEFAULT_PLUGIN,
-        **select_kwargs: Any,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        tools_already_used: list[str] | None = None,
     ) -> list[Any]:
-        """Select tools for ``query`` as SK ``KernelFunction``s (static slice)."""
+        """Select tools for ``query`` as SK ``KernelFunction``s (static slice).
+
+        Same explicit selection surface as :meth:`BaseFrameworkAdapter.select`
+        (``score_threshold``, ``namespaces``, ``tools_already_used``), plus SK's
+        own ``plugin_name`` (the plugin every returned ``KernelFunction`` is
+        registered under).
+        """
         return await _for_semantic_kernel(
             self._gantry,
             query,
             limit=self._default_limit if limit is None else limit,
             plugin_name=plugin_name,
-            **select_kwargs,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+            tools_already_used=tools_already_used,
         )
 
     async def plugin(

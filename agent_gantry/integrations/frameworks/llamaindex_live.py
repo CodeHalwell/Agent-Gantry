@@ -32,7 +32,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import GantryToolset
+from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT, GantryToolset
 from agent_gantry.integrations.frameworks.llamaindex import _spec_to_llamaindex
 from agent_gantry.query import latest_activity
 
@@ -110,7 +110,7 @@ def _build_retriever_class() -> type:
             self,
             gantry: AgentGantry,
             *,
-            limit: int = 5,
+            limit: int = DEFAULT_TOOL_LIMIT,
             score_threshold: float = 0.0,
         ) -> None:
             # Intentionally do NOT call super().__init__(): the base class wires
@@ -159,7 +159,7 @@ def _build_retriever_class() -> type:
 def _gantry_tool_retriever(
     gantry: AgentGantry,
     *,
-    limit: int = 5,
+    limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
 ) -> Any:
     """Build a ``GantryToolRetriever`` for ``gantry``.
@@ -177,7 +177,7 @@ def _gantry_function_agent(
     llm: Any,
     *,
     name: str = "gantry_agent",
-    limit: int = 5,
+    limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
     **agent_kwargs: Any,
 ) -> Any:

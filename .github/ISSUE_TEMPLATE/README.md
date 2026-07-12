@@ -93,4 +93,4 @@ These templates align with Agent-Gantry's vision to become a comprehensive orche
 - Enable continuous learning and improvement
 - Support stateful agent workflows
 
-For more information, see the project's [roadmap](../../plan.md) and [README](../../README.md).
+For more information, see the project's [README](../../README.md) and [CHANGELOG](../../CHANGELOG.md).

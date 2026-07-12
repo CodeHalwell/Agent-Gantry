@@ -39,8 +39,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT, ToolSpec
 from agent_gantry.integrations.frameworks.base import GantryToolset as _BaseToolset
-from agent_gantry.integrations.frameworks.base import ToolSpec
 from agent_gantry.query import latest_activity
 
 if TYPE_CHECKING:
@@ -163,7 +163,7 @@ def _build_toolset_class() -> type:
             self,
             gantry: AgentGantry,
             *,
-            limit: int = 5,
+            limit: int = DEFAULT_TOOL_LIMIT,
             score_threshold: float = 0.0,
         ) -> None:
             self._toolset = _BaseToolset(gantry)
@@ -289,7 +289,7 @@ def _get_class() -> type:
 def _gantry_toolset(
     gantry: AgentGantry,
     *,
-    limit: int = 5,
+    limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
 ) -> Any:
     """Build a :class:`GantryToolset` for per-turn dynamic tool provision.

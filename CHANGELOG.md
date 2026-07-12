@@ -35,6 +35,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING — static framework adapters now default `limit` to 5, not 3.**
+  `GantryToolset`, `BaseFrameworkAdapter`, and every native per-framework static
+  helper (`agent_gantry.langchain`, `.crewai`, `.llamaindex`, `.autogen`,
+  `.google_adk`, `.agno`, `.haystack`, `.pydantic_ai`, `.smolagents`,
+  `.openai_agents`, `.semantic_kernel`) previously surfaced 3 tools per call by
+  default while every live/deep per-turn provider (`live_wrappers.py`,
+  `integrations/frameworks/*_live.py`, `AgentFrameworkAdapter`) already
+  defaulted to 5. Both families now share a single
+  `agent_gantry.integrations.frameworks.base.DEFAULT_TOOL_LIMIT = 5` constant.
+  Callers relying on the old default of 3 tools per static selection should
+  pass `limit=3` explicitly. (`integrations/frameworks/langgraph_live.py` is
+  excluded from this pass — it is mid-migration in a parallel change.)
+- **`with_semantic_tools` / `SemanticToolSelector` / `SemanticToolsDecorator`
+  now default `score_threshold` to `0.0`, not `0.5`**, matching every
+  framework adapter in `agent_gantry.integrations.frameworks` (which already
+  documented and used a `0.0` default to avoid silently dropping every tool on
+  a non-trivial query). The raw `ToolQuery` schema default remains `0.5` for
+  backward compatibility — see the note on
+  `agent_gantry.schema.query.ToolQuery.score_threshold`.
+- **`BaseFrameworkAdapter.select` gained explicit `score_threshold`,
+  `namespaces`, and `tools_already_used` keyword parameters** instead of
+  swallowing them in `**select_kwargs`. Previously `namespaces` was a
+  discoverable, first-class kwarg only on `OpenAIAgentsAdapter`'s live
+  methods; it (and the other two) are now explicit and documented on every
+  adapter's `select`. `SemanticKernelAdapter.select` keeps its extra
+  `plugin_name` kwarg alongside the same three. This is additive
+  (keyword-only) and does not change behavior for existing callers.
+- **`fetch_framework_tools`'s `framework` parameter now accepts every native
+  adapter name**, not just `langgraph`, `semantic-kernel`, `crew_ai`,
+  `google_adk`, `strands`, and `agent_framework` (fixes #101). It now covers
+  `langchain`, `llamaindex`, `crewai`, `autogen`, `semantic_kernel`, `agno`,
+  `haystack`, `pydantic_ai`, `openai_agents`, and `smolagents` too, matching
+  the native per-framework adapter module names. The legacy spellings
+  `crew_ai` and `semantic-kernel` are still accepted and normalized
+  internally to `crewai` / `semantic_kernel`.
 - **LangGraph live tool provider migrated off the deprecated `create_react_agent`.**
   `agent_gantry.integrations.frameworks.langgraph_live` now builds the per-turn
   live agent with `langchain.agents.create_agent` (the documented replacement;
@@ -66,8 +101,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pydantic_ai.models.test.TestModel`, and the others gate their live
   agent/model run behind `OPENAI_API_KEY`. `examples/agent_frameworks/
   README.md` documents all five.
-
-## [0.9.0] - 2026-06-16
+ 2026-06-16
 
 ### Removed
 

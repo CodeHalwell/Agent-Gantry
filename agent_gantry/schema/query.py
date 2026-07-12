@@ -51,6 +51,18 @@ class ToolQuery(BaseModel):
     context: ConversationContext
 
     limit: int = Field(default=5, ge=1, le=50)
+    # NOTE: this 0.5 default is intentionally *not* mirrored by the
+    # higher-level convenience APIs (``agent_gantry.integrations.frameworks``
+    # adapters, ``with_semantic_tools`` / ``SemanticToolSelector`` in
+    # ``agent_gantry.integrations.semantic_tools``). Those all default to
+    # ``0.0`` (no filtering) because a flat absolute-similarity cutoff is a
+    # silent-drop trap once queries get longer or more specific — long queries
+    # dilute absolute similarity scores, so a non-zero default can silently
+    # return zero tools with no error. Callers constructing a ``ToolQuery``
+    # directly should set ``score_threshold`` explicitly rather than relying on
+    # this default; the convenience layers set it to ``0.0`` for exactly this
+    # reason. Kept at 0.5 here for backward compatibility with existing direct
+    # ``ToolQuery`` callers — do not change this without a migration plan.
     score_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
 
     # Filters

@@ -43,6 +43,15 @@ if TYPE_CHECKING:
     from agent_gantry.schema.tool import ToolDefinition
 
 
+#: Default number of tools surfaced per selection call, shared by every static
+#: adapter (:class:`GantryToolset`, :class:`BaseFrameworkAdapter`) and every
+#: live/deep per-turn provider (``live_wrappers.py``, ``frameworks/*_live.py``,
+#: :class:`~agent_gantry.integrations.agent_framework_adapter.AgentFrameworkAdapter`).
+#: A single named constant keeps the two families from drifting apart again —
+#: they previously disagreed (static adapters defaulted to 3, live paths to 5).
+DEFAULT_TOOL_LIMIT = 5
+
+
 class ToolExecutionError(RuntimeError):
     """Raised when a Gantry-backed tool invocation does not succeed."""
 
@@ -306,7 +315,7 @@ class GantryToolset:
         lc_tools = [LangChainAdapter.convert(s) for s in specs]
     """
 
-    def __init__(self, gantry: AgentGantry, *, default_limit: int = 3) -> None:
+    def __init__(self, gantry: AgentGantry, *, default_limit: int = DEFAULT_TOOL_LIMIT) -> None:
         self._gantry = gantry
         self._default_limit = default_limit
 
@@ -352,7 +361,7 @@ class BaseFrameworkAdapter:
     framework-specific helpers (agent builders, live retrievers, …).
     """
 
-    def __init__(self, gantry: AgentGantry, *, default_limit: int = 3) -> None:
+    def __init__(self, gantry: AgentGantry, *, default_limit: int = DEFAULT_TOOL_LIMIT) -> None:
         self._gantry = gantry
         self._default_limit = default_limit
 
@@ -367,19 +376,28 @@ class BaseFrameworkAdapter:
         raise NotImplementedError
 
     async def select(
-        self, query: str, *, limit: int | None = None, **select_kwargs: Any
+        self,
+        query: str,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        tools_already_used: list[str] | None = None,
     ) -> list[Any]:
         """Select tools for ``query`` as the framework's native tool objects.
 
-        ``limit`` defaults to the adapter's ``default_limit``. Extra keyword
-        arguments (``score_threshold``, ``namespaces``, ``tools_already_used``)
-        are forwarded to the underlying semantic selection. Each call still
-        routes through ``gantry.execute`` so retries, timeouts, circuit
-        breakers, and the security policy apply.
+        ``limit`` defaults to the adapter's ``default_limit``. ``score_threshold``,
+        ``namespaces``, and ``tools_already_used`` are explicit, first-class
+        keyword arguments — not buried in ``**kwargs`` — and are forwarded
+        verbatim to :meth:`GantryToolset.select`. Each call still routes through
+        ``gantry.execute`` so retries, timeouts, circuit breakers, and the
+        security policy apply.
         """
         specs = await GantryToolset(self._gantry).select(
             query,
             limit=self._default_limit if limit is None else limit,
-            **select_kwargs,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+            tools_already_used=tools_already_used,
         )
         return [self.convert(s) for s in specs]

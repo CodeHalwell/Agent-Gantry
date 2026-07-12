@@ -33,6 +33,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.agno import _for_agno
+from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT
 from agent_gantry.integrations.frameworks.crewai import _for_crewai
 from agent_gantry.integrations.frameworks.haystack import _for_haystack
 from agent_gantry.integrations.frameworks.smolagents import _for_smolagents
@@ -72,7 +73,7 @@ class GantryLiveCrewAgent:
         goal: str = "Help the user by selecting and using the right tools.",
         backstory: str = "An agent whose tools are chosen by Agent-Gantry per task.",
         llm: Any | None = None,
-        limit: int = 5,
+        limit: int = DEFAULT_TOOL_LIMIT,
         score_threshold: float = 0.0,
         **agent_kwargs: Any,
     ) -> None:
@@ -147,7 +148,7 @@ class GantryLiveAgnoAgent:
         gantry: AgentGantry,
         *,
         model: Any | None = None,
-        limit: int = 5,
+        limit: int = DEFAULT_TOOL_LIMIT,
         score_threshold: float = 0.0,
         **agent_kwargs: Any,
     ) -> None:
@@ -209,7 +210,7 @@ class GantryLiveHaystackToolInvoker:
         self,
         gantry: AgentGantry,
         *,
-        limit: int = 5,
+        limit: int = DEFAULT_TOOL_LIMIT,
         score_threshold: float = 0.0,
         **invoker_kwargs: Any,
     ) -> None:
@@ -275,7 +276,7 @@ class GantryLiveSmolAgent:
         *,
         model: Any | None = None,
         agent_cls: Any | None = None,
-        limit: int = 5,
+        limit: int = DEFAULT_TOOL_LIMIT,
         score_threshold: float = 0.0,
         **agent_kwargs: Any,
     ) -> None:

@@ -17,7 +17,11 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import BaseFrameworkAdapter, GantryToolset
+from agent_gantry.integrations.frameworks.base import (
+    DEFAULT_TOOL_LIMIT,
+    BaseFrameworkAdapter,
+    GantryToolset,
+)
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
@@ -65,7 +69,7 @@ async def _for_openai_agents(
     gantry: AgentGantry,
     query: str,
     *,
-    limit: int = 3,
+    limit: int = DEFAULT_TOOL_LIMIT,
     **select_kwargs: Any,
 ) -> list:
     """Select tools for ``query`` and return them as OpenAI Agents ``FunctionTool``s."""

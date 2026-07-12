@@ -34,7 +34,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import GantryToolset, ToolSpec
+from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT, GantryToolset, ToolSpec
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
@@ -83,7 +83,7 @@ def _build_workbench_class() -> type:
             gantry: AgentGantry,
             *,
             query: str = "",
-            limit: int = 5,
+            limit: int = DEFAULT_TOOL_LIMIT,
             score_threshold: float = 0.0,
         ) -> None:
             self._toolset = GantryToolset(gantry)
@@ -240,7 +240,7 @@ def _gantry_workbench(
     gantry: AgentGantry,
     *,
     query: str = "",
-    limit: int = 5,
+    limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
 ) -> Any:
     """Build a :class:`GantryWorkbench` for per-turn dynamic tool provision.

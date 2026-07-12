@@ -73,7 +73,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import GantryToolset
+from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT, GantryToolset
 from agent_gantry.integrations.frameworks.openai_agents import _spec_to_openai_agents
 from agent_gantry.query import latest_activity
 
@@ -119,7 +119,7 @@ async def _select_function_tools(
     gantry: AgentGantry,
     query_or_input: Any,
     *,
-    limit: int = 5,
+    limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
     namespaces: list[str] | None = None,
 ) -> list[Any]:
@@ -156,7 +156,7 @@ async def _refresh_agent_tools(
     gantry: AgentGantry,
     query_or_input: Any,
     *,
-    limit: int = 5,
+    limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
     namespaces: list[str] | None = None,
 ) -> list[Any]:
@@ -187,7 +187,7 @@ def _gantry_run_hooks(
     gantry: AgentGantry,
     agent: Any,
     *,
-    limit: int = 5,
+    limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
     namespaces: list[str] | None = None,
 ) -> Any:
@@ -264,7 +264,7 @@ class GantryAgentSession:
         agent: Any,
         gantry: AgentGantry,
         *,
-        limit: int = 5,
+        limit: int = DEFAULT_TOOL_LIMIT,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
     ) -> None:
@@ -329,7 +329,7 @@ async def _run_with_gantry(
     gantry: AgentGantry,
     run_input: Any,
     *,
-    limit: int = 5,
+    limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
     namespaces: list[str] | None = None,
     **run_kwargs: Any,

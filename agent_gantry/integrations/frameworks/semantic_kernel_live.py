@@ -62,6 +62,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
+from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT
 from agent_gantry.integrations.frameworks.semantic_kernel import _gantry_plugin
 from agent_gantry.query import latest_activity
 
@@ -167,7 +168,7 @@ class GantryFunctionProvider:
         kernel: Any,
         *,
         plugin_name: str = _DEFAULT_PLUGIN,
-        limit: int = 5,
+        limit: int = DEFAULT_TOOL_LIMIT,
         score_threshold: float = 0.0,
     ) -> None:
         self._gantry = gantry
@@ -227,7 +228,7 @@ async def _refresh_kernel_tools(
     query: Any,
     *,
     plugin_name: str = _DEFAULT_PLUGIN,
-    limit: int = 5,
+    limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
 ) -> dict[str, Any]:
     """Re-select tools for ``query`` and rebuild ``kernel``'s gantry plugin once.

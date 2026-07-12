@@ -311,7 +311,8 @@ class MyVectorStore(VectorStoreAdapter):
 
 ## Roadmap Context
 
-The project follows a phased roadmap (see `plan.md`):
+The project follows a phased roadmap, reflected in the `tests/test_phase*.py`
+files (`test_phase2.py` … `test_phase6_a2a.py`) and `CHANGELOG.md`:
 - **Phase 1**: Core Foundation (data models, basic routing)
 - **Phase 2**: Robustness (execution engine, retries, circuit breakers)
 - **Phase 3**: Context-Aware Routing (intent classification, diversity)
@@ -343,4 +344,4 @@ When working on features, consider which phase they belong to and follow the arc
 - Check existing code patterns in the codebase
 - Review tests for usage examples
 - See `README.md` for high-level architecture
-- See `plan.md` for detailed roadmap and design decisions
+- See `CLAUDE.md` and `CHANGELOG.md` for architecture notes and design history
