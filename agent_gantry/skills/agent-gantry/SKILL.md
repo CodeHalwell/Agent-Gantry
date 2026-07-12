@@ -1,6 +1,6 @@
 ---
 name: agent-gantry
-description: Use this skill when the user is writing or debugging code that uses the `agent-gantry` Python library (semantic tool routing for LLM agents). Triggers on `import agent_gantry`, mentions of `AgentGantry`, `GantryContextProvider`, `GantryToolBridge`, `gantry.register`, `with_semantic_tools`, `LangChainAdapter`/`CrewAIAdapter`/`StrandsAdapter`/other `<Framework>Adapter` classes (or the per-SDK `OpenAIAdapter`/`AnthropicAdapter`/`GeminiAdapter`/`GroqAdapter`/`VertexAIAdapter`/`MistralAdapter`), `ToolRefresher`, or tool retrieval / surfacing problems with Microsoft Agent Framework, LangChain, LangGraph, AutoGen, CrewAI, LlamaIndex, Pydantic AI, OpenAI Agents SDK, Smolagents, Haystack, Agno, Strands Agents, Semantic Kernel, Google ADK, A2A, or MCP. Use proactively when the code imports `agent_gantry` even if the user did not explicitly invoke the skill.
+description: Use this skill when the user is writing or debugging code that uses the `agent-gantry` Python library (semantic tool routing for LLM agents). Triggers on `import agent_gantry`, mentions of `AgentGantry`, `GantryContextProvider`, `GantryToolBridge`, `gantry.register`, `with_semantic_tools`, `LangChainAdapter`/`CrewAIAdapter`/`StrandsAdapter`/`DSPyAdapter`/other `<Framework>Adapter` classes (or the per-SDK `OpenAIAdapter`/`AnthropicAdapter`/`GeminiAdapter`/`GroqAdapter`/`VertexAIAdapter`/`MistralAdapter`), `ToolRefresher`, or tool retrieval / surfacing problems with Microsoft Agent Framework, LangChain, LangGraph, AutoGen, CrewAI, LlamaIndex, Pydantic AI, OpenAI Agents SDK, Smolagents, Haystack, Agno, Strands Agents, DSPy, Semantic Kernel, Google ADK, A2A, or MCP. Use proactively when the code imports `agent_gantry` even if the user did not explicitly invoke the skill.
 ---
 
 # Agent-Gantry
@@ -24,6 +24,7 @@ This skill is the canonical reference for using the library. Read the section th
 | Haystack | `HaystackAdapter(gantry).select(...)` | [Native framework adapters](#native-framework-adapters) |
 | Agno | `AgnoAdapter(gantry).select(...)` | [Native framework adapters](#native-framework-adapters) |
 | Strands Agents | `StrandsAdapter(gantry).select(...)` (static) or `.agent(...)` / `.tool_hook(...)` (live, per-turn) | [Native framework adapters](#native-framework-adapters) |
+| DSPy | `DSPyAdapter(gantry).select(...)` (static) or `.agent_builder(signature, ...)` (per-call) | [Native framework adapters](#native-framework-adapters) |
 | AutoGen / AG2 | `AutoGenAdapter(gantry).select(...)` / `.register(...)` (static) or `.workbench()` (live) | [Native framework adapters](#native-framework-adapters) |
 | Semantic Kernel | `SemanticKernelAdapter(gantry).select(...)` / `.plugin(query)` | [Native framework adapters](#native-framework-adapters) |
 | Google ADK | `GoogleADKAdapter(gantry).select(...)` (static) or `.agent(model=, name=)` (live) | [Native framework adapters](#native-framework-adapters) |
@@ -238,7 +239,7 @@ agent = Agent(
 
 ## Native framework adapters
 
-For LangChain, LangGraph, LlamaIndex, CrewAI, Pydantic AI, OpenAI Agents SDK, Smolagents, Haystack, Agno, Strands Agents, AutoGen/AG2, Semantic Kernel, and Google ADK, use the native `<Framework>Adapter` class. Its `.select(query, limit=...)` method selects the top-K relevant tools and returns the framework's **native tool objects**, with every call still routed through `gantry.execute`.
+For LangChain, LangGraph, LlamaIndex, CrewAI, Pydantic AI, OpenAI Agents SDK, Smolagents, Haystack, Agno, Strands Agents, DSPy, AutoGen/AG2, Semantic Kernel, and Google ADK, use the native `<Framework>Adapter` class. Its `.select(query, limit=...)` method selects the top-K relevant tools and returns the framework's **native tool objects**, with every call still routed through `gantry.execute`.
 
 ```python
 from agent_gantry import AgentGantry
@@ -265,6 +266,7 @@ Every adapter shares the identical signature `<Framework>Adapter(gantry).select(
 | Haystack | `HaystackAdapter` | `haystack.tools.Tool` | `from agent_gantry.haystack import HaystackAdapter` |
 | Agno | `AgnoAdapter` | `agno.tools.function.Function` | `from agent_gantry.agno import AgnoAdapter` |
 | Strands Agents | `StrandsAdapter` | `strands.tools.decorator.DecoratedFunctionTool` | `from agent_gantry.strands import StrandsAdapter` |
+| DSPy | `DSPyAdapter` | `dspy.Tool` | `from agent_gantry.dspy import DSPyAdapter` |
 | AutoGen / AG2 | `AutoGenAdapter` (`.select` / `.register`) | callables + `register_function` | `from agent_gantry.autogen import AutoGenAdapter` |
 | Semantic Kernel | `SemanticKernelAdapter` (`.select` / `.plugin`) | `@kernel_function` `KernelFunction` | `from agent_gantry.semantic_kernel import SemanticKernelAdapter` |
 | Google ADK | `GoogleADKAdapter` | `google.adk.tools.FunctionTool` | `from agent_gantry.google_adk import GoogleADKAdapter` |
@@ -303,7 +305,7 @@ agent = LlamaIndexAdapter(gantry).function_agent(llm)   # re-selects tools each 
 
 The returned live objects keep their classes (`GantryToolRetriever`, live `GantryToolset`, `GantryWorkbench`, `GantryFunctionProvider`, `GantryAgentSession`) — still importable from each framework's `*_live` module for `isinstance` checks.
 
-Frameworks whose tool list is **fixed at agent construction** (CrewAI, Agno, Haystack, Smolagents) can't re-advertise tools mid-run. Build a self-rebuilding agent with `<Adapter>(gantry).agent_builder(...)` (Haystack: `HaystackAdapter(gantry).tool_invoker_builder(...)`); it re-selects and rebuilds on each top-level call. For a one-shot fresh slice of native tools, call `<Adapter>(gantry).live_tools(query)` (async).
+Frameworks whose tool list is **fixed at agent construction** (CrewAI, Agno, Haystack, Smolagents, DSPy) can't re-advertise tools mid-run. Build a self-rebuilding agent with `<Adapter>(gantry).agent_builder(...)` (Haystack: `HaystackAdapter(gantry).tool_invoker_builder(...)`; DSPy: `DSPyAdapter(gantry).agent_builder(signature, ...)`, since `dspy.ReAct` needs a task signature); it re-selects and rebuilds on each top-level call. For a one-shot fresh slice of native tools, call `<Adapter>(gantry).live_tools(query)` (async, not available on DSPy — use `.select(query)` instead).
 
 ## Multi-turn re-selection (ToolRefresher)
 
@@ -697,6 +699,7 @@ from agent_gantry.smolagents import SmolagentsAdapter
 from agent_gantry.haystack import HaystackAdapter
 from agent_gantry.agno import AgnoAdapter
 from agent_gantry.strands import StrandsAdapter
+from agent_gantry.dspy import DSPyAdapter
 from agent_gantry.autogen import AutoGenAdapter
 from agent_gantry.semantic_kernel import SemanticKernelAdapter
 from agent_gantry.google_adk import GoogleADKAdapter

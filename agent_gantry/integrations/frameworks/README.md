@@ -23,6 +23,7 @@ timeouts, circuit breakers, security policy all apply).
 | Semantic Kernel | `SemanticKernelAdapter` (`.select`, `.plugin`) | `KernelFunction` (`@kernel_function`) |
 | Google ADK | `GoogleADKAdapter` | `google.adk.tools.FunctionTool` |
 | Strands Agents | `StrandsAdapter` | `strands.tools.decorator.DecoratedFunctionTool` |
+| DSPy | `DSPyAdapter` | `dspy.Tool` |
 
 All third-party imports are **lazy** — `import agent_gantry` never requires any
 of these frameworks. A missing framework raises `ImportError` with a
@@ -47,7 +48,7 @@ Each framework has a top-level namespace — `from agent_gantry.<framework> impo
 `agent_gantry.pydantic_ai`, `agent_gantry.openai_agents`, `agent_gantry.smolagents`,
 `agent_gantry.haystack`, `agent_gantry.agno`, `agent_gantry.autogen`,
 `agent_gantry.semantic_kernel`, `agent_gantry.google_adk`, `agent_gantry.langgraph`,
-`agent_gantry.strands`, `agent_gantry.agent_framework`) re-exporting that framework's `<Framework>Adapter`
+`agent_gantry.strands`, `agent_gantry.dspy`, `agent_gantry.agent_framework`) re-exporting that framework's `<Framework>Adapter`
 class (which carries both the static `.select`/`.convert` and the deep live
 methods). Importing `agent_gantry` never pulls these in.
 
@@ -115,12 +116,18 @@ agent = LlamaIndexAdapter(gantry).function_agent(llm)   # LlamaIndex agent that 
 ```
 
 Frameworks whose tool list is **fixed at agent construction** (CrewAI, Agno,
-Haystack, Smolagents) can't re-advertise tools mid-run; their "live" wrappers —
+Haystack, Smolagents, DSPy) can't re-advertise tools mid-run; their "live" wrappers —
 obtained via `CrewAIAdapter(gantry).agent_builder(...)`,
 `AgnoAdapter(gantry).agent_builder(...)`, `SmolagentsAdapter(gantry).agent_builder(...)`,
+`DSPyAdapter(gantry).agent_builder(signature, ...)`,
 and `HaystackAdapter(gantry).tool_invoker_builder(...)` (or `HaystackAdapter(gantry).live_tools(query)`
 for tools alone) — re-select and rebuild the agent on each top-level call —
-the deepest those frameworks allow.
+the deepest those frameworks allow. DSPy's `dspy.ReAct` bakes each tool's
+name/description into its instruction prompt at construction and has no
+runtime hook (`dspy.utils.callback.BaseCallback`'s `on_tool_start`/
+`on_module_start` fire around an already-selected call, not before the model
+picks the next tool) — see the module docstring in
+`agent_gantry/integrations/frameworks/dspy.py` for the full analysis.
 
 ## Shared base
 

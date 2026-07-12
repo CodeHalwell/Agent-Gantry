@@ -38,6 +38,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **every model call**, matching the depth of Google ADK's
   `before_model_callback` rather than the per-top-level-call rebuild used for
   CrewAI/Agno/Haystack/Smolagents.
+- **Native DSPy adapter** — `DSPyAdapter`
+  (`from agent_gantry.dspy import DSPyAdapter`), joining the per-framework
+  `<Framework>Adapter` family. `await adapter.select(query, limit=...)` /
+  `adapter.convert(spec)` wrap Gantry tools as `dspy.Tool`s for DSPy's
+  agentic module, `dspy.ReAct`, with Gantry's own name/description/JSON-Schema
+  parameters passed straight through via
+  `dspy.adapters.types.tool.convert_input_schema_to_tool_args` (the same
+  schema bridge DSPy's own MCP/LangChain tool converters use). The wrapped
+  function is intentionally **synchronous** (`ToolSpec.invoke`'s loop-safe
+  bridge), not `callable_for_signature()`'s async wrapper: `dspy.Tool.__call__`
+  — the path `ReAct.forward()`/plain `react(...)` uses, DSPy's own documented
+  call convention — raises on an async tool unless the caller opts in with
+  `dspy.configure(allow_tool_async_sync_conversion=True)` or always calls
+  `await react.acall(...)`; a sync wrapper works correctly under both entry
+  points with no DSPy configuration. `dspy.ReAct` fixes its tool list at
+  construction with no runtime re-selection hook (`dspy.utils.callback`'s
+  `on_tool_start`/`on_module_start` fire around an already-selected call, not
+  before the model picks the next tool), so `DSPyAdapter(gantry).agent_builder(
+  signature, ...)` follows the same per-top-level-call rebuild tier as
+  CrewAI/Agno/Smolagents rather than a fabricated per-turn hook.
 - **`framework-adapters` CI job now runs on ubuntu × Python 3.10–3.13 plus a
   macOS 3.12 cell** (was a single ubuntu/3.12 cell), matching the OS/Python
   coverage the main `test` matrix already gives the other framework

@@ -8,7 +8,7 @@ so importing this package never requires those frameworks to be installed.
 
 Supported frameworks: LangChain, LangGraph, LlamaIndex, CrewAI, Pydantic AI,
 OpenAI Agents SDK, Smolagents, Haystack, Agno, AutoGen/AG2, Semantic Kernel,
-Google ADK, Strands Agents.
+Google ADK, Strands Agents, DSPy.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from agent_gantry.integrations.frameworks.base import (
     spec_from_tool,
 )
 from agent_gantry.integrations.frameworks.crewai import CrewAIAdapter
+from agent_gantry.integrations.frameworks.dspy import DSPyAdapter
 from agent_gantry.integrations.frameworks.google_adk import GoogleADKAdapter
 from agent_gantry.integrations.frameworks.haystack import HaystackAdapter
 from agent_gantry.integrations.frameworks.langchain import LangChainAdapter
@@ -53,4 +54,5 @@ __all__ = [
     "SemanticKernelAdapter",
     "GoogleADKAdapter",
     "StrandsAdapter",
+    "DSPyAdapter",
 ]
