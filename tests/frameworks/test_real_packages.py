@@ -8,9 +8,11 @@ adapter against the *actual* installed package, skipping any framework that
 isn't present (``pytest.importorskip``). In CI (where the ``agent-frameworks``
 extra installs them) this is the guard against silent adapter breakage.
 
-Exception: Pydantic AI is **build-only** here — invoking its ``Tool`` requires
-a live agent run context, so ``test_pydantic_ai_builds`` only asserts the tool
-is constructed correctly.
+``test_agent_framework_builds_and_invokes`` covers the Microsoft Agent
+Framework separately, below the ``REAL_ADAPTERS`` table: ``AgentFrameworkAdapter``
+has no ``select``/``convert`` staticmethods (unlike the ``BaseFrameworkAdapter``
+family that populates ``REAL_ADAPTERS``) — its select-equivalent is
+``tool_bridge().get_tools(...)``, so it doesn't fit the shared parametrization.
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 
 from agent_gantry import AgentGantry
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.integrations import frameworks as F
+from agent_gantry.integrations import frameworks as F  # noqa: N812
 
 
 @pytest.fixture
@@ -85,14 +87,23 @@ async def _invoke_semantic_kernel(tool):
     return await tool.invoke(Kernel(), to="boss@x.com")
 
 
-# (id, importable module, Adapter class, invoke). Pydantic AI is intentionally
-# NOT here — invoking its Tool needs a live agent context — and is covered
-# build-only by test_pydantic_ai_builds below.
+def _invoke_pydantic_ai(tool):
+    # ``Tool``/``Tool.from_schema`` both stash the wrapped callable as the
+    # public ``function`` attribute (see pydantic_ai.tools.Tool.__init__).
+    # Calling it directly exercises the exact function a live agent run would
+    # invoke, without needing a full ``RunContext`` — it's the same async
+    # `ToolSpec.callable_for_signature()` wrapper every other adapter uses,
+    # which already routes through ``gantry.execute``.
+    return tool.function(to="boss@x.com")
+
+
+# (id, importable module, Adapter class, invoke).
 REAL_ADAPTERS = [
     ("langchain", "langchain_core", F.LangChainAdapter, _invoke_langchain),
     ("langgraph", "langgraph", F.LangGraphAdapter, _invoke_langchain),
     ("llamaindex", "llama_index.core", F.LlamaIndexAdapter, _invoke_llamaindex),
     ("crewai", "crewai", F.CrewAIAdapter, _invoke_crewai),
+    ("pydantic_ai", "pydantic_ai", F.PydanticAIAdapter, _invoke_pydantic_ai),
     ("smolagents", "smolagents", F.SmolagentsAdapter, _invoke_smolagents),
     ("haystack", "haystack", F.HaystackAdapter, _invoke_haystack),
     ("agno", "agno", F.AgnoAdapter, _invoke_agno),
@@ -117,14 +128,6 @@ async def test_real_adapter_builds_and_invokes(name, module, adapter_cls, invoke
     assert "sent:boss@x.com" in str(result), f"{name}: invocation did not route through gantry"
 
 
-async def test_pydantic_ai_builds(gantry):
-    """Pydantic AI tool build (its run path needs an agent context, so just build)."""
-    pytest.importorskip("pydantic_ai", reason="pydantic-ai not installed")
-    tools = await F.PydanticAIAdapter(gantry).select("send an email", limit=1)
-    assert tools
-    assert tools[0].name == "send_email"
-
-
 async def test_autogen_builds_and_invokes(gantry):
     """AutoGenAdapter.select returns plain {name, description, callable} entries
     (no third-party framework needed); verify the callable routes through gantry."""
@@ -132,3 +135,32 @@ async def test_autogen_builds_and_invokes(gantry):
     assert entries and entries[0]["name"] == "send_email"
     result = await entries[0]["callable"](to="boss@x.com")
     assert "sent:boss@x.com" in str(result)
+
+
+async def test_agent_framework_builds_and_invokes(gantry):
+    """AgentFrameworkAdapter's ``tool_bridge().get_tools(...)`` is its
+    select+convert equivalent — it has no ``select``/``convert`` staticmethods
+    (see ``agent_gantry.agent_framework.AgentFrameworkAdapter``), so it isn't in
+    ``REAL_ADAPTERS`` above. With ``agent-framework`` installed, ``get_tools()``
+    upgrades the bare callable to a real ``agent_framework.FunctionTool`` (see
+    ``GantryToolBridge._maybe_wrap_as_function_tool``); invoke it through its
+    native ``.invoke()`` and confirm the call still routes through gantry.
+    """
+    pytest.importorskip("agent_framework", reason="agent-framework not installed")
+    from agent_gantry.agent_framework import AgentFrameworkAdapter
+
+    bridge = AgentFrameworkAdapter(gantry).tool_bridge()
+    tools = await bridge.get_tools("send an email to my boss", limit=1)
+    assert tools, "agent_framework: adapter returned no tools"
+
+    tool = tools[0]
+    assert type(tool).__name__ == "FunctionTool", (
+        f"agent_framework: expected a real FunctionTool with agent-framework "
+        f"installed, got {type(tool)!r}"
+    )
+    # `skip_parsing=True` returns the wrapped function's raw string result
+    # instead of wrapping it in `list[Content]` — see `FunctionTool.invoke`.
+    result = await tool.invoke(to="boss@x.com", skip_parsing=True)
+    assert "sent:boss@x.com" in str(result), (
+        "agent_framework: invocation did not route through gantry"
+    )
