@@ -262,8 +262,9 @@ def test_register_accepts_function_tool_like_object():
     assert returned is ft  # the wrapper is passed through unchanged
     pending_names = [t.name for t in g._pending_tools]
     assert "doubler" in pending_names
-    # The handler under the registered name should be the bare callable.
-    assert g._tool_handlers["doubler"] is real_handler
+    # The handler under the registered (namespace-qualified) name should be
+    # the bare callable.
+    assert g._tool_handlers["default.doubler"] is real_handler
 
 
 # ---------------------------------------------------------------------------

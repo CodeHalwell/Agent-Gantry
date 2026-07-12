@@ -40,8 +40,11 @@ jobs:
       - name: Run ruff
         run: uv run ruff check agent_gantry/
 
-      - name: Run ty
-        run: uvx ty check agent_gantry/ --warn all
+      - name: Run ty (informational)
+        # Static typing is not gated in CI (see CLAUDE.md) — ty exits 1 on any
+        # diagnostic, and main itself carries warnings, so this step reports
+        # without failing the job. Ruff (above) remains the enforced gate.
+        run: uvx ty check agent_gantry/ --warn all --exit-zero
 
   test:
     runs-on: ${{ matrix.os }}
