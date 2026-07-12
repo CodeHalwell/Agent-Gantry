@@ -64,11 +64,9 @@ def _best_embedder() -> tuple[Any, str, bool]:
             SentenceTransformersEmbedder,
         )
 
-        return (
-            SentenceTransformersEmbedder("all-MiniLM-L6-v2"),
-            "sentence-transformers/all-MiniLM-L6-v2",
-            True,
-        )
+        embedder = SentenceTransformersEmbedder("all-MiniLM-L6-v2")
+        _ = embedder.dimension  # Eagerly verify the model can actually load.
+        return (embedder, "sentence-transformers/all-MiniLM-L6-v2", True)
     except Exception:  # noqa: BLE001
         from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 
@@ -130,19 +128,19 @@ async def check_toolset_invoke(gantry: AgentGantry) -> tuple[bool, str]:
 
 async def check_adapters(gantry: AgentGantry) -> list[tuple[str, bool, str]]:
     """Build native tools per framework; SKIP cleanly when not installed."""
-    from agent_gantry.integrations import frameworks as F
+    from agent_gantry.integrations import frameworks
 
     adapters = [
-        ("langchain", F.LangChainAdapter),
-        ("langgraph", F.LangGraphAdapter),
-        ("llamaindex", F.LlamaIndexAdapter),
-        ("crewai", F.CrewAIAdapter),
-        ("pydantic_ai", F.PydanticAIAdapter),
-        ("openai_agents", F.OpenAIAgentsAdapter),
-        ("smolagents", F.SmolagentsAdapter),
-        ("haystack", F.HaystackAdapter),
-        ("agno", F.AgnoAdapter),
-        ("autogen", F.AutoGenAdapter),
+        ("langchain", frameworks.LangChainAdapter),
+        ("langgraph", frameworks.LangGraphAdapter),
+        ("llamaindex", frameworks.LlamaIndexAdapter),
+        ("crewai", frameworks.CrewAIAdapter),
+        ("pydantic_ai", frameworks.PydanticAIAdapter),
+        ("openai_agents", frameworks.OpenAIAgentsAdapter),
+        ("smolagents", frameworks.SmolagentsAdapter),
+        ("haystack", frameworks.HaystackAdapter),
+        ("agno", frameworks.AgnoAdapter),
+        ("autogen", frameworks.AutoGenAdapter),
     ]
     rows: list[tuple[str, bool, str]] = []
     for name, adapter_cls in adapters:
@@ -240,10 +238,10 @@ async def check_autonomous_pipeline() -> tuple[bool, str]:
     # Each result points FORWARD at the next stage (describing what is needed
     # next, not what was just done) — how a real pipeline step hands off.
     step_results = {
-        "fetch_raw_data": "the records contain missing nulls and duplicate rows that must be cleaned and normalized",
-        "clean_dataset": "the prepared training set is ready to fit and train a machine learning model",
-        "train_model": "the fitted model now needs its accuracy and performance metrics evaluated",
-        "evaluate_model": "please write a summary report describing the evaluation findings",
+        "fetch_raw_data": "clean and normalize the raw dataset, removing nulls and duplicates",
+        "clean_dataset": "train a machine learning model on the cleaned dataset",
+        "train_model": "evaluate the trained machine learning model accuracy metrics",
+        "evaluate_model": "generate a written report summarizing evaluation results",
     }
     expected_order = ["fetch_raw_data", "clean_dataset", "train_model", "evaluate_model", "generate_report"]
 

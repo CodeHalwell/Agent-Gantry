@@ -38,7 +38,9 @@ def _embedder() -> tuple[Any, str]:
             SentenceTransformersEmbedder,
         )
 
-        return SentenceTransformersEmbedder("all-MiniLM-L6-v2"), "all-MiniLM-L6-v2"
+        embedder = SentenceTransformersEmbedder("all-MiniLM-L6-v2")
+        _ = embedder.dimension  # Eagerly verify the model can actually load.
+        return embedder, "all-MiniLM-L6-v2"
     except Exception:  # noqa: BLE001
         from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 
@@ -73,15 +75,18 @@ async def autonomous_pipeline_demo(embedder) -> None:
     refresher = ToolRefresher(gantry, limit=3)  # default = latest_activity
     # Each result points forward at the next stage (how a real step hands off).
     forward = {
-        "fetch_raw_data": "records have missing nulls and duplicate rows that must be cleaned and normalized",
-        "clean_dataset": "the prepared training set is ready to fit and train a machine learning model",
-        "train_model": "the fitted model now needs its accuracy and performance metrics evaluated",
-        "evaluate_model": "please write a summary report describing the evaluation findings",
+        "fetch_raw_data": "clean and normalize the raw dataset, removing nulls and duplicates",
+        "clean_dataset": "train a machine learning model on the cleaned dataset",
+        "train_model": "evaluate the trained machine learning model accuracy metrics",
+        "evaluate_model": "generate a written report summarizing evaluation results",
         "generate_report": "report complete",
     }
 
     messages: list[dict[str, Any]] = [
-        {"role": "user", "content": "Build and evaluate a model from the raw source data."}
+        {
+            "role": "user",
+            "content": "Fetch the raw unprocessed data from the source system and run it through the pipeline.",
+        }
     ]
     for step in range(5):
         schemas = await refresher.refresh(messages)
