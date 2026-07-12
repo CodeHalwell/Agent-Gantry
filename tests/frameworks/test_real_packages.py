@@ -87,6 +87,13 @@ async def _invoke_semantic_kernel(tool):
     return await tool.invoke(Kernel(), to="boss@x.com")
 
 
+async def _invoke_strands(tool):
+    # ``DecoratedFunctionTool`` keeps the wrapped function callable directly;
+    # calling it returns the coroutine from the async wrapper, which routes
+    # through ``gantry.execute`` like every other adapter's invoke path.
+    return await tool(to="boss@x.com")
+
+
 def _invoke_pydantic_ai(tool):
     # ``Tool``/``Tool.from_schema`` both stash the wrapped callable as the
     # public ``function`` attribute (see pydantic_ai.tools.Tool.__init__).
@@ -110,6 +117,7 @@ REAL_ADAPTERS = [
     ("openai_agents", "agents", F.OpenAIAgentsAdapter, _invoke_openai_agents),
     ("google_adk", "google.adk", F.GoogleADKAdapter, _invoke_google_adk),
     ("semantic_kernel", "semantic_kernel", F.SemanticKernelAdapter, _invoke_semantic_kernel),
+    ("strands", "strands", F.StrandsAdapter, _invoke_strands),
 ]
 
 

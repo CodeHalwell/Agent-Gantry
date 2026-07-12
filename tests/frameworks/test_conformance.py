@@ -177,6 +177,16 @@ def _stub_google_adk_attrs() -> dict[str, object]:
     return {"FunctionTool": _echo}
 
 
+def _stub_strands_attrs() -> dict[str, object]:
+    def _tool(**kwargs: Any):
+        def _decorator(fn: Any) -> Any:
+            return types.SimpleNamespace(fn=fn, **kwargs)
+
+        return _decorator
+
+    return {"tool": _tool}
+
+
 @dataclass(frozen=True)
 class AdapterCase:
     """One row of the cross-framework conformance matrix.
@@ -277,14 +287,12 @@ ADAPTERS: list[AdapterCase] = [
         [],
         convert_kind="dict",
     ),
-    # A Strands adapter is expected here once it lands, e.g.:
-    # AdapterCase(
-    #     "strands",
-    #     F.StrandsAdapter,
-    #     ["strands", "strands.tools"],
-    #     stub_attrs=_stub_strands_attrs,
-    # ),
-    # ...plus a `_stub_strands_attrs()` factory alongside the others above.
+    AdapterCase(
+        "strands",
+        F.StrandsAdapter,
+        ["strands"],
+        stub_attrs=_stub_strands_attrs,
+    ),
 ]
 
 
