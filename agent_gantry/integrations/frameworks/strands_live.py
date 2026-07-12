@@ -53,6 +53,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT
 from agent_gantry.integrations.frameworks.strands import _for_strands
 
 if TYPE_CHECKING:
@@ -131,7 +132,7 @@ class GantryStrandsToolHook:
         self,
         gantry: AgentGantry,
         *,
-        limit: int = 5,
+        limit: int = DEFAULT_TOOL_LIMIT,
         score_threshold: float = 0.0,
     ) -> None:
         self._gantry = gantry
@@ -195,7 +196,7 @@ class GantryStrandsToolHook:
 def _gantry_strands_agent(
     gantry: AgentGantry,
     *,
-    limit: int = 5,
+    limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
     **agent_kwargs: Any,
 ) -> Any:

@@ -71,7 +71,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import GantryToolset, spec_from_tool
+from agent_gantry.integrations.frameworks.base import (
+    DEFAULT_TOOL_LIMIT,
+    GantryToolset,
+    spec_from_tool,
+)
 from agent_gantry.integrations.frameworks.langchain import _spec_to_langchain
 from agent_gantry.query import latest_activity
 
@@ -129,7 +133,7 @@ async def _select_tools_for_state(
     gantry: AgentGantry,
     state: Any,
     *,
-    limit: int = 5,
+    limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
 ) -> list[Any]:
     """Re-select Gantry tools for the current turn and wrap them for LangChain.
@@ -164,7 +168,7 @@ def _create_gantry_react_agent(
     model: Any,
     gantry: AgentGantry,
     *,
-    limit: int = 5,
+    limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
     **agent_kwargs: Any,
 ) -> Any:
@@ -220,7 +224,7 @@ async def _acreate_gantry_react_agent(
     model: Any,
     gantry: AgentGantry,
     *,
-    limit: int = 5,
+    limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
     **agent_kwargs: Any,
 ) -> Any:
