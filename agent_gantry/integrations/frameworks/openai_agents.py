@@ -97,6 +97,8 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **framework_kwargs: Any,
     ) -> Any:
         """Per-turn uniform entry point: delegates to :meth:`session`.
@@ -107,11 +109,18 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
         :class:`~agent_gantry.integrations.frameworks.openai_agents_live.GantryAgentSession`;
         call ``await session.run(run_input)`` per conversational turn (it
         re-selects and applies tools before the run, and installs
-        :meth:`run_hooks` for intra-run dynamism).
+        :meth:`run_hooks` for intra-run dynamism). ``required``/
+        ``always_include`` are re-applied on every re-selection (see
+        :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select`).
         """
         agent = framework_kwargs.pop("agent")
         return self.session(
-            agent, limit=limit, score_threshold=score_threshold, namespaces=namespaces
+            agent,
+            limit=limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         )
 
     async def run(
@@ -122,6 +131,8 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **run_kwargs: Any,
     ) -> Any:
         """Re-select ``agent``'s tools for ``run_input`` and run it once via Gantry (one-shot live)."""
@@ -136,6 +147,8 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
             **run_kwargs,
         )
 
@@ -146,6 +159,8 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
     ) -> Any:
         """Return a live session that re-selects ``agent``'s tools each run."""
         from agent_gantry.integrations.frameworks.openai_agents_live import (
@@ -158,6 +173,8 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         )
 
     def run_hooks(
@@ -167,6 +184,8 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
     ) -> Any:
         """Build ``agents.RunHooks`` that re-select ``agent.tools`` before each model call."""
         from agent_gantry.integrations.frameworks.openai_agents_live import (
@@ -179,6 +198,8 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         )
 
     async def refresh(
@@ -189,6 +210,8 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
     ) -> list[Any]:
         """Re-select tools and rewrite ``agent.tools`` in place; return the new tools."""
         from agent_gantry.integrations.frameworks.openai_agents_live import (
@@ -202,6 +225,8 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         )
 
     async def select_function_tools(
@@ -211,6 +236,8 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
     ) -> list[Any]:
         """Re-select tools for a query string OR a run-input/message list; return ``FunctionTool``s."""
         from agent_gantry.integrations.frameworks.openai_agents_live import (
@@ -223,4 +250,6 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         )

@@ -36,6 +36,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT, GantryToolset, ToolSpec
+from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
@@ -89,12 +90,16 @@ def _build_workbench_class() -> type:
             limit: int = DEFAULT_TOOL_LIMIT,
             score_threshold: float = 0.0,
             namespaces: list[str] | None = None,
+            required: list[str] | None = None,
+            always_include: list[str] | None = None,
         ) -> None:
             self._toolset = GantryToolset(gantry)
             self._query = query
             self._limit = limit
             self._score_threshold = score_threshold
             self._namespaces = namespaces
+            self._required = required
+            self._always_include = always_include
             # Specs from the most recent ``list_tools`` selection, keyed by the
             # tool name the model calls. ``call_tool`` resolves against this.
             self._selected: dict[str, ToolSpec] = {}
@@ -134,7 +139,11 @@ def _build_workbench_class() -> type:
                     limit=self._limit,
                     score_threshold=self._score_threshold,
                     namespaces=self._namespaces,
+                    required=self._required,
+                    always_include=self._always_include,
                 )
+            except MissingRequiredToolError:
+                raise
             except Exception:
                 logger.warning(
                     "GantryWorkbench.list_tools: semantic retrieval failed; "
@@ -259,6 +268,8 @@ def _gantry_workbench(
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
     namespaces: list[str] | None = None,
+    required: list[str] | None = None,
+    always_include: list[str] | None = None,
 ) -> Any:
     """Build a :class:`GantryWorkbench` for per-turn dynamic tool provision.
 
@@ -277,6 +288,8 @@ def _gantry_workbench(
         limit=limit,
         score_threshold=score_threshold,
         namespaces=namespaces,
+        required=required,
+        always_include=always_include,
     )
 
 

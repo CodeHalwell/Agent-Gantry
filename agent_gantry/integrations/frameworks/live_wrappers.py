@@ -76,6 +76,8 @@ class GantryLiveCrewAgent:
         limit: int = DEFAULT_TOOL_LIMIT,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **agent_kwargs: Any,
     ) -> None:
         self._gantry = gantry
@@ -86,6 +88,8 @@ class GantryLiveCrewAgent:
         self._limit = limit
         self._score_threshold = score_threshold
         self._namespaces = namespaces
+        self._required = required
+        self._always_include = always_include
         self._agent_kwargs = agent_kwargs
 
     async def select_tools(self, query: str) -> list[Any]:
@@ -96,6 +100,8 @@ class GantryLiveCrewAgent:
             limit=self._limit,
             score_threshold=self._score_threshold,
             namespaces=self._namespaces,
+            required=self._required,
+            always_include=self._always_include,
         )
 
     async def build(self, query: str) -> Any:
@@ -153,6 +159,8 @@ class GantryLiveAgnoAgent:
         limit: int = DEFAULT_TOOL_LIMIT,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **agent_kwargs: Any,
     ) -> None:
         self._gantry = gantry
@@ -160,6 +168,8 @@ class GantryLiveAgnoAgent:
         self._limit = limit
         self._score_threshold = score_threshold
         self._namespaces = namespaces
+        self._required = required
+        self._always_include = always_include
         self._agent_kwargs = agent_kwargs
 
     async def select_tools(self, query: str) -> list[Any]:
@@ -170,6 +180,8 @@ class GantryLiveAgnoAgent:
             limit=self._limit,
             score_threshold=self._score_threshold,
             namespaces=self._namespaces,
+            required=self._required,
+            always_include=self._always_include,
         )
 
     async def build(self, query: str) -> Any:
@@ -218,12 +230,16 @@ class GantryLiveHaystackToolInvoker:
         limit: int = DEFAULT_TOOL_LIMIT,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **invoker_kwargs: Any,
     ) -> None:
         self._gantry = gantry
         self._limit = limit
         self._score_threshold = score_threshold
         self._namespaces = namespaces
+        self._required = required
+        self._always_include = always_include
         self._invoker_kwargs = invoker_kwargs
 
     async def select_tools(self, query: str) -> list[Any]:
@@ -234,6 +250,8 @@ class GantryLiveHaystackToolInvoker:
             limit=self._limit,
             score_threshold=self._score_threshold,
             namespaces=self._namespaces,
+            required=self._required,
+            always_include=self._always_include,
         )
 
     async def build(self, query: str) -> Any:
@@ -287,6 +305,8 @@ class GantryLiveSmolAgent:
         limit: int = DEFAULT_TOOL_LIMIT,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **agent_kwargs: Any,
     ) -> None:
         self._gantry = gantry
@@ -295,6 +315,8 @@ class GantryLiveSmolAgent:
         self._limit = limit
         self._score_threshold = score_threshold
         self._namespaces = namespaces
+        self._required = required
+        self._always_include = always_include
         self._agent_kwargs = agent_kwargs
 
     async def select_tools(self, query: str) -> list[Any]:
@@ -305,6 +327,8 @@ class GantryLiveSmolAgent:
             limit=self._limit,
             score_threshold=self._score_threshold,
             namespaces=self._namespaces,
+            required=self._required,
+            always_include=self._always_include,
         )
 
     async def build(self, query: str) -> Any:

@@ -83,6 +83,8 @@ class HaystackAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **framework_kwargs: Any,
     ) -> Any:
         """Per-call uniform entry point: delegates to :meth:`tool_invoker_builder`.
@@ -92,11 +94,18 @@ class HaystackAdapter(BaseFrameworkAdapter):
         deepest Haystack allows. Returns a
         ``GantryLiveHaystackToolInvoker``; call ``await builder.build(query)``
         before each new call to get a fresh ``ToolInvoker`` with tools
-        re-selected for that query. ``framework_kwargs`` are forwarded to
-        ``ToolInvoker`` on every rebuild.
+        re-selected for that query. ``required``/``always_include`` are
+        re-applied on every rebuild (see
+        :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select`).
+        ``framework_kwargs`` are forwarded to ``ToolInvoker`` on every rebuild.
         """
         return self.tool_invoker_builder(
-            limit=limit, score_threshold=score_threshold, namespaces=namespaces, **framework_kwargs
+            limit=limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+            required=required,
+            always_include=always_include,
+            **framework_kwargs,
         )
 
     async def live_tools(
@@ -120,6 +129,8 @@ class HaystackAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **invoker_kwargs: Any,
     ) -> Any:
         """Return a builder that rebuilds a fresh ``ToolInvoker`` per call with re-selected tools.
@@ -136,5 +147,7 @@ class HaystackAdapter(BaseFrameworkAdapter):
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
             **invoker_kwargs,
         )

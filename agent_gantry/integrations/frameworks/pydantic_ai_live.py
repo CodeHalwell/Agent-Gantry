@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT, ToolSpec
 from agent_gantry.integrations.frameworks.base import GantryToolset as _BaseToolset
+from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
 from agent_gantry.query import latest_activity
 
 if TYPE_CHECKING:
@@ -169,11 +170,15 @@ def _build_toolset_class() -> type:
             limit: int = DEFAULT_TOOL_LIMIT,
             score_threshold: float = 0.0,
             namespaces: list[str] | None = None,
+            required: list[str] | None = None,
+            always_include: list[str] | None = None,
         ) -> None:
             self._toolset = _BaseToolset(gantry)
             self._limit = limit
             self._score_threshold = score_threshold
             self._namespaces = namespaces
+            self._required = required
+            self._always_include = always_include
             # An explicit query override, used when driving selection without a
             # full RunContext (tests, manual selection). When set it takes
             # precedence over the context-derived query.
@@ -235,7 +240,11 @@ def _build_toolset_class() -> type:
                     limit=self._limit,
                     score_threshold=self._score_threshold,
                     namespaces=self._namespaces,
+                    required=self._required,
+                    always_include=self._always_include,
                 )
+            except MissingRequiredToolError:
+                raise
             except Exception:
                 logger.warning(
                     "GantryToolset.get_tools: semantic retrieval failed; "
@@ -308,6 +317,8 @@ def _gantry_toolset(
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
     namespaces: list[str] | None = None,
+    required: list[str] | None = None,
+    always_include: list[str] | None = None,
 ) -> Any:
     """Build a :class:`GantryToolset` for per-turn dynamic tool provision.
 
@@ -320,7 +331,14 @@ def _gantry_toolset(
         ImportError: If ``pydantic-ai`` is not installed.
     """
     cls = _get_class()
-    return cls(gantry, limit=limit, score_threshold=score_threshold, namespaces=namespaces)
+    return cls(
+        gantry,
+        limit=limit,
+        score_threshold=score_threshold,
+        namespaces=namespaces,
+        required=required,
+        always_include=always_include,
+    )
 
 
 def __getattr__(name: str) -> Any:

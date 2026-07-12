@@ -89,16 +89,25 @@ class PydanticAIAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **framework_kwargs: Any,
     ) -> Any:
         """Per-turn uniform entry point: delegates to :meth:`toolset`.
 
         Returns a ``pydantic_ai.toolsets.AbstractToolset`` — plug it into
-        ``Agent(model, toolsets=[<result>])``. No ``framework_kwargs`` are
-        required.
+        ``Agent(model, toolsets=[<result>])``. ``required``/``always_include``
+        are re-applied on every run/step (see
+        :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select`).
+        No other ``framework_kwargs`` are required.
         """
         return self.toolset(
-            limit=limit, score_threshold=score_threshold, namespaces=namespaces, **framework_kwargs
+            limit=limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+            required=required,
+            always_include=always_include,
+            **framework_kwargs,
         )
 
     def toolset(
@@ -107,6 +116,8 @@ class PydanticAIAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
     ) -> Any:
         """Build a live ``AbstractToolset`` for per-turn dynamic selection (``Agent(toolsets=[...])``)."""
         from agent_gantry.integrations.frameworks.pydantic_ai_live import (
@@ -118,4 +129,6 @@ class PydanticAIAdapter(BaseFrameworkAdapter):
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         )

@@ -116,16 +116,26 @@ class StrandsAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **framework_kwargs: Any,
     ) -> Any:
         """Per-turn uniform entry point: delegates to :meth:`tool_hook`.
 
         Returns a ``GantryStrandsToolHook`` (a structural ``HookProvider``)
         — plug it into ``Agent(tools=[], hooks=[<result>])`` or
-        ``agent.add_hook(<result>)``. No ``framework_kwargs`` are required.
+        ``agent.add_hook(<result>)``. ``required``/``always_include`` are
+        re-applied on every model call (see
+        :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select`).
+        No other ``framework_kwargs`` are required.
         """
         return self.tool_hook(
-            limit=limit, score_threshold=score_threshold, namespaces=namespaces, **framework_kwargs
+            limit=limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+            required=required,
+            always_include=always_include,
+            **framework_kwargs,
         )
 
     def tool_hook(
@@ -134,6 +144,8 @@ class StrandsAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
     ) -> Any:
         """Build a ``HookProvider`` that re-selects Gantry tools before every model call.
 
@@ -152,6 +164,8 @@ class StrandsAdapter(BaseFrameworkAdapter):
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         )
 
     def agent(
@@ -160,6 +174,8 @@ class StrandsAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **agent_kwargs: Any,
     ) -> Any:
         """Build a ``strands.Agent`` wired for per-turn dynamic tool selection.
@@ -178,5 +194,7 @@ class StrandsAdapter(BaseFrameworkAdapter):
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
             **agent_kwargs,
         )

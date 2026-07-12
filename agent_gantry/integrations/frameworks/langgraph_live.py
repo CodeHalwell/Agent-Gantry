@@ -77,6 +77,7 @@ from agent_gantry.integrations.frameworks.base import (
     GantryToolset,
     spec_from_tool,
 )
+from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
 from agent_gantry.integrations.frameworks.langchain import _spec_to_langchain
 from agent_gantry.query import latest_activity
 
@@ -139,6 +140,8 @@ async def _select_tools_for_state(
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
     namespaces: list[str] | None = None,
+    required: list[str] | None = None,
+    always_include: list[str] | None = None,
 ) -> list[Any]:
     """Re-select Gantry tools for the current turn and wrap them for LangChain.
 
@@ -148,21 +151,31 @@ async def _select_tools_for_state(
     there's no retrieval signal this turn), and returns the chosen tools as
     LangChain ``StructuredTool`` objects (each routing execution through
     ``gantry.execute``). Exposed separately from the model callable so it can
-    be unit-tested directly.
+    be unit-tested directly. ``required``/``always_include`` are forwarded to
+    ``select_or_empty`` and re-applied every turn.
 
-    Never raises on selection failure — a broken retrieval must not break the
-    agent's turn. ``create_agent``'s ``request.override(tools=...)`` is a
-    fresh, stateless override applied every turn (there is no persisted
+    Never raises on *transient* selection failure — a broken retrieval must
+    not break the agent's turn. ``create_agent``'s ``request.override(tools=...)``
+    is a fresh, stateless override applied every turn (there is no persisted
     "previous turn's tools" to fall back to), so on failure this logs a
     WARNING and degrades to "no tools this turn" (the model is called
     unbound, mirroring the empty-selection branch above) — see "Per-turn
     selection-failure policy" in ``integrations/frameworks/README.md``.
+    A :class:`~agent_gantry.integrations.frameworks.errors.MissingRequiredToolError`
+    is configuration, not a transient fault, and always propagates.
     """
     query = _query_from_state(state)
     try:
         specs = await GantryToolset(gantry).select_or_empty(
-            query, limit=limit, score_threshold=score_threshold, namespaces=namespaces
+            query,
+            limit=limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         )
+    except MissingRequiredToolError:
+        raise
     except Exception:
         logger.warning(
             "_select_tools_for_state: semantic retrieval failed; "
@@ -192,6 +205,8 @@ def _create_gantry_react_agent(
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
     namespaces: list[str] | None = None,
+    required: list[str] | None = None,
+    always_include: list[str] | None = None,
     **agent_kwargs: Any,
 ) -> Any:
     """Build a LangGraph agent whose tools are re-selected every turn.
@@ -246,6 +261,8 @@ def _create_gantry_react_agent(
         limit=limit,
         score_threshold=score_threshold,
         namespaces=namespaces,
+        required=required,
+        always_include=always_include,
         **agent_kwargs,
     )
 
@@ -257,6 +274,8 @@ async def _acreate_gantry_react_agent(
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
     namespaces: list[str] | None = None,
+    required: list[str] | None = None,
+    always_include: list[str] | None = None,
     **agent_kwargs: Any,
 ) -> Any:
     """Async-native variant of :func:`_create_gantry_react_agent`.
@@ -274,6 +293,8 @@ async def _acreate_gantry_react_agent(
         limit=limit,
         score_threshold=score_threshold,
         namespaces=namespaces,
+        required=required,
+        always_include=always_include,
         **agent_kwargs,
     )
 
@@ -286,6 +307,8 @@ def _build_react_agent(
     limit: int,
     score_threshold: float,
     namespaces: list[str] | None = None,
+    required: list[str] | None = None,
+    always_include: list[str] | None = None,
     **agent_kwargs: Any,
 ) -> Any:
     """Compile the per-turn tool-selecting agent given a pre-resolved superset."""
@@ -311,6 +334,8 @@ def _build_react_agent(
                 limit=limit,
                 score_threshold=score_threshold,
                 namespaces=namespaces,
+                required=required,
+                always_include=always_include,
             )
             # ``selected`` is `[]` when there's no retrieval signal this turn;
             # create_agent binds the model with no tools in that case (mirrors

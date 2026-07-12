@@ -611,7 +611,18 @@ def test_langchain_live_is_a_bound_select_alias(monkeypatch) -> None:
 
     result = asyncio.run(live_select("a query"))
     assert result == ["tool"]
-    assert calls == [("a query", {"limit": 7, "score_threshold": 0.3, "namespaces": ["ns1"]})]
+    assert calls == [
+        (
+            "a query",
+            {
+                "limit": 7,
+                "score_threshold": 0.3,
+                "namespaces": ["ns1"],
+                "required": None,
+                "always_include": None,
+            },
+        )
+    ]
 
 
 @pytest.mark.parametrize("case", ADAPTERS, ids=[c.name for c in ADAPTERS])
@@ -681,6 +692,36 @@ async def test_for_each_framework_selects_and_converts(
         assert all("callable" in t and callable(t["callable"]) for t in tools), (
             f"{case.name}: expected registrable mappings with a callable"
         )
+
+
+@pytest.mark.parametrize("case", ADAPTERS, ids=[c.name for c in ADAPTERS])
+async def test_for_each_framework_select_with_required(
+    case: AdapterCase, gantry, monkeypatch
+) -> None:
+    """``select(required=...)`` pins a tool outside the semantic slice, uniformly.
+
+    Regression guard for porting ``required``/``always_include`` from the
+    Microsoft Agent Framework provider (``GantryContextProvider``) into the
+    shared ``BaseFrameworkAdapter.select`` — every adapter shares the same
+    ``GantryToolset.select`` under the hood (see
+    ``agent_gantry/integrations/frameworks/base.py``), so a ``required`` tool
+    the semantic slice (bounded by ``limit``) wouldn't otherwise have picked
+    must still surface, uncounted against ``limit``, regardless of which
+    framework is converting it.
+    """
+    if case.stub_attrs is not None:
+        _install_stub(monkeypatch, case.modules, case.stub_attrs())
+
+    # limit=1 bounds the semantic slice to the top match for the email query
+    # (send_email); "add" is unrelated and would not otherwise be selected,
+    # so its presence proves `required` was threaded through, and the total
+    # count proves it wasn't counted against `limit`.
+    tools = await case.adapter_cls(gantry).select(
+        "send an email to my boss", limit=1, required=["add"]
+    )
+    assert len(tools) == 2, (
+        f"{case.name}: expected 1 semantic tool + 1 pinned required tool, got {len(tools)}"
+    )
 
 
 # --------------------------------------------------------------------------- #

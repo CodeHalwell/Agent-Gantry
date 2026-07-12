@@ -92,20 +92,26 @@ class LlamaIndexAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **framework_kwargs: Any,
     ) -> Any:
         """Per-turn uniform entry point: delegates to :meth:`tool_retriever`.
 
         Returns a ``GantryToolRetriever`` (an ``llama_index.core.objects.
         ObjectRetriever`` subclass) — plug it into
-        ``FunctionAgent(tool_retriever=<result>)``. No ``framework_kwargs``
-        are required; any supplied are forwarded to the underlying retriever
-        constructor.
+        ``FunctionAgent(tool_retriever=<result>)``. ``required``/
+        ``always_include`` are re-applied on every reasoning step (see
+        :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select`).
+        No other ``framework_kwargs`` are required; any supplied are
+        forwarded to the underlying retriever constructor.
         """
         return self.tool_retriever(
             limit=limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
             **framework_kwargs,
         )
 
@@ -115,6 +121,8 @@ class LlamaIndexAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
     ) -> Any:
         """Build a live per-turn ``ObjectRetriever`` for ``FunctionAgent(tool_retriever=...)``."""
         from agent_gantry.integrations.frameworks.llamaindex_live import (
@@ -126,6 +134,8 @@ class LlamaIndexAdapter(BaseFrameworkAdapter):
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         )
 
     def function_agent(
@@ -136,6 +146,8 @@ class LlamaIndexAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **agent_kwargs: Any,
     ) -> Any:
         """Build a ``FunctionAgent`` wired to a live per-turn gantry retriever."""
@@ -150,5 +162,7 @@ class LlamaIndexAdapter(BaseFrameworkAdapter):
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
             **agent_kwargs,
         )

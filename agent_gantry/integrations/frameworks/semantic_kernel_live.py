@@ -64,7 +64,12 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT
-from agent_gantry.integrations.frameworks.semantic_kernel import _gantry_plugin
+from agent_gantry.integrations.frameworks.base import GantryToolset as _BaseToolset
+from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
+from agent_gantry.integrations.frameworks.semantic_kernel import (
+    _gantry_plugin,
+    _spec_to_semantic_kernel,
+)
 from agent_gantry.query import latest_activity
 
 if TYPE_CHECKING:
@@ -153,6 +158,31 @@ def _set_plugin_functions(kernel: Any, plugin_name: str, functions: dict[str, An
     return plugin
 
 
+async def _pinned_only_functions(
+    gantry: AgentGantry,
+    *,
+    plugin_name: str,
+    required: list[str] | None,
+    always_include: list[str] | None,
+) -> dict[str, Any]:
+    """Resolve only ``required``/``always_include`` (no semantic leg) as SK functions.
+
+    Used on a blank query: unlike the semantic leg (which must not run on an
+    empty embedding — see the module docstring's "no extractable query"
+    guard), pinned tools don't depend on the query at all, so they're still
+    owed to the caller.
+    :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select_or_empty`
+    already implements exactly this split (blank query → pins only, no
+    semantic retrieval), so this just reuses it and converts the result to
+    SK ``KernelFunction``s.
+    """
+    specs = await _BaseToolset(gantry).select_or_empty(
+        "", required=required, always_include=always_include
+    )
+    functions = [_spec_to_semantic_kernel(s, plugin_name=plugin_name) for s in specs]
+    return {f.name: f for f in functions}
+
+
 class GantryFunctionProvider:
     """Live, per-turn Gantry tool source for a Semantic Kernel ``Kernel``.
 
@@ -185,6 +215,8 @@ class GantryFunctionProvider:
         limit: int = DEFAULT_TOOL_LIMIT,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
     ) -> None:
         self._gantry = gantry
         self._kernel = kernel
@@ -192,6 +224,8 @@ class GantryFunctionProvider:
         self._limit = limit
         self._score_threshold = score_threshold
         self._namespaces = namespaces
+        self._required = required
+        self._always_include = always_include
         # Serialise refreshes: the remove-then-add plugin swap is not atomic, so
         # concurrent refresh() calls on one provider could corrupt plugin state.
         self._lock = asyncio.Lock()
@@ -229,10 +263,22 @@ class GantryFunctionProvider:
         query = _query_from(query_or_messages)
         async with self._lock:
             if not query:
-                # No extractable query: clear the plugin rather than selecting on
-                # an empty embedding (arbitrary top-k for some embedders).
-                _set_plugin_functions(self._kernel, self._plugin_name, {})
-                return {}
+                if not self._required and not self._always_include:
+                    # No extractable query and no pins: clear the plugin
+                    # rather than selecting on an empty embedding (arbitrary
+                    # top-k for some embedders).
+                    _set_plugin_functions(self._kernel, self._plugin_name, {})
+                    return {}
+                # Pins don't depend on the query — resolve them without
+                # running the semantic leg (see ``_pinned_only_functions``).
+                functions = await _pinned_only_functions(
+                    self._gantry,
+                    plugin_name=self._plugin_name,
+                    required=self._required,
+                    always_include=self._always_include,
+                )
+                _set_plugin_functions(self._kernel, self._plugin_name, functions)
+                return functions
             try:
                 functions = await _gantry_plugin(
                     self._gantry,
@@ -241,7 +287,11 @@ class GantryFunctionProvider:
                     plugin_name=self._plugin_name,
                     score_threshold=self._score_threshold,
                     namespaces=self._namespaces,
+                    required=self._required,
+                    always_include=self._always_include,
                 )
+            except MissingRequiredToolError:
+                raise
             except Exception:
                 logger.warning(
                     "GantryFunctionProvider.refresh: semantic retrieval failed; "
@@ -262,6 +312,8 @@ async def _refresh_kernel_tools(
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
     namespaces: list[str] | None = None,
+    required: list[str] | None = None,
+    always_include: list[str] | None = None,
 ) -> dict[str, Any]:
     """Re-select tools for ``query`` and rebuild ``kernel``'s gantry plugin once.
 
@@ -279,10 +331,17 @@ async def _refresh_kernel_tools(
     """
     resolved = _query_from(query)
     if not resolved:
-        # Mirror GantryFunctionProvider.refresh: clear the plugin rather than
-        # selecting on an empty embedding (arbitrary top-k for some embedders).
-        _set_plugin_functions(kernel, plugin_name, {})
-        return {}
+        if not required and not always_include:
+            # Mirror GantryFunctionProvider.refresh: clear the plugin rather
+            # than selecting on an empty embedding (arbitrary top-k for some
+            # embedders).
+            _set_plugin_functions(kernel, plugin_name, {})
+            return {}
+        functions = await _pinned_only_functions(
+            gantry, plugin_name=plugin_name, required=required, always_include=always_include
+        )
+        _set_plugin_functions(kernel, plugin_name, functions)
+        return functions
     try:
         functions = await _gantry_plugin(
             gantry,
@@ -291,7 +350,11 @@ async def _refresh_kernel_tools(
             plugin_name=plugin_name,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         )
+    except MissingRequiredToolError:
+        raise
     except Exception:
         logger.warning(
             "_refresh_kernel_tools: semantic retrieval failed; "

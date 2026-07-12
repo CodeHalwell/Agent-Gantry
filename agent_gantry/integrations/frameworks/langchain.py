@@ -90,6 +90,8 @@ class LangChainAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **framework_kwargs: Any,
     ) -> Callable[[str], Awaitable[list[Any]]]:
         """Per-call uniform entry point: a bound alias of :meth:`select`.
@@ -106,9 +108,9 @@ class LangChainAdapter(BaseFrameworkAdapter):
         Returns a bound async callable ``query -> list[StructuredTool]`` —
         call it with the new call's query before each such rebuild; it *is*
         :meth:`select`, aliased so every adapter's ``live()`` has the same
-        uniform ``limit``/``score_threshold``/``namespaces`` signature.
-        ``framework_kwargs`` are forwarded to :meth:`select` verbatim (e.g.
-        ``tools_already_used``).
+        uniform ``limit``/``score_threshold``/``namespaces``/``required``/
+        ``always_include`` signature. ``framework_kwargs`` are forwarded to
+        :meth:`select` verbatim (e.g. ``tools_already_used``).
         """
         eff_limit = self._default_limit if limit is None else limit
 
@@ -118,6 +120,8 @@ class LangChainAdapter(BaseFrameworkAdapter):
                 limit=eff_limit,
                 score_threshold=score_threshold,
                 namespaces=namespaces,
+                required=required,
+                always_include=always_include,
                 **framework_kwargs,
             )
 

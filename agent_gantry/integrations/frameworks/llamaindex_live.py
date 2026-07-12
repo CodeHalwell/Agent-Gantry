@@ -34,6 +34,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT, GantryToolset
+from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
 from agent_gantry.integrations.frameworks.llamaindex import _spec_to_llamaindex
 from agent_gantry.query import latest_activity
 
@@ -116,6 +117,8 @@ def _build_retriever_class() -> type:
             limit: int = DEFAULT_TOOL_LIMIT,
             score_threshold: float = 0.0,
             namespaces: list[str] | None = None,
+            required: list[str] | None = None,
+            always_include: list[str] | None = None,
         ) -> None:
             # Intentionally do NOT call super().__init__(): the base class wires
             # a static BaseRetriever + BaseObjectNodeMapping over a pre-indexed
@@ -126,6 +129,8 @@ def _build_retriever_class() -> type:
             self._limit = limit
             self._score_threshold = score_threshold
             self._namespaces = namespaces
+            self._required = required
+            self._always_include = always_include
 
         @property
         def gantry(self) -> AgentGantry:
@@ -160,7 +165,11 @@ def _build_retriever_class() -> type:
                     limit=self._limit,
                     score_threshold=self._score_threshold,
                     namespaces=self._namespaces,
+                    required=self._required,
+                    always_include=self._always_include,
                 )
+            except MissingRequiredToolError:
+                raise
             except Exception:
                 logger.warning(
                     "GantryToolRetriever.aretrieve: semantic retrieval failed; "
@@ -186,6 +195,8 @@ def _gantry_tool_retriever(
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
     namespaces: list[str] | None = None,
+    required: list[str] | None = None,
+    always_include: list[str] | None = None,
 ) -> Any:
     """Build a ``GantryToolRetriever`` for ``gantry``.
 
@@ -193,7 +204,12 @@ def _gantry_tool_retriever(
         ImportError: If ``llama-index-core`` is not installed.
     """
     return _build_retriever_class()(
-        gantry, limit=limit, score_threshold=score_threshold, namespaces=namespaces
+        gantry,
+        limit=limit,
+        score_threshold=score_threshold,
+        namespaces=namespaces,
+        required=required,
+        always_include=always_include,
     )
 
 
@@ -205,6 +221,8 @@ def _gantry_function_agent(
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
     namespaces: list[str] | None = None,
+    required: list[str] | None = None,
+    always_include: list[str] | None = None,
     **agent_kwargs: Any,
 ) -> Any:
     """Build a ``FunctionAgent`` wired to a live per-turn gantry retriever.
@@ -233,7 +251,12 @@ def _gantry_function_agent(
         name=name,
         llm=llm,
         tool_retriever=_gantry_tool_retriever(
-            gantry, limit=limit, score_threshold=score_threshold, namespaces=namespaces
+            gantry,
+            limit=limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         ),
         **agent_kwargs,
     )

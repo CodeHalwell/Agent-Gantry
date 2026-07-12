@@ -178,6 +178,8 @@ class GantryLiveDSPyReAct:
         limit: int = DEFAULT_TOOL_LIMIT,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **react_kwargs: Any,
     ) -> None:
         self._gantry = gantry
@@ -186,6 +188,8 @@ class GantryLiveDSPyReAct:
         self._limit = limit
         self._score_threshold = score_threshold
         self._namespaces = namespaces
+        self._required = required
+        self._always_include = always_include
         self._react_kwargs = react_kwargs
 
     async def select_tools(self, query: str) -> list[Any]:
@@ -196,6 +200,8 @@ class GantryLiveDSPyReAct:
             limit=self._limit,
             score_threshold=self._score_threshold,
             namespaces=self._namespaces,
+            required=self._required,
+            always_include=self._always_include,
         )
 
     async def build(self, query: str) -> Any:
@@ -250,6 +256,8 @@ class DSPyAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **framework_kwargs: Any,
     ) -> Any:
         """Per-call uniform entry point: delegates to :meth:`agent_builder`.
@@ -258,6 +266,8 @@ class DSPyAdapter(BaseFrameworkAdapter):
         the live object is a builder — the deepest DSPy allows. Requires
         ``signature=`` (the DSPy task signature) in ``framework_kwargs``;
         ``max_iters`` and any other ``dspy.ReAct`` kwargs pass through too.
+        ``required``/``always_include`` are re-applied on every rebuild (see
+        :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select`).
         Returns a :class:`GantryLiveDSPyReAct`; call ``await builder.build(query)``
         per task to get a fresh ``dspy.ReAct`` with tools re-selected for that
         query.
@@ -266,6 +276,8 @@ class DSPyAdapter(BaseFrameworkAdapter):
             limit=limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
             **framework_kwargs,
         )
 
@@ -277,6 +289,8 @@ class DSPyAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **react_kwargs: Any,
     ) -> Any:
         """Return a builder that rebuilds a fresh ``dspy.ReAct`` per call with re-selected tools.
@@ -297,6 +311,8 @@ class DSPyAdapter(BaseFrameworkAdapter):
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
             **react_kwargs,
         )
 

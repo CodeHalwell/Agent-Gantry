@@ -67,6 +67,8 @@ class LangGraphAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **framework_kwargs: Any,
     ) -> Any:
         """Per-turn uniform entry point: delegates to :meth:`react_agent`.
@@ -76,8 +78,11 @@ class LangGraphAdapter(BaseFrameworkAdapter):
         into the compiled agent, so there is no lower-level standalone hook to
         return — the compiled agent *is* the live object here). Returns the
         compiled LangGraph agent (a ``Pregel`` graph); call ``.ainvoke`` /
-        ``.invoke`` on it directly — no further plumbing needed. Any other
-        ``framework_kwargs`` (``system_prompt``, ``checkpointer``,
+        ``.invoke`` on it directly — no further plumbing needed.
+        ``required``/``always_include`` are re-applied on every model turn
+        (see
+        :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select`).
+        Any other ``framework_kwargs`` (``system_prompt``, ``checkpointer``,
         ``state_schema``, ``middleware``, …) are forwarded to
         ``create_agent``.
         """
@@ -87,6 +92,8 @@ class LangGraphAdapter(BaseFrameworkAdapter):
             limit=limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
             **framework_kwargs,
         )
 
@@ -98,6 +105,8 @@ class LangGraphAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **agent_kwargs: Any,
     ) -> Any:
         """Build a ReAct agent that re-selects tools every model turn (sync).
@@ -115,6 +124,8 @@ class LangGraphAdapter(BaseFrameworkAdapter):
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
             **agent_kwargs,
         )
 
@@ -125,6 +136,8 @@ class LangGraphAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **agent_kwargs: Any,
     ) -> Any:
         """Async-native :meth:`react_agent` (awaits the tool-superset enumeration)."""
@@ -138,6 +151,8 @@ class LangGraphAdapter(BaseFrameworkAdapter):
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
             **agent_kwargs,
         )
 
@@ -148,6 +163,8 @@ class LangGraphAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
     ) -> list[Any]:
         """Re-select tools for a LangGraph agent ``state`` (per-turn primitive)."""
         from agent_gantry.integrations.frameworks.langgraph_live import (
@@ -160,4 +177,6 @@ class LangGraphAdapter(BaseFrameworkAdapter):
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         )

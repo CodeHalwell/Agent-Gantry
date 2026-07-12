@@ -63,6 +63,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT, GantryToolset
+from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
 from agent_gantry.integrations.frameworks.google_adk import _spec_to_google_adk
 
 if TYPE_CHECKING:
@@ -146,6 +147,8 @@ async def _inject_selected_tools(
     limit: int,
     score_threshold: float,
     namespaces: list[str] | None = None,
+    required: list[str] | None = None,
+    always_include: list[str] | None = None,
 ) -> list[str]:
     """Select tools for ``query`` and inject them into ``llm_request``.
 
@@ -155,13 +158,24 @@ async def _inject_selected_tools(
     ``llm_request.tools_dict`` so ADK can execute the resulting calls this turn.
 
     Returns the names of the tools whose declarations were injected (useful for
-    logging and tests). Never raises on selection failure — retrieval must not
-    break the agent run.
+    logging and tests). Never raises on a *transient* selection failure —
+    retrieval must not break the agent run. The one deliberate exception is
+    :class:`~agent_gantry.integrations.frameworks.errors.MissingRequiredToolError`:
+    an unresolvable ``required`` name is a configuration error (typo, dropped
+    registration), not a transient retrieval failure, so it propagates rather
+    than degrading to "silently never inject the required tool."
     """
     try:
         specs = await GantryToolset(gantry).select_or_empty(
-            query, limit=limit, score_threshold=score_threshold, namespaces=namespaces
+            query,
+            limit=limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         )
+    except MissingRequiredToolError:
+        raise
     except Exception:
         # Selection failure must not kill the agent's model call: log a
         # WARNING (not raise) and degrade to "no dynamic tools this turn".
@@ -198,6 +212,8 @@ def _gantry_before_model_callback(
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
     namespaces: list[str] | None = None,
+    required: list[str] | None = None,
+    always_include: list[str] | None = None,
 ) -> Any:
     """Build an ADK ``before_model_callback`` that injects Gantry tools per turn.
 
@@ -239,6 +255,8 @@ def _gantry_before_model_callback(
             limit=limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         )
         # Return None: ADK proceeds with the mutated llm_request.
         return None
@@ -255,6 +273,8 @@ def _gantry_adk_agent(
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
     namespaces: list[str] | None = None,
+    required: list[str] | None = None,
+    always_include: list[str] | None = None,
     **agent_kwargs: Any,
 ) -> Any:
     """Build an ADK ``Agent`` wired for per-turn dynamic tool selection.
@@ -290,7 +310,12 @@ def _gantry_adk_agent(
         instruction=instruction,
         tools=[],
         before_model_callback=_gantry_before_model_callback(
-            gantry, limit=limit, score_threshold=score_threshold, namespaces=namespaces
+            gantry,
+            limit=limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         ),
         **agent_kwargs,
     )

@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`required` / `always_include` pinned-tool selection, ported to every
+  framework adapter.** Previously only the Microsoft Agent Framework provider
+  (`GantryContextProvider(required=..., always_include=...)`) could guarantee
+  a named tool's presence in the selection or pin a tool onto every round
+  regardless of semantic score. `GantryToolset.select` / `.select_or_empty`
+  (`integrations/frameworks/base.py`) now accept the same two keywords, and
+  `BaseFrameworkAdapter.select` and every adapter's `live(...)` (plus the
+  bespoke live methods and constructors it delegates to — `live_wrappers.py`,
+  every `*_live.py` module) thread them through, so all 15 framework
+  integrations get the same guarantee. `required=[...]` (bare or
+  `namespace.name`-qualified names) must resolve against the registry or
+  `select` raises the new shared `MissingRequiredToolError`
+  (`integrations/frameworks/errors.py`, re-exported from `agent_gantry`,
+  `agent_gantry.integrations`, and `agent_gantry.integrations.frameworks` —
+  `agent_gantry.integrations.agent_framework_provider.MissingRequiredToolError`
+  now imports from this shared module, keeping the historical import path
+  working); `always_include=[...]` logs a `WARNING` and skips unresolvable
+  names instead of raising. Both are appended after the semantic slice
+  (`required` before `always_include`), deduplicated, and never counted
+  against `limit` — matching `GantryContextProvider`'s own choice that
+  `top_k` bounds only the dynamic/semantic slice. The Microsoft Agent
+  Framework provider's own `required`/`always_include` implementation was
+  left in place (it is entangled with skills, `static_tools`, and
+  `ContextVar`-scoped retrieval history with no equivalent in the plain
+  adapter layer) — only the error type is shared, so its 90+ existing tests
+  keep passing unmodified. See `integrations/frameworks/README.md`
+  ("Guaranteed & pinned tools") and the new `tests/frameworks/test_selection.py`.
 - **Reverse-direction framework importers** — `agent_gantry.integrations.importers`
   adds `register_langchain_tools`, `register_crewai_tools`, and
   `register_llamaindex_tools`, the missing other half of every

@@ -23,6 +23,7 @@ from agent_gantry.integrations.frameworks.base import (
 )
 from agent_gantry.integrations.frameworks.crewai import CrewAIAdapter
 from agent_gantry.integrations.frameworks.dspy import DSPyAdapter
+from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
 from agent_gantry.integrations.frameworks.google_adk import GoogleADKAdapter
 from agent_gantry.integrations.frameworks.haystack import HaystackAdapter
 from agent_gantry.integrations.frameworks.langchain import LangChainAdapter
@@ -37,6 +38,7 @@ from agent_gantry.integrations.frameworks.strands import StrandsAdapter
 __all__ = [
     # shared selection core
     "GantryToolset",
+    "MissingRequiredToolError",
     "ToolExecutionError",
     "ToolSpec",
     "spec_from_tool",

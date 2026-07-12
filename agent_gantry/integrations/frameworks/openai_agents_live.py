@@ -75,6 +75,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT, GantryToolset
+from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
 from agent_gantry.integrations.frameworks.openai_agents import _spec_to_openai_agents
 from agent_gantry.query import latest_activity
 
@@ -124,6 +125,8 @@ async def _select_function_tools(
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
     namespaces: list[str] | None = None,
+    required: list[str] | None = None,
+    always_include: list[str] | None = None,
 ) -> list[Any]:
     """Re-select tools for the current activity and return ``FunctionTool``s.
 
@@ -147,6 +150,8 @@ async def _select_function_tools(
         limit=limit,
         score_threshold=score_threshold,
         namespaces=namespaces,
+        required=required,
+        always_include=always_include,
     )
     return [_spec_to_openai_agents(spec) for spec in specs]
 
@@ -159,6 +164,8 @@ async def _refresh_agent_tools(
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
     namespaces: list[str] | None = None,
+    required: list[str] | None = None,
+    always_include: list[str] | None = None,
 ) -> list[Any]:
     """Re-select tools and rewrite ``agent.tools`` in place; return the new tools.
 
@@ -183,10 +190,13 @@ async def _refresh_agent_tools(
             limit=limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         )
-    except ImportError:
-        # Missing `openai-agents` is a static install-time problem, not a
-        # transient retrieval failure — keep failing fast/loudly for it.
+    except (ImportError, MissingRequiredToolError):
+        # Missing `openai-agents` is a static install-time problem and a
+        # missing required tool is a configuration error, not a transient
+        # retrieval failure — keep failing fast/loudly for both.
         raise
     except Exception:
         logger.warning(
@@ -208,6 +218,8 @@ def _gantry_run_hooks(
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
     namespaces: list[str] | None = None,
+    required: list[str] | None = None,
+    always_include: list[str] | None = None,
 ) -> Any:
     """Build a :class:`agents.RunHooks` that re-selects tools every model call.
 
@@ -246,6 +258,8 @@ def _gantry_run_hooks(
                 limit=limit,
                 score_threshold=score_threshold,
                 namespaces=namespaces,
+                required=required,
+                always_include=always_include,
             )
 
     return _GantryRunHooks()
@@ -285,6 +299,8 @@ class GantryAgentSession:
         limit: int = DEFAULT_TOOL_LIMIT,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
     ) -> None:
         _require_agents()  # fail fast with the pip hint at construction
         self._agent = agent
@@ -292,6 +308,8 @@ class GantryAgentSession:
         self._limit = limit
         self._score_threshold = score_threshold
         self._namespaces = namespaces
+        self._required = required
+        self._always_include = always_include
 
     @property
     def agent(self) -> Any:
@@ -315,6 +333,8 @@ class GantryAgentSession:
             limit=self._limit,
             score_threshold=self._score_threshold,
             namespaces=self._namespaces,
+            required=self._required,
+            always_include=self._always_include,
         )
 
     async def run(self, run_input: Any, **run_kwargs: Any) -> Any:
@@ -339,6 +359,8 @@ class GantryAgentSession:
             limit=self._limit,
             score_threshold=self._score_threshold,
             namespaces=self._namespaces,
+            required=self._required,
+            always_include=self._always_include,
         )
 
 
@@ -350,6 +372,8 @@ async def _run_with_gantry(
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
     namespaces: list[str] | None = None,
+    required: list[str] | None = None,
+    always_include: list[str] | None = None,
     **run_kwargs: Any,
 ) -> Any:
     """Re-select ``agent``'s tools for ``run_input`` and run it once via Gantry.
@@ -370,6 +394,8 @@ async def _run_with_gantry(
         limit=limit,
         score_threshold=score_threshold,
         namespaces=namespaces,
+        required=required,
+        always_include=always_include,
     )
     return await session.run(run_input, **run_kwargs)
 

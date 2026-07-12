@@ -53,11 +53,54 @@ class (which carries both the static `.select`/`.convert` and the deep live
 methods). Importing `agent_gantry` never pulls these in.
 
 Every `<Adapter>(gantry).select(query, *, limit=None, score_threshold=0.0,
-namespaces=None, tools_already_used=None)` accepts the same explicit selection
-knobs as `GantryToolset.select` — `limit` defaults to the adapter's
-`default_limit` (5, `DEFAULT_TOOL_LIMIT` in `base.py`) when omitted. Need one
-conversion at a time? Use the staticmethod `<Adapter>.convert(spec)` with specs
-from `GantryToolset(gantry).select(query)`.
+namespaces=None, tools_already_used=None, required=None, always_include=None)`
+accepts the same explicit selection knobs as `GantryToolset.select` — `limit`
+defaults to the adapter's `default_limit` (5, `DEFAULT_TOOL_LIMIT` in
+`base.py`) when omitted. Need one conversion at a time? Use the staticmethod
+`<Adapter>.convert(spec)` with specs from `GantryToolset(gantry).select(query)`.
+
+## Guaranteed & pinned tools (`required` / `always_include`)
+
+Ported from the Microsoft Agent Framework provider
+(`GantryContextProvider(required=..., always_include=...)`), every adapter's
+`select`/`select_or_empty`/`live(...)` now accepts the same two keywords —
+shared by `GantryToolset.select` (`base.py`), so all 15 framework integrations
+get the same guarantee:
+
+- **`required=[...]`** — bare or `namespace.name`-qualified tool names that
+  **must** be present in the result. A name already in the semantic slice
+  counts; anything missing is fetched from the registry and appended. If a
+  name doesn't resolve against the registry at all, `select` raises
+  `MissingRequiredToolError` (`agent_gantry.integrations.frameworks.errors`,
+  re-exported from `agent_gantry`, `agent_gantry.integrations`, and
+  `agent_gantry.integrations.frameworks`) rather than silently returning an
+  incomplete selection.
+- **`always_include=[...]`** — same resolution and append behaviour, but a
+  name that isn't in the registry logs a `WARNING` and is skipped rather than
+  raising.
+
+Both are appended *after* the semantic slice (`required` before
+`always_include`), deduplicated against it and against each other, and are
+**never counted against `limit`** — `limit` bounds only the semantic
+retrieval, so a required tool is never dropped because the semantic slice
+already filled the budget, and pins never silently shrink the slice you asked
+for. `select_or_empty` resolves pins even on a blank query (they don't depend
+on the query's retrieval signal — only the semantic leg is skipped).
+
+```python
+from agent_gantry.langchain import LangChainAdapter
+
+tools = await LangChainAdapter(gantry).select(
+    "book a flight to Tokyo",
+    limit=3,
+    required=["cancel_booking"],       # guaranteed present, or MissingRequiredToolError
+    always_include=["escalate_to_human"],  # pinned if present, warned+skipped if not
+)
+```
+
+The live/dynamic paths (`adapter.live(required=..., always_include=...)` and
+the bespoke methods it delegates to) re-apply both pins on every re-selection
+round, not just the first.
 
 ## Multi-turn re-selection — autonomous *and* conversational
 
@@ -118,12 +161,14 @@ documented, framework-idiomatic path; `live()` just delegates to one of them):
     a fresh agent/tool list before each new top-level call (see
     `live_wrappers.py`).
 - **`adapter.live(*, limit=None, score_threshold=0.0, namespaces=None,
-  **framework_kwargs)`** — returns the framework-appropriate live object (the
-  hook / toolset / provider / builder that the framework consumes). Some
-  frameworks' native hooks are inherently bound to an external object you must
-  supply (a chat model, an already-built agent, a kernel) — those adapters
-  require it as a named `framework_kwargs` entry (see the table below) and
-  raise a clean `TypeError`/`KeyError` if it's missing.
+  required=None, always_include=None, **framework_kwargs)`** — returns the
+  framework-appropriate live object (the hook / toolset / provider / builder
+  that the framework consumes). Some frameworks' native hooks are inherently
+  bound to an external object you must supply (a chat model, an already-built
+  agent, a kernel) — those adapters require it as a named `framework_kwargs`
+  entry (see the table below) and raise a clean `TypeError`/`KeyError` if it's
+  missing. `required`/`always_include` follow `GantryToolset.select`'s pinning
+  contract (see above) and are re-applied on every dynamic re-selection round.
 
 | Framework | `live_tier` | `live()` delegates to | `live()` returns | Plug into |
 |---|---|---|---|---|
@@ -195,11 +240,19 @@ picks the next tool) — see the module docstring in
 
 ## Shared base
 
-`base.py` provides `GantryToolset` (selection) and `ToolSpec` (a
-framework-neutral handle with `.name`, `.description`, `.parameters`, plus
-`ainvoke`/`invoke`). `invoke()` is safe to call from synchronous framework code
-even inside a running event loop — it runs the coroutine on a worker thread and
-blocks for the result.
+`base.py` provides `GantryToolset` (selection, including the `required`/
+`always_include` pinning contract above) and `ToolSpec` (a framework-neutral
+handle with `.name`, `.description`, `.parameters`, plus `ainvoke`/`invoke`).
+`invoke()` is safe to call from synchronous framework code even inside a
+running event loop — it runs the coroutine on a worker thread and blocks for
+the result. `errors.py` holds the shared `MissingRequiredToolError`, imported
+by both `GantryToolset.select` and the Microsoft Agent Framework's
+`GantryContextProvider` (`agent_framework_provider.py` re-exports it from
+there for backward compatibility — MAF's own `required=[...]` implementation
+was left in place rather than delegating to the shared helper, since it's
+deeply entangled with skills/`static_tools`/`ContextVar`-scoped retrieval
+history that has no equivalent in the plain adapter layer; only the error
+type is shared).
 
 ## Error-handling policy
 

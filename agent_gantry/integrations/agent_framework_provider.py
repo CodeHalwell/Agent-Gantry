@@ -79,6 +79,7 @@ from agent_gantry.integrations.agent_framework_bridge import (
     GantryToolBridge,
     RetrievalDecision,
 )
+from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
 from agent_gantry.query import (
     fallback_chain,
     last_tool_result,
@@ -111,9 +112,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
-class MissingRequiredToolError(LookupError):
-    """Raised when a tool listed in ``required=[...]`` is not present in the gantry."""
+# ``MissingRequiredToolError`` now lives in
+# ``agent_gantry.integrations.frameworks.errors`` (shared with
+# ``GantryToolset.select(required=...)``); imported above and re-exported from
+# this module's ``__all__`` below so the historical import path —
+# ``from agent_gantry.integrations.agent_framework_provider import
+# MissingRequiredToolError`` — keeps working unchanged.
 
 
 def _import_context_provider() -> type:

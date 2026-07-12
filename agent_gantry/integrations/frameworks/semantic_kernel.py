@@ -112,6 +112,8 @@ class SemanticKernelAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **framework_kwargs: Any,
     ) -> Any:
         """Per-turn uniform entry point: delegates to :meth:`function_provider`.
@@ -121,6 +123,8 @@ class SemanticKernelAdapter(BaseFrameworkAdapter):
         plugins, so the live object is inherently kernel-bound. Returns a
         ``GantryFunctionProvider``; call ``await provider.refresh(history)``
         before each ``agent.get_response()`` / chat-completion invocation.
+        ``required``/``always_include`` are re-applied on every refresh (see
+        :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select`).
         Any other ``framework_kwargs`` (e.g. ``plugin_name``) are forwarded.
         """
         kernel = framework_kwargs.pop("kernel")
@@ -129,6 +133,8 @@ class SemanticKernelAdapter(BaseFrameworkAdapter):
             limit=limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
             **framework_kwargs,
         )
 
@@ -141,13 +147,15 @@ class SemanticKernelAdapter(BaseFrameworkAdapter):
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
         tools_already_used: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
     ) -> list[Any]:
         """Select tools for ``query`` as SK ``KernelFunction``s (static slice).
 
         Same explicit selection surface as :meth:`BaseFrameworkAdapter.select`
-        (``score_threshold``, ``namespaces``, ``tools_already_used``), plus SK's
-        own ``plugin_name`` (the plugin every returned ``KernelFunction`` is
-        registered under).
+        (``score_threshold``, ``namespaces``, ``tools_already_used``,
+        ``required``, ``always_include``), plus SK's own ``plugin_name`` (the
+        plugin every returned ``KernelFunction`` is registered under).
         """
         return await _for_semantic_kernel(
             self._gantry,
@@ -157,6 +165,8 @@ class SemanticKernelAdapter(BaseFrameworkAdapter):
             score_threshold=score_threshold,
             namespaces=namespaces,
             tools_already_used=tools_already_used,
+            required=required,
+            always_include=always_include,
         )
 
     async def plugin(
@@ -168,7 +178,12 @@ class SemanticKernelAdapter(BaseFrameworkAdapter):
         score_threshold: float = 0.0,
         **select_kwargs: Any,
     ) -> dict[str, Any]:
-        """Return a ``{function_name: KernelFunction}`` mapping for ``query``."""
+        """Return a ``{function_name: KernelFunction}`` mapping for ``query``.
+
+        ``select_kwargs`` (``namespaces``, ``tools_already_used``,
+        ``required``, ``always_include``, …) are forwarded verbatim to
+        :func:`_gantry_plugin`.
+        """
         return await _gantry_plugin(
             self._gantry,
             query,
@@ -186,6 +201,8 @@ class SemanticKernelAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
     ) -> Any:
         """Build a live ``GantryFunctionProvider`` whose ``refresh(history)`` re-selects functions per turn."""
         from agent_gantry.integrations.frameworks.semantic_kernel_live import (
@@ -199,6 +216,8 @@ class SemanticKernelAdapter(BaseFrameworkAdapter):
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         )
 
     async def refresh(
@@ -210,6 +229,8 @@ class SemanticKernelAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
     ) -> dict[str, Any]:
         """Re-select tools for ``query`` and rebuild ``kernel``'s gantry plugin once."""
         from agent_gantry.integrations.frameworks.semantic_kernel_live import (
@@ -224,4 +245,6 @@ class SemanticKernelAdapter(BaseFrameworkAdapter):
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         )

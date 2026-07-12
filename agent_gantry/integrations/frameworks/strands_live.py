@@ -53,8 +53,9 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT
-from agent_gantry.integrations.frameworks.strands import _for_strands
+from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT, GantryToolset
+from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
+from agent_gantry.integrations.frameworks.strands import _spec_to_strands
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
@@ -135,11 +136,15 @@ class GantryStrandsToolHook:
         limit: int = DEFAULT_TOOL_LIMIT,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
     ) -> None:
         self._gantry = gantry
         self._limit = limit
         self._score_threshold = score_threshold
         self._namespaces = namespaces
+        self._required = required
+        self._always_include = always_include
         self._active_names: set[str] = set()
 
     def register_hooks(self, registry: Any, **kwargs: Any) -> None:
@@ -158,21 +163,34 @@ class GantryStrandsToolHook:
     async def _on_before_model_call(self, event: Any) -> None:
         """Re-select and swap this turn's tools into ``event.agent.tool_registry``.
 
-        Never raises on selection failure — a broken retrieval must not break
-        the agent's model call; the previous turn's tools (if any) are left in
-        place when that happens.
+        Never raises on a *transient* selection failure — a broken retrieval
+        must not break the agent's model call; the previous turn's tools (if
+        any) are left in place when that happens. The one deliberate
+        exception is
+        :class:`~agent_gantry.integrations.frameworks.errors.MissingRequiredToolError`
+        (see :func:`~agent_gantry.integrations.frameworks.google_adk_live._inject_selected_tools`
+        for the same carve-out and its rationale).
+
+        Uses :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select_or_empty`
+        directly (rather than :func:`_for_strands`, which uses ``.select()``)
+        so ``required``/``always_include`` pins still resolve on a turn with
+        no extractable user text — matching every other live provider's
+        blank-query behaviour.
         """
         query = _query_from_messages(getattr(event.agent, "messages", None))
-        if not query:
+        if not query and not self._required and not self._always_include:
             return
         try:
-            tools = await _for_strands(
-                self._gantry,
+            specs = await GantryToolset(self._gantry).select_or_empty(
                 query,
                 limit=self._limit,
                 score_threshold=self._score_threshold,
                 namespaces=self._namespaces,
+                required=self._required,
+                always_include=self._always_include,
             )
+        except MissingRequiredToolError:
+            raise
         except Exception:
             # Selection failure must not kill the agent's model call: log a
             # WARNING (not raise) and degrade gracefully. Strands'
@@ -187,6 +205,7 @@ class GantryStrandsToolHook:
                 exc_info=True,
             )
             return
+        tools = [_spec_to_strands(s) for s in specs]
 
         tool_registry = event.agent.tool_registry
         new_names = {t.tool_name for t in tools}
@@ -210,6 +229,8 @@ def _gantry_strands_agent(
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
     namespaces: list[str] | None = None,
+    required: list[str] | None = None,
+    always_include: list[str] | None = None,
     **agent_kwargs: Any,
 ) -> Any:
     """Build a ``strands.Agent`` wired for per-turn dynamic tool selection.
@@ -236,7 +257,12 @@ def _gantry_strands_agent(
     """
     agent_cls = _import_strands_agent()
     hook = GantryStrandsToolHook(
-        gantry, limit=limit, score_threshold=score_threshold, namespaces=namespaces
+        gantry,
+        limit=limit,
+        score_threshold=score_threshold,
+        namespaces=namespaces,
+        required=required,
+        always_include=always_include,
     )
     return agent_cls(tools=[], hooks=[hook], **agent_kwargs)
 

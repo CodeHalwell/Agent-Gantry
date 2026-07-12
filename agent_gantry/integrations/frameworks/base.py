@@ -31,16 +31,20 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from collections.abc import Callable
+import logging
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
+from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
 from agent_gantry.schema.execution import ExecutionStatus, ToolCall
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
     from agent_gantry.schema.tool import ToolDefinition
+
+logger = logging.getLogger(__name__)
 
 
 #: Default number of tools surfaced per selection call, shared by every static
@@ -310,6 +314,149 @@ def spec_from_tool(gantry: AgentGantry, tool: ToolDefinition, score: float = 0.0
     )
 
 
+def _bare_qualified_name(tool: ToolDefinition) -> str:
+    """Return a tool's ``namespace.name`` string — no version suffix.
+
+    This is the format a ``required=[...]``/``always_include=[...]`` caller
+    uses to disambiguate same-named tools across namespaces, and the same
+    format
+    :class:`~agent_gantry.integrations.agent_framework_provider.GantryContextProvider`
+    uses for its own ``required`` validation (``f"{t.namespace}.{t.name}"``).
+    Deliberately distinct from :attr:`ToolDefinition.qualified_name` /
+    :attr:`ToolSpec.qualified_name`, which both additionally suffix
+    ``:<version>`` — a version pin isn't something a ``required=[...]``
+    caller would reasonably type, so matching against it would make
+    ``namespace.name`` lookups silently fail.
+    """
+    return f"{tool.namespace}.{tool.name}"
+
+
+def _resolve_tool_names(
+    gantry: AgentGantry, names: Sequence[str]
+) -> tuple[list[ToolDefinition], list[str]]:
+    """Resolve bare or qualified tool names against the gantry's registry.
+
+    Reads :meth:`AgentGantry.list_tools_sync` — the in-memory registry, no
+    vector-store round trip — the same source
+    :class:`~agent_gantry.integrations.agent_framework_provider.GantryContextProvider`
+    uses to validate its own ``required=[...]``. A name matches either the
+    tool's bare ``name`` or its ``namespace.name`` qualified name (see
+    :func:`_bare_qualified_name`); bare-name lookups take the first match
+    across namespaces (mirroring
+    :meth:`~agent_gantry.core.registry.ToolRegistry.get_tool_by_name`).
+
+    Returns ``(found, missing)`` — the resolved :class:`ToolDefinition`\\ s in
+    the order ``names`` was given, and the subset of ``names`` that matched
+    nothing.
+    """
+    known = gantry.list_tools_sync()
+    by_qualified: dict[str, ToolDefinition] = {}
+    by_bare: dict[str, ToolDefinition] = {}
+    for tool in known:
+        by_qualified.setdefault(_bare_qualified_name(tool), tool)
+        by_bare.setdefault(tool.name, tool)
+
+    found: list[ToolDefinition] = []
+    missing: list[str] = []
+    for name in names:
+        tool = by_qualified.get(name) or by_bare.get(name)
+        if tool is None:
+            missing.append(name)
+        else:
+            found.append(tool)
+    return found, missing
+
+
+def _pin_specs(
+    gantry: AgentGantry,
+    names: Sequence[str] | None,
+    seen: set[str],
+    *,
+    kind: Literal["required", "always_include"],
+) -> list[ToolSpec]:
+    """Resolve ``names`` and wrap any not already in ``seen`` as pinned :class:`ToolSpec`\\ s.
+
+    Shared by :meth:`GantryToolset.select` and :meth:`GantryToolset.select_or_empty`
+    for both the ``required`` and ``always_include`` keyword arguments — the
+    only difference between the two is what happens when a name doesn't
+    resolve against the registry:
+
+    - ``kind="required"``: raises :class:`MissingRequiredToolError` listing
+      every unresolved name. Mirrors
+      :class:`~agent_gantry.integrations.agent_framework_provider.GantryContextProvider`,
+      which validates ``required=[...]`` and raises the same error type.
+    - ``kind="always_include"``: logs a ``WARNING`` naming the unresolved
+      tools and silently skips them — mirrors
+      ``GantryContextProvider``'s ``always_include`` semantics (a missing
+      always-include tool is a soft-fail, not a hard error).
+
+    ``seen`` is mutated in place — the bare-qualified (``namespace.name``),
+    versioned-qualified (``ToolSpec.qualified_name``, i.e. ``namespace.name:
+    version``), and bare name of each newly pinned tool are all added — so a
+    name that already appeared in the semantic selection (in either name
+    form), or in an earlier call to this helper (e.g. ``required`` pinned
+    before ``always_include``), is never duplicated.
+    """
+    if not names:
+        return []
+    found, missing = _resolve_tool_names(gantry, names)
+    if missing:
+        if kind == "required":
+            raise MissingRequiredToolError(
+                f"GantryToolset.select: required tool(s) not found in gantry: "
+                f"{missing}. Did you forget to register them, or is there a typo?"
+            )
+        logger.warning(
+            "GantryToolset.select: always_include tool(s) not found in gantry "
+            "and will be skipped: %s",
+            missing,
+        )
+    pinned: list[ToolSpec] = []
+    for tool_def in found:
+        bare_qualified = _bare_qualified_name(tool_def)
+        if bare_qualified in seen or tool_def.name in seen:
+            continue
+        spec = spec_from_tool(gantry, tool_def)
+        seen.add(bare_qualified)
+        seen.add(spec.qualified_name)
+        seen.add(tool_def.name)
+        pinned.append(spec)
+    return pinned
+
+
+def _resolve_pins(
+    gantry: AgentGantry,
+    specs: list[ToolSpec],
+    *,
+    required: Sequence[str] | None,
+    always_include: Sequence[str] | None,
+) -> list[ToolSpec]:
+    """Build the pinned-tool tail appended after ``specs`` (the semantic slice).
+
+    Ordering matches
+    :class:`~agent_gantry.integrations.agent_framework_provider.GantryContextProvider`:
+    dynamic/semantic tools first (``specs``, already ranked), then
+    ``required`` (in the order given), then ``always_include`` (in the order
+    given, skipping anything ``required`` already pinned). Deduplicated
+    against ``specs`` and against each other. Pinned tools are never counted
+    against ``limit`` — the same choice
+    ``GantryContextProvider.top_k`` makes for its own ``required`` /
+    ``always_include`` — so a caller's tool budget for the *semantic* slice
+    is never silently reduced by pins, and a required tool is never dropped
+    because the semantic slice happened to fill ``limit`` first.
+    """
+    if not required and not always_include:
+        return []
+    seen: set[str] = set()
+    for s in specs:
+        seen.add(s.qualified_name)
+        seen.add(f"{s._namespace}.{s.name}")
+        seen.add(s.name)
+    pinned = _pin_specs(gantry, required, seen, kind="required")
+    pinned += _pin_specs(gantry, always_include, seen, kind="always_include")
+    return pinned
+
+
 class GantryToolset:
     """Framework-neutral entry point: select tools, then export to a framework.
 
@@ -335,12 +482,39 @@ class GantryToolset:
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
         tools_already_used: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
     ) -> list[ToolSpec]:
         """Run semantic selection and return ranked :class:`ToolSpec` handles.
 
         ``score_threshold`` defaults to ``0.0`` (no filtering) — matching the
         high-level convenience API and avoiding the silent-drop trap of the raw
         ``ToolQuery`` 0.5 default.
+
+        ``required`` and ``always_include`` (both bare or ``namespace.name``
+        qualified tool names) are pinned onto the semantic slice — ported
+        from
+        :class:`~agent_gantry.integrations.agent_framework_provider.GantryContextProvider`,
+        the Microsoft Agent Framework provider that originated this feature,
+        so every framework adapter gets the same guarantee:
+
+        - ``required``: every listed tool **must** end up in the result. A
+          tool already present in the semantic slice counts; anything
+          missing is fetched from the registry and appended. If a name
+          doesn't resolve against the registry at all, raises
+          :class:`~agent_gantry.integrations.frameworks.errors.MissingRequiredToolError`
+          rather than silently returning an incomplete selection.
+        - ``always_include``: same resolution and append behaviour, but a
+          name that isn't in the registry is logged as a ``WARNING`` and
+          skipped rather than raising.
+
+        Both are appended *after* the semantic slice, in the order given
+        (``required`` before ``always_include``), deduplicated against it and
+        against each other — see :func:`_resolve_pins` for the full ordering
+        and dedup contract. Neither counts against ``limit``: ``limit`` bounds
+        only the semantic retrieval, so a required tool is never dropped
+        because the semantic slice already filled the budget, and pins never
+        silently shrink the semantic slice a caller asked for.
         """
         context = ConversationContext(
             query=query,
@@ -354,7 +528,13 @@ class GantryToolset:
                 namespaces=namespaces,
             )
         )
-        return [spec_from_tool(self._gantry, st.tool, st.semantic_score) for st in result.tools]
+        specs = [spec_from_tool(self._gantry, st.tool, st.semantic_score) for st in result.tools]
+        if not required and not always_include:
+            return specs
+        pinned = _resolve_pins(
+            self._gantry, specs, required=required, always_include=always_include
+        )
+        return specs + pinned
 
     async def select_or_empty(
         self,
@@ -364,28 +544,43 @@ class GantryToolset:
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
         tools_already_used: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
     ) -> list[ToolSpec]:
-        """Like :meth:`select`, but returns ``[]`` immediately for a blank query.
+        """Like :meth:`select`, but skips the *semantic* leg for a blank query.
 
         Every per-turn live provider (``integrations/frameworks/*_live.py``,
         :class:`~agent_gantry.integrations.refresh.ToolRefresher`) needs this
         exact guard: selecting on an empty embedding yields an arbitrary
         top-k for some embedders, so a turn with no retrieval signal (no new
-        user text, no tool result yet) should surface no tools rather than a
-        nonsensical selection. This was previously re-implemented verbatim in
-        nearly every ``*_live.py`` module (each with an identical "consistent
-        with the other live providers" comment) — centralised here so each
-        live provider keeps its own framework-specific query derivation but
-        shares this one selection primitive.
+        user text, no tool result yet) should surface no *dynamic* tools
+        rather than a nonsensical selection. This was previously
+        re-implemented verbatim in nearly every ``*_live.py`` module (each
+        with an identical "consistent with the other live providers" comment)
+        — centralised here so each live provider keeps its own
+        framework-specific query derivation but shares this one selection
+        primitive.
+
+        ``required`` / ``always_include`` are resolved and returned even on a
+        blank query — they don't depend on the query's retrieval signal, and
+        ``GantryContextProvider`` injects its own ``always_include``/``required``
+        pins unconditionally for the same reason (a workflow that needs a
+        pinned tool needs it whether or not this turn produced new query
+        text). A blank query with a missing ``required`` tool still raises
+        :class:`~agent_gantry.integrations.frameworks.errors.MissingRequiredToolError`.
         """
         if not (query or "").strip():
-            return []
+            return _resolve_pins(
+                self._gantry, [], required=required, always_include=always_include
+            )
         return await self.select(
             query,
             limit=limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
             tools_already_used=tools_already_used,
+            required=required,
+            always_include=always_include,
         )
 
 
@@ -439,22 +634,28 @@ class BaseFrameworkAdapter:
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **framework_kwargs: Any,
     ) -> Any:
         """Return this framework's live/dynamic tool object (uniform entry point).
 
-        Every adapter's ``live()`` accepts the same three explicit keywords —
-        ``limit``, ``score_threshold``, ``namespaces`` — plus
-        ``**framework_kwargs`` forwarded verbatim to whichever
-        framework-idiomatic bespoke method it delegates to (``react_agent``,
-        ``toolset``, ``tool_hook``, ``agent_builder``, …). Some frameworks'
-        native hooks are inherently tied to an external object the caller
-        must supply (a chat model, an already-built agent, a kernel); those
-        adapters require it as a named ``framework_kwargs`` entry and raise a
-        ``TypeError`` if it's missing — see the concrete override's docstring
-        for exactly what is returned, which ``framework_kwargs`` are required,
-        and where to plug the result in. :attr:`live_tier` tells you how deep
-        the re-selection goes before you call this.
+        Every adapter's ``live()`` accepts the same five explicit keywords —
+        ``limit``, ``score_threshold``, ``namespaces``, ``required``,
+        ``always_include`` — plus ``**framework_kwargs`` forwarded verbatim to
+        whichever framework-idiomatic bespoke method it delegates to
+        (``react_agent``, ``toolset``, ``tool_hook``, ``agent_builder``, …).
+        Some frameworks' native hooks are inherently tied to an external
+        object the caller must supply (a chat model, an already-built agent,
+        a kernel); those adapters require it as a named ``framework_kwargs``
+        entry and raise a ``TypeError`` if it's missing — see the concrete
+        override's docstring for exactly what is returned, which
+        ``framework_kwargs`` are required, and where to plug the result in.
+        :attr:`live_tier` tells you how deep the re-selection goes before you
+        call this. ``required``/``always_include`` follow
+        :meth:`GantryToolset.select`'s semantics (pinned tools, not counted
+        against ``limit``; see that method for the full contract) and are
+        re-applied on every dynamic re-selection round, not just the first.
 
         Subclasses MUST override this. The bespoke method(s) it wraps remain
         the documented, framework-native path and are never removed —
@@ -470,15 +671,19 @@ class BaseFrameworkAdapter:
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
         tools_already_used: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
     ) -> list[Any]:
         """Select tools for ``query`` as the framework's native tool objects.
 
         ``limit`` defaults to the adapter's ``default_limit``. ``score_threshold``,
-        ``namespaces``, and ``tools_already_used`` are explicit, first-class
-        keyword arguments — not buried in ``**kwargs`` — and are forwarded
-        verbatim to :meth:`GantryToolset.select`. Each call still routes through
-        ``gantry.execute`` so retries, timeouts, circuit breakers, and the
-        security policy apply.
+        ``namespaces``, ``tools_already_used``, ``required``, and
+        ``always_include`` are explicit, first-class keyword arguments — not
+        buried in ``**kwargs`` — and are forwarded verbatim to
+        :meth:`GantryToolset.select` (see its docstring for the
+        ``required``/``always_include`` pinning contract). Each call still
+        routes through ``gantry.execute`` so retries, timeouts, circuit
+        breakers, and the security policy apply.
         """
         specs = await GantryToolset(self._gantry).select(
             query,
@@ -486,5 +691,7 @@ class BaseFrameworkAdapter:
             score_threshold=score_threshold,
             namespaces=namespaces,
             tools_already_used=tools_already_used,
+            required=required,
+            always_include=always_include,
         )
         return [self.convert(s) for s in specs]
