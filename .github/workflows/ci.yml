@@ -121,7 +121,7 @@ jobs:
         run: |
           uv venv .venv-frameworks --python ${{ matrix.python-version }}
           uv pip install --python .venv-frameworks ".[dev]" \
-            pydantic-ai-slim openai-agents smolagents haystack-ai agno strands-agents
+            pydantic-ai-slim openai-agents smolagents haystack-ai agno strands-agents dspy
           .venv-frameworks/bin/python -m pytest tests/frameworks/ -v
 
   docs:

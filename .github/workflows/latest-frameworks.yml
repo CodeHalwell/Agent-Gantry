@@ -65,7 +65,7 @@ jobs:
           # agent-frameworks set. Validate their latest releases together,
           # same as the `framework-adapters` CI job but unpinned.
           - name: native adapters (latest)
-            install: '".[dev]" pydantic-ai-slim openai-agents smolagents haystack-ai agno strands-agents'
+            install: '".[dev]" pydantic-ai-slim openai-agents smolagents haystack-ai agno strands-agents dspy'
             tests: tests/frameworks/
     steps:
       - uses: actions/checkout@v4
