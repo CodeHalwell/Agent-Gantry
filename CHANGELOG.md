@@ -25,6 +25,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   logged warning rather than aborting the batch; an empty `tools` argument
   raises. See `agent_gantry/integrations/README.md` ("Importing existing
   framework tools") and `examples/frameworks/importers_example.py`.
+- **Uniform `live_tier` / `live()` entry point on every framework adapter.**
+  All 13 `<Framework>Adapter` classes (`BaseFrameworkAdapter` subclasses) plus
+  `AgentFrameworkAdapter` (Microsoft Agent Framework) now expose
+  `adapter.live_tier` (`"per-turn"` or `"per-call"` — the deepest dynamic
+  re-selection tier that framework supports) and
+  `adapter.live(*, limit=None, score_threshold=0.0, namespaces=None,
+  **framework_kwargs)`, which returns the framework-appropriate live object
+  (hook / toolset / provider / builder) by delegating to that framework's
+  existing bespoke live method (`react_agent`, `toolset`, `tool_hook`,
+  `agent_builder`, …). No bespoke method was removed or renamed — `live()` is
+  a thin, uniform layer over them, so framework-agnostic code no longer needs
+  to know each framework's own live-method name. See
+  `integrations/frameworks/README.md` for the full per-framework table
+  (`live_tier`, delegate, return type, where to plug it in).
+  `tests/frameworks/test_conformance.py` locks the new surface: every adapter
+  is checked for a valid `live_tier` matching the documented capability table,
+  and a stub-based test proves `live()` calls the right bespoke method with
+  the right kwargs.
+- **`namespaces` now threads through every live/per-turn provider**, not just
+  the static `select()` path and `OpenAIAgentsAdapter`'s live methods.
+  `LangGraphAdapter.react_agent`/`.areact_agent`/`.select_for_state`,
+  `LlamaIndexAdapter.tool_retriever`/`.function_agent`,
+  `PydanticAIAdapter.toolset`, `SemanticKernelAdapter.function_provider`/
+  `.refresh`, `GoogleADKAdapter.before_model_callback`/`.agent`,
+  `AutoGenAdapter.workbench`, `StrandsAdapter.tool_hook`/`.agent`, and the
+  per-call builders (`CrewAIAdapter.agent_builder`, `AgnoAdapter.agent_builder`,
+  `HaystackAdapter.tool_invoker_builder`, `SmolagentsAdapter.agent_builder`)
+  all now accept and forward `namespaces` to every re-selection.
+- **`GantryToolset.select_or_empty`** — a new selection primitive that returns
+  `[]` immediately for a blank/whitespace-only query instead of running a
+  nonsensical selection on an empty embedding. Every `integrations/frameworks/
+  *_live.py` module previously re-implemented this exact guard by hand (each
+  with its own "consistent with the other live providers" comment); the
+  duplicated guard+select code is now centralized here, and
+  `ToolRefresher.refresh_specs` uses the same primitive.
 - **Native AWS Strands Agents adapter** — `StrandsAdapter`
   (`from agent_gantry.strands import StrandsAdapter`), joining the per-framework
   `<Framework>Adapter` family. `await adapter.select(query, limit=...)` /
@@ -71,6 +106,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`ToolRefresher` (`agent_gantry.integrations.refresh`) is now explicitly
+  documented as the standalone, hand-rolled-agent-loop utility**, cross-linked
+  with the new `adapter.live()` uniform entry point. It was already
+  framework-agnostic by design (no framework adapter called it) — the
+  per-framework `*_live.py` modules' query-derivation logic is genuinely
+  framework-specific (a LangGraph `state["messages"]`, a Pydantic AI
+  `RunContext`, an ADK `callback_context`, …) and was deliberately left
+  un-merged with `ToolRefresher`'s generic message-list walker; only the
+  shared, framework-independent "guard against an empty query, then select"
+  step was extracted, into `GantryToolset.select_or_empty` (used by both
+  `ToolRefresher` and every `*_live.py` module).
 - **BREAKING — static framework adapters now default `limit` to 5, not 3.**
   `GantryToolset`, `BaseFrameworkAdapter`, and every native per-framework static
   helper (`agent_gantry.langchain`, `.crewai`, `.llamaindex`, `.autogen`,

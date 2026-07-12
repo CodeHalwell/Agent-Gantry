@@ -84,10 +84,35 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
     the conversation progresses. Every tool call routes through ``gantry.execute``.
     """
 
+    live_tier = "per-turn"
+
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as an OpenAI Agents ``FunctionTool``."""
         return _spec_to_openai_agents(spec)
+
+    def live(
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        **framework_kwargs: Any,
+    ) -> Any:
+        """Per-turn uniform entry point: delegates to :meth:`session`.
+
+        Requires ``agent=<agents.Agent>`` in ``framework_kwargs`` — the SDK's
+        tool-refresh hook rewrites a *specific* agent's ``.tools`` list, so
+        there is no agent-agnostic standalone hook to return. Returns a
+        :class:`~agent_gantry.integrations.frameworks.openai_agents_live.GantryAgentSession`;
+        call ``await session.run(run_input)`` per conversational turn (it
+        re-selects and applies tools before the run, and installs
+        :meth:`run_hooks` for intra-run dynamism).
+        """
+        agent = framework_kwargs.pop("agent")
+        return self.session(
+            agent, limit=limit, score_threshold=score_threshold, namespaces=namespaces
+        )
 
     async def run(
         self,

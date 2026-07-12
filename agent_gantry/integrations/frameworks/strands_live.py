@@ -134,10 +134,12 @@ class GantryStrandsToolHook:
         *,
         limit: int = DEFAULT_TOOL_LIMIT,
         score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
     ) -> None:
         self._gantry = gantry
         self._limit = limit
         self._score_threshold = score_threshold
+        self._namespaces = namespaces
         self._active_names: set[str] = set()
 
     def register_hooks(self, registry: Any, **kwargs: Any) -> None:
@@ -169,6 +171,7 @@ class GantryStrandsToolHook:
                 query,
                 limit=self._limit,
                 score_threshold=self._score_threshold,
+                namespaces=self._namespaces,
             )
         except Exception:
             logger.exception(
@@ -198,6 +201,7 @@ def _gantry_strands_agent(
     *,
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
+    namespaces: list[str] | None = None,
     **agent_kwargs: Any,
 ) -> Any:
     """Build a ``strands.Agent`` wired for per-turn dynamic tool selection.
@@ -211,6 +215,8 @@ def _gantry_strands_agent(
         gantry: The :class:`~agent_gantry.core.gantry.AgentGantry` instance.
         limit: Maximum number of tools selected/injected per turn.
         score_threshold: Minimum semantic relevance score for selection.
+        namespaces: Optional namespace filter applied to every per-turn
+            selection. Defaults to ``None`` (no filtering).
         **agent_kwargs: Extra keyword arguments forwarded to ``Agent(...)``
             (``model``, ``system_prompt``, ``callback_handler``, ...).
 
@@ -221,7 +227,9 @@ def _gantry_strands_agent(
         ImportError: If ``strands-agents`` is not installed.
     """
     agent_cls = _import_strands_agent()
-    hook = GantryStrandsToolHook(gantry, limit=limit, score_threshold=score_threshold)
+    hook = GantryStrandsToolHook(
+        gantry, limit=limit, score_threshold=score_threshold, namespaces=namespaces
+    )
     return agent_cls(tools=[], hooks=[hook], **agent_kwargs)
 
 

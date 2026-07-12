@@ -37,8 +37,7 @@ def _spec_to_pydantic_ai(spec: ToolSpec) -> Any:
         from pydantic_ai.tools import Tool
     except ImportError as exc:  # pragma: no cover - exercised via stub
         raise ImportError(
-            "Pydantic AI support requires `pydantic-ai`. "
-            "Install it with `pip install pydantic-ai`."
+            "Pydantic AI support requires `pydantic-ai`. Install it with `pip install pydantic-ai`."
         ) from exc
 
     function = spec.callable_for_signature()
@@ -77,17 +76,46 @@ class PydanticAIAdapter(BaseFrameworkAdapter):
     toolset that re-selects tools on every run/step. Both route through ``gantry.execute``.
     """
 
+    live_tier = "per-turn"
+
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a Pydantic AI ``Tool``."""
         return _spec_to_pydantic_ai(spec)
 
-    def toolset(self, *, limit: int | None = None, score_threshold: float = 0.0) -> Any:
+    def live(
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        **framework_kwargs: Any,
+    ) -> Any:
+        """Per-turn uniform entry point: delegates to :meth:`toolset`.
+
+        Returns a ``pydantic_ai.toolsets.AbstractToolset`` — plug it into
+        ``Agent(model, toolsets=[<result>])``. No ``framework_kwargs`` are
+        required.
+        """
+        return self.toolset(
+            limit=limit, score_threshold=score_threshold, namespaces=namespaces, **framework_kwargs
+        )
+
+    def toolset(
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+    ) -> Any:
         """Build a live ``AbstractToolset`` for per-turn dynamic selection (``Agent(toolsets=[...])``)."""
         from agent_gantry.integrations.frameworks.pydantic_ai_live import (
             _gantry_toolset,
         )
 
         return _gantry_toolset(
-            self._gantry, limit=self._default_limit if limit is None else limit, score_threshold=score_threshold
+            self._gantry,
+            limit=self._default_limit if limit is None else limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
         )

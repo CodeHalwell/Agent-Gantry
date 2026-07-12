@@ -71,8 +71,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _INSTALL_HINT = (
-    "Google ADK support requires `google-adk`. "
-    "Install it with `pip install google-adk`."
+    "Google ADK support requires `google-adk`. Install it with `pip install google-adk`."
 )
 
 
@@ -146,6 +145,7 @@ async def _inject_selected_tools(
     *,
     limit: int,
     score_threshold: float,
+    namespaces: list[str] | None = None,
 ) -> list[str]:
     """Select tools for ``query`` and inject them into ``llm_request``.
 
@@ -158,11 +158,9 @@ async def _inject_selected_tools(
     logging and tests). Never raises on selection failure — retrieval must not
     break the agent run.
     """
-    if not query:
-        return []
     try:
-        specs = await GantryToolset(gantry).select(
-            query, limit=limit, score_threshold=score_threshold
+        specs = await GantryToolset(gantry).select_or_empty(
+            query, limit=limit, score_threshold=score_threshold, namespaces=namespaces
         )
     except Exception:
         logger.exception(
@@ -191,6 +189,7 @@ def _gantry_before_model_callback(
     *,
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
+    namespaces: list[str] | None = None,
 ) -> Any:
     """Build an ADK ``before_model_callback`` that injects Gantry tools per turn.
 
@@ -216,6 +215,8 @@ def _gantry_before_model_callback(
         limit: Maximum number of tools to select and inject per turn.
         score_threshold: Minimum semantic relevance score (``0.0`` = no
             filtering).
+        namespaces: Optional namespace filter applied to every per-turn
+            selection. Defaults to ``None`` (no filtering).
 
     Returns:
         An ``async`` callback ``(callback_context, llm_request) -> None``.
@@ -229,6 +230,7 @@ def _gantry_before_model_callback(
             llm_request,
             limit=limit,
             score_threshold=score_threshold,
+            namespaces=namespaces,
         )
         # Return None: ADK proceeds with the mutated llm_request.
         return None
@@ -244,6 +246,7 @@ def _gantry_adk_agent(
     instruction: str = "",
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
+    namespaces: list[str] | None = None,
     **agent_kwargs: Any,
 ) -> Any:
     """Build an ADK ``Agent`` wired for per-turn dynamic tool selection.
@@ -262,6 +265,8 @@ def _gantry_adk_agent(
         instruction: The system instruction for the agent.
         limit: Maximum number of tools selected/injected per turn.
         score_threshold: Minimum semantic relevance score for selection.
+        namespaces: Optional namespace filter applied to every per-turn
+            selection. Defaults to ``None`` (no filtering).
         **agent_kwargs: Extra keyword arguments forwarded to ``Agent(...)``.
 
     Returns:
@@ -277,7 +282,7 @@ def _gantry_adk_agent(
         instruction=instruction,
         tools=[],
         before_model_callback=_gantry_before_model_callback(
-            gantry, limit=limit, score_threshold=score_threshold
+            gantry, limit=limit, score_threshold=score_threshold, namespaces=namespaces
         ),
         **agent_kwargs,
     )

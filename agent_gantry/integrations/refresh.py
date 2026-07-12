@@ -14,6 +14,31 @@ and a gantry instance. Call :meth:`ToolRefresher.refresh` (or
 :meth:`refresh_specs`) once per turn with the conversation-so-far and it returns
 a fresh top-k selection appropriate to the *latest* sub-task.
 
+Where this sits next to ``adapter.live()``
+-------------------------------------------
+Every ``<Framework>Adapter`` in :mod:`agent_gantry.integrations.frameworks` now
+exposes a uniform :meth:`~agent_gantry.integrations.frameworks.base.BaseFrameworkAdapter.live`
+method that delegates to that framework's *native* per-turn/per-call hook
+(LangGraph middleware, a Pydantic AI ``AbstractToolset``, a Strands
+``HookProvider``, …) — see ``integrations/frameworks/README.md`` for the full
+table. Each of those hooks derives its retrieval query from the shape of
+*that framework's own* state object (a LangGraph ``state["messages"]``, a
+Pydantic AI ``RunContext``, an ADK ``callback_context``, …), because that is
+what the framework hands the hook.
+
+``ToolRefresher`` is deliberately **not** one of those hooks and is not called
+by any adapter's ``live()``: it is the *standalone* utility for callers who are
+not using one of the 14 supported frameworks at all — a hand-rolled agent loop
+that owns its own message list and its own calls to an LLM SDK. If your
+framework has a ``live()``, prefer it (it wires into the framework's actual
+lifecycle instead of you calling ``refresh()`` by hand between turns). Both
+sit on the same underlying selection primitive
+(:class:`~agent_gantry.integrations.frameworks.base.GantryToolset`, plus its
+:meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select_or_empty`
+guard against selecting on an empty query), so behaviour — score thresholds,
+namespace filtering, already-used-tool penalties — is consistent whichever
+path you use.
+
 Two behaviours make this genuinely multi-turn / direction-changing:
 
 - **Query follows the conversation tail (recency-aware).** The default query
@@ -151,6 +176,15 @@ async def _maybe_await(value: Any) -> Any:
 class ToolRefresher:
     """Re-select tools every turn of a single agent run, for any framework.
 
+    **Standalone utility, not a framework hook.** If you're using one of the
+    14 supported frameworks (see ``integrations/frameworks/README.md``),
+    prefer ``<Framework>Adapter(gantry).live(...)`` instead — it wires Gantry
+    into that framework's own per-turn/per-call lifecycle so re-selection
+    happens automatically. Reach for ``ToolRefresher`` when you're driving a
+    hand-rolled agent loop (a raw LLM SDK call in a ``while`` loop) with no
+    framework underneath to hook into — see the module docstring for the
+    full comparison.
+
     The refresher keeps no per-turn conversation state of its own beyond the
     accumulated set of used tool names (when ``track_used`` is enabled) and the
     most recent selection. Each call to :meth:`refresh` / :meth:`refresh_specs`
@@ -245,12 +279,10 @@ class ToolRefresher:
             self._accumulate_used(msg_list)
 
         query = await self._build_query(msg_list)
-        if not query:
-            # Nothing to retrieve against; nothing to surface this turn.
-            self._last_selection = []
-            return []
-
-        specs = await self._toolset.select(
+        # select_or_empty: nothing to retrieve against means nothing to
+        # surface this turn, same empty-query guard every live per-framework
+        # provider uses (see GantryToolset.select_or_empty).
+        specs = await self._toolset.select_or_empty(
             query,
             limit=self._limit,
             score_threshold=self._score_threshold,
@@ -288,9 +320,7 @@ class ToolRefresher:
         # ToolSpec list so last_selection / refresh_specs stay consistent.
         context = ConversationContext(
             query=query,
-            tools_already_used=(
-                list(self._tools_used) if self._track_used else []
-            ),
+            tools_already_used=(list(self._tools_used) if self._track_used else []),
         )
         result = await self._gantry.retrieve(
             ToolQuery(
@@ -303,8 +333,7 @@ class ToolRefresher:
         from agent_gantry.integrations.frameworks.base import spec_from_tool
 
         self._last_selection = [
-            spec_from_tool(self._gantry, st.tool, st.semantic_score)
-            for st in result.tools
+            spec_from_tool(self._gantry, st.tool, st.semantic_score) for st in result.tools
         ]
         return [st.tool.to_dialect(self._dialect) for st in result.tools]
 

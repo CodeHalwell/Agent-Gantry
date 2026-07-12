@@ -79,13 +79,42 @@ class LlamaIndexAdapter(BaseFrameworkAdapter):
     (re-selects tools every reasoning step), both routed through ``gantry.execute``.
     """
 
+    live_tier = "per-turn"
+
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a LlamaIndex ``FunctionTool``."""
         return _spec_to_llamaindex(spec)
 
+    def live(
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        **framework_kwargs: Any,
+    ) -> Any:
+        """Per-turn uniform entry point: delegates to :meth:`tool_retriever`.
+
+        Returns a ``GantryToolRetriever`` (an ``llama_index.core.objects.
+        ObjectRetriever`` subclass) — plug it into
+        ``FunctionAgent(tool_retriever=<result>)``. No ``framework_kwargs``
+        are required; any supplied are forwarded to the underlying retriever
+        constructor.
+        """
+        return self.tool_retriever(
+            limit=limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+            **framework_kwargs,
+        )
+
     def tool_retriever(
-        self, *, limit: int | None = None, score_threshold: float = 0.0
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
     ) -> Any:
         """Build a live per-turn ``ObjectRetriever`` for ``FunctionAgent(tool_retriever=...)``."""
         from agent_gantry.integrations.frameworks.llamaindex_live import (
@@ -93,7 +122,10 @@ class LlamaIndexAdapter(BaseFrameworkAdapter):
         )
 
         return _gantry_tool_retriever(
-            self._gantry, limit=self._default_limit if limit is None else limit, score_threshold=score_threshold
+            self._gantry,
+            limit=self._default_limit if limit is None else limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
         )
 
     def function_agent(
@@ -103,6 +135,7 @@ class LlamaIndexAdapter(BaseFrameworkAdapter):
         name: str = "gantry_agent",
         limit: int | None = None,
         score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
         **agent_kwargs: Any,
     ) -> Any:
         """Build a ``FunctionAgent`` wired to a live per-turn gantry retriever."""
@@ -116,5 +149,6 @@ class LlamaIndexAdapter(BaseFrameworkAdapter):
             name=name,
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
+            namespaces=namespaces,
             **agent_kwargs,
         )

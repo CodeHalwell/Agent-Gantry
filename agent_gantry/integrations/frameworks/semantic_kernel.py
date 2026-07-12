@@ -99,10 +99,38 @@ class SemanticKernelAdapter(BaseFrameworkAdapter):
     live plugin refresh. Every call routes through ``gantry.execute``.
     """
 
+    live_tier = "per-turn"
+
     @staticmethod
     def convert(spec: ToolSpec, *, plugin_name: str = _DEFAULT_PLUGIN) -> Any:
         """Wrap a single :class:`ToolSpec` as a Semantic Kernel ``KernelFunction``."""
         return _spec_to_semantic_kernel(spec, plugin_name=plugin_name)
+
+    def live(
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        **framework_kwargs: Any,
+    ) -> Any:
+        """Per-turn uniform entry point: delegates to :meth:`function_provider`.
+
+        Requires ``kernel=<semantic_kernel.Kernel>`` in ``framework_kwargs``
+        — SK advertises functions from a specific kernel's registered
+        plugins, so the live object is inherently kernel-bound. Returns a
+        ``GantryFunctionProvider``; call ``await provider.refresh(history)``
+        before each ``agent.get_response()`` / chat-completion invocation.
+        Any other ``framework_kwargs`` (e.g. ``plugin_name``) are forwarded.
+        """
+        kernel = framework_kwargs.pop("kernel")
+        return self.function_provider(
+            kernel,
+            limit=limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+            **framework_kwargs,
+        )
 
     async def select(
         self,
@@ -157,6 +185,7 @@ class SemanticKernelAdapter(BaseFrameworkAdapter):
         plugin_name: str = _DEFAULT_PLUGIN,
         limit: int | None = None,
         score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
     ) -> Any:
         """Build a live ``GantryFunctionProvider`` whose ``refresh(history)`` re-selects functions per turn."""
         from agent_gantry.integrations.frameworks.semantic_kernel_live import (
@@ -169,6 +198,7 @@ class SemanticKernelAdapter(BaseFrameworkAdapter):
             plugin_name=plugin_name,
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
+            namespaces=namespaces,
         )
 
     async def refresh(
@@ -179,6 +209,7 @@ class SemanticKernelAdapter(BaseFrameworkAdapter):
         plugin_name: str = _DEFAULT_PLUGIN,
         limit: int | None = None,
         score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
     ) -> dict[str, Any]:
         """Re-select tools for ``query`` and rebuild ``kernel``'s gantry plugin once."""
         from agent_gantry.integrations.frameworks.semantic_kernel_live import (
@@ -192,4 +223,5 @@ class SemanticKernelAdapter(BaseFrameworkAdapter):
             plugin_name=plugin_name,
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
+            namespaces=namespaces,
         )

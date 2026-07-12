@@ -78,16 +78,40 @@ class AgnoAdapter(BaseFrameworkAdapter):
     builder (Agno fixes tools at construction). Every call routes through ``gantry.execute``.
     """
 
+    live_tier = "per-call"
+
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as an Agno ``Function``."""
         return _spec_to_agno(spec)
+
+    def live(
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        **framework_kwargs: Any,
+    ) -> Any:
+        """Per-call uniform entry point: delegates to :meth:`agent_builder`.
+
+        Agno fixes an agent's tools at construction (no mid-run hook), so the
+        live object here is a builder, not a hook — the deepest Agno allows.
+        Returns a ``GantryLiveAgnoAgent``; call ``await builder.build(query)``
+        before each new run to get a fresh ``agno.agent.Agent`` with tools
+        re-selected for that query. ``framework_kwargs`` (``model``, …) are
+        forwarded to ``agno.agent.Agent`` on every rebuild.
+        """
+        return self.agent_builder(
+            limit=limit, score_threshold=score_threshold, namespaces=namespaces, **framework_kwargs
+        )
 
     def agent_builder(
         self,
         *,
         limit: int | None = None,
         score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
         **agent_kwargs: Any,
     ) -> Any:
         """Return a builder that rebuilds a fresh ``agno.agent.Agent`` per call with re-selected tools.
@@ -102,5 +126,6 @@ class AgnoAdapter(BaseFrameworkAdapter):
             self._gantry,
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
+            namespaces=namespaces,
             **agent_kwargs,
         )

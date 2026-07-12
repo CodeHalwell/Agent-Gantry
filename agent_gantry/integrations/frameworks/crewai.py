@@ -35,8 +35,7 @@ def _spec_to_crewai(spec: ToolSpec) -> Any:
         from crewai.tools import BaseTool
     except ImportError as exc:  # pragma: no cover - exercised via stub
         raise ImportError(
-            "CrewAI support requires `crewai`. "
-            "Install it with `pip install crewai`."
+            "CrewAI support requires `crewai`. Install it with `pip install crewai`."
         ) from exc
 
     # CrewAI's BaseTool is a Pydantic v2 model: ``name`` / ``description`` are
@@ -74,9 +73,7 @@ def _build_args_schema(spec: ToolSpec) -> Any:
         required = set(spec.parameters.get("required") or [])
         fields: dict[str, Any] = {}
         for name, prop in properties.items():
-            annotation = _json_type_to_python(
-                prop.get("type") if isinstance(prop, dict) else None
-            )
+            annotation = _json_type_to_python(prop.get("type") if isinstance(prop, dict) else None)
             description = prop.get("description", "") if isinstance(prop, dict) else ""
             if name in required:
                 fields[name] = (annotation, Field(..., description=description))
@@ -107,24 +104,69 @@ class CrewAIAdapter(BaseFrameworkAdapter):
     fresh agent per call). Every call routes through ``gantry.execute``.
     """
 
+    live_tier = "per-call"
+
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a CrewAI ``BaseTool``."""
         return _spec_to_crewai(spec)
 
-    async def live_tools(self, query: str, *, limit: int | None = None, **select_kwargs: Any) -> list[Any]:
+    def live(
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        **framework_kwargs: Any,
+    ) -> Any:
+        """Per-call uniform entry point: delegates to :meth:`agent_builder`.
+
+        CrewAI fixes an agent's tools at construction (no mid-run hook), so
+        the live object here is a builder, not a hook — the deepest CrewAI
+        allows. Returns a ``GantryLiveCrewAgent``; call
+        ``await builder.build(query)`` before each new task to get a fresh
+        ``crewai.Agent`` with tools re-selected for that query.
+        ``framework_kwargs`` (``role``, ``goal``, ``backstory``, ``llm``, …)
+        are forwarded to ``crewai.Agent`` on every rebuild.
+        """
+        return self.agent_builder(
+            limit=limit, score_threshold=score_threshold, namespaces=namespaces, **framework_kwargs
+        )
+
+    async def live_tools(
+        self, query: str, *, limit: int | None = None, **select_kwargs: Any
+    ) -> list[Any]:
         """Re-select CrewAI ``BaseTool``s for THIS call's ``query`` (per-call selection).
 
         Same selection surface as :meth:`select` (``score_threshold``,
         ``namespaces``, ``tools_already_used`` via ``**select_kwargs``).
         """
-        return await _for_crewai(self._gantry, query, limit=self._default_limit if limit is None else limit, **select_kwargs)
+        return await _for_crewai(
+            self._gantry,
+            query,
+            limit=self._default_limit if limit is None else limit,
+            **select_kwargs,
+        )
 
-    def agent_builder(self, *, limit: int | None = None, score_threshold: float = 0.0, **agent_kwargs: Any) -> Any:
+    def agent_builder(
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        **agent_kwargs: Any,
+    ) -> Any:
         """Return a builder that rebuilds a fresh ``crewai.Agent`` per call with re-selected tools.
 
         ``agent_kwargs`` (role/goal/backstory/llm/...) are forwarded to the builder.
         Call ``await builder.build(query)`` per task.
         """
         from agent_gantry.integrations.frameworks.live_wrappers import GantryLiveCrewAgent
-        return GantryLiveCrewAgent(self._gantry, limit=self._default_limit if limit is None else limit, score_threshold=score_threshold, **agent_kwargs)
+
+        return GantryLiveCrewAgent(
+            self._gantry,
+            limit=self._default_limit if limit is None else limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+            **agent_kwargs,
+        )

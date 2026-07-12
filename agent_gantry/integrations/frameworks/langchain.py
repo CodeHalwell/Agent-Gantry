@@ -10,6 +10,7 @@ Public entry point: :class:`LangChainAdapter`.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import (
@@ -76,7 +77,48 @@ class LangChainAdapter(BaseFrameworkAdapter):
         llm = ChatOpenAI(model="gpt-5.5").bind_tools(tools)
     """
 
+    live_tier = "per-call"
+
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a LangChain ``StructuredTool``."""
         return _spec_to_langchain(spec)
+
+    def live(
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        **framework_kwargs: Any,
+    ) -> Callable[[str], Awaitable[list[Any]]]:
+        """Per-call uniform entry point: a bound alias of :meth:`select`.
+
+        LangChain's ``AgentExecutor`` / ``.bind_tools()`` fixes its tool list
+        at construction with no framework-native per-turn or per-call hook of
+        its own — that hook lives one layer up, in :class:`LangGraphAdapter`
+        (``live_tier`` = ``"per-turn"``), which plugs Gantry into
+        ``langchain.agents.create_agent`` middleware. Without LangGraph, the
+        deepest re-selection LangChain permits is: re-run selection for each
+        new top-level call's query and rebind the result to a fresh
+        ``AgentExecutor`` / ``.bind_tools()`` call.
+
+        Returns a bound async callable ``query -> list[StructuredTool]`` —
+        call it with the new call's query before each such rebuild; it *is*
+        :meth:`select`, aliased so every adapter's ``live()`` has the same
+        uniform ``limit``/``score_threshold``/``namespaces`` signature.
+        ``framework_kwargs`` are forwarded to :meth:`select` verbatim (e.g.
+        ``tools_already_used``).
+        """
+        eff_limit = self._default_limit if limit is None else limit
+
+        async def _select(query: str) -> list[Any]:
+            return await self.select(
+                query,
+                limit=eff_limit,
+                score_threshold=score_threshold,
+                namespaces=namespaces,
+                **framework_kwargs,
+            )
+
+        return _select

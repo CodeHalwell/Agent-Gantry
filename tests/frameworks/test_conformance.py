@@ -198,6 +198,16 @@ class AdapterCase:
             native framework. Stubbing these to ``None`` simulates "framework
             not installed"; installing real stub modules there (via
             ``stub_attrs``) simulates "framework installed" cheaply.
+        live_tier: The adapter's documented ``live_tier`` — ``"per-turn"`` or
+            ``"per-call"``. Locked against ``<Framework>Adapter.live_tier``
+            and cross-referenced with ``integrations/frameworks/README.md``'s
+            table (see ``test_adapter_live_tier_matches_capability_table``).
+        live_delegate: Name of the bespoke method ``adapter.live()`` delegates
+            to (e.g. ``"react_agent"``, ``"toolset"``, ``"agent_builder"``).
+            ``"select"`` is a sentinel for LangChain, whose ``live()`` returns
+            a *bound alias* of ``select`` rather than delegating to a
+            separate bespoke method — it is exercised by its own dedicated
+            test, not the generic delegation-smoke test.
         convert_kind: ``"native"`` (default) — ``convert`` requires the
             framework and returns an opaque native tool object. ``"dict"`` —
             ``convert`` is import-free and returns a plain registrable
@@ -205,92 +215,134 @@ class AdapterCase:
         stub_attrs: Zero-arg factory building the ``{attr: value}`` mapping
             installed on the leaf module in ``modules`` for the end-to-end
             select→convert smoke. ``None`` for import-free adapters.
+        live_extra_kwargs: Zero-arg factory building the extra
+            ``framework_kwargs`` a call to ``adapter.live()`` requires (e.g.
+            ``{"model": ...}`` for LangGraph, whose native hook is bound to a
+            specific chat model). ``None`` when ``live()`` needs nothing
+            beyond ``limit``/``score_threshold``/``namespaces``.
     """
 
     name: str
     adapter_cls: type
     modules: list[str]
+    live_tier: str
+    live_delegate: str
     convert_kind: str = "native"
     stub_attrs: Callable[[], dict[str, object]] | None = None
+    live_extra_kwargs: Callable[[], dict[str, object]] | None = None
 
 
+# NOTE for the DSPy adapter (added separately, see CLAUDE.md task boundaries):
+# add its row here with `live_tier`/`live_delegate` set once its native live
+# hook (if any) is decided — if DSPy has no native per-turn/per-call hook,
+# follow the LangChain precedent (`live_delegate="select"`, tier "per-call",
+# `live()` returns a bound alias of `select`) rather than skip the field.
 ADAPTERS: list[AdapterCase] = [
     AdapterCase(
         "langchain",
         F.LangChainAdapter,
         ["langchain_core", "langchain_core.tools"],
+        live_tier="per-call",
+        live_delegate="select",
         stub_attrs=_stub_langchain_attrs,
     ),
     AdapterCase(
         "langgraph",
         F.LangGraphAdapter,
         ["langchain_core", "langchain_core.tools"],
+        live_tier="per-turn",
+        live_delegate="react_agent",
         stub_attrs=_stub_langchain_attrs,
+        live_extra_kwargs=lambda: {"model": object()},
     ),
     AdapterCase(
         "llamaindex",
         F.LlamaIndexAdapter,
         ["llama_index", "llama_index.core", "llama_index.core.tools"],
+        live_tier="per-turn",
+        live_delegate="tool_retriever",
         stub_attrs=_stub_llamaindex_attrs,
     ),
     AdapterCase(
         "crewai",
         F.CrewAIAdapter,
         ["crewai", "crewai.tools"],
+        live_tier="per-call",
+        live_delegate="agent_builder",
         stub_attrs=_stub_crewai_attrs,
     ),
     AdapterCase(
         "pydantic_ai",
         F.PydanticAIAdapter,
         ["pydantic_ai", "pydantic_ai.tools"],
+        live_tier="per-turn",
+        live_delegate="toolset",
         stub_attrs=_stub_pydantic_ai_attrs,
     ),
     AdapterCase(
         "openai_agents",
         F.OpenAIAgentsAdapter,
         ["agents"],
+        live_tier="per-turn",
+        live_delegate="session",
         stub_attrs=_stub_openai_agents_attrs,
+        live_extra_kwargs=lambda: {"agent": object()},
     ),
     AdapterCase(
         "smolagents",
         F.SmolagentsAdapter,
         ["smolagents"],
+        live_tier="per-call",
+        live_delegate="agent_builder",
         stub_attrs=_stub_smolagents_attrs,
     ),
     AdapterCase(
         "haystack",
         F.HaystackAdapter,
         ["haystack", "haystack.tools"],
+        live_tier="per-call",
+        live_delegate="tool_invoker_builder",
         stub_attrs=_stub_haystack_attrs,
     ),
     AdapterCase(
         "agno",
         F.AgnoAdapter,
         ["agno", "agno.tools", "agno.tools.function"],
+        live_tier="per-call",
+        live_delegate="agent_builder",
         stub_attrs=_stub_agno_attrs,
     ),
     AdapterCase(
         "semantic_kernel",
         F.SemanticKernelAdapter,
         ["semantic_kernel", "semantic_kernel.functions"],
+        live_tier="per-turn",
+        live_delegate="function_provider",
         stub_attrs=_stub_semantic_kernel_attrs,
+        live_extra_kwargs=lambda: {"kernel": object()},
     ),
     AdapterCase(
         "google_adk",
         F.GoogleADKAdapter,
         ["google.adk", "google.adk.tools"],
+        live_tier="per-turn",
+        live_delegate="before_model_callback",
         stub_attrs=_stub_google_adk_attrs,
     ),
     AdapterCase(
         "autogen",
         F.AutoGenAdapter,
         [],
+        live_tier="per-turn",
+        live_delegate="workbench",
         convert_kind="dict",
     ),
     AdapterCase(
         "strands",
         F.StrandsAdapter,
         ["strands"],
+        live_tier="per-turn",
+        live_delegate="tool_hook",
         stub_attrs=_stub_strands_attrs,
     ),
 ]
@@ -304,6 +356,118 @@ def test_adapter_exposes_uniform_surface(case: AdapterCase) -> None:
     assert callable(getattr(case.adapter_cls, "convert", None)), (
         f"{case.name}: {case.adapter_cls.__name__}.convert missing"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Uniform `live_tier` / `live()` entry point (BaseFrameworkAdapter)
+#
+# Every adapter's dynamic ("live") re-selection tier is named differently per
+# framework (`react_agent`, `toolset`, `tool_hook`, `function_provider`,
+# `agent_builder`, …). `live_tier` and `live()` give callers a single,
+# framework-agnostic way to discover how deep an adapter's dynamic tier goes
+# and get the live object for it, without knowing the bespoke method name.
+# These checks lock that uniform surface the same way the matrix above locks
+# select/convert; the bespoke methods themselves stay untouched and are still
+# the documented framework-idiomatic path.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("case", ADAPTERS, ids=[c.name for c in ADAPTERS])
+def test_adapter_exposes_live_tier_and_live(case: AdapterCase) -> None:
+    """Every adapter declares a valid ``live_tier`` and a callable ``live``."""
+    assert getattr(case.adapter_cls, "live_tier", None) in ("per-turn", "per-call"), (
+        f"{case.name}: {case.adapter_cls.__name__}.live_tier missing or invalid "
+        f"(got {getattr(case.adapter_cls, 'live_tier', None)!r})"
+    )
+    assert callable(getattr(case.adapter_cls, "live", None)), (
+        f"{case.name}: {case.adapter_cls.__name__}.live missing"
+    )
+
+
+@pytest.mark.parametrize("case", ADAPTERS, ids=[c.name for c in ADAPTERS])
+def test_adapter_live_tier_matches_capability_table(case: AdapterCase) -> None:
+    """``live_tier`` matches the documented per-framework capability table.
+
+    Mirrors ``integrations/frameworks/README.md``'s uniform-tier table and the
+    audit findings in the task brief: LangGraph, LlamaIndex, Pydantic AI,
+    OpenAI Agents SDK, Semantic Kernel, Google ADK, AutoGen, and Strands
+    genuinely re-select tools on every model turn (``"per-turn"``); LangChain,
+    CrewAI, Agno, Haystack, and Smolagents fix their tool list at agent
+    construction with no native mid-run hook, so the deepest Gantry can do is
+    rebuild before each new top-level call (``"per-call"``).
+    """
+    assert case.adapter_cls.live_tier == case.live_tier, (
+        f"{case.name}: expected live_tier={case.live_tier!r}, got {case.adapter_cls.live_tier!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "case", [c for c in ADAPTERS if c.live_delegate != "select"], ids=lambda c: c.name
+)
+def test_adapter_live_delegates_to_bespoke_method(case: AdapterCase, monkeypatch) -> None:
+    """``adapter.live(...)`` calls the documented bespoke method with the same kwargs.
+
+    Cheaply proves delegation via a stub: monkeypatches the bespoke method
+    (``case.live_delegate``) on the adapter class with a recorder, calls
+    ``live()`` with distinctive ``limit``/``score_threshold``/``namespaces``,
+    and asserts the recorder saw them and that ``live()`` returned the
+    recorder's sentinel unchanged. No real gantry or framework install is
+    needed — this only proves the wiring, not the bespoke method's own
+    behaviour (that's covered by each framework's dedicated live tests).
+    """
+    sentinel = object()
+    calls: list[tuple[tuple, dict]] = []
+
+    def _recorder(self: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append((args, kwargs))
+        return sentinel
+
+    monkeypatch.setattr(case.adapter_cls, case.live_delegate, _recorder)
+
+    adapter = case.adapter_cls(gantry=None)  # type: ignore[arg-type]
+    extra = case.live_extra_kwargs() if case.live_extra_kwargs is not None else {}
+    result = adapter.live(limit=7, score_threshold=0.3, namespaces=["ns1"], **extra)
+
+    assert result is sentinel, f"{case.name}: live() did not return {case.live_delegate}()'s result"
+    assert len(calls) == 1, f"{case.name}: expected exactly one {case.live_delegate}() call"
+    _, kwargs = calls[0]
+    assert kwargs.get("limit") == 7, f"{case.name}: limit not forwarded to {case.live_delegate}"
+    assert kwargs.get("score_threshold") == 0.3, (
+        f"{case.name}: score_threshold not forwarded to {case.live_delegate}"
+    )
+    assert kwargs.get("namespaces") == ["ns1"], (
+        f"{case.name}: namespaces not forwarded to {case.live_delegate}"
+    )
+
+
+def test_langchain_live_is_a_bound_select_alias(monkeypatch) -> None:
+    """LangChain has no framework-native live hook, so ``live()`` is a thin,
+    uniform-signature alias of :meth:`~agent_gantry.integrations.frameworks.langchain.LangChainAdapter.select`
+    (see that method's docstring for why: the mid-run hook lives one layer up,
+    in ``LangGraphAdapter``). ``live()`` itself must stay synchronous (it
+    returns an object, matching every other adapter) — the returned callable
+    is what's async.
+    """
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_select(self: Any, query: str, **kwargs: Any) -> list[Any]:
+        calls.append((query, kwargs))
+        return ["tool"]
+
+    monkeypatch.setattr(F.LangChainAdapter, "select", _fake_select)
+
+    adapter = F.LangChainAdapter(gantry=None)  # type: ignore[arg-type]
+    live_select = adapter.live(limit=7, score_threshold=0.3, namespaces=["ns1"])
+    assert not isinstance(live_select, list), (
+        "live() must return an object, not run selection eagerly"
+    )
+    assert not calls, "live() must not call select() before the returned callable is invoked"
+
+    import asyncio
+
+    result = asyncio.run(live_select("a query"))
+    assert result == ["tool"]
+    assert calls == [("a query", {"limit": 7, "score_threshold": 0.3, "namespaces": ["ns1"]})]
 
 
 @pytest.mark.parametrize("case", ADAPTERS, ids=[c.name for c in ADAPTERS])
@@ -409,6 +573,48 @@ def test_agent_framework_adapter_exposes_uniform_surface() -> None:
         assert callable(getattr(adapter, method_name, None)), (
             f"AgentFrameworkAdapter.{method_name} missing"
         )
+
+
+def test_agent_framework_adapter_exposes_live_tier_and_live() -> None:
+    """AgentFrameworkAdapter also participates in the uniform live_tier/live()
+    facade (see AdapterCase docstring and ADAPTERS above for the 13
+    BaseFrameworkAdapter subclasses) — AF genuinely supports per-round
+    (``query_strategy="per_call"``) dynamic tool re-selection, so its tier is
+    ``"per-turn"``, matching LangGraph/LlamaIndex/Pydantic AI/etc.
+    """
+    assert AgentFrameworkAdapter.live_tier == "per-turn"
+    assert callable(getattr(AgentFrameworkAdapter, "live", None))
+
+
+def test_agent_framework_adapter_live_delegates_to_context_provider(monkeypatch) -> None:
+    """``live()`` delegates to :meth:`AgentFrameworkAdapter.context_provider`,
+    forwarding ``limit`` as ``top_k`` and defaulting ``query_strategy`` to
+    ``"per_call"`` (the deepest tier) rather than :meth:`context_provider`'s
+    own back-compatible ``"per_run"`` default.
+    """
+    sentinel = object()
+    calls: list[dict] = []
+
+    def _recorder(self: Any, **kwargs: Any) -> Any:
+        calls.append(kwargs)
+        return sentinel
+
+    monkeypatch.setattr(AgentFrameworkAdapter, "context_provider", _recorder)
+
+    adapter = AgentFrameworkAdapter(object())
+    result = adapter.live(limit=7, score_threshold=0.3, namespaces=["ns1"])
+
+    assert result is sentinel
+    assert len(calls) == 1
+    assert calls[0]["top_k"] == 7
+    assert calls[0]["score_threshold"] == 0.3
+    assert calls[0]["query_strategy"] == "per_call"
+    assert calls[0]["namespaces"] == ["ns1"]
+
+    # An explicit query_strategy in framework_kwargs is respected, not overridden.
+    calls.clear()
+    adapter.live(limit=3, query_strategy="per_run")
+    assert calls[0]["query_strategy"] == "per_run"
 
 
 _AF_IMPORT_GATED_CASES: list[tuple[str, Callable[[AgentFrameworkAdapter], Any]]] = [

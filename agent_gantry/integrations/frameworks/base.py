@@ -33,7 +33,7 @@ import asyncio
 import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from agent_gantry.schema.execution import ExecutionStatus, ToolCall
 from agent_gantry.schema.query import ConversationContext, ToolQuery
@@ -51,6 +51,22 @@ if TYPE_CHECKING:
 #: they previously disagreed (static adapters defaulted to 3, live paths to 5).
 DEFAULT_TOOL_LIMIT = 5
 
+#: The deepest dynamic tool re-selection tier a framework adapter supports,
+#: surfaced uniformly as ``adapter.live_tier``. See
+#: :attr:`BaseFrameworkAdapter.live_tier` and
+#: ``integrations/frameworks/README.md`` for the full per-framework table.
+#:
+#: - ``"per-turn"`` — the framework calls back into Gantry (directly, or via a
+#:   Gantry-built hook/toolset/provider) on every model turn / reasoning step,
+#:   so the tool surface can change *mid-run* (LangGraph, LlamaIndex,
+#:   Pydantic AI, OpenAI Agents SDK, Semantic Kernel, Google ADK, AutoGen,
+#:   Strands, Microsoft Agent Framework).
+#: - ``"per-call"`` — the framework fixes its tool list at agent-construction
+#:   time with no native mid-run hook, so the deepest Gantry can do is rebuild
+#:   a fresh agent/tool list before each new top-level call (LangChain,
+#:   CrewAI, Agno, Haystack, Smolagents — see ``live_wrappers.py``).
+LiveTier = Literal["per-turn", "per-call"]
+
 
 class ToolExecutionError(RuntimeError):
     """Raised when a Gantry-backed tool invocation does not succeed."""
@@ -59,9 +75,7 @@ class ToolExecutionError(RuntimeError):
         self.tool_name = tool_name
         self.status = status
         self.error = error
-        super().__init__(
-            f"Tool {tool_name!r} failed (status={status}): {error or 'no detail'}"
-        )
+        super().__init__(f"Tool {tool_name!r} failed (status={status}): {error or 'no detail'}")
 
 
 @dataclass(frozen=True)
@@ -103,12 +117,8 @@ class ToolSpec:
         """
         arguments = _coerce_arguments(args, kwargs)
         required = set(self.parameters.get("required") or [])
-        arguments = {
-            k: v for k, v in arguments.items() if v is not None or k in required
-        }
-        result = await self._gantry.execute(
-            ToolCall(tool_name=self.name, arguments=arguments)
-        )
+        arguments = {k: v for k, v in arguments.items() if v is not None or k in required}
+        result = await self._gantry.execute(ToolCall(tool_name=self.name, arguments=arguments))
         if result.status != ExecutionStatus.SUCCESS:
             raise ToolExecutionError(
                 self.name, getattr(result.status, "value", str(result.status)), result.error
@@ -284,9 +294,7 @@ def _coerce_arguments(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str
     return dict(kwargs)
 
 
-def spec_from_tool(
-    gantry: AgentGantry, tool: ToolDefinition, score: float = 0.0
-) -> ToolSpec:
+def spec_from_tool(gantry: AgentGantry, tool: ToolDefinition, score: float = 0.0) -> ToolSpec:
     """Build a :class:`ToolSpec` from a Gantry :class:`ToolDefinition`."""
     qualified = getattr(tool, "qualified_name", None) or f"{tool.namespace}.{tool.name}"
     params = tool.parameters_schema or {"type": "object", "properties": {}}
@@ -346,9 +354,39 @@ class GantryToolset:
                 namespaces=namespaces,
             )
         )
-        return [
-            spec_from_tool(self._gantry, st.tool, st.semantic_score) for st in result.tools
-        ]
+        return [spec_from_tool(self._gantry, st.tool, st.semantic_score) for st in result.tools]
+
+    async def select_or_empty(
+        self,
+        query: str,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        tools_already_used: list[str] | None = None,
+    ) -> list[ToolSpec]:
+        """Like :meth:`select`, but returns ``[]`` immediately for a blank query.
+
+        Every per-turn live provider (``integrations/frameworks/*_live.py``,
+        :class:`~agent_gantry.integrations.refresh.ToolRefresher`) needs this
+        exact guard: selecting on an empty embedding yields an arbitrary
+        top-k for some embedders, so a turn with no retrieval signal (no new
+        user text, no tool result yet) should surface no tools rather than a
+        nonsensical selection. This was previously re-implemented verbatim in
+        nearly every ``*_live.py`` module (each with an identical "consistent
+        with the other live providers" comment) — centralised here so each
+        live provider keeps its own framework-specific query derivation but
+        shares this one selection primitive.
+        """
+        if not (query or "").strip():
+            return []
+        return await self.select(
+            query,
+            limit=limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+            tools_already_used=tools_already_used,
+        )
 
 
 class BaseFrameworkAdapter:
@@ -359,11 +397,31 @@ class BaseFrameworkAdapter:
     adapter shares — construction and the ``select`` → ``convert`` pipeline —
     so each concrete adapter only declares ``convert`` plus any
     framework-specific helpers (agent builders, live retrievers, …).
+
+    Uniform live entry point
+    -------------------------
+    Every adapter's *dynamic* re-selection surface is named differently
+    per framework (``react_agent``, ``toolset``, ``tool_hook``,
+    ``function_provider``, ``agent_builder``, …) because each framework
+    exposes a different native hook. :attr:`live_tier` and :meth:`live`
+    give callers a single, framework-agnostic way to ask "how deep does
+    this adapter's dynamic tier go, and how do I get the live object for
+    it?" without knowing which bespoke method to call. The bespoke methods
+    themselves are never removed or renamed — they remain the documented,
+    framework-idiomatic path; ``live()`` is a thin uniform layer that
+    delegates to one of them. See ``integrations/frameworks/README.md``
+    for the full per-framework table (tier, delegate, return type, where
+    to plug it in).
     """
 
     def __init__(self, gantry: AgentGantry, *, default_limit: int = DEFAULT_TOOL_LIMIT) -> None:
         self._gantry = gantry
         self._default_limit = default_limit
+
+    #: The deepest dynamic re-selection tier this adapter's framework
+    #: supports — ``"per-turn"`` or ``"per-call"`` (see :data:`LiveTier`).
+    #: Every concrete subclass MUST set this.
+    live_tier: ClassVar[LiveTier]
 
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
@@ -372,6 +430,35 @@ class BaseFrameworkAdapter:
         Subclasses must re-declare this as a ``@staticmethod`` (it is part of the
         public API — callers use ``SomeAdapter.convert(spec)`` without an
         instance — and :meth:`select` dispatches through ``self.convert``).
+        """
+        raise NotImplementedError
+
+    def live(
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        **framework_kwargs: Any,
+    ) -> Any:
+        """Return this framework's live/dynamic tool object (uniform entry point).
+
+        Every adapter's ``live()`` accepts the same three explicit keywords —
+        ``limit``, ``score_threshold``, ``namespaces`` — plus
+        ``**framework_kwargs`` forwarded verbatim to whichever
+        framework-idiomatic bespoke method it delegates to (``react_agent``,
+        ``toolset``, ``tool_hook``, ``agent_builder``, …). Some frameworks'
+        native hooks are inherently tied to an external object the caller
+        must supply (a chat model, an already-built agent, a kernel); those
+        adapters require it as a named ``framework_kwargs`` entry and raise a
+        ``TypeError`` if it's missing — see the concrete override's docstring
+        for exactly what is returned, which ``framework_kwargs`` are required,
+        and where to plug the result in. :attr:`live_tier` tells you how deep
+        the re-selection goes before you call this.
+
+        Subclasses MUST override this. The bespoke method(s) it wraps remain
+        the documented, framework-native path and are never removed —
+        ``live()`` is only a uniform layer on top of them.
         """
         raise NotImplementedError
 

@@ -104,9 +104,7 @@ def _query_from(query_or_messages: Any) -> str:
     return latest_activity(query_or_messages) or ""
 
 
-def _set_plugin_functions(
-    kernel: Any, plugin_name: str, functions: dict[str, Any]
-) -> Any:
+def _set_plugin_functions(kernel: Any, plugin_name: str, functions: dict[str, Any]) -> Any:
     """Replace the ``plugin_name`` plugin on ``kernel`` with ``functions``.
 
     Removes any existing plugin under ``plugin_name`` and registers a fresh
@@ -170,12 +168,14 @@ class GantryFunctionProvider:
         plugin_name: str = _DEFAULT_PLUGIN,
         limit: int = DEFAULT_TOOL_LIMIT,
         score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
     ) -> None:
         self._gantry = gantry
         self._kernel = kernel
         self._plugin_name = plugin_name
         self._limit = limit
         self._score_threshold = score_threshold
+        self._namespaces = namespaces
         # Serialise refreshes: the remove-then-add plugin swap is not atomic, so
         # concurrent refresh() calls on one provider could corrupt plugin state.
         self._lock = asyncio.Lock()
@@ -217,6 +217,7 @@ class GantryFunctionProvider:
                 limit=self._limit,
                 plugin_name=self._plugin_name,
                 score_threshold=self._score_threshold,
+                namespaces=self._namespaces,
             )
             _set_plugin_functions(self._kernel, self._plugin_name, functions)
             return functions
@@ -230,6 +231,7 @@ async def _refresh_kernel_tools(
     plugin_name: str = _DEFAULT_PLUGIN,
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
+    namespaces: list[str] | None = None,
 ) -> dict[str, Any]:
     """Re-select tools for ``query`` and rebuild ``kernel``'s gantry plugin once.
 
@@ -252,6 +254,7 @@ async def _refresh_kernel_tools(
         limit=limit,
         plugin_name=plugin_name,
         score_threshold=score_threshold,
+        namespaces=namespaces,
     )
     _set_plugin_functions(kernel, plugin_name, functions)
     return functions

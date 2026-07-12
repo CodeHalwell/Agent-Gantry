@@ -136,13 +136,11 @@ async def _select_function_tools(
     """
     _require_agents()  # fail fast with the pip hint before doing any work
     query = _query_from(query_or_input)
-    if not query:
-        # No extractable text (empty/None input, or only non-text items): expose
-        # no tools rather than selecting on an empty embedding, which yields an
-        # arbitrary top-k for some embedders. _refresh_agent_tools then clears
-        # agent.tools instead of surfacing unrelated functions.
-        return []
-    specs = await GantryToolset(gantry).select(
+    # select_or_empty: no extractable text (empty/None input, or only non-text
+    # items) exposes no tools rather than selecting on an empty embedding,
+    # which yields an arbitrary top-k for some embedders. _refresh_agent_tools
+    # then clears agent.tools instead of surfacing unrelated functions.
+    specs = await GantryToolset(gantry).select_or_empty(
         query,
         limit=limit,
         score_threshold=score_threshold,

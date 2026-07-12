@@ -112,6 +112,7 @@ def _build_retriever_class() -> type:
             *,
             limit: int = DEFAULT_TOOL_LIMIT,
             score_threshold: float = 0.0,
+            namespaces: list[str] | None = None,
         ) -> None:
             # Intentionally do NOT call super().__init__(): the base class wires
             # a static BaseRetriever + BaseObjectNodeMapping over a pre-indexed
@@ -121,6 +122,7 @@ def _build_retriever_class() -> type:
             self._toolset = GantryToolset(gantry)
             self._limit = limit
             self._score_threshold = score_threshold
+            self._namespaces = namespaces
 
         @property
         def gantry(self) -> AgentGantry:
@@ -134,15 +136,18 @@ def _build_retriever_class() -> type:
         def score_threshold(self) -> float:
             return self._score_threshold
 
+        @property
+        def namespaces(self) -> list[str] | None:
+            return self._namespaces
+
         async def aretrieve(self, str_or_query_bundle: Any) -> list:
             """Re-select tools for the current step and return ``FunctionTool``s."""
             query = _query_from(str_or_query_bundle)
-            if not (query or "").strip():
-                # No retrieval signal: expose no tools rather than selecting on
-                # an empty embedding (consistent with the other live providers).
-                return []
-            specs = await self._toolset.select(
-                query, limit=self._limit, score_threshold=self._score_threshold
+            specs = await self._toolset.select_or_empty(
+                query,
+                limit=self._limit,
+                score_threshold=self._score_threshold,
+                namespaces=self._namespaces,
             )
             return [_spec_to_llamaindex(spec) for spec in specs]
 
@@ -161,6 +166,7 @@ def _gantry_tool_retriever(
     *,
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
+    namespaces: list[str] | None = None,
 ) -> Any:
     """Build a ``GantryToolRetriever`` for ``gantry``.
 
@@ -168,7 +174,7 @@ def _gantry_tool_retriever(
         ImportError: If ``llama-index-core`` is not installed.
     """
     return _build_retriever_class()(
-        gantry, limit=limit, score_threshold=score_threshold
+        gantry, limit=limit, score_threshold=score_threshold, namespaces=namespaces
     )
 
 
@@ -179,6 +185,7 @@ def _gantry_function_agent(
     name: str = "gantry_agent",
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
+    namespaces: list[str] | None = None,
     **agent_kwargs: Any,
 ) -> Any:
     """Build a ``FunctionAgent`` wired to a live per-turn gantry retriever.
@@ -207,7 +214,7 @@ def _gantry_function_agent(
         name=name,
         llm=llm,
         tool_retriever=_gantry_tool_retriever(
-            gantry, limit=limit, score_threshold=score_threshold
+            gantry, limit=limit, score_threshold=score_threshold, namespaces=namespaces
         ),
         **agent_kwargs,
     )

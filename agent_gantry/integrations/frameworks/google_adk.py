@@ -40,8 +40,7 @@ def _spec_to_google_adk(spec: ToolSpec) -> Any:
         from google.adk.tools import FunctionTool
     except ImportError as exc:  # pragma: no cover - exercised via stub
         raise ImportError(
-            "Google ADK support requires `google-adk`. "
-            "Install it with `pip install google-adk`."
+            "Google ADK support requires `google-adk`. Install it with `pip install google-adk`."
         ) from exc
 
     # ADK's automatic function calling rejects `T | None` and `None`-typed
@@ -69,13 +68,38 @@ class GoogleADKAdapter(BaseFrameworkAdapter):
     through ``gantry.execute``.
     """
 
+    live_tier = "per-turn"
+
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a Google ADK ``FunctionTool``."""
         return _spec_to_google_adk(spec)
 
+    def live(
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        **framework_kwargs: Any,
+    ) -> Any:
+        """Per-turn uniform entry point: delegates to :meth:`before_model_callback`.
+
+        Returns an ``async (callback_context, llm_request) -> None`` callback
+        — plug it into ``Agent(tools=[], before_model_callback=<result>)``.
+        No ``framework_kwargs`` are required (unlike LangGraph/OpenAI
+        Agents/Semantic Kernel, this hook is agent-agnostic).
+        """
+        return self.before_model_callback(
+            limit=limit, score_threshold=score_threshold, namespaces=namespaces, **framework_kwargs
+        )
+
     def before_model_callback(
-        self, *, limit: int | None = None, score_threshold: float = 0.0
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
     ) -> Any:
         """Build an ADK ``before_model_callback`` that injects Gantry tools per turn."""
         from agent_gantry.integrations.frameworks.google_adk_live import (
@@ -83,7 +107,10 @@ class GoogleADKAdapter(BaseFrameworkAdapter):
         )
 
         return _gantry_before_model_callback(
-            self._gantry, limit=self._default_limit if limit is None else limit, score_threshold=score_threshold
+            self._gantry,
+            limit=self._default_limit if limit is None else limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
         )
 
     def agent(
@@ -94,6 +121,7 @@ class GoogleADKAdapter(BaseFrameworkAdapter):
         instruction: str = "",
         limit: int | None = None,
         score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
         **agent_kwargs: Any,
     ) -> Any:
         """Build an ADK ``Agent`` wired for per-turn dynamic tool selection (tools=[] + callback)."""
@@ -108,5 +136,6 @@ class GoogleADKAdapter(BaseFrameworkAdapter):
             instruction=instruction,
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
+            namespaces=namespaces,
             **agent_kwargs,
         )

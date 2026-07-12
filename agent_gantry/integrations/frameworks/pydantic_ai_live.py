@@ -165,10 +165,12 @@ def _build_toolset_class() -> type:
             *,
             limit: int = DEFAULT_TOOL_LIMIT,
             score_threshold: float = 0.0,
+            namespaces: list[str] | None = None,
         ) -> None:
             self._toolset = _BaseToolset(gantry)
             self._limit = limit
             self._score_threshold = score_threshold
+            self._namespaces = namespaces
             # An explicit query override, used when driving selection without a
             # full RunContext (tests, manual selection). When set it takes
             # precedence over the context-derived query.
@@ -217,16 +219,11 @@ def _build_toolset_class() -> type:
             so :meth:`call_tool` can resolve and invoke them.
             """
             query = self._query if self._query is not None else _query_from_ctx(ctx)
-            if not (query or "").strip():
-                # No retrieval signal: expose no tools rather than selecting on
-                # an empty embedding (arbitrary top-k for some embedders) —
-                # consistent with the other live providers' empty-query guards.
-                self._selected = {}
-                return {}
-            specs = await self._toolset.select(
+            specs = await self._toolset.select_or_empty(
                 query,
                 limit=self._limit,
                 score_threshold=self._score_threshold,
+                namespaces=self._namespaces,
             )
             self._selected = {spec.name: spec for spec in specs}
             return {spec.name: self._spec_to_tool(ctx, spec) for spec in specs}
@@ -240,8 +237,7 @@ def _build_toolset_class() -> type:
             tool_def = ToolDefinition(
                 name=spec.name,
                 description=spec.description,
-                parameters_json_schema=spec.parameters
-                or {"type": "object", "properties": {}},
+                parameters_json_schema=spec.parameters or {"type": "object", "properties": {}},
             )
             return ToolsetTool(
                 toolset=self,
@@ -291,6 +287,7 @@ def _gantry_toolset(
     *,
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
+    namespaces: list[str] | None = None,
 ) -> Any:
     """Build a :class:`GantryToolset` for per-turn dynamic tool provision.
 
@@ -303,7 +300,7 @@ def _gantry_toolset(
         ImportError: If ``pydantic-ai`` is not installed.
     """
     cls = _get_class()
-    return cls(gantry, limit=limit, score_threshold=score_threshold)
+    return cls(gantry, limit=limit, score_threshold=score_threshold, namespaces=namespaces)
 
 
 def __getattr__(name: str) -> Any:

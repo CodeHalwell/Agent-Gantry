@@ -63,7 +63,12 @@ from `GantryToolset(gantry).select(query)`.
 
 `ToolRefresher` generalizes the Microsoft Agent Framework provider's per-call
 retrieval to any framework: re-rank the whole registry on every turn so the
-agent can pivot to a different tool as the task changes.
+agent can pivot to a different tool as the task changes. It is the
+**standalone** utility for hand-rolled agent loops (a raw LLM SDK call in a
+`while` loop, no framework underneath) — if you're using one of the 14
+frameworks below, prefer `adapter.live(...)` instead, which wires Gantry into
+that framework's own lifecycle rather than requiring you to call `refresh()`
+by hand between turns.
 
 ```python
 from agent_gantry.integrations import ToolRefresher
@@ -90,23 +95,82 @@ To force one behaviour, pass `query_generator=` explicitly — `last_user_text`
 `fallback_chain(...)`. See `examples/frameworks/multi_turn_refresher_example.py`
 for both modes side by side.
 
-## Deep per-turn "live" providers (as embedded as Microsoft Agent Framework)
+## Uniform `live_tier` / `live()` entry point
 
 The `<Adapter>.select` methods above are *static*: select once, hand over a fixed
-tool list. The **live** methods go deeper — they hook each framework's own
-per-turn lifecycle so Gantry re-selects tools on **every turn**, exactly like
-`GantryContextProvider` does for Microsoft Agent Framework. Import them lazily
-from `agent_gantry.integrations.frameworks` (importing `agent_gantry` never
-loads these — the framework is only required when you use its provider).
+tool list. Every adapter also exposes a **dynamic** re-selection surface that goes
+deeper — but historically each framework named and shaped it differently
+(`react_agent`, `toolset`, `tool_hook`, `agent_builder`, …), so writing
+framework-agnostic code against it meant knowing 14 different method names.
 
-| Framework | Live entry point | Native hook |
+`adapter.live_tier` and `adapter.live(...)` are the uniform entry point on top
+of those bespoke methods (which are **not** removed or renamed — they stay the
+documented, framework-idiomatic path; `live()` just delegates to one of them):
+
+- **`adapter.live_tier`** — `"per-turn"` or `"per-call"`, the deepest dynamic
+  re-selection tier that framework supports (see `LiveTier` /
+  `BaseFrameworkAdapter.live_tier` in `base.py`).
+  - `"per-turn"` — the framework calls back into Gantry (directly, or via a
+    Gantry-built hook/toolset/provider) on every model turn / reasoning step,
+    so the tool surface can change *mid-run*.
+  - `"per-call"` — the framework fixes its tool list at agent-construction
+    time with no native mid-run hook, so the deepest Gantry can do is rebuild
+    a fresh agent/tool list before each new top-level call (see
+    `live_wrappers.py`).
+- **`adapter.live(*, limit=None, score_threshold=0.0, namespaces=None,
+  **framework_kwargs)`** — returns the framework-appropriate live object (the
+  hook / toolset / provider / builder that the framework consumes). Some
+  frameworks' native hooks are inherently bound to an external object you must
+  supply (a chat model, an already-built agent, a kernel) — those adapters
+  require it as a named `framework_kwargs` entry (see the table below) and
+  raise a clean `TypeError`/`KeyError` if it's missing.
+
+| Framework | `live_tier` | `live()` delegates to | `live()` returns | Plug into |
+|---|---|---|---|---|
+| LangChain | per-call | `select` (bound alias) | async `query -> list[StructuredTool]` callable | rebuild `AgentExecutor` / `.bind_tools()` before each call |
+| LangGraph | per-turn | `react_agent` (requires `model=`) | compiled LangGraph agent (`Pregel`) | call `.ainvoke()` / `.invoke()` directly |
+| LlamaIndex | per-turn | `tool_retriever` | `GantryToolRetriever` (`ObjectRetriever`) | `FunctionAgent(tool_retriever=<result>)` |
+| CrewAI | per-call | `agent_builder` | `GantryLiveCrewAgent` builder | `await builder.build(query)` per task |
+| Pydantic AI | per-turn | `toolset` | `GantryToolset` (`AbstractToolset`) | `Agent(model, toolsets=[<result>])` |
+| OpenAI Agents SDK | per-turn | `session` (requires `agent=`) | `GantryAgentSession` | `await session.run(run_input)` per turn |
+| Smolagents | per-call | `agent_builder` | `GantryLiveSmolAgent` builder | `await builder.build(query)` per run |
+| Haystack | per-call | `tool_invoker_builder` | `GantryLiveHaystackToolInvoker` builder | `await builder.build(query)` per call |
+| Agno | per-call | `agent_builder` | `GantryLiveAgnoAgent` builder | `await builder.build(query)` per run |
+| AutoGen / AG2 | per-turn | `workbench` | `GantryWorkbench` (`autogen_core.tools.Workbench`) | agent consuming a `Workbench` (e.g. `AssistantAgent`) |
+| Semantic Kernel | per-turn | `function_provider` (requires `kernel=`) | `GantryFunctionProvider` | `await provider.refresh(history)` before each call |
+| Google ADK | per-turn | `before_model_callback` | async `(callback_context, llm_request) -> None` | `Agent(tools=[], before_model_callback=<result>)` |
+| Strands Agents | per-turn | `tool_hook` | `GantryStrandsToolHook` (`HookProvider`) | `Agent(tools=[], hooks=[<result>])` |
+| Microsoft Agent Framework* | per-turn | `context_provider` (`query_strategy="per_call"`) | `GantryContextProvider` | `Agent(context_providers=[<result>])` + `<result>.as_chat_middleware()`, or `<result>.attach_to(agent)` |
+
+\* `AgentFrameworkAdapter` (`agent_gantry.agent_framework`) is not a
+`BaseFrameworkAdapter` subclass (no `select`/`convert`) but participates in the
+same `live_tier`/`live()` facade — see `agent_framework_adapter.py`.
+
+```python
+from agent_gantry.llamaindex import LlamaIndexAdapter
+
+adapter = LlamaIndexAdapter(gantry)
+adapter.live_tier                      # "per-turn"
+retriever = adapter.live(limit=5)      # same object as .tool_retriever(limit=5)
+```
+
+### Bespoke per-framework methods (what `live()` delegates to)
+
+Each framework's own live methods remain available directly — some frameworks
+offer more than one (e.g. Google ADK's `before_model_callback()` for a
+hand-built agent vs. `agent()` for a fully-assembled one); `live()` always
+picks the one requiring the fewest extra arguments. Import them lazily from
+`agent_gantry.integrations.frameworks` (importing `agent_gantry` never loads
+these — the framework is only required when you use its provider).
+
+| Framework | Bespoke live methods | Native hook |
 |---|---|---|
 | LlamaIndex | `LlamaIndexAdapter(gantry).tool_retriever()` / `.function_agent(llm)` | `FunctionAgent(tool_retriever=…)` (`ObjectRetriever`) |
 | Pydantic AI | `PydanticAIAdapter(gantry).toolset()` | `AbstractToolset.get_tools()` |
 | AutoGen | `AutoGenAdapter(gantry).workbench()` | `autogen_core.tools.Workbench.list_tools()` |
 | Google ADK | `GoogleADKAdapter(gantry).before_model_callback()` / `.agent()` | `Agent(before_model_callback=…)` |
 | Strands Agents | `StrandsAdapter(gantry).tool_hook()` / `.agent()` | `Agent(hooks=[…])` — `BeforeModelCallEvent` |
-| LangGraph | `LangGraphAdapter(gantry).react_agent(model)` | dynamic `model` callable (re-binds tools per turn) |
+| LangGraph | `LangGraphAdapter(gantry).react_agent(model)` / `.areact_agent(model)` / `.select_for_state(state)` | dynamic `model` callable (re-binds tools per turn) |
 | Semantic Kernel | `SemanticKernelAdapter(gantry).function_provider(kernel)` / `.refresh(kernel, query)` | per-invocation plugin refresh |
 | OpenAI Agents SDK | `OpenAIAgentsAdapter(gantry).run(agent, run_input)` / `.session(agent)` / `.run_hooks(agent)` | `RunHooks.on_llm_start` + per-run refresh |
 

@@ -85,11 +85,13 @@ def _build_workbench_class() -> type:
             query: str = "",
             limit: int = DEFAULT_TOOL_LIMIT,
             score_threshold: float = 0.0,
+            namespaces: list[str] | None = None,
         ) -> None:
             self._toolset = GantryToolset(gantry)
             self._query = query
             self._limit = limit
             self._score_threshold = score_threshold
+            self._namespaces = namespaces
             # Specs from the most recent ``list_tools`` selection, keyed by the
             # tool name the model calls. ``call_tool`` resolves against this.
             self._selected: dict[str, ToolSpec] = {}
@@ -116,15 +118,11 @@ def _build_workbench_class() -> type:
             Called by the agent on every turn. The freshly selected specs are
             cached so :meth:`call_tool` can resolve and invoke them.
             """
-            if not (self._query or "").strip():
-                # No retrieval signal: expose no tools rather than selecting on
-                # an empty embedding (arbitrary top-k for some embedders).
-                self._selected = {}
-                return []
-            specs = await self._toolset.select(
+            specs = await self._toolset.select_or_empty(
                 self._query,
                 limit=self._limit,
                 score_threshold=self._score_threshold,
+                namespaces=self._namespaces,
             )
             self._selected = {spec.name: spec for spec in specs}
             return [self._spec_to_schema(spec) for spec in specs]
@@ -242,6 +240,7 @@ def _gantry_workbench(
     query: str = "",
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
+    namespaces: list[str] | None = None,
 ) -> Any:
     """Build a :class:`GantryWorkbench` for per-turn dynamic tool provision.
 
@@ -259,6 +258,7 @@ def _gantry_workbench(
         query=query,
         limit=limit,
         score_threshold=score_threshold,
+        namespaces=namespaces,
     )
 
 

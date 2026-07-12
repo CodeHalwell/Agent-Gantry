@@ -135,20 +135,22 @@ async def _select_tools_for_state(
     *,
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
+    namespaces: list[str] | None = None,
 ) -> list[Any]:
     """Re-select Gantry tools for the current turn and wrap them for LangChain.
 
     Derives the query from ``state["messages"]``, runs Gantry semantic
-    selection, and returns the chosen tools as LangChain ``StructuredTool``
-    objects (each routing execution through ``gantry.execute``). Exposed
-    separately from the model callable so it can be unit-tested directly.
+    selection (via :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select_or_empty`,
+    which returns no tools rather than selecting on an empty embedding when
+    there's no retrieval signal this turn), and returns the chosen tools as
+    LangChain ``StructuredTool`` objects (each routing execution through
+    ``gantry.execute``). Exposed separately from the model callable so it can
+    be unit-tested directly.
     """
     query = _query_from_state(state)
-    if not (query or "").strip():
-        # No retrieval signal this turn: bind no tools rather than selecting on
-        # an empty embedding (consistent with the other live providers).
-        return []
-    specs = await GantryToolset(gantry).select(query, limit=limit, score_threshold=score_threshold)
+    specs = await GantryToolset(gantry).select_or_empty(
+        query, limit=limit, score_threshold=score_threshold, namespaces=namespaces
+    )
     return [_spec_to_langchain(s) for s in specs]
 
 
@@ -170,6 +172,7 @@ def _create_gantry_react_agent(
     *,
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
+    namespaces: list[str] | None = None,
     **agent_kwargs: Any,
 ) -> Any:
     """Build a LangGraph agent whose tools are re-selected every turn.
@@ -195,6 +198,8 @@ def _create_gantry_react_agent(
         limit: Maximum number of tools re-selected per turn. Defaults to ``5``.
         score_threshold: Minimum semantic relevance score for selected tools.
             Defaults to ``0.0`` (no filtering).
+        namespaces: Optional namespace filter applied to every per-turn
+            selection. Defaults to ``None`` (no filtering).
         **agent_kwargs: Forwarded verbatim to ``create_agent`` (e.g.
             ``system_prompt``, ``checkpointer``, ``state_schema``,
             ``middleware`` — note the system-prompt kwarg is ``system_prompt``,
@@ -216,7 +221,13 @@ def _create_gantry_react_agent(
 
     superset = _run_coroutine_sync(_all_tools(gantry))
     return _build_react_agent(
-        model, gantry, superset, limit=limit, score_threshold=score_threshold, **agent_kwargs
+        model,
+        gantry,
+        superset,
+        limit=limit,
+        score_threshold=score_threshold,
+        namespaces=namespaces,
+        **agent_kwargs,
     )
 
 
@@ -226,6 +237,7 @@ async def _acreate_gantry_react_agent(
     *,
     limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
+    namespaces: list[str] | None = None,
     **agent_kwargs: Any,
 ) -> Any:
     """Async-native variant of :func:`_create_gantry_react_agent`.
@@ -237,7 +249,13 @@ async def _acreate_gantry_react_agent(
     """
     superset = await _all_tools(gantry)
     return _build_react_agent(
-        model, gantry, superset, limit=limit, score_threshold=score_threshold, **agent_kwargs
+        model,
+        gantry,
+        superset,
+        limit=limit,
+        score_threshold=score_threshold,
+        namespaces=namespaces,
+        **agent_kwargs,
     )
 
 
@@ -248,6 +266,7 @@ def _build_react_agent(
     *,
     limit: int,
     score_threshold: float,
+    namespaces: list[str] | None = None,
     **agent_kwargs: Any,
 ) -> Any:
     """Compile the per-turn tool-selecting agent given a pre-resolved superset."""
@@ -268,7 +287,11 @@ def _build_react_agent(
         async def awrap_model_call(self, request: Any, handler: Any) -> Any:
             """Derive a query from the turn's state, re-select, and re-invoke."""
             selected = await _select_tools_for_state(
-                gantry, request.state, limit=limit, score_threshold=score_threshold
+                gantry,
+                request.state,
+                limit=limit,
+                score_threshold=score_threshold,
+                namespaces=namespaces,
             )
             # ``selected`` is `[]` when there's no retrieval signal this turn;
             # create_agent binds the model with no tools in that case (mirrors

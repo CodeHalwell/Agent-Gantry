@@ -99,8 +99,7 @@ def _spec_to_smolagents(spec: ToolSpec) -> Any:
         from smolagents import Tool
     except ImportError as exc:  # pragma: no cover - exercised via fake module
         raise ImportError(
-            "Smolagents support requires `smolagents`. "
-            "Install it with `pip install smolagents`."
+            "Smolagents support requires `smolagents`. Install it with `pip install smolagents`."
         ) from exc
 
     def forward(self: Any, *args: Any, **kwargs: Any) -> Any:
@@ -151,16 +150,41 @@ class SmolagentsAdapter(BaseFrameworkAdapter):
     Every call routes through ``gantry.execute``.
     """
 
+    live_tier = "per-call"
+
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a smolagents ``Tool``."""
         return _spec_to_smolagents(spec)
+
+    def live(
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        **framework_kwargs: Any,
+    ) -> Any:
+        """Per-call uniform entry point: delegates to :meth:`agent_builder`.
+
+        Smolagents fixes an agent's tools at construction (no mid-run hook),
+        so the live object here is a builder, not a hook — the deepest
+        smolagents allows. Returns a ``GantryLiveSmolAgent``; call
+        ``await builder.build(query)`` before each new run to get a fresh
+        smolagents agent with tools re-selected for that query.
+        ``framework_kwargs`` (``model``, ``agent_cls``, …) are forwarded on
+        every rebuild.
+        """
+        return self.agent_builder(
+            limit=limit, score_threshold=score_threshold, namespaces=namespaces, **framework_kwargs
+        )
 
     def agent_builder(
         self,
         *,
         limit: int | None = None,
         score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
         **agent_kwargs: Any,
     ) -> Any:
         """Return a builder that rebuilds a fresh smolagents agent per call with re-selected tools.
@@ -176,5 +200,6 @@ class SmolagentsAdapter(BaseFrameworkAdapter):
             self._gantry,
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
+            namespaces=namespaces,
             **agent_kwargs,
         )

@@ -103,12 +103,38 @@ class StrandsAdapter(BaseFrameworkAdapter):
         agent = Agent(tools=tools)
     """
 
+    live_tier = "per-turn"
+
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a Strands ``DecoratedFunctionTool``."""
         return _spec_to_strands(spec)
 
-    def tool_hook(self, *, limit: int | None = None, score_threshold: float = 0.0) -> Any:
+    def live(
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        **framework_kwargs: Any,
+    ) -> Any:
+        """Per-turn uniform entry point: delegates to :meth:`tool_hook`.
+
+        Returns a ``GantryStrandsToolHook`` (a structural ``HookProvider``)
+        — plug it into ``Agent(tools=[], hooks=[<result>])`` or
+        ``agent.add_hook(<result>)``. No ``framework_kwargs`` are required.
+        """
+        return self.tool_hook(
+            limit=limit, score_threshold=score_threshold, namespaces=namespaces, **framework_kwargs
+        )
+
+    def tool_hook(
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+    ) -> Any:
         """Build a ``HookProvider`` that re-selects Gantry tools before every model call.
 
         Pass the result straight to ``Agent(hooks=[...])`` (or
@@ -125,6 +151,7 @@ class StrandsAdapter(BaseFrameworkAdapter):
             self._gantry,
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
+            namespaces=namespaces,
         )
 
     def agent(
@@ -132,6 +159,7 @@ class StrandsAdapter(BaseFrameworkAdapter):
         *,
         limit: int | None = None,
         score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
         **agent_kwargs: Any,
     ) -> Any:
         """Build a ``strands.Agent`` wired for per-turn dynamic tool selection.
@@ -149,5 +177,6 @@ class StrandsAdapter(BaseFrameworkAdapter):
             self._gantry,
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
+            namespaces=namespaces,
             **agent_kwargs,
         )
