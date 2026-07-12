@@ -30,6 +30,7 @@ so that ``import agent_gantry`` never requires LlamaIndex to be installed.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT, GantryToolset
@@ -38,6 +39,8 @@ from agent_gantry.query import latest_activity
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
+
+logger = logging.getLogger(__name__)
 
 
 def _import_object_retriever() -> type:
@@ -141,14 +144,30 @@ def _build_retriever_class() -> type:
             return self._namespaces
 
         async def aretrieve(self, str_or_query_bundle: Any) -> list:
-            """Re-select tools for the current step and return ``FunctionTool``s."""
+            """Re-select tools for the current step and return ``FunctionTool``s.
+
+            Never raises on selection failure — a broken retrieval must not
+            break the agent's step. ``FunctionAgent`` calls this fresh every
+            step with no persisted "previous step's tools" for this retriever
+            to fall back to, so on failure this logs a WARNING and degrades to
+            "no tools this step" — see "Per-turn selection-failure policy" in
+            ``integrations/frameworks/README.md``.
+            """
             query = _query_from(str_or_query_bundle)
-            specs = await self._toolset.select_or_empty(
-                query,
-                limit=self._limit,
-                score_threshold=self._score_threshold,
-                namespaces=self._namespaces,
-            )
+            try:
+                specs = await self._toolset.select_or_empty(
+                    query,
+                    limit=self._limit,
+                    score_threshold=self._score_threshold,
+                    namespaces=self._namespaces,
+                )
+            except Exception:
+                logger.warning(
+                    "GantryToolRetriever.aretrieve: semantic retrieval failed; "
+                    "continuing with no tools this step.",
+                    exc_info=True,
+                )
+                return []
             return [_spec_to_llamaindex(spec) for spec in specs]
 
         def retrieve(self, str_or_query_bundle: Any) -> list:

@@ -37,6 +37,7 @@ The ``pydantic_ai`` import is lazy (only inside the class/factory), so
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT, ToolSpec
@@ -45,6 +46,8 @@ from agent_gantry.query import latest_activity
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
+
+logger = logging.getLogger(__name__)
 
 
 def _require_pydantic_ai() -> tuple[Any, Any, Any, Any]:
@@ -217,14 +220,31 @@ def _build_toolset_class() -> type:
             ``ctx`` (latest user prompt / messages) unless an explicit override
             was set via :meth:`set_query`. The freshly selected specs are cached
             so :meth:`call_tool` can resolve and invoke them.
+
+            Never raises on selection failure — a broken retrieval must not
+            break the agent's run. ``self._selected`` persists across runs
+            (``call_tool`` resolves against it), so on failure this logs a
+            WARNING and leaves the previous run's selection in place rather
+            than wiping it — see "Per-turn selection-failure policy" in
+            ``integrations/frameworks/README.md``.
             """
             query = self._query if self._query is not None else _query_from_ctx(ctx)
-            specs = await self._toolset.select_or_empty(
-                query,
-                limit=self._limit,
-                score_threshold=self._score_threshold,
-                namespaces=self._namespaces,
-            )
+            try:
+                specs = await self._toolset.select_or_empty(
+                    query,
+                    limit=self._limit,
+                    score_threshold=self._score_threshold,
+                    namespaces=self._namespaces,
+                )
+            except Exception:
+                logger.warning(
+                    "GantryToolset.get_tools: semantic retrieval failed; "
+                    "continuing with the previous run's tools.",
+                    exc_info=True,
+                )
+                return {
+                    name: self._spec_to_tool(ctx, spec) for name, spec in self._selected.items()
+                }
             self._selected = {spec.name: spec for spec in specs}
             return {spec.name: self._spec_to_tool(ctx, spec) for spec in specs}
 

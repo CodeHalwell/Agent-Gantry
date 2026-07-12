@@ -174,9 +174,17 @@ class GantryStrandsToolHook:
                 namespaces=self._namespaces,
             )
         except Exception:
-            logger.exception(
+            # Selection failure must not kill the agent's model call: log a
+            # WARNING (not raise) and degrade gracefully. Strands'
+            # tool_registry is mutated in place and persists across turns
+            # (unlike ADK's fresh-per-turn LlmRequest), so here "degrade
+            # gracefully" means leaving the previous turn's tools registered
+            # rather than wiping them — see "Per-turn selection-failure
+            # policy" in integrations/frameworks/README.md.
+            logger.warning(
                 "GantryStrandsToolHook: semantic retrieval failed; "
-                "continuing with the previous turn's tools."
+                "continuing with the previous turn's tools.",
+                exc_info=True,
             )
             return
 

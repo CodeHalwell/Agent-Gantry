@@ -163,9 +163,17 @@ async def _inject_selected_tools(
             query, limit=limit, score_threshold=score_threshold, namespaces=namespaces
         )
     except Exception:
-        logger.exception(
+        # Selection failure must not kill the agent's model call: log a
+        # WARNING (not raise) and degrade to "no dynamic tools this turn".
+        # ADK's LlmRequest is rebuilt fresh every turn (no persisted tool
+        # state to fall back to), so an empty injection is the natural
+        # degradation — see "Per-turn selection-failure policy" in
+        # integrations/frameworks/README.md for the uniform rule this and
+        # every other live provider follows.
+        logger.warning(
             "gantry_before_model_callback: semantic retrieval failed; "
-            "continuing without dynamic tools."
+            "continuing without dynamic tools.",
+            exc_info=True,
         )
         return []
 

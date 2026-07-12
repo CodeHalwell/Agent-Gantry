@@ -200,3 +200,131 @@ framework-neutral handle with `.name`, `.description`, `.parameters`, plus
 `ainvoke`/`invoke`). `invoke()` is safe to call from synchronous framework code
 even inside a running event loop — it runs the coroutine on a worker thread and
 blocks for the result.
+
+## Error-handling policy
+
+Tool failures surface two different ways depending on *what* failed:
+
+- **Tool execution failure** — `gantry.execute()` returns a non-success
+  `ToolResult` (or raises). This is the everyday case: a registered tool
+  raised, timed out, tripped a circuit breaker, or was denied by policy.
+- **Selection failure** — `gantry.retrieve()` itself raises, e.g. the vector
+  store or embedder is briefly unavailable. This only applies to the eight
+  *per-turn* live providers (`integrations/frameworks/*_live.py`), which call
+  back into Gantry autonomously, mid-conversation, with no application code
+  between calls to catch anything.
+
+These are deliberately **not** unified — a bad tool call is the model's
+problem to react to; a broken retrieval pipe is an infrastructure problem the
+agent's *turn* must survive regardless of what the model does next.
+
+### 1. Tool execution failure — default: raises `ToolExecutionError`
+
+`ToolSpec.ainvoke` (and its sync bridge, `ToolSpec.invoke`, safe to call even
+from inside a running event loop — it runs the coroutine on a worker thread
+via `_run_coroutine_sync` and blocks for the result, verified to propagate the
+exception through that bridge intact) raises
+`agent_gantry.integrations.frameworks.base.ToolExecutionError(tool_name,
+status, error)` on any non-success result. `ToolExecutionError.error` carries
+the underlying error string; its message is
+`f"Tool {tool_name!r} failed (status={status}): {error or 'no detail'}"` —
+stable and pattern-matchable (locked by
+`tests/frameworks/test_conformance.py::test_tool_execution_error_message_format`).
+
+**Every one of the 14 native adapters lets this propagate uncaught** from the
+native tool object's own invocation entry point (`.func`, `._run`, `.forward`,
+`.entrypoint`, `.method`, `.on_invoke_tool`, …) — proven for all of them,
+including the sync wrappers, by
+`test_conformance.py::test_adapter_tool_failure_matches_documented_error_kind`.
+From there, each framework's *own* error handling takes over exactly as it
+would for a hand-written native tool (a LangChain `AgentExecutor`'s
+`handle_tool_error`, a Haystack `ToolInvoker`'s `raise_on_failure`, an OpenAI
+Agents SDK `failure_error_function`, …) — Gantry does not second-guess it.
+
+Three deliberate deviations exist **one layer deeper** than `convert()`/
+`select()` — i.e. not in the wrapper this repo builds, but in a framework's
+own downstream consumption of it:
+
+1. **Microsoft Agent Framework** (`agent_framework_bridge.py`,
+   `GantryToolBridge._build_tool_execute`) returns a JSON `{"error": ...}`
+   **string** to the model instead of raising. Deliberate: AF's tool runner
+   otherwise replaces an uncaught error with an opaque `"Error: Function
+   failed."` string when `include_detailed_errors` is off (the AF default),
+   destroying the root cause — returning it as tool output lets the LLM see
+   and react to the real error.
+2. **AutoGen / AG2's *live* `Workbench`** (`autogen_live.py`,
+   `GantryWorkbench.call_tool`) catches the exception and returns an error
+   `autogen_core.tools.ToolResult(is_error=True)` instead of raising.
+   Deliberate: this matches `Workbench.call_tool`'s own documented contract
+   (report failure *as* a result, not an exception) — the *static*
+   `AutoGenAdapter.select`/`.register` path (a plain callable) still raises.
+3. **AWS Strands Agents' real `Agent` tool-execution loop**
+   (`strands.tools.decorator.DecoratedFunctionTool.stream`, Strands' own code,
+   not this adapter's) catches any exception and converts it into an error
+   `ToolResult` (`status="error"`). This is Strands' native contract for
+   *every* function-based tool, not something `StrandsAdapter` opts into —
+   calling the tool directly via `__call__`/`.acall` (bypassing Strands' own
+   dispatch) still raises `ToolExecutionError` untouched; only `.stream()`
+   (what the real agent loop calls for a model-issued tool call) absorbs it.
+   See `tests/frameworks/test_strands_live.py::test_stream_absorbs_tool_failure_into_error_tool_result`.
+
+A fourth case looks similar but is **DSPy's own behaviour, not a Gantry
+deviation**: `dspy.Tool.__call__`/`.acall` never swallow the error (verified
+in `tests/frameworks/test_dspy_live.py::test_tool_failure_surfaces_as_tool_execution_error`)
+— but `dspy.ReAct.forward`/`.aforward` (DSPy's own agentic driver, what
+`DSPyAdapter.agent_builder`/`.live()` hand you) wrap each tool call in a bare
+`except Exception` and fold it into the trajectory as an `"Execution error in
+<tool>: ..."` observation string instead of raising — see
+`test_react_forward_absorbs_tool_failure_into_trajectory`. It is listed here
+for completeness (it's what most DSPy users actually see) but isn't a
+Gantry-adapter contract at all.
+
+### 2. Selection failure (live/per-turn mode) — always degrades, never raises
+
+A `gantry.retrieve()` failure inside a per-turn live provider must not kill
+the agent's turn. Every one of the eight `per-turn` providers now follows one
+uniform rule: **catch, log a `WARNING` (with `exc_info=True`), and degrade —
+never propagate.** *How* it degrades depends on whether that framework's tool
+surface is stateless-per-turn or persists across turns:
+
+- **Stateless per-turn recomputation** (the framework calls the hook fresh
+  every turn/step with no notion of "last turn's tools" to fall back to) →
+  degrade to **no tools this turn**: Google ADK, LangGraph, LlamaIndex,
+  Pydantic AI.
+- **Stateful in-place mutation** (the framework's tool registry/plugin/list
+  persists across turns) → degrade to **leave the previous turn's tools in
+  place**, so a transient retrieval blip doesn't strip a working agent of
+  tools it already has: AutoGen, OpenAI Agents SDK, Semantic Kernel, Strands.
+
+This does not apply to the five `per-call` adapters (LangChain, CrewAI, Agno,
+Haystack, Smolagents) or DSPy's per-call builder: their "live" surface is a
+builder whose `.build(query)` the *caller* awaits directly before each new
+top-level call — an ordinary Python call the caller can wrap in `try`/`except`
+itself, not a framework-internal hook invoked deep inside someone else's loop.
+
+Locked by the `test_conformance.py::test_*_live_selection_failure_degrades_gracefully`
+tests (one per per-turn provider, patching `GantryToolset.select` to raise and
+asserting no exception + a `WARNING` log record).
+
+### Per-framework summary
+
+| Framework | (a) Tool execution failure | (b) Selection failure (live/per-turn) |
+|---|---|---|
+| LangChain | Raises `ToolExecutionError` | *(per-call — see above)* |
+| LangGraph | Raises `ToolExecutionError` | Degrades to no tools this turn (stateless) + `WARNING` |
+| LlamaIndex | Raises `ToolExecutionError` | Degrades to no tools this step (stateless) + `WARNING` |
+| CrewAI | Raises `ToolExecutionError` | *(per-call — see above)* |
+| Pydantic AI | Raises `ToolExecutionError` | Degrades to previous run's tools (stateful cache) + `WARNING` |
+| OpenAI Agents SDK | Raises `ToolExecutionError` | Degrades to previous turn's `agent.tools` (stateful) + `WARNING` |
+| Smolagents | Raises `ToolExecutionError` | *(per-call — see above)* |
+| Haystack | Raises `ToolExecutionError` | *(per-call — see above)* |
+| Agno | Raises `ToolExecutionError` | *(per-call — see above)* |
+| Semantic Kernel | Raises `ToolExecutionError` | Degrades to previous turn's plugin functions (stateful) + `WARNING` |
+| Google ADK | Raises `ToolExecutionError` | Degrades to no tools this turn (stateless) + `WARNING` — the original precedent |
+| AutoGen / AG2 (static `select`/`register`) | Raises `ToolExecutionError` | — |
+| AutoGen / AG2 (live `workbench`) | **Deviation:** error `ToolResult(is_error=True)`, not raised | Degrades to previous turn's tools (stateful cache) + `WARNING` |
+| Strands Agents (`__call__`/`.acall`) | Raises `ToolExecutionError` | — |
+| Strands Agents (real agent loop, `.stream()`) | **Deviation:** error `ToolResult(status="error")`, not raised (Strands' own contract) | Degrades to previous turn's registered tools (stateful) + `WARNING` — the other precedent |
+| DSPy (`dspy.Tool.__call__`/`.acall`) | Raises `ToolExecutionError` | *(per-call — see above)* |
+| DSPy (`dspy.ReAct.forward`/`.aforward`) | **DSPy's own behaviour** (not a Gantry deviation): folded into the trajectory as an `"Execution error in <tool>: ..."` observation | *(per-call — see above)* |
+| Microsoft Agent Framework | **Deviation:** JSON `{"error": ...}` string returned to the model, not raised | *(`GantryToolBridge`/`ContextProvider` selection is a separate mechanism from `GantryToolset`, outside this audit's scope)* |

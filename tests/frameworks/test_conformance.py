@@ -67,6 +67,25 @@ async def gantry():
     return g
 
 
+@pytest.fixture
+async def gantry_with_failing_tool(gantry: AgentGantry) -> AgentGantry:
+    """The shared conformance ``gantry`` plus one tool that always raises.
+
+    Shared by the tool-failure conformance test (below) and reused verbatim
+    by the pattern already proven in ``tests/frameworks/test_dspy.py`` /
+    ``test_strands.py``. A separate fixture (rather than extending ``gantry``
+    itself) keeps this tool out of every other conformance test's tool count.
+    """
+
+    @gantry.register(tags=["danger"])
+    def explode() -> str:
+        "Always raises when invoked."
+        raise RuntimeError("boom: this tool always fails")
+
+    await gantry.sync()
+    return gantry
+
+
 # --------------------------------------------------------------------------- #
 # Per-framework stub factories for the end-to-end select→convert smoke below.
 #
@@ -235,6 +254,29 @@ class AdapterCase:
             ``{"model": ...}`` for LangGraph, whose native hook is bound to a
             specific chat model). ``None`` when ``live()`` needs nothing
             beyond ``limit``/``score_threshold``/``namespaces``.
+        error_kind: How a failing ``gantry.execute()`` surfaces through the
+            native tool object this adapter's ``convert()`` produces.
+            ``"raises"`` (every adapter, currently) — the native object's own
+            call convention (``.func``/``._run``/``.forward``/``.method``/…)
+            propagates :class:`~agent_gantry.integrations.frameworks.base.ToolExecutionError`
+            uncaught, matching the documented default contract (see
+            "Error-handling policy" in ``integrations/frameworks/README.md``).
+            The three deliberate "framework absorbs the error" deviations
+            (Microsoft Agent Framework's JSON error string, AutoGen's *live*
+            ``Workbench.call_tool``, Strands' real ``Agent`` tool-execution
+            loop) live one layer deeper than ``convert()``/``select()`` — see
+            their own dedicated tests, not this matrix.
+        invoke_failure: Async callable that takes the native object returned
+            by ``adapter_cls.convert(spec)`` and invokes it the way that
+            framework's own runtime would (its ``.func``/``._run``/
+            ``.forward``/``.on_invoke_tool``/… entry point), awaiting through
+            if that entry point is itself a coroutine function. Used by
+            :func:`test_adapter_tool_failure_matches_documented_error_kind`
+            to prove ``error_kind`` end-to-end for every adapter, including
+            the sync wrappers (CrewAI/Agno/Haystack/Smolagents/DSPy/
+            LangChain/LlamaIndex/Google ADK), which this exercises through
+            the real ``_run_coroutine_sync`` worker-thread bridge since the
+            test itself runs inside a running event loop.
     """
 
     name: str
@@ -242,9 +284,78 @@ class AdapterCase:
     modules: list[str]
     live_tier: str
     live_delegate: str
+    invoke_failure: Callable[[Any], Any]
     convert_kind: str = "native"
     stub_attrs: Callable[[], dict[str, object]] | None = None
     live_extra_kwargs: Callable[[], dict[str, object]] | None = None
+    error_kind: str = "raises"
+
+
+# --------------------------------------------------------------------------- #
+# Per-framework "invoke the native tool object the way the real framework
+# would" callables, used by the tool-failure conformance test below. Each
+# takes the object `adapter_cls.convert(spec)` returns and calls through its
+# real invocation entry point — the same attribute a genuine LangChain
+# StructuredTool / CrewAI BaseTool / etc. would call. All are ``async`` so the
+# test can ``await`` uniformly regardless of whether the underlying call is
+# itself a coroutine function (openai_agents, pydantic_ai, semantic_kernel,
+# google_adk, autogen, strands) or a synchronous bridge through
+# ``ToolSpec.invoke`` (langchain, langgraph, llamaindex, crewai, smolagents,
+# haystack, agno, dspy) — the latter exercises the `_run_coroutine_sync`
+# worker-thread bridge since these tests run inside a running event loop.
+# --------------------------------------------------------------------------- #
+
+
+async def _invoke_langchain_failure(native: Any) -> Any:
+    return native.func()
+
+
+async def _invoke_llamaindex_failure(native: Any) -> Any:
+    return native.fn()
+
+
+async def _invoke_crewai_failure(native: Any) -> Any:
+    return native._run()
+
+
+async def _invoke_pydantic_ai_failure(native: Any) -> Any:
+    return await native.function()
+
+
+async def _invoke_openai_agents_failure(native: Any) -> Any:
+    return await native.on_invoke_tool(None, "{}")
+
+
+async def _invoke_smolagents_failure(native: Any) -> Any:
+    return native.forward()
+
+
+async def _invoke_haystack_failure(native: Any) -> Any:
+    return native.function()
+
+
+async def _invoke_agno_failure(native: Any) -> Any:
+    return native.entrypoint()
+
+
+async def _invoke_semantic_kernel_failure(native: Any) -> Any:
+    return await native.method()
+
+
+async def _invoke_google_adk_failure(native: Any) -> Any:
+    return await native.func()
+
+
+async def _invoke_autogen_failure(native: Any) -> Any:
+    return await native["callable"]()
+
+
+async def _invoke_strands_failure(native: Any) -> Any:
+    return await native.fn()
+
+
+async def _invoke_dspy_failure(native: Any) -> Any:
+    return native.func()
 
 
 ADAPTERS: list[AdapterCase] = [
@@ -255,6 +366,7 @@ ADAPTERS: list[AdapterCase] = [
         live_tier="per-call",
         live_delegate="select",
         stub_attrs=_stub_langchain_attrs,
+        invoke_failure=_invoke_langchain_failure,
     ),
     AdapterCase(
         "langgraph",
@@ -264,6 +376,7 @@ ADAPTERS: list[AdapterCase] = [
         live_delegate="react_agent",
         stub_attrs=_stub_langchain_attrs,
         live_extra_kwargs=lambda: {"model": object()},
+        invoke_failure=_invoke_langchain_failure,
     ),
     AdapterCase(
         "llamaindex",
@@ -272,6 +385,7 @@ ADAPTERS: list[AdapterCase] = [
         live_tier="per-turn",
         live_delegate="tool_retriever",
         stub_attrs=_stub_llamaindex_attrs,
+        invoke_failure=_invoke_llamaindex_failure,
     ),
     AdapterCase(
         "crewai",
@@ -280,6 +394,7 @@ ADAPTERS: list[AdapterCase] = [
         live_tier="per-call",
         live_delegate="agent_builder",
         stub_attrs=_stub_crewai_attrs,
+        invoke_failure=_invoke_crewai_failure,
     ),
     AdapterCase(
         "pydantic_ai",
@@ -288,6 +403,7 @@ ADAPTERS: list[AdapterCase] = [
         live_tier="per-turn",
         live_delegate="toolset",
         stub_attrs=_stub_pydantic_ai_attrs,
+        invoke_failure=_invoke_pydantic_ai_failure,
     ),
     AdapterCase(
         "openai_agents",
@@ -297,6 +413,7 @@ ADAPTERS: list[AdapterCase] = [
         live_delegate="session",
         stub_attrs=_stub_openai_agents_attrs,
         live_extra_kwargs=lambda: {"agent": object()},
+        invoke_failure=_invoke_openai_agents_failure,
     ),
     AdapterCase(
         "smolagents",
@@ -305,6 +422,7 @@ ADAPTERS: list[AdapterCase] = [
         live_tier="per-call",
         live_delegate="agent_builder",
         stub_attrs=_stub_smolagents_attrs,
+        invoke_failure=_invoke_smolagents_failure,
     ),
     AdapterCase(
         "haystack",
@@ -313,6 +431,7 @@ ADAPTERS: list[AdapterCase] = [
         live_tier="per-call",
         live_delegate="tool_invoker_builder",
         stub_attrs=_stub_haystack_attrs,
+        invoke_failure=_invoke_haystack_failure,
     ),
     AdapterCase(
         "agno",
@@ -321,6 +440,7 @@ ADAPTERS: list[AdapterCase] = [
         live_tier="per-call",
         live_delegate="agent_builder",
         stub_attrs=_stub_agno_attrs,
+        invoke_failure=_invoke_agno_failure,
     ),
     AdapterCase(
         "semantic_kernel",
@@ -330,6 +450,7 @@ ADAPTERS: list[AdapterCase] = [
         live_delegate="function_provider",
         stub_attrs=_stub_semantic_kernel_attrs,
         live_extra_kwargs=lambda: {"kernel": object()},
+        invoke_failure=_invoke_semantic_kernel_failure,
     ),
     AdapterCase(
         "google_adk",
@@ -338,6 +459,7 @@ ADAPTERS: list[AdapterCase] = [
         live_tier="per-turn",
         live_delegate="before_model_callback",
         stub_attrs=_stub_google_adk_attrs,
+        invoke_failure=_invoke_google_adk_failure,
     ),
     AdapterCase(
         "autogen",
@@ -346,6 +468,7 @@ ADAPTERS: list[AdapterCase] = [
         live_tier="per-turn",
         live_delegate="workbench",
         convert_kind="dict",
+        invoke_failure=_invoke_autogen_failure,
     ),
     AdapterCase(
         "strands",
@@ -354,6 +477,7 @@ ADAPTERS: list[AdapterCase] = [
         live_tier="per-turn",
         live_delegate="tool_hook",
         stub_attrs=_stub_strands_attrs,
+        invoke_failure=_invoke_strands_failure,
     ),
     AdapterCase(
         "dspy",
@@ -363,6 +487,7 @@ ADAPTERS: list[AdapterCase] = [
         live_delegate="agent_builder",
         live_extra_kwargs=lambda: {"signature": "question -> answer"},
         stub_attrs=_stub_dspy_attrs,
+        invoke_failure=_invoke_dspy_failure,
     ),
 ]
 
@@ -556,6 +681,293 @@ async def test_for_each_framework_selects_and_converts(
         assert all("callable" in t and callable(t["callable"]) for t in tools), (
             f"{case.name}: expected registrable mappings with a callable"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Error-handling policy (see "Error-handling policy" in
+# integrations/frameworks/README.md for the full write-up):
+#
+#   Default contract: a failing `gantry.execute()` raises `ToolExecutionError`
+#   out of `ToolSpec.ainvoke`/`invoke`, and every adapter's native wrapper
+#   (`.func`/`._run`/`.forward`/…) lets it propagate uncaught so the
+#   framework's own error handling takes over. That is `error_kind="raises"`
+#   below, for all 14 adapters.
+#
+#   Three deliberate deviations exist one layer *below* convert()/select()
+#   (i.e. not exercised by this matrix — see their own tests): MAF's
+#   `_build_tool_execute` returns a JSON `{"error": ...}` string to the model;
+#   AutoGen's *live* `GantryWorkbench.call_tool` returns an error
+#   `ToolResult(is_error=True)`; Strands' real `Agent` tool-execution loop
+#   (`DecoratedFunctionTool.stream`) converts any exception into an error
+#   `ToolResult` — that one is Strands' own native contract, not Gantry code.
+#
+#   Every *_live.py per-turn selection path (a *different* failure mode --
+#   `gantry.retrieve()`/selection failing, not tool execution) must not raise
+#   at all: it logs a WARNING and degrades gracefully, either to "no tools
+#   this turn" (stateless per-turn recomputation: Google ADK, LangGraph,
+#   LlamaIndex, Pydantic AI) or "leave the previous turn's tools in place"
+#   (stateful in-place mutation: AutoGen, OpenAI Agents SDK, Semantic Kernel,
+#   Strands) — see the second block of tests below.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("case", ADAPTERS, ids=[c.name for c in ADAPTERS])
+async def test_adapter_tool_failure_matches_documented_error_kind(
+    case: AdapterCase, gantry_with_failing_tool: AgentGantry, monkeypatch
+) -> None:
+    """A failing ``gantry.execute()`` surfaces per the documented ``error_kind``.
+
+    Selects the ``explode`` tool (registered by ``gantry_with_failing_tool``,
+    always raises), converts it via ``adapter_cls.convert``, then invokes the
+    *native* object the way that framework's own runtime would
+    (``case.invoke_failure``) — not ``spec.ainvoke`` directly, so this proves
+    the contract survives each adapter's own wrapper, not just ``base.py``.
+    Locks in that no ``_spec_to_*`` conversion accidentally swallows the
+    error for any of the 14 adapters.
+    """
+    if case.stub_attrs is not None:
+        _install_stub(monkeypatch, case.modules, case.stub_attrs())
+
+    from agent_gantry.integrations.frameworks.base import GantryToolset, ToolExecutionError
+
+    specs = await GantryToolset(gantry_with_failing_tool).select("always raises", limit=1)
+    assert specs, f"{case.name}: failing tool not found by selection"
+    native = case.adapter_cls.convert(specs[0])
+
+    assert case.error_kind == "raises", f"{case.name}: unknown error_kind {case.error_kind!r}"
+    with pytest.raises(ToolExecutionError) as exc_info:
+        await case.invoke_failure(native)
+    assert exc_info.value.tool_name == "explode"
+    assert exc_info.value.error is not None and "boom" in exc_info.value.error
+
+
+def test_tool_execution_error_message_format() -> None:
+    """Locks ``ToolExecutionError``'s message format so callers can pattern-match it.
+
+    Every one of the 14 adapters' native tools raises this exact type with
+    this exact shape on a failed execution (see the parametrized test above),
+    so downstream users (a LangChain ``try/except``, a CrewAI callback, …) can
+    rely on ``.tool_name`` / ``.status`` / ``.error`` rather than string-parsing.
+    """
+    from agent_gantry.integrations.frameworks.base import ToolExecutionError
+
+    err = ToolExecutionError("send_email", "failure", "SMTP connection refused")
+
+    assert err.tool_name == "send_email"
+    assert err.status == "failure"
+    assert err.error == "SMTP connection refused"
+    assert str(err) == "Tool 'send_email' failed (status=failure): SMTP connection refused"
+
+    # A ``None`` error still produces a stable, non-empty message.
+    err_no_detail = ToolExecutionError("add", "failure", None)
+    assert str(err_no_detail) == "Tool 'add' failed (status=failure): no detail"
+
+
+# --------------------------------------------------------------------------- #
+# Per-turn live selection-failure policy
+#
+# A *different* failure mode from tool execution above: `gantry.retrieve()`
+# (semantic selection) itself raising mid-conversation -- e.g. the vector
+# store is briefly unavailable. Every per-turn live provider must not let
+# that kill the agent's turn. `GantryToolset.select` is the single choke
+# point every *_live.py per-turn provider's selection call routes through
+# (directly, or via `select_or_empty`), so patching it here exercises all
+# eight uniformly.
+# --------------------------------------------------------------------------- #
+
+
+async def _raise_on_select(self: Any, query: str, **kwargs: Any) -> list[Any]:
+    raise RuntimeError("boom: vector store unavailable")
+
+
+@pytest.fixture
+def broken_selection(monkeypatch) -> None:
+    """Make every ``GantryToolset.select`` call raise (simulates a broken retrieval)."""
+    from agent_gantry.integrations.frameworks.base import GantryToolset
+
+    monkeypatch.setattr(GantryToolset, "select", _raise_on_select)
+
+
+async def test_google_adk_live_selection_failure_degrades_gracefully(
+    gantry: AgentGantry, broken_selection, caplog
+) -> None:
+    from agent_gantry.integrations.frameworks.google_adk_live import _inject_selected_tools
+
+    llm_request = types.SimpleNamespace(config=types.SimpleNamespace(tools=[]), tools_dict={})
+    with caplog.at_level("WARNING"):
+        injected = await _inject_selected_tools(
+            gantry, "weather", llm_request, limit=3, score_threshold=0.0
+        )
+
+    assert injected == []  # stateless per-turn: degrades to "no tools this turn"
+    assert any("semantic retrieval failed" in r.message for r in caplog.records)
+
+
+async def test_langgraph_live_selection_failure_degrades_gracefully(
+    gantry: AgentGantry, broken_selection, caplog
+) -> None:
+    from agent_gantry.integrations.frameworks.langgraph_live import _select_tools_for_state
+
+    state = {"messages": [{"role": "user", "content": "weather forecast"}]}
+    with caplog.at_level("WARNING"):
+        tools = await _select_tools_for_state(gantry, state, limit=3, score_threshold=0.0)
+
+    assert tools == []  # stateless per-turn: degrades to "no tools this turn"
+    assert any("semantic retrieval failed" in r.message for r in caplog.records)
+
+
+async def test_llamaindex_live_selection_failure_degrades_gracefully(
+    gantry: AgentGantry, broken_selection, caplog, monkeypatch
+) -> None:
+    import agent_gantry.integrations.frameworks.llamaindex_live as li_live
+
+    class _FakeObjectRetriever:
+        pass
+
+    stub_objects = types.ModuleType("llama_index.core.objects")
+    stub_objects.ObjectRetriever = _FakeObjectRetriever
+    monkeypatch.setitem(sys.modules, "llama_index", types.ModuleType("llama_index"))
+    monkeypatch.setitem(sys.modules, "llama_index.core", types.ModuleType("llama_index.core"))
+    monkeypatch.setitem(sys.modules, "llama_index.core.objects", stub_objects)
+    # Force a rebuild against the stub base class; monkeypatch restores the
+    # real cached class (if any) after this test.
+    monkeypatch.setattr(li_live, "_RETRIEVER_CLS", None)
+
+    retriever = li_live._gantry_tool_retriever(gantry, limit=3)
+    with caplog.at_level("WARNING"):
+        tools = await retriever.aretrieve("weather forecast")
+
+    assert tools == []  # stateless per-turn: degrades to "no tools this step"
+    assert any("semantic retrieval failed" in r.message for r in caplog.records)
+
+
+async def test_pydantic_ai_live_selection_failure_degrades_gracefully(
+    gantry: AgentGantry, broken_selection, caplog, monkeypatch
+) -> None:
+    import agent_gantry.integrations.frameworks.pydantic_ai_live as pai_live
+
+    class _FakeToolDefinition:
+        def __init__(self, **kwargs: Any) -> None:
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
+    class _FakeAbstractToolset:
+        pass
+
+    class _FakeToolsetTool:
+        def __init__(self, **kwargs: Any) -> None:
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
+    pa_tools = types.ModuleType("pydantic_ai.tools")
+    pa_tools.ToolDefinition = _FakeToolDefinition
+    pa_toolsets = types.ModuleType("pydantic_ai.toolsets")
+    pa_toolsets.AbstractToolset = _FakeAbstractToolset
+    pa_toolsets_abstract = types.ModuleType("pydantic_ai.toolsets.abstract")
+    pa_toolsets_abstract.ToolsetTool = _FakeToolsetTool
+    monkeypatch.setitem(sys.modules, "pydantic_ai", types.ModuleType("pydantic_ai"))
+    monkeypatch.setitem(sys.modules, "pydantic_ai.tools", pa_tools)
+    monkeypatch.setitem(sys.modules, "pydantic_ai.toolsets", pa_toolsets)
+    monkeypatch.setitem(sys.modules, "pydantic_ai.toolsets.abstract", pa_toolsets_abstract)
+    monkeypatch.setattr(pai_live, "_GANTRY_TOOLSET_CLASS", None)
+
+    toolset = pai_live._gantry_toolset(gantry, limit=3)
+    toolset.set_query("weather forecast")
+    with caplog.at_level("WARNING"):
+        tools = await toolset.get_tools(types.SimpleNamespace(max_retries=1))
+
+    # stateful (`self._selected` persists across runs): nothing was ever
+    # selected successfully yet, so degrading to "leave prior state" is `{}`.
+    assert tools == {}
+    assert any("semantic retrieval failed" in r.message for r in caplog.records)
+
+
+async def test_openai_agents_live_selection_failure_degrades_gracefully(
+    gantry: AgentGantry, broken_selection, caplog, monkeypatch
+) -> None:
+    monkeypatch.setitem(sys.modules, "agents", types.ModuleType("agents"))
+    from agent_gantry.integrations.frameworks.openai_agents_live import _refresh_agent_tools
+
+    agent = types.SimpleNamespace(tools=["existing_tool"])
+    with caplog.at_level("WARNING"):
+        tools = await _refresh_agent_tools(agent, gantry, "weather forecast", limit=3)
+
+    # stateful (`agent.tools` persists across turns): the mutation is skipped,
+    # so both the return value and `agent.tools` keep the previous turn's tools.
+    assert tools == ["existing_tool"]
+    assert agent.tools == ["existing_tool"]
+    assert any("semantic retrieval failed" in r.message for r in caplog.records)
+
+
+async def test_semantic_kernel_live_selection_failure_degrades_gracefully(
+    gantry: AgentGantry, broken_selection, caplog
+) -> None:
+    from agent_gantry.integrations.frameworks.semantic_kernel_live import GantryFunctionProvider
+
+    kernel = types.SimpleNamespace(plugins={})
+    provider = GantryFunctionProvider(gantry, kernel, limit=3)
+    with caplog.at_level("WARNING"):
+        functions = await provider.refresh("weather forecast")
+
+    # stateful (`kernel.plugins` persists): nothing was ever registered, so
+    # degrading to "leave prior state" reads back as `{}`.
+    assert functions == {}
+    assert any("semantic retrieval failed" in r.message for r in caplog.records)
+
+
+async def test_autogen_live_selection_failure_degrades_gracefully(
+    gantry: AgentGantry, broken_selection, caplog, monkeypatch
+) -> None:
+    import agent_gantry.integrations.frameworks.autogen_live as autogen_live
+
+    class _FakeWorkbench:
+        pass
+
+    class _FakeResultContent:
+        def __init__(self, **kwargs: Any) -> None:
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
+    stub_tools = types.ModuleType("autogen_core.tools")
+    stub_tools.Workbench = _FakeWorkbench
+    stub_tools.ToolResult = _FakeResultContent
+    stub_tools.TextResultContent = _FakeResultContent
+    monkeypatch.setitem(sys.modules, "autogen_core", types.ModuleType("autogen_core"))
+    monkeypatch.setitem(sys.modules, "autogen_core.tools", stub_tools)
+    monkeypatch.setattr(autogen_live, "_GANTRY_WORKBENCH_CLASS", None)
+
+    wb = autogen_live._gantry_workbench(gantry, query="weather forecast", limit=3)
+    with caplog.at_level("WARNING"):
+        schemas = await wb.list_tools()
+
+    # stateful (`self._selected` persists across turns): nothing was ever
+    # selected successfully yet, so degrading to "leave prior state" is `[]`.
+    assert schemas == []
+    assert any("semantic retrieval failed" in r.message for r in caplog.records)
+
+
+async def test_strands_live_selection_failure_degrades_gracefully(
+    gantry: AgentGantry, broken_selection, caplog
+) -> None:
+    from agent_gantry.integrations.frameworks.strands_live import GantryStrandsToolHook
+
+    hook = GantryStrandsToolHook(gantry, limit=3)
+    sentinel = object()
+    tool_registry = types.SimpleNamespace(registry={"stale": sentinel}, dynamic_tools={})
+    event = types.SimpleNamespace(
+        agent=types.SimpleNamespace(
+            messages=[{"role": "user", "content": [{"text": "weather forecast"}]}],
+            tool_registry=tool_registry,
+        )
+    )
+
+    with caplog.at_level("WARNING"):
+        await hook._on_before_model_call(event)
+
+    # stateful (`agent.tool_registry` persists across turns): the registry is
+    # left completely untouched rather than retracting the previous tools.
+    assert tool_registry.registry == {"stale": sentinel}
+    assert any("semantic retrieval failed" in r.message for r in caplog.records)
 
 
 # --------------------------------------------------------------------------- #

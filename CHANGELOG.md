@@ -103,6 +103,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   native-adapter set, each in its own isolated env, so drift on unpinned
   latest versions is caught by a weekly run instead of staying invisible
   between manual audits.
+- **Documented and tested error-handling policy for all 14 native framework
+  adapters + Microsoft Agent Framework.** New "Error-handling policy" section
+  in `integrations/frameworks/README.md` states the default contract (a
+  failing `gantry.execute()` raises `ToolExecutionError` out of every
+  adapter's native tool object, uncaught, letting the framework's own error
+  handling take over), the four deliberate "framework absorbs the error"
+  exceptions with their rationale (Microsoft Agent Framework's JSON error
+  string, AutoGen's live `Workbench.call_tool`, Strands' real `Agent`
+  tool-execution loop, and — not a Gantry deviation but documented for
+  completeness — DSPy's own `ReAct.forward`/`.aforward`), and a uniform rule
+  for the eight per-turn live providers' *selection* failures (`WARNING` log
+  + graceful degradation, never raise). `tests/frameworks/test_conformance.py`
+  gained an `AdapterCase.error_kind`/`.invoke_failure` field and a
+  parametrized `test_adapter_tool_failure_matches_documented_error_kind` that
+  forces a failing tool through every adapter's real native call convention
+  (proving the contract survives the `_run_coroutine_sync` worker-thread
+  bridge for the sync wrappers too), plus one `test_*_live_selection_failure_degrades_gracefully`
+  test per per-turn provider and a `test_tool_execution_error_message_format`
+  test locking `ToolExecutionError`'s message shape. `tests/frameworks/
+  test_dspy_live.py` and `test_strands_live.py` each gained a dedicated test
+  proving their respective "framework absorbs it" behavior end-to-end against
+  the real installed package.
 
 ### Changed
 
@@ -207,6 +229,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   type annotations and `isinstance()` checks return `False` rather than raising
   `TypeError`. The `score_threshold` property is now typed `float | str` to match
   the config (relative-threshold strings are valid).
+- **BREAKING (bugfix) — a broken `gantry.retrieve()` mid-conversation no
+  longer crashes six of the eight per-turn live providers.**
+  `integrations/frameworks/{autogen_live,langgraph_live,llamaindex_live,
+  openai_agents_live,pydantic_ai_live,semantic_kernel_live}.py` previously let
+  a selection failure propagate straight out of the framework's own
+  turn-driving hook (`Workbench.list_tools`, the `create_agent` tool-selection
+  middleware, `ObjectRetriever.aretrieve`, `RunHooks.on_llm_start`,
+  `AbstractToolset.get_tools`, `GantryFunctionProvider.refresh`) — a transient
+  vector-store hiccup could kill the entire agent run. They now catch the
+  failure, log a `WARNING` with `exc_info=True`, and degrade gracefully
+  instead: to "no tools this turn" for the four stateless per-turn providers
+  (LangGraph, LlamaIndex, and — already-existing behavior — Google ADK) or to
+  "leave the previous turn's tools in place" for the stateful ones (AutoGen,
+  Pydantic AI, OpenAI Agents SDK, Semantic Kernel), matching the precedent
+  already set by Google ADK's `before_model_callback` and Strands'
+  `BeforeModelCallEvent` hook (both of which already degraded gracefully and
+  are unchanged in behavior, only normalized from `logger.exception`/ERROR to
+  `logger.warning(..., exc_info=True)` for consistency with the other six).
+  Callers who relied on a selection failure raising out of one of these six
+  providers (e.g. to abort a run) must now check the `WARNING` log or wrap
+  `gantry.retrieve()`/the vector store itself instead.
 
 ### Changed
 

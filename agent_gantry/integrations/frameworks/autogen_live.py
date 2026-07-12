@@ -31,6 +31,7 @@ The ``autogen_core`` import is lazy (only inside the class/factory), so
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -38,6 +39,8 @@ from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT, Gantry
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
+
+logger = logging.getLogger(__name__)
 
 
 def _require_autogen() -> Any:
@@ -117,13 +120,28 @@ def _build_workbench_class() -> type:
 
             Called by the agent on every turn. The freshly selected specs are
             cached so :meth:`call_tool` can resolve and invoke them.
+
+            Never raises on selection failure — a broken retrieval must not
+            break the agent's turn. ``self._selected`` persists across turns
+            (``call_tool`` resolves against it), so on failure this logs a
+            WARNING and leaves the previous turn's selection in place rather
+            than wiping it — see "Per-turn selection-failure policy" in
+            ``integrations/frameworks/README.md``.
             """
-            specs = await self._toolset.select_or_empty(
-                self._query,
-                limit=self._limit,
-                score_threshold=self._score_threshold,
-                namespaces=self._namespaces,
-            )
+            try:
+                specs = await self._toolset.select_or_empty(
+                    self._query,
+                    limit=self._limit,
+                    score_threshold=self._score_threshold,
+                    namespaces=self._namespaces,
+                )
+            except Exception:
+                logger.warning(
+                    "GantryWorkbench.list_tools: semantic retrieval failed; "
+                    "continuing with the previous turn's tools.",
+                    exc_info=True,
+                )
+                return [self._spec_to_schema(spec) for spec in self._selected.values()]
             self._selected = {spec.name: spec for spec in specs}
             return [self._spec_to_schema(spec) for spec in specs]
 

@@ -60,6 +60,7 @@ only when the live provider is actually used.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT
@@ -68,6 +69,8 @@ from agent_gantry.query import latest_activity
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_PLUGIN = "gantry"
 
@@ -102,6 +105,19 @@ def _query_from(query_or_messages: Any) -> str:
     if isinstance(query_or_messages, str):
         return query_or_messages
     return latest_activity(query_or_messages) or ""
+
+
+def _current_plugin_functions(kernel: Any, plugin_name: str) -> dict[str, Any]:
+    """Best-effort read of the functions currently registered under ``plugin_name``.
+
+    Used to report *something* sensible when a refresh degrades gracefully
+    (selection failed, so the plugin swap was skipped) — returns ``{}`` if the
+    plugin isn't registered or ``kernel.plugins`` has an unexpected shape.
+    """
+    plugins = getattr(kernel, "plugins", None)
+    plugin = plugins.get(plugin_name) if isinstance(plugins, dict) else None
+    functions = getattr(plugin, "functions", None) if plugin is not None else None
+    return dict(functions) if isinstance(functions, dict) else {}
 
 
 def _set_plugin_functions(kernel: Any, plugin_name: str, functions: dict[str, Any]) -> Any:
@@ -203,6 +219,12 @@ class GantryFunctionProvider:
         Returns the ``{function_name: KernelFunction}`` mapping now registered
         under :attr:`plugin_name` (empty dict if nothing was selected — the
         plugin is still refreshed to an empty set so stale functions clear).
+
+        Never raises on selection failure — a broken retrieval must not break
+        the agent/chat invocation. ``kernel.plugins`` persists across turns,
+        so on failure this logs a WARNING and skips the plugin swap, leaving
+        the previous turn's functions registered — see "Per-turn
+        selection-failure policy" in ``integrations/frameworks/README.md``.
         """
         query = _query_from(query_or_messages)
         async with self._lock:
@@ -211,14 +233,22 @@ class GantryFunctionProvider:
                 # an empty embedding (arbitrary top-k for some embedders).
                 _set_plugin_functions(self._kernel, self._plugin_name, {})
                 return {}
-            functions = await _gantry_plugin(
-                self._gantry,
-                query,
-                limit=self._limit,
-                plugin_name=self._plugin_name,
-                score_threshold=self._score_threshold,
-                namespaces=self._namespaces,
-            )
+            try:
+                functions = await _gantry_plugin(
+                    self._gantry,
+                    query,
+                    limit=self._limit,
+                    plugin_name=self._plugin_name,
+                    score_threshold=self._score_threshold,
+                    namespaces=self._namespaces,
+                )
+            except Exception:
+                logger.warning(
+                    "GantryFunctionProvider.refresh: semantic retrieval failed; "
+                    "continuing with the previous turn's functions.",
+                    exc_info=True,
+                )
+                return _current_plugin_functions(self._kernel, self._plugin_name)
             _set_plugin_functions(self._kernel, self._plugin_name, functions)
             return functions
 
@@ -241,6 +271,11 @@ async def _refresh_kernel_tools(
 
     Returns the ``{function_name: KernelFunction}`` mapping now registered
     under ``plugin_name``.
+
+    Never raises on selection failure — mirrors
+    :meth:`GantryFunctionProvider.refresh`: on a broken retrieval this logs a
+    WARNING and skips the plugin swap, leaving whatever was previously
+    registered under ``plugin_name`` in place.
     """
     resolved = _query_from(query)
     if not resolved:
@@ -248,14 +283,22 @@ async def _refresh_kernel_tools(
         # selecting on an empty embedding (arbitrary top-k for some embedders).
         _set_plugin_functions(kernel, plugin_name, {})
         return {}
-    functions = await _gantry_plugin(
-        gantry,
-        resolved,
-        limit=limit,
-        plugin_name=plugin_name,
-        score_threshold=score_threshold,
-        namespaces=namespaces,
-    )
+    try:
+        functions = await _gantry_plugin(
+            gantry,
+            resolved,
+            limit=limit,
+            plugin_name=plugin_name,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+        )
+    except Exception:
+        logger.warning(
+            "_refresh_kernel_tools: semantic retrieval failed; "
+            "continuing with the previous turn's functions.",
+            exc_info=True,
+        )
+        return _current_plugin_functions(kernel, plugin_name)
     _set_plugin_functions(kernel, plugin_name, functions)
     return functions
 

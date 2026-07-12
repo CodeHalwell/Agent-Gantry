@@ -69,6 +69,7 @@ live agent is actually built.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import (
@@ -81,6 +82,8 @@ from agent_gantry.query import latest_activity
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
+
+logger = logging.getLogger(__name__)
 
 
 def _import_create_agent() -> tuple[Any, Any]:
@@ -146,11 +149,27 @@ async def _select_tools_for_state(
     LangChain ``StructuredTool`` objects (each routing execution through
     ``gantry.execute``). Exposed separately from the model callable so it can
     be unit-tested directly.
+
+    Never raises on selection failure — a broken retrieval must not break the
+    agent's turn. ``create_agent``'s ``request.override(tools=...)`` is a
+    fresh, stateless override applied every turn (there is no persisted
+    "previous turn's tools" to fall back to), so on failure this logs a
+    WARNING and degrades to "no tools this turn" (the model is called
+    unbound, mirroring the empty-selection branch above) — see "Per-turn
+    selection-failure policy" in ``integrations/frameworks/README.md``.
     """
     query = _query_from_state(state)
-    specs = await GantryToolset(gantry).select_or_empty(
-        query, limit=limit, score_threshold=score_threshold, namespaces=namespaces
-    )
+    try:
+        specs = await GantryToolset(gantry).select_or_empty(
+            query, limit=limit, score_threshold=score_threshold, namespaces=namespaces
+        )
+    except Exception:
+        logger.warning(
+            "_select_tools_for_state: semantic retrieval failed; "
+            "continuing with no tools this turn.",
+            exc_info=True,
+        )
+        return []
     return [_spec_to_langchain(s) for s in specs]
 
 

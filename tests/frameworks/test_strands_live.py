@@ -140,3 +140,43 @@ async def test_empty_query_leaves_registry_untouched(gantry):
     await _fire_before_model_call(hook, agent)
 
     assert list(agent.tool_registry.registry) == []
+
+
+async def test_stream_absorbs_tool_failure_into_error_tool_result(gantry):
+    """Documents a deliberate deviation that lives in Strands' own code, not ours.
+
+    ``DecoratedFunctionTool.__call__`` (proven below to still raise directly)
+    is a bypass for manual/direct calls, not what Strands' own agent event
+    loop uses for a model-issued tool call -- that's ``.stream()``, which
+    wraps the call in a bare ``except Exception`` and converts it into an
+    error ``ToolResult`` (``status="error"``) instead of raising. That is
+    Strands' own native tool-execution contract (every function-based tool
+    behaves this way, not just Gantry's), not overridden by this adapter --
+    see "Error-handling policy" in ``integrations/frameworks/README.md``.
+    """
+    from agent_gantry.integrations.frameworks.base import ToolExecutionError
+    from agent_gantry.strands import StrandsAdapter
+
+    @gantry.register(tags=["danger"])
+    def explode() -> str:
+        "Always raises."
+        raise RuntimeError("boom")
+
+    await gantry.sync()
+
+    tools = await StrandsAdapter(gantry).select("always raises", limit=1)
+    tool = tools[0]
+
+    # __call__ bypasses Strands' own tool-use dispatch -- still raises directly.
+    with pytest.raises(ToolExecutionError):
+        await tool()
+
+    # .stream() is what the real Strands agent loop calls for a model-issued
+    # tool call -- it absorbs the error into a ToolResult instead of raising.
+    tool_use = {"toolUseId": "t1", "name": "explode", "input": {}}
+    events = [event async for event in tool.stream(tool_use, {})]
+    result_event = events[-1]
+
+    assert result_event.tool_result["status"] == "error"
+    assert "boom" in result_event.tool_result["content"][0]["text"]
+    assert isinstance(result_event.exception, ToolExecutionError)

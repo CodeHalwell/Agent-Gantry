@@ -71,6 +71,7 @@ Usage
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT, GantryToolset
@@ -80,6 +81,7 @@ from agent_gantry.query import latest_activity
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
 
+logger = logging.getLogger(__name__)
 
 _PIP_HINT = (
     "The OpenAI Agents SDK is required for the live (per-turn) Gantry provider; "
@@ -165,16 +167,34 @@ async def _refresh_agent_tools(
     SDK already holds to the agent observes the updated surface on its next
     ``get_all_tools`` snapshot.
 
+    Never raises on selection failure — a broken retrieval must not break the
+    agent's turn/run. ``agent.tools`` persists across turns, so on failure
+    this logs a WARNING and leaves it untouched (skips the mutation) rather
+    than wiping it to empty — see "Per-turn selection-failure policy" in
+    ``integrations/frameworks/README.md``.
+
     Raises:
         ImportError: If ``openai-agents`` is not installed.
     """
-    tools = await _select_function_tools(
-        gantry,
-        query_or_input,
-        limit=limit,
-        score_threshold=score_threshold,
-        namespaces=namespaces,
-    )
+    try:
+        tools = await _select_function_tools(
+            gantry,
+            query_or_input,
+            limit=limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+        )
+    except ImportError:
+        # Missing `openai-agents` is a static install-time problem, not a
+        # transient retrieval failure — keep failing fast/loudly for it.
+        raise
+    except Exception:
+        logger.warning(
+            "_refresh_agent_tools: semantic retrieval failed; "
+            "continuing with the previous turn's tools.",
+            exc_info=True,
+        )
+        return list(agent.tools)
     # Mutate in place: the run loop reads ``agent.tools`` each turn, and other
     # references to this agent must see the same updated list.
     agent.tools[:] = tools
