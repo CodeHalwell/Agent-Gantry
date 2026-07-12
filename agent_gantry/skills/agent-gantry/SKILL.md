@@ -1,6 +1,6 @@
 ---
 name: agent-gantry
-description: Use this skill when the user is writing or debugging code that uses the `agent-gantry` Python library (semantic tool routing for LLM agents). Triggers on `import agent_gantry`, mentions of `AgentGantry`, `GantryContextProvider`, `GantryToolBridge`, `gantry.register`, `with_semantic_tools`, `LangChainAdapter`/`CrewAIAdapter`/other `<Framework>Adapter` classes (or the per-SDK `OpenAIAdapter`/`AnthropicAdapter`/`GeminiAdapter`/`GroqAdapter`/`VertexAIAdapter`/`MistralAdapter`), `ToolRefresher`, or tool retrieval / surfacing problems with Microsoft Agent Framework, LangChain, LangGraph, AutoGen, CrewAI, LlamaIndex, Pydantic AI, OpenAI Agents SDK, Smolagents, Haystack, Agno, Semantic Kernel, Google ADK, A2A, or MCP. Use proactively when the code imports `agent_gantry` even if the user did not explicitly invoke the skill.
+description: Use this skill when the user is writing or debugging code that uses the `agent-gantry` Python library (semantic tool routing for LLM agents). Triggers on `import agent_gantry`, mentions of `AgentGantry`, `GantryContextProvider`, `GantryToolBridge`, `gantry.register`, `with_semantic_tools`, `LangChainAdapter`/`CrewAIAdapter`/`StrandsAdapter`/other `<Framework>Adapter` classes (or the per-SDK `OpenAIAdapter`/`AnthropicAdapter`/`GeminiAdapter`/`GroqAdapter`/`VertexAIAdapter`/`MistralAdapter`), `ToolRefresher`, or tool retrieval / surfacing problems with Microsoft Agent Framework, LangChain, LangGraph, AutoGen, CrewAI, LlamaIndex, Pydantic AI, OpenAI Agents SDK, Smolagents, Haystack, Agno, Strands Agents, Semantic Kernel, Google ADK, A2A, or MCP. Use proactively when the code imports `agent_gantry` even if the user did not explicitly invoke the skill.
 ---
 
 # Agent-Gantry
@@ -23,6 +23,7 @@ This skill is the canonical reference for using the library. Read the section th
 | Smolagents | `SmolagentsAdapter(gantry).select(...)` | [Native framework adapters](#native-framework-adapters) |
 | Haystack | `HaystackAdapter(gantry).select(...)` | [Native framework adapters](#native-framework-adapters) |
 | Agno | `AgnoAdapter(gantry).select(...)` | [Native framework adapters](#native-framework-adapters) |
+| Strands Agents | `StrandsAdapter(gantry).select(...)` (static) or `.agent(...)` / `.tool_hook(...)` (live, per-turn) | [Native framework adapters](#native-framework-adapters) |
 | AutoGen / AG2 | `AutoGenAdapter(gantry).select(...)` / `.register(...)` (static) or `.workbench()` (live) | [Native framework adapters](#native-framework-adapters) |
 | Semantic Kernel | `SemanticKernelAdapter(gantry).select(...)` / `.plugin(query)` | [Native framework adapters](#native-framework-adapters) |
 | Google ADK | `GoogleADKAdapter(gantry).select(...)` (static) or `.agent(model=, name=)` (live) | [Native framework adapters](#native-framework-adapters) |
@@ -237,7 +238,7 @@ agent = Agent(
 
 ## Native framework adapters
 
-For LangChain, LangGraph, LlamaIndex, CrewAI, Pydantic AI, OpenAI Agents SDK, Smolagents, Haystack, Agno, AutoGen/AG2, Semantic Kernel, and Google ADK, use the native `<Framework>Adapter` class. Its `.select(query, limit=...)` method selects the top-K relevant tools and returns the framework's **native tool objects**, with every call still routed through `gantry.execute`.
+For LangChain, LangGraph, LlamaIndex, CrewAI, Pydantic AI, OpenAI Agents SDK, Smolagents, Haystack, Agno, Strands Agents, AutoGen/AG2, Semantic Kernel, and Google ADK, use the native `<Framework>Adapter` class. Its `.select(query, limit=...)` method selects the top-K relevant tools and returns the framework's **native tool objects**, with every call still routed through `gantry.execute`.
 
 ```python
 from agent_gantry import AgentGantry
@@ -263,6 +264,7 @@ Every adapter shares the identical signature `<Framework>Adapter(gantry).select(
 | Smolagents | `SmolagentsAdapter` | `smolagents.Tool` | `from agent_gantry.smolagents import SmolagentsAdapter` |
 | Haystack | `HaystackAdapter` | `haystack.tools.Tool` | `from agent_gantry.haystack import HaystackAdapter` |
 | Agno | `AgnoAdapter` | `agno.tools.function.Function` | `from agent_gantry.agno import AgnoAdapter` |
+| Strands Agents | `StrandsAdapter` | `strands.tools.decorator.DecoratedFunctionTool` | `from agent_gantry.strands import StrandsAdapter` |
 | AutoGen / AG2 | `AutoGenAdapter` (`.select` / `.register`) | callables + `register_function` | `from agent_gantry.autogen import AutoGenAdapter` |
 | Semantic Kernel | `SemanticKernelAdapter` (`.select` / `.plugin`) | `@kernel_function` `KernelFunction` | `from agent_gantry.semantic_kernel import SemanticKernelAdapter` |
 | Google ADK | `GoogleADKAdapter` | `google.adk.tools.FunctionTool` | `from agent_gantry.google_adk import GoogleADKAdapter` |
@@ -294,6 +296,7 @@ agent = LlamaIndexAdapter(gantry).function_agent(llm)   # re-selects tools each 
 | Pydantic AI | `PydanticAIAdapter(gantry).toolset()` | `AbstractToolset.get_tools()` |
 | AutoGen | `AutoGenAdapter(gantry).workbench()` | `Workbench.list_tools()` |
 | Google ADK | `GoogleADKAdapter(gantry).before_model_callback()` / `.agent(model=, name=)` | `Agent(before_model_callback=…)` |
+| Strands Agents | `StrandsAdapter(gantry).tool_hook()` / `.agent(...)` | `Agent(hooks=[…])` — `BeforeModelCallEvent` |
 | LangGraph | `LangGraphAdapter(gantry).react_agent(model)` / `.areact_agent(model)` | dynamic `model` callable (re-binds tools per turn) |
 | Semantic Kernel | `SemanticKernelAdapter(gantry).function_provider(kernel)` / `.refresh(kernel, query)` | per-invocation plugin refresh |
 | OpenAI Agents SDK | `OpenAIAgentsAdapter(gantry).run(agent, run_input)` / `.session(agent)` / `.run_hooks(agent)` | `RunHooks.on_llm_start` + per-run refresh |
@@ -693,6 +696,7 @@ from agent_gantry.openai_agents import OpenAIAgentsAdapter
 from agent_gantry.smolagents import SmolagentsAdapter
 from agent_gantry.haystack import HaystackAdapter
 from agent_gantry.agno import AgnoAdapter
+from agent_gantry.strands import StrandsAdapter
 from agent_gantry.autogen import AutoGenAdapter
 from agent_gantry.semantic_kernel import SemanticKernelAdapter
 from agent_gantry.google_adk import GoogleADKAdapter

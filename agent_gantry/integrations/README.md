@@ -201,7 +201,7 @@ agent = Agent(
 ## Modules
 
 - `semantic_tools.py`: Core `with_semantic_tools` decorator and `SemanticToolSelector` class for automatic tool injection
-- `framework_adapters.py`: Helpers for converting tools to framework-specific formats (LangGraph, Semantic Kernel, CrewAI, Google ADK, Strands)
+- `framework_adapters.py`: Legacy helper (`fetch_framework_tools`) for converting tools to OpenAI-shape JSON schemas for a small set of frameworks (LangGraph, Semantic Kernel, CrewAI, Google ADK, Strands). Prefer the native `frameworks/strands.py` `StrandsAdapter` (see below) for Strands — it returns real `DecoratedFunctionTool` objects with execution wired through `gantry.execute`, and supports genuine per-turn re-selection via `BeforeModelCallEvent`.
 - `agent_framework_bridge.py`: Microsoft Agent Framework 1.0 GA bridge — `GantryToolBridge` wraps Gantry tools as AF `FunctionTool`s with `approval_mode` auto-derived from Gantry `ToolCapability`. Exposes three agent construction helpers:
   - `build_agent(client, query, ...)` — one-liner using `client.as_agent()`, fine for single-agent flows.
   - `as_agent(client, query, ...)` — direct `Agent(client, ...)` construction; preferred when the result feeds `WorkflowBuilder`.

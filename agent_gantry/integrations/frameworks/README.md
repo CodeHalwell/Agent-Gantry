@@ -22,6 +22,7 @@ timeouts, circuit breakers, security policy all apply).
 | AutoGen / AG2 | `AutoGenAdapter` (`.select`, `.register`) | callables + `register_function` |
 | Semantic Kernel | `SemanticKernelAdapter` (`.select`, `.plugin`) | `KernelFunction` (`@kernel_function`) |
 | Google ADK | `GoogleADKAdapter` | `google.adk.tools.FunctionTool` |
+| Strands Agents | `StrandsAdapter` | `strands.tools.decorator.DecoratedFunctionTool` |
 
 All third-party imports are **lazy** — `import agent_gantry` never requires any
 of these frameworks. A missing framework raises `ImportError` with a
@@ -46,7 +47,7 @@ Each framework has a top-level namespace — `from agent_gantry.<framework> impo
 `agent_gantry.pydantic_ai`, `agent_gantry.openai_agents`, `agent_gantry.smolagents`,
 `agent_gantry.haystack`, `agent_gantry.agno`, `agent_gantry.autogen`,
 `agent_gantry.semantic_kernel`, `agent_gantry.google_adk`, `agent_gantry.langgraph`,
-`agent_gantry.agent_framework`) re-exporting that framework's `<Framework>Adapter`
+`agent_gantry.strands`, `agent_gantry.agent_framework`) re-exporting that framework's `<Framework>Adapter`
 class (which carries both the static `.select`/`.convert` and the deep live
 methods). Importing `agent_gantry` never pulls these in.
 
@@ -101,6 +102,7 @@ loads these — the framework is only required when you use its provider).
 | Pydantic AI | `PydanticAIAdapter(gantry).toolset()` | `AbstractToolset.get_tools()` |
 | AutoGen | `AutoGenAdapter(gantry).workbench()` | `autogen_core.tools.Workbench.list_tools()` |
 | Google ADK | `GoogleADKAdapter(gantry).before_model_callback()` / `.agent()` | `Agent(before_model_callback=…)` |
+| Strands Agents | `StrandsAdapter(gantry).tool_hook()` / `.agent()` | `Agent(hooks=[…])` — `BeforeModelCallEvent` |
 | LangGraph | `LangGraphAdapter(gantry).react_agent(model)` | dynamic `model` callable (re-binds tools per turn) |
 | Semantic Kernel | `SemanticKernelAdapter(gantry).function_provider(kernel)` / `.refresh(kernel, query)` | per-invocation plugin refresh |
 | OpenAI Agents SDK | `OpenAIAgentsAdapter(gantry).run(agent, run_input)` / `.session(agent)` / `.run_hooks(agent)` | `RunHooks.on_llm_start` + per-run refresh |

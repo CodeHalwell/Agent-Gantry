@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Native AWS Strands Agents adapter** — `StrandsAdapter`
+  (`from agent_gantry.strands import StrandsAdapter`), joining the per-framework
+  `<Framework>Adapter` family. `await adapter.select(query, limit=...)` /
+  `adapter.convert(spec)` wrap Gantry tools as Strands
+  `DecoratedFunctionTool`s (built from `spec.callable_for_signature()`, with
+  Gantry's own name/description/JSON-Schema parameters passed straight through
+  via `strands.tool()`'s `name`/`description`/`inputSchema` overrides). Strands
+  genuinely supports per-turn re-selection — it fires a `BeforeModelCallEvent`
+  hook before every model call and only reads the tool registry afterward — so
+  `StrandsAdapter(gantry).tool_hook()` / `.agent(...)` re-select tools on
+  **every model call**, matching the depth of Google ADK's
+  `before_model_callback` rather than the per-top-level-call rebuild used for
+  CrewAI/Agno/Haystack/Smolagents.
 - **`framework-adapters` CI job now runs on ubuntu × Python 3.10–3.13 plus a
   macOS 3.12 cell** (was a single ubuntu/3.12 cell), matching the OS/Python
   coverage the main `test` matrix already gives the other framework
