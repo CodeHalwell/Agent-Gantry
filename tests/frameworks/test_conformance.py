@@ -187,6 +187,21 @@ def _stub_strands_attrs() -> dict[str, object]:
     return {"tool": _tool}
 
 
+def _stub_dspy_attrs() -> dict[str, object]:
+    class _StubDSPyTool:
+        def __init__(
+            self, func, name=None, desc=None, args=None, arg_types=None, arg_desc=None
+        ):
+            self.func, self.name, self.desc = func, name, desc
+            self.args, self.arg_types, self.arg_desc = args, arg_types, arg_desc
+
+    def _convert(schema):
+        props = (schema or {}).get("properties") or {}
+        return dict(props), {k: "Any" for k in props}, {k: "" for k in props}
+
+    return {"Tool": _StubDSPyTool, "convert_input_schema_to_tool_args": _convert}
+
+
 @dataclass(frozen=True)
 class AdapterCase:
     """One row of the cross-framework conformance matrix.
@@ -232,11 +247,6 @@ class AdapterCase:
     live_extra_kwargs: Callable[[], dict[str, object]] | None = None
 
 
-# NOTE for the DSPy adapter (added separately, see CLAUDE.md task boundaries):
-# add its row here with `live_tier`/`live_delegate` set once its native live
-# hook (if any) is decided — if DSPy has no native per-turn/per-call hook,
-# follow the LangChain precedent (`live_delegate="select"`, tier "per-call",
-# `live()` returns a bound alias of `select`) rather than skip the field.
 ADAPTERS: list[AdapterCase] = [
     AdapterCase(
         "langchain",
@@ -344,6 +354,15 @@ ADAPTERS: list[AdapterCase] = [
         live_tier="per-turn",
         live_delegate="tool_hook",
         stub_attrs=_stub_strands_attrs,
+    ),
+    AdapterCase(
+        "dspy",
+        F.DSPyAdapter,
+        ["dspy", "dspy.adapters", "dspy.adapters.types", "dspy.adapters.types.tool"],
+        live_tier="per-call",
+        live_delegate="agent_builder",
+        live_extra_kwargs=lambda: {"signature": "question -> answer"},
+        stub_attrs=_stub_dspy_attrs,
     ),
 ]
 

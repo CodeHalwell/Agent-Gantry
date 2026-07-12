@@ -177,6 +177,7 @@ class GantryLiveDSPyReAct:
         max_iters: int = 20,
         limit: int = DEFAULT_TOOL_LIMIT,
         score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
         **react_kwargs: Any,
     ) -> None:
         self._gantry = gantry
@@ -184,6 +185,7 @@ class GantryLiveDSPyReAct:
         self._max_iters = max_iters
         self._limit = limit
         self._score_threshold = score_threshold
+        self._namespaces = namespaces
         self._react_kwargs = react_kwargs
 
     async def select_tools(self, query: str) -> list[Any]:
@@ -193,6 +195,7 @@ class GantryLiveDSPyReAct:
             query,
             limit=self._limit,
             score_threshold=self._score_threshold,
+            namespaces=self._namespaces,
         )
 
     async def build(self, query: str) -> Any:
@@ -234,10 +237,37 @@ class DSPyAdapter(BaseFrameworkAdapter):
         pred = react(question="what's the weather in Tokyo?")
     """
 
+    live_tier = "per-call"
+
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a ``dspy.Tool``."""
         return _spec_to_dspy(spec)
+
+    def live(
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        **framework_kwargs: Any,
+    ) -> Any:
+        """Per-call uniform entry point: delegates to :meth:`agent_builder`.
+
+        ``dspy.ReAct`` fixes its tools at construction (no mid-run hook), so
+        the live object is a builder — the deepest DSPy allows. Requires
+        ``signature=`` (the DSPy task signature) in ``framework_kwargs``;
+        ``max_iters`` and any other ``dspy.ReAct`` kwargs pass through too.
+        Returns a :class:`GantryLiveDSPyReAct`; call ``await builder.build(query)``
+        per task to get a fresh ``dspy.ReAct`` with tools re-selected for that
+        query.
+        """
+        return self.agent_builder(
+            limit=limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+            **framework_kwargs,
+        )
 
     def agent_builder(
         self,
@@ -246,6 +276,7 @@ class DSPyAdapter(BaseFrameworkAdapter):
         max_iters: int = 20,
         limit: int | None = None,
         score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
         **react_kwargs: Any,
     ) -> Any:
         """Return a builder that rebuilds a fresh ``dspy.ReAct`` per call with re-selected tools.
@@ -265,6 +296,7 @@ class DSPyAdapter(BaseFrameworkAdapter):
             max_iters=max_iters,
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
+            namespaces=namespaces,
             **react_kwargs,
         )
 

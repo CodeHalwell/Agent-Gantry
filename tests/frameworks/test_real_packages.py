@@ -87,6 +87,12 @@ async def _invoke_semantic_kernel(tool):
     return await tool.invoke(Kernel(), to="boss@x.com")
 
 
+def _invoke_dspy(tool):
+    # dspy.Tool.__call__ — sync, matching ReAct.forward's invoke path; the
+    # wrapped function is a sync bridge over ``ToolSpec.invoke``.
+    return tool(to="boss@x.com")
+
+
 async def _invoke_strands(tool):
     # ``DecoratedFunctionTool`` keeps the wrapped function callable directly;
     # calling it returns the coroutine from the async wrapper, which routes
@@ -118,6 +124,7 @@ REAL_ADAPTERS = [
     ("google_adk", "google.adk", F.GoogleADKAdapter, _invoke_google_adk),
     ("semantic_kernel", "semantic_kernel", F.SemanticKernelAdapter, _invoke_semantic_kernel),
     ("strands", "strands", F.StrandsAdapter, _invoke_strands),
+    ("dspy", "dspy", F.DSPyAdapter, _invoke_dspy),
 ]
 
 
