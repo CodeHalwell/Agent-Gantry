@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`framework-adapters` CI job now runs on ubuntu × Python 3.10–3.13 plus a
+  macOS 3.12 cell** (was a single ubuntu/3.12 cell), matching the OS/Python
+  coverage the main `test` matrix already gives the other framework
+  integrations. Its isolated-env install now also covers `strands-agents`.
+- **New scheduled `latest-frameworks.yml` workflow** validates the latest
+  release of each framework that `pyproject.toml` deliberately floors below
+  current (google-adk, crewai, semantic-kernel, agent-framework) plus the
+  native-adapter set, each in its own isolated env, so drift on unpinned
+  latest versions is caught by a weekly run instead of staying invisible
+  between manual audits.
+
 ## [0.9.0] - 2026-06-16
 
 ### Removed

@@ -1,0 +1,89 @@
+name: Latest framework drift check
+
+# pyproject.toml intentionally floors several framework extras below their
+# latest upstream release because they don't co-resolve with each other in
+# the combined `agent-frameworks` extra (see the dated comments there for the
+# exact conflicts: google-adk vs langgraph, crewai/semantic-kernel vs
+# agent-framework on opentelemetry-api). The main `test` matrix therefore
+# only ever exercises the pinned floors, so drift on the *latest* release of
+# each conflicting framework is invisible until a user hits it.
+#
+# This workflow installs each conflicting framework at latest in its own
+# isolated venv (mirroring the standalone-install recipes documented in
+# pyproject.toml) and runs only that framework's tests. It is schedule/
+# workflow_dispatch only — it never runs on push/pull_request — so a failure
+# here signals upstream drift without blocking merges.
+
+on:
+  schedule:
+    # Weekly, Monday 06:00 UTC.
+    - cron: "0 6 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  latest-frameworks:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # google-adk 2.x requires langgraph<0.4.8, which conflicts with the
+          # langgraph>=1.2.4 floor in the `agent-frameworks` extra, so install
+          # it standalone per the pyproject comment (no langchain/langgraph).
+          - name: google-adk (latest)
+            install: '".[dev,google-genai]" "google-adk>=2.2.0"'
+            tests: tests/frameworks/test_google_adk.py tests/frameworks/test_google_adk_live.py
+
+          # crewai's latest release pins opentelemetry-api ~=1.34, which
+          # conflicts with agent-framework's opentelemetry-api>=1.39 floor, so
+          # install it standalone without agent-framework.
+          - name: crewai (latest)
+            install: '".[dev]" crewai'
+            tests: tests/frameworks/test_crewai.py tests/frameworks/test_live_wrappers.py -k crewai
+
+          # semantic-kernel's latest release has the same opentelemetry-api
+          # conflict with agent-framework, so install it standalone.
+          - name: semantic-kernel (latest)
+            install: '".[dev]" semantic-kernel'
+            tests: tests/frameworks/test_semantic_kernel.py tests/frameworks/test_semantic_kernel_live.py
+
+          # agent-framework itself is floored below latest (<2.0 stays on the
+          # documented 1.x series); validate the newest 1.x release standalone.
+          - name: agent-framework (latest 1.x)
+            install: '".[dev]" "agent-framework<2.0"'
+            tests: tests/test_agent_framework_adapter.py tests/test_agent_framework_integration.py tests/test_agent_framework_provider.py tests/test_agent_framework_orchestration.py
+
+          # The native-tool-adapter frameworks are never a project extra (see
+          # pyproject.toml) because they can't co-resolve with the combined
+          # agent-frameworks set. Validate their latest releases together,
+          # same as the `framework-adapters` CI job but unpinned.
+          - name: native adapters (latest)
+            install: '".[dev]" pydantic-ai-slim openai-agents smolagents haystack-ai agno strands-agents'
+            tests: tests/frameworks/
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      # Isolated env per cell: install exactly the one conflicting framework
+      # at latest alongside the project's dev deps, deliberately NOT the full
+      # extras, so this venv's resolution is independent of the pinned floors.
+      - name: Install isolated env
+        run: |
+          uv venv .venv-latest --python 3.12
+          uv pip install --python .venv-latest ${{ matrix.install }}
+
+      - name: Run tests
+        run: |
+          .venv-latest/bin/python -m pytest ${{ matrix.tests }} -v

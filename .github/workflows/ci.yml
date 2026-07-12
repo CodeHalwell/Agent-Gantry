@@ -82,10 +82,20 @@ jobs:
 
   framework-adapters:
     name: Framework adapter smoke tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        include:
+          # Single macOS cell to catch platform-specific drift without
+          # multiplying the full OS x Python grid (cost control).
+          - os: macos-latest
+            python-version: "3.12"
     steps:
       - uses: actions/checkout@v4
 
@@ -93,23 +103,25 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Set up Python
-        run: uv python install 3.12
+        run: uv python install ${{ matrix.python-version }}
 
       # Isolated env: the native-adapter frameworks (pydantic-ai, openai-agents,
-      # smolagents, haystack, agno) don't co-resolve with the combined
-      # agent-frameworks/nomic set, so they are NOT a project extra. Install the
-      # project (dev) then add them directly with a one-off resolution, and run
-      # the real-package adapter smoke tests. importorskip handles any that
-      # aren't present. langchain/llamaindex/crewai/SK/ADK are covered by the
-      # main `test` matrix (which installs the `agent-frameworks` extra).
+      # smolagents, haystack, agno, strands-agents) don't co-resolve with the
+      # combined agent-frameworks/nomic set, so they are NOT a project extra.
+      # Install the project (dev) then add them directly with a one-off
+      # resolution, and run the real-package adapter smoke tests. importorskip
+      # handles any that aren't present (e.g. a Strands adapter landing later
+      # can rely on the package already being installed here).
+      # langchain/llamaindex/crewai/SK/ADK are covered by the main `test`
+      # matrix (which installs the `agent-frameworks` extra).
       # Resolve the project (dev) + the adapter frameworks together in ONE
       # isolated venv, so a shared dep (pydantic/httpx/openai) is resolved to a
       # single compatible version rather than installed-then-downgraded.
       - name: Run adapter smoke tests
         run: |
-          uv venv .venv-frameworks
+          uv venv .venv-frameworks --python ${{ matrix.python-version }}
           uv pip install --python .venv-frameworks ".[dev]" \
-            pydantic-ai-slim openai-agents smolagents haystack-ai agno
+            pydantic-ai-slim openai-agents smolagents haystack-ai agno strands-agents
           .venv-frameworks/bin/python -m pytest tests/frameworks/ -v
 
   docs:
