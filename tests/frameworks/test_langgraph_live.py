@@ -1,26 +1,32 @@
 """Tests for the deep, per-turn LangGraph dynamic-tool provider.
 
 Exercises :meth:`LangGraphAdapter.react_agent` against the *real* installed
-``langgraph.prebuilt.create_react_agent`` API surface: the agent must re-select
-tools from Gantry on every model turn via the dynamic-``model`` callable and bind
-exactly those tools to the chat model (so the tools advertised to the LLM change
-turn-to-turn as the conversation pivots).
+``langchain.agents.create_agent`` API surface (the ``langgraph.prebuilt.
+create_react_agent`` replacement — the latter is removed in LangGraph 2.0): the
+agent must re-select tools from Gantry on every model turn via a
+``wrap_model_call`` middleware hook and bind exactly those tools to the chat
+model (so the tools advertised to the LLM change turn-to-turn as the
+conversation pivots).
 
 No real LLM is called: a tiny stub ``BaseChatModel`` records which tools were
 bound to it via ``.bind_tools`` and returns a fixed (tool-free) reply so the
-ReAct loop terminates immediately.
+agent loop terminates immediately.
 """
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 
 pytest.importorskip("langgraph")
+pytest.importorskip("langchain")
 pytest.importorskip("langchain_core")
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
+from langgraph.warnings import LangGraphDeprecatedSinceV10
 
 from agent_gantry import AgentGantry
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
@@ -105,7 +111,7 @@ async def test_selected_tool_routes_through_gantry(gantry):
     assert await tools[0].coroutine(city="Tokyo") == "weather:Tokyo:sunny"
 
 
-# -- full compiled graph with dynamic model callable ------------------------ #
+# -- full compiled graph with the create_agent wrap_model_call middleware --- #
 
 
 async def test_react_agent_binds_weather_tool_per_turn(gantry):
@@ -118,7 +124,7 @@ async def test_react_agent_binds_weather_tool_per_turn(gantry):
         {"messages": [HumanMessage(content="what's the weather in Paris?")]}
     )
 
-    assert model.bound_tool_names, "dynamic model callable was never invoked"
+    assert model.bound_tool_names, "wrap_model_call middleware was never invoked"
     last_bound = model.bound_tool_names[-1]
     assert last_bound == ["get_weather"]
 
@@ -133,7 +139,7 @@ async def test_react_agent_binds_email_tool_per_turn(gantry):
         {"messages": [HumanMessage(content="send an email to my boss")]}
     )
 
-    assert model.bound_tool_names, "dynamic model callable was never invoked"
+    assert model.bound_tool_names, "wrap_model_call middleware was never invoked"
     last_bound = model.bound_tool_names[-1]
     assert last_bound == ["send_email"]
 
@@ -145,3 +151,27 @@ async def test_react_agent_superset_covers_all_tools(gantry):
     superset = await _all_tools(gantry)
     names = {t.name for t in superset}
     assert {"get_weather", "send_email", "convert_currency"} <= names
+
+
+# -- regression guard: the deprecated create_react_agent must stay gone ----- #
+
+
+async def test_react_agent_build_does_not_use_deprecated_create_react_agent(gantry):
+    """Building and driving the live agent must never touch ``create_react_agent``.
+
+    ``langgraph.prebuilt.create_react_agent`` is deprecated in LangGraph 1.x
+    (raising ``LangGraphDeprecatedSinceV10`` on use) and is REMOVED outright in
+    LangGraph 2.0. This module migrated to ``langchain.agents.create_agent`` +
+    a ``wrap_model_call`` middleware for per-turn tool re-selection; escalate
+    the specific deprecation warning class to an error here so that if the
+    deprecated call path ever sneaks back in, this test fails loudly instead of
+    the warning getting lost in normal pytest output.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", category=LangGraphDeprecatedSinceV10)
+
+        model = RecordingChatModel()
+        agent = LangGraphAdapter(gantry).react_agent(model, limit=1)
+        await agent.ainvoke(
+            {"messages": [HumanMessage(content="what's the weather in Paris?")]}
+        )

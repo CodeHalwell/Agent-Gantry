@@ -20,6 +20,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   latest versions is caught by a weekly run instead of staying invisible
   between manual audits.
 
+### Changed
+
+- **LangGraph live tool provider migrated off the deprecated `create_react_agent`.**
+  `agent_gantry.integrations.frameworks.langgraph_live` now builds the per-turn
+  live agent with `langchain.agents.create_agent` (the documented replacement;
+  `langgraph.prebuilt.create_react_agent` is removed outright in LangGraph 2.0).
+  Per-turn tool re-selection — the ability for Gantry to rebind a different tool
+  subset to the model on every conversation turn — moved from the old
+  dynamic-`model` callable to a `wrap_model_call` `AgentMiddleware` hook (the
+  same mechanism `langchain.agents.middleware.LLMToolSelectorMiddleware` uses),
+  with identical externally-observable behavior. No fallback to the deprecated
+  API is kept: this project's floors (`langchain>=1.3.4`, `langgraph>=1.2.4`,
+  pinned together in the `agent-frameworks` extra) already guarantee
+  `langchain.agents.create_agent` is available. `LangGraphAdapter.react_agent` /
+  `areact_agent` / `select_for_state` are unaffected — this is purely an
+  internal implementation change, aside from `**agent_kwargs` now being
+  forwarded to `create_agent` (e.g. use `system_prompt=` instead of the old
+  `create_react_agent`'s `prompt=`).
+
 ### Documentation
 
 - **Dedicated runnable examples for the 5 native-tool-adapter frameworks that
@@ -34,7 +53,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pydantic_ai.models.test.TestModel`, and the others gate their live
   agent/model run behind `OPENAI_API_KEY`. `examples/agent_frameworks/
   README.md` documents all five.
->>>>>>> 0a8c7f8 (Add dedicated examples for agno, haystack, pydantic_ai, openai_agents, smolagents)
 
 ## [0.9.0] - 2026-06-16
 
