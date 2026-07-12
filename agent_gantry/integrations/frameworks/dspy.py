@@ -101,7 +101,11 @@ def _spec_to_dspy(spec: ToolSpec) -> Any:
         ImportError: If ``dspy`` is not installed.
     """
     try:
-        from dspy import Tool as DSPyTool
+        # Both names are imported from the same submodule -- not the top-level
+        # `dspy.Tool` re-export -- mirroring dspy.utils.mcp.convert_mcp_tool's
+        # own import line exactly (DSPy's own MCP tool bridge uses this same
+        # pair from this same module).
+        from dspy.adapters.types.tool import Tool as DSPyTool
         from dspy.adapters.types.tool import convert_input_schema_to_tool_args
     except ImportError as exc:  # pragma: no cover - exercised via stub
         raise ImportError(_INSTALL_HINT) from exc

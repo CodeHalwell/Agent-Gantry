@@ -70,11 +70,15 @@ def _fake_convert_input_schema_to_tool_args(schema):
 @pytest.fixture
 def fake_dspy(monkeypatch):
     dspy_module = types.ModuleType("dspy")
-    dspy_module.Tool = _FakeTool
     dspy_module.ReAct = _FakeReAct
     adapters_module = types.ModuleType("dspy.adapters")
     types_module = types.ModuleType("dspy.adapters.types")
     tool_module = types.ModuleType("dspy.adapters.types.tool")
+    # Both `Tool` and `convert_input_schema_to_tool_args` live on THIS leaf
+    # module -- the adapter imports both from here (mirroring
+    # dspy.utils.mcp.convert_mcp_tool's own import line), not from the
+    # top-level `dspy.Tool` re-export.
+    tool_module.Tool = _FakeTool
     tool_module.convert_input_schema_to_tool_args = _fake_convert_input_schema_to_tool_args
 
     monkeypatch.setitem(sys.modules, "dspy", dspy_module)
@@ -197,7 +201,13 @@ async def test_select_routes_through_gantry_execute_and_raises_on_failure(fake_d
 
 async def test_missing_dspy_raises_helpful_error(monkeypatch, gantry):
     # Ensure the lazy import fails even if a real package is somehow present.
-    monkeypatch.setitem(sys.modules, "dspy", None)
+    # Mask every level the adapter imports from -- if only "dspy" were masked,
+    # an already-cached real `dspy.adapters.types.tool` (e.g. imported by
+    # collecting test_dspy_live.py in the same session) would let
+    # `from dspy.adapters.types.tool import Tool` resolve straight from
+    # sys.modules without ever re-checking that `dspy` itself imports.
+    for mod in ("dspy", "dspy.adapters", "dspy.adapters.types", "dspy.adapters.types.tool"):
+        monkeypatch.setitem(sys.modules, mod, None)
 
     from agent_gantry.dspy import DSPyAdapter
     from agent_gantry.integrations.frameworks.base import GantryToolset
@@ -229,7 +239,8 @@ async def test_agent_builder_rebuilds_dspy_react_with_reselected_tools(fake_dspy
 
 
 async def test_agent_builder_build_requires_dspy(monkeypatch, gantry):
-    monkeypatch.setitem(sys.modules, "dspy", None)
+    for mod in ("dspy", "dspy.adapters", "dspy.adapters.types", "dspy.adapters.types.tool"):
+        monkeypatch.setitem(sys.modules, mod, None)
 
     from agent_gantry.dspy import DSPyAdapter
 
