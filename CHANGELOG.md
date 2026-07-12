@@ -20,6 +20,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   latest versions is caught by a weekly run instead of staying invisible
   between manual audits.
 
+### Documentation
+
+- **Dedicated runnable examples for the 5 native-tool-adapter frameworks that
+  had none.** `examples/agent_frameworks/{agno,haystack,pydantic_ai,
+  openai_agents,smolagents}_example.py` each register a small tool set,
+  select + convert through the framework's `*Adapter` (no hard-coded tool
+  names), and exercise both the static tier (`select` → native tool objects)
+  and the deep per-call/per-turn tier (`agent_builder` / `toolset` /
+  `run_hooks` + `refresh` / `live_tools` + `tool_invoker_builder`). All five
+  degrade gracefully with a clear `pip install` hint when the framework isn't
+  installed; the Pydantic AI example runs end-to-end offline via
+  `pydantic_ai.models.test.TestModel`, and the others gate their live
+  agent/model run behind `OPENAI_API_KEY`. `examples/agent_frameworks/
+  README.md` documents all five.
+>>>>>>> 0a8c7f8 (Add dedicated examples for agno, haystack, pydantic_ai, openai_agents, smolagents)
+
 ## [0.9.0] - 2026-06-16
 
 ### Removed
