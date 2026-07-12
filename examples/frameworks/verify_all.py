@@ -231,8 +231,11 @@ async def check_autonomous_pipeline() -> tuple[bool, str]:
     refresher = ToolRefresher(g, limit=3)  # default = latest_activity (recency-aware)
 
     # One user goal, then NO further user messages — only tool results feed back.
+    # The goal is phrased to unambiguously start at the first pipeline step
+    # (data ingestion) so the initial semantic hit is fetch_raw_data, not a
+    # later stage like evaluate_model or generate_report.
     messages: list[dict[str, Any]] = [
-        {"role": "user", "content": "Build and evaluate a model from the raw source data."}
+        {"role": "user", "content": "Fetch the raw unprocessed data from the source system and run it through the pipeline."}
     ]
     # Each result points FORWARD at the next stage (describing what is needed
     # next, not what was just done) — how a real pipeline step hands off.

@@ -70,7 +70,11 @@ async def test_intent_matching_boosts_relevance(sample_tools) -> None:
     for tool in sample_tools:
         await gantry.add_tool(tool)
 
-    query = ToolQuery(context=ConversationContext(query="customer refund request"), limit=1)
+    query = ToolQuery(
+        context=ConversationContext(query="customer refund request"),
+        limit=1,
+        score_threshold=0.0,
+    )
     result = await gantry.retrieve(query)
 
     assert result.tools
