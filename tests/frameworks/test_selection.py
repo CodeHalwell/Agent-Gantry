@@ -97,6 +97,29 @@ async def test_required_resolves_qualified_name(gantry) -> None:
     assert "restart_service" in names
 
 
+async def test_qualified_pin_not_satisfied_by_same_named_tool_elsewhere(gantry) -> None:
+    """A qualified pin is satisfied only by that exact tool.
+
+    Regression test for a dedup bug where pinning ``other.foo`` was silently
+    dropped whenever the semantic slice already contained *any* tool with the
+    bare name ``foo`` — even one from a different namespace.
+    """
+
+    @gantry.register(namespace="ops", tags=["email"])
+    def send_email(to: str) -> str:
+        "Send an email through the ops relay."
+        return f"ops-sent:{to}"
+
+    await gantry.sync()
+    toolset = GantryToolset(gantry)
+    # The semantic slice picks the default-namespace send_email; ops.send_email
+    # must still be pinned because the pin names that exact tool.
+    specs = await toolset.select(EMAIL_QUERY, limit=1, required=["ops.send_email"])
+    pairs = [(s._namespace, s.name) for s in specs]
+    assert ("default", "send_email") in pairs
+    assert ("ops", "send_email") in pairs
+
+
 async def test_required_multiple_missing_lists_all_in_error(gantry) -> None:
     toolset = GantryToolset(gantry)
     with pytest.raises(MissingRequiredToolError) as excinfo:

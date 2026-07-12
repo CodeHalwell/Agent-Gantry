@@ -175,11 +175,12 @@ class GantryStrandsToolHook:
         directly (rather than :func:`_for_strands`, which uses ``.select()``)
         so ``required``/``always_include`` pins still resolve on a turn with
         no extractable user text — matching every other live provider's
-        blank-query behaviour.
+        blank-query behaviour. A blank query with no pins deliberately falls
+        through with an empty selection so tools selected on a previous turn
+        are *retracted* (Strands' tool_registry is stateful; compare Semantic
+        Kernel's provider, which clears its plugin on a blank query).
         """
         query = _query_from_messages(getattr(event.agent, "messages", None))
-        if not query and not self._required and not self._always_include:
-            return
         try:
             specs = await GantryToolset(self._gantry).select_or_empty(
                 query,

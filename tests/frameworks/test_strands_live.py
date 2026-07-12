@@ -142,6 +142,24 @@ async def test_empty_query_leaves_registry_untouched(gantry):
     assert list(agent.tool_registry.registry) == []
 
 
+async def test_empty_query_retracts_stale_tools(gantry):
+    """A turn with no query signal retracts the previous turn's tools.
+
+    Regression test: an early return on an empty query used to leave the
+    previous turn's tools registered in Strands' stateful tool_registry
+    instead of retracting them — inconsistent with the other stateful live
+    providers (e.g. Semantic Kernel clears its plugin on a blank query).
+    """
+    hook = StrandsAdapter(gantry).tool_hook(limit=1)
+    agent = _agent_with_user_text("weather forecast for the city")
+    await _fire_before_model_call(hook, agent)
+    assert set(agent.tool_registry.registry) == {"get_weather"}
+
+    agent.messages.clear()
+    await _fire_before_model_call(hook, agent)
+    assert list(agent.tool_registry.registry) == []
+
+
 async def test_stream_absorbs_tool_failure_into_error_tool_result(gantry):
     """Documents a deliberate deviation that lives in Strands' own code, not ours.
 

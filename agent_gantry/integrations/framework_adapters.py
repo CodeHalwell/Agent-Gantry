@@ -43,6 +43,7 @@ FrameworkName = Literal[
     "smolagents",
     "agent_framework",
     "strands",
+    "dspy",
     # Legacy spellings accepted for backwards compatibility (see #101) and
     # normalized internally to the canonical name above.
     "crew_ai",
@@ -65,6 +66,7 @@ _SUPPORTED_FRAMEWORKS: frozenset[str] = frozenset(
         "smolagents",
         "agent_framework",
         "strands",
+        "dspy",
     }
 )
 
@@ -103,7 +105,7 @@ async def fetch_framework_tools(
     ``framework`` accepts any canonical native-adapter name (``langchain``,
     ``langgraph``, ``llamaindex``, ``crewai``, ``autogen``, ``semantic_kernel``,
     ``google_adk``, ``agno``, ``haystack``, ``pydantic_ai``, ``openai_agents``,
-    ``smolagents``, ``agent_framework``, ``strands``) plus the legacy spellings
+    ``smolagents``, ``agent_framework``, ``strands``, ``dspy``) plus the legacy spellings
     ``crew_ai`` and ``semantic-kernel``, which are normalized internally to
     ``crewai`` and ``semantic_kernel`` respectively.
 

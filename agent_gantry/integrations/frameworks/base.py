@@ -345,9 +345,11 @@ def _resolve_tool_names(
     across namespaces (mirroring
     :meth:`~agent_gantry.core.registry.ToolRegistry.get_tool_by_name`).
 
-    Returns ``(found, missing)`` — the resolved :class:`ToolDefinition`\\ s in
-    the order ``names`` was given, and the subset of ``names`` that matched
-    nothing.
+    Returns ``(found, missing)`` — ``(requested name, resolved ToolDefinition)``
+    pairs in the order ``names`` was given, and the subset of ``names`` that
+    matched nothing. The requested name is kept alongside the resolution so
+    callers can tell a bare pin (``"foo"``) from a qualified one
+    (``"other.foo"``) when deduplicating against the semantic slice.
     """
     known = gantry.list_tools_sync()
     by_qualified: dict[str, ToolDefinition] = {}
@@ -356,25 +358,26 @@ def _resolve_tool_names(
         by_qualified.setdefault(_bare_qualified_name(tool), tool)
         by_bare.setdefault(tool.name, tool)
 
-    found: list[ToolDefinition] = []
+    found: list[tuple[str, ToolDefinition]] = []
     missing: list[str] = []
     for name in names:
         tool = by_qualified.get(name) or by_bare.get(name)
         if tool is None:
             missing.append(name)
         else:
-            found.append(tool)
+            found.append((name, tool))
     return found, missing
 
 
 def _pin_specs(
     gantry: AgentGantry,
     names: Sequence[str] | None,
-    seen: set[str],
+    seen_qualified: set[str],
+    seen_bare: set[str],
     *,
     kind: Literal["required", "always_include"],
 ) -> list[ToolSpec]:
-    """Resolve ``names`` and wrap any not already in ``seen`` as pinned :class:`ToolSpec`\\ s.
+    """Resolve ``names`` and wrap any not already present as pinned :class:`ToolSpec`\\ s.
 
     Shared by :meth:`GantryToolset.select` and :meth:`GantryToolset.select_or_empty`
     for both the ``required`` and ``always_include`` keyword arguments — the
@@ -390,12 +393,18 @@ def _pin_specs(
       ``GantryContextProvider``'s ``always_include`` semantics (a missing
       always-include tool is a soft-fail, not a hard error).
 
-    ``seen`` is mutated in place — the bare-qualified (``namespace.name``),
-    versioned-qualified (``ToolSpec.qualified_name``, i.e. ``namespace.name:
-    version``), and bare name of each newly pinned tool are all added — so a
-    name that already appeared in the semantic selection (in either name
-    form), or in an earlier call to this helper (e.g. ``required`` pinned
-    before ``always_include``), is never duplicated.
+    Deduplication respects the pin's own name form:
+
+    - A **qualified** pin (``"other.foo"``) is skipped only when *that exact
+      tool* (same ``namespace.name``) is already present — a same-named tool
+      from a different namespace in the semantic slice does NOT satisfy it.
+    - A **bare** pin (``"foo"``) is satisfied by *any* already-present tool
+      with that bare name (semantic slice or an earlier pin), since the caller
+      expressed no namespace preference.
+
+    ``seen_qualified``/``seen_bare`` are mutated in place so an earlier call
+    (``required`` is pinned before ``always_include``) deduplicates against
+    later ones.
     """
     if not names:
         return []
@@ -412,14 +421,16 @@ def _pin_specs(
             missing,
         )
     pinned: list[ToolSpec] = []
-    for tool_def in found:
+    for requested, tool_def in found:
         bare_qualified = _bare_qualified_name(tool_def)
-        if bare_qualified in seen or tool_def.name in seen:
+        if bare_qualified in seen_qualified:
+            continue
+        is_bare_pin = requested == tool_def.name
+        if is_bare_pin and tool_def.name in seen_bare:
             continue
         spec = spec_from_tool(gantry, tool_def)
-        seen.add(bare_qualified)
-        seen.add(spec.qualified_name)
-        seen.add(tool_def.name)
+        seen_qualified.add(bare_qualified)
+        seen_bare.add(tool_def.name)
         pinned.append(spec)
     return pinned
 
@@ -447,13 +458,15 @@ def _resolve_pins(
     """
     if not required and not always_include:
         return []
-    seen: set[str] = set()
+    seen_qualified: set[str] = set()
+    seen_bare: set[str] = set()
     for s in specs:
-        seen.add(s.qualified_name)
-        seen.add(f"{s._namespace}.{s.name}")
-        seen.add(s.name)
-    pinned = _pin_specs(gantry, required, seen, kind="required")
-    pinned += _pin_specs(gantry, always_include, seen, kind="always_include")
+        seen_qualified.add(f"{s._namespace}.{s.name}")
+        seen_bare.add(s.name)
+    pinned = _pin_specs(gantry, required, seen_qualified, seen_bare, kind="required")
+    pinned += _pin_specs(
+        gantry, always_include, seen_qualified, seen_bare, kind="always_include"
+    )
     return pinned
 
 

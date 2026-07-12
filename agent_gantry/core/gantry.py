@@ -482,10 +482,13 @@ class AgentGantry:
             )
 
             self._pending_tools.append(tool)
-            self._tool_handlers[tool_name] = underlying
 
-            # Register both tool definition and handler in the registry
+            # Register both tool definition and handler in the registry.
+            # _tool_handlers is keyed by the namespace-qualified name so
+            # same-named tools in different namespaces never clobber each
+            # other (its only consumer is the tool_count property).
             key = f"{namespace}.{tool_name}"
+            self._tool_handlers[key] = underlying
             self._registry.register_tool(tool)
             self._registry.register_handler(key, underlying)
 
@@ -520,9 +523,15 @@ class AgentGantry:
         """
         self._pending_tools.append(tool)
         if handler is not None:
+            # Mirror register(): the definition goes into the registry right
+            # away (not just _pending_tools) so the tool is executable before
+            # the next sync() even with auto_sync=False, and the handler map
+            # is keyed by the namespace-qualified name to avoid cross-namespace
+            # clobbering.
             key = f"{tool.namespace}.{tool.name}"
+            self._registry.register_tool(tool)
             self._registry.register_handler(key, handler)
-            self._tool_handlers[tool.name] = handler
+            self._tool_handlers[key] = handler
         if self._config.auto_sync:
             await self.sync()
 
@@ -810,7 +819,7 @@ class AgentGantry:
                 # Register the handler if available
                 if handler:
                     self._registry.register_handler(key, handler)
-                    self._tool_handlers[tool.name] = handler
+                    self._tool_handlers[key] = handler
                 else:
                     logger.debug(f"No handler found for tool '{key}' in module '{module_path}'")
 

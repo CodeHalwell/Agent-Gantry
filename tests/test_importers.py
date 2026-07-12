@@ -699,3 +699,79 @@ class TestRealPackages:
         result = await gantry.execute(ToolCall(tool_name="li_add", arguments={"a": 10, "b": 15}))
         assert result.status == ExecutionStatus.SUCCESS
         assert result.result == 25
+
+
+class TestAddToolHandlerWiring:
+    """Regression tests for ``AgentGantry.add_tool(..., handler=...)`` wiring."""
+
+    async def test_handler_backed_tool_executable_before_sync(self) -> None:
+        """A handler-backed tool must be executable immediately, pre-sync.
+
+        With ``auto_sync=False`` (the batching mode used when importing many
+        framework tools), ``add_tool(..., handler=...)`` must register the
+        definition in the registry right away — matching ``@gantry.register`` —
+        rather than parking it in the pending queue until the next ``sync()``.
+        """
+        from agent_gantry.schema.config import AgentGantryConfig
+        from agent_gantry.schema.tool import ToolDefinition
+
+        g = AgentGantry(
+            config=AgentGantryConfig(auto_sync=False),
+            embedder=SimpleEmbedder(dimension=64),
+        )
+        tool = ToolDefinition(
+            name="pre_sync_echo",
+            description="Echo the given text back to the caller.",
+            parameters_schema={
+                "type": "object",
+                "properties": {"text": {"type": "string"}},
+                "required": ["text"],
+            },
+        )
+
+        async def handler(text: str) -> str:
+            return f"echo:{text}"
+
+        await g.add_tool(tool, handler=handler)
+        # No sync() on purpose — execution must already work.
+        result = await g.execute(ToolCall(tool_name="pre_sync_echo", arguments={"text": "hi"}))
+        assert result.status == ExecutionStatus.SUCCESS
+        assert result.result == "echo:hi"
+
+    async def test_handlers_do_not_clobber_across_namespaces(self) -> None:
+        """Same-named tools in different namespaces keep distinct handlers."""
+        from agent_gantry.schema.config import AgentGantryConfig
+        from agent_gantry.schema.tool import ToolDefinition
+
+        g = AgentGantry(
+            config=AgentGantryConfig(auto_sync=False),
+            embedder=SimpleEmbedder(dimension=64),
+        )
+        schema = {"type": "object", "properties": {}}
+
+        async def alpha_handler() -> str:
+            return "alpha"
+
+        async def beta_handler() -> str:
+            return "beta"
+
+        await g.add_tool(
+            ToolDefinition(
+                name="whoami", namespace="alpha",
+                description="Report which namespace this tool lives in.",
+                parameters_schema=schema,
+            ),
+            handler=alpha_handler,
+        )
+        await g.add_tool(
+            ToolDefinition(
+                name="whoami", namespace="beta",
+                description="Report which namespace this tool lives in.",
+                parameters_schema=schema,
+            ),
+            handler=beta_handler,
+        )
+        assert g._registry.get_handler("alpha.whoami") is alpha_handler
+        assert g._registry.get_handler("beta.whoami") is beta_handler
+        # The handler map is keyed by qualified name, so both are counted.
+        assert g.tool_count == 2
