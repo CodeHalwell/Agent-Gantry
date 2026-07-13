@@ -46,6 +46,11 @@ For per-step (multi-turn) re-selection within one run, use `ToolRefresher`
 - `autogen_example.py`: Registering Gantry tools for an AutoGen (AG2) `AssistantAgent`.
 - `llamaindex_example.py`: Using Gantry with LlamaIndex's new `AgentWorkflow` based `ReActAgent`.
 - `semantic_kernel_example.py`: Registering Gantry tools as Semantic Kernel plugins with auto-function calling.
+- `pydantic_ai_example.py`: `PydanticAIAdapter` — static `select` → native `pydantic_ai.tools.Tool`, plus the deep per-turn tier via `adapter.toolset(...)` (a live `AbstractToolset` that re-selects on every run/step from the `RunContext`). Runs fully offline with `pydantic_ai.models.test.TestModel` — no API key needed anywhere in the file.
+- `openai_agents_example.py`: `OpenAIAgentsAdapter` — static `select` → native `agents.FunctionTool`, plus the deep per-turn tier via `adapter.refresh(agent, ...)` (rewrites `agent.tools` in place) and `adapter.run_hooks(agent)` (the same refresh applied automatically before every model call). Tool selection and re-selection run with no API key; the actual `agents.Runner.run(...)` turn is gated behind `OPENAI_API_KEY`.
+- `smolagents_example.py`: `SmolagentsAdapter` — static `select` → native `smolagents.Tool`, plus the per-call tier via `adapter.agent_builder(...)` (smolagents fixes an agent's tools at construction, so this rebuilds a fresh agent per call with freshly selected tools). Tool selection runs with no API key; building the model + running the agent is gated behind `OPENAI_API_KEY`.
+- `haystack_example.py`: `HaystackAdapter` — static `select` → native `haystack.tools.Tool`, plus the per-call tier via `adapter.live_tools(...)` and `adapter.tool_invoker_builder(...)` (rebuilds a fresh `ToolInvoker` per call). Tool selection runs with no API key; an `OpenAIChatGenerator` + `ToolInvoker` round is gated behind `OPENAI_API_KEY`.
+- `agno_example.py`: `AgnoAdapter` — static `select` → native `agno.tools.function.Function`, plus the per-call tier via `adapter.agent_builder(...)` (Agno fixes an agent's tools at construction, so this rebuilds a fresh `agno.agent.Agent` per call with freshly selected tools). Tool selection runs with no API key; building the model + running the agent is gated behind `OPENAI_API_KEY`.
 
 ## Installation Requirements
 
@@ -63,6 +68,20 @@ uv add agent-gantry autogen-agentchat "autogen-ext[openai]"
 
 # Option 3: Developing in the agent-gantry repo
 uv sync --extra agent-frameworks
+```
+
+**pydantic_ai / openai_agents / smolagents / haystack / agno are intentionally NOT
+part of `agent-frameworks`** (or any other project extra) — several of them can't
+co-resolve with the combined extra's pinned dependencies (see `pyproject.toml`
+around lines 152-160 for the specifics). Install them standalone alongside
+`agent-gantry`:
+
+```bash
+pip install agent-gantry pydantic-ai-slim
+pip install agent-gantry openai-agents
+pip install agent-gantry smolagents
+pip install agent-gantry haystack-ai
+pip install agent-gantry agno
 ```
 
 **Note on Python Version:** These examples are verified on **Python 3.13**, but should work on any supported Agent-Gantry version (**Python 3.10+**).

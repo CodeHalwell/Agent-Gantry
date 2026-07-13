@@ -150,7 +150,7 @@ agent-frameworks = [
     "google-adk>=1.14.1",
 ]
 # NOTE: the native-tool-adapter frameworks (pydantic-ai, openai-agents,
-# smolagents, haystack-ai, agno) are intentionally NOT a project extra: several
+# smolagents, haystack-ai, agno, strands-agents, dspy) are intentionally NOT a project extra: several
 # of them (e.g. openai-agents requires pydantic>=2.12.2) cannot co-resolve with
 # the `agent-frameworks` extra (pydantic<2.12 via crewai/agent-framework), and a
 # project extra must satisfy uv's *universal* lock alongside every other extra.

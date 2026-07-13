@@ -248,8 +248,8 @@ async def prepare_session(*, embedder_kind: str = "simple") -> tuple[
 def build_live_chat_client():
     """Create an AF chat client with explicit credential routing and clear errors."""
     from agent_framework.exceptions import SettingNotFoundError
-    from dotenv import load_dotenv
     from agent_framework.openai import OpenAIChatClient
+    from dotenv import load_dotenv
 
     load_dotenv()
 
@@ -720,9 +720,9 @@ class GantryAgentFrameworkTUI(App[None]):
         tool_event = message.tool_event
         log = self.query_one("#execution-log", RichLog)
         status = (
-            f"[#95f985]✓ result[/]"
+            "[#95f985]✓ result[/]"
             if tool_event.ok
-            else f"[red]✗ failed[/]"
+            else "[red]✗ failed[/]"
         )
         preview = str(tool_event.result.result)
         if len(preview) > 48:

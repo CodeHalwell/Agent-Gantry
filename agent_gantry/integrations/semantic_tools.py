@@ -110,7 +110,7 @@ class SemanticToolSelector:
         limit: int = 5,
         dialect: str = "openai",
         auto_sync: bool = True,
-        score_threshold: float = 0.5,
+        score_threshold: float = 0.0,
     ) -> None:
         """
         Initialize the semantic tool selector.
@@ -122,7 +122,12 @@ class SemanticToolSelector:
             limit: Maximum number of tools to retrieve (default: 5).
             dialect: Schema dialect for tool conversion (default: "openai").
             auto_sync: Whether to sync tools before retrieval (default: True).
-            score_threshold: Minimum score threshold (default: 0.5).
+            score_threshold: Minimum score threshold (default: 0.0 — no
+                filtering, matching every framework adapter in
+                ``agent_gantry.integrations.frameworks``. This intentionally
+                differs from the raw ``ToolQuery`` schema default of 0.5 — see
+                ``agent_gantry.schema.query.ToolQuery.score_threshold`` for why
+                a non-zero default is a silent-drop trap for convenience APIs).
         """
         self._gantry = gantry
         self._prompt_param = prompt_param
@@ -368,7 +373,7 @@ def with_semantic_tools(
     limit: int = 5,
     dialect: str = "openai",
     auto_sync: bool = True,
-    score_threshold: float = 0.5,
+    score_threshold: float = 0.0,
 ) -> SemanticToolSelector | Callable[..., Any]:
     """
     Decorator for automatic semantic tool selection in LLM generate functions.
@@ -406,7 +411,12 @@ def with_semantic_tools(
         limit: Maximum tools to retrieve (default: 5).
         dialect: Tool schema format - "openai", "anthropic", "gemini" (default: "openai").
         auto_sync: Whether to sync tools before retrieval (default: True).
-        score_threshold: Minimum relevance score for tools (default: 0.5).
+        score_threshold: Minimum relevance score for tools (default: 0.0 — no
+            filtering, matching every framework adapter in
+            ``agent_gantry.integrations.frameworks``; the raw ``ToolQuery``
+            schema default is 0.5, but that default is a silent-drop trap for
+            convenience APIs like this one — see
+            ``agent_gantry.schema.query.ToolQuery.score_threshold``).
 
     Returns:
         SemanticToolSelector instance or wrapped function.
@@ -540,7 +550,7 @@ class SemanticToolsDecorator:
         limit: int = 5,
         dialect: str = "openai",
         auto_sync: bool = True,
-        score_threshold: float = 0.5,
+        score_threshold: float = 0.0,
     ) -> None:
         """
         Initialize the decorator factory.
@@ -552,7 +562,10 @@ class SemanticToolsDecorator:
             limit: Default maximum tools to retrieve.
             dialect: Default schema dialect.
             auto_sync: Whether to auto-sync by default.
-            score_threshold: Default score threshold.
+            score_threshold: Default score threshold (0.0 — no filtering,
+                matching every framework adapter; see the module-level note on
+                ``with_semantic_tools`` for why this differs from the raw
+                ``ToolQuery`` schema default of 0.5).
         """
         self._gantry = gantry
         self._prompt_param = prompt_param

@@ -197,12 +197,13 @@ class TestAgentGantryModuleImport:
         """Test that tool handlers are properly registered."""
         await gantry.collect_tools_from_modules(["tests.test_modules.module_a"])
 
-        # Check that handlers are registered
-        assert "tool_a1" in gantry._tool_handlers
-        assert "tool_a2" in gantry._tool_handlers
+        # Check that handlers are registered (keyed by namespace-qualified
+        # name so same-named tools across namespaces never clobber each other)
+        assert "default.tool_a1" in gantry._tool_handlers
+        assert "default.tool_a2" in gantry._tool_handlers
 
         # Verify handlers are callable
-        handler1 = gantry._tool_handlers["tool_a1"]
+        handler1 = gantry._tool_handlers["default.tool_a1"]
         assert callable(handler1)
         result = handler1(5)
         assert result == 10

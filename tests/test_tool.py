@@ -141,6 +141,49 @@ class TestToolDefinition:
         assert schema["type"] == "function"
 
 
+class TestToolSource:
+    """Tests for the ToolSource enum."""
+
+    def test_framework_member_exists(self) -> None:
+        """FRAMEWORK is a valid source for tools imported from other agent
+        frameworks (LangChain/CrewAI/LlamaIndex/...) via
+        agent_gantry.integrations.importers."""
+        assert ToolSource.FRAMEWORK == "framework"
+        assert ToolSource("framework") is ToolSource.FRAMEWORK
+
+    def test_all_expected_members_present(self) -> None:
+        """Adding FRAMEWORK must not disturb any pre-existing member."""
+        assert {member.value for member in ToolSource} == {
+            "python_function",
+            "mcp_server",
+            "openapi",
+            "a2a_agent",
+            "manual",
+            "framework",
+        }
+
+    def test_tool_definition_with_framework_source(self) -> None:
+        """A ToolDefinition can be constructed with source=ToolSource.FRAMEWORK."""
+        tool = ToolDefinition(
+            name="imported_tool",
+            description="A tool imported from an external agent framework.",
+            parameters_schema={"type": "object", "properties": {}},
+            source=ToolSource.FRAMEWORK,
+            source_uri="langchain://imported_tool",
+        )
+        assert tool.source == ToolSource.FRAMEWORK
+        assert tool.source_uri == "langchain://imported_tool"
+
+    def test_default_source_is_python_function(self) -> None:
+        """Existing behavior is unaffected: default source is still PYTHON_FUNCTION."""
+        tool = ToolDefinition(
+            name="default_source_tool",
+            description="A tool with no explicit source.",
+            parameters_schema={"type": "object", "properties": {}},
+        )
+        assert tool.source == ToolSource.PYTHON_FUNCTION
+
+
 class TestToolCost:
     """Tests for ToolCost model."""
 

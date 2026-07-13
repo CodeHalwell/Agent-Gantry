@@ -31,13 +31,17 @@ The ``autogen_core`` import is lazy (only inside the class/factory), so
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import GantryToolset, ToolSpec
+from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT, GantryToolset, ToolSpec
+from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
+
+logger = logging.getLogger(__name__)
 
 
 def _require_autogen() -> Any:
@@ -83,13 +87,19 @@ def _build_workbench_class() -> type:
             gantry: AgentGantry,
             *,
             query: str = "",
-            limit: int = 5,
+            limit: int = DEFAULT_TOOL_LIMIT,
             score_threshold: float = 0.0,
+            namespaces: list[str] | None = None,
+            required: list[str] | None = None,
+            always_include: list[str] | None = None,
         ) -> None:
             self._toolset = GantryToolset(gantry)
             self._query = query
             self._limit = limit
             self._score_threshold = score_threshold
+            self._namespaces = namespaces
+            self._required = required
+            self._always_include = always_include
             # Specs from the most recent ``list_tools`` selection, keyed by the
             # tool name the model calls. ``call_tool`` resolves against this.
             self._selected: dict[str, ToolSpec] = {}
@@ -115,17 +125,32 @@ def _build_workbench_class() -> type:
 
             Called by the agent on every turn. The freshly selected specs are
             cached so :meth:`call_tool` can resolve and invoke them.
+
+            Never raises on selection failure — a broken retrieval must not
+            break the agent's turn. ``self._selected`` persists across turns
+            (``call_tool`` resolves against it), so on failure this logs a
+            WARNING and leaves the previous turn's selection in place rather
+            than wiping it — see "Per-turn selection-failure policy" in
+            ``integrations/frameworks/README.md``.
             """
-            if not (self._query or "").strip():
-                # No retrieval signal: expose no tools rather than selecting on
-                # an empty embedding (arbitrary top-k for some embedders).
-                self._selected = {}
-                return []
-            specs = await self._toolset.select(
-                self._query,
-                limit=self._limit,
-                score_threshold=self._score_threshold,
-            )
+            try:
+                specs = await self._toolset.select_or_empty(
+                    self._query,
+                    limit=self._limit,
+                    score_threshold=self._score_threshold,
+                    namespaces=self._namespaces,
+                    required=self._required,
+                    always_include=self._always_include,
+                )
+            except MissingRequiredToolError:
+                raise
+            except Exception:
+                logger.warning(
+                    "GantryWorkbench.list_tools: semantic retrieval failed; "
+                    "continuing with the previous turn's tools.",
+                    exc_info=True,
+                )
+                return [self._spec_to_schema(spec) for spec in self._selected.values()]
             self._selected = {spec.name: spec for spec in specs}
             return [self._spec_to_schema(spec) for spec in specs]
 
@@ -240,8 +265,11 @@ def _gantry_workbench(
     gantry: AgentGantry,
     *,
     query: str = "",
-    limit: int = 5,
+    limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
+    namespaces: list[str] | None = None,
+    required: list[str] | None = None,
+    always_include: list[str] | None = None,
 ) -> Any:
     """Build a :class:`GantryWorkbench` for per-turn dynamic tool provision.
 
@@ -259,6 +287,9 @@ def _gantry_workbench(
         query=query,
         limit=limit,
         score_threshold=score_threshold,
+        namespaces=namespaces,
+        required=required,
+        always_include=always_include,
     )
 
 

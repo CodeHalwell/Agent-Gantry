@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import (
+    DEFAULT_TOOL_LIMIT,
     BaseFrameworkAdapter,
     GantryToolset,
     ToolSpec,
@@ -39,8 +40,7 @@ def _spec_to_google_adk(spec: ToolSpec) -> Any:
         from google.adk.tools import FunctionTool
     except ImportError as exc:  # pragma: no cover - exercised via stub
         raise ImportError(
-            "Google ADK support requires `google-adk`. "
-            "Install it with `pip install google-adk`."
+            "Google ADK support requires `google-adk`. Install it with `pip install google-adk`."
         ) from exc
 
     # ADK's automatic function calling rejects `T | None` and `None`-typed
@@ -52,7 +52,7 @@ async def _for_google_adk(
     gantry: AgentGantry,
     query: str,
     *,
-    limit: int = 3,
+    limit: int = DEFAULT_TOOL_LIMIT,
     **select_kwargs: Any,
 ) -> list[Any]:
     """Select tools for ``query`` and return them as ADK ``FunctionTool``s."""
@@ -68,13 +68,50 @@ class GoogleADKAdapter(BaseFrameworkAdapter):
     through ``gantry.execute``.
     """
 
+    live_tier = "per-turn"
+
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a Google ADK ``FunctionTool``."""
         return _spec_to_google_adk(spec)
 
+    def live(
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
+        **framework_kwargs: Any,
+    ) -> Any:
+        """Per-turn uniform entry point: delegates to :meth:`before_model_callback`.
+
+        Returns an ``async (callback_context, llm_request) -> None`` callback
+        — plug it into ``Agent(tools=[], before_model_callback=<result>)``.
+        ``required``/``always_include`` are re-applied on every model request
+        (see
+        :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select`).
+        No other ``framework_kwargs`` are required (unlike LangGraph/OpenAI
+        Agents/Semantic Kernel, this hook is agent-agnostic).
+        """
+        return self.before_model_callback(
+            limit=limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+            required=required,
+            always_include=always_include,
+            **framework_kwargs,
+        )
+
     def before_model_callback(
-        self, *, limit: int | None = None, score_threshold: float = 0.0
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
     ) -> Any:
         """Build an ADK ``before_model_callback`` that injects Gantry tools per turn."""
         from agent_gantry.integrations.frameworks.google_adk_live import (
@@ -82,7 +119,12 @@ class GoogleADKAdapter(BaseFrameworkAdapter):
         )
 
         return _gantry_before_model_callback(
-            self._gantry, limit=self._default_limit if limit is None else limit, score_threshold=score_threshold
+            self._gantry,
+            limit=self._default_limit if limit is None else limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         )
 
     def agent(
@@ -93,6 +135,9 @@ class GoogleADKAdapter(BaseFrameworkAdapter):
         instruction: str = "",
         limit: int | None = None,
         score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **agent_kwargs: Any,
     ) -> Any:
         """Build an ADK ``Agent`` wired for per-turn dynamic tool selection (tools=[] + callback)."""
@@ -107,5 +152,8 @@ class GoogleADKAdapter(BaseFrameworkAdapter):
             instruction=instruction,
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
+            namespaces=namespaces,
+            required=required,
+            always_include=always_include,
             **agent_kwargs,
         )

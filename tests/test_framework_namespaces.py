@@ -36,6 +36,11 @@ FRAMEWORK_ADAPTERS = {
         ["semantic_kernel", "semantic_kernel.functions"],
     ),
     "agent_gantry.google_adk": ("GoogleADKAdapter", ["google.adk", "google.adk.tools"]),
+    "agent_gantry.strands": ("StrandsAdapter", ["strands", "strands.hooks"]),
+    "agent_gantry.dspy": (
+        "DSPyAdapter",
+        ["dspy", "dspy.adapters", "dspy.adapters.types", "dspy.adapters.types.tool"],
+    ),
     # Microsoft Agent Framework: unified entry point.
     "agent_gantry.agent_framework": ("AgentFrameworkAdapter", ["agent_framework"]),
 }
@@ -122,7 +127,7 @@ def test_importing_agent_gantry_does_not_load_third_party_frameworks():
         # agent frameworks
         "agent_framework", "langchain_core", "langgraph", "llama_index",
         "crewai", "pydantic_ai", "agents", "smolagents", "haystack", "agno",
-        "semantic_kernel", "google.adk",
+        "semantic_kernel", "google.adk", "strands", "dspy",
         # LLM provider SDKs — the LLM adapters never import them (they only emit
         # schemas via gantry.retrieve_tools), so none should load on import.
         "openai", "anthropic", "groq", "mistralai", "google.generativeai",

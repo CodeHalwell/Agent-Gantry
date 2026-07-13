@@ -16,8 +16,9 @@ def test_validate_description_valid():
 
 
 def test_ssrf_domain_extraction_bypass():
-    from agent_gantry.core.security import SecurityPolicy, PermissionDeniedError
     import pytest
+
+    from agent_gantry.core.security import PermissionDeniedError, SecurityPolicy
 
     sp = SecurityPolicy(allowed_domains=["example.com"])
 
@@ -32,8 +33,9 @@ def test_ssrf_domain_extraction_bypass():
             sp.check_permission("test_tool", {"url": url})
 
 def test_ssrf_port_bypass():
-    from agent_gantry.core.security import SecurityPolicy, PermissionDeniedError
     import pytest
+
+    from agent_gantry.core.security import PermissionDeniedError, SecurityPolicy
 
     sp = SecurityPolicy(allowed_domains=["example.com"])
 
@@ -50,8 +52,9 @@ def test_ssrf_port_bypass():
 
 
 def test_ssrf_invalid_port_with_hostname():
-    from agent_gantry.core.security import SecurityPolicy, PermissionDeniedError
     import pytest
+
+    from agent_gantry.core.security import PermissionDeniedError, SecurityPolicy
 
     sp = SecurityPolicy(allowed_domains=["example.com"])
 

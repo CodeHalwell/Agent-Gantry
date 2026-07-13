@@ -1,0 +1,54 @@
+---
+import DocsLayout from '../../../../layouts/DocsLayout.astro';
+import CodeBlock from '../../../../components/CodeBlock.astro';
+---
+<DocsLayout title="Advanced DSPy guide | Agent-Gantry">
+  <p class="eyebrow">Advanced framework guide</p>
+  <h1>Advanced DSPy</h1>
+  <p class="lead">Scale DSPy from static tool demos to governed agent workloads with per-call dynamic tool selection, explicit LLM-call policy, tracing, and deployment boundaries.</p>
+  <p><a class="pill" href="/Agent-Gantry/docs/frameworks/dspy/">← Basic DSPy usage</a></p>
+
+  <h2>Advanced page: per-call dynamic tool selection</h2>
+  <p><code>dspy.ReAct</code> bakes each tool's name and description into its instruction prompt once, at construction, and freezes <code>self.tools</code> into a plain dict — there is no runtime hook to swap either mid-run. (DSPy's <code>dspy.utils.callback.BaseCallback</code> exposes <code>on_tool_start</code>/<code>on_tool_end</code> and <code>on_module_start</code>/<code>on_module_end</code>, but those fire for observability around an already-selected tool call or an already-finished top-level run — never <em>before</em> the model decides which tool to call next, unlike Strands' <code>BeforeModelCallEvent</code> or Google ADK's <code>before_model_callback</code>.) So the deepest re-selection tier DSPy permits is <strong>per top-level call</strong>: rebuild a fresh <code>dspy.ReAct</code> for each call, with tools re-selected for that call's query — the same tier CrewAI, Agno, and Smolagents get.</p>
+  <CodeBlock lang="python" code={`from agent_gantry.dspy import DSPyAdapter
+
+builder = DSPyAdapter(gantry).agent_builder(
+    "question -> answer",
+    max_iters=5,
+)
+
+# Each call re-selects tools for THAT call's query and builds a fresh ReAct.
+react = await builder.build("What's the weather in Tokyo?")
+pred = react(question="What's the weather in Tokyo?")
+`} />
+  <p>Prefer a fixed tool set for a single run instead? The static path still works — select once and hand the framework's native objects to <code>dspy.ReAct(signature, tools=[...])</code>:</p>
+  <CodeBlock lang="python" code={`candidate_tools = await DSPyAdapter(gantry).select(
+    query=user_message,
+    limit=8,
+)
+react = dspy.ReAct("question -> answer", tools=candidate_tools)
+`} />
+
+  <h2>Sync vs. async tool invocation</h2>
+  <p><code>dspy.Tool</code> supports a synchronous <code>__call__</code> (the path <code>ReAct.forward</code> — i.e. plain <code>react(...)</code> — uses) and an async <code>acall</code> (the path <code>ReAct.aforward</code> / <code>await react.acall(...)</code> uses). <code>DSPyAdapter</code> wraps every tool with a <strong>synchronous</strong> function backed by Gantry's loop-safe sync bridge, so it works correctly under both entry points with zero DSPy configuration — no need to set <code>dspy.configure(allow_tool_async_sync_conversion=True)</code> or remember to always call <code>await react.acall(...)</code>. Execution still always routes through <code>gantry.execute</code> (retries, timeouts, circuit breakers, security policy).</p>
+
+  <h2>LLM calls and model policy</h2>
+  <p>Centralize LLM calls through <code>dspy.LM(...)</code> (LiteLLM-backed, so one interface covers OpenAI, Anthropic, and most other providers) when possible; otherwise add middleware around the framework call via <code>dspy.utils.callback.BaseCallback</code>. The policy should select the provider, enforce budget ceilings, redact sensitive fields, emit token metrics, and decide whether tool results should be summarized before returning to the model.</p>
+  <CodeBlock lang="python" code={`response = llm_policy.complete(
+    framework="DSPy",
+    model="primary-or-fallback-model",
+    messages=messages,
+    tools=framework_tools,
+    trace_id=trace_id,
+)
+`} />
+
+  <h2>Production patterns</h2>
+  <ul>
+    <li><strong>Observability:</strong> attach trace IDs to every DSPy run, LLM call, and tool execution — <code>dspy.utils.callback.BaseCallback</code>'s <code>on_module_start</code>/<code>on_module_end</code> and <code>on_tool_start</code>/<code>on_tool_end</code> hooks are a natural place to record them alongside <code>gantry.on_tool_call(cb)</code>.</li>
+    <li><strong>Safety:</strong> keep high-risk tools behind explicit allowlists, human approval, or dry-run executors — Gantry's <code>SecurityPolicy</code> still gates every call routed through <code>gantry.execute</code>, even when the tool surface is re-selected per call.</li>
+    <li><strong>Resilience:</strong> add provider fallback for LLM calls (DSPy's <code>dspy.LM</code> supports multiple backends via LiteLLM) and executor fallback for remote MCP/A2A tools.</li>
+    <li><strong>Evaluation:</strong> DSPy's own optimizers (e.g. <code>dspy.MIPROv2</code>) replay representative examples to tune prompts/few-shot demos — pin the tool snapshot used during optimization runs before broadening dynamic retrieval in production.</li>
+    <li><strong>Testing offline:</strong> <code>dspy.utils.dummies.DummyLM</code> scripts a fixed sequence of tool calls and answers, so integration tests can exercise a full <code>ReAct</code> run — including a Gantry-sourced tool actually executing — with no network access or API key.</li>
+  </ul>
+</DocsLayout>

@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import (
+    DEFAULT_TOOL_LIMIT,
     BaseFrameworkAdapter,
     GantryToolset,
     ToolSpec,
@@ -46,7 +47,7 @@ async def _for_autogen(
     gantry: AgentGantry,
     query: str,
     *,
-    limit: int = 3,
+    limit: int = DEFAULT_TOOL_LIMIT,
     **select_kwargs: Any,
 ) -> list[dict[str, Any]]:
     """Select tools for ``query`` and return AutoGen-registrable mappings."""
@@ -60,7 +61,7 @@ async def _register_with_autogen(
     *,
     caller: Any,
     executor: Any,
-    limit: int = 3,
+    limit: int = DEFAULT_TOOL_LIMIT,
     **select_kwargs: Any,
 ) -> list[str]:
     """Select tools and register each with AutoGen's caller/executor agents.
@@ -78,8 +79,7 @@ async def _register_with_autogen(
         from autogen import register_function
     except ImportError as exc:  # pragma: no cover - exercised via fake module
         raise ImportError(
-            "AutoGen support requires `autogen`. "
-            "Install it with `pip install pyautogen`."
+            "AutoGen support requires `autogen`. Install it with `pip install pyautogen`."
         ) from exc
 
     specs = await GantryToolset(gantry).select(query, limit=limit, **select_kwargs)
@@ -104,10 +104,42 @@ class AutoGenAdapter(BaseFrameworkAdapter):
     routes through ``gantry.execute``.
     """
 
+    live_tier = "per-turn"
+
     @staticmethod
     def convert(spec: ToolSpec) -> dict[str, Any]:
         """Describe a single :class:`ToolSpec` as an AutoGen-registrable mapping."""
         return _spec_to_autogen(spec)
+
+    def live(
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
+        **framework_kwargs: Any,
+    ) -> Any:
+        """Per-turn uniform entry point: delegates to :meth:`workbench`.
+
+        Returns a ``GantryWorkbench`` (an ``autogen_core.tools.Workbench``
+        subclass) — plug it into the agent that consumes ``Workbench``
+        instances in your installed AutoGen/AG2 version. Update its query
+        between turns via ``.set_query(...)``. ``required``/``always_include``
+        are re-applied on every ``list_tools`` call (see
+        :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select`).
+        No other ``framework_kwargs`` are required; ``query`` may be passed as
+        one to seed the first turn.
+        """
+        return self.workbench(
+            limit=limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+            required=required,
+            always_include=always_include,
+            **framework_kwargs,
+        )
 
     async def register(
         self,
@@ -129,7 +161,14 @@ class AutoGenAdapter(BaseFrameworkAdapter):
         )
 
     def workbench(
-        self, *, query: str = "", limit: int | None = None, score_threshold: float = 0.0
+        self,
+        *,
+        query: str = "",
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
     ) -> Any:
         """Build a live ``Workbench`` for per-turn dynamic tool provision (``AssistantAgent``)."""
         from agent_gantry.integrations.frameworks.autogen_live import _gantry_workbench
@@ -139,4 +178,7 @@ class AutoGenAdapter(BaseFrameworkAdapter):
             query=query,
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
+            namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         )

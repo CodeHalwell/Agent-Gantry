@@ -30,14 +30,18 @@ so that ``import agent_gantry`` never requires LlamaIndex to be installed.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import GantryToolset
+from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT, GantryToolset
+from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
 from agent_gantry.integrations.frameworks.llamaindex import _spec_to_llamaindex
 from agent_gantry.query import latest_activity
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
+
+logger = logging.getLogger(__name__)
 
 
 def _import_object_retriever() -> type:
@@ -110,8 +114,11 @@ def _build_retriever_class() -> type:
             self,
             gantry: AgentGantry,
             *,
-            limit: int = 5,
+            limit: int = DEFAULT_TOOL_LIMIT,
             score_threshold: float = 0.0,
+            namespaces: list[str] | None = None,
+            required: list[str] | None = None,
+            always_include: list[str] | None = None,
         ) -> None:
             # Intentionally do NOT call super().__init__(): the base class wires
             # a static BaseRetriever + BaseObjectNodeMapping over a pre-indexed
@@ -121,6 +128,9 @@ def _build_retriever_class() -> type:
             self._toolset = GantryToolset(gantry)
             self._limit = limit
             self._score_threshold = score_threshold
+            self._namespaces = namespaces
+            self._required = required
+            self._always_include = always_include
 
         @property
         def gantry(self) -> AgentGantry:
@@ -134,16 +144,39 @@ def _build_retriever_class() -> type:
         def score_threshold(self) -> float:
             return self._score_threshold
 
+        @property
+        def namespaces(self) -> list[str] | None:
+            return self._namespaces
+
         async def aretrieve(self, str_or_query_bundle: Any) -> list:
-            """Re-select tools for the current step and return ``FunctionTool``s."""
+            """Re-select tools for the current step and return ``FunctionTool``s.
+
+            Never raises on selection failure — a broken retrieval must not
+            break the agent's step. ``FunctionAgent`` calls this fresh every
+            step with no persisted "previous step's tools" for this retriever
+            to fall back to, so on failure this logs a WARNING and degrades to
+            "no tools this step" — see "Per-turn selection-failure policy" in
+            ``integrations/frameworks/README.md``.
+            """
             query = _query_from(str_or_query_bundle)
-            if not (query or "").strip():
-                # No retrieval signal: expose no tools rather than selecting on
-                # an empty embedding (consistent with the other live providers).
+            try:
+                specs = await self._toolset.select_or_empty(
+                    query,
+                    limit=self._limit,
+                    score_threshold=self._score_threshold,
+                    namespaces=self._namespaces,
+                    required=self._required,
+                    always_include=self._always_include,
+                )
+            except MissingRequiredToolError:
+                raise
+            except Exception:
+                logger.warning(
+                    "GantryToolRetriever.aretrieve: semantic retrieval failed; "
+                    "continuing with no tools this step.",
+                    exc_info=True,
+                )
                 return []
-            specs = await self._toolset.select(
-                query, limit=self._limit, score_threshold=self._score_threshold
-            )
             return [_spec_to_llamaindex(spec) for spec in specs]
 
         def retrieve(self, str_or_query_bundle: Any) -> list:
@@ -159,8 +192,11 @@ def _build_retriever_class() -> type:
 def _gantry_tool_retriever(
     gantry: AgentGantry,
     *,
-    limit: int = 5,
+    limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
+    namespaces: list[str] | None = None,
+    required: list[str] | None = None,
+    always_include: list[str] | None = None,
 ) -> Any:
     """Build a ``GantryToolRetriever`` for ``gantry``.
 
@@ -168,7 +204,12 @@ def _gantry_tool_retriever(
         ImportError: If ``llama-index-core`` is not installed.
     """
     return _build_retriever_class()(
-        gantry, limit=limit, score_threshold=score_threshold
+        gantry,
+        limit=limit,
+        score_threshold=score_threshold,
+        namespaces=namespaces,
+        required=required,
+        always_include=always_include,
     )
 
 
@@ -177,8 +218,11 @@ def _gantry_function_agent(
     llm: Any,
     *,
     name: str = "gantry_agent",
-    limit: int = 5,
+    limit: int = DEFAULT_TOOL_LIMIT,
     score_threshold: float = 0.0,
+    namespaces: list[str] | None = None,
+    required: list[str] | None = None,
+    always_include: list[str] | None = None,
     **agent_kwargs: Any,
 ) -> Any:
     """Build a ``FunctionAgent`` wired to a live per-turn gantry retriever.
@@ -207,7 +251,12 @@ def _gantry_function_agent(
         name=name,
         llm=llm,
         tool_retriever=_gantry_tool_retriever(
-            gantry, limit=limit, score_threshold=score_threshold
+            gantry,
+            limit=limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         ),
         **agent_kwargs,
     )

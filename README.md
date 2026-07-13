@@ -73,7 +73,7 @@ Agent-Gantry automatically fingerprints registered tools, syncs definitions to t
 - **Register once, run anywhere:** emit schemas for OpenAI-compatible APIs, Anthropic, Gemini, framework adapters, MCP, and A2A paths.
 - **Secure execution:** run tools through policies, capabilities, timeouts, retries, rate limits, circuit breakers, callbacks, and telemetry.
 - **Persistence and retrieval:** use in-memory defaults, LanceDB, Qdrant, Chroma, pgvector, OpenAI/Nomic/sentence-transformers embeddings, and rerankers.
-- **Framework coverage:** Microsoft Agent Framework plus LangChain, LangGraph, LlamaIndex, CrewAI, AutoGen, Semantic Kernel, Google ADK, Pydantic AI, OpenAI Agents SDK, Smolagents, Haystack, and Agno.
+- **Framework coverage:** Microsoft Agent Framework plus LangChain, LangGraph, LlamaIndex, CrewAI, AutoGen, Semantic Kernel, Google ADK, Pydantic AI, OpenAI Agents SDK, Smolagents, Haystack, Agno, Strands Agents, and DSPy.
 - **Bundled Claude Skill:** install with `agent-gantry install-skill --claude` or target a project-local skills directory.
 
 ## Manual retrieval and execution

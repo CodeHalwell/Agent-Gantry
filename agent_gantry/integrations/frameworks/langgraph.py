@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import BaseFrameworkAdapter
+from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT, BaseFrameworkAdapter
 from agent_gantry.integrations.frameworks.langchain import (
     _for_langchain,
     _spec_to_langchain,
@@ -33,7 +33,7 @@ async def _for_langgraph(
     gantry: AgentGantry,
     query: str,
     *,
-    limit: int = 3,
+    limit: int = DEFAULT_TOOL_LIMIT,
     **select_kwargs: Any,
 ) -> list[Any]:
     """Select tools for ``query`` as LangChain ``BaseTool``s for a LangGraph node."""
@@ -54,10 +54,48 @@ class LangGraphAdapter(BaseFrameworkAdapter):
         agent = await adapter.areact_agent(chat_model, limit=5)           # live
     """
 
+    live_tier = "per-turn"
+
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a LangChain ``StructuredTool``."""
         return _spec_to_langgraph(spec)
+
+    def live(
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
+        **framework_kwargs: Any,
+    ) -> Any:
+        """Per-turn uniform entry point: delegates to :meth:`react_agent`.
+
+        Requires ``model=<langchain_core.language_models.BaseChatModel>`` in
+        ``framework_kwargs`` (LangGraph's per-turn hook is a middleware bound
+        into the compiled agent, so there is no lower-level standalone hook to
+        return — the compiled agent *is* the live object here). Returns the
+        compiled LangGraph agent (a ``Pregel`` graph); call ``.ainvoke`` /
+        ``.invoke`` on it directly — no further plumbing needed.
+        ``required``/``always_include`` are re-applied on every model turn
+        (see
+        :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select`).
+        Any other ``framework_kwargs`` (``system_prompt``, ``checkpointer``,
+        ``state_schema``, ``middleware``, …) are forwarded to
+        ``create_agent``.
+        """
+        model = framework_kwargs.pop("model")
+        return self.react_agent(
+            model,
+            limit=limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+            required=required,
+            always_include=always_include,
+            **framework_kwargs,
+        )
 
     # -- deep per-turn (live) -------------------------------------------- #
     def react_agent(
@@ -66,6 +104,9 @@ class LangGraphAdapter(BaseFrameworkAdapter):
         *,
         limit: int | None = None,
         score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **agent_kwargs: Any,
     ) -> Any:
         """Build a ReAct agent that re-selects tools every model turn (sync).
@@ -82,6 +123,9 @@ class LangGraphAdapter(BaseFrameworkAdapter):
             self._gantry,
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
+            namespaces=namespaces,
+            required=required,
+            always_include=always_include,
             **agent_kwargs,
         )
 
@@ -91,6 +135,9 @@ class LangGraphAdapter(BaseFrameworkAdapter):
         *,
         limit: int | None = None,
         score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **agent_kwargs: Any,
     ) -> Any:
         """Async-native :meth:`react_agent` (awaits the tool-superset enumeration)."""
@@ -103,11 +150,21 @@ class LangGraphAdapter(BaseFrameworkAdapter):
             self._gantry,
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
+            namespaces=namespaces,
+            required=required,
+            always_include=always_include,
             **agent_kwargs,
         )
 
     async def select_for_state(
-        self, state: Any, *, limit: int | None = None, score_threshold: float = 0.0
+        self,
+        state: Any,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
     ) -> list[Any]:
         """Re-select tools for a LangGraph agent ``state`` (per-turn primitive)."""
         from agent_gantry.integrations.frameworks.langgraph_live import (
@@ -115,5 +172,11 @@ class LangGraphAdapter(BaseFrameworkAdapter):
         )
 
         return await _select_tools_for_state(
-            self._gantry, state, limit=self._default_limit if limit is None else limit, score_threshold=score_threshold
+            self._gantry,
+            state,
+            limit=self._default_limit if limit is None else limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         )

@@ -9,6 +9,12 @@ AutoGen, Semantic Kernel, Google ADK), one ``<Provider>Adapter`` per LLM SDK
 selection core and the framework-agnostic ``ToolRefresher`` / semantic-tools
 decorator.
 
+The adapters above all **export** Gantry tools to a framework. For the
+reverse direction — registering tools you already built with a framework
+*into* Gantry's own registry — see ``register_langchain_tools`` /
+``register_crewai_tools`` / ``register_llamaindex_tools``
+(:mod:`agent_gantry.integrations.importers`).
+
 Prefer the clean per-framework namespaces (``from agent_gantry.langchain import
 LangChainAdapter``); these aggregated re-exports are a convenience.
 """
@@ -45,6 +51,11 @@ from agent_gantry.integrations.frameworks import (
     SmolagentsAdapter,
     ToolExecutionError,
     ToolSpec,
+)
+from agent_gantry.integrations.importers import (
+    register_crewai_tools,
+    register_langchain_tools,
+    register_llamaindex_tools,
 )
 from agent_gantry.integrations.llm_adapters import (
     AnthropicAdapter,
@@ -101,4 +112,8 @@ __all__: list[str] = [
     "SemanticToolsDecorator",
     "with_semantic_tools",
     "fetch_framework_tools",
+    # reverse-direction importers: framework-native tools -> Gantry registry
+    "register_crewai_tools",
+    "register_langchain_tools",
+    "register_llamaindex_tools",
 ]

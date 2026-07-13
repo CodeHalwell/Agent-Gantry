@@ -46,7 +46,7 @@ def fake_llama_index(monkeypatch: pytest.MonkeyPatch) -> type:
                 setattr(self, key, value)
 
         @classmethod
-        def from_defaults(cls, **kwargs: object) -> "FunctionTool":
+        def from_defaults(cls, **kwargs: object) -> FunctionTool:
             return cls(**kwargs)
 
     pkg = types.ModuleType("llama_index")
@@ -94,9 +94,7 @@ async def test_spec_to_llamaindex_async_fn_executes(
     assert result == "sent:boss@x.com"
 
 
-async def test_for_llamaindex_maps_all_specs(
-    gantry: AgentGantry, fake_llama_index: type
-) -> None:
+async def test_for_llamaindex_maps_all_specs(gantry: AgentGantry, fake_llama_index: type) -> None:
     tools = await LlamaIndexAdapter(gantry).select("send an email", limit=5)
 
     assert len(tools) >= 1

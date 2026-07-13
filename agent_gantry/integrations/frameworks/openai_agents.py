@@ -17,7 +17,11 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import BaseFrameworkAdapter, GantryToolset
+from agent_gantry.integrations.frameworks.base import (
+    DEFAULT_TOOL_LIMIT,
+    BaseFrameworkAdapter,
+    GantryToolset,
+)
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
@@ -65,7 +69,7 @@ async def _for_openai_agents(
     gantry: AgentGantry,
     query: str,
     *,
-    limit: int = 3,
+    limit: int = DEFAULT_TOOL_LIMIT,
     **select_kwargs: Any,
 ) -> list:
     """Select tools for ``query`` and return them as OpenAI Agents ``FunctionTool``s."""
@@ -80,10 +84,44 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
     the conversation progresses. Every tool call routes through ``gantry.execute``.
     """
 
+    live_tier = "per-turn"
+
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as an OpenAI Agents ``FunctionTool``."""
         return _spec_to_openai_agents(spec)
+
+    def live(
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
+        **framework_kwargs: Any,
+    ) -> Any:
+        """Per-turn uniform entry point: delegates to :meth:`session`.
+
+        Requires ``agent=<agents.Agent>`` in ``framework_kwargs`` — the SDK's
+        tool-refresh hook rewrites a *specific* agent's ``.tools`` list, so
+        there is no agent-agnostic standalone hook to return. Returns a
+        :class:`~agent_gantry.integrations.frameworks.openai_agents_live.GantryAgentSession`;
+        call ``await session.run(run_input)`` per conversational turn (it
+        re-selects and applies tools before the run, and installs
+        :meth:`run_hooks` for intra-run dynamism). ``required``/
+        ``always_include`` are re-applied on every re-selection (see
+        :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select`).
+        """
+        agent = framework_kwargs.pop("agent")
+        return self.session(
+            agent,
+            limit=limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+            required=required,
+            always_include=always_include,
+        )
 
     async def run(
         self,
@@ -93,6 +131,8 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
         **run_kwargs: Any,
     ) -> Any:
         """Re-select ``agent``'s tools for ``run_input`` and run it once via Gantry (one-shot live)."""
@@ -107,6 +147,8 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
             **run_kwargs,
         )
 
@@ -117,6 +159,8 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
     ) -> Any:
         """Return a live session that re-selects ``agent``'s tools each run."""
         from agent_gantry.integrations.frameworks.openai_agents_live import (
@@ -129,6 +173,8 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         )
 
     def run_hooks(
@@ -138,6 +184,8 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
     ) -> Any:
         """Build ``agents.RunHooks`` that re-select ``agent.tools`` before each model call."""
         from agent_gantry.integrations.frameworks.openai_agents_live import (
@@ -150,6 +198,8 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         )
 
     async def refresh(
@@ -160,6 +210,8 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
     ) -> list[Any]:
         """Re-select tools and rewrite ``agent.tools`` in place; return the new tools."""
         from agent_gantry.integrations.frameworks.openai_agents_live import (
@@ -173,6 +225,8 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         )
 
     async def select_function_tools(
@@ -182,6 +236,8 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
         limit: int | None = None,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
     ) -> list[Any]:
         """Re-select tools for a query string OR a run-input/message list; return ``FunctionTool``s."""
         from agent_gantry.integrations.frameworks.openai_agents_live import (
@@ -194,4 +250,6 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
             limit=self._default_limit if limit is None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            required=required,
+            always_include=always_include,
         )

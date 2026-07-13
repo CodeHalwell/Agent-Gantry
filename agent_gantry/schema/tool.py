@@ -38,6 +38,14 @@ class ToolSource(str, Enum):
     OPENAPI = "openapi"
     A2A_AGENT = "a2a_agent"
     MANUAL = "manual"
+    # Imported from another agent framework's native tool object (LangChain
+    # BaseTool, CrewAI BaseTool, LlamaIndex FunctionTool, ...) via
+    # agent_gantry.integrations.importers. Distinct from PYTHON_FUNCTION
+    # (@gantry.register-ed or bare Python callables) so telemetry/governance
+    # can tell tools that originated outside Gantry's own registry apart from
+    # those authored directly against it. Additive: existing serialized
+    # ToolDefinition data using any other source value is unaffected.
+    FRAMEWORK = "framework"
 
 
 class ToolCapability(str, Enum):

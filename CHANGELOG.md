@@ -7,7 +7,232 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.9.0] - 2026-06-16
+### Added
+
+- **`required` / `always_include` pinned-tool selection, ported to every
+  framework adapter.** Previously only the Microsoft Agent Framework provider
+  (`GantryContextProvider(required=..., always_include=...)`) could guarantee
+  a named tool's presence in the selection or pin a tool onto every round
+  regardless of semantic score. `GantryToolset.select` / `.select_or_empty`
+  (`integrations/frameworks/base.py`) now accept the same two keywords, and
+  `BaseFrameworkAdapter.select` and every adapter's `live(...)` (plus the
+  bespoke live methods and constructors it delegates to — `live_wrappers.py`,
+  every `*_live.py` module) thread them through, so all 15 framework
+  integrations get the same guarantee. `required=[...]` (bare or
+  `namespace.name`-qualified names) must resolve against the registry or
+  `select` raises the new shared `MissingRequiredToolError`
+  (`integrations/frameworks/errors.py`, re-exported from `agent_gantry`,
+  `agent_gantry.integrations`, and `agent_gantry.integrations.frameworks` —
+  `agent_gantry.integrations.agent_framework_provider.MissingRequiredToolError`
+  now imports from this shared module, keeping the historical import path
+  working); `always_include=[...]` logs a `WARNING` and skips unresolvable
+  names instead of raising. Both are appended after the semantic slice
+  (`required` before `always_include`), deduplicated, and never counted
+  against `limit` — matching `GantryContextProvider`'s own choice that
+  `top_k` bounds only the dynamic/semantic slice. The Microsoft Agent
+  Framework provider's own `required`/`always_include` implementation was
+  left in place (it is entangled with skills, `static_tools`, and
+  `ContextVar`-scoped retrieval history with no equivalent in the plain
+  adapter layer) — only the error type is shared, so its 90+ existing tests
+  keep passing unmodified. See `integrations/frameworks/README.md`
+  ("Guaranteed & pinned tools") and the new `tests/frameworks/test_selection.py`.
+- **Reverse-direction framework importers** — `agent_gantry.integrations.importers`
+  adds `register_langchain_tools`, `register_crewai_tools`, and
+  `register_llamaindex_tools`, the missing other half of every
+  `<Framework>Adapter` (which only ever *exported* Gantry tools outward).
+  Each coroutine converts existing `langchain_core.tools.BaseTool`,
+  `crewai.tools.BaseTool`, or `llama_index.core.tools.FunctionTool` objects
+  into `ToolDefinition`s (new `ToolSource.FRAMEWORK`) with an execution
+  handler wired through `gantry.add_tool(tool, handler=...)` — a new optional
+  `handler` parameter on `AgentGantry.add_tool()` — so imported tools run
+  through the normal `gantry.execute()` path (security policy, retries,
+  circuit breakers, telemetry) exactly like `@gantry.register`-ed ones, gain
+  semantic routing, and are re-exportable to any *other* framework via the
+  existing export adapters. Malformed/unrecognized tools are skipped with a
+  logged warning rather than aborting the batch; an empty `tools` argument
+  raises. See `agent_gantry/integrations/README.md` ("Importing existing
+  framework tools") and `examples/frameworks/importers_example.py`.
+- **Uniform `live_tier` / `live()` entry point on every framework adapter.**
+  All 13 `<Framework>Adapter` classes (`BaseFrameworkAdapter` subclasses) plus
+  `AgentFrameworkAdapter` (Microsoft Agent Framework) now expose
+  `adapter.live_tier` (`"per-turn"` or `"per-call"` — the deepest dynamic
+  re-selection tier that framework supports) and
+  `adapter.live(*, limit=None, score_threshold=0.0, namespaces=None,
+  **framework_kwargs)`, which returns the framework-appropriate live object
+  (hook / toolset / provider / builder) by delegating to that framework's
+  existing bespoke live method (`react_agent`, `toolset`, `tool_hook`,
+  `agent_builder`, …). No bespoke method was removed or renamed — `live()` is
+  a thin, uniform layer over them, so framework-agnostic code no longer needs
+  to know each framework's own live-method name. See
+  `integrations/frameworks/README.md` for the full per-framework table
+  (`live_tier`, delegate, return type, where to plug it in).
+  `tests/frameworks/test_conformance.py` locks the new surface: every adapter
+  is checked for a valid `live_tier` matching the documented capability table,
+  and a stub-based test proves `live()` calls the right bespoke method with
+  the right kwargs.
+- **`namespaces` now threads through every live/per-turn provider**, not just
+  the static `select()` path and `OpenAIAgentsAdapter`'s live methods.
+  `LangGraphAdapter.react_agent`/`.areact_agent`/`.select_for_state`,
+  `LlamaIndexAdapter.tool_retriever`/`.function_agent`,
+  `PydanticAIAdapter.toolset`, `SemanticKernelAdapter.function_provider`/
+  `.refresh`, `GoogleADKAdapter.before_model_callback`/`.agent`,
+  `AutoGenAdapter.workbench`, `StrandsAdapter.tool_hook`/`.agent`, and the
+  per-call builders (`CrewAIAdapter.agent_builder`, `AgnoAdapter.agent_builder`,
+  `HaystackAdapter.tool_invoker_builder`, `SmolagentsAdapter.agent_builder`)
+  all now accept and forward `namespaces` to every re-selection.
+- **`GantryToolset.select_or_empty`** — a new selection primitive that returns
+  `[]` immediately for a blank/whitespace-only query instead of running a
+  nonsensical selection on an empty embedding. Every `integrations/frameworks/
+  *_live.py` module previously re-implemented this exact guard by hand (each
+  with its own "consistent with the other live providers" comment); the
+  duplicated guard+select code is now centralized here, and
+  `ToolRefresher.refresh_specs` uses the same primitive.
+- **Native AWS Strands Agents adapter** — `StrandsAdapter`
+  (`from agent_gantry.strands import StrandsAdapter`), joining the per-framework
+  `<Framework>Adapter` family. `await adapter.select(query, limit=...)` /
+  `adapter.convert(spec)` wrap Gantry tools as Strands
+  `DecoratedFunctionTool`s (built from `spec.callable_for_signature()`, with
+  Gantry's own name/description/JSON-Schema parameters passed straight through
+  via `strands.tool()`'s `name`/`description`/`inputSchema` overrides). Strands
+  genuinely supports per-turn re-selection — it fires a `BeforeModelCallEvent`
+  hook before every model call and only reads the tool registry afterward — so
+  `StrandsAdapter(gantry).tool_hook()` / `.agent(...)` re-select tools on
+  **every model call**, matching the depth of Google ADK's
+  `before_model_callback` rather than the per-top-level-call rebuild used for
+  CrewAI/Agno/Haystack/Smolagents.
+- **Native DSPy adapter** — `DSPyAdapter`
+  (`from agent_gantry.dspy import DSPyAdapter`), joining the per-framework
+  `<Framework>Adapter` family. `await adapter.select(query, limit=...)` /
+  `adapter.convert(spec)` wrap Gantry tools as `dspy.Tool`s for DSPy's
+  agentic module, `dspy.ReAct`, with Gantry's own name/description/JSON-Schema
+  parameters passed straight through via
+  `dspy.adapters.types.tool.convert_input_schema_to_tool_args` (the same
+  schema bridge DSPy's own MCP/LangChain tool converters use). The wrapped
+  function is intentionally **synchronous** (`ToolSpec.invoke`'s loop-safe
+  bridge), not `callable_for_signature()`'s async wrapper: `dspy.Tool.__call__`
+  — the path `ReAct.forward()`/plain `react(...)` uses, DSPy's own documented
+  call convention — raises on an async tool unless the caller opts in with
+  `dspy.configure(allow_tool_async_sync_conversion=True)` or always calls
+  `await react.acall(...)`; a sync wrapper works correctly under both entry
+  points with no DSPy configuration. `dspy.ReAct` fixes its tool list at
+  construction with no runtime re-selection hook (`dspy.utils.callback`'s
+  `on_tool_start`/`on_module_start` fire around an already-selected call, not
+  before the model picks the next tool), so `DSPyAdapter(gantry).agent_builder(
+  signature, ...)` follows the same per-top-level-call rebuild tier as
+  CrewAI/Agno/Smolagents rather than a fabricated per-turn hook.
+- **`framework-adapters` CI job now runs on ubuntu × Python 3.10–3.13 plus a
+  macOS 3.12 cell** (was a single ubuntu/3.12 cell), matching the OS/Python
+  coverage the main `test` matrix already gives the other framework
+  integrations. Its isolated-env install now also covers `strands-agents`.
+- **New scheduled `latest-frameworks.yml` workflow** validates the latest
+  release of each framework that `pyproject.toml` deliberately floors below
+  current (google-adk, crewai, semantic-kernel, agent-framework) plus the
+  native-adapter set, each in its own isolated env, so drift on unpinned
+  latest versions is caught by a weekly run instead of staying invisible
+  between manual audits.
+- **Documented and tested error-handling policy for all 14 native framework
+  adapters + Microsoft Agent Framework.** New "Error-handling policy" section
+  in `integrations/frameworks/README.md` states the default contract (a
+  failing `gantry.execute()` raises `ToolExecutionError` out of every
+  adapter's native tool object, uncaught, letting the framework's own error
+  handling take over), the four deliberate "framework absorbs the error"
+  exceptions with their rationale (Microsoft Agent Framework's JSON error
+  string, AutoGen's live `Workbench.call_tool`, Strands' real `Agent`
+  tool-execution loop, and — not a Gantry deviation but documented for
+  completeness — DSPy's own `ReAct.forward`/`.aforward`), and a uniform rule
+  for the eight per-turn live providers' *selection* failures (`WARNING` log
+  + graceful degradation, never raise). `tests/frameworks/test_conformance.py`
+  gained an `AdapterCase.error_kind`/`.invoke_failure` field and a
+  parametrized `test_adapter_tool_failure_matches_documented_error_kind` that
+  forces a failing tool through every adapter's real native call convention
+  (proving the contract survives the `_run_coroutine_sync` worker-thread
+  bridge for the sync wrappers too), plus one `test_*_live_selection_failure_degrades_gracefully`
+  test per per-turn provider and a `test_tool_execution_error_message_format`
+  test locking `ToolExecutionError`'s message shape. `tests/frameworks/
+  test_dspy_live.py` and `test_strands_live.py` each gained a dedicated test
+  proving their respective "framework absorbs it" behavior end-to-end against
+  the real installed package.
+
+### Changed
+
+- **`ToolRefresher` (`agent_gantry.integrations.refresh`) is now explicitly
+  documented as the standalone, hand-rolled-agent-loop utility**, cross-linked
+  with the new `adapter.live()` uniform entry point. It was already
+  framework-agnostic by design (no framework adapter called it) — the
+  per-framework `*_live.py` modules' query-derivation logic is genuinely
+  framework-specific (a LangGraph `state["messages"]`, a Pydantic AI
+  `RunContext`, an ADK `callback_context`, …) and was deliberately left
+  un-merged with `ToolRefresher`'s generic message-list walker; only the
+  shared, framework-independent "guard against an empty query, then select"
+  step was extracted, into `GantryToolset.select_or_empty` (used by both
+  `ToolRefresher` and every `*_live.py` module).
+- **BREAKING — static framework adapters now default `limit` to 5, not 3.**
+  `GantryToolset`, `BaseFrameworkAdapter`, and every native per-framework static
+  helper (`agent_gantry.langchain`, `.crewai`, `.llamaindex`, `.autogen`,
+  `.google_adk`, `.agno`, `.haystack`, `.pydantic_ai`, `.smolagents`,
+  `.openai_agents`, `.semantic_kernel`) previously surfaced 3 tools per call by
+  default while every live/deep per-turn provider (`live_wrappers.py`,
+  `integrations/frameworks/*_live.py`, `AgentFrameworkAdapter`) already
+  defaulted to 5. Both families now share a single
+  `agent_gantry.integrations.frameworks.base.DEFAULT_TOOL_LIMIT = 5` constant.
+  Callers relying on the old default of 3 tools per static selection should
+  pass `limit=3` explicitly. (`integrations/frameworks/langgraph_live.py` is
+  excluded from this pass — it is mid-migration in a parallel change.)
+- **`with_semantic_tools` / `SemanticToolSelector` / `SemanticToolsDecorator`
+  now default `score_threshold` to `0.0`, not `0.5`**, matching every
+  framework adapter in `agent_gantry.integrations.frameworks` (which already
+  documented and used a `0.0` default to avoid silently dropping every tool on
+  a non-trivial query). The raw `ToolQuery` schema default remains `0.5` for
+  backward compatibility — see the note on
+  `agent_gantry.schema.query.ToolQuery.score_threshold`.
+- **`BaseFrameworkAdapter.select` gained explicit `score_threshold`,
+  `namespaces`, and `tools_already_used` keyword parameters** instead of
+  swallowing them in `**select_kwargs`. Previously `namespaces` was a
+  discoverable, first-class kwarg only on `OpenAIAgentsAdapter`'s live
+  methods; it (and the other two) are now explicit and documented on every
+  adapter's `select`. `SemanticKernelAdapter.select` keeps its extra
+  `plugin_name` kwarg alongside the same three. This is additive
+  (keyword-only) and does not change behavior for existing callers.
+- **`fetch_framework_tools`'s `framework` parameter now accepts every native
+  adapter name**, not just `langgraph`, `semantic-kernel`, `crew_ai`,
+  `google_adk`, `strands`, and `agent_framework` (fixes #101). It now covers
+  `langchain`, `llamaindex`, `crewai`, `autogen`, `semantic_kernel`, `agno`,
+  `haystack`, `pydantic_ai`, `openai_agents`, and `smolagents` too, matching
+  the native per-framework adapter module names. The legacy spellings
+  `crew_ai` and `semantic-kernel` are still accepted and normalized
+  internally to `crewai` / `semantic_kernel`.
+- **LangGraph live tool provider migrated off the deprecated `create_react_agent`.**
+  `agent_gantry.integrations.frameworks.langgraph_live` now builds the per-turn
+  live agent with `langchain.agents.create_agent` (the documented replacement;
+  `langgraph.prebuilt.create_react_agent` is removed outright in LangGraph 2.0).
+  Per-turn tool re-selection — the ability for Gantry to rebind a different tool
+  subset to the model on every conversation turn — moved from the old
+  dynamic-`model` callable to a `wrap_model_call` `AgentMiddleware` hook (the
+  same mechanism `langchain.agents.middleware.LLMToolSelectorMiddleware` uses),
+  with identical externally-observable behavior. No fallback to the deprecated
+  API is kept: this project's floors (`langchain>=1.3.4`, `langgraph>=1.2.4`,
+  pinned together in the `agent-frameworks` extra) already guarantee
+  `langchain.agents.create_agent` is available. `LangGraphAdapter.react_agent` /
+  `areact_agent` / `select_for_state` are unaffected — this is purely an
+  internal implementation change, aside from `**agent_kwargs` now being
+  forwarded to `create_agent` (e.g. use `system_prompt=` instead of the old
+  `create_react_agent`'s `prompt=`).
+
+### Documentation
+
+- **Dedicated runnable examples for the 5 native-tool-adapter frameworks that
+  had none.** `examples/agent_frameworks/{agno,haystack,pydantic_ai,
+  openai_agents,smolagents}_example.py` each register a small tool set,
+  select + convert through the framework's `*Adapter` (no hard-coded tool
+  names), and exercise both the static tier (`select` → native tool objects)
+  and the deep per-call/per-turn tier (`agent_builder` / `toolset` /
+  `run_hooks` + `refresh` / `live_tools` + `tool_invoker_builder`). All five
+  degrade gracefully with a clear `pip install` hint when the framework isn't
+  installed; the Pydantic AI example runs end-to-end offline via
+  `pydantic_ai.models.test.TestModel`, and the others gate their live
+  agent/model run behind `OPENAI_API_KEY`. `examples/agent_frameworks/
+  README.md` documents all five.
+ 2026-06-16
 
 ### Removed
 
@@ -31,6 +256,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   type annotations and `isinstance()` checks return `False` rather than raising
   `TypeError`. The `score_threshold` property is now typed `float | str` to match
   the config (relative-threshold strings are valid).
+- **BREAKING (bugfix) — a broken `gantry.retrieve()` mid-conversation no
+  longer crashes six of the eight per-turn live providers.**
+  `integrations/frameworks/{autogen_live,langgraph_live,llamaindex_live,
+  openai_agents_live,pydantic_ai_live,semantic_kernel_live}.py` previously let
+  a selection failure propagate straight out of the framework's own
+  turn-driving hook (`Workbench.list_tools`, the `create_agent` tool-selection
+  middleware, `ObjectRetriever.aretrieve`, `RunHooks.on_llm_start`,
+  `AbstractToolset.get_tools`, `GantryFunctionProvider.refresh`) — a transient
+  vector-store hiccup could kill the entire agent run. They now catch the
+  failure, log a `WARNING` with `exc_info=True`, and degrade gracefully
+  instead: to "no tools this turn" for the four stateless per-turn providers
+  (LangGraph, LlamaIndex, and — already-existing behavior — Google ADK) or to
+  "leave the previous turn's tools in place" for the stateful ones (AutoGen,
+  Pydantic AI, OpenAI Agents SDK, Semantic Kernel), matching the precedent
+  already set by Google ADK's `before_model_callback` and Strands'
+  `BeforeModelCallEvent` hook (both of which already degraded gracefully and
+  are unchanged in behavior, only normalized from `logger.exception`/ERROR to
+  `logger.warning(..., exc_info=True)` for consistency with the other six).
+  Callers who relied on a selection failure raising out of one of these six
+  providers (e.g. to abort a run) must now check the `WARNING` log or wrap
+  `gantry.retrieve()`/the vector store itself instead.
 
 ### Changed
 

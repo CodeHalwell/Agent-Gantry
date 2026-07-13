@@ -27,6 +27,7 @@ from agent_gantry.integrations.agent_framework_middleware import (
     GantryToolChoiceMiddleware,
 )
 from agent_gantry.integrations.agent_framework_provider import GantryContextProvider
+from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
@@ -51,11 +52,55 @@ class AgentFrameworkAdapter:
         # Per-call (multi-step) tool injection:
         provider = af.context_provider(top_k=3, query_strategy="per_call")
         provider.attach_to(agent)
+
+    Not a :class:`~agent_gantry.integrations.frameworks.base.BaseFrameworkAdapter`
+    subclass (it has no ``select``/``convert`` staticmethods — see
+    ``tests/frameworks/test_conformance.py``), but it participates in the same
+    uniform ``live_tier`` / :meth:`live` facade the 13 ``<Framework>Adapter``
+    classes expose, since AF genuinely supports per-call (multi-round) dynamic
+    tool re-selection via ``query_strategy="per_call"``.
     """
 
-    def __init__(self, gantry: AgentGantry, *, default_top_k: int = 5) -> None:
+    #: AF's ``GantryContextProvider`` supports genuine per-round re-selection
+    #: (``query_strategy="per_call"``), matching the other per-turn adapters.
+    live_tier = "per-turn"
+
+    def __init__(self, gantry: AgentGantry, *, default_top_k: int = DEFAULT_TOOL_LIMIT) -> None:
         self._gantry = gantry
         self._default_top_k = default_top_k
+
+    def live(
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        **framework_kwargs: Any,
+    ) -> Any:
+        """Per-turn uniform entry point: delegates to :meth:`context_provider`.
+
+        Same ``limit``/``score_threshold``/``namespaces``/``**framework_kwargs``
+        shape as every ``<Framework>Adapter.live()`` (``namespaces`` is
+        forwarded as an ordinary AF ``query_kwargs`` entry, to
+        ``GantryToolBridge.get_tools``). Unlike calling
+        :meth:`context_provider` directly, this defaults ``query_strategy``
+        to ``"per_call"`` (not :meth:`context_provider`'s own
+        back-compatible ``"per_run"`` default) — ``live()`` is meant to
+        surface the *deepest* tier AF supports, and per-call is what makes
+        AF's re-selection genuinely per-turn. Pass ``query_strategy="per_run"``
+        in ``framework_kwargs`` to opt back out.
+
+        Returns a ``GantryContextProvider``. Plug it into
+        ``Agent(context_providers=[<result>])`` and, for ``per_call``, also
+        attach ``<result>.as_chat_middleware()`` — or call
+        ``<result>.attach_to(agent)`` to do both in one step.
+        """
+        framework_kwargs.setdefault("query_strategy", "per_call")
+        if namespaces is not None:
+            framework_kwargs.setdefault("namespaces", namespaces)
+        return self.context_provider(
+            top_k=limit, score_threshold=score_threshold, **framework_kwargs
+        )
 
     def context_provider(self, *, top_k: int | None = None, **kwargs: Any) -> Any:
         """Build a ``GantryContextProvider`` (per-run / per-call tool injection).

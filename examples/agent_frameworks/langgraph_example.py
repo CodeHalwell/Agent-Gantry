@@ -1,9 +1,9 @@
 import asyncio
 
 from dotenv import load_dotenv
+from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
-from langgraph.prebuilt import create_react_agent
 
 from agent_gantry import AgentGantry
 from agent_gantry.langgraph import LangGraphAdapter
@@ -34,8 +34,10 @@ async def main():
     )
     print(f"Gantry retrieved {len(gantry_tools)} tools.")
 
-    # 3. Build the Agent using LangGraph's create_react_agent (LangGraph 1.x)
-    agent = create_react_agent(llm, tools=gantry_tools)
+    # 3. Build the Agent using LangChain's create_agent (langchain>=1.0), the
+    #    replacement for LangGraph's deprecated `create_react_agent`, which
+    #    LangGraph 2.0 removes.
+    agent = create_agent(llm, tools=gantry_tools)
 
     # 4. Run the Agent
     print("--- Running LangGraph Agent with Gantry-sourced tools ---")
