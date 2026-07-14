@@ -108,3 +108,7 @@
 ## 2026-10-25 - [Semantic Grouping for Pill Badges]
 **Learning:** When displaying groups of inline visual badges or pills (like tags or categories), flat `<span>` or `<div>` elements cause screen readers to read them as an unstructured text block. By wrapping them in a semantic `<ul role="list">` and `<li>` structure, screen readers will properly announce the item count and boundaries.
 **Action:** Always wrap visual pill or tag groups in a `<ul role="list">` and apply CSS flexbox for wrapping to maintain visual layout while providing semantic meaning.
+
+## 2026-10-26 - [Visual Context for aria-current Elements]
+**Learning:** When navigation links use the `aria-current="page"` attribute for accessibility, failing to provide a corresponding visual active state leaves sighted users without spatial context of where they are within the site's hierarchy. Furthermore, lacking a global `:focus-visible` rule makes keyboard navigation difficult or impossible to track.
+**Action:** Always ensure that elements with `aria-current="page"` have a distinct CSS visual active state (e.g., using `[aria-current="page"]` as a selector), and always implement a clear global `:focus-visible` outline.

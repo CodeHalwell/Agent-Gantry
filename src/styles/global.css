@@ -35,6 +35,11 @@ a {
 a:hover {
   text-decoration: underline;
 }
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 0.125rem;
+}
 .skip-link {
   position: absolute;
   top: -9999px;
@@ -107,6 +112,13 @@ a:hover {
   background: var(--panel2);
   color: var(--text);
   text-decoration: none;
+}
+.nav-section a[aria-current="page"] {
+  background: rgba(110, 231, 249, 0.1);
+  color: var(--text);
+  font-weight: 600;
+  border-left: 2px solid var(--accent);
+  border-radius: 0 0.6rem 0.6rem 0;
 }
 .main {
   min-width: 0;
