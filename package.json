@@ -16,7 +16,9 @@
     "astro": "^5.18.2",
     "react": "latest",
     "react-dom": "latest",
-    "shiki": "^4.2.0",
-    "typescript": "latest"
+    "shiki": "^4.2.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
   }
 }

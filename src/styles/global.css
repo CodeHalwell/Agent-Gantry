@@ -103,10 +103,16 @@ a:hover {
   border-radius: 0.6rem;
   color: var(--muted);
 }
-.nav-section a:hover {
+.nav-section a:hover,
+.nav-section a[aria-current="page"] {
   background: var(--panel2);
   color: var(--text);
   text-decoration: none;
+}
+
+a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .main {
   min-width: 0;
