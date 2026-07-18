@@ -108,3 +108,11 @@
 ## 2026-10-25 - [Semantic Grouping for Pill Badges]
 **Learning:** When displaying groups of inline visual badges or pills (like tags or categories), flat `<span>` or `<div>` elements cause screen readers to read them as an unstructured text block. By wrapping them in a semantic `<ul role="list">` and `<li>` structure, screen readers will properly announce the item count and boundaries.
 **Action:** Always wrap visual pill or tag groups in a `<ul role="list">` and apply CSS flexbox for wrapping to maintain visual layout while providing semantic meaning.
+
+## 2026-07-18 - [Global Focus Visible Rules]
+**Learning:** Relying on browser default focus outlines often leads to inconsistent or low-contrast focus rings, failing WCAG accessibility guidelines. However, aggressively defining `:focus` can be visually distracting for mouse users.
+**Action:** Always implement a global `:focus-visible` rule in the base stylesheet (e.g., `outline: 2px solid var(--accent); outline-offset: 2px;`) to ensure strong, consistent keyboard focus indicators without impacting mouse interactions.
+
+## 2026-07-18 - [Active State for Navigation Links]
+**Learning:** Using `aria-current="page"` on active navigation links is essential for screen readers to announce the user's current location within a navigation list. However, sighted users need spatial context as well.
+**Action:** When implementing `aria-current="page"`, always ensure a corresponding CSS visual active state is defined (e.g., `[aria-current="page"] { font-weight: 600; border-left: 2px solid var(--accent); }`) so both sighted users and assistive technology users have context.
