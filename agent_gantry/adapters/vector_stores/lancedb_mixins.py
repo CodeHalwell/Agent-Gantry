@@ -816,7 +816,7 @@ class LanceDBMetadataMixin:
         await self._ensure_initialized()  # type: ignore
 
         try:
-            table = self._tools_table.to_arrow()  # type: ignore
+            table = self._tools_table.search().select(["id", "fingerprint"]).limit(None).to_arrow()  # type: ignore
             records = table.to_pylist()
             return {r["id"]: r.get("fingerprint", "") for r in records}
         except Exception as e:
