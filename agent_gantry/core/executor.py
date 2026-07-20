@@ -507,6 +507,8 @@ class ExecutionEngine:
             elif expected_type == "string":
                 if not isinstance(value, str):
                     return False, f"Parameter '{path}' must be a string"
+                if len(value) > 1_000_000:
+                    return False, f"Parameter '{path}' exceeds maximum allowed length of 1000000 characters"
             elif expected_type == "array":
                 if not isinstance(value, list):
                     return False, f"Parameter '{path}' must be an array"
