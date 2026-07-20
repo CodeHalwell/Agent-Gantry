@@ -48,5 +48,5 @@
 **Learning:** Using `list.pop(0)` for rolling histories incurs O(N) overhead because all subsequent elements must be shifted in memory. This creates a bottleneck in tight loops or long-running instances.
 **Action:** Use `collections.deque(maxlen=N)` for O(1) appending and automatic truncation from either end.
 ## 2026-06-25 - Push LanceDB operations to database engine
-**Learning:** When querying LanceDB tables in Python, loading the entire table into memory via `table.to_arrow().to_pylist()` for filtering, counting, or pagination creates an O(N) memory bottleneck on large datasets.
-**Action:** Use LanceDB native query builders like `search().where(condition).limit(limit).offset(offset).to_list()` and `count_rows(condition)` instead of pulling the data into Python lists.
+**Learning:** When querying LanceDB tables in Python, loading the entire table into memory via `table.to_arrow().to_pylist()` for filtering, counting, or pagination creates an O(N) memory bottleneck on large datasets. Additionally, retrieving all columns when only specific ones are needed (like 'id' and 'fingerprint') increases the payload significantly.
+**Action:** Use LanceDB native query builders like `search().where(condition).limit(limit).offset(offset).to_list()`, `count_rows(condition)`, and `.select(["col1", "col2"])` instead of pulling the data into Python lists to process them.
