@@ -89,3 +89,8 @@
 **Vulnerability:** The `AgentSkill` and `AgentCard` models lacked identifier validation for `id` and `name` fields, making them vulnerable to newline injection. This could lead to downstream log injection or command injection.
 **Learning:** Security validations for common schema patterns (like identifier sanitation) must be universally applied across all analogous models within a system (e.g., tools, MCP servers, skills, and A2A agents).
 **Prevention:** Always implement explicit string character checks (using `reject_newlines`) with `@field_validator` on all identifier fields across all Pydantic models. Ensure `model_config = ConfigDict(validate_assignment=True)` is set so these constraints cannot be bypassed after object instantiation.
+
+## 2026-07-22 - [MEDIUM] Fix unhandled PermissionDeniedError in executor retries
+**Vulnerability:** The `_execute_handler_with_retries` method caught `PermissionDeniedError` but mapped it to `ExecutionStatus.FAILURE` instead of `ExecutionStatus.PERMISSION_DENIED`.
+**Learning:** Security policy exceptions (like authorization and permission errors) must be explicitly mapped to their correct specialized failure statuses when translating application exceptions into structured API or execution responses like `ToolResult`.
+**Prevention:** Always verify that every custom exception raised by a security or validation component is mapped to its exact corresponding execution status to ensure accurate downstream security logging and policy enforcement.

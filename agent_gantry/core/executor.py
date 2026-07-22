@@ -272,7 +272,7 @@ class ExecutionEngine:
                 await self._record_failure(tool)
                 result = ToolResult(
                     tool_name=call.tool_name,
-                    status=ExecutionStatus.FAILURE,
+                    status=ExecutionStatus.PERMISSION_DENIED,
                     error=str(e),
                     error_type="PermissionDeniedError",
                     queued_at=queued_at,
