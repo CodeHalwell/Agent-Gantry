@@ -108,3 +108,7 @@
 ## 2026-10-25 - [Semantic Grouping for Pill Badges]
 **Learning:** When displaying groups of inline visual badges or pills (like tags or categories), flat `<span>` or `<div>` elements cause screen readers to read them as an unstructured text block. By wrapping them in a semantic `<ul role="list">` and `<li>` structure, screen readers will properly announce the item count and boundaries.
 **Action:** Always wrap visual pill or tag groups in a `<ul role="list">` and apply CSS flexbox for wrapping to maintain visual layout while providing semantic meaning.
+
+## 2026-07-26 - [Decorative Logo Screen Reader Accessibility]
+**Learning:** For accessibility, when using empty inline elements (like `<span>` or `<div>`) purely for CSS-driven decorative graphics (such as visual shapes or logos), always apply `aria-hidden="true"` to ensure assistive technologies smoothly bypass them without announcing unpredictable content.
+**Action:** When inspecting empty layout elements designed purely for visual CSS backgrounds, explicitly append `aria-hidden="true"` to prevent screen reader clutter.
