@@ -130,9 +130,7 @@ class ToolDefinition(BaseModel):
 
     model_config = ConfigDict(extra="ignore", validate_assignment=True)
 
-    _reject_newline_identifiers = field_validator("name", "version", "namespace")(
-        reject_newlines
-    )
+    _reject_newline_identifiers = field_validator("name", "version", "namespace")(reject_newlines)
 
     @field_validator("name")
     @classmethod
@@ -212,3 +210,6 @@ class ToolDependency(BaseModel):
     tool_name: str
     dependency_type: Literal["requires", "suggests", "conflicts"]
     reason: str | None = None
+
+    model_config = ConfigDict(validate_assignment=True)
+    _reject_newline_identifiers = field_validator("tool_name")(reject_newlines)

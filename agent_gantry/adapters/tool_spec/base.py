@@ -10,11 +10,14 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any, Protocol
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 if TYPE_CHECKING:
     from agent_gantry.schema.execution import ToolCall
     from agent_gantry.schema.tool import ToolDefinition
+
+
+from agent_gantry.schema.base import reject_newlines
 
 
 class ToolCallPayload(BaseModel):
@@ -36,6 +39,9 @@ class ToolCallPayload(BaseModel):
     raw_payload: dict[str, Any] | None = Field(
         default=None, description="Original provider payload for debugging"
     )
+
+    model_config = ConfigDict(validate_assignment=True)
+    _reject_newline_identifiers = field_validator("tool_name", "tool_call_id")(reject_newlines)
 
 
 class ToolSpecAdapter(Protocol):

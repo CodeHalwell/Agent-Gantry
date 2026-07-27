@@ -8,9 +8,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 from agent_gantry.schema.tool import ToolCapability, ToolDefinition, ToolSource
+
+
+from agent_gantry.schema.base import reject_newlines
 
 
 class ConversationContext(BaseModel):
@@ -140,3 +143,6 @@ class RetrievalResult(BaseModel):
             List of provider-specific tool schemas
         """
         return [t.tool.to_dialect(dialect, **options) for t in self.tools]
+
+    model_config = ConfigDict(validate_assignment=True)
+    _reject_newline_identifiers = field_validator("trace_id")(reject_newlines)

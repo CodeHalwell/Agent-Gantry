@@ -169,3 +169,6 @@ class SkillRetrievalResult(BaseModel):
             lines.append("")
 
         return "\n".join(lines)
+
+    model_config = ConfigDict(validate_assignment=True)
+    _reject_newline_identifiers = field_validator("trace_id")(reject_newlines)

@@ -8,7 +8,10 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict, field_validator
+
+
+from agent_gantry.schema.base import reject_newlines
 
 
 class VectorStoreConfig(BaseModel):
@@ -130,6 +133,9 @@ class MCPServerConfig(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     namespace: str = "default"
 
+    model_config = ConfigDict(validate_assignment=True)
+    _reject_newline_identifiers = field_validator("name", "namespace")(reject_newlines)
+
 
 class MCPConfig(BaseModel):
     """Configuration for MCP integration."""
@@ -145,6 +151,9 @@ class A2AAgentConfig(BaseModel):
     name: str
     url: str
     namespace: str = "default"
+
+    model_config = ConfigDict(validate_assignment=True)
+    _reject_newline_identifiers = field_validator("name", "namespace")(reject_newlines)
 
 
 class A2AConfig(BaseModel):
