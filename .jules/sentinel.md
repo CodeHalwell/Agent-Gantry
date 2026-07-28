@@ -89,3 +89,8 @@
 **Vulnerability:** The `AgentSkill` and `AgentCard` models lacked identifier validation for `id` and `name` fields, making them vulnerable to newline injection. This could lead to downstream log injection or command injection.
 **Learning:** Security validations for common schema patterns (like identifier sanitation) must be universally applied across all analogous models within a system (e.g., tools, MCP servers, skills, and A2A agents).
 **Prevention:** Always implement explicit string character checks (using `reject_newlines`) with `@field_validator` on all identifier fields across all Pydantic models. Ensure `model_config = ConfigDict(validate_assignment=True)` is set so these constraints cannot be bypassed after object instantiation.
+
+## 2026-07-28 - [HIGH] Fix Rate Limit Error Status Mapping
+**Vulnerability:** Rate limit exceptions (RateLimitExceeded) in `ExecutionEngine._check_rate_limit` were incorrectly mapped to the generic `ExecutionStatus.FAILURE`. This obscured the security context of the failure in execution logs and could allow authorization/rate-limit events to be improperly categorized or retried downstream.
+**Learning:** Security policy exceptions (like authorization, permission, and rate limit errors) must consistently map to explicit security-related statuses (e.g., `ExecutionStatus.PERMISSION_DENIED`) when converted into structured API or execution responses (like `ToolResult`). Generic failure statuses weaken observability and security auditing.
+**Prevention:** When mapping authorization, permission, or rate limiting errors to structured execution responses in Agent-Gantry, always use `ExecutionStatus.PERMISSION_DENIED` instead of generic failure statuses to ensure accurate downstream security logging.

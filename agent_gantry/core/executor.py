@@ -408,7 +408,7 @@ class ExecutionEngine:
             except RateLimitExceeded as e:
                 result = ToolResult(
                     tool_name=call.tool_name,
-                    status=ExecutionStatus.FAILURE,
+                    status=ExecutionStatus.PERMISSION_DENIED,
                     error=str(e),
                     error_type="RateLimitExceeded",
                     queued_at=queued_at,

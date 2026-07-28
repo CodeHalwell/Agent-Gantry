@@ -107,6 +107,7 @@ async def test_rate_limiter_blocks_execution() -> None:
 
     # Second call should be rate-limited
     result2 = await engine.execute(ToolCall(tool_name="test_tool", arguments={}))
+    assert result2.status.value == "permission_denied"
     assert result2.error_type == "RateLimitExceeded"
 
 
