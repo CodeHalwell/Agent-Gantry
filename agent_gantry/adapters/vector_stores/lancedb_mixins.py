@@ -342,11 +342,11 @@ class LanceDBToolsMixin:
             _validate_identifier(namespace, "namespace")
 
         try:
-            query = self._tools_table.search()  # type: ignore
+            query = self._tools_table.search().select(["tool_json"])  # type: ignore
             if namespace:
                 query = query.where(f"namespace = '{_escape_sql_string(namespace)}'")
 
-            records = query.limit(limit).offset(offset).to_list()
+            records = query.limit(limit).offset(offset).to_arrow().to_pylist()
 
             return [
                 ToolDefinition.model_validate_json(r["tool_json"])
@@ -697,7 +697,7 @@ class LanceDBSkillsMixin:
             _validate_identifier(category, "category")
 
         try:
-            query = self._skills_table.search()  # type: ignore
+            query = self._skills_table.search().select(["skill_json"])  # type: ignore
             where_clauses = []
             if namespace:
                 where_clauses.append(f"namespace = '{_escape_sql_string(namespace)}'")
@@ -707,7 +707,7 @@ class LanceDBSkillsMixin:
             if where_clauses:
                 query = query.where(" AND ".join(where_clauses))
 
-            records = query.limit(limit).offset(offset).to_list()
+            records = query.limit(limit).offset(offset).to_arrow().to_pylist()
 
             return [
                 Skill.model_validate_json(r["skill_json"])

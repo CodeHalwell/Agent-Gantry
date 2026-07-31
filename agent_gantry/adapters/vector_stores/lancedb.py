@@ -311,6 +311,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
             ValueError: If tools and embeddings have different lengths or
                        if embedding dimensions don't match configured dimension
         """
+
         def to_record(tool: ToolDefinition, embedding: list[float], now: str) -> dict[str, Any]:
             return {
                 "id": f"{tool.namespace}.{tool.name}",
@@ -354,6 +355,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
             ValueError: If skills and embeddings have different lengths or
                        if embedding dimensions don't match configured dimension
         """
+
         def to_record(skill: Skill, embedding: list[float], now: str) -> dict[str, Any]:
             return {
                 "id": f"{skill.namespace}.{skill.name}",
@@ -686,10 +688,10 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
             _validate_identifier(namespace, "namespace")
 
         try:
-            query = self._tools_table.search()
+            query = self._tools_table.search().select(["tool_json"])
             if namespace:
                 query = query.where(f"namespace = '{_escape_sql_string(namespace)}'")
-            records = query.limit(limit).offset(offset).to_list()
+            records = query.limit(limit).offset(offset).to_arrow().to_pylist()
 
             return [
                 ToolDefinition.model_validate_json(r["tool_json"])
@@ -728,7 +730,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
             _validate_identifier(category, "category")
 
         try:
-            query = self._skills_table.search()
+            query = self._skills_table.search().select(["skill_json"])
             where_clauses = []
             if namespace:
                 where_clauses.append(f"namespace = '{_escape_sql_string(namespace)}'")
@@ -738,7 +740,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
             if where_clauses:
                 query = query.where(" AND ".join(where_clauses))
 
-            records = query.limit(limit).offset(offset).to_list()
+            records = query.limit(limit).offset(offset).to_arrow().to_pylist()
 
             return [
                 Skill.model_validate_json(r["skill_json"])
@@ -767,7 +769,9 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
 
         try:
             if namespace:
-                return int(self._tools_table.count_rows(f"namespace = '{_escape_sql_string(namespace)}'"))
+                return int(
+                    self._tools_table.count_rows(f"namespace = '{_escape_sql_string(namespace)}'")
+                )
             # Use count_rows() for efficient counting when no filter
             return int(self._tools_table.count_rows())
         except Exception as e:
@@ -792,7 +796,9 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
 
         try:
             if namespace:
-                return int(self._skills_table.count_rows(f"namespace = '{_escape_sql_string(namespace)}'"))
+                return int(
+                    self._skills_table.count_rows(f"namespace = '{_escape_sql_string(namespace)}'")
+                )
             return int(self._skills_table.count_rows())
         except Exception as e:
             logger.warning(f"Error counting skills: {e}")
@@ -947,4 +953,3 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
     def dimension(self) -> int:
         """Return the vector dimension."""
         return self._dimension
-
