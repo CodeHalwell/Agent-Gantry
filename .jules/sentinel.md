@@ -89,3 +89,8 @@
 **Vulnerability:** The `AgentSkill` and `AgentCard` models lacked identifier validation for `id` and `name` fields, making them vulnerable to newline injection. This could lead to downstream log injection or command injection.
 **Learning:** Security validations for common schema patterns (like identifier sanitation) must be universally applied across all analogous models within a system (e.g., tools, MCP servers, skills, and A2A agents).
 **Prevention:** Always implement explicit string character checks (using `reject_newlines`) with `@field_validator` on all identifier fields across all Pydantic models. Ensure `model_config = ConfigDict(validate_assignment=True)` is set so these constraints cannot be bypassed after object instantiation.
+
+## 2026-08-01 - [HIGH] Fix Log Injection via Newlines in Execution Models
+**Vulnerability:** Execution trace and tool models lacked identifier validation, making them vulnerable to newline injection.
+**Learning:** Pydantic models handling tool names, span IDs, and trace IDs must reject newlines.
+**Prevention:** Apply `reject_newlines` with `ConfigDict(validate_assignment=True)` on all identifier fields.
