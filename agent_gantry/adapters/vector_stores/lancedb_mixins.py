@@ -212,7 +212,7 @@ class LanceDBToolsMixin:
                 search = search.where(f"namespace = '{escaped_ns}'")
 
         # Execute search
-        results = search.to_list()
+        results = search.select(["tool_json", "_distance"]).to_arrow().to_pylist()
 
         # Process results
         output: list[tuple[ToolDefinition, float]] = []
@@ -281,7 +281,14 @@ class LanceDBToolsMixin:
         # Escape ID for SQL safety
         tool_id = _escape_sql_string(f"{namespace}.{name}")
         try:
-            results = self._tools_table.search().where(f"id = '{tool_id}'").limit(1).to_list()  # type: ignore
+            results = (
+                self._tools_table.search()
+                .where(f"id = '{tool_id}'")
+                .limit(1)
+                .select(["tool_json"])
+                .to_arrow()
+                .to_pylist()
+            )  # type: ignore
             if results:
                 tool_json_str = results[0].get("tool_json")
                 if tool_json_str:
@@ -346,7 +353,7 @@ class LanceDBToolsMixin:
             if namespace:
                 query = query.where(f"namespace = '{_escape_sql_string(namespace)}'")
 
-            records = query.limit(limit).offset(offset).to_list()
+            records = query.limit(limit).offset(offset).select(["tool_json"]).to_arrow().to_pylist()
 
             return [
                 ToolDefinition.model_validate_json(r["tool_json"])
@@ -583,7 +590,7 @@ class LanceDBSkillsMixin:
             escaped_cat = _escape_sql_string(filters["category"])
             search = search.where(f"category = '{escaped_cat}'")
 
-        results = search.to_list()
+        results = search.select(["skill_json", "_distance"]).to_arrow().to_pylist()
 
         output: list[tuple[Skill, float]] = []
         for row in results:
@@ -632,7 +639,14 @@ class LanceDBSkillsMixin:
         # Escape ID for SQL safety
         skill_id = _escape_sql_string(f"{namespace}.{name}")
         try:
-            results = self._skills_table.search().where(f"id = '{skill_id}'").limit(1).to_list()  # type: ignore
+            results = (
+                self._skills_table.search()
+                .where(f"id = '{skill_id}'")
+                .limit(1)
+                .select(["skill_json"])
+                .to_arrow()
+                .to_pylist()
+            )  # type: ignore
             if results:
                 skill_json_str = results[0].get("skill_json")
                 if skill_json_str:
@@ -707,7 +721,9 @@ class LanceDBSkillsMixin:
             if where_clauses:
                 query = query.where(" AND ".join(where_clauses))
 
-            records = query.limit(limit).offset(offset).to_list()
+            records = (
+                query.limit(limit).offset(offset).select(["skill_json"]).to_arrow().to_pylist()
+            )
 
             return [
                 Skill.model_validate_json(r["skill_json"])
@@ -763,7 +779,12 @@ class LanceDBMetadataMixin:
         try:
             escaped_key = _escape_sql_string(key)
             results = (
-                self._metadata_table.search().where(f"key = '{escaped_key}'").limit(1).to_list()
+                self._metadata_table.search()
+                .where(f"key = '{escaped_key}'")
+                .limit(1)
+                .select(["value"])
+                .to_arrow()
+                .to_pylist()
             )  # type: ignore
             if results and results[0].get("value") is not None:
                 value: str = results[0]["value"]

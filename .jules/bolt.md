@@ -50,3 +50,7 @@
 ## 2026-06-25 - Push LanceDB operations to database engine
 **Learning:** When querying LanceDB tables in Python, loading the entire table into memory via `table.to_arrow().to_pylist()` for filtering, counting, or pagination creates an O(N) memory bottleneck on large datasets. Additionally, retrieving all columns when only specific ones are needed (like 'id' and 'fingerprint') increases the payload significantly.
 **Action:** Use LanceDB native query builders like `search().where(condition).limit(limit).offset(offset).to_list()`, `count_rows(condition)`, and `.select(["col1", "col2"])` instead of pulling the data into Python lists to process them.
+
+## 2026-06-25 - Push LanceDB arrow payload reduction to C++ layer
+**Learning:** Retrieving whole rows from LanceDB (especially with large vector embeddings) using `.to_list()` incurs massive serialization and memory overhead, even if only a subset of data is needed. Applying `.select()` restricts the payload to the required columns, but `to_list()` still creates dictionaries directly. Converting to Arrow format first and then to python list via `.to_arrow().to_pylist()` pushes the column filtering and data reduction entirely into the highly-optimized C++ layer, leading to significant performance gains on retrieval.
+**Action:** When searching or listing LanceDB records, always limit retrieved columns using `.select([...])` and materialize via `.to_arrow().to_pylist()` rather than using `.to_list()` directly.
