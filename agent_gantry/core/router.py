@@ -6,6 +6,7 @@ Intelligent tool selection using semantic search, intent classification, and con
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass
@@ -74,6 +75,16 @@ INTENT_TAG_PATTERNS: dict[TaskIntent, re.Pattern[str]] = {
     intent: re.compile("|".join(re.escape(kw) for kw in keywords))
     for intent, keywords in INTENT_TAG_MAPPING.items()
 }
+
+
+@dataclass
+class _QueryContextCache:
+    """Per-query normalized conversation context, computed once per route call."""
+
+    summary_lower: str
+    messages_lower: list[str]
+    tools_used: set[str]
+    tools_failed: set[str]
 
 
 @dataclass
@@ -250,28 +261,38 @@ class SemanticRouter:
         Returns:
             Routing result with scores and timings
         """
-        embed_start = perf_counter()
-        query_embedding = await self._embedder.embed_text(query.context.query)
-        query_embedding_time_ms = (perf_counter() - embed_start) * 1000
+        # Intent resolution is independent of embedding + vector search, so run
+        # it concurrently. With keyword classification this is near-free; with
+        # LLM classification it removes an entire LLM round-trip from the
+        # critical path.
+        intent_task = asyncio.ensure_future(self._resolve_intent(query))
 
-        filters: dict[str, list[str]] | None = None
-        if query.namespaces:
-            filters = {"namespace": query.namespaces}
+        try:
+            embed_start = perf_counter()
+            query_embedding = await self._embedder.embed_text(query.context.query)
+            query_embedding_time_ms = (perf_counter() - embed_start) * 1000
 
-        # Request embeddings if MMR will be used (optimization to avoid re-embedding)
-        include_embeddings = query.diversity_factor > 0
+            filters: dict[str, list[str]] | None = None
+            if query.namespaces:
+                filters = {"namespace": query.namespaces}
 
-        search_start = perf_counter()
-        candidates = await self._vector_store.search(
-            query_vector=query_embedding,
-            limit=query.limit * 4,
-            filters=filters,
-            score_threshold=query.score_threshold,
-            include_embeddings=include_embeddings,
-        )
-        vector_search_time_ms = (perf_counter() - search_start) * 1000
+            # Request embeddings if MMR will be used (optimization to avoid re-embedding)
+            include_embeddings = query.diversity_factor > 0
 
-        intent = await self._resolve_intent(query)
+            search_start = perf_counter()
+            candidates = await self._vector_store.search(
+                query_vector=query_embedding,
+                limit=query.limit * 4,
+                filters=filters,
+                score_threshold=query.score_threshold,
+                include_embeddings=include_embeddings,
+            )
+            vector_search_time_ms = (perf_counter() - search_start) * 1000
+        except BaseException:
+            intent_task.cancel()
+            raise
+
+        intent = await intent_task
 
         scored_tools, tool_embeddings = self._score_and_filter_candidates(
             candidates=list(candidates),
@@ -325,6 +346,16 @@ class SemanticRouter:
         req_caps = set(query.required_capabilities) if query.required_capabilities else None
         exc_caps = set(query.excluded_capabilities) if query.excluded_capabilities else None
 
+        # Normalize conversation context once per query instead of once per
+        # candidate — lowering the summary and every recent message inside the
+        # scoring loop is O(candidates × context size).
+        ctx = _QueryContextCache(
+            summary_lower=(query.context.conversation_summary or "").lower(),
+            messages_lower=[m.get("content", "").lower() for m in query.context.recent_messages],
+            tools_used=set(query.context.tools_already_used),
+            tools_failed=set(query.context.tools_failed),
+        )
+
         for candidate in candidates:
             if include_embeddings:
                 tool, semantic_score, embedding = candidate  # type: ignore
@@ -340,7 +371,7 @@ class SemanticRouter:
                 tool=tool,
                 semantic_score=semantic_score,
                 intent=intent,
-                query=query,
+                ctx=ctx,
             )
             final_score = compute_final_score(signals, self._weights)
             scored_tools.append((tool, final_score))
@@ -392,7 +423,7 @@ class SemanticRouter:
         tool: ToolDefinition,
         semantic_score: float,
         intent: TaskIntent,
-        query: ToolQuery,
+        ctx: _QueryContextCache,
     ) -> RoutingSignals:
         """Compute routing signals for a tool."""
         # Intent match
@@ -407,15 +438,14 @@ class SemanticRouter:
                     intent_match = 1.0
 
         # Conversation relevance
+        tool_name_lower = tool.name.lower()
         conversation_relevance = 0.0
-        if tool.name in query.context.tools_already_used:
+        if tool.name in ctx.tools_used:
             conversation_relevance = 0.5
-        summary = (query.context.conversation_summary or "").lower()
-        if summary and self._contains_token(summary, tool.name.lower()):
+        if ctx.summary_lower and self._contains_token(ctx.summary_lower, tool_name_lower):
             conversation_relevance = min(1.0, conversation_relevance + 0.2)
-        for message in query.context.recent_messages:
-            content = message.get("content", "").lower()
-            if content and self._contains_token(content, tool.name.lower()):
+        for content in ctx.messages_lower:
+            if content and self._contains_token(content, tool_name_lower):
                 conversation_relevance = min(1.0, conversation_relevance + 0.2)
 
         # Health score
@@ -425,8 +455,8 @@ class SemanticRouter:
         cost_score = 1.0 - min(tool.cost.estimated_latency_ms / 10000, 1.0)
 
         # Penalties
-        already_used_penalty = 0.1 if tool.name in query.context.tools_already_used else 0.0
-        already_failed_penalty = 0.3 if tool.name in query.context.tools_failed else 0.0
+        already_used_penalty = 0.1 if tool.name in ctx.tools_used else 0.0
+        already_failed_penalty = 0.3 if tool.name in ctx.tools_failed else 0.0
         deprecated_penalty = 0.5 if tool.deprecated else 0.0
 
         return RoutingSignals(

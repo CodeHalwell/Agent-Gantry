@@ -1,9 +1,9 @@
 # Agent-Gantry Modernisation Audit
 
-**Date:** 2026-06-08
-**Repository:** `CodeHalwell/Agent-Gantry` · version `0.4.0`
-**Branch:** `claude/cool-hopper-cSXxx` (based on `main` after commit `be7c3b4` — 2026-06-04 audit run; includes SSRF fix, Qodana setup, SimpleEmbedder perf, and 2026-06-05 audit)
-**Auditor:** Claude (claude-sonnet-4-6)
+**Date:** 2026-08-03
+**Repository:** `CodeHalwell/Agent-Gantry` · version `0.9.0`
+**Branch:** `claude/agent-gantry-performance-mw8s6p` (based on `main` at `e4e7fd4`)
+**Auditor:** Claude
 
 > **Audit history.**
 > - **2026-05-27** (`claude/cool-hopper-Y9M5N`): Initial modernisation audit. Bumped
@@ -32,7 +32,30 @@
 >   `>=1.5.0,<2.0.0` constraint — no version change required); updated google-adk comment
 >   to reflect 2.2.0 as latest stable (was 2.1.0; langgraph conflict still blocks upgrade).
 >   No code changes required.
-> - **2026-06-08** (this run, `claude/cool-hopper-cSXxx`): Bumped `anthropic>=0.105.2→>=0.107.1`
+> - **2026-08-03** (`claude/agent-gantry-performance-mw8s6p`): Performance +
+>   dependency audit. **Urgent:** capped `mcp>=1.27.2,<2.0.0` — mcp 2.0.0
+>   (2026-07-28) removes every v1 API Gantry uses (`Server`, `stdio_server`,
+>   `ClientSession`, `stdio_client`); uncapped standalone `[mcp]` installs broke
+>   at import. Bumped `crewai>=1.15.0` (its opentelemetry-api pin moved to
+>   ~=1.42.0 in 1.15.0, resolving the long-standing agent-framework conflict —
+>   combined extra now locks crewai 1.15.10, was 1.6.1), `langchain>=1.3.14`,
+>   `langchain-openai>=1.4.1`, `langgraph>=1.2.10`, `llama-index-core>=0.14.23`,
+>   `llama-index-llms-openai>=0.7.10`, `openai>=2.45.0` (required by
+>   langchain-openai 1.4.x), `anthropic>=0.120.2`, `cohere>=7.0.8`,
+>   `groq>=1.6.0`. semantic-kernel bump to 1.43.1 attempted and REVERTED —
+>   `uv lock` proved sk 1.43+ (azure-ai-projects<1.1) incompatible with
+>   agent-framework-foundry (azure-ai-projects>=2.2); comment updated. Removed
+>   obsolete `azure-search-documents>=11.7.0b2` uv override (stable 12.0.0
+>   exists). Noted mistralai quarantine LIFTED (kept OpenAI-compatible path)
+>   and google-adk's google-genai constraint inversion (>=2.9,<3 since adk
+>   1.36.0). CI adapter job caps `pydantic-ai-slim<2`, `haystack-ai<3`,
+>   `dspy<3.3` pending adapter migration (all three shipped breaking changes).
+>   Regenerated `uv.lock`. Code: fixed broken incremental sync (in-memory
+>   fingerprint format; Qdrant/Chroma/PGVector fingerprint + metadata support),
+>   rate-limiter slot leak, LanceDB include_embeddings crash under MMR; wired
+>   MCP tool execution (handlers + persistent sessions); perf work in
+>   router/registry/executor/LanceDB/OpenAI embedder (see CHANGELOG).
+> - **2026-06-08** (`claude/cool-hopper-cSXxx`): Bumped `anthropic>=0.105.2→>=0.107.1`
 >   (three new releases since 2026-06-05: 0.106.0 deprecated claude-opus-4-1 in SDK,
 >   0.107.0 added Managed Agents type updates, 0.107.1 fixed Foundry x-api-key header).
 >   Updated `anthropic_features.py` — replaced vague "earlier Claude 4 models" in three

@@ -7,6 +7,7 @@ batch processing with built-in retry logic.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Any
@@ -58,6 +59,10 @@ class BaseOpenAIEmbedder:
         self._model = config.model or "text-embedding-3-small"
         self._batch_size = config.batch_size
         self._max_retries = config.max_retries
+        # Concurrent in-flight batch requests for embed_batch. Small enough to
+        # stay well under provider rate limits while removing the serial
+        # round-trip latency of large multi-batch syncs.
+        self._max_concurrent_batches = 4
 
         # Determine dimension - use specified, or config, or model default
         if dimension is not None:
@@ -120,33 +125,41 @@ class BaseOpenAIEmbedder:
         if not texts:
             return []
 
+        if not self._client:
+            raise RuntimeError("Client is not initialized")
+
         batch_size = batch_size or self._batch_size
-        all_embeddings: list[list[float]] = []
+        batches = [texts[i : i + batch_size] for i in range(0, len(texts), batch_size)]
 
-        # Process in batches
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i : i + batch_size]
-
-            # Prepare parameters for embedding call
+        async def embed_one(batch: list[str], semaphore: asyncio.Semaphore) -> list[list[float]]:
             params: dict[str, Any] = {
                 "input": batch,
                 "model": self._model,
             }
-
             # Only add dimensions parameter for models that support it
             if self._model.startswith("text-embedding-3"):
                 params["dimensions"] = self._dimension
 
-            try:
-                if not self._client:
-                    raise RuntimeError("Client is not initialized")
-                response = await self._client.embeddings.create(**params)
-                batch_embeddings = [item.embedding for item in response.data]
-                all_embeddings.extend(batch_embeddings)
-            except Exception as e:
-                logger.error(f"Error embedding batch: {e}")
-                raise
+            async with semaphore:
+                try:
+                    response = await self._client.embeddings.create(**params)
+                except Exception as e:
+                    logger.error(f"Error embedding batch: {e}")
+                    raise
+            return [item.embedding for item in response.data]
 
+        if len(batches) == 1:
+            semaphore = asyncio.Semaphore(1)
+            return await embed_one(batches[0], semaphore)
+
+        # Issue batch requests concurrently (bounded to stay under provider
+        # rate limits) instead of serial round-trips; gather preserves order.
+        semaphore = asyncio.Semaphore(self._max_concurrent_batches)
+        results = await asyncio.gather(*(embed_one(batch, semaphore) for batch in batches))
+
+        all_embeddings: list[list[float]] = []
+        for batch_embeddings in results:
+            all_embeddings.extend(batch_embeddings)
         return all_embeddings
 
     async def health_check(self) -> bool:

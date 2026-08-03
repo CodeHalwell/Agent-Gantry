@@ -6,6 +6,7 @@ Connects to MCP servers and converts their tools to ToolDefinition.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import Any
@@ -27,8 +28,16 @@ class MCPClient:
     - Connection via stdio (subprocess)
     - MCP handshake (initialize/initialized)
     - Tool discovery (tools/list)
-    - Tool execution (tools/call)
+    - Tool execution (tools/call) over a persistent session
     - Conversion of MCP tools to ToolDefinition
+
+    ``call_tool`` keeps one long-lived connection per client: spawning the
+    server subprocess and re-running the initialize handshake per call adds
+    hundreds of milliseconds (or seconds, for ``npx``-launched servers) to
+    every tool execution. The connection is owned by a dedicated background
+    task so the anyio cancel scopes of ``stdio_client``/``ClientSession`` are
+    entered and exited in the same task — holding them open across arbitrary
+    caller tasks is unsafe. Call :meth:`close` to shut the connection down.
     """
 
     def __init__(self, config: MCPServerConfig) -> None:
@@ -41,6 +50,11 @@ class MCPClient:
         self.config = config
         self._session: ClientSession | None = None
         self._connected = False
+        # Persistent-session machinery (see class docstring)
+        self._owner_task: asyncio.Task[None] | None = None
+        self._close_event: asyncio.Event | None = None
+        self._connect_lock: asyncio.Lock | None = None
+        self._loop_id: int | None = None
 
     @asynccontextmanager
     async def connect(self) -> Any:
@@ -68,13 +82,118 @@ class MCPClient:
                     self._session = None
                     self._connected = False
 
+    async def _ensure_session(self) -> ClientSession:
+        """
+        Return a live persistent session, connecting if needed.
+
+        The connection is opened and later closed by a dedicated owner task
+        (via :meth:`connect`), so the underlying anyio cancel scopes stay in
+        one task. Other tasks may safely *use* the returned session.
+        """
+        loop_id = id(asyncio.get_running_loop())
+
+        if self._connected and self._session is not None and self._loop_id == loop_id:
+            return self._session
+
+        if self._loop_id is not None and self._loop_id != loop_id:
+            # Session belongs to a different (likely dead) event loop. Its
+            # owner task can't be awaited from here — signal it to close and
+            # abandon it, then reconnect on the current loop.
+            if self._close_event is not None:
+                self._close_event.set()
+            self._owner_task = None
+            self._close_event = None
+            self._connect_lock = None
+            self._loop_id = None
+
+        if self._connect_lock is None:
+            self._connect_lock = asyncio.Lock()
+
+        async with self._connect_lock:
+            if self._connected and self._session is not None:
+                return self._session
+
+            ready = asyncio.Event()
+            close_event = asyncio.Event()
+            startup_error: list[BaseException] = []
+
+            async def owner() -> None:
+                try:
+                    async with self.connect() as session:
+                        # connect() sets _session/_connected for the real
+                        # implementation; set them explicitly so patched/mock
+                        # connect() implementations work too.
+                        self._session = session
+                        self._connected = True
+                        ready.set()
+                        await close_event.wait()
+                except BaseException as e:
+                    startup_error.append(e)
+                    ready.set()
+                finally:
+                    self._session = None
+                    self._connected = False
+
+            self._close_event = close_event
+            self._loop_id = loop_id
+            self._owner_task = asyncio.create_task(owner())
+            await ready.wait()
+
+            if startup_error:
+                self._owner_task = None
+                self._close_event = None
+                self._loop_id = None
+                raise RuntimeError(
+                    f"Failed to connect to MCP server '{self.config.name}': {startup_error[0]}"
+                ) from startup_error[0]
+
+            assert self._session is not None
+            return self._session
+
+    async def _invalidate_session(self) -> None:
+        """Drop the persistent connection so the next call reconnects."""
+        if self._close_event is not None:
+            self._close_event.set()
+        task = self._owner_task
+        self._owner_task = None
+        self._close_event = None
+        if task is not None and self._loop_id == id(asyncio.get_running_loop()):
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=5)
+            except Exception:
+                logger.debug("Error while closing MCP session", exc_info=True)
+        self._loop_id = None
+
+    async def close(self) -> None:
+        """Close the persistent connection (if any). Safe to call repeatedly."""
+        try:
+            await self._invalidate_session()
+        except RuntimeError:
+            # No running loop / different loop — abandon; subprocess dies
+            # with the loop's task teardown.
+            self._owner_task = None
+            self._close_event = None
+            self._loop_id = None
+
     async def list_tools(self) -> list[ToolDefinition]:
         """
         List all tools from the MCP server.
 
+        Reuses the persistent session when one is live; otherwise opens a
+        short-lived discovery connection.
+
         Returns:
             List of ToolDefinition objects
         """
+        if self._connected and self._session is not None:
+            session = self._session
+            try:
+                result = await session.list_tools()
+            except Exception:
+                await self._invalidate_session()
+                raise
+            return [self._convert_tool(tool) for tool in result.tools]
+
         async with self.connect() as session:
             result = await session.list_tools()
             tools = []
@@ -118,7 +237,11 @@ class MCPClient:
 
     async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         """
-        Execute a tool on the MCP server.
+        Execute a tool on the MCP server over the persistent session.
+
+        The first call connects (subprocess spawn + initialize handshake);
+        subsequent calls reuse the connection. On a transport error the
+        session is dropped so the next call reconnects.
 
         Args:
             tool_name: Name of the tool to execute
@@ -127,9 +250,12 @@ class MCPClient:
         Returns:
             Tool execution result
         """
-        async with self.connect() as session:
-            result = await session.call_tool(tool_name, arguments)
-            return result
+        session = await self._ensure_session()
+        try:
+            return await session.call_tool(tool_name, arguments)
+        except Exception:
+            await self._invalidate_session()
+            raise
 
 
 class MCPClientPool:
@@ -188,13 +314,36 @@ class MCPClientPool:
         """
         Remove an MCP server from the pool.
 
+        Best-effort closes the client's persistent connection (scheduled on
+        the running loop when there is one).
+
         Args:
             name: Server name
 
         Returns:
             True if server was removed
         """
-        if name in self._clients:
-            del self._clients[name]
-            return True
-        return False
+        client = self._clients.pop(name, None)
+        if client is None:
+            return False
+        _schedule_client_close(client)
+        return True
+
+    async def close_all(self) -> None:
+        """Close all pooled clients' persistent connections."""
+        for client in list(self._clients.values()):
+            try:
+                await client.close()
+            except Exception:
+                logger.debug("Error closing MCP client", exc_info=True)
+
+
+def _schedule_client_close(client: MCPClient) -> None:
+    """Schedule ``client.close()`` on the running loop, if any."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    task = loop.create_task(client.close())
+    # Keep a reference until done so the task isn't garbage-collected early.
+    task.add_done_callback(lambda _t: None)

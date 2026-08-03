@@ -33,6 +33,17 @@ class A2AExecutor:
         """Initialize A2A executor."""
         self._clients: dict[str, Any] = {}
 
+    async def close(self) -> None:
+        """Close all cached A2A clients and their persistent connections."""
+        for client in self._clients.values():
+            close_method = getattr(client, "close", None)
+            if close_method is not None:
+                try:
+                    await close_method()
+                except Exception:  # pragma: no cover - best-effort cleanup
+                    logger.debug("Error closing A2A client", exc_info=True)
+        self._clients.clear()
+
     def _get_client(self, tool: ToolDefinition) -> Any:
         """
         Get or create an A2A client for the tool.

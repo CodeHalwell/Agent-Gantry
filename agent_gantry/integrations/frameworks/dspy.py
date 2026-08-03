@@ -233,7 +233,7 @@ class DSPyAdapter(BaseFrameworkAdapter):
         from agent_gantry.dspy import DSPyAdapter
         import dspy
 
-        dspy.configure(lm=dspy.LM("openai/gpt-4o-mini"))
+        dspy.configure(lm=dspy.LM("openai/gpt-5.4-mini"))
 
         gantry = AgentGantry()
         # ... register tools, await gantry.sync() ...

@@ -120,11 +120,18 @@ jobs:
       # Resolve the project (dev) + the adapter frameworks together in ONE
       # isolated venv, so a shared dep (pydantic/httpx/openai) is resolved to a
       # single compatible version rather than installed-then-downgraded.
+      # Temporary caps (2026-08-03): pydantic-ai 2.x (2.0.0 on 2026-06-23:
+      # builtin_tools→capabilities, ToolDefinition positional-arg reorder, MCP
+      # class removals), haystack-ai 3.0.0 (2026-07-20: ToolInvoker removed,
+      # explicit tool-state injection, JSON-serialized tool results), and
+      # dspy 3.3.0 (2026-08-03: ReActV2 trajectory format, resource factories)
+      # all break the current adapters. Cap until each adapter is migrated,
+      # then lift the corresponding cap.
       - name: Run adapter smoke tests
         run: |
           uv venv .venv-frameworks --python ${{ matrix.python-version }}
           uv pip install --python .venv-frameworks ".[dev]" \
-            pydantic-ai-slim openai-agents smolagents haystack-ai agno strands-agents dspy
+            "pydantic-ai-slim<2" openai-agents smolagents "haystack-ai<3" agno strands-agents "dspy<3.3"
           .venv-frameworks/bin/python -m pytest tests/frameworks/ -v
 
   docs:

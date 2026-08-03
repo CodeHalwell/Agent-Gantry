@@ -7,7 +7,7 @@ supporting both tools and skills collections for semantic retrieval.
 
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -146,8 +146,8 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
         db_dir = Path(self._db_path)
         db_dir.mkdir(parents=True, exist_ok=True)
 
-        # Connect to database
-        self._db = lancedb.connect(str(db_dir))
+        # Connect to database (blocking file I/O — keep it off the event loop)
+        self._db = await asyncio.to_thread(lancedb.connect, str(db_dir))
 
         # Create tools table schema
         tools_schema = pa.schema(
@@ -275,9 +275,9 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
             try:
                 if len(ids) > 1:
                     escaped_ids = ", ".join(f"'{id_}'" for id_ in ids)
-                    table.delete(f"id IN ({escaped_ids})")
+                    await asyncio.to_thread(table.delete, f"id IN ({escaped_ids})")
                 else:
-                    table.delete(f"id = '{ids[0]}'")
+                    await asyncio.to_thread(table.delete, f"id = '{ids[0]}'")
             except RuntimeError as e:
                 # LanceDB raises RuntimeError when attempting to delete non-existent records
                 # This is expected during upsert when records don't exist yet
@@ -287,7 +287,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
                 logger.warning(f"Unexpected error during upsert delete: {e}")
                 raise
 
-        table.add(records)
+        await asyncio.to_thread(table.add, records)
         return len(records)
 
     async def add_tools(
@@ -398,18 +398,21 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
             List of (tool, score) tuples if include_embeddings=False
             List of (tool, score, embedding) tuples if include_embeddings=True
         """
-        import logging
-
-        if include_embeddings:
-            logging.getLogger(__name__).warning(
-                "LanceDBVectorStore does not support include_embeddings yet. "
-                "Returning without embeddings."
-            )
-
         await self._ensure_initialized()
 
-        # Build search query
-        search = self._tools_table.search(query_vector).limit(limit * 2)  # Over-fetch for filtering
+        # Build search query. Only materialize the columns we need — without
+        # .select() every row also deserializes the full embedding vector into
+        # Python objects just to be discarded. `_distance` must be listed
+        # explicitly: newer Lance versions stop auto-projecting it when output
+        # columns are specified.
+        columns = (
+            ["tool_json", "vector", "_distance"] if include_embeddings else ["tool_json", "_distance"]
+        )
+        search = (
+            self._tools_table.search(query_vector)
+            .select(columns)
+            .limit(limit * 2)  # Over-fetch for filtering
+        )
 
         # Apply namespace filter if specified (escape for SQL safety)
         if filters and "namespace" in filters:
@@ -426,11 +429,12 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
                 escaped_ns = _escape_sql_string(ns_filter)
                 search = search.where(f"namespace = '{escaped_ns}'")
 
-        # Execute search
-        results = search.to_list()
+        # Execute search off the event loop — LanceDB queries are synchronous
+        # Rust/file I/O and would otherwise block every concurrent coroutine.
+        results = await asyncio.to_thread(search.to_list)
 
         # Process results
-        output: list[tuple[ToolDefinition, float]] = []
+        output: list[Any] = []
 
         # Pre-calculate required tags for faster set operations
         required_tags: set[str] = set()
@@ -446,18 +450,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
             if score_threshold is not None and score < score_threshold:
                 continue
 
-            # Filter by tags if specified
-            if required_tags:
-                tool_json_str = row.get("tool_json")
-                if not tool_json_str:
-                    logger.warning("Skipping row with missing tool_json field")
-                    continue
-                tool_json = json.loads(tool_json_str)
-                tool_tags = tool_json.get("tags", [])
-                if required_tags.isdisjoint(tool_tags):
-                    continue
-
-            # Deserialize tool
+            # Deserialize tool (validate once; tags are checked on the model)
             tool_json_str = row.get("tool_json")
             if not tool_json_str:
                 logger.warning("Skipping row with missing tool_json field")
@@ -469,7 +462,16 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
                 logger.warning(f"Failed to deserialize tool: {e}")
                 continue
 
-            output.append((tool, score))
+            # Filter by tags if specified
+            if required_tags and required_tags.isdisjoint(tool.tags):
+                continue
+
+            if include_embeddings:
+                vector = row.get("vector")
+                embedding = list(vector) if vector is not None else []
+                output.append((tool, score, embedding))
+            else:
+                output.append((tool, score))
 
             if len(output) >= limit:
                 break

@@ -10,6 +10,7 @@ from typing import Any
 import numpy as np
 
 from agent_gantry.schema.tool import ToolDefinition
+from agent_gantry.utils.fingerprint import compute_tool_fingerprint
 
 
 class InMemoryVectorStore:
@@ -70,8 +71,12 @@ class InMemoryVectorStore:
             if key not in self._tools or upsert:
                 self._tools[key] = tool
                 self._embeddings[key] = embedding
-                # Store fingerprint for change detection
-                self._fingerprints[key] = tool.content_hash
+                # Store fingerprint for change detection. Must be the same
+                # format SyncManager.detect_changes compares against
+                # (compute_tool_fingerprint, "v1.0:<hash>") — storing the
+                # unrelated tool.content_hash here made every sync() re-embed
+                # the full registry because the comparison never matched.
+                self._fingerprints[key] = compute_tool_fingerprint(tool)
                 count += 1
         if count:
             self._matrix = None  # invalidate vectorized cache

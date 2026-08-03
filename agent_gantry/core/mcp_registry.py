@@ -131,12 +131,25 @@ class MCPRegistry:
         key = f"{namespace}.{name}"
         if key in self._servers:
             del self._servers[key]
-            # Also remove client if it exists
-            if key in self._clients:
-                del self._clients[key]
+            # Also remove client if it exists (best-effort close of its
+            # persistent connection)
+            client = self._clients.pop(key, None)
+            if client is not None:
+                from agent_gantry.adapters.executors.mcp_client import _schedule_client_close
+
+                _schedule_client_close(client)
             logger.debug(f"Deleted MCP server: {key}")
             return True
         return False
+
+    async def close_all_clients(self) -> None:
+        """Close all cached clients' persistent connections."""
+        for client in list(self._clients.values()):
+            try:
+                await client.close()
+            except Exception:
+                logger.debug("Error closing MCP client", exc_info=True)
+        self._clients.clear()
 
     def get_pending(self) -> list[MCPServerDefinition]:
         """

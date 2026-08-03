@@ -28,6 +28,23 @@ class ToolRegistry:
         self._tools: dict[str, ToolDefinition] = {}
         self._handlers: dict[str, Callable[..., Any]] = {}
         self._pending: list[ToolDefinition] = []
+        # Secondary index: bare tool name -> first registered qualified key.
+        # Keeps get_tool_by_name O(1); executed on every ExecutionEngine call.
+        self._name_index: dict[str, str] = {}
+
+    def _index_tool(self, key: str, tool: ToolDefinition) -> None:
+        """Record a tool in the name index (first registration wins)."""
+        self._name_index.setdefault(tool.name, key)
+
+    def _unindex_tool(self, key: str, name: str) -> None:
+        """Drop a deleted tool from the name index, re-pointing to another namespace if any."""
+        if self._name_index.get(name) != key:
+            return
+        del self._name_index[name]
+        for other_key, other_tool in self._tools.items():
+            if other_tool.name == name:
+                self._name_index[name] = other_key
+                break
 
     def register(
         self,
@@ -76,6 +93,7 @@ class ToolRegistry:
             self._tools[key] = tool
             self._handlers[key] = fn
             self._pending.append(tool)
+            self._index_tool(key, tool)
 
             return fn
 
@@ -95,6 +113,7 @@ class ToolRegistry:
         self._tools[key] = tool
         self._handlers[key] = handler
         self._pending.append(tool)
+        self._index_tool(key, tool)
 
     def get_tool(self, name: str, namespace: str = "default") -> ToolDefinition | None:
         """
@@ -128,10 +147,10 @@ class ToolRegistry:
         if default_key in self._tools:
             return self._tools[default_key]
 
-        # Search all namespaces
-        for key, tool in self._tools.items():
-            if tool.name == name:
-                return tool
+        # O(1) lookup across namespaces via the name index
+        key = self._name_index.get(name)
+        if key is not None:
+            return self._tools.get(key)
         return None
 
     def get_handler(self, key: str) -> Callable[..., Any] | None:
@@ -155,6 +174,7 @@ class ToolRegistry:
         """
         key = f"{tool.namespace}.{tool.name}"
         self._tools[key] = tool
+        self._index_tool(key, tool)
 
     def register_handler(self, key: str, handler: Callable[..., Any]) -> None:
         """
@@ -196,6 +216,7 @@ class ToolRegistry:
         if key in self._tools:
             del self._tools[key]
             self._handlers.pop(key, None)
+            self._unindex_tool(key, name)
             return True
         return False
 

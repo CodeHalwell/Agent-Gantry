@@ -217,6 +217,10 @@ class AgentGantry:
         self._pending_tools: list[ToolDefinition] = []
         self._pending_mcp_servers: list[MCPServerDefinition] = []
         self._tool_handlers: dict[str, Callable[..., Any]] = {}
+        # MCP clients created by add_mcp_server (immediate discovery), kept so
+        # their persistent connections can be reused by handlers and closed on
+        # close(). Keyed by config name.
+        self._direct_mcp_clients: dict[str, Any] = {}
         # Framework-agnostic post-execution callbacks (see on_tool_call).
         self._tool_call_callbacks: list[Callable[..., Any]] = []
         self._initialized = False
@@ -232,6 +236,21 @@ class AgentGantry:
         Closes vector store connections, MCP clients, and any other resources.
         Safe to call multiple times.
         """
+        # Close MCP clients (persistent server connections)
+        for client in list(self._direct_mcp_clients.values()):
+            try:
+                await client.close()
+            except Exception:
+                logger.debug("Error closing MCP client", exc_info=True)
+        self._direct_mcp_clients.clear()
+        if self._mcp_registry is not None:
+            close_clients = getattr(self._mcp_registry, "close_all_clients", None)
+            if close_clients is not None:
+                await close_clients()
+
+        # Close the execution engine (cached A2A clients, etc.)
+        await self._executor.close()
+
         # Close vector store if it has a close method
         close_method = getattr(self._vector_store, "close", None)
         if close_method:
@@ -598,9 +617,12 @@ class AgentGantry:
         # Update sync metadata (if supported)
         await self._sync_manager.update_metadata()
 
-        # Ensure all tools are registered (even those not synced)
+        # Ensure all tools are registered (even those not synced). Compare by
+        # qualified name — `tool in tools_to_sync` would deep-compare Pydantic
+        # models pairwise (O(N²) over full schemas).
+        synced_keys = {f"{t.namespace}.{t.name}" for t in tools_to_sync}
         for tool in all_tools:
-            if tool not in tools_to_sync:
+            if f"{tool.namespace}.{tool.name}" not in synced_keys:
                 self._registry.register_tool(tool)
 
         self._synced = True
@@ -1167,17 +1189,47 @@ class AgentGantry:
 
         await self._ensure_initialized()
 
-        # Create MCP client
-        client = MCPClient(config)
+        # Reuse the client (and its persistent connection) across repeat calls
+        client = self._direct_mcp_clients.get(config.name)
+        if client is None:
+            client = MCPClient(config)
+            self._direct_mcp_clients[config.name] = client
 
         # Discover tools from the server
         tools = await client.list_tools()
 
-        # Add tools to the gantry
-        for tool in tools:
-            await self.add_tool(tool)
+        # Wire execution handlers so discovered tools run through
+        # gantry.execute() (security, retries, telemetry) via the MCP client.
+        self._register_mcp_tool_handlers(client, tools)
+
+        # Add all tools first, then sync once — per-tool add_tool() would
+        # trigger a full sync (and a size-1 embedding batch) per tool when
+        # auto_sync is enabled.
+        self._pending_tools.extend(tools)
+        if self._config.auto_sync:
+            await self.sync()
 
         return len(tools)
+
+    def _register_mcp_tool_handlers(self, client: Any, tools: list[ToolDefinition]) -> None:
+        """Register execution handlers that proxy tool calls to an MCP client.
+
+        Without a handler, MCP-discovered tools are retrievable but fail with
+        "No handler found" when executed through the engine.
+        """
+
+        def make_handler(tool_name: str) -> Callable[..., Any]:
+            async def mcp_tool_handler(**arguments: Any) -> Any:
+                return await client.call_tool(tool_name, arguments)
+
+            mcp_tool_handler.__name__ = f"mcp_{tool_name}"
+            return mcp_tool_handler
+
+        for tool in tools:
+            key = f"{tool.namespace}.{tool.name}"
+            handler = make_handler(tool.name)
+            self._registry.register_handler(key, handler)
+            self._tool_handlers[key] = handler
 
     def register_mcp_server(
         self,
@@ -1328,9 +1380,13 @@ class AgentGantry:
             # Discover tools from the server with timeout protection
             tools = await asyncio.wait_for(client.list_tools(), timeout=timeout)
 
-            # Add tools to the gantry
-            for tool in tools:
-                await self.add_tool(tool)
+            # Wire execution handlers (tools execute via the MCP client)
+            self._register_mcp_tool_handlers(client, tools)
+
+            # Add all tools first, then sync once (avoids per-tool full syncs)
+            self._pending_tools.extend(tools)
+            if self._config.auto_sync:
+                await self.sync()
 
             # Update server health
             self._mcp_registry.update_health(
@@ -1427,9 +1483,10 @@ class AgentGantry:
         await client.discover()
         tools = await client.list_tools()
 
-        # Add tools to the gantry
-        for tool in tools:
-            await self.add_tool(tool)
+        # Add all tools first, then sync once (avoids per-tool full syncs)
+        self._pending_tools.extend(tools)
+        if self._config.auto_sync:
+            await self.sync()
 
         return len(tools)
 

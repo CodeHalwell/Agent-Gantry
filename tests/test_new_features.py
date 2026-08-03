@@ -13,6 +13,7 @@ import pytest
 
 from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
 from agent_gantry.schema.tool import ToolDefinition
+from agent_gantry.utils.fingerprint import compute_tool_fingerprint
 
 # ============================================================================
 # Vector Store Dimension Property Tests
@@ -125,7 +126,9 @@ async def test_inmemory_store_fingerprints_on_add():
 
     fingerprints = await store.get_stored_fingerprints()
     assert "default.test_tool" in fingerprints
-    assert fingerprints["default.test_tool"] == tool.content_hash
+    # Must match what SyncManager.detect_changes compares against, otherwise
+    # every sync() re-embeds the full registry.
+    assert fingerprints["default.test_tool"] == compute_tool_fingerprint(tool)
 
 
 @pytest.mark.asyncio
@@ -187,8 +190,42 @@ async def test_inmemory_store_fingerprints_multiple_tools():
     assert len(fingerprints) == 2
     assert "default.tool1" in fingerprints
     assert "default.tool2" in fingerprints
-    assert fingerprints["default.tool1"] == tools[0].content_hash
-    assert fingerprints["default.tool2"] == tools[1].content_hash
+    assert fingerprints["default.tool1"] == compute_tool_fingerprint(tools[0])
+    assert fingerprints["default.tool2"] == compute_tool_fingerprint(tools[1])
+
+
+@pytest.mark.asyncio
+async def test_repeat_sync_is_incremental_noop():
+    """A second sync() with unchanged tools must not re-embed anything."""
+    from agent_gantry import AgentGantry
+
+    gantry = AgentGantry()
+
+    @gantry.register(name="incr_tool")
+    def incr_tool(x: int) -> int:
+        """Increment a number."""
+        return x + 1
+
+    first = await gantry.sync()
+    assert first == 1
+
+    embed_calls = 0
+    original = gantry.embedder.embed_batch
+
+    async def counting_embed_batch(texts):
+        nonlocal embed_calls
+        embed_calls += 1
+        return await original(texts)
+
+    gantry.embedder.embed_batch = counting_embed_batch  # type: ignore[method-assign]
+    try:
+        gantry._synced = False
+        second = await gantry.sync()
+    finally:
+        gantry.embedder.embed_batch = original  # type: ignore[method-assign]
+
+    assert second == 0
+    assert embed_calls == 0
 
 
 # ============================================================================
