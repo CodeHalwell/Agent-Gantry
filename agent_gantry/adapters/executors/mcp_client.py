@@ -110,7 +110,13 @@ class MCPClient:
             # MCPClient) is not supported — same bound as the per-loop lock
             # pattern documented in core/rate_limiter.py.
             if self._close_event is not None:
-                self._close_event.set()
+                try:
+                    self._close_event.set()
+                except RuntimeError:
+                    # Waking the old owner's waiter schedules a callback on
+                    # its (likely closed) loop, which raises "Event loop is
+                    # closed" — abandon, same guard as _invalidate_session.
+                    pass
             self._owner_task = None
             self._close_event = None
             self._connect_lock = None

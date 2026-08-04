@@ -159,6 +159,31 @@ async def test_stale_owner_does_not_clear_replacement_session(
     await client.close()
 
 
+def test_cross_loop_reuse_reconnects(server_config: MCPServerConfig) -> None:
+    """Reusing one MCPClient after its loop died must abandon the old session
+    and reconnect. The first loop is closed WITHOUT cancelling the owner task
+    (run_until_complete + close, unlike asyncio.run), so the old close
+    event still has a registered waiter — waking it schedules a callback on
+    the closed loop and raises 'Event loop is closed' unless guarded."""
+    client = MCPClient(server_config)
+
+    async def use() -> str:
+        result = await client.call_tool("add_numbers", {"a": 1, "b": 2})
+        return _text_content(result)
+
+    loop = asyncio.new_event_loop()
+    try:
+        assert loop.run_until_complete(use()) == "3"
+    finally:
+        loop.close()
+
+    try:
+        # Fresh loop: the persistent session belongs to the dead first loop
+        assert asyncio.run(use()) == "3"
+    finally:
+        asyncio.run(client.close())
+
+
 @pytest.mark.asyncio
 async def test_client_raises_on_iserror_result(server_config: MCPServerConfig) -> None:
     """In-band MCP tool failures (isError) surface as exceptions, and the
