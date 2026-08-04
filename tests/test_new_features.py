@@ -441,3 +441,24 @@ def test_sync_manager_embedder_id_attribute_fallbacks():
     id_b = SyncManager(store, BareEmbedder("model-b"), registry)
     assert id_a.get_embedder_id() != id_b.get_embedder_id()
     assert "model-a" in id_a.get_embedder_id()
+
+
+def test_embedder_id_includes_custom_endpoint(monkeypatch):
+    """Switching api_base between OpenAI-compatible services (same model
+    label and dimension) must change the embedder identity — the same label
+    on a different endpoint is a different vector space, and a shared
+    identity would skip re-embedding and corrupt retrieval."""
+    pytest.importorskip("openai")
+
+    from agent_gantry.adapters.embedders.openai import OpenAIEmbedder
+    from agent_gantry.schema.config import EmbedderConfig
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+    default = OpenAIEmbedder(EmbedderConfig(model="text-embedding-3-small"))
+    custom = OpenAIEmbedder(
+        EmbedderConfig(model="text-embedding-3-small", api_base="https://proxy.example/v1")
+    )
+    assert default.get_embedder_id() != custom.get_embedder_id()
+    assert "proxy.example" in custom.get_embedder_id()

@@ -168,7 +168,26 @@ class MCPClient:
             self._close_event = close_event
             self._loop_id = loop_id
             self._owner_task = asyncio.create_task(owner())
-            await ready.wait()
+            try:
+                await ready.wait()
+            except asyncio.CancelledError:
+                # Caller cancelled mid-startup (e.g. a timeout around
+                # discovery). Cancel and drain the owner before releasing the
+                # connect lock — otherwise a retry creates a second owner and
+                # the half-started first one can later install its session
+                # over the replacement and orphan its subprocess where
+                # close() can no longer reach it.
+                task = self._owner_task
+                if task is not None:
+                    task.cancel()
+                    try:
+                        await task
+                    except BaseException:
+                        pass
+                self._owner_task = None
+                self._close_event = None
+                self._loop_id = None
+                raise
 
             if startup_error:
                 self._owner_task = None

@@ -185,6 +185,28 @@ def test_cross_loop_reuse_reconnects(server_config: MCPServerConfig) -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancelled_startup_cancels_owner(server_config: MCPServerConfig) -> None:
+    """A caller cancelled mid-startup (e.g. a timeout around discovery) must
+    cancel the owner task too — otherwise a retry creates a second owner and
+    the half-started first one later installs its session over the
+    replacement, orphaning a subprocess close() can no longer reach."""
+    client = MCPClient(server_config)
+    try:
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(client._ensure_session(), timeout=0.001)
+
+        # The half-started owner was cancelled and detached
+        assert client._owner_task is None
+        assert client._connected is False
+
+        # A retry connects cleanly
+        result = await client.call_tool("add_numbers", {"a": 2, "b": 3})
+        assert _text_content(result) == "5"
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
 async def test_client_raises_on_iserror_result(server_config: MCPServerConfig) -> None:
     """In-band MCP tool failures (isError) surface as exceptions, and the
     session survives them — a tool error is not a broken connection."""

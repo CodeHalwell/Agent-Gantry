@@ -229,6 +229,7 @@ class OpenAIEmbedder(BaseOpenAIEmbedder):
         # OPENAI_BASE_URL env var. Without this users have to monkey-patch
         # or globally set OPENAI_BASE_URL — both brittle.
         base_url = config.api_base or os.getenv("OPENAI_BASE_URL")
+        self._api_base = base_url
 
         client_kwargs: dict[str, Any] = {
             "api_key": api_key,
@@ -257,7 +258,14 @@ class OpenAIEmbedder(BaseOpenAIEmbedder):
         Returns:
             Identifier combining model name and dimension
         """
-        return f"{self._model}:{self._dimension}"
+        base = f"{self._model}:{self._dimension}"
+        # A custom OpenAI-compatible endpoint may serve a different model
+        # under the same label, producing an incompatible vector space —
+        # the endpoint is part of the identity, or switching endpoints
+        # would skip re-embedding and corrupt retrieval.
+        if self._api_base:
+            return f"{base}@{self._api_base}"
+        return base
 
 
 class AzureOpenAIEmbedder(BaseOpenAIEmbedder):
@@ -298,6 +306,7 @@ class AzureOpenAIEmbedder(BaseOpenAIEmbedder):
         api_base = config.api_base
         if not api_base:
             raise ValueError("Azure OpenAI api_base (endpoint) is required in config.")
+        self._api_base = api_base
 
         # Azure API version - use config, env var, or latest preview default
         api_version = (
@@ -326,4 +335,6 @@ class AzureOpenAIEmbedder(BaseOpenAIEmbedder):
         Returns:
             Identifier combining model name and dimension
         """
-        return f"azure:{self._model}:{self._dimension}"
+        # Endpoint included for the same reason as OpenAIEmbedder: the same
+        # deployment name on different Azure resources is a different model.
+        return f"azure:{self._model}:{self._dimension}@{self._api_base}"
