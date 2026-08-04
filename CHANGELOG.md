@@ -88,6 +88,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default (empty fingerprints), so **every** `sync()` re-embedded and
   re-upserted the entire registry — on every process restart, and per
   `add_tool()` call with `auto_sync=True`.
+  Deployment note for PGVector: the first `initialize()` against a
+  pre-existing table performs the one-time `ALTER TABLE ... ADD COLUMN IF
+  NOT EXISTS` and `CREATE TABLE IF NOT EXISTS <table>__meta`, so the app's
+  DB role needs DDL on its own table (implicit for table owners; grant
+  explicitly if your role only has DML).
 
 - **`required` / `always_include` pinned-tool selection, ported to every
   framework adapter.** Previously only the Microsoft Agent Framework provider

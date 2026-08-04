@@ -462,3 +462,24 @@ def test_embedder_id_includes_custom_endpoint(monkeypatch):
     )
     assert default.get_embedder_id() != custom.get_embedder_id()
     assert "proxy.example" in custom.get_embedder_id()
+
+
+@pytest.mark.asyncio
+async def test_memory_store_search_survives_mixed_dimensions():
+    """Ragged stored embeddings (e.g. a dimension-changing re-sync that
+    partially failed) must not break search: the matrix builds over the
+    dominant dimension and mismatched rows score as absent, matching the old
+    per-vector behaviour of scoring dimension mismatches 0.0."""
+    store = InMemoryVectorStore()
+    tools = [
+        ToolDefinition(name=f"t{i}", description=f"tool number {i}", parameters_schema={})
+        for i in range(3)
+    ]
+    # Two 4-dim rows (dominant) and one 3-dim straggler
+    await store.add_tools(tools[:2], [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]])
+    await store.add_tools(tools[2:], [[1.0, 0.0, 0.0]])
+
+    results = await store.search(query_vector=[1.0, 0.0, 0.0, 0.0], limit=10)
+    names = {t.name for t, _ in results}
+    assert "t0" in names
+    assert "t2" not in names  # mismatched dimension scores as absent, no crash

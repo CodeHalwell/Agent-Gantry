@@ -4,6 +4,7 @@ In-memory vector store implementation.
 
 from __future__ import annotations
 
+import logging
 import math
 from typing import Any
 
@@ -11,6 +12,8 @@ import numpy as np
 
 from agent_gantry.schema.tool import ToolDefinition
 from agent_gantry.utils.fingerprint import compute_tool_fingerprint
+
+logger = logging.getLogger(__name__)
 
 
 class InMemoryVectorStore:
@@ -163,6 +166,22 @@ class InMemoryVectorStore:
             self._matrix = np.zeros((0, 0), dtype=np.float32)
             self._matrix_keys = []
             return
+        # Mixed dimensions can legitimately occur (e.g. a dimension-changing
+        # re-sync that partially failed). A ragged asarray would raise and
+        # break every subsequent search; build the matrix over the dominant
+        # dimension instead. Excluded rows behave like the old per-vector
+        # implementation, which scored dimension mismatches as 0.0.
+        dims: dict[int, int] = {}
+        for k in keys:
+            d = len(self._embeddings[k])
+            dims[d] = dims.get(d, 0) + 1
+        if len(dims) > 1:
+            dominant = max(dims, key=lambda d: dims[d])
+            logger.warning(
+                f"InMemoryVectorStore holds embeddings of mixed dimensions "
+                f"{sorted(dims)}; searching over dimension {dominant} only"
+            )
+            keys = [k for k in keys if len(self._embeddings[k]) == dominant]
         mat = np.asarray([self._embeddings[k] for k in keys], dtype=np.float32)
         norms = np.linalg.norm(mat, axis=1, keepdims=True)
         norms[norms == 0.0] = 1.0  # avoid divide-by-zero for zero vectors

@@ -226,3 +226,47 @@ async def test_all_intent_types():
         assert intent == expected_intent, (
             f"Query '{query}' should be {expected_intent}, got {intent}"
         )
+
+
+@pytest.mark.asyncio
+async def test_reasoning_model_request_shape():
+    """Reasoning-family OpenAI models must get max_completion_tokens and no
+    temperature — the legacy params fail the request and every classification
+    silently degrades to the UNKNOWN fallback."""
+    from types import SimpleNamespace
+
+    from agent_gantry.adapters.llm_client import LLMClient
+
+    captured: dict = {}
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            captured.update(kwargs)
+            message = SimpleNamespace(content="data_query")
+            return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    def make_client(model: str) -> LLMClient:
+        # Bypass __init__ (it imports the openai SDK); the request-shape
+        # branch under test only needs these attributes.
+        client = LLMClient.__new__(LLMClient)
+        client._config = LLMConfig(provider="openai", model=model, api_key="test-key-not-real")
+        client._provider = "openai"
+        client._model = model
+        client._client = SimpleNamespace(
+            chat=SimpleNamespace(completions=FakeCompletions())
+        )
+        return client
+
+    # Reasoning family: max_completion_tokens with headroom, no temperature
+    result = await make_client("gpt-5.4-mini").classify_intent("show me sales data")
+    assert result == "data_query"
+    assert captured["max_completion_tokens"] >= 100
+    assert "max_tokens" not in captured
+    assert "temperature" not in captured
+
+    # Legacy family keeps the classic params
+    captured.clear()
+    await make_client("gpt-4o-mini").classify_intent("show me sales data")
+    assert "max_tokens" in captured
+    assert "temperature" in captured
+    assert "max_completion_tokens" not in captured

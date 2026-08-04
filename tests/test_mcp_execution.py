@@ -332,6 +332,40 @@ async def test_readd_reconfigured_server_refreshes_definitions(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+async def test_failed_reconfiguration_keeps_old_client(tmp_path: Path) -> None:
+    """If a re-add with a changed config fails discovery, the old client must
+    stay cached and working — the swap is only committed after the
+    replacement discovers successfully. Otherwise handlers close over a
+    client gantry.close() can no longer reach."""
+    script = tmp_path / "server.py"
+    script.write_text(SERVER_SCRIPT)
+
+    def config_for(command: list[str]) -> MCPServerConfig:
+        return MCPServerConfig(name="test-server", command=command, namespace="mcp_test")
+
+    gantry = AgentGantry()
+    try:
+        await gantry.add_mcp_server(config_for([sys.executable, str(script)]))
+        old_client = gantry._direct_mcp_clients["mcp_test.test-server"]
+
+        # Reconfigure to a command that cannot start
+        with pytest.raises(Exception):
+            await gantry.add_mcp_server(
+                config_for([sys.executable, str(tmp_path / "missing.py")])
+            )
+
+        # The old client remains cached and the tools still execute
+        assert gantry._direct_mcp_clients["mcp_test.test-server"] is old_client
+        result = await gantry.execute(
+            ToolCall(tool_name="add_numbers", arguments={"a": 5, "b": 6})
+        )
+        assert result.status == ExecutionStatus.SUCCESS, result.error
+        assert _text_content(result.result) == "11"
+    finally:
+        await gantry.close()
+
+
+@pytest.mark.asyncio
 async def test_mcp_tools_executable_before_sync_with_auto_sync_off(
     server_config: MCPServerConfig,
 ) -> None:

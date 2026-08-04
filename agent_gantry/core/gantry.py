@@ -1195,19 +1195,31 @@ class AgentGantry:
         # (same name, different command/env/etc.), so a re-add never keeps
         # executing against the old server process.
         client_key = f"{config.namespace}.{config.name}"
-        client = self._direct_mcp_clients.get(client_key)
-        if client is not None and client.config != config:
-            try:
-                await client.close()
-            except Exception:
-                logger.debug("Error closing reconfigured MCP client", exc_info=True)
-            client = None
-        if client is None:
+        existing = self._direct_mcp_clients.get(client_key)
+        if existing is not None and existing.config == config:
+            client = existing
+            tools = await client.list_tools()
+        else:
+            # New or reconfigured server: verify the replacement can discover
+            # BEFORE committing the swap. Closing/evicting the old client
+            # first would, on discovery failure, leave registry handlers
+            # closing over a client that gantry.close() can no longer reach
+            # — still executing against the obsolete command.
             client = MCPClient(config)
+            try:
+                tools = await client.list_tools()
+            except BaseException:
+                try:
+                    await client.close()
+                except Exception:
+                    logger.debug("Error closing failed MCP client", exc_info=True)
+                raise
+            if existing is not None:
+                try:
+                    await existing.close()
+                except Exception:
+                    logger.debug("Error closing reconfigured MCP client", exc_info=True)
             self._direct_mcp_clients[client_key] = client
-
-        # Discover tools from the server
-        tools = await client.list_tools()
 
         # Wire execution handlers so discovered tools run through
         # gantry.execute() (security, retries, telemetry) via the MCP client.
