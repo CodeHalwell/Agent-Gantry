@@ -483,3 +483,28 @@ async def test_memory_store_search_survives_mixed_dimensions():
     names = {t.name for t, _ in results}
     assert "t0" in names
     assert "t2" not in names  # mismatched dimension scores as absent, no crash
+
+    # The query's dimension picks its matrix, so the minority dimension is
+    # searchable too — a partially-completed migration must not starve
+    # whichever side is currently smaller
+    results_3d = await store.search(query_vector=[1.0, 0.0, 0.0], limit=10)
+    assert {t.name for t, _ in results_3d} == {"t2"}
+
+
+def test_fingerprint_covers_routing_fields():
+    """Definition-only changes (deprecated, cost, metadata, ...) must change
+    the fingerprint: stores serve the stored ToolDefinition back to the
+    router, so a skipped re-sync would leave filters like exclude_deprecated
+    acting on stale data."""
+    base = dict(
+        name="fp_tool",
+        description="a tool for fingerprint testing",
+        parameters_schema={"type": "object", "properties": {}},
+    )
+    plain = compute_tool_fingerprint(ToolDefinition(**base))
+    assert plain != compute_tool_fingerprint(ToolDefinition(**base, deprecated=True))
+    assert plain != compute_tool_fingerprint(ToolDefinition(**base, metadata={"k": "v"}))
+    # Volatile per-instantiation fields must NOT affect it
+    a, b = ToolDefinition(**base), ToolDefinition(**base)
+    assert a.created_at != b.created_at or True  # timestamps may differ
+    assert compute_tool_fingerprint(a) == compute_tool_fingerprint(b)

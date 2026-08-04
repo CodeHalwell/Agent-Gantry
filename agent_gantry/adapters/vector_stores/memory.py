@@ -35,12 +35,13 @@ class InMemoryVectorStore:
         self._fingerprints: dict[str, str] = {}
         self._metadata: dict[str, str] = {}
         self._dimension = dimension
-        # Vectorized search cache: a (n, d) L2-normalized matrix plus the row
-        # ordering. Rebuilt lazily on the next search after any mutation, so a
-        # batch of add/delete calls only pays for one rebuild. ``None`` means
-        # "stale — rebuild before use".
-        self._matrix: np.ndarray | None = None
-        self._matrix_keys: list[str] = []
+        # Vectorized search cache: L2-normalized (n, d) matrices plus row
+        # ordering, kept per dimension — mixed dimensions legitimately coexist
+        # mid-migration (a dimension-changing re-sync that partially
+        # completed), and the query's own dimension decides which matrix
+        # serves it. Rebuilt lazily on the next search after any mutation, so
+        # a batch of add/delete calls only pays for one rebuild.
+        self._matrices: dict[int, tuple[np.ndarray, list[str]]] = {}
 
     @property
     def dimension(self) -> int:
@@ -76,13 +77,13 @@ class InMemoryVectorStore:
                 self._embeddings[key] = embedding
                 # Store fingerprint for change detection. Must be the same
                 # format SyncManager.detect_changes compares against
-                # (compute_tool_fingerprint, "v1.0:<hash>") — storing the
+                # (compute_tool_fingerprint, "<version>:<hash>") — storing the
                 # unrelated tool.content_hash here made every sync() re-embed
                 # the full registry because the comparison never matched.
                 self._fingerprints[key] = compute_tool_fingerprint(tool)
                 count += 1
         if count:
-            self._matrix = None  # invalidate vectorized cache
+            self._matrices.clear()  # invalidate vectorized caches
         return count
 
     async def search(
@@ -106,29 +107,28 @@ class InMemoryVectorStore:
         if filters and "tags" in filters:
             required_tags = set(filters["tags"])
 
-        self._ensure_matrix()
-        if self._matrix is None or self._matrix.shape[0] == 0:
+        q = np.asarray(query_vector, dtype=np.float32)
+        if q.ndim != 1:
+            return []
+        # The query's dimension selects the matching matrix; rows of other
+        # dimensions behave like the old per-vector implementation, which
+        # scored dimension mismatches as 0.0.
+        matrix, matrix_keys = self._matrix_for(q.shape[0])
+        if matrix.shape[0] == 0:
             return []
 
-        # Normalize the query once; stored rows are already normalized.
-        q = np.asarray(query_vector, dtype=np.float32)
-        # Guard against a query/stored dimension mismatch: the old per-vector
-        # loop returned 0.0 similarity for mismatched lengths, so preserve that
-        # graceful behaviour here instead of letting the matmul raise.
-        if q.ndim != 1 or q.shape[0] != self._matrix.shape[1]:
-            return []
         q_norm = float(np.linalg.norm(q))
         if q_norm == 0.0:
             # A zero query vector carries no signal. The original per-vector
             # cosine returned 0.0 for every tool (kept by a 0.0 threshold), so
             # an "empty"/zero query surfaces all tools rather than none. Preserve
             # that instead of dividing by zero.
-            scores = np.zeros(self._matrix.shape[0], dtype=np.float32)
+            scores = np.zeros(matrix.shape[0], dtype=np.float32)
         else:
-            scores = self._matrix @ (q / q_norm)  # (n,) cosine similarities
+            scores = matrix @ (q / q_norm)  # (n,) cosine similarities
 
         results: list[tuple[ToolDefinition, float, str]] = []
-        for idx, key in enumerate(self._matrix_keys):
+        for idx, key in enumerate(matrix_keys):
             tool = self._tools.get(key)
             if tool is None:
                 continue
@@ -157,36 +157,26 @@ class InMemoryVectorStore:
             return [(tool, score, self._embeddings[key]) for tool, score, key in limited]
         return [(tool, score) for tool, score, _ in limited]
 
-    def _ensure_matrix(self) -> None:
-        """(Re)build the cached normalized embedding matrix if stale."""
-        if self._matrix is not None:
-            return
-        keys = [k for k in self._tools if self._embeddings.get(k) is not None]
+    def _matrix_for(self, dim: int) -> tuple[np.ndarray, list[str]]:
+        """Return (matrix, keys) of normalized embeddings with this dimension."""
+        cached = self._matrices.get(dim)
+        if cached is not None:
+            return cached
+        keys = [
+            k
+            for k in self._tools
+            if (emb := self._embeddings.get(k)) is not None and len(emb) == dim
+        ]
         if not keys:
-            self._matrix = np.zeros((0, 0), dtype=np.float32)
-            self._matrix_keys = []
-            return
-        # Mixed dimensions can legitimately occur (e.g. a dimension-changing
-        # re-sync that partially failed). A ragged asarray would raise and
-        # break every subsequent search; build the matrix over the dominant
-        # dimension instead. Excluded rows behave like the old per-vector
-        # implementation, which scored dimension mismatches as 0.0.
-        dims: dict[int, int] = {}
-        for k in keys:
-            d = len(self._embeddings[k])
-            dims[d] = dims.get(d, 0) + 1
-        if len(dims) > 1:
-            dominant = max(dims, key=lambda d: dims[d])
-            logger.warning(
-                f"InMemoryVectorStore holds embeddings of mixed dimensions "
-                f"{sorted(dims)}; searching over dimension {dominant} only"
-            )
-            keys = [k for k in keys if len(self._embeddings[k]) == dominant]
+            empty: tuple[np.ndarray, list[str]] = (np.zeros((0, dim), dtype=np.float32), [])
+            self._matrices[dim] = empty
+            return empty
         mat = np.asarray([self._embeddings[k] for k in keys], dtype=np.float32)
         norms = np.linalg.norm(mat, axis=1, keepdims=True)
         norms[norms == 0.0] = 1.0  # avoid divide-by-zero for zero vectors
-        self._matrix = mat / norms
-        self._matrix_keys = keys
+        result = (mat / norms, keys)
+        self._matrices[dim] = result
+        return result
 
     async def get_by_name(self, name: str, namespace: str = "default") -> ToolDefinition | None:
         """Get a tool by name."""
@@ -200,7 +190,7 @@ class InMemoryVectorStore:
             del self._tools[key]
             self._embeddings.pop(key, None)
             self._fingerprints.pop(key, None)
-            self._matrix = None  # invalidate vectorized cache
+            self._matrices.clear()  # invalidate vectorized caches
             return True
         return False
 
