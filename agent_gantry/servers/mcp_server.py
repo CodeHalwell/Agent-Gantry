@@ -119,7 +119,7 @@ class MCPServer:
             return types.CallToolResult(content=content)
         except Exception as e:
             return types.CallToolResult(
-                content=[{"type": "text", "text": f"Error: {e}"}],
+                content=[types.TextContent(type="text", text=f"Error: {e}")],
                 is_error=True,
             )
 

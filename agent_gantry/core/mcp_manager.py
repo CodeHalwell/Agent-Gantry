@@ -213,18 +213,18 @@ class MCPManager:
         )
         return [scored.server for scored in result.servers]
 
-    async def add_server(self, config: MCPServerConfig) -> tuple[int, list[ToolDefinition]]:
+    async def add_server(self, config: MCPServerConfig) -> int:
         """
         Add an MCP server by immediately discovering all its tools.
 
         Returns:
-            Tuple of (number of tools discovered, the discovered tools)
+            Number of tools discovered
         """
         from agent_gantry.adapters.executors.mcp_client import MCPClient
 
         client = MCPClient(config)
         tools = await client.list_tools()
-        return len(tools), tools
+        return len(tools)
 
     async def discover_tools_from_server(
         self,

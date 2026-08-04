@@ -47,6 +47,12 @@ def server_pid() -> int:
     return os.getpid()
 
 
+@mcp.tool()
+def always_fails() -> int:
+    \"\"\"Raise an error to produce an isError tool result.\"\"\"
+    raise ValueError("intentional failure")
+
+
 if __name__ == "__main__":
     mcp.run()
 """
@@ -91,18 +97,39 @@ async def test_client_persistent_session_reuse(server_config: MCPServerConfig) -
 
 
 @pytest.mark.asyncio
+async def test_client_raises_on_iserror_result(server_config: MCPServerConfig) -> None:
+    """In-band MCP tool failures (isError) surface as exceptions, and the
+    session survives them — a tool error is not a broken connection."""
+    client = MCPClient(server_config)
+    try:
+        with pytest.raises(RuntimeError, match="intentional failure"):
+            await client.call_tool("always_fails", {})
+        assert client._connected is True
+        result = await client.call_tool("add_numbers", {"a": 1, "b": 2})
+        assert _text_content(result) == "3"
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
 async def test_add_mcp_server_tools_are_executable(server_config: MCPServerConfig) -> None:
     """Tools discovered via add_mcp_server execute through gantry.execute()."""
     gantry = AgentGantry()
     try:
         count = await gantry.add_mcp_server(server_config)
-        assert count == 2
+        assert count == 3
 
         result = await gantry.execute(
             ToolCall(tool_name="add_numbers", arguments={"a": 20, "b": 22})
         )
         assert result.status == ExecutionStatus.SUCCESS, result.error
         assert _text_content(result.result) == "42"
+
+        # An isError result from the server must be recorded as a failure,
+        # not passed through as a successful result.
+        failed = await gantry.execute(ToolCall(tool_name="always_fails", arguments={}))
+        assert failed.status == ExecutionStatus.FAILURE
+        assert "intentional failure" in (failed.error or "")
     finally:
         await gantry.close()
 
@@ -114,7 +141,7 @@ async def test_list_tools_discovery(server_config: MCPServerConfig) -> None:
     try:
         tools = await client.list_tools()
         names = {t.name for t in tools}
-        assert names == {"add_numbers", "server_pid"}
+        assert names == {"add_numbers", "server_pid", "always_fails"}
         for tool in tools:
             assert tool.namespace == "mcp_test"
             assert tool.metadata["mcp_server"] == "test-server"

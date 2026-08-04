@@ -46,6 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (security policy, retries, timeouts, telemetry) like `@gantry.register`-ed
   tools. Previously discovered MCP tools were retrievable but failed with
   "No handler found" on execution — `MCPClient.call_tool` had no callers.
+  In-band MCP tool failures (`isError`/`is_error` on the call result, how the
+  protocol reports a tool that raised) are surfaced as exceptions so the
+  engine records them as failures — with retries, health, and telemetry —
+  instead of passing the error object through as a successful result. The
+  persistent session survives such failures (tool error ≠ broken connection).
   See the new end-to-end suite `tests/test_mcp_execution.py`, which runs a
   real stdio MCP server subprocess.
 - **Persistent MCP sessions.** `MCPClient.call_tool` now keeps one long-lived

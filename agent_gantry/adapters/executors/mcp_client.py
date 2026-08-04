@@ -158,17 +158,29 @@ class MCPClient:
 
     async def _invalidate_session(self) -> None:
         """Drop the persistent connection so the next call reconnects."""
-        if self._close_event is not None:
-            self._close_event.set()
+        same_loop = self._loop_id is None or self._loop_id == id(asyncio.get_running_loop())
+        event = self._close_event
         task = self._owner_task
         self._owner_task = None
         self._close_event = None
-        if task is not None and self._loop_id == id(asyncio.get_running_loop()):
+        self._loop_id = None
+        if event is not None:
+            if same_loop:
+                event.set()
+            else:
+                # The event belongs to another (likely dead) loop. set() wakes
+                # its waiters through that loop and can raise "Event loop is
+                # closed" — signal best-effort, then abandon like
+                # _ensure_session does.
+                try:
+                    event.set()
+                except RuntimeError:
+                    pass
+        if task is not None and same_loop:
             try:
                 await asyncio.wait_for(asyncio.shield(task), timeout=5)
             except Exception:
                 logger.debug("Error while closing MCP session", exc_info=True)
-        self._loop_id = None
 
     async def close(self) -> None:
         """Close the persistent connection (if any). Safe to call repeatedly."""
@@ -262,10 +274,29 @@ class MCPClient:
         """
         session = await self._ensure_session()
         try:
-            return await session.call_tool(tool_name, arguments)
+            result = await session.call_tool(tool_name, arguments)
         except Exception:
             await self._invalidate_session()
             raise
+        # The MCP protocol reports tool failures in-band (isError on the
+        # result) rather than as transport errors, so the call above resolves
+        # normally. Surface them as exceptions so the execution engine records
+        # a failure (retries, health, telemetry) instead of a success. The
+        # session stays valid — this is a tool error, not a broken connection.
+        # Attribute is spelled isError on mcp 1.x and is_error on 2.x.
+        if getattr(result, "isError", False) or getattr(result, "is_error", False):
+            raise RuntimeError(self._extract_error_text(result))
+        return result
+
+    @staticmethod
+    def _extract_error_text(result: Any) -> str:
+        """Pull a readable message out of an error CallToolResult."""
+        texts = [
+            text
+            for item in getattr(result, "content", None) or []
+            if isinstance(text := getattr(item, "text", None), str)
+        ]
+        return "; ".join(texts) if texts else f"MCP tool call failed: {result!r}"
 
 
 class MCPClientPool:
