@@ -68,6 +68,14 @@ jobs:
         run: uv sync --python ${{ matrix.python-version }} --extra dev --extra nomic --extra lancedb --extra agent-frameworks --extra example-tools
 
       - name: Run tests
+        # PYTORCH_MPS_HIGH_WATERMARK_RATIO: on Apple Silicon runners, torch's
+        # MPS allocator caps at ~7.9 GiB and sentence-transformers model loads
+        # accumulate against it over the session, flaking late tests with
+        # "MPS backend out of memory" (observed twice on macos 3.10). 0.0
+        # lifts the artificial cap — the fix torch's own error suggests.
+        # No effect on Linux/Windows (no MPS backend).
+        env:
+          PYTORCH_MPS_HIGH_WATERMARK_RATIO: "0.0"
         run: |
           uv run pytest --ignore=tests/test_phase5_mcp.py --ignore=tests/test_phase6_a2a.py -v
 
