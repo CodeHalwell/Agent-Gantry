@@ -264,6 +264,47 @@ class TestA2AClient:
         assert tool.namespace == "edge"
 
 
+class TestA2AClientConnectionPool:
+    """Tests for the per-event-loop persistent httpx client pool."""
+
+    @pytest.fixture
+    def pool_client(self) -> A2AClient:
+        """A2A client whose pooled httpx clients are never used for I/O."""
+        return A2AClient(
+            A2AAgentConfig(
+                name="pool-agent",
+                url="http://pool-agent.example.com",
+                namespace="a2a_test",
+            )
+        )
+
+    @pytest.mark.asyncio
+    async def test_http_client_reused_on_same_loop(self, pool_client: A2AClient) -> None:
+        """Repeated calls on one loop return the same client (keep-alive reuse)."""
+        first = pool_client._get_http_client()
+        second = pool_client._get_http_client()
+        assert first is second
+        await pool_client.close()
+
+    @pytest.mark.asyncio
+    async def test_close_closes_pooled_client(self, pool_client: A2AClient) -> None:
+        """close() actually closes the pooled client and empties the cache."""
+        client = pool_client._get_http_client()
+        await pool_client.close()
+        assert client.is_closed
+        assert pool_client._http_clients == {}
+
+    @pytest.mark.asyncio
+    async def test_fresh_client_after_close(self, pool_client: A2AClient) -> None:
+        """A call after close() gets a new, open client rather than the closed one."""
+        first = pool_client._get_http_client()
+        await pool_client.close()
+        second = pool_client._get_http_client()
+        assert second is not first
+        assert not second.is_closed
+        await pool_client.close()
+
+
 class TestA2AServer:
     """Tests for A2A server functionality."""
 

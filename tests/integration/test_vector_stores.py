@@ -92,3 +92,80 @@ async def test_pgvector_basic_flow(pgvector_url: str) -> None:
     assert len(results) > 0
 
     assert await store.health_check()
+
+
+def test_pgvector_meta_table_name_bounded() -> None:
+    """The derived metadata table name never truncates onto the tools table.
+
+    PostgreSQL silently truncates identifiers to 63 bytes, so for a
+    63-character table_name a naive "<table>__meta" would collapse back to
+    the tools table's own identifier. No database needed — this is pure
+    construction logic.
+    """
+    pytest.importorskip("asyncpg")
+
+    from agent_gantry.adapters.vector_stores.remote import PGVectorStore
+
+    short = PGVectorStore(url="postgresql://unused", table_name="tools", dimension=8)
+    assert short._meta_table_name == "tools__meta"
+
+    long_name = "t" * 63
+    long = PGVectorStore(url="postgresql://unused", table_name=long_name, dimension=8)
+    assert len(long._meta_table_name) <= 63
+    assert long._meta_table_name != long_name
+    assert long._meta_table_name.endswith("__meta")
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_qdrant_fingerprint_keys_align_with_sync_manager(qdrant_url: str) -> None:
+    """get_stored_fingerprints() must key by 'namespace.name' with
+    compute_tool_fingerprint values — the contract SyncManager.detect_changes
+    relies on. A mismatch silently degrades incremental sync to a full
+    re-embed every time (the exact bug the in-memory store had)."""
+    pytest.importorskip("qdrant_client")
+
+    from agent_gantry.adapters.vector_stores.remote import QdrantVectorStore
+    from agent_gantry.utils.fingerprint import compute_tool_fingerprint
+
+    store = QdrantVectorStore(
+        url=qdrant_url,
+        collection_name="test_fingerprint_keys",
+        dimension=128,
+    )
+    embedder = SimpleEmbedder()
+    await store.initialize()
+
+    tools = _make_tools(3)
+    embeddings = await embedder.embed_batch([t.to_searchable_text() for t in tools])
+    await store.add_tools(tools, embeddings, upsert=True)
+
+    stored = await store.get_stored_fingerprints()
+    expected = {f"{t.namespace}.{t.name}": compute_tool_fingerprint(t) for t in tools}
+    assert stored == expected
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pgvector_fingerprint_keys_align_with_sync_manager(pgvector_url: str) -> None:
+    """Same contract check as the Qdrant variant, for PGVector."""
+    pytest.importorskip("asyncpg")
+
+    from agent_gantry.adapters.vector_stores.remote import PGVectorStore
+    from agent_gantry.utils.fingerprint import compute_tool_fingerprint
+
+    store = PGVectorStore(
+        url=pgvector_url,
+        table_name="test_fingerprint_keys",
+        dimension=128,
+    )
+    embedder = SimpleEmbedder()
+    await store.initialize()
+
+    tools = _make_tools(3)
+    embeddings = await embedder.embed_batch([t.to_searchable_text() for t in tools])
+    await store.add_tools(tools, embeddings, upsert=True)
+
+    stored = await store.get_stored_fingerprints()
+    expected = {f"{t.namespace}.{t.name}": compute_tool_fingerprint(t) for t in tools}
+    assert stored == expected

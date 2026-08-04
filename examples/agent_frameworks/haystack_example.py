@@ -100,9 +100,26 @@ async def main() -> None:
     )
     print(f"[dynamic] email query   -> {[t.name for t in email_tools]}")
 
-    invoker_builder = adapter.tool_invoker_builder(limit=2, score_threshold=0.1)
-    invoker = await invoker_builder.build(query)
-    print(f"[dynamic] built a fresh ToolInvoker with tools: {[t.name for t in invoker.tools]}\n")
+    # haystack 3.0 removed ToolInvoker (the Agent component owns tool
+    # execution), so the per-call builder behaves differently by version:
+    # 2.x -> a fresh ToolInvoker; 3.x -> a fresh Agent (needs chat_generator).
+    try:
+        from haystack.components.tools import ToolInvoker  # noqa: F401
+
+        haystack_has_tool_invoker = True
+    except ImportError:
+        haystack_has_tool_invoker = False
+
+    if haystack_has_tool_invoker:
+        invoker_builder = adapter.tool_invoker_builder(limit=2, score_threshold=0.1)
+        invoker = await invoker_builder.build(query)
+        print(f"[dynamic] built a fresh ToolInvoker with tools: {[t.name for t in invoker.tools]}\n")
+    else:
+        print(
+            "[dynamic] haystack >= 3.0 removed ToolInvoker; pass "
+            "chat_generator=... to tool_invoker_builder() to build a "
+            "per-call Agent instead (see the live section below).\n"
+        )
 
     # --- 3. Optional: a real Haystack chat + tool-invocation round ---------- #
     if os.environ.get("OPENAI_API_KEY"):
@@ -110,16 +127,27 @@ async def main() -> None:
         from haystack.dataclasses import ChatMessage
 
         generator = OpenAIChatGenerator(model="gpt-5.5")
-        print("[live] asking the model, offering Gantry-selected tools...")
-        reply = generator.run(messages=[ChatMessage.from_user(query)], tools=static_tools)
-        replies = reply["replies"]
-        if replies and replies[0].tool_calls:
-            invocation = invoker.run(messages=replies)
-            print(f"[live] tool invocation results: {invocation['tool_messages']}")
+        if haystack_has_tool_invoker:
+            print("[live] asking the model, offering Gantry-selected tools...")
+            reply = generator.run(messages=[ChatMessage.from_user(query)], tools=static_tools)
+            replies = reply["replies"]
+            if replies and replies[0].tool_calls:
+                invocation = invoker.run(messages=replies)
+                print(f"[live] tool invocation results: {invocation['tool_messages']}")
+            else:
+                print(f"[live] model replied directly: {replies[0].text}")
         else:
-            print(f"[live] model replied directly: {replies[0].text}")
+            # haystack >= 3.0: the builder constructs a per-call Agent that
+            # both selects and executes the Gantry tools.
+            agent_builder = adapter.tool_invoker_builder(
+                limit=2, score_threshold=0.1, chat_generator=generator
+            )
+            agent = await agent_builder.build(query)
+            print("[live] running a per-call haystack Agent with Gantry-selected tools...")
+            result = agent.run(messages=[ChatMessage.from_user(query)])
+            print(f"[live] agent reply: {result['last_message'].text}")
     else:
-        print("(Set OPENAI_API_KEY to also run a live OpenAIChatGenerator + ToolInvoker round.)")
+        print("(Set OPENAI_API_KEY to also run a live chat + tool-invocation round.)")
 
 
 if __name__ == "__main__":

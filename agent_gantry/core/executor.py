@@ -73,6 +73,21 @@ class ExecutionEngine:
         self._security_policy = security_policy
         self._telemetry = telemetry
         self._rate_limiter = rate_limiter
+        self._a2a_executor: Any = None
+
+    def _get_a2a_executor(self) -> Any:
+        """Return the shared A2A executor, constructing it on first use."""
+        if self._a2a_executor is None:
+            from agent_gantry.adapters.executors.a2a_executor import A2AExecutor
+
+            self._a2a_executor = A2AExecutor()
+        return self._a2a_executor
+
+    async def close(self) -> None:
+        """Release resources held by the engine (A2A clients, etc.)."""
+        if self._a2a_executor is not None:
+            await self._a2a_executor.close()
+            self._a2a_executor = None
 
     async def execute(self, call: ToolCall) -> ToolResult:
         """
@@ -112,49 +127,49 @@ class ExecutionEngine:
         if sp_result:
             return sp_result
 
-        # Rate limiting check
+        # Rate limiting check (acquires a concurrency slot on success)
         rl_result = await self._check_rate_limit(tool, call, queued_at, trace_id, span_id)
         if rl_result:
             return rl_result
 
-        # Argument validation
-        val_result = await self._validate_call_arguments(tool, call, queued_at, trace_id, span_id)
-        if val_result:
-            return val_result
-
-        # Check if this requires special execution (A2A, MCP, etc.)
-        from agent_gantry.schema.tool import ToolSource
-
-        if tool.source == ToolSource.A2A_AGENT:
-            # Use A2A executor
-            from agent_gantry.adapters.executors.a2a_executor import A2AExecutor
-
-            a2a_executor = A2AExecutor()
-            return await a2a_executor.execute(tool, call, None)
-
-        # Get handler for Python functions
-        handler = self._registry.get_handler(f"{tool.namespace}.{call.tool_name}")
-        if not handler:
-            return ToolResult(
-                tool_name=call.tool_name,
-                status=ExecutionStatus.FAILURE,
-                error=f"No handler found for tool '{call.tool_name}'",
-                error_type="HandlerNotFound",
-                queued_at=queued_at,
-                completed_at=datetime.now(timezone.utc),
-                trace_id=trace_id,
-                span_id=span_id,
-            )
-
-        # Check confirmation requirement
-        confirm_result = await self._check_confirmation_required(
-            tool, call, queued_at, trace_id, span_id
-        )
-        if confirm_result:
-            return confirm_result
-
-        # Execute with retries (release rate limiter slot when done)
+        # Every path past a successful acquire must release the slot —
+        # including validation failures and early returns — or the concurrent
+        # counter leaks and eventually rejects all calls for this key.
         try:
+            # Argument validation
+            val_result = await self._validate_call_arguments(
+                tool, call, queued_at, trace_id, span_id
+            )
+            if val_result:
+                return val_result
+
+            # Check if this requires special execution (A2A, MCP, etc.)
+            from agent_gantry.schema.tool import ToolSource
+
+            if tool.source == ToolSource.A2A_AGENT:
+                return await self._get_a2a_executor().execute(tool, call, None)
+
+            # Get handler for Python functions
+            handler = self._registry.get_handler(f"{tool.namespace}.{call.tool_name}")
+            if not handler:
+                return ToolResult(
+                    tool_name=call.tool_name,
+                    status=ExecutionStatus.FAILURE,
+                    error=f"No handler found for tool '{call.tool_name}'",
+                    error_type="HandlerNotFound",
+                    queued_at=queued_at,
+                    completed_at=datetime.now(timezone.utc),
+                    trace_id=trace_id,
+                    span_id=span_id,
+                )
+
+            # Check confirmation requirement
+            confirm_result = await self._check_confirmation_required(
+                tool, call, queued_at, trace_id, span_id
+            )
+            if confirm_result:
+                return confirm_result
+
             return await self._execute_handler_with_retries(
                 tool, call, handler, queued_at, trace_id, span_id
             )

@@ -7,7 +7,7 @@ supporting both tools and skills collections for semantic retrieval.
 
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,7 +15,6 @@ from typing import Any
 
 from agent_gantry.adapters.vector_stores.lancedb_mixins import (
     LanceDBMetadataMixin,
-    LanceDBSkillsMixin,
     LanceDBToolsMixin,
     _escape_sql_string,
     _validate_identifier,
@@ -29,7 +28,7 @@ __all__ = ["LanceDBVectorStore", "_escape_sql_string", "_validate_identifier"]
 logger = logging.getLogger(__name__)
 
 
-class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataMixin):
+class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
     """
     LanceDB vector store for on-device semantic indexing.
 
@@ -146,8 +145,8 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
         db_dir = Path(self._db_path)
         db_dir.mkdir(parents=True, exist_ok=True)
 
-        # Connect to database
-        self._db = lancedb.connect(str(db_dir))
+        # Connect to database (blocking file I/O — keep it off the event loop)
+        self._db = await asyncio.to_thread(lancedb.connect, str(db_dir))
 
         # Create tools table schema
         tools_schema = pa.schema(
@@ -275,9 +274,9 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
             try:
                 if len(ids) > 1:
                     escaped_ids = ", ".join(f"'{id_}'" for id_ in ids)
-                    table.delete(f"id IN ({escaped_ids})")
+                    await asyncio.to_thread(table.delete, f"id IN ({escaped_ids})")
                 else:
-                    table.delete(f"id = '{ids[0]}'")
+                    await asyncio.to_thread(table.delete, f"id = '{ids[0]}'")
             except RuntimeError as e:
                 # LanceDB raises RuntimeError when attempting to delete non-existent records
                 # This is expected during upsert when records don't exist yet
@@ -287,7 +286,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
                 logger.warning(f"Unexpected error during upsert delete: {e}")
                 raise
 
-        table.add(records)
+        await asyncio.to_thread(table.add, records)
         return len(records)
 
     async def add_tools(
@@ -398,18 +397,21 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
             List of (tool, score) tuples if include_embeddings=False
             List of (tool, score, embedding) tuples if include_embeddings=True
         """
-        import logging
-
-        if include_embeddings:
-            logging.getLogger(__name__).warning(
-                "LanceDBVectorStore does not support include_embeddings yet. "
-                "Returning without embeddings."
-            )
-
         await self._ensure_initialized()
 
-        # Build search query
-        search = self._tools_table.search(query_vector).limit(limit * 2)  # Over-fetch for filtering
+        # Build search query. Only materialize the columns we need — without
+        # .select() every row also deserializes the full embedding vector into
+        # Python objects just to be discarded. `_distance` must be listed
+        # explicitly: newer Lance versions stop auto-projecting it when output
+        # columns are specified.
+        columns = (
+            ["tool_json", "vector", "_distance"] if include_embeddings else ["tool_json", "_distance"]
+        )
+        search = (
+            self._tools_table.search(query_vector)
+            .select(columns)
+            .limit(limit * 2)  # Over-fetch for filtering
+        )
 
         # Apply namespace filter if specified (escape for SQL safety)
         if filters and "namespace" in filters:
@@ -426,11 +428,12 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
                 escaped_ns = _escape_sql_string(ns_filter)
                 search = search.where(f"namespace = '{escaped_ns}'")
 
-        # Execute search
-        results = search.to_list()
+        # Execute search off the event loop — LanceDB queries are synchronous
+        # Rust/file I/O and would otherwise block every concurrent coroutine.
+        results = await asyncio.to_thread(search.to_list)
 
         # Process results
-        output: list[tuple[ToolDefinition, float]] = []
+        output: list[Any] = []
 
         # Pre-calculate required tags for faster set operations
         required_tags: set[str] = set()
@@ -446,18 +449,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
             if score_threshold is not None and score < score_threshold:
                 continue
 
-            # Filter by tags if specified
-            if required_tags:
-                tool_json_str = row.get("tool_json")
-                if not tool_json_str:
-                    logger.warning("Skipping row with missing tool_json field")
-                    continue
-                tool_json = json.loads(tool_json_str)
-                tool_tags = tool_json.get("tags", [])
-                if required_tags.isdisjoint(tool_tags):
-                    continue
-
-            # Deserialize tool
+            # Deserialize tool (validate once; tags are checked on the model)
             tool_json_str = row.get("tool_json")
             if not tool_json_str:
                 logger.warning("Skipping row with missing tool_json field")
@@ -469,7 +461,16 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
                 logger.warning(f"Failed to deserialize tool: {e}")
                 continue
 
-            output.append((tool, score))
+            # Filter by tags if specified
+            if required_tags and required_tags.isdisjoint(tool.tags):
+                continue
+
+            if include_embeddings:
+                vector = row.get("vector")
+                embedding = list(vector) if vector is not None else []
+                output.append((tool, score, embedding))
+            else:
+                output.append((tool, score))
 
             if len(output) >= limit:
                 break
@@ -519,7 +520,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
             escaped_cat = _escape_sql_string(filters["category"])
             search = search.where(f"category = '{escaped_cat}'")
 
-        results = search.to_list()
+        results = await asyncio.to_thread(search.to_list)
 
         output: list[tuple[Skill, float]] = []
         for row in results:
@@ -568,7 +569,9 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
         # Escape ID for SQL safety
         tool_id = _escape_sql_string(f"{namespace}.{name}")
         try:
-            results = self._tools_table.search().where(f"id = '{tool_id}'").limit(1).to_list()
+            results = await asyncio.to_thread(
+                self._tools_table.search().where(f"id = '{tool_id}'").limit(1).to_list
+            )
             if results:
                 tool_json_str = results[0].get("tool_json")
                 if tool_json_str:
@@ -600,7 +603,9 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
         # Escape ID for SQL safety
         skill_id = _escape_sql_string(f"{namespace}.{name}")
         try:
-            results = self._skills_table.search().where(f"id = '{skill_id}'").limit(1).to_list()
+            results = await asyncio.to_thread(
+                self._skills_table.search().where(f"id = '{skill_id}'").limit(1).to_list
+            )
             if results:
                 skill_json_str = results[0].get("skill_json")
                 if skill_json_str:
@@ -632,7 +637,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
         # Escape ID for SQL safety
         tool_id = _escape_sql_string(f"{namespace}.{name}")
         try:
-            self._tools_table.delete(f"id = '{tool_id}'")
+            await asyncio.to_thread(self._tools_table.delete, f"id = '{tool_id}'")
             return True
         except Exception:
             return False
@@ -657,7 +662,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
         # Escape ID for SQL safety
         skill_id = _escape_sql_string(f"{namespace}.{name}")
         try:
-            self._skills_table.delete(f"id = '{skill_id}'")
+            await asyncio.to_thread(self._skills_table.delete, f"id = '{skill_id}'")
             return True
         except Exception:
             return False
@@ -689,7 +694,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
             query = self._tools_table.search()
             if namespace:
                 query = query.where(f"namespace = '{_escape_sql_string(namespace)}'")
-            records = query.limit(limit).offset(offset).to_list()
+            records = await asyncio.to_thread(query.limit(limit).offset(offset).to_list)
 
             return [
                 ToolDefinition.model_validate_json(r["tool_json"])
@@ -738,7 +743,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
             if where_clauses:
                 query = query.where(" AND ".join(where_clauses))
 
-            records = query.limit(limit).offset(offset).to_list()
+            records = await asyncio.to_thread(query.limit(limit).offset(offset).to_list)
 
             return [
                 Skill.model_validate_json(r["skill_json"])
@@ -767,9 +772,14 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
 
         try:
             if namespace:
-                return int(self._tools_table.count_rows(f"namespace = '{_escape_sql_string(namespace)}'"))
+                return int(
+                    await asyncio.to_thread(
+                        self._tools_table.count_rows,
+                        f"namespace = '{_escape_sql_string(namespace)}'",
+                    )
+                )
             # Use count_rows() for efficient counting when no filter
-            return int(self._tools_table.count_rows())
+            return int(await asyncio.to_thread(self._tools_table.count_rows))
         except Exception as e:
             logger.warning(f"Error counting tools: {e}")
             return 0
@@ -792,8 +802,13 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
 
         try:
             if namespace:
-                return int(self._skills_table.count_rows(f"namespace = '{_escape_sql_string(namespace)}'"))
-            return int(self._skills_table.count_rows())
+                return int(
+                    await asyncio.to_thread(
+                        self._skills_table.count_rows,
+                        f"namespace = '{_escape_sql_string(namespace)}'",
+                    )
+                )
+            return int(await asyncio.to_thread(self._skills_table.count_rows))
         except Exception as e:
             logger.warning(f"Error counting skills: {e}")
             return 0
@@ -812,8 +827,8 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataM
         try:
             await self._ensure_initialized()
             # Verify tables exist and are queryable
-            _ = self._tools_table.count_rows()
-            _ = self._skills_table.count_rows()
+            _ = await asyncio.to_thread(self._tools_table.count_rows)
+            _ = await asyncio.to_thread(self._skills_table.count_rows)
             return True
         except Exception:
             return False

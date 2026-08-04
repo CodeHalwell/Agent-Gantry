@@ -9,6 +9,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **mcp 1.x and 2.x are both supported** — the `mcp` dependency range widened
+  from the emergency `<2.0.0` cap to `>=1.27.2,<3`. mcp 2.0.0 kept the entire
+  v1 client surface (`ClientSession` / `StdioServerParameters` /
+  `stdio_client`), so the persistent-session client works verbatim; the two
+  real breaks are handled in one code path: `servers/mcp_server.py` registers
+  handlers via the 1.x decorators or the 2.x constructor callbacks
+  (`on_list_tools` / `on_call_tool`, whose handlers return full
+  `ListToolsResult` / `CallToolResult` models and must mark failures with
+  `is_error` themselves), and the client reads tool schemas dual-spelled
+  (`input_schema` on 2.x, `inputSchema` on 1.x — the 1.x-only read silently
+  replaced every v2 tool's schema with an empty default). The full MCP test
+  suite passes against both mcp 1.28.1 and 2.0.0, including real stdio
+  subprocess round-trips (`tests/test_mcp_execution.py` now spins up a
+  version-appropriate server: FastMCP on 1.x, `MCPServer` on 2.x).
+  Cross-version protocol interop over stdio was verified in both directions.
+  The combined `all` extra still locks mcp 1.x because openai-agents and
+  agent-framework pin `mcp<2`; standalone `agent-gantry[mcp]` installs may
+  resolve 2.x.
+- **haystack-ai 3.0 support.** haystack 3.0 removed `ToolInvoker` (the
+  `Agent` component now owns tool execution), which broke
+  `GantryLiveHaystackToolInvoker.build()` with a *misleading* "install
+  haystack-ai" `ImportError` even when haystack 3 was installed — the stubbed
+  test suites never exercised `build()` against the real package. `build()`
+  now branches: on haystack 2.x it returns a fresh `ToolInvoker` as before;
+  on >=3.0 it builds a per-call `haystack.components.agents.Agent` when the
+  builder was given `chat_generator=...`, and otherwise raises a clear
+  `RuntimeError` pointing at the alternatives. New real-package guard tests
+  (`tests/frameworks/test_haystack_build_live.py`) cover the 2.x invoker
+  path, the 3.x Agent path, and the 3.x error path; `haystack_example.py`
+  and the adapter docs are version-aware.
+- **MCP-discovered tools are now executable through `gantry.execute()`.**
+  `add_mcp_server()` and `discover_tools_from_server()` register an execution
+  handler per discovered tool that proxies the call to the server via
+  `MCPClient.call_tool`, so MCP tools run through the full engine path
+  (security policy, retries, timeouts, telemetry) like `@gantry.register`-ed
+  tools. Previously discovered MCP tools were retrievable but failed with
+  "No handler found" on execution — `MCPClient.call_tool` had no callers.
+  In-band MCP tool failures (`isError`/`is_error` on the call result, how the
+  protocol reports a tool that raised) are surfaced as exceptions so the
+  engine records them as failures — with retries, health, and telemetry —
+  instead of passing the error object through as a successful result. The
+  persistent session survives such failures (tool error ≠ broken connection).
+  Symmetrically, `MCPServer._handle_execute_tool` raises on failed
+  executions instead of returning error text, so the served result carries
+  `isError` and MCP clients don't record the failure as a success.
+  Qualified-name collisions are first-wins for definition AND handler: an
+  MCP tool whose `namespace.name` is already registered by a different
+  source is skipped with a warning instead of silently hijacking the
+  existing tool's handler (validation/authorization and dispatch would
+  otherwise disagree about which tool runs). Re-discovery from the same
+  server refreshes the stored definition along with the handler, so
+  re-adding a reconfigured server can't leave validation running against
+  the old schema while calls go to the new subprocess — and tools the
+  reconfigured server no longer exposes are removed (registry, handlers,
+  vector store), since their handlers would reconnect to the replaced
+  command. Discovered definitions enter the registry immediately
+  (mirroring `add_tool()`), so MCP tools are executable before the next
+  `sync()` even with `auto_sync=False`.
+  See the new end-to-end suite `tests/test_mcp_execution.py`, which runs a
+  real stdio MCP server subprocess.
+- **Persistent MCP sessions.** `MCPClient.call_tool` and `list_tools` share
+  one long-lived connection per server (owned by a dedicated background task
+  so anyio cancel scopes stay in one task) — discovery seeds the connection
+  the first tool call reuses — instead of spawning the server subprocess and
+  re-running the initialize handshake on every call — previously hundreds of
+  milliseconds to seconds (for `npx`-launched servers) of overhead per tool
+  execution. Transport errors invalidate the session so the next call
+  reconnects. New lifecycle hooks: `MCPClient.close()`,
+  `MCPClientPool.close_all()`, `MCPRegistry.close_all_clients()`, and
+  `AgentGantry.close()` closes all MCP clients it created.
+- **Incremental sync for Qdrant, Chroma, and PGVector.** All three remote
+  stores now persist per-tool fingerprints (Qdrant payload field, Chroma
+  metadata field, new PG `fingerprint` column with in-place `ALTER TABLE`
+  migration) and implement `get_stored_fingerprints()` plus the sync-metadata
+  API (`get_metadata`/`set_metadata`/`update_sync_metadata`, backed by a small
+  side collection/table). Previously these backends returned the protocol
+  default (empty fingerprints), so **every** `sync()` re-embedded and
+  re-upserted the entire registry — on every process restart, and per
+  `add_tool()` call with `auto_sync=True`.
+  Deployment note for PGVector: the first `initialize()` against a
+  pre-existing table performs the one-time `ALTER TABLE ... ADD COLUMN IF
+  NOT EXISTS` and `CREATE TABLE IF NOT EXISTS <table>__meta`, so the app's
+  DB role needs DDL on its own table (implicit for table owners; grant
+  explicitly if your role only has DML).
+
 - **`required` / `always_include` pinned-tool selection, ported to every
   framework adapter.** Previously only the Microsoft Agent Framework provider
   (`GantryContextProvider(required=..., always_include=...)`) could guarantee
@@ -155,6 +240,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING — `LLMConfig.model` default is now `"gpt-5.4-mini"`** (was
+  `"gpt-4o-mini"`, which OpenAI shuts down on 2026-10-23). Leaving the
+  retiring model as the default would break every deployment relying on it
+  at the shutdown date; callers who need the old model until then must set
+  `model="gpt-4o-mini"` explicitly. This only affects LLM-based intent
+  classification (`use_llm_for_intent=True`), which is off by default.
+  `LLMClient.classify_intent` builds reasoning-model-compatible requests for
+  the gpt-5 family and o-series: `max_completion_tokens` (with headroom for
+  reasoning tokens) instead of the legacy `max_tokens`, and no `temperature`
+  (reasoning models accept only the default) — otherwise every request would
+  fail and silently degrade classification to the UNKNOWN fallback.
+- **CI native-adapter caps lifted** (added earlier in this cycle as a
+  temporary mitigation): pydantic-ai verified against 2.23.0 with **zero
+  adapter changes needed** (every construction site was already keyword-only,
+  which spans 1.x and 2.x); dspy verified against 3.3.0 (fully backward
+  compatible on the adapter surface — the rebuilt ReActV2 is a separate,
+  explicitly experimental class); haystack-ai 3.0 supported via the
+  version-branched `build()` (see Added). The isolated CI job installs all
+  three uncapped again.
+- **LanceDB implementation consolidated.** `lancedb_mixins.py` carried full
+  duplicate copies of `add_tools`/`search`/the skills API that were shadowed
+  by the identical class-body definitions in `LanceDBVectorStore` (MRO:
+  class body wins) — ~600 lines of dead code that silently diverged whenever
+  only one copy was fixed. The mixins now contain only what is actually
+  inherited (tools schema migration and the sync-metadata API), and those
+  live methods run their blocking LanceDB calls off the event loop via
+  `asyncio.to_thread` like the main store methods.
+- **Performance.**
+  - `ToolRegistry.get_tool_by_name` is O(1) via a name index instead of a
+    linear scan over all registered tools; it runs on every
+    `ExecutionEngine.execute()` call (~800× faster at 5k tools in
+    microbenchmarks).
+  - `SemanticRouter.route` resolves intent concurrently with query embedding
+    + vector search; with LLM-based intent classification this removes an
+    entire LLM round-trip from the retrieval critical path.
+  - Candidate scoring normalizes conversation context (summary/messages
+    lowercasing, used/failed-tool sets) once per query instead of once per
+    candidate.
+  - LanceDB queries now run off the event loop (`asyncio.to_thread`) — disk
+    I/O no longer freezes concurrent coroutines — and `search` fetches only
+    the columns it needs instead of materializing every row's embedding
+    vector; the tag filter no longer parses each row's JSON twice.
+  - `OpenAIEmbedder.embed_batch` issues batch requests concurrently (bounded
+    at 4 in flight) instead of strictly sequential round-trips — large syncs
+    are ~3-4× faster at typical API latency.
+  - `add_mcp_server()` / `discover_tools_from_server()` / `add_a2a_agent()`
+    register all discovered tools then sync once, instead of triggering a
+    full sync (fingerprint scan + size-1 embed batch) per tool under
+    `auto_sync=True`.
+  - The execution engine caches one `A2AExecutor` (previously constructed per
+    call, which also discarded its per-agent client cache), and `A2AClient`
+    holds a persistent `httpx.AsyncClient` per event loop so repeated task
+    sends reuse connections instead of paying DNS + TCP + TLS each call.
+    `ExecutionEngine.close()` / `A2AExecutor.close()` / `A2AClient.close()`
+    release the connections; `AgentGantry.close()` calls through.
+  - `gantry.sync()` compares synced tools by qualified name instead of
+    Pydantic deep-equality list membership (was O(N²) over full schemas).
+- **Dependency floors refreshed (2026-08-03 audit)** — see `pyproject.toml`
+  comments for full rationale per package:
+  - `mcp` was emergency-capped `<2.0.0` at this audit (mcp 2.0.0, released
+    2026-07-28, moved every v1 API Gantry used — `Server`, `stdio_server`,
+    `ClientSession`, `stdio_client` — so an uncapped standalone
+    `agent-gantry[mcp]` install broke at import). **Superseded later in this
+    same cycle**: the cap was replaced by full 1.x/2.x dual-version support
+    and the range is now `>=1.27.2,<3` — see the mcp entry under Added.
+  - `crewai>=1.15.0` — its opentelemetry conflict with `agent-framework` was
+    resolved upstream in 1.15.0; the combined `agent-frameworks` extra now
+    locks crewai 1.15.10 (was held at 1.6.1).
+  - `langchain>=1.3.14`, `langchain-openai>=1.4.1`, `langgraph>=1.2.10`,
+    `llama-index-core>=0.14.23`, `llama-index-llms-openai>=0.7.10`,
+    `openai>=2.45.0`, `anthropic>=0.120.2`, `cohere>=7.0.8`, `groq>=1.6.0`.
+  - `semantic-kernel` stays at `>=1.36.0`: a bump to 1.43.1+ is blocked by a
+    *new* conflict (sk 1.43+ pins `azure-ai-projects<1.1`, agent-framework
+    needs `>=2.2`) — verified via `uv lock` and documented.
+  - The obsolete `azure-search-documents>=11.7.0b2` uv override was removed
+    (stable 12.0.0 exists and is what the AF search beta now requires).
+  - The `mistralai` PyPI quarantine has been lifted upstream (comment
+    updated); Gantry deliberately keeps the OpenAI-compatible path.
+  - CI's native-adapter smoke-test job temporarily caps `pydantic-ai-slim<2`,
+    `haystack-ai<3`, and `dspy<3.3` — each shipped breaking changes for the
+    adapter surface (pydantic-ai 2.0 `ToolDefinition` arg reorder and
+    `builtin_tools`→capabilities; haystack 3.0 `ToolInvoker` removal;
+    dspy 3.3 ReActV2 trajectory format). Migrating the adapters and lifting
+    the caps is tracked follow-up work.
 - **`ToolRefresher` (`agent_gantry.integrations.refresh`) is now explicitly
   documented as the standalone, hand-rolled-agent-loop utility**, cross-linked
   with the new `adapter.live()` uniform entry point. It was already
@@ -245,6 +414,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Incremental sync on the default in-memory store never worked.**
+  `InMemoryVectorStore.add_tools` stored `tool.content_hash` while
+  `SyncManager.detect_changes` compares `compute_tool_fingerprint()` output
+  (`"v1.0:<hash>"` over a different field set), so the comparison never
+  matched and every `sync()` re-embedded the full registry. The store now
+  persists the fingerprint format the sync manager actually checks; a repeat
+  `sync()` with unchanged tools is a true no-op (regression-tested).
+- **Rate-limiter concurrency-slot leak in the execution engine.** After a
+  successful `RateLimiter.acquire()`, the early-return paths (argument
+  validation failure, A2A dispatch, missing handler, confirmation-required)
+  returned without releasing the slot, permanently consuming
+  `max_concurrent` capacity — repeated invalid-argument calls (an LLM
+  hallucinating parameters) would eventually brick the tool with
+  "Concurrent execution limit exceeded". Every path past acquire now
+  releases in a `finally`.
+- **LanceDB + MMR diversity crashed.** `LanceDBVectorStore.search` ignored
+  `include_embeddings=True` (returning 2-tuples with a warning), which the
+  router unpacks as 3-tuples whenever `diversity_factor > 0` → `ValueError`.
+  The search now returns the stored vector (it was already in the fetched
+  row), which also removes the router's re-embed fallback for MMR.
+- `MCPManager.add_server` returned a `(count, tools)` tuple while annotated
+  `-> int`; the annotation now matches the return value.
 - **MCP initialisation no longer masks real failures.** `AgentGantry` now
   separates the *import* guard from the *construction* guard: an expected-absent
   MCP install is logged at DEBUG and degrades silently to no-MCP, while an

@@ -8,6 +8,7 @@ collection management, filtering, and error handling.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -15,6 +16,7 @@ import uuid
 from typing import Any
 
 from agent_gantry.schema.tool import ToolDefinition
+from agent_gantry.utils.fingerprint import compute_tool_fingerprint
 
 logger = logging.getLogger(__name__)
 
@@ -153,12 +155,15 @@ class QdrantVectorStore:
             # Generate deterministic ID
             point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{tool.namespace}.{tool.name}"))
 
-            # Create payload with tool data
+            # Create payload with tool data. The fingerprint enables
+            # incremental sync: SyncManager.detect_changes compares it against
+            # compute_tool_fingerprint so unchanged tools skip re-embedding.
             payload = {
                 "name": tool.name,
                 "namespace": tool.namespace,
                 "description": tool.description,
                 "tool_json": tool.model_dump_json(),
+                "fingerprint": compute_tool_fingerprint(tool),
             }
 
             points.append(
@@ -342,6 +347,94 @@ class QdrantVectorStore:
         except Exception:
             return False
 
+    @property
+    def supports_metadata(self) -> bool:
+        """Qdrant supports metadata storage (via a side collection)."""
+        return True
+
+    async def get_stored_fingerprints(self) -> dict[str, str]:
+        """
+        Get all stored tool fingerprints for incremental sync.
+
+        Scrolls the collection fetching only payload fields (no vectors), so
+        unchanged tools can skip re-embedding on subsequent syncs.
+        """
+        await self.initialize()
+
+        fingerprints: dict[str, str] = {}
+        offset = None
+        while True:
+            records, offset = await self._client.scroll(
+                collection_name=self._collection_name,
+                limit=256,
+                offset=offset,
+                with_payload=["name", "namespace", "fingerprint"],
+                with_vectors=False,
+            )
+            for record in records:
+                payload = record.payload or {}
+                fingerprint = payload.get("fingerprint")
+                name = payload.get("name")
+                namespace = payload.get("namespace", "default")
+                if fingerprint and name:
+                    fingerprints[f"{namespace}.{name}"] = fingerprint
+            if offset is None:
+                break
+        return fingerprints
+
+    async def _ensure_meta_collection(self) -> str:
+        """Create the side collection holding sync metadata key/values."""
+        from qdrant_client.models import VectorParams
+
+        meta_name = f"{self._collection_name}__meta"
+        collections = await self._client.get_collections()
+        exists = any(c.name == meta_name for c in collections.collections)
+        if not exists:
+            await self._client.create_collection(
+                collection_name=meta_name,
+                vectors_config=VectorParams(size=1, distance=self._distance),
+            )
+        return meta_name
+
+    async def get_metadata(self, key: str) -> str | None:
+        """Get a sync-metadata value by key."""
+        try:
+            meta_name = await self._ensure_meta_collection()
+            point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"__gantry_meta__.{key}"))
+            result = await self._client.retrieve(
+                collection_name=meta_name,
+                ids=[point_id],
+            )
+            if result:
+                payload = result[0].payload or {}
+                value = payload.get("value")
+                return str(value) if value is not None else None
+        except Exception as e:
+            logger.debug(f"get_metadata failed for {key}: {e}")
+        return None
+
+    async def set_metadata(self, key: str, value: str) -> None:
+        """Set a sync-metadata value."""
+        from qdrant_client.models import PointStruct
+
+        meta_name = await self._ensure_meta_collection()
+        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"__gantry_meta__.{key}"))
+        await self._client.upsert(
+            collection_name=meta_name,
+            points=[
+                PointStruct(
+                    id=point_id,
+                    vector=[0.0],
+                    payload={"key": key, "value": value},
+                )
+            ],
+        )
+
+    async def update_sync_metadata(self, embedder_id: str, dimension: int) -> None:
+        """Update sync metadata after a successful sync."""
+        await self.set_metadata("embedder_id", embedder_id)
+        await self.set_metadata("dimension", str(dimension))
+
 
 class ChromaVectorStore:
     """
@@ -450,12 +543,14 @@ class ChromaVectorStore:
             # Document is the searchable text
             documents.append(tool.description)
 
-            # Metadata includes full tool JSON
+            # Metadata includes full tool JSON and the sync fingerprint
+            # (compared by SyncManager.detect_changes for incremental sync)
             metadatas.append(
                 {
                     "name": tool.name,
                     "namespace": tool.namespace,
                     "tool_json": tool.model_dump_json(),
+                    "fingerprint": compute_tool_fingerprint(tool),
                 }
             )
 
@@ -637,6 +732,68 @@ class ChromaVectorStore:
         except Exception:
             return False
 
+    @property
+    def supports_metadata(self) -> bool:
+        """Chroma supports metadata storage (via a side collection)."""
+        return True
+
+    async def get_stored_fingerprints(self) -> dict[str, str]:
+        """Get all stored tool fingerprints for incremental sync."""
+        await self.initialize()
+
+        try:
+            result = await asyncio.to_thread(
+                self._collection.get,
+                include=["metadatas"],
+            )
+        except Exception as e:
+            logger.debug(f"get_stored_fingerprints failed: {e}")
+            return {}
+
+        fingerprints: dict[str, str] = {}
+        ids = result.get("ids") or []
+        metadatas = result.get("metadatas") or []
+        for tool_id, metadata in zip(ids, metadatas):
+            if metadata:
+                fingerprint = metadata.get("fingerprint")
+                if fingerprint:
+                    fingerprints[tool_id] = fingerprint
+        return fingerprints
+
+    async def _get_meta_collection(self) -> Any:
+        """Get or create the side collection holding sync metadata."""
+        return await asyncio.to_thread(
+            self._client.get_or_create_collection,
+            name=f"{self._collection_name}__meta",
+        )
+
+    async def get_metadata(self, key: str) -> str | None:
+        """Get a sync-metadata value by key."""
+        try:
+            meta = await self._get_meta_collection()
+            result = await asyncio.to_thread(meta.get, ids=[key])
+            documents = result.get("documents") or []
+            if documents:
+                return documents[0]
+        except Exception as e:
+            logger.debug(f"get_metadata failed for {key}: {e}")
+        return None
+
+    async def set_metadata(self, key: str, value: str) -> None:
+        """Set a sync-metadata value."""
+        meta = await self._get_meta_collection()
+        await asyncio.to_thread(
+            meta.upsert,
+            ids=[key],
+            embeddings=[[0.0]],
+            documents=[value],
+        )
+
+    async def update_sync_metadata(self, embedder_id: str, dimension: int) -> None:
+        """Update sync metadata after a successful sync."""
+        await self.set_metadata("embedder_id", embedder_id)
+        await self.set_metadata("dimension", str(dimension))
+
 
 class PGVectorStore:
     """
@@ -674,6 +831,16 @@ class PGVectorStore:
 
         self._url = url
         self._table_name = table_name
+        # PostgreSQL silently truncates identifiers to 63 bytes, so for a
+        # table_name near the limit "<table>__meta" would truncate back to
+        # the tools table's own identifier and CREATE TABLE IF NOT EXISTS
+        # would treat the tools table as the metadata table. Derive a
+        # shortened, hash-distinguished name in that case.
+        meta_name = f"{table_name}__meta"
+        if len(meta_name) > 63:
+            digest = hashlib.sha256(table_name.encode()).hexdigest()[:10]
+            meta_name = f"{table_name[:46]}_{digest}__meta"
+        self._meta_table_name = meta_name
         self._dimension = dimension
         self._pool = None
         self._initialized = False
@@ -707,8 +874,25 @@ class PGVectorStore:
                     namespace TEXT NOT NULL,
                     description TEXT,
                     tool_json TEXT NOT NULL,
+                    fingerprint TEXT,
                     embedding vector({self._dimension}),
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            """)
+
+            # Migrate pre-fingerprint tables in place (no-op when present).
+            # Tools without a fingerprint simply re-embed on the next sync.
+            await conn.execute(f"""
+                ALTER TABLE "{self._table_name}"
+                ADD COLUMN IF NOT EXISTS fingerprint TEXT
+            """)
+
+            # Sync metadata table (embedder_id / dimension tracking)
+            await conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS "{self._meta_table_name}" (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
                     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
                 )
             """)
@@ -754,6 +938,7 @@ class PGVectorStore:
                         tool.namespace,
                         tool.description,
                         tool.model_dump_json(),
+                        compute_tool_fingerprint(tool),
                         embedding_str,
                     )
                 )
@@ -762,13 +947,14 @@ class PGVectorStore:
                 await conn.executemany(
                     f"""
                     INSERT INTO "{self._table_name}"
-                    (id, name, namespace, description, tool_json, embedding, updated_at)
-                    VALUES ($1, $2, $3, $4, $5, $6, NOW())
+                    (id, name, namespace, description, tool_json, fingerprint, embedding, updated_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
                     ON CONFLICT (id) DO UPDATE SET
                         name = EXCLUDED.name,
                         namespace = EXCLUDED.namespace,
                         description = EXCLUDED.description,
                         tool_json = EXCLUDED.tool_json,
+                        fingerprint = EXCLUDED.fingerprint,
                         embedding = EXCLUDED.embedding,
                         updated_at = NOW()
                     """,
@@ -778,8 +964,8 @@ class PGVectorStore:
                 await conn.executemany(
                     f"""
                     INSERT INTO "{self._table_name}"
-                    (id, name, namespace, description, tool_json, embedding)
-                    VALUES ($1, $2, $3, $4, $5, $6)
+                    (id, name, namespace, description, tool_json, fingerprint, embedding)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
                     """,
                     records,
                 )
@@ -945,6 +1131,54 @@ class PGVectorStore:
             return True
         except Exception:
             return False
+
+    @property
+    def supports_metadata(self) -> bool:
+        """PGVector supports metadata storage (via a side table)."""
+        return True
+
+    async def get_stored_fingerprints(self) -> dict[str, str]:
+        """Get all stored tool fingerprints for incremental sync."""
+        await self.initialize()
+
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                f'SELECT id, fingerprint FROM "{self._table_name}" '
+                "WHERE fingerprint IS NOT NULL"
+            )
+            return {row["id"]: row["fingerprint"] for row in rows}
+
+    async def get_metadata(self, key: str) -> str | None:
+        """Get a sync-metadata value by key."""
+        await self.initialize()
+
+        async with self._pool.acquire() as conn:
+            return await conn.fetchval(
+                f'SELECT value FROM "{self._meta_table_name}" WHERE key = $1',
+                key,
+            )
+
+    async def set_metadata(self, key: str, value: str) -> None:
+        """Set a sync-metadata value."""
+        await self.initialize()
+
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                f"""
+                INSERT INTO "{self._meta_table_name}" (key, value, updated_at)
+                VALUES ($1, $2, NOW())
+                ON CONFLICT (key) DO UPDATE SET
+                    value = EXCLUDED.value,
+                    updated_at = NOW()
+                """,
+                key,
+                value,
+            )
+
+    async def update_sync_metadata(self, embedder_id: str, dimension: int) -> None:
+        """Update sync metadata after a successful sync."""
+        await self.set_metadata("embedder_id", embedder_id)
+        await self.set_metadata("dimension", str(dimension))
 
     async def close(self) -> None:
         """Close the connection pool."""

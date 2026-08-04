@@ -208,11 +208,20 @@ class GantryLiveAgnoAgent:
 # Haystack
 # --------------------------------------------------------------------------- #
 class GantryLiveHaystackToolInvoker:
-    """Rebuild a fresh Haystack ``ToolInvoker`` per call with re-selected tools.
+    """Rebuild a fresh Haystack tool-execution component per call.
 
-    Haystack fixes a ``ToolInvoker``'s tools at construction, so this builder
-    constructs a new ``ToolInvoker`` for every call via :meth:`build`, each time
-    wiring in the tools Gantry selects for that call's query.
+    Haystack fixes a component's tools at construction, so this builder
+    constructs a new one for every call via :meth:`build`, each time wiring in
+    the tools Gantry selects for that call's query.
+
+    What :meth:`build` returns depends on the installed haystack-ai version:
+
+    * **haystack 2.x** — a ``ToolInvoker``, as before.
+    * **haystack >= 3.0** — ``ToolInvoker`` was removed (the ``Agent``
+      component owns tool execution). If a ``chat_generator`` was supplied in
+      the builder kwargs, :meth:`build` constructs a per-call
+      ``haystack.components.agents.Agent`` with the selected tools; without
+      one it raises a clear error pointing at the alternatives.
 
     Obtain one via ``HaystackAdapter(gantry).tool_invoker_builder(...)``.
 
@@ -220,7 +229,9 @@ class GantryLiveHaystackToolInvoker:
         gantry: The :class:`~agent_gantry.core.gantry.AgentGantry` to select from.
         limit: Max tools to surface per call. Defaults to ``5``.
         score_threshold: Minimum semantic relevance score. Defaults to ``0.0``.
-        **invoker_kwargs: Extra kwargs forwarded to ``ToolInvoker``.
+        **invoker_kwargs: Extra kwargs forwarded to ``ToolInvoker``
+            (haystack 2.x) or ``Agent`` (haystack >= 3, where a
+            ``chat_generator=...`` entry is required).
     """
 
     def __init__(
@@ -255,21 +266,51 @@ class GantryLiveHaystackToolInvoker:
         )
 
     async def build(self, query: str) -> Any:
-        """Build a fresh ``ToolInvoker`` whose tools are selected for ``query``.
+        """Build a fresh tool-execution component for ``query``.
+
+        Returns a ``ToolInvoker`` on haystack 2.x, or an ``Agent`` on
+        haystack >= 3.0 (which removed ``ToolInvoker``) when the builder was
+        given a ``chat_generator``.
 
         Raises:
             ImportError: If ``haystack-ai`` is not installed.
+            RuntimeError: On haystack >= 3.0 when no ``chat_generator`` was
+                supplied to the builder.
         """
         try:
             from haystack.components.tools import ToolInvoker
-        except ImportError as exc:  # pragma: no cover - exercised via importorskip
-            raise ImportError(
-                "Haystack support requires `haystack-ai`. "
-                "Install it with `pip install haystack-ai`."
-            ) from exc
+        except ImportError as exc:
+            # Distinguish "haystack absent" from "haystack >= 3.0, where
+            # ToolInvoker was removed" — otherwise the error tells users to
+            # install a package they already have.
+            try:
+                import haystack  # noqa: F401
+            except ImportError:  # pragma: no cover - exercised via importorskip
+                raise ImportError(
+                    "Haystack support requires `haystack-ai`. "
+                    "Install it with `pip install haystack-ai`."
+                ) from exc
+            return await self._build_haystack3_agent(query, exc)
 
         tools = await self.select_tools(query)
         return ToolInvoker(tools=tools, **self._invoker_kwargs)
+
+    async def _build_haystack3_agent(self, query: str, cause: ImportError) -> Any:
+        """haystack >= 3.0 path: build a per-call ``Agent`` with fresh tools."""
+        from haystack.components.agents import Agent
+
+        if "chat_generator" not in self._invoker_kwargs:
+            raise RuntimeError(
+                "haystack-ai >= 3.0 removed ToolInvoker; the Agent component "
+                "now owns tool execution. Pass chat_generator=... to "
+                "tool_invoker_builder(...) so build() can construct a "
+                "per-call haystack Agent with the selected tools, or use "
+                "HaystackAdapter.live_tools() and wire the tools into your "
+                "own haystack.components.agents.Agent."
+            ) from cause
+
+        tools = await self.select_tools(query)
+        return Agent(tools=tools, **self._invoker_kwargs)
 
 
 # --------------------------------------------------------------------------- #

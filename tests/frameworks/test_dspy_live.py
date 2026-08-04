@@ -119,7 +119,7 @@ async def test_react_forward_absorbs_tool_failure_into_trajectory(gantry):
 
     ``dspy.Tool.__call__``/``.acall`` (proven above) never swallow
     ``ToolExecutionError`` -- but ``dspy.ReAct.forward``/``aforward``
-    (DSPy's *own* agentic driver, installed dspy 3.2.1) wrap each tool call
+    (DSPy's *own* agentic driver, installed dspy 3.2.1 and 3.3.0) wrap each tool call
     in a bare ``except Exception`` and fold it into the trajectory as an
     ``"Execution error in <tool>: ..."`` observation string instead of
     raising -- the same absorption pattern as a standard ReAct loop feeding

@@ -46,11 +46,31 @@ class SyncManager:
         """
         embedder_class = self._embedder.__class__.__name__
 
+        # Prefer the embedder protocol's own identity: it includes the model
+        # name plus any extra params the implementation adds (task type,
+        # quantization, ...). The attribute fallbacks below exist only for
+        # duck-typed embedders outside the base protocol — probing just
+        # `model`/`_model_name` used to miss the OpenAI/Azure embedders
+        # (which expose `model_name`/`_model`), so two same-dimension models
+        # shared one identity and a model switch skipped re-embedding,
+        # leaving queries from the new model searching the old model's
+        # vectors.
+        get_id = getattr(self._embedder, "get_embedder_id", None)
+        if callable(get_id):
+            try:
+                return f"{embedder_class}-{get_id()}"
+            except Exception:
+                pass
+
         dimension = getattr(self._embedder, "dimension", None)
         if dimension is None:
             dimension = getattr(self._embedder, "_dimension", None)
 
-        model = getattr(self._embedder, "model", None)
+        model = getattr(self._embedder, "model_name", None)
+        if model is None:
+            model = getattr(self._embedder, "model", None)
+        if model is None:
+            model = getattr(self._embedder, "_model", None)
         if model is None:
             model = getattr(self._embedder, "_model_name", None)
 

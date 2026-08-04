@@ -48,7 +48,10 @@ class TestMCPClient:
     async def test_convert_tool(self, mcp_client: MCPClient, mcp_config: MCPServerConfig) -> None:
         """Test converting MCP tool to ToolDefinition."""
         # Mock MCP tool
-        mock_tool = MagicMock()
+        # spec-limited mock: a real mcp 1.x Tool has no `input_schema`
+        # attribute (that's the 2.x spelling), and an unspecced MagicMock
+        # would auto-create a truthy mock for it.
+        mock_tool = MagicMock(spec=["name", "description", "inputSchema"])
         mock_tool.name = "test_tool"
         mock_tool.description = "A test tool"
         mock_tool.inputSchema = {
@@ -74,12 +77,12 @@ class TestMCPClient:
     async def test_list_tools_with_mock(self, mcp_client: MCPClient) -> None:
         """Test listing tools from MCP server with mocked connection."""
         # Mock the connection and session
-        mock_tool1 = MagicMock()
+        mock_tool1 = MagicMock(spec=["name", "description", "inputSchema"])
         mock_tool1.name = "tool1"
         mock_tool1.description = "This is the first test tool for MCP"
         mock_tool1.inputSchema = {"type": "object", "properties": {}}
 
-        mock_tool2 = MagicMock()
+        mock_tool2 = MagicMock(spec=["name", "description", "inputSchema"])
         mock_tool2.name = "tool2"
         mock_tool2.description = "This is the second test tool for MCP"
         mock_tool2.inputSchema = {"type": "object", "properties": {}}
@@ -297,17 +300,15 @@ class TestMCPServer:
 
     @pytest.mark.asyncio
     async def test_execute_tool_error(self, mcp_server_dynamic: MCPServer) -> None:
-        """Test execute_tool with non-existent tool."""
-        result = await mcp_server_dynamic._handle_execute_tool(
-            {"tool_name": "nonexistent_tool", "arguments": {}}
-        )
+        """Failed executions raise so the MCP layer marks the result isError.
 
-        assert isinstance(result, list)
-        assert len(result) > 0
-
-        first_result = result[0]
-        assert first_result["type"] == "text"
-        assert "Error" in first_result["text"]
+        Returning error text instead would make MCP clients record the
+        failure as a successful call.
+        """
+        with pytest.raises(RuntimeError, match="Error"):
+            await mcp_server_dynamic._handle_execute_tool(
+                {"tool_name": "nonexistent_tool", "arguments": {}}
+            )
 
 
 class TestAgentGantryMCPIntegration:
@@ -414,7 +415,8 @@ class TestMCPProtocolCompliance:
         mcp_tool = server._convert_tool(tool)
         assert mcp_tool.name == "test_tool"
         assert hasattr(mcp_tool, "description")
-        assert hasattr(mcp_tool, "inputSchema")
+        # mcp 1.x exposes inputSchema; 2.x renamed the attribute input_schema
+        assert hasattr(mcp_tool, "inputSchema") or hasattr(mcp_tool, "input_schema")
 
     @pytest.mark.asyncio
     async def test_meta_tool_discovery_flow(self) -> None:

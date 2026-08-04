@@ -66,8 +66,10 @@ class HaystackAdapter(BaseFrameworkAdapter):
     """Route Gantry-selected tools into Haystack.
 
     Static slice (``haystack.tools.Tool`` objects) plus per-call live helpers
-    (Haystack fixes a ToolInvoker's tools at construction). Every call routes
-    through ``gantry.execute``.
+    (Haystack fixes a component's tools at construction). Every call routes
+    through ``gantry.execute``. Works with haystack 2.x (``ToolInvoker``) and
+    haystack >= 3.0 (``Agent`` owns tool execution — see
+    :meth:`tool_invoker_builder`).
     """
 
     live_tier = "per-call"
@@ -89,15 +91,17 @@ class HaystackAdapter(BaseFrameworkAdapter):
     ) -> Any:
         """Per-call uniform entry point: delegates to :meth:`tool_invoker_builder`.
 
-        Haystack fixes a ``ToolInvoker``'s tools at construction (no mid-run
+        Haystack fixes a component's tools at construction (no mid-run
         hook), so the live object here is a builder, not a hook — the
         deepest Haystack allows. Returns a
         ``GantryLiveHaystackToolInvoker``; call ``await builder.build(query)``
-        before each new call to get a fresh ``ToolInvoker`` with tools
-        re-selected for that query. ``required``/``always_include`` are
-        re-applied on every rebuild (see
+        before each new call to get a fresh component with tools re-selected
+        for that query — a ``ToolInvoker`` on haystack 2.x, or an ``Agent``
+        on haystack >= 3.0 (pass ``chat_generator=...`` there).
+        ``required``/``always_include`` are re-applied on every rebuild (see
         :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select`).
-        ``framework_kwargs`` are forwarded to ``ToolInvoker`` on every rebuild.
+        ``framework_kwargs`` are forwarded to the built component on every
+        rebuild.
         """
         return self.tool_invoker_builder(
             limit=limit,
@@ -133,10 +137,13 @@ class HaystackAdapter(BaseFrameworkAdapter):
         always_include: list[str] | None = None,
         **invoker_kwargs: Any,
     ) -> Any:
-        """Return a builder that rebuilds a fresh ``ToolInvoker`` per call with re-selected tools.
+        """Return a builder that rebuilds a fresh tool-execution component per call.
 
-        ``invoker_kwargs`` are forwarded to ``ToolInvoker``. Call
-        ``await builder.build(query)`` per call.
+        On haystack 2.x each ``await builder.build(query)`` returns a
+        ``ToolInvoker``; on haystack >= 3.0 (which removed ``ToolInvoker``)
+        it returns a ``haystack.components.agents.Agent`` and
+        ``invoker_kwargs`` must include ``chat_generator=...``.
+        ``invoker_kwargs`` are forwarded to the built component.
         """
         from agent_gantry.integrations.frameworks.live_wrappers import (
             GantryLiveHaystackToolInvoker,

@@ -37,6 +37,73 @@ class A2AClient:
         self.config = config
         self._agent_card: AgentCard | None = None
         self._base_url = config.url.rstrip("/")
+        # Persistent HTTP client(s) so repeated task sends reuse connections
+        # (keep-alive) instead of paying DNS + TCP + TLS per call. httpx
+        # AsyncClient connections bind to the event loop they were created on,
+        # so keep one client per running loop (bounded in practice — see
+        # core/rate_limiter.py for the same pattern). Entries hold a weakref
+        # to the owning loop so close() can dispose of clients on other live
+        # loops instead of abandoning them.
+        self._http_clients: dict[int, tuple[Any, Any]] = {}
+
+    def _get_http_client(self) -> Any:
+        """Return a persistent ``httpx.AsyncClient`` for the running loop."""
+        import asyncio
+        import weakref
+
+        import httpx
+
+        loop = asyncio.get_running_loop()
+        entry = self._http_clients.get(id(loop))
+        if entry is not None:
+            loop_ref, client = entry
+            if loop_ref() is loop and not client.is_closed:
+                return client
+            # Stale entry (dead loop whose id() was reused, or a closed
+            # client). The old client can't be aclose()'d here — it belongs
+            # to a gone loop — so its sockets are reclaimed by httpx's
+            # finalizer. Call close() before abandoning a loop to release
+            # them deterministically.
+            if not client.is_closed:
+                logger.debug(
+                    "Dropping A2A HTTP client bound to a dead event loop for "
+                    "agent '%s'; connections will be reclaimed by GC",
+                    self.config.name,
+                )
+        client = httpx.AsyncClient()
+        self._http_clients[id(loop)] = (weakref.ref(loop), client)
+        # Opportunistic cleanup of entries whose loops were garbage-collected
+        # (same GC-reclaim caveat as above for any still-open clients).
+        for stale in [k for k, (ref, _c) in self._http_clients.items() if ref() is None]:
+            self._http_clients.pop(stale, None)
+        return client
+
+    async def close(self) -> None:
+        """Close any persistent HTTP clients. Safe to call multiple times.
+
+        The current loop's client is closed inline. Clients bound to other
+        loops can't be awaited from here: if their loop is still running,
+        ``aclose()`` is scheduled onto it thread-safely; if the loop is gone,
+        the reference is dropped and connections are reclaimed by GC. Those
+        scheduled closes are not awaited — close() returns before other
+        loops' clients have finished closing.
+        """
+        import asyncio
+
+        current = asyncio.get_running_loop()
+        for key, (loop_ref, client) in list(self._http_clients.items()):
+            self._http_clients.pop(key, None)
+            loop = loop_ref()
+            if loop is current:
+                await client.aclose()
+            elif loop is not None and not loop.is_closed():
+                try:
+                    loop.call_soon_threadsafe(
+                        lambda c=client, lo=loop: lo.create_task(c.aclose())
+                    )
+                except RuntimeError:
+                    # Loop shut down between the check and the call — drop.
+                    pass
 
     async def discover(self) -> AgentCard:
         """
@@ -49,22 +116,19 @@ class A2AClient:
             RuntimeError: If discovery fails
         """
         try:
-            # Import httpx only when needed
-            import httpx
-
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{self._base_url}/.well-known/agent.json",
-                    timeout=10.0,
-                )
-                response.raise_for_status()
-                data = response.json()
-                self._agent_card = AgentCard(**data)
-                logger.info(
-                    f"Discovered A2A agent: {self._agent_card.name} "
-                    f"with {len(self._agent_card.skills)} skills"
-                )
-                return self._agent_card
+            client = self._get_http_client()
+            response = await client.get(
+                f"{self._base_url}/.well-known/agent.json",
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            data = response.json()
+            self._agent_card = AgentCard(**data)
+            logger.info(
+                f"Discovered A2A agent: {self._agent_card.name} "
+                f"with {len(self._agent_card.skills)} skills"
+            )
+            return self._agent_card
         except Exception as e:
             raise RuntimeError(f"Failed to discover A2A agent at {self._base_url}: {e}") from e
 
@@ -163,9 +227,6 @@ class A2AClient:
             RuntimeError: If task execution fails
         """
         try:
-            # Import httpx only when needed
-            import httpx
-
             # Build task request
             task_request = TaskRequest(
                 skill_id=skill_id,
@@ -178,27 +239,27 @@ class A2AClient:
                 metadata=metadata or {},
             )
 
-            # Send JSON-RPC request
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    f"{self._base_url}/tasks/send",
-                    json={
-                        "jsonrpc": "2.0",
-                        "method": "tasks/send",
-                        "params": task_request.model_dump(),
-                        "id": 1,
-                    },
-                    timeout=30.0,
-                )
-                response.raise_for_status()
-                result = response.json()
+            # Send JSON-RPC request over the persistent connection
+            client = self._get_http_client()
+            response = await client.post(
+                f"{self._base_url}/tasks/send",
+                json={
+                    "jsonrpc": "2.0",
+                    "method": "tasks/send",
+                    "params": task_request.model_dump(),
+                    "id": 1,
+                },
+                timeout=30.0,
+            )
+            response.raise_for_status()
+            result = response.json()
 
-                # Handle JSON-RPC response
-                if "error" in result:
-                    raise RuntimeError(f"A2A task error: {result['error']}")
+            # Handle JSON-RPC response
+            if "error" in result:
+                raise RuntimeError(f"A2A task error: {result['error']}")
 
-                task_result: dict[str, Any] = result.get("result", {})
-                return task_result
+            task_result: dict[str, Any] = result.get("result", {})
+            return task_result
 
         except Exception as e:
             raise RuntimeError(f"Failed to send task to A2A agent {self.config.name}: {e}") from e

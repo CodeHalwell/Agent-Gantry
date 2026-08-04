@@ -20,7 +20,7 @@ FINGERPRINT_LENGTH = 16
 # Format: v{major}.{minor}
 # - Major: Breaking changes (all fingerprints must be recomputed)
 # - Minor: Non-breaking enhancements
-FINGERPRINT_VERSION = "v1.0"
+FINGERPRINT_VERSION = "v1.1"
 
 
 def compute_tool_fingerprint(tool: ToolDefinition, version: str | None = None) -> str:
@@ -45,25 +45,44 @@ def compute_tool_fingerprint(tool: ToolDefinition, version: str | None = None) -
     """
     version = version or FINGERPRINT_VERSION
 
-    if version != "v1.0":
+    if version not in ("v1.0", "v1.1"):
         raise ValueError(f"Unsupported fingerprint version: {version}")
 
-    # v1.0 algorithm: SHA256 of sorted JSON
-    # Includes security-critical fields (capabilities, requires_confirmation)
-    # to ensure permission changes trigger re-embedding
-    content = json.dumps(
-        {
-            "name": tool.name,
-            "namespace": tool.namespace,
-            "description": tool.description,
-            "parameters_schema": tool.parameters_schema,
-            "tags": sorted(tool.tags),
-            "examples": sorted(tool.examples),
-            "capabilities": sorted([str(cap) for cap in tool.capabilities]),
-            "requires_confirmation": tool.requires_confirmation,
-        },
-        sort_keys=True,
-    )
+    # SHA256 of sorted JSON. Includes security-critical fields (capabilities,
+    # requires_confirmation) so permission changes trigger re-embedding.
+    payload: dict = {
+        "name": tool.name,
+        "namespace": tool.namespace,
+        "description": tool.description,
+        "parameters_schema": tool.parameters_schema,
+        "tags": sorted(tool.tags),
+        "examples": sorted(tool.examples),
+        "capabilities": sorted([str(cap) for cap in tool.capabilities]),
+        "requires_confirmation": tool.requires_confirmation,
+    }
+    if version == "v1.1":
+        # v1.1 additionally covers every persisted routing/lifecycle field:
+        # stores serve the stored ToolDefinition back to the router, so a
+        # definition-only change (e.g. flipping `deprecated`) must re-sync
+        # the stored copy or filters like exclude_deprecated keep acting on
+        # stale data. Runtime health and the per-instantiation created_at
+        # timestamp stay excluded — including them would defeat incremental
+        # sync. Costs one re-embed per actually-changed tool.
+        payload.update(
+            {
+                "version": tool.version,
+                "extended_description": tool.extended_description,
+                "returns_schema": tool.returns_schema,
+                "source": tool.source.value,
+                "source_uri": tool.source_uri,
+                "cost": tool.cost.model_dump(mode="json"),
+                "metadata": tool.metadata,
+                "deprecated": tool.deprecated,
+                "deprecation_message": tool.deprecation_message,
+                "superseded_by": tool.superseded_by,
+            }
+        )
+    content = json.dumps(payload, sort_keys=True, default=str)
     hash_value = hashlib.sha256(content.encode()).hexdigest()[:FINGERPRINT_LENGTH]
     return f"{version}:{hash_value}"
 

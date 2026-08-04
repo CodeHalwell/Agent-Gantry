@@ -13,6 +13,7 @@ import pytest
 
 from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
 from agent_gantry.schema.tool import ToolDefinition
+from agent_gantry.utils.fingerprint import compute_tool_fingerprint
 
 # ============================================================================
 # Vector Store Dimension Property Tests
@@ -125,7 +126,9 @@ async def test_inmemory_store_fingerprints_on_add():
 
     fingerprints = await store.get_stored_fingerprints()
     assert "default.test_tool" in fingerprints
-    assert fingerprints["default.test_tool"] == tool.content_hash
+    # Must match what SyncManager.detect_changes compares against, otherwise
+    # every sync() re-embeds the full registry.
+    assert fingerprints["default.test_tool"] == compute_tool_fingerprint(tool)
 
 
 @pytest.mark.asyncio
@@ -187,8 +190,42 @@ async def test_inmemory_store_fingerprints_multiple_tools():
     assert len(fingerprints) == 2
     assert "default.tool1" in fingerprints
     assert "default.tool2" in fingerprints
-    assert fingerprints["default.tool1"] == tools[0].content_hash
-    assert fingerprints["default.tool2"] == tools[1].content_hash
+    assert fingerprints["default.tool1"] == compute_tool_fingerprint(tools[0])
+    assert fingerprints["default.tool2"] == compute_tool_fingerprint(tools[1])
+
+
+@pytest.mark.asyncio
+async def test_repeat_sync_is_incremental_noop():
+    """A second sync() with unchanged tools must not re-embed anything."""
+    from agent_gantry import AgentGantry
+
+    gantry = AgentGantry()
+
+    @gantry.register(name="incr_tool")
+    def incr_tool(x: int) -> int:
+        """Increment a number."""
+        return x + 1
+
+    first = await gantry.sync()
+    assert first == 1
+
+    embed_calls = 0
+    original = gantry.embedder.embed_batch
+
+    async def counting_embed_batch(texts):
+        nonlocal embed_calls
+        embed_calls += 1
+        return await original(texts)
+
+    gantry.embedder.embed_batch = counting_embed_batch  # type: ignore[method-assign]
+    try:
+        gantry._synced = False
+        second = await gantry.sync()
+    finally:
+        gantry.embedder.embed_batch = original  # type: ignore[method-assign]
+
+    assert second == 0
+    assert embed_calls == 0
 
 
 # ============================================================================
@@ -349,3 +386,125 @@ def test_cohere_reranker_format_empty_examples():
     assert "Name: test_tool" in formatted
     assert "Description: A test tool" in formatted
     assert "Examples:" not in formatted
+
+
+# ============================================================================
+# SyncManager embedder identity tests
+# ============================================================================
+
+
+def test_sync_manager_embedder_id_distinguishes_models():
+    """Two same-dimension embedders with different models must get different
+    sync identities — otherwise switching models silently skips re-embedding
+    and queries from the new model search the old model's vectors."""
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.core.sync_manager import SyncManager
+
+    class ProtocolEmbedder:
+        def __init__(self, model: str) -> None:
+            self._model = model
+
+        @property
+        def model_name(self) -> str:
+            return self._model
+
+        @property
+        def dimension(self) -> int:
+            return 1536
+
+        def get_embedder_id(self) -> str:
+            return f"{self._model}:{self.dimension}"
+
+    store = InMemoryVectorStore()
+    registry = ToolRegistry()
+    id_a = SyncManager(store, ProtocolEmbedder("text-embedding-3-small"), registry)
+    id_b = SyncManager(store, ProtocolEmbedder("text-embedding-ada-002"), registry)
+    assert id_a.get_embedder_id() != id_b.get_embedder_id()
+    assert "text-embedding-3-small" in id_a.get_embedder_id()
+
+
+def test_sync_manager_embedder_id_attribute_fallbacks():
+    """Duck-typed embedders without the protocol method still contribute
+    their model to the identity via attribute probing (including the
+    OpenAI-style `_model` spelling that was previously missed)."""
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.core.sync_manager import SyncManager
+
+    class BareEmbedder:
+        def __init__(self, model: str) -> None:
+            self._model = model
+            self._dimension = 1536
+
+    store = InMemoryVectorStore()
+    registry = ToolRegistry()
+    id_a = SyncManager(store, BareEmbedder("model-a"), registry)
+    id_b = SyncManager(store, BareEmbedder("model-b"), registry)
+    assert id_a.get_embedder_id() != id_b.get_embedder_id()
+    assert "model-a" in id_a.get_embedder_id()
+
+
+def test_embedder_id_includes_custom_endpoint(monkeypatch):
+    """Switching api_base between OpenAI-compatible services (same model
+    label and dimension) must change the embedder identity — the same label
+    on a different endpoint is a different vector space, and a shared
+    identity would skip re-embedding and corrupt retrieval."""
+    pytest.importorskip("openai")
+
+    from agent_gantry.adapters.embedders.openai import OpenAIEmbedder
+    from agent_gantry.schema.config import EmbedderConfig
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+    default = OpenAIEmbedder(EmbedderConfig(model="text-embedding-3-small"))
+    custom = OpenAIEmbedder(
+        EmbedderConfig(model="text-embedding-3-small", api_base="https://proxy.example/v1")
+    )
+    assert default.get_embedder_id() != custom.get_embedder_id()
+    assert "proxy.example" in custom.get_embedder_id()
+
+
+@pytest.mark.asyncio
+async def test_memory_store_search_survives_mixed_dimensions():
+    """Ragged stored embeddings (e.g. a dimension-changing re-sync that
+    partially failed) must not break search: the matrix builds over the
+    dominant dimension and mismatched rows score as absent, matching the old
+    per-vector behaviour of scoring dimension mismatches 0.0."""
+    store = InMemoryVectorStore()
+    tools = [
+        ToolDefinition(name=f"t{i}", description=f"tool number {i}", parameters_schema={})
+        for i in range(3)
+    ]
+    # Two 4-dim rows (dominant) and one 3-dim straggler
+    await store.add_tools(tools[:2], [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]])
+    await store.add_tools(tools[2:], [[1.0, 0.0, 0.0]])
+
+    results = await store.search(query_vector=[1.0, 0.0, 0.0, 0.0], limit=10)
+    names = {t.name for t, _ in results}
+    assert "t0" in names
+    assert "t2" not in names  # mismatched dimension scores as absent, no crash
+
+    # The query's dimension picks its matrix, so the minority dimension is
+    # searchable too — a partially-completed migration must not starve
+    # whichever side is currently smaller
+    results_3d = await store.search(query_vector=[1.0, 0.0, 0.0], limit=10)
+    assert {t.name for t, _ in results_3d} == {"t2"}
+
+
+def test_fingerprint_covers_routing_fields():
+    """Definition-only changes (deprecated, cost, metadata, ...) must change
+    the fingerprint: stores serve the stored ToolDefinition back to the
+    router, so a skipped re-sync would leave filters like exclude_deprecated
+    acting on stale data."""
+    base = dict(
+        name="fp_tool",
+        description="a tool for fingerprint testing",
+        parameters_schema={"type": "object", "properties": {}},
+    )
+    plain = compute_tool_fingerprint(ToolDefinition(**base))
+    assert plain != compute_tool_fingerprint(ToolDefinition(**base, deprecated=True))
+    assert plain != compute_tool_fingerprint(ToolDefinition(**base, metadata={"k": "v"}))
+    # Volatile per-instantiation fields must NOT affect it
+    a, b = ToolDefinition(**base), ToolDefinition(**base)
+    assert a.created_at != b.created_at or True  # timestamps may differ
+    assert compute_tool_fingerprint(a) == compute_tool_fingerprint(b)

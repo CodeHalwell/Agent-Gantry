@@ -33,6 +33,17 @@ class A2AExecutor:
         """Initialize A2A executor."""
         self._clients: dict[str, Any] = {}
 
+    async def close(self) -> None:
+        """Close all cached A2A clients and their persistent connections."""
+        for client in self._clients.values():
+            close_method = getattr(client, "close", None)
+            if close_method is not None:
+                try:
+                    await close_method()
+                except Exception:  # pragma: no cover - best-effort cleanup
+                    logger.debug("Error closing A2A client", exc_info=True)
+        self._clients.clear()
+
     def _get_client(self, tool: ToolDefinition) -> Any:
         """
         Get or create an A2A client for the tool.
@@ -57,16 +68,23 @@ class A2AExecutor:
         from agent_gantry.providers.a2a_client import A2AClient
         from agent_gantry.schema.config import A2AAgentConfig
 
+        # Cache key must qualify the agent by namespace AND endpoint: with the
+        # executor shared across calls, a bare-name key would conflate two
+        # agents that share a name but live at different URLs, silently
+        # dispatching one agent's tasks to the other's endpoint.
+        url = tool.metadata["a2a_url"]
+        client_key = f"{tool.namespace}.{agent_name}@{url}"
+
         # Return cached client or create new one
-        if agent_name not in self._clients:
+        if client_key not in self._clients:
             config = A2AAgentConfig(
                 name=agent_name,
-                url=tool.metadata["a2a_url"],
+                url=url,
                 namespace=tool.namespace,
             )
-            self._clients[agent_name] = A2AClient(config)
+            self._clients[client_key] = A2AClient(config)
 
-        return self._clients[agent_name]
+        return self._clients[client_key]
 
     async def execute(
         self,

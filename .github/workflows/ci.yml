@@ -68,6 +68,14 @@ jobs:
         run: uv sync --python ${{ matrix.python-version }} --extra dev --extra nomic --extra lancedb --extra agent-frameworks --extra example-tools
 
       - name: Run tests
+        # PYTORCH_MPS_HIGH_WATERMARK_RATIO: on Apple Silicon runners, torch's
+        # MPS allocator caps at ~7.9 GiB and sentence-transformers model loads
+        # accumulate against it over the session, flaking late tests with
+        # "MPS backend out of memory" (observed twice on macos 3.10). 0.0
+        # lifts the artificial cap — the fix torch's own error suggests.
+        # No effect on Linux/Windows (no MPS backend).
+        env:
+          PYTORCH_MPS_HIGH_WATERMARK_RATIO: "0.0"
         run: |
           uv run pytest --ignore=tests/test_phase5_mcp.py --ignore=tests/test_phase6_a2a.py -v
 
@@ -120,6 +128,13 @@ jobs:
       # Resolve the project (dev) + the adapter frameworks together in ONE
       # isolated venv, so a shared dep (pydantic/httpx/openai) is resolved to a
       # single compatible version rather than installed-then-downgraded.
+      # Uncapped since 2026-08-03: adapters verified against pydantic-ai 2.23.0
+      # (keyword-only construction spans 1.x/2.x — no changes were needed),
+      # haystack-ai 3.0.0 (ToolInvoker removal handled by a version branch in
+      # GantryLiveHaystackToolInvoker.build, guarded by
+      # tests/frameworks/test_haystack_build_live.py), and dspy 3.3.0 (fully
+      # backward compatible on the adapter surface; ReActV2 remains a separate
+      # experimental class).
       - name: Run adapter smoke tests
         run: |
           uv venv .venv-frameworks --python ${{ matrix.python-version }}

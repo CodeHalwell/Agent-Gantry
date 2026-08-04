@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 
 from agent_gantry.schema.tool import ToolCapability, ToolDefinition
@@ -12,7 +14,7 @@ def test_compute_tool_fingerprint_valid():
         capabilities=[ToolCapability.READ_DATA],
     )
     fp = compute_tool_fingerprint(tool)
-    assert fp.startswith("v1.0:")
+    assert fp.startswith("v1.1:")
     assert len(fp.split(":")[1]) == 16
 
 
@@ -91,17 +93,22 @@ def test_compute_tool_fingerprint_sensitivity():
     tool_diff_req = base_tool.model_copy(update={"requires_confirmation": True})
     assert compute_tool_fingerprint(tool_diff_req) != base_fp
 
-    # Change ignored field: source_uri
-    tool_same_source = base_tool.model_copy(update={"source_uri": "http://example.com/tool"})
-    assert compute_tool_fingerprint(tool_same_source) == base_fp
+    # v1.1: persisted routing/lifecycle fields are covered too — stores serve
+    # the stored ToolDefinition back to the router, so definition-only
+    # changes must re-sync the stored copy
+    tool_diff_source = base_tool.model_copy(update={"source_uri": "http://example.com/tool"})
+    assert compute_tool_fingerprint(tool_diff_source) != base_fp
 
-    # Change ignored field: version
-    tool_same_version = base_tool.model_copy(update={"version": "2.0.0"})
-    assert compute_tool_fingerprint(tool_same_version) == base_fp
+    tool_diff_version = base_tool.model_copy(update={"version": "2.0.0"})
+    assert compute_tool_fingerprint(tool_diff_version) != base_fp
 
-    # Change ignored field: metadata
-    tool_same_meta = base_tool.model_copy(update={"metadata": {"extra": "data"}})
-    assert compute_tool_fingerprint(tool_same_meta) == base_fp
+    tool_diff_meta = base_tool.model_copy(update={"metadata": {"extra": "data"}})
+    assert compute_tool_fingerprint(tool_diff_meta) != base_fp
+
+    # Volatile per-instantiation fields stay excluded — covering created_at
+    # or health would defeat incremental sync entirely
+    tool_same_created = base_tool.model_copy(update={"created_at": datetime.now(timezone.utc)})
+    assert compute_tool_fingerprint(tool_same_created) == base_fp
 
 
 def test_parse_fingerprint_edge_cases():

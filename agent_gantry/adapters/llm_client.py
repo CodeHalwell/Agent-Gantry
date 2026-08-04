@@ -141,12 +141,26 @@ Respond with ONLY the intent category name (e.g., "data_query"), nothing else.""
         # Call the appropriate provider using async methods
         if self._provider in ("openai", "groq"):
             # AsyncOpenAI and AsyncGroq have native async support
-            response = await self._client.chat.completions.create(
-                model=self._model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=self._config.max_tokens,
-                temperature=self._config.temperature,
-            )
+            params: dict[str, Any] = {
+                "model": self._model,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+            if self._provider == "openai" and self._model.startswith(
+                ("gpt-5", "o1", "o3", "o4")
+            ):
+                # OpenAI reasoning models (gpt-5 family, o-series) reject the
+                # legacy max_tokens parameter (they require
+                # max_completion_tokens) and support only the default
+                # temperature — sending either fails the request, which would
+                # silently degrade every classification to the UNKNOWN
+                # fallback. Reasoning tokens also count toward the completion
+                # budget, so give headroom above the configured cap (sized
+                # for one-word answers from non-reasoning models).
+                params["max_completion_tokens"] = max(self._config.max_tokens, 512)
+            else:
+                params["max_tokens"] = self._config.max_tokens
+                params["temperature"] = self._config.temperature
+            response = await self._client.chat.completions.create(**params)
             result = response.choices[0].message.content.strip()
         elif self._provider == "anthropic":
             # AsyncAnthropic has native async support
