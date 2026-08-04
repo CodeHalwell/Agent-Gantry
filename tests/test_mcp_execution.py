@@ -254,7 +254,14 @@ async def test_readd_reconfigured_server_refreshes_definitions(tmp_path: Path) -
     gantry = AgentGantry()
     try:
         await gantry.add_mcp_server(config_for(script_v1))
+        old_client = gantry._direct_mcp_clients["mcp_test.test-server"]
+        assert old_client._connected is True
+
         await gantry.add_mcp_server(config_for(script_v2))
+
+        # The config change closed and replaced the cached client
+        assert gantry._direct_mcp_clients["mcp_test.test-server"] is not old_client
+        assert old_client._connected is False
 
         tools = {f"{t.namespace}.{t.name}": t for t in gantry.export_tools()}
         assert "(v2)" in tools["mcp_test.add_numbers"].description
