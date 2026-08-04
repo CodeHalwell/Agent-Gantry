@@ -61,7 +61,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   otherwise disagree about which tool runs). Re-discovery from the same
   server refreshes the stored definition along with the handler, so
   re-adding a reconfigured server can't leave validation running against
-  the old schema while calls go to the new subprocess.
+  the old schema while calls go to the new subprocess — and tools the
+  reconfigured server no longer exposes are removed (registry, handlers,
+  vector store), since their handlers would reconnect to the replaced
+  command. Discovered definitions enter the registry immediately
+  (mirroring `add_tool()`), so MCP tools are executable before the next
+  `sync()` even with `auto_sync=False`.
   See the new end-to-end suite `tests/test_mcp_execution.py`, which runs a
   real stdio MCP server subprocess.
 - **Persistent MCP sessions.** `MCPClient.call_tool` and `list_tools` share

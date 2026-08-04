@@ -235,9 +235,13 @@ async def test_readd_reconfigured_server_refreshes_definitions(tmp_path: Path) -
     the reconfigured server."""
     script_v1 = tmp_path / "server_v1.py"
     script_v1.write_text(SERVER_SCRIPT)
+    # v2 changes add_numbers' schema AND renames server_pid → server_pid_v2,
+    # so the old name must disappear from the registry on re-add
     script_v2 = tmp_path / "server_v2.py"
     script_v2.write_text(
-        SERVER_SCRIPT.replace("Add two numbers together.", "Add two numbers together (v2).")
+        SERVER_SCRIPT.replace(
+            "Add two numbers together.", "Add two numbers together (v2)."
+        ).replace("def server_pid(", "def server_pid_v2(")
     )
 
     def config_for(script: Path) -> MCPServerConfig:
@@ -255,12 +259,43 @@ async def test_readd_reconfigured_server_refreshes_definitions(tmp_path: Path) -
         tools = {f"{t.namespace}.{t.name}": t for t in gantry.export_tools()}
         assert "(v2)" in tools["mcp_test.add_numbers"].description
 
+        # Tools the reconfigured server no longer exposes are removed — their
+        # handlers closed over the replaced client and would reconnect to the
+        # old command
+        assert "mcp_test.server_pid" not in tools
+        assert "mcp_test.server_pid_v2" in tools
+        stale = await gantry.execute(ToolCall(tool_name="server_pid", arguments={}))
+        assert stale.status != ExecutionStatus.SUCCESS
+
         # And execution dispatches to the reconfigured server
         result = await gantry.execute(
             ToolCall(tool_name="add_numbers", arguments={"a": 2, "b": 2})
         )
         assert result.status == ExecutionStatus.SUCCESS, result.error
         assert _text_content(result.result) == "4"
+    finally:
+        await gantry.close()
+
+
+@pytest.mark.asyncio
+async def test_mcp_tools_executable_before_sync_with_auto_sync_off(
+    server_config: MCPServerConfig,
+) -> None:
+    """MCP-discovered tools are executable immediately even with
+    auto_sync=False — the definition must enter the registry alongside the
+    handler, mirroring add_tool()'s documented guarantee."""
+    from agent_gantry.schema.config import AgentGantryConfig
+
+    gantry = AgentGantry(AgentGantryConfig(auto_sync=False))
+    try:
+        count = await gantry.add_mcp_server(server_config)
+        assert count == 3
+
+        result = await gantry.execute(
+            ToolCall(tool_name="add_numbers", arguments={"a": 3, "b": 4})
+        )
+        assert result.status == ExecutionStatus.SUCCESS, result.error
+        assert _text_content(result.result) == "7"
     finally:
         await gantry.close()
 

@@ -399,6 +399,12 @@ class MCPClientPool:
                 logger.debug("Error closing MCP client", exc_info=True)
 
 
+# Strong references to in-flight fire-and-forget close tasks: the event loop
+# only keeps weak references, so without this a scheduled close could be
+# garbage-collected before it runs.
+_pending_close_tasks: set[asyncio.Task[None]] = set()
+
+
 def _schedule_client_close(client: MCPClient) -> None:
     """Schedule ``client.close()`` on the running loop, if any.
 
@@ -416,5 +422,8 @@ def _schedule_client_close(client: MCPClient) -> None:
         )
         return
     task = loop.create_task(client.close())
-    # Keep a reference until done so the task isn't garbage-collected early.
-    task.add_done_callback(lambda _t: None)
+    # The loop holds only weak references to tasks; without a strong external
+    # reference the close task can be garbage-collected mid-flight, silently
+    # skipping the close (a done-callback alone does not keep the task alive).
+    _pending_close_tasks.add(task)
+    task.add_done_callback(_pending_close_tasks.discard)

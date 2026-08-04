@@ -186,21 +186,6 @@ class ToolRegistry:
         """
         self._handlers[key] = handler
 
-    def replace_tool(self, key: str, tool: ToolDefinition) -> None:
-        """
-        Replace an existing tool definition in place, keeping its key.
-
-        Used when a re-discovered tool's schema may have changed: the handler
-        is re-registered separately, and sync change-detection picks up the
-        replaced definition's new fingerprint on the next sync.
-
-        Args:
-            key: Full tool key (namespace.name)
-            tool: The new tool definition
-        """
-        self._tools[key] = tool
-        self._index_tool(key, tool)
-
     def list_tools(self, namespace: str | None = None) -> list[ToolDefinition]:
         """
         List all registered tools.
