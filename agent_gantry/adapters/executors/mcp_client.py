@@ -185,6 +185,14 @@ class MCPClient:
         if task is not None and same_loop:
             try:
                 await asyncio.wait_for(asyncio.shield(task), timeout=5)
+            except asyncio.TimeoutError:
+                # Loud on purpose: a normal close is quiet, so a timeout here
+                # means the owner task is stuck and the server subprocess may
+                # still be alive.
+                logger.warning(
+                    f"Timed out waiting for MCP session owner task to close "
+                    f"(server '{self.config.name}'); its subprocess may still be running"
+                )
             except Exception:
                 logger.debug("Error while closing MCP session", exc_info=True)
 

@@ -1238,6 +1238,29 @@ class AgentGantry:
 
         for tool in tools:
             key = f"{tool.namespace}.{tool.name}"
+            # Qualified-name dedup (export_tools) keeps the first-seen
+            # definition, so overwriting only the handler on a collision would
+            # validate and authorize against one tool while dispatching to
+            # another. Keep first-wins for definition AND handler: skip when
+            # the name is already owned by a different source. Re-discovery
+            # from the same MCP server stays idempotent.
+            existing = self._registry.get_tool(tool.name, tool.namespace)
+            if existing is None:
+                existing = next(
+                    (
+                        t
+                        for t in self._pending_tools
+                        if t.name == tool.name and t.namespace == tool.namespace
+                    ),
+                    None,
+                )
+            if existing is not None and existing.metadata.get("mcp_server") != client.config.name:
+                logger.warning(
+                    f"MCP server '{client.config.name}' exposes tool '{key}', which is "
+                    f"already registered by a different source; keeping the existing "
+                    f"tool. Use a distinct namespace to register both."
+                )
+                continue
             handler = make_handler(tool.name)
             self._registry.register_handler(key, handler)
             self._tool_handlers[key] = handler

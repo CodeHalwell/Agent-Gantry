@@ -135,6 +135,36 @@ async def test_add_mcp_server_tools_are_executable(server_config: MCPServerConfi
 
 
 @pytest.mark.asyncio
+async def test_mcp_name_collision_keeps_existing_tool(server_config: MCPServerConfig) -> None:
+    """An MCP tool sharing a qualified name with an existing tool must not
+    hijack its handler: qualified-name dedup keeps the first definition, so
+    replacing only the handler would validate against one tool while
+    dispatching to another."""
+    gantry = AgentGantry()
+    try:
+
+        @gantry.register(namespace="mcp_test")
+        def add_numbers(a: int, b: int) -> int:
+            """Local implementation that shadows the MCP server's tool."""
+            return 999
+
+        await gantry.add_mcp_server(server_config)
+
+        result = await gantry.execute(
+            ToolCall(tool_name="add_numbers", arguments={"a": 1, "b": 2})
+        )
+        assert result.status == ExecutionStatus.SUCCESS, result.error
+        # The locally registered handler still owns the name
+        assert result.result == 999
+
+        # Non-colliding MCP tools from the same server work normally
+        pid_result = await gantry.execute(ToolCall(tool_name="server_pid", arguments={}))
+        assert pid_result.status == ExecutionStatus.SUCCESS, pid_result.error
+    finally:
+        await gantry.close()
+
+
+@pytest.mark.asyncio
 async def test_list_tools_discovery(server_config: MCPServerConfig) -> None:
     """Discovery returns ToolDefinitions with MCP source metadata."""
     client = MCPClient(server_config)

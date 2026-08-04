@@ -54,6 +54,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Symmetrically, `MCPServer._handle_execute_tool` raises on failed
   executions instead of returning error text, so the served result carries
   `isError` and MCP clients don't record the failure as a success.
+  Qualified-name collisions are first-wins for definition AND handler: an
+  MCP tool whose `namespace.name` is already registered by a different
+  source is skipped with a warning instead of silently hijacking the
+  existing tool's handler (validation/authorization and dispatch would
+  otherwise disagree about which tool runs).
   See the new end-to-end suite `tests/test_mcp_execution.py`, which runs a
   real stdio MCP server subprocess.
 - **Persistent MCP sessions.** `MCPClient.call_tool` now keeps one long-lived
@@ -280,10 +285,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Pydantic deep-equality list membership (was O(N²) over full schemas).
 - **Dependency floors refreshed (2026-08-03 audit)** — see `pyproject.toml`
   comments for full rationale per package:
-  - `mcp` is now capped `<2.0.0` (**urgent**: mcp 2.0.0, released 2026-07-28,
-    removes every v1 API Gantry uses — `Server`, `stdio_server`,
+  - `mcp` was emergency-capped `<2.0.0` at this audit (mcp 2.0.0, released
+    2026-07-28, moved every v1 API Gantry used — `Server`, `stdio_server`,
     `ClientSession`, `stdio_client` — so an uncapped standalone
-    `agent-gantry[mcp]` install broke at import).
+    `agent-gantry[mcp]` install broke at import). **Superseded later in this
+    same cycle**: the cap was replaced by full 1.x/2.x dual-version support
+    and the range is now `>=1.27.2,<3` — see the mcp entry under Added.
   - `crewai>=1.15.0` — its opentelemetry conflict with `agent-framework` was
     resolved upstream in 1.15.0; the combined `agent-frameworks` extra now
     locks crewai 1.15.10 (was held at 1.6.1).

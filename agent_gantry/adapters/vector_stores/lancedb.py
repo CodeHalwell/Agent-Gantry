@@ -520,7 +520,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
             escaped_cat = _escape_sql_string(filters["category"])
             search = search.where(f"category = '{escaped_cat}'")
 
-        results = search.to_list()
+        results = await asyncio.to_thread(search.to_list)
 
         output: list[tuple[Skill, float]] = []
         for row in results:
@@ -569,7 +569,9 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
         # Escape ID for SQL safety
         tool_id = _escape_sql_string(f"{namespace}.{name}")
         try:
-            results = self._tools_table.search().where(f"id = '{tool_id}'").limit(1).to_list()
+            results = await asyncio.to_thread(
+                self._tools_table.search().where(f"id = '{tool_id}'").limit(1).to_list
+            )
             if results:
                 tool_json_str = results[0].get("tool_json")
                 if tool_json_str:
@@ -601,7 +603,9 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
         # Escape ID for SQL safety
         skill_id = _escape_sql_string(f"{namespace}.{name}")
         try:
-            results = self._skills_table.search().where(f"id = '{skill_id}'").limit(1).to_list()
+            results = await asyncio.to_thread(
+                self._skills_table.search().where(f"id = '{skill_id}'").limit(1).to_list
+            )
             if results:
                 skill_json_str = results[0].get("skill_json")
                 if skill_json_str:
@@ -633,7 +637,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
         # Escape ID for SQL safety
         tool_id = _escape_sql_string(f"{namespace}.{name}")
         try:
-            self._tools_table.delete(f"id = '{tool_id}'")
+            await asyncio.to_thread(self._tools_table.delete, f"id = '{tool_id}'")
             return True
         except Exception:
             return False
@@ -658,7 +662,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
         # Escape ID for SQL safety
         skill_id = _escape_sql_string(f"{namespace}.{name}")
         try:
-            self._skills_table.delete(f"id = '{skill_id}'")
+            await asyncio.to_thread(self._skills_table.delete, f"id = '{skill_id}'")
             return True
         except Exception:
             return False
@@ -690,7 +694,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
             query = self._tools_table.search()
             if namespace:
                 query = query.where(f"namespace = '{_escape_sql_string(namespace)}'")
-            records = query.limit(limit).offset(offset).to_list()
+            records = await asyncio.to_thread(query.limit(limit).offset(offset).to_list)
 
             return [
                 ToolDefinition.model_validate_json(r["tool_json"])
@@ -739,7 +743,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
             if where_clauses:
                 query = query.where(" AND ".join(where_clauses))
 
-            records = query.limit(limit).offset(offset).to_list()
+            records = await asyncio.to_thread(query.limit(limit).offset(offset).to_list)
 
             return [
                 Skill.model_validate_json(r["skill_json"])
@@ -768,9 +772,14 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
 
         try:
             if namespace:
-                return int(self._tools_table.count_rows(f"namespace = '{_escape_sql_string(namespace)}'"))
+                return int(
+                    await asyncio.to_thread(
+                        self._tools_table.count_rows,
+                        f"namespace = '{_escape_sql_string(namespace)}'",
+                    )
+                )
             # Use count_rows() for efficient counting when no filter
-            return int(self._tools_table.count_rows())
+            return int(await asyncio.to_thread(self._tools_table.count_rows))
         except Exception as e:
             logger.warning(f"Error counting tools: {e}")
             return 0
@@ -793,8 +802,13 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
 
         try:
             if namespace:
-                return int(self._skills_table.count_rows(f"namespace = '{_escape_sql_string(namespace)}'"))
-            return int(self._skills_table.count_rows())
+                return int(
+                    await asyncio.to_thread(
+                        self._skills_table.count_rows,
+                        f"namespace = '{_escape_sql_string(namespace)}'",
+                    )
+                )
+            return int(await asyncio.to_thread(self._skills_table.count_rows))
         except Exception as e:
             logger.warning(f"Error counting skills: {e}")
             return 0
@@ -813,8 +827,8 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
         try:
             await self._ensure_initialized()
             # Verify tables exist and are queryable
-            _ = self._tools_table.count_rows()
-            _ = self._skills_table.count_rows()
+            _ = await asyncio.to_thread(self._tools_table.count_rows)
+            _ = await asyncio.to_thread(self._skills_table.count_rows)
             return True
         except Exception:
             return False

@@ -72,7 +72,9 @@ class A2AClient:
         The current loop's client is closed inline. Clients bound to other
         loops can't be awaited from here: if their loop is still running,
         ``aclose()`` is scheduled onto it thread-safely; if the loop is gone,
-        the reference is dropped and connections are reclaimed by GC.
+        the reference is dropped and connections are reclaimed by GC. Those
+        scheduled closes are not awaited — close() returns before other
+        loops' clients have finished closing.
         """
         import asyncio
 
