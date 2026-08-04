@@ -123,6 +123,43 @@ async def test_concurrent_invalidation_clears_session_state(
 
 
 @pytest.mark.asyncio
+async def test_stale_owner_does_not_clear_replacement_session(
+    server_config: MCPServerConfig,
+) -> None:
+    """A detached owner task exiting late must not tear down the state of a
+    replacement session installed after invalidation. Uses a mocked transport
+    with slow teardown to force the overlap deterministically."""
+    from contextlib import asynccontextmanager
+
+    client = MCPClient(server_config)
+
+    @asynccontextmanager
+    async def fake_connect():
+        session = object()
+        try:
+            yield session
+        finally:
+            # Slow teardown keeps the old owner alive while a replacement
+            # session is being installed
+            await asyncio.sleep(0.2)
+
+    client.connect = fake_connect
+
+    first = await client._ensure_session()
+    invalidation = asyncio.create_task(client._invalidate_session())
+    await asyncio.sleep(0)  # let invalidation detach the old owner
+
+    second = await client._ensure_session()
+    assert second is not first
+
+    await invalidation  # old owner's teardown finishes AFTER the replacement
+    assert client._session is second
+    assert client._connected is True
+
+    await client.close()
+
+
+@pytest.mark.asyncio
 async def test_client_raises_on_iserror_result(server_config: MCPServerConfig) -> None:
     """In-band MCP tool failures (isError) surface as exceptions, and the
     session survives them — a tool error is not a broken connection."""

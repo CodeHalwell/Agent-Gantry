@@ -128,6 +128,7 @@ class MCPClient:
             startup_error: list[BaseException] = []
 
             async def owner() -> None:
+                session = None
                 try:
                     async with self.connect() as session:
                         # connect() sets _session/_connected for the real
@@ -141,8 +142,14 @@ class MCPClient:
                     startup_error.append(e)
                     ready.set()
                 finally:
-                    self._session = None
-                    self._connected = False
+                    # Only clear our own session (same guard as connect()'s
+                    # teardown): a detached owner can exit after invalidation
+                    # has already let a replacement session go live, and
+                    # clearing the shared fields then would tear down the
+                    # replacement's state.
+                    if session is not None and self._session is session:
+                        self._session = None
+                        self._connected = False
 
             self._close_event = close_event
             self._loop_id = loop_id
