@@ -222,8 +222,13 @@ class MCPManager:
         """
         from agent_gantry.adapters.executors.mcp_client import MCPClient
 
+        # Discovery-only client: list_tools seeds a persistent connection,
+        # so close it before dropping the client or the subprocess lives on.
         client = MCPClient(config)
-        tools = await client.list_tools()
+        try:
+            tools = await client.list_tools()
+        finally:
+            await client.close()
         return len(tools)
 
     async def discover_tools_from_server(

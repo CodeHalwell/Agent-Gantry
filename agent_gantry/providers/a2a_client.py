@@ -59,9 +59,21 @@ class A2AClient:
             loop_ref, client = entry
             if loop_ref() is loop and not client.is_closed:
                 return client
+            # Stale entry (dead loop whose id() was reused, or a closed
+            # client). The old client can't be aclose()'d here — it belongs
+            # to a gone loop — so its sockets are reclaimed by httpx's
+            # finalizer. Call close() before abandoning a loop to release
+            # them deterministically.
+            if not client.is_closed:
+                logger.debug(
+                    "Dropping A2A HTTP client bound to a dead event loop for "
+                    "agent '%s'; connections will be reclaimed by GC",
+                    self.config.name,
+                )
         client = httpx.AsyncClient()
         self._http_clients[id(loop)] = (weakref.ref(loop), client)
-        # Opportunistic cleanup of entries whose loops were garbage-collected.
+        # Opportunistic cleanup of entries whose loops were garbage-collected
+        # (same GC-reclaim caveat as above for any still-open clients).
         for stale in [k for k, (ref, _c) in self._http_clients.items() if ref() is None]:
             self._http_clients.pop(stale, None)
         return client

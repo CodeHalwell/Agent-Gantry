@@ -386,3 +386,58 @@ def test_cohere_reranker_format_empty_examples():
     assert "Name: test_tool" in formatted
     assert "Description: A test tool" in formatted
     assert "Examples:" not in formatted
+
+
+# ============================================================================
+# SyncManager embedder identity tests
+# ============================================================================
+
+
+def test_sync_manager_embedder_id_distinguishes_models():
+    """Two same-dimension embedders with different models must get different
+    sync identities — otherwise switching models silently skips re-embedding
+    and queries from the new model search the old model's vectors."""
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.core.sync_manager import SyncManager
+
+    class ProtocolEmbedder:
+        def __init__(self, model: str) -> None:
+            self._model = model
+
+        @property
+        def model_name(self) -> str:
+            return self._model
+
+        @property
+        def dimension(self) -> int:
+            return 1536
+
+        def get_embedder_id(self) -> str:
+            return f"{self._model}:{self.dimension}"
+
+    store = InMemoryVectorStore()
+    registry = ToolRegistry()
+    id_a = SyncManager(store, ProtocolEmbedder("text-embedding-3-small"), registry)
+    id_b = SyncManager(store, ProtocolEmbedder("text-embedding-ada-002"), registry)
+    assert id_a.get_embedder_id() != id_b.get_embedder_id()
+    assert "text-embedding-3-small" in id_a.get_embedder_id()
+
+
+def test_sync_manager_embedder_id_attribute_fallbacks():
+    """Duck-typed embedders without the protocol method still contribute
+    their model to the identity via attribute probing (including the
+    OpenAI-style `_model` spelling that was previously missed)."""
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.core.sync_manager import SyncManager
+
+    class BareEmbedder:
+        def __init__(self, model: str) -> None:
+            self._model = model
+            self._dimension = 1536
+
+    store = InMemoryVectorStore()
+    registry = ToolRegistry()
+    id_a = SyncManager(store, BareEmbedder("model-a"), registry)
+    id_b = SyncManager(store, BareEmbedder("model-b"), registry)
+    assert id_a.get_embedder_id() != id_b.get_embedder_id()
+    assert "model-a" in id_a.get_embedder_id()

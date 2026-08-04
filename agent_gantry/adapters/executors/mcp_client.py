@@ -79,8 +79,12 @@ class MCPClient:
                 try:
                     yield session
                 finally:
-                    self._session = None
-                    self._connected = False
+                    # Only clear our own session: _invalidate_session clears
+                    # these fields eagerly, and a replacement session may
+                    # already be live by the time this teardown runs.
+                    if self._session is session:
+                        self._session = None
+                        self._connected = False
 
     async def _ensure_session(self) -> ClientSession:
         """
@@ -116,7 +120,7 @@ class MCPClient:
             self._connect_lock = asyncio.Lock()
 
         async with self._connect_lock:
-            if self._connected and self._session is not None:
+            if self._connected and self._session is not None and self._loop_id == loop_id:
                 return self._session
 
             ready = asyncio.Event()
@@ -170,6 +174,13 @@ class MCPClient:
         self._owner_task = None
         self._close_event = None
         self._loop_id = None
+        # Clear the live-session flags NOW, not when the owner task finishes
+        # its teardown: concurrent callers whose calls failed against the same
+        # broken session invoke _invalidate_session too, return immediately
+        # (fields already cleared), and retry — the retry must reconnect, not
+        # find still-truthy flags and reuse the dying transport.
+        self._session = None
+        self._connected = False
         if event is not None:
             if same_loop:
                 event.set()
@@ -202,36 +213,24 @@ class MCPClient:
 
     async def list_tools(self) -> list[ToolDefinition]:
         """
-        List all tools from the MCP server.
+        List all tools from the MCP server over the persistent session.
 
-        Reuses the persistent session when one is live; otherwise opens a
-        short-lived discovery connection.
+        Discovery seeds the persistent connection: add_mcp_server() always
+        lists tools before the first call_tool(), so opening a short-lived
+        connection here would spawn the subprocess and run the initialize
+        handshake twice on the common add-then-call path. Callers that only
+        discover must close() the client to release the connection.
 
         Returns:
             List of ToolDefinition objects
         """
-        # Reuse the persistent session only when it belongs to the current
-        # event loop — a session created on another loop cannot be used here.
-        if (
-            self._connected
-            and self._session is not None
-            and self._loop_id == id(asyncio.get_running_loop())
-        ):
-            session = self._session
-            try:
-                result = await session.list_tools()
-            except Exception:
-                await self._invalidate_session()
-                raise
-            return [self._convert_tool(tool) for tool in result.tools]
-
-        async with self.connect() as session:
+        session = await self._ensure_session()
+        try:
             result = await session.list_tools()
-            tools = []
-            for tool in result.tools:
-                tool_def = self._convert_tool(tool)
-                tools.append(tool_def)
-            return tools
+        except Exception:
+            await self._invalidate_session()
+            raise
+        return [self._convert_tool(tool) for tool in result.tools]
 
     def _convert_tool(self, mcp_tool: Any) -> ToolDefinition:
         """

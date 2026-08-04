@@ -64,9 +64,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the old schema while calls go to the new subprocess.
   See the new end-to-end suite `tests/test_mcp_execution.py`, which runs a
   real stdio MCP server subprocess.
-- **Persistent MCP sessions.** `MCPClient.call_tool` now keeps one long-lived
-  connection per server (owned by a dedicated background task so anyio cancel
-  scopes stay in one task), instead of spawning the server subprocess and
+- **Persistent MCP sessions.** `MCPClient.call_tool` and `list_tools` share
+  one long-lived connection per server (owned by a dedicated background task
+  so anyio cancel scopes stay in one task) — discovery seeds the connection
+  the first tool call reuses — instead of spawning the server subprocess and
   re-running the initialize handshake on every call — previously hundreds of
   milliseconds to seconds (for `npx`-launched servers) of overhead per tool
   execution. Transport errors invalidate the session so the next call

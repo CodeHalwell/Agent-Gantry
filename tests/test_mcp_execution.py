@@ -10,6 +10,7 @@ Uses a real stdio MCP server (subprocess) built with the ``mcp`` package.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -94,6 +95,31 @@ async def test_client_persistent_session_reuse(server_config: MCPServerConfig) -
     finally:
         await client.close()
     assert client._connected is False
+
+
+@pytest.mark.asyncio
+async def test_concurrent_invalidation_clears_session_state(
+    server_config: MCPServerConfig,
+) -> None:
+    """Invalidation clears the live-session flags immediately, so a sibling
+    caller's retry reconnects instead of reusing the dying transport, and
+    concurrent invalidations are safe."""
+    client = MCPClient(server_config)
+    try:
+        await client.call_tool("server_pid", {})
+        assert client._connected is True
+
+        await asyncio.gather(client._invalidate_session(), client._invalidate_session())
+        # No live-session state may survive invalidation, even for the
+        # caller that returned early because the fields were already cleared
+        assert client._connected is False
+        assert client._session is None
+
+        # And the client reconnects cleanly afterwards
+        result = await client.call_tool("add_numbers", {"a": 1, "b": 1})
+        assert _text_content(result) == "2"
+    finally:
+        await client.close()
 
 
 @pytest.mark.asyncio
@@ -200,6 +226,72 @@ async def test_readd_reconfigured_server_refreshes_definitions(tmp_path: Path) -
         assert _text_content(result.result) == "4"
     finally:
         await gantry.close()
+
+
+GANTRY_SERVER_SCRIPT = """
+import asyncio
+
+from agent_gantry import AgentGantry
+from agent_gantry.servers.mcp_server import create_mcp_server
+
+gantry = AgentGantry()
+
+
+@gantry.register
+def echo(text: str) -> str:
+    \"\"\"Echo the given text back.\"\"\"
+    return text
+
+
+@gantry.register
+def boom() -> str:
+    \"\"\"Always fails with a server-side error.\"\"\"
+    raise ValueError("server-side failure")
+
+
+async def main() -> None:
+    await gantry.sync()
+    server = create_mcp_server(gantry, mode="static", name="gantry-e2e")
+    await server.run_stdio()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+"""
+
+
+@pytest.mark.asyncio
+async def test_gantry_mcp_server_roundtrip(tmp_path: Path) -> None:
+    """Full wire round trip against Gantry's own MCPServer: success content
+    comes back, and a failed execution arrives as an isError result — pinning
+    the assumption that the 1.x SDK wraps raised handler exceptions (and that
+    the 2.x callback marks is_error itself), which unit tests can't see."""
+    script = tmp_path / "gantry_mcp_server.py"
+    script.write_text(GANTRY_SERVER_SCRIPT)
+    client = MCPClient(
+        MCPServerConfig(
+            name="gantry-e2e",
+            command=[sys.executable, str(script)],
+            namespace="gantry_e2e",
+        )
+    )
+    try:
+        tools = await client.list_tools()
+        assert {t.name for t in tools} == {"echo", "boom"}
+
+        result = await client.call_tool("echo", {"text": "hello"})
+        assert "hello" in _text_content(result)
+
+        # The served failure must surface as an MCP error result, which the
+        # client translates into an exception
+        with pytest.raises(RuntimeError, match="server-side failure"):
+            await client.call_tool("boom", {})
+
+        # And the session survives the failed call
+        result = await client.call_tool("echo", {"text": "still alive"})
+        assert "still alive" in _text_content(result)
+    finally:
+        await client.close()
 
 
 @pytest.mark.asyncio
