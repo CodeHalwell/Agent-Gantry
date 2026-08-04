@@ -1244,16 +1244,15 @@ class AgentGantry:
             # another. Keep first-wins for definition AND handler: skip when
             # the name is already owned by a different source. Re-discovery
             # from the same MCP server stays idempotent.
-            existing = self._registry.get_tool(tool.name, tool.namespace)
-            if existing is None:
-                existing = next(
-                    (
-                        t
-                        for t in self._pending_tools
-                        if t.name == tool.name and t.namespace == tool.namespace
-                    ),
-                    None,
-                )
+            registered = self._registry.get_tool(tool.name, tool.namespace)
+            existing = registered or next(
+                (
+                    t
+                    for t in self._pending_tools
+                    if t.name == tool.name and t.namespace == tool.namespace
+                ),
+                None,
+            )
             if existing is not None and existing.metadata.get("mcp_server") != client.config.name:
                 logger.warning(
                     f"MCP server '{client.config.name}' exposes tool '{key}', which is "
@@ -1261,6 +1260,21 @@ class AgentGantry:
                     f"tool. Use a distinct namespace to register both."
                 )
                 continue
+            if existing is not None:
+                # Same-server re-discovery: the schema may have changed (e.g.
+                # add_mcp_server re-called with a reconfigured server), and
+                # first-wins dedup would otherwise keep the stale definition
+                # while the handler dispatches to the new server. Refresh the
+                # stored copy — registered in place, stale pending entries
+                # dropped (the caller re-appends the fresh ones) — so the
+                # definition and handler always describe the same tool.
+                if registered is not None:
+                    self._registry.replace_tool(key, tool)
+                self._pending_tools[:] = [
+                    t
+                    for t in self._pending_tools
+                    if not (t.name == tool.name and t.namespace == tool.namespace)
+                ]
             handler = make_handler(tool.name)
             self._registry.register_handler(key, handler)
             self._tool_handlers[key] = handler

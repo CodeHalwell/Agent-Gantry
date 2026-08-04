@@ -165,6 +165,44 @@ async def test_mcp_name_collision_keeps_existing_tool(server_config: MCPServerCo
 
 
 @pytest.mark.asyncio
+async def test_readd_reconfigured_server_refreshes_definitions(tmp_path: Path) -> None:
+    """Re-adding a server under the same name with a changed config refreshes
+    the stored tool definitions, not just the handlers — otherwise validation
+    and authorization would keep using the old schema while calls dispatch to
+    the reconfigured server."""
+    script_v1 = tmp_path / "server_v1.py"
+    script_v1.write_text(SERVER_SCRIPT)
+    script_v2 = tmp_path / "server_v2.py"
+    script_v2.write_text(
+        SERVER_SCRIPT.replace("Add two numbers together.", "Add two numbers together (v2).")
+    )
+
+    def config_for(script: Path) -> MCPServerConfig:
+        return MCPServerConfig(
+            name="test-server",
+            command=[sys.executable, str(script)],
+            namespace="mcp_test",
+        )
+
+    gantry = AgentGantry()
+    try:
+        await gantry.add_mcp_server(config_for(script_v1))
+        await gantry.add_mcp_server(config_for(script_v2))
+
+        tools = {f"{t.namespace}.{t.name}": t for t in gantry.export_tools()}
+        assert "(v2)" in tools["mcp_test.add_numbers"].description
+
+        # And execution dispatches to the reconfigured server
+        result = await gantry.execute(
+            ToolCall(tool_name="add_numbers", arguments={"a": 2, "b": 2})
+        )
+        assert result.status == ExecutionStatus.SUCCESS, result.error
+        assert _text_content(result.result) == "4"
+    finally:
+        await gantry.close()
+
+
+@pytest.mark.asyncio
 async def test_list_tools_discovery(server_config: MCPServerConfig) -> None:
     """Discovery returns ToolDefinitions with MCP source metadata."""
     client = MCPClient(server_config)

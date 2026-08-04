@@ -58,7 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   MCP tool whose `namespace.name` is already registered by a different
   source is skipped with a warning instead of silently hijacking the
   existing tool's handler (validation/authorization and dispatch would
-  otherwise disagree about which tool runs).
+  otherwise disagree about which tool runs). Re-discovery from the same
+  server refreshes the stored definition along with the handler, so
+  re-adding a reconfigured server can't leave validation running against
+  the old schema while calls go to the new subprocess.
   See the new end-to-end suite `tests/test_mcp_execution.py`, which runs a
   real stdio MCP server subprocess.
 - **Persistent MCP sessions.** `MCPClient.call_tool` now keeps one long-lived
