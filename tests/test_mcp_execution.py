@@ -24,9 +24,15 @@ from agent_gantry.schema.execution import ExecutionStatus, ToolCall
 
 SERVER_SCRIPT = """
 import os
-from mcp.server.fastmcp import FastMCP
 
-mcp = FastMCP("test-server")
+try:
+    # mcp 1.x
+    from mcp.server.fastmcp import FastMCP as _Server
+except ImportError:
+    # mcp 2.x renamed FastMCP to MCPServer (same tool()/run() surface)
+    from mcp.server import MCPServer as _Server
+
+mcp = _Server("test-server")
 
 
 @mcp.tool()

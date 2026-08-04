@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **mcp 1.x and 2.x are both supported** — the `mcp` dependency range widened
+  from the emergency `<2.0.0` cap to `>=1.27.2,<3`. mcp 2.0.0 kept the entire
+  v1 client surface (`ClientSession` / `StdioServerParameters` /
+  `stdio_client`), so the persistent-session client works verbatim; the two
+  real breaks are handled in one code path: `servers/mcp_server.py` registers
+  handlers via the 1.x decorators or the 2.x constructor callbacks
+  (`on_list_tools` / `on_call_tool`, whose handlers return full
+  `ListToolsResult` / `CallToolResult` models and must mark failures with
+  `is_error` themselves), and the client reads tool schemas dual-spelled
+  (`input_schema` on 2.x, `inputSchema` on 1.x — the 1.x-only read silently
+  replaced every v2 tool's schema with an empty default). The full MCP test
+  suite passes against both mcp 1.28.1 and 2.0.0, including real stdio
+  subprocess round-trips (`tests/test_mcp_execution.py` now spins up a
+  version-appropriate server: FastMCP on 1.x, `MCPServer` on 2.x).
+  Cross-version protocol interop over stdio was verified in both directions.
+  The combined `all` extra still locks mcp 1.x because openai-agents and
+  agent-framework pin `mcp<2`; standalone `agent-gantry[mcp]` installs may
+  resolve 2.x.
+- **haystack-ai 3.0 support.** haystack 3.0 removed `ToolInvoker` (the
+  `Agent` component now owns tool execution), which broke
+  `GantryLiveHaystackToolInvoker.build()` with a *misleading* "install
+  haystack-ai" `ImportError` even when haystack 3 was installed — the stubbed
+  test suites never exercised `build()` against the real package. `build()`
+  now branches: on haystack 2.x it returns a fresh `ToolInvoker` as before;
+  on >=3.0 it builds a per-call `haystack.components.agents.Agent` when the
+  builder was given `chat_generator=...`, and otherwise raises a clear
+  `RuntimeError` pointing at the alternatives. New real-package guard tests
+  (`tests/frameworks/test_haystack_build_live.py`) cover the 2.x invoker
+  path, the 3.x Agent path, and the 3.x error path; `haystack_example.py`
+  and the adapter docs are version-aware.
 - **MCP-discovered tools are now executable through `gantry.execute()`.**
   `add_mcp_server()` and `discover_tools_from_server()` register an execution
   handler per discovered tool that proxies the call to the server via
@@ -183,6 +213,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING — `LLMConfig.model` default is now `"gpt-5.4-mini"`** (was
+  `"gpt-4o-mini"`, which OpenAI shuts down on 2026-10-23). Leaving the
+  retiring model as the default would break every deployment relying on it
+  at the shutdown date; callers who need the old model until then must set
+  `model="gpt-4o-mini"` explicitly. This only affects LLM-based intent
+  classification (`use_llm_for_intent=True`), which is off by default.
+- **CI native-adapter caps lifted** (added earlier in this cycle as a
+  temporary mitigation): pydantic-ai verified against 2.23.0 with **zero
+  adapter changes needed** (every construction site was already keyword-only,
+  which spans 1.x and 2.x); dspy verified against 3.3.0 (fully backward
+  compatible on the adapter surface — the rebuilt ReActV2 is a separate,
+  explicitly experimental class); haystack-ai 3.0 supported via the
+  version-branched `build()` (see Added). The isolated CI job installs all
+  three uncapped again.
+- **LanceDB implementation consolidated.** `lancedb_mixins.py` carried full
+  duplicate copies of `add_tools`/`search`/the skills API that were shadowed
+  by the identical class-body definitions in `LanceDBVectorStore` (MRO:
+  class body wins) — ~600 lines of dead code that silently diverged whenever
+  only one copy was fixed. The mixins now contain only what is actually
+  inherited (tools schema migration and the sync-metadata API), and those
+  live methods run their blocking LanceDB calls off the event loop via
+  `asyncio.to_thread` like the main store methods.
 - **Performance.**
   - `ToolRegistry.get_tool_by_name` is O(1) via a name index instead of a
     linear scan over all registered tools; it runs on every

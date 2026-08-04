@@ -17,7 +17,7 @@ react.acall(...)``). DSPy's own bundled MCP bridge
 (``dspy.utils.mcp.convert_mcp_tool``) wraps MCP's inherently-async calls with
 an *async* function, but that only works because MCP users are expected to
 always invoke through ``await react.acall(...)``. Verified against the
-installed dspy 3.2.1: calling the *same* async-wrapped tool through the
+installed dspy 3.2.1 and 3.3.0: calling the *same* async-wrapped tool through the
 default, synchronous ``react(...)`` entry point does not raise all the way
 out — ``ReAct.forward`` catches the resulting ``ValueError`` (DSPy's message:
 "you are calling ``__call__`` on an async tool, please use ``acall`` instead

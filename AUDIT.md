@@ -55,6 +55,24 @@
 >   rate-limiter slot leak, LanceDB include_embeddings crash under MMR; wired
 >   MCP tool execution (handlers + persistent sessions); perf work in
 >   router/registry/executor/LanceDB/OpenAI embedder (see CHANGELOG).
+>   **Follow-up (same day, same branch):** completed the tracked follow-ups.
+>   mcp cap widened `<2.0.0` → `<3` — dual 1.x/2.x support implemented and
+>   verified against 1.28.1 and 2.0.0 (v1 client surface survives in 2.0;
+>   server handler registration branched decorators vs `on_list_tools`/
+>   `on_call_tool` callbacks; dual-spelled `input_schema`/`inputSchema` read
+>   fixes a silent v2 empty-schema bug; combined extra still locks 1.x via
+>   openai-agents/agent-framework `<2` pins). All three native-adapter CI caps
+>   LIFTED: pydantic-ai verified on 2.23.0 (zero changes — keyword-only
+>   construction spans both majors), dspy verified on 3.3.0 (backward
+>   compatible; ReActV2 is a separate experimental class), haystack-ai 3.0
+>   supported via a version branch in `GantryLiveHaystackToolInvoker.build()`
+>   (`ToolInvoker` on 2.x; per-call `Agent` with `chat_generator=...` or a
+>   clear error on 3.x — previously a misleading "install haystack-ai"
+>   ImportError; new real-package guards in
+>   `tests/frameworks/test_haystack_build_live.py`). LanceDB mixins
+>   consolidated (~600 lines of dead shadowed duplicates removed).
+>   BREAKING: `LLMConfig.model` default `gpt-4o-mini` → `gpt-5.4-mini`
+>   (shutdown 2026-10-23), closing the last remaining audit next-step.
 > - **2026-06-08** (`claude/cool-hopper-cSXxx`): Bumped `anthropic>=0.105.2→>=0.107.1`
 >   (three new releases since 2026-06-05: 0.106.0 deprecated claude-opus-4-1 in SDK,
 >   0.107.0 added Managed Agents type updates, 0.107.1 fixed Foundry x-api-key header).

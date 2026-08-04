@@ -257,19 +257,23 @@ nomic = [
     "einops>=0.8.1",
 ]
 mcp = [
-    # CAP <2.0.0: mcp 2.0.0 (released 2026-07-28, implementing the 2026-07-28
-    # MCP spec) removes every v1 API Gantry uses — `mcp.server.Server`,
-    # `mcp.server.stdio.stdio_server` (servers/mcp_server.py) and
-    # `ClientSession` / `StdioServerParameters` / `stdio_client`
-    # (adapters/executors/mcp_client.py) are replaced by a single `Client`
-    # object and `MCPServer` (FastMCP renamed). Uncapped, a standalone
-    # `pip install agent-gantry[mcp]` resolves to 2.0.0 and breaks at import.
-    # The 1.x line (latest 1.29.0, 2026-07-28) is in maintenance mode
-    # (security fixes only, `v1.x` branch). The ecosystem caps too:
-    # openai-agents pins mcp>=1.19,<2; agent-framework-core[all] pins
-    # mcp>=1.24,<2. Migration to the v2 API is a tracked follow-up.
+    # Range <3: Gantry supports BOTH mcp 1.x and 2.x through one code path
+    # (added 2026-08-03, verified by running the test suite against 1.28.1 and
+    # 2.0.0). The client surface (`ClientSession` / `StdioServerParameters` /
+    # `stdio_client`) survives unchanged in 2.0.0; the two real breaks are
+    # handled in-tree: (1) servers/mcp_server.py branches handler
+    # registration — 1.x `@server.list_tools()` decorators vs 2.x
+    # `Server(name, on_list_tools=..., on_call_tool=...)` constructor
+    # callbacks returning full result models; (2) mcp_client.py reads the
+    # tool schema dual-spelled (`input_schema` on 2.x, `inputSchema` on 1.x —
+    # the 1.x-only read silently returned an empty schema under 2.x).
+    # Cross-version protocol interop over stdio is confirmed both directions
+    # (v1 client <-> v2 server). Note the combined `all` extra still locks
+    # mcp 1.x because openai-agents pins mcp>=1.19,<2 and
+    # agent-framework-core[all] pins mcp>=1.24,<2; standalone
+    # `agent-gantry[mcp]` installs may resolve 2.x.
     # Source: https://pypi.org/pypi/mcp/json (verified 2026-08-03)
-    "mcp>=1.27.2,<2.0.0",
+    "mcp>=1.27.2,<3",
 ]
 a2a = [
     "httpx>=0.24.0",

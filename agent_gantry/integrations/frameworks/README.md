@@ -179,7 +179,7 @@ documented, framework-idiomatic path; `live()` just delegates to one of them):
 | Pydantic AI | per-turn | `toolset` | `GantryToolset` (`AbstractToolset`) | `Agent(model, toolsets=[<result>])` |
 | OpenAI Agents SDK | per-turn | `session` (requires `agent=`) | `GantryAgentSession` | `await session.run(run_input)` per turn |
 | Smolagents | per-call | `agent_builder` | `GantryLiveSmolAgent` builder | `await builder.build(query)` per run |
-| Haystack | per-call | `tool_invoker_builder` | `GantryLiveHaystackToolInvoker` builder | `await builder.build(query)` per call |
+| Haystack | per-call | `tool_invoker_builder` | `GantryLiveHaystackToolInvoker` builder (ToolInvoker on haystack 2.x, Agent on >=3.0) | `await builder.build(query)` per call |
 | Agno | per-call | `agent_builder` | `GantryLiveAgnoAgent` builder | `await builder.build(query)` per run |
 | AutoGen / AG2 | per-turn | `workbench` | `GantryWorkbench` (`autogen_core.tools.Workbench`) | agent consuming a `Workbench` (e.g. `AssistantAgent`) |
 | Semantic Kernel | per-turn | `function_provider` (requires `kernel=`) | `GantryFunctionProvider` | `await provider.refresh(history)` before each call |
@@ -291,7 +291,8 @@ including the sync wrappers, by
 `test_conformance.py::test_adapter_tool_failure_matches_documented_error_kind`.
 From there, each framework's *own* error handling takes over exactly as it
 would for a hand-written native tool (a LangChain `AgentExecutor`'s
-`handle_tool_error`, a Haystack `ToolInvoker`'s `raise_on_failure`, an OpenAI
+`handle_tool_error`, a Haystack `ToolInvoker`'s `raise_on_failure` (haystack 2.x; `Agent`'s
+`raise_on_tool_invocation_failure` on >=3.0), an OpenAI
 Agents SDK `failure_error_function`, …) — Gantry does not second-guess it.
 
 Three deliberate deviations exist **one layer deeper** than `convert()`/

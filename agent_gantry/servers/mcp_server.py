@@ -2,12 +2,22 @@
 MCP Server implementation for Agent-Gantry.
 
 Exposes AgentGantry as an MCP server with dynamic tool discovery.
+
+Supports both mcp 1.x and mcp 2.x. The wire types (``Tool``, ``TextContent``)
+and the stdio transport (``stdio_server`` + ``Server.run``) are identical
+across both major versions; the one breaking seam is handler registration —
+mcp 2.0 removed the ``@server.list_tools()`` / ``@server.call_tool()``
+decorators in favour of constructor callbacks (``on_list_tools`` /
+``on_call_tool``) whose handlers take ``(ctx, params)`` and return full
+result models (``ListToolsResult`` / ``CallToolResult``), with no automatic
+wrapping of returned content lists or raised exceptions.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import mcp
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool
@@ -16,6 +26,9 @@ from agent_gantry.schema.query import ConversationContext, ToolQuery
 
 if TYPE_CHECKING:
     from agent_gantry import AgentGantry
+
+# mcp 2.x introduced the high-level `Client`; 1.x has no such attribute.
+_MCP_V2 = hasattr(mcp, "Client")
 
 
 class MCPServer:
@@ -45,34 +58,70 @@ class MCPServer:
         self.gantry = gantry
         self.mode = mode
         self.name = name
-        self.server = Server(name)
-        self._setup_handlers()
+        if _MCP_V2:
+            self.server = Server(
+                name,
+                on_list_tools=self._on_list_tools_v2,
+                on_call_tool=self._on_call_tool_v2,
+            )
+        else:
+            self.server = Server(name)
+            self._setup_v1_handlers()
 
-    def _setup_handlers(self) -> None:
-        """Setup MCP server handlers."""
+    async def _list_tools(self) -> list[Tool]:
+        """List available tools based on mode (shared across mcp versions)."""
+        if self.mode == "static":
+            # Static mode: expose all tools directly
+            tools = await self.gantry.list_tools()
+            return [self._convert_tool(tool) for tool in tools]
+        # Dynamic and hybrid modes: expose meta-tools for context savings
+        # (hybrid could add common tools later)
+        return self._get_meta_tools()
+
+    async def _call_tool(self, name: str, arguments: dict[str, Any]) -> list[Any]:
+        """Dispatch a tool call (shared across mcp versions)."""
+        if name == "find_relevant_tools":
+            return await self._handle_find_relevant_tools(arguments)
+        elif name == "execute_tool":
+            return await self._handle_execute_tool(arguments)
+        else:
+            # Direct tool execution (static mode)
+            return await self._handle_execute_tool({"tool_name": name, "arguments": arguments})
+
+    def _setup_v1_handlers(self) -> None:
+        """Register handlers via the mcp 1.x decorators."""
 
         @self.server.list_tools()  # type: ignore[misc, no-untyped-call]
         async def list_tools() -> list[Tool]:
-            """List available tools based on mode."""
-            if self.mode == "static":
-                # Static mode: expose all tools directly
-                tools = await self.gantry.list_tools()
-                return [self._convert_tool(tool) for tool in tools]
-            else:
-                # Dynamic and hybrid modes: expose meta-tools for context savings
-                # (hybrid could add common tools later)
-                return self._get_meta_tools()
+            return await self._list_tools()
 
         @self.server.call_tool()  # type: ignore[misc, no-untyped-call]
         async def call_tool(name: str, arguments: dict[str, Any]) -> list[Any]:
-            """Handle tool calls."""
-            if name == "find_relevant_tools":
-                return await self._handle_find_relevant_tools(arguments)
-            elif name == "execute_tool":
-                return await self._handle_execute_tool(arguments)
-            else:
-                # Direct tool execution (static mode)
-                return await self._handle_execute_tool({"tool_name": name, "arguments": arguments})
+            return await self._call_tool(name, arguments)
+
+    async def _on_list_tools_v2(self, ctx: Any, params: Any) -> Any:
+        """mcp 2.x list-tools handler: wrap into a full ListToolsResult."""
+        import mcp.types as types
+
+        return types.ListToolsResult(tools=await self._list_tools())
+
+    async def _on_call_tool_v2(self, ctx: Any, params: Any) -> Any:
+        """mcp 2.x call-tool handler.
+
+        Unlike 1.x, the SDK no longer wraps returned content lists or raised
+        exceptions — return a full CallToolResult and mark failures with
+        ``is_error`` ourselves.
+        """
+        import mcp.types as types
+
+        try:
+            content = await self._call_tool(params.name, params.arguments or {})
+            return types.CallToolResult(content=content)
+        except Exception as e:
+            return types.CallToolResult(
+                content=[{"type": "text", "text": f"Error: {e}"}],
+                is_error=True,
+            )
 
     def _get_meta_tools(self) -> list[Tool]:
         """Return the meta-tools for dynamic tool discovery."""

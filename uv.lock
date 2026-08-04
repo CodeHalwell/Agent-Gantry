@@ -688,7 +688,7 @@ requires-dist = [
     { name = "llama-index-core", marker = "extra == 'agent-frameworks'", specifier = ">=0.14.23" },
     { name = "llama-index-llms-openai", marker = "extra == 'agent-frameworks'", specifier = ">=0.7.10" },
     { name = "matplotlib", marker = "extra == 'example-tools'", specifier = ">=3.7.0" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.27.2,<2.0.0" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.27.2,<3" },
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "numpy", marker = "extra == 'embeddings'", specifier = ">=1.24.0" },
     { name = "numpy", marker = "extra == 'nomic'", specifier = ">=1.24.0" },

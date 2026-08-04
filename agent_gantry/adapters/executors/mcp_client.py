@@ -216,9 +216,14 @@ class MCPClient:
         name = mcp_tool.name
         description = mcp_tool.description or f"Tool: {name}"
 
-        # Convert input schema to parameters_schema
-        parameters_schema = getattr(
-            mcp_tool, "inputSchema", {"type": "object", "properties": {}, "required": []}
+        # Convert input schema to parameters_schema. mcp 2.x renamed the
+        # attribute inputSchema -> input_schema (the old spelling remains a
+        # construction alias only), so read both — checking just the 1.x name
+        # would silently replace every v2 tool's schema with the empty default.
+        parameters_schema = (
+            getattr(mcp_tool, "input_schema", None)
+            or getattr(mcp_tool, "inputSchema", None)
+            or {"type": "object", "properties": {}, "required": []}
         )
 
         # Create ToolDefinition with MCP source
