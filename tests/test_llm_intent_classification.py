@@ -151,15 +151,19 @@ async def test_llm_client_config():
     """Test LLM client configuration."""
     config = LLMConfig(
         provider="openai",
-        model="gpt-4o-mini",
+        model="gpt-5.4-mini",
         max_tokens=100,
         temperature=0.0,
     )
 
     assert config.provider == "openai"
-    assert config.model == "gpt-4o-mini"
+    assert config.model == "gpt-5.4-mini"
     assert config.max_tokens == 100
     assert config.temperature == 0.0
+
+    # Default model must not be a scheduled-for-shutdown ID (gpt-4o-mini
+    # retires 2026-10-23); the default changed in the 2026-08-03 audit.
+    assert LLMConfig().model == "gpt-5.4-mini"
 
 
 @pytest.mark.asyncio
@@ -171,7 +175,7 @@ async def test_llm_client_initialization():
     # This test only checks initialization, not actual API calls
     config = LLMConfig(
         provider="openai",
-        model="gpt-4o-mini",
+        model="gpt-5.4-mini",
         api_key="test-key-not-real",
     )
 

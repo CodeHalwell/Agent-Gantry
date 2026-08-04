@@ -16,7 +16,7 @@ Demonstrates both tool-surfacing tiers Agent-Gantry offers for DSPy:
 
 Actually *running* a ``dspy.ReAct`` agent needs a configured DSPy LM. When
 ``OPENAI_API_KEY`` is set, this example configures a real
-``dspy.LM("openai/gpt-4o-mini")`` and runs the agent for real. With no key
+``dspy.LM("openai/gpt-5.4-mini")`` and runs the agent for real. With no key
 configured, it falls back to ``dspy.utils.dummies.DummyLM`` — a scripted,
 offline stand-in DSPy ships for its own test suite — to drive one full
 tool-calling round trip with **no network access and no API key at all**, so
@@ -73,7 +73,7 @@ def _run_with_real_lm(react, question: str):
     """Drive ``react`` with a real OpenAI-backed ``dspy.LM`` (requires OPENAI_API_KEY)."""
     import dspy
 
-    dspy.configure(lm=dspy.LM("openai/gpt-4o-mini"))
+    dspy.configure(lm=dspy.LM("openai/gpt-5.4-mini"))
     try:
         return react(question=question)
     finally:

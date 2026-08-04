@@ -15,7 +15,6 @@ from typing import Any
 
 from agent_gantry.adapters.vector_stores.lancedb_mixins import (
     LanceDBMetadataMixin,
-    LanceDBSkillsMixin,
     LanceDBToolsMixin,
     _escape_sql_string,
     _validate_identifier,
@@ -29,7 +28,7 @@ __all__ = ["LanceDBVectorStore", "_escape_sql_string", "_validate_identifier"]
 logger = logging.getLogger(__name__)
 
 
-class LanceDBVectorStore(LanceDBToolsMixin, LanceDBSkillsMixin, LanceDBMetadataMixin):
+class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
     """
     LanceDB vector store for on-device semantic indexing.
 
