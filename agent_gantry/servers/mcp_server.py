@@ -245,13 +245,14 @@ class MCPServer:
         # Format result for MCP
         if result.status.value == "success":
             return [{"type": "text", "text": str(result.result)}]
-        else:
-            return [
-                {
-                    "type": "text",
-                    "text": f"Error: {result.error or 'Unknown error'}",
-                }
-            ]
+        # Raise so failures surface as MCP errors (isError on the result):
+        # the 1.x SDK wraps raised handler exceptions itself and the 2.x
+        # handler sets is_error explicitly. Returning error text here would
+        # make clients record the failed execution as a success.
+        raise RuntimeError(
+            f"Error: {result.error or 'Unknown error'} "
+            f"(tool '{tool_name}', status {result.status.value})"
+        )
 
     async def run_stdio(self) -> None:
         """Run the server with stdio transport."""

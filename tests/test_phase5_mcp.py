@@ -300,17 +300,15 @@ class TestMCPServer:
 
     @pytest.mark.asyncio
     async def test_execute_tool_error(self, mcp_server_dynamic: MCPServer) -> None:
-        """Test execute_tool with non-existent tool."""
-        result = await mcp_server_dynamic._handle_execute_tool(
-            {"tool_name": "nonexistent_tool", "arguments": {}}
-        )
+        """Failed executions raise so the MCP layer marks the result isError.
 
-        assert isinstance(result, list)
-        assert len(result) > 0
-
-        first_result = result[0]
-        assert first_result["type"] == "text"
-        assert "Error" in first_result["text"]
+        Returning error text instead would make MCP clients record the
+        failure as a successful call.
+        """
+        with pytest.raises(RuntimeError, match="Error"):
+            await mcp_server_dynamic._handle_execute_tool(
+                {"tool_name": "nonexistent_tool", "arguments": {}}
+            )
 
 
 class TestAgentGantryMCPIntegration:

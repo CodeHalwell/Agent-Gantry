@@ -51,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   engine records them as failures — with retries, health, and telemetry —
   instead of passing the error object through as a successful result. The
   persistent session survives such failures (tool error ≠ broken connection).
+  Symmetrically, `MCPServer._handle_execute_tool` raises on failed
+  executions instead of returning error text, so the served result carries
+  `isError` and MCP clients don't record the failure as a success.
   See the new end-to-end suite `tests/test_mcp_execution.py`, which runs a
   real stdio MCP server subprocess.
 - **Persistent MCP sessions.** `MCPClient.call_tool` now keeps one long-lived
@@ -224,6 +227,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   at the shutdown date; callers who need the old model until then must set
   `model="gpt-4o-mini"` explicitly. This only affects LLM-based intent
   classification (`use_llm_for_intent=True`), which is off by default.
+  `LLMClient.classify_intent` builds reasoning-model-compatible requests for
+  the gpt-5 family and o-series: `max_completion_tokens` (with headroom for
+  reasoning tokens) instead of the legacy `max_tokens`, and no `temperature`
+  (reasoning models accept only the default) — otherwise every request would
+  fail and silently degrade classification to the UNKNOWN fallback.
 - **CI native-adapter caps lifted** (added earlier in this cycle as a
   temporary mitigation): pydantic-ai verified against 2.23.0 with **zero
   adapter changes needed** (every construction site was already keyword-only,
