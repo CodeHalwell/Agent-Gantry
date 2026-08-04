@@ -153,7 +153,13 @@ class MCPClient:
                     f"Failed to connect to MCP server '{self.config.name}': {startup_error[0]}"
                 ) from startup_error[0]
 
-            assert self._session is not None
+            if self._session is None:
+                # Explicit check rather than assert: asserts are stripped
+                # under python -O, and proceeding with a None session would
+                # fail far from the cause.
+                raise RuntimeError(
+                    f"MCP server '{self.config.name}' connected but produced no session"
+                )
             return self._session
 
     async def _invalidate_session(self) -> None:
@@ -380,10 +386,20 @@ class MCPClientPool:
 
 
 def _schedule_client_close(client: MCPClient) -> None:
-    """Schedule ``client.close()`` on the running loop, if any."""
+    """Schedule ``client.close()`` on the running loop, if any.
+
+    Best-effort: callers are expected to be inside a running loop. Without
+    one the close is skipped (logged) and the connection is left to process
+    teardown — use ``await client.close()`` from async code for a
+    deterministic shutdown.
+    """
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
+        logger.debug(
+            "No running event loop; skipping close of MCP client '%s'",
+            client.config.name,
+        )
         return
     task = loop.create_task(client.close())
     # Keep a reference until done so the task isn't garbage-collected early.

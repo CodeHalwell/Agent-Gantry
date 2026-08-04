@@ -155,7 +155,18 @@ class BaseOpenAIEmbedder:
         # Issue batch requests concurrently (bounded to stay under provider
         # rate limits) instead of serial round-trips; gather preserves order.
         semaphore = asyncio.Semaphore(self._max_concurrent_batches)
-        results = await asyncio.gather(*(embed_one(batch, semaphore) for batch in batches))
+        tasks = [asyncio.ensure_future(embed_one(batch, semaphore)) for batch in batches]
+        try:
+            results = await asyncio.gather(*tasks)
+        except BaseException:
+            # gather propagates the first failure while sibling requests keep
+            # running. Cancel and drain them so they stop consuming provider
+            # quota before the error surfaces — a retrying caller would
+            # otherwise overlap with the still-running originals.
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
 
         all_embeddings: list[list[float]] = []
         for batch_embeddings in results:

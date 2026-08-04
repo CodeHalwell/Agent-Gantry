@@ -8,6 +8,7 @@ collection management, filtering, and error handling.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -830,6 +831,16 @@ class PGVectorStore:
 
         self._url = url
         self._table_name = table_name
+        # PostgreSQL silently truncates identifiers to 63 bytes, so for a
+        # table_name near the limit "<table>__meta" would truncate back to
+        # the tools table's own identifier and CREATE TABLE IF NOT EXISTS
+        # would treat the tools table as the metadata table. Derive a
+        # shortened, hash-distinguished name in that case.
+        meta_name = f"{table_name}__meta"
+        if len(meta_name) > 63:
+            digest = hashlib.sha256(table_name.encode()).hexdigest()[:10]
+            meta_name = f"{table_name[:46]}_{digest}__meta"
+        self._meta_table_name = meta_name
         self._dimension = dimension
         self._pool = None
         self._initialized = False
@@ -879,7 +890,7 @@ class PGVectorStore:
 
             # Sync metadata table (embedder_id / dimension tracking)
             await conn.execute(f"""
-                CREATE TABLE IF NOT EXISTS "{self._table_name}__meta" (
+                CREATE TABLE IF NOT EXISTS "{self._meta_table_name}" (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL,
                     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -1143,7 +1154,7 @@ class PGVectorStore:
 
         async with self._pool.acquire() as conn:
             return await conn.fetchval(
-                f'SELECT value FROM "{self._table_name}__meta" WHERE key = $1',
+                f'SELECT value FROM "{self._meta_table_name}" WHERE key = $1',
                 key,
             )
 
@@ -1154,7 +1165,7 @@ class PGVectorStore:
         async with self._pool.acquire() as conn:
             await conn.execute(
                 f"""
-                INSERT INTO "{self._table_name}__meta" (key, value, updated_at)
+                INSERT INTO "{self._meta_table_name}" (key, value, updated_at)
                 VALUES ($1, $2, NOW())
                 ON CONFLICT (key) DO UPDATE SET
                     value = EXCLUDED.value,

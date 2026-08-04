@@ -92,3 +92,25 @@ async def test_pgvector_basic_flow(pgvector_url: str) -> None:
     assert len(results) > 0
 
     assert await store.health_check()
+
+
+def test_pgvector_meta_table_name_bounded() -> None:
+    """The derived metadata table name never truncates onto the tools table.
+
+    PostgreSQL silently truncates identifiers to 63 bytes, so for a
+    63-character table_name a naive "<table>__meta" would collapse back to
+    the tools table's own identifier. No database needed — this is pure
+    construction logic.
+    """
+    pytest.importorskip("asyncpg")
+
+    from agent_gantry.adapters.vector_stores.remote import PGVectorStore
+
+    short = PGVectorStore(url="postgresql://unused", table_name="tools", dimension=8)
+    assert short._meta_table_name == "tools__meta"
+
+    long_name = "t" * 63
+    long = PGVectorStore(url="postgresql://unused", table_name=long_name, dimension=8)
+    assert len(long._meta_table_name) <= 63
+    assert long._meta_table_name != long_name
+    assert long._meta_table_name.endswith("__meta")
