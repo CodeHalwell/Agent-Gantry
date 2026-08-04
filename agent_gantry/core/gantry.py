@@ -219,7 +219,7 @@ class AgentGantry:
         self._tool_handlers: dict[str, Callable[..., Any]] = {}
         # MCP clients created by add_mcp_server (immediate discovery), kept so
         # their persistent connections can be reused by handlers and closed on
-        # close(). Keyed by config name.
+        # close(). Keyed by namespace-qualified config name.
         self._direct_mcp_clients: dict[str, Any] = {}
         # Framework-agnostic post-execution callbacks (see on_tool_call).
         self._tool_call_callbacks: list[Callable[..., Any]] = []
@@ -1189,11 +1189,22 @@ class AgentGantry:
 
         await self._ensure_initialized()
 
-        # Reuse the client (and its persistent connection) across repeat calls
-        client = self._direct_mcp_clients.get(config.name)
+        # Reuse the client (and its persistent connection) across repeat
+        # calls. Keyed by namespace-qualified name — the same identity the
+        # MCP registry uses — and invalidated when the config itself changed
+        # (same name, different command/env/etc.), so a re-add never keeps
+        # executing against the old server process.
+        client_key = f"{config.namespace}.{config.name}"
+        client = self._direct_mcp_clients.get(client_key)
+        if client is not None and client.config != config:
+            try:
+                await client.close()
+            except Exception:
+                logger.debug("Error closing reconfigured MCP client", exc_info=True)
+            client = None
         if client is None:
             client = MCPClient(config)
-            self._direct_mcp_clients[config.name] = client
+            self._direct_mcp_clients[client_key] = client
 
         # Discover tools from the server
         tools = await client.list_tools()
@@ -1476,12 +1487,15 @@ class AgentGantry:
 
         await self._ensure_initialized()
 
-        # Create A2A client
+        # Discovery-only client: close it when done so its persistent HTTP
+        # connections are released deterministically (execution goes through
+        # the engine's own A2AExecutor clients, not this one).
         client = A2AClient(config)
-
-        # Discover agent and its skills
-        await client.discover()
-        tools = await client.list_tools()
+        try:
+            await client.discover()
+            tools = await client.list_tools()
+        finally:
+            await client.close()
 
         # Add all tools first, then sync once (avoids per-tool full syncs)
         self._pending_tools.extend(tools)

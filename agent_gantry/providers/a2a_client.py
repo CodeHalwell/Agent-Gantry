@@ -41,33 +41,55 @@ class A2AClient:
         # (keep-alive) instead of paying DNS + TCP + TLS per call. httpx
         # AsyncClient connections bind to the event loop they were created on,
         # so keep one client per running loop (bounded in practice — see
-        # core/rate_limiter.py for the same pattern).
-        self._http_clients: dict[int, Any] = {}
+        # core/rate_limiter.py for the same pattern). Entries hold a weakref
+        # to the owning loop so close() can dispose of clients on other live
+        # loops instead of abandoning them.
+        self._http_clients: dict[int, tuple[Any, Any]] = {}
 
     def _get_http_client(self) -> Any:
         """Return a persistent ``httpx.AsyncClient`` for the running loop."""
         import asyncio
+        import weakref
 
         import httpx
 
-        loop_id = id(asyncio.get_running_loop())
-        client = self._http_clients.get(loop_id)
-        if client is None or client.is_closed:
-            client = httpx.AsyncClient()
-            self._http_clients[loop_id] = client
+        loop = asyncio.get_running_loop()
+        entry = self._http_clients.get(id(loop))
+        if entry is not None:
+            loop_ref, client = entry
+            if loop_ref() is loop and not client.is_closed:
+                return client
+        client = httpx.AsyncClient()
+        self._http_clients[id(loop)] = (weakref.ref(loop), client)
+        # Opportunistic cleanup of entries whose loops were garbage-collected.
+        for stale in [k for k, (ref, _c) in self._http_clients.items() if ref() is None]:
+            self._http_clients.pop(stale, None)
         return client
 
     async def close(self) -> None:
-        """Close any persistent HTTP clients. Safe to call multiple times."""
+        """Close any persistent HTTP clients. Safe to call multiple times.
+
+        The current loop's client is closed inline. Clients bound to other
+        loops can't be awaited from here: if their loop is still running,
+        ``aclose()`` is scheduled onto it thread-safely; if the loop is gone,
+        the reference is dropped and connections are reclaimed by GC.
+        """
         import asyncio
 
-        loop_id = id(asyncio.get_running_loop())
-        for key, client in list(self._http_clients.items()):
+        current = asyncio.get_running_loop()
+        for key, (loop_ref, client) in list(self._http_clients.items()):
             self._http_clients.pop(key, None)
-            if key == loop_id:
+            loop = loop_ref()
+            if loop is current:
                 await client.aclose()
-            # Clients bound to other (likely dead) loops can't be awaited
-            # here; dropping the reference lets connections be GC-closed.
+            elif loop is not None and not loop.is_closed():
+                try:
+                    loop.call_soon_threadsafe(
+                        lambda c=client, lo=loop: lo.create_task(c.aclose())
+                    )
+                except RuntimeError:
+                    # Loop shut down between the check and the call — drop.
+                    pass
 
     async def discover(self) -> AgentCard:
         """

@@ -289,7 +289,13 @@ class SemanticRouter:
             )
             vector_search_time_ms = (perf_counter() - search_start) * 1000
         except BaseException:
+            # Cancel AND await the intent task so it never outlives route()
+            # as a pending task ("Task was destroyed but it is pending").
             intent_task.cancel()
+            try:
+                await intent_task
+            except (asyncio.CancelledError, Exception):
+                pass
             raise
 
         intent = await intent_task

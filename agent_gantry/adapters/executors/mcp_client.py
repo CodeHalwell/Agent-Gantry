@@ -99,6 +99,12 @@ class MCPClient:
             # Session belongs to a different (likely dead) event loop. Its
             # owner task can't be awaited from here — signal it to close and
             # abandon it, then reconnect on the current loop.
+            #
+            # Concurrency scope: this reset runs without awaits, so tasks on
+            # a single loop can never interleave inside it. Simultaneous
+            # first-use from two OS threads (two live loops sharing one
+            # MCPClient) is not supported — same bound as the per-loop lock
+            # pattern documented in core/rate_limiter.py.
             if self._close_event is not None:
                 self._close_event.set()
             self._owner_task = None
@@ -166,14 +172,7 @@ class MCPClient:
 
     async def close(self) -> None:
         """Close the persistent connection (if any). Safe to call repeatedly."""
-        try:
-            await self._invalidate_session()
-        except RuntimeError:
-            # No running loop / different loop — abandon; subprocess dies
-            # with the loop's task teardown.
-            self._owner_task = None
-            self._close_event = None
-            self._loop_id = None
+        await self._invalidate_session()
 
     async def list_tools(self) -> list[ToolDefinition]:
         """
@@ -185,7 +184,13 @@ class MCPClient:
         Returns:
             List of ToolDefinition objects
         """
-        if self._connected and self._session is not None:
+        # Reuse the persistent session only when it belongs to the current
+        # event loop — a session created on another loop cannot be used here.
+        if (
+            self._connected
+            and self._session is not None
+            and self._loop_id == id(asyncio.get_running_loop())
+        ):
             session = self._session
             try:
                 result = await session.list_tools()
