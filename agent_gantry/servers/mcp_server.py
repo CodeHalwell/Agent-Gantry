@@ -28,7 +28,22 @@ if TYPE_CHECKING:
     from agent_gantry import AgentGantry
 
 # mcp 2.x introduced the high-level `Client`; 1.x has no such attribute.
-_MCP_V2 = hasattr(mcp, "Client")
+def _detect_mcp_v2() -> bool:
+    """Detect mcp 2.x by installed version, falling back to a symbol probe.
+
+    The major version is the contract we branch on; hasattr(mcp, "Client")
+    alone is a proxy that could silently flip if the symbol is ever added to
+    or removed from a different major.
+    """
+    try:
+        from importlib.metadata import version
+
+        return int(version("mcp").split(".")[0]) >= 2
+    except Exception:
+        return hasattr(mcp, "Client")
+
+
+_MCP_V2 = _detect_mcp_v2()
 
 
 class MCPServer:

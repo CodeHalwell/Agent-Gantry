@@ -114,3 +114,58 @@ def test_pgvector_meta_table_name_bounded() -> None:
     assert len(long._meta_table_name) <= 63
     assert long._meta_table_name != long_name
     assert long._meta_table_name.endswith("__meta")
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_qdrant_fingerprint_keys_align_with_sync_manager(qdrant_url: str) -> None:
+    """get_stored_fingerprints() must key by 'namespace.name' with
+    compute_tool_fingerprint values — the contract SyncManager.detect_changes
+    relies on. A mismatch silently degrades incremental sync to a full
+    re-embed every time (the exact bug the in-memory store had)."""
+    pytest.importorskip("qdrant_client")
+
+    from agent_gantry.adapters.vector_stores.remote import QdrantVectorStore
+    from agent_gantry.utils.fingerprint import compute_tool_fingerprint
+
+    store = QdrantVectorStore(
+        url=qdrant_url,
+        collection_name="test_fingerprint_keys",
+        dimension=128,
+    )
+    embedder = SimpleEmbedder()
+    await store.initialize()
+
+    tools = _make_tools(3)
+    embeddings = await embedder.embed_batch([t.to_searchable_text() for t in tools])
+    await store.add_tools(tools, embeddings, upsert=True)
+
+    stored = await store.get_stored_fingerprints()
+    expected = {f"{t.namespace}.{t.name}": compute_tool_fingerprint(t) for t in tools}
+    assert stored == expected
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pgvector_fingerprint_keys_align_with_sync_manager(pgvector_url: str) -> None:
+    """Same contract check as the Qdrant variant, for PGVector."""
+    pytest.importorskip("asyncpg")
+
+    from agent_gantry.adapters.vector_stores.remote import PGVectorStore
+    from agent_gantry.utils.fingerprint import compute_tool_fingerprint
+
+    store = PGVectorStore(
+        url=pgvector_url,
+        table_name="test_fingerprint_keys",
+        dimension=128,
+    )
+    embedder = SimpleEmbedder()
+    await store.initialize()
+
+    tools = _make_tools(3)
+    embeddings = await embedder.embed_batch([t.to_searchable_text() for t in tools])
+    await store.add_tools(tools, embeddings, upsert=True)
+
+    stored = await store.get_stored_fingerprints()
+    expected = {f"{t.namespace}.{t.name}": compute_tool_fingerprint(t) for t in tools}
+    assert stored == expected

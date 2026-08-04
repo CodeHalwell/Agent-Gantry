@@ -104,6 +104,14 @@ class MCPClient:
             # owner task can't be awaited from here — signal it to close and
             # abandon it, then reconnect on the current loop.
             #
+            # Loud on purpose: if the other loop is in fact still running,
+            # its server subprocess may outlive this reset (two live loops
+            # sharing one MCPClient is outside the supported contract).
+            logger.warning(
+                f"Abandoning MCP session for server '{self.config.name}' owned by a "
+                f"different event loop; reconnecting on the current loop"
+            )
+            #
             # Concurrency scope: this reset runs without awaits, so tasks on
             # a single loop can never interleave inside it. Simultaneous
             # first-use from two OS threads (two live loops sharing one
@@ -397,12 +405,19 @@ class MCPClientPool:
         return True
 
     async def close_all(self) -> None:
-        """Close all pooled clients' persistent connections."""
-        for client in list(self._clients.values()):
-            try:
-                await client.close()
-            except Exception:
-                logger.debug("Error closing MCP client", exc_info=True)
+        """Close all pooled clients' persistent connections.
+
+        Closes run concurrently so shutdown is bounded by the slowest single
+        client (each close can wait up to 5s on a stuck owner task), not the
+        sum across servers.
+        """
+        clients = list(self._clients.values())
+        results = await asyncio.gather(
+            *(client.close() for client in clients), return_exceptions=True
+        )
+        for result in results:
+            if isinstance(result, BaseException):
+                logger.debug("Error closing MCP client", exc_info=result)
 
 
 # Strong references to in-flight fire-and-forget close tasks: the event loop
