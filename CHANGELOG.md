@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Semantic skill selection.** The `Skill` schema (procedural memory:
+  guidance retrieved by meaning and injected into prompts, never executed)
+  now has a facade API — `add_skill`/`add_skills`, `retrieve_skills`,
+  `retrieve_skills_as_prompt` (pre-formatted system-prompt block),
+  `delete_skill`, `list_skills`, `count_skills` — using the same embedder
+  and vector store as tools. The default `InMemoryVectorStore` gained full
+  skill support (add/search/get/delete/list/count with namespace/category
+  filters and per-dimension matrices), joining LanceDB, which already
+  persisted skills; stores without skill support raise a clear
+  `NotImplementedError`. `Skill`, `SkillCategory`, and `SkillSearchResult`
+  are exported from the top-level package. Example:
+  `examples/basics/skills_example.py`.
+- **Qdrant quantized vector search.** `QdrantVectorStore(quantization=...)`
+  enables int8 scalar quantization (`"scalar"`: ~4x smaller vectors kept in
+  RAM, minimal recall loss) or binary quantization (`"binary"`: ~32x
+  smaller, best for high-dimensional embeddings) at collection creation.
+  Searches oversample and rescore candidates against the original vectors,
+  so returned scores stay exact. Existing collections are not migrated —
+  recreate the collection to change quantization.
+
 - **mcp 1.x and 2.x are both supported** — the `mcp` dependency range widened
   from the emergency `<2.0.0` cap to `>=1.27.2,<3`. mcp 2.0.0 kept the entire
   v1 client surface (`ClientSession` / `StdioServerParameters` /

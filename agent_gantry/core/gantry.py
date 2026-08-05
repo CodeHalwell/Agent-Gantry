@@ -37,6 +37,7 @@ from agent_gantry.schema.config import (
 from agent_gantry.schema.introspection import build_parameters_schema
 from agent_gantry.schema.mcp import MCPServerDefinition
 from agent_gantry.schema.query import RetrievalResult, ScoredTool, ToolQuery
+from agent_gantry.schema.skill import Skill, SkillSearchResult
 from agent_gantry.schema.tool import ToolCapability, ToolDefinition
 from agent_gantry.utils.fingerprint import compute_tool_fingerprint
 
@@ -1812,6 +1813,135 @@ class AgentGantry:
                 result.append(tool)
 
         return result
+
+    # ------------------------------------------------------------------
+    # Skills — semantic procedural memory alongside tools: registered
+    # once, retrieved by meaning per prompt, and injected as context
+    # (never executed). Same embedder and vector store as tools.
+    # ------------------------------------------------------------------
+
+    def _skills_store(self) -> Any:
+        """Return the vector store if it supports skills, else raise."""
+        store = self._vector_store
+        if not hasattr(store, "add_skills"):
+            raise NotImplementedError(
+                f"{type(store).__name__} does not support skills. "
+                f"InMemoryVectorStore (default) and LanceDBVectorStore do."
+            )
+        return store
+
+    async def add_skill(self, skill: Skill) -> None:
+        """
+        Add a single skill. See :meth:`add_skills`.
+
+        Args:
+            skill: The skill to add
+        """
+        await self.add_skills([skill])
+
+    async def add_skills(self, skills: list[Skill]) -> int:
+        """
+        Embed and store skills for semantic retrieval.
+
+        Args:
+            skills: Skills to add (upserted by ``namespace.name``)
+
+        Returns:
+            Number of skills stored
+        """
+        if not skills:
+            return 0
+        store = self._skills_store()
+        await self._ensure_initialized()
+        embeddings = await self._embedder.embed_batch(
+            [skill.to_embedding_text() for skill in skills]
+        )
+        return int(await store.add_skills(skills, embeddings, upsert=True))
+
+    async def retrieve_skills(
+        self,
+        query: str,
+        limit: int = 3,
+        namespace: str | list[str] | None = None,
+        category: str | None = None,
+        score_threshold: float | None = None,
+    ) -> list[SkillSearchResult]:
+        """
+        Retrieve the skills most relevant to a query.
+
+        Args:
+            query: Natural-language query (typically the user prompt)
+            limit: Maximum number of skills to return
+            namespace: Optional namespace (or list of namespaces) filter
+            category: Optional ``SkillCategory`` value filter
+            score_threshold: Minimum similarity score (0-1)
+
+        Returns:
+            Scored skills, most relevant first
+        """
+        store = self._skills_store()
+        await self._ensure_initialized()
+        query_embedding = await self._embedder.embed_text(query)
+        filters: dict[str, Any] = {}
+        if namespace is not None:
+            filters["namespace"] = namespace
+        if category is not None:
+            filters["category"] = category
+        matches = await store.search_skills(
+            query_vector=query_embedding,
+            limit=limit,
+            filters=filters or None,
+            score_threshold=score_threshold,
+        )
+        # Clamp: float32 cosine can exceed 1.0 by rounding error, and the
+        # schema bounds score to [0, 1].
+        return [
+            SkillSearchResult(skill=skill, score=min(1.0, max(0.0, float(score))))
+            for skill, score in matches
+        ]
+
+    async def retrieve_skills_as_prompt(
+        self,
+        query: str,
+        limit: int = 3,
+        namespace: str | list[str] | None = None,
+        category: str | None = None,
+        score_threshold: float | None = None,
+    ) -> str:
+        """
+        Retrieve relevant skills formatted for system-prompt injection.
+
+        Returns an empty string when nothing matches, so the result can be
+        appended to a prompt unconditionally.
+        """
+        results = await self.retrieve_skills(
+            query,
+            limit=limit,
+            namespace=namespace,
+            category=category,
+            score_threshold=score_threshold,
+        )
+        return "\n\n".join(result.skill.to_prompt_text() for result in results)
+
+    async def delete_skill(self, name: str, namespace: str = "default") -> bool:
+        """Delete a skill by name."""
+        store = self._skills_store()
+        await self._ensure_initialized()
+        return bool(await store.delete_skill(name, namespace))
+
+    async def list_skills(
+        self, namespace: str | None = None, limit: int = 1000, offset: int = 0
+    ) -> list[Skill]:
+        """List stored skills."""
+        store = self._skills_store()
+        await self._ensure_initialized()
+        return list(await store.list_all_skills(namespace=namespace, limit=limit, offset=offset))
+
+    async def count_skills(self, namespace: str | None = None) -> int:
+        """Count stored skills."""
+        store = self._skills_store()
+        await self._ensure_initialized()
+        return int(await store.count_skills(namespace=namespace))
 
     async def delete_tool(self, name: str, namespace: str = "default") -> bool:
         """
