@@ -212,3 +212,85 @@ async def test_skills_reembedded_after_embedder_change():
     results = await gantry_b.retrieve_skills(skills[0].to_embedding_text(), limit=1)
     assert results and results[0].skill.name == "api_pagination"
     assert results[0].score == pytest.approx(1.0, abs=1e-5)
+
+
+def _shifted_embedder_cls():
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+
+    class ShiftedEmbedder(SimpleEmbedder):
+        @property
+        def model_name(self) -> str:
+            return "shifted-model"
+
+        def get_embedder_id(self) -> str:
+            return f"shifted:{self.dimension}"
+
+        async def embed_text(self, text: str) -> list[float]:
+            return list(reversed(await super().embed_text(text)))
+
+        async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+            return [await self.embed_text(t) for t in texts]
+
+    return ShiftedEmbedder
+
+
+@pytest.mark.asyncio
+async def test_concurrent_retrievals_wait_for_skill_migration():
+    """Concurrent first calls must not skip past an in-flight re-embed and
+    search stale vectors."""
+    import asyncio
+
+    store = InMemoryVectorStore()
+    skills = _make_skills()
+    gantry_a = AgentGantry(vector_store=store)
+    await gantry_a.add_skills(skills)
+
+    # Slow the migration's skill listing so a second caller overlaps it
+    original_list = store.list_all_skills
+
+    async def slow_list(*args, **kwargs):
+        await asyncio.sleep(0.05)
+        return await original_list(*args, **kwargs)
+
+    store.list_all_skills = slow_list  # type: ignore[method-assign]
+
+    gantry_b = AgentGantry(vector_store=store, embedder=_shifted_embedder_cls()())
+    query = skills[0].to_embedding_text()
+    first, second = await asyncio.gather(
+        gantry_b.retrieve_skills(query, limit=1),
+        gantry_b.retrieve_skills(query, limit=1),
+    )
+    for results in (first, second):
+        assert results and results[0].skill.name == "api_pagination"
+        assert results[0].score == pytest.approx(1.0, abs=1e-5)
+
+
+@pytest.mark.asyncio
+async def test_skill_migration_retries_after_transient_failure():
+    """A transient failure mid-migration must not permanently mark the
+    migration complete — the next call retries it."""
+    store = InMemoryVectorStore()
+    skills = _make_skills()
+    gantry_a = AgentGantry(vector_store=store)
+    await gantry_a.add_skills(skills)
+
+    original_get = store.get_metadata
+    calls = {"n": 0}
+
+    async def flaky_get(key: str):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("transient metadata outage")
+        return await original_get(key)
+
+    store.get_metadata = flaky_get  # type: ignore[method-assign]
+
+    gantry_b = AgentGantry(vector_store=store, embedder=_shifted_embedder_cls()())
+    query = skills[0].to_embedding_text()
+    with pytest.raises(RuntimeError, match="transient metadata outage"):
+        await gantry_b.retrieve_skills(query, limit=1)
+
+    # Retry migrates and succeeds
+    results = await gantry_b.retrieve_skills(query, limit=1)
+    assert results and results[0].skill.name == "api_pagination"
+    assert results[0].score == pytest.approx(1.0, abs=1e-5)
