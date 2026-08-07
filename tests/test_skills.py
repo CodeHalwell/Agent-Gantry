@@ -373,3 +373,46 @@ async def test_gantry_skill_roundtrip_lancedb(tmp_path):
     assert await gantry.delete_skill("retry_backoff") is True
     assert await gantry.count_skills() == 2
     assert {s.name for s in await gantry.list_skills()} == {"api_pagination", "db_migration"}
+
+
+@pytest.mark.asyncio
+async def test_lancedb_search_skills_combines_namespace_and_category(tmp_path):
+    """LanceDB's .where() is a setter — a second call replaces the first
+    predicate, so namespace+category must be combined into one clause or the
+    namespace constraint is silently dropped."""
+    pytest.importorskip("lancedb")
+
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+
+    embedder = SimpleEmbedder()
+    store = LanceDBVectorStore(db_path=str(tmp_path / "db"), dimension=embedder.dimension)
+    await store.initialize()
+
+    skills = [
+        Skill(
+            name="how_a",
+            namespace="ns_a",
+            description="how-to skill living in namespace a",
+            content="a",
+            category=SkillCategory.HOW_TO,
+        ),
+        Skill(
+            name="how_b",
+            namespace="ns_b",
+            description="how-to skill living in namespace b",
+            content="b",
+            category=SkillCategory.HOW_TO,
+        ),
+    ]
+    embeddings = await embedder.embed_batch([s.to_embedding_text() for s in skills])
+    await store.add_skills(skills, embeddings)
+
+    query = await embedder.embed_text(skills[1].to_embedding_text())
+    results = await store.search_skills(
+        query_vector=query,
+        limit=10,
+        filters={"namespace": "ns_a", "category": "how_to"},
+    )
+    names = {s.name for s, _ in results}
+    assert names == {"how_a"}, f"namespace filter dropped: got {names}"

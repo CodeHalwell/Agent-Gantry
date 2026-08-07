@@ -500,25 +500,28 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
 
         search = self._skills_table.search(query_vector).limit(limit * 2)
 
-        # Apply namespace filter (escape for SQL safety)
+        # Build ONE combined predicate: LanceDB's .where() is a setter, not
+        # an accumulator — a second call replaces the first, which silently
+        # dropped the namespace constraint when both filters were supplied.
+        where_clauses: list[str] = []
         if filters and "namespace" in filters:
             ns_filter = filters["namespace"]
             if isinstance(ns_filter, (list, tuple, set)):
                 ns_list = list(ns_filter)
                 if len(ns_list) == 1:
                     escaped_ns = _escape_sql_string(ns_list[0])
-                    search = search.where(f"namespace = '{escaped_ns}'")
+                    where_clauses.append(f"namespace = '{escaped_ns}'")
                 else:
                     escaped_values = ", ".join(f"'{_escape_sql_string(ns)}'" for ns in ns_list)
-                    search = search.where(f"namespace IN ({escaped_values})")
+                    where_clauses.append(f"namespace IN ({escaped_values})")
             else:
                 escaped_ns = _escape_sql_string(ns_filter)
-                search = search.where(f"namespace = '{escaped_ns}'")
-
-        # Apply category filter (escape for SQL safety)
+                where_clauses.append(f"namespace = '{escaped_ns}'")
         if filters and "category" in filters:
             escaped_cat = _escape_sql_string(filters["category"])
-            search = search.where(f"category = '{escaped_cat}'")
+            where_clauses.append(f"category = '{escaped_cat}'")
+        if where_clauses:
+            search = search.where(" AND ".join(where_clauses))
 
         results = await asyncio.to_thread(search.to_list)
 
