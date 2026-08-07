@@ -10,6 +10,7 @@ from typing import Any
 
 import numpy as np
 
+from agent_gantry.schema.skill import Skill
 from agent_gantry.schema.tool import ToolDefinition
 from agent_gantry.utils.fingerprint import compute_tool_fingerprint
 
@@ -34,6 +35,9 @@ class InMemoryVectorStore:
         self._embeddings: dict[str, list[float]] = {}
         self._fingerprints: dict[str, str] = {}
         self._metadata: dict[str, str] = {}
+        self._skills: dict[str, Skill] = {}
+        self._skill_embeddings: dict[str, list[float]] = {}
+        self._skill_matrices: dict[int, tuple[np.ndarray, list[str]]] = {}
         self._dimension = dimension
         # Vectorized search cache: L2-normalized (n, d) matrices plus row
         # ordering, kept per dimension — mixed dimensions legitimately coexist
@@ -219,6 +223,138 @@ class InMemoryVectorStore:
     async def health_check(self) -> bool:
         """Check health (always healthy for in-memory)."""
         return True
+
+    # ------------------------------------------------------------------
+    # Skills — procedural-memory records retrieved semantically and
+    # injected into prompts (never executed). Mirrors the LanceDB store's
+    # skill API so the facade works against the default backend.
+    # ------------------------------------------------------------------
+
+    async def add_skills(
+        self,
+        skills: list[Skill],
+        embeddings: list[list[float]],
+        upsert: bool = True,
+    ) -> int:
+        """Add skills with their embeddings."""
+        # Validate BEFORE mutating: a strict zip alone would store the
+        # matching prefix and then raise, leaving a partial skill set behind
+        # a failed call. A length mismatch means an upstream embed failure.
+        if len(skills) != len(embeddings):
+            raise ValueError(
+                f"skills/embeddings length mismatch: {len(skills)} != {len(embeddings)}"
+            )
+        count = 0
+        for skill, embedding in zip(skills, embeddings, strict=True):
+            key = f"{skill.namespace}.{skill.name}"
+            if key not in self._skills or upsert:
+                self._skills[key] = skill
+                self._skill_embeddings[key] = embedding
+                count += 1
+        if count:
+            self._skill_matrices.clear()
+        return count
+
+    async def search_skills(
+        self,
+        query_vector: list[float],
+        limit: int,
+        filters: dict[str, Any] | None = None,
+        score_threshold: float | None = None,
+    ) -> list[tuple[Skill, float]]:
+        """Search for skills similar to the query vector.
+
+        Filters: ``namespace`` (str or collection) and ``category`` (str).
+        """
+        q = np.asarray(query_vector, dtype=np.float32)
+        if q.ndim != 1:
+            return []
+        matrix, keys = self._skill_matrix_for(q.shape[0])
+        if matrix.shape[0] == 0:
+            return []
+
+        q_norm = float(np.linalg.norm(q))
+        if q_norm == 0.0:
+            scores = np.zeros(matrix.shape[0], dtype=np.float32)
+        else:
+            scores = matrix @ (q / q_norm)
+
+        ns_filter = filters.get("namespace") if filters else None
+        category = filters.get("category") if filters else None
+
+        results: list[tuple[Skill, float]] = []
+        for idx, key in enumerate(keys):
+            skill = self._skills.get(key)
+            if skill is None:
+                continue
+            if ns_filter is not None:
+                if isinstance(ns_filter, (list, tuple, set)):
+                    if skill.namespace not in ns_filter:
+                        continue
+                elif skill.namespace != ns_filter:
+                    continue
+            if category is not None and skill.category.value != category:
+                continue
+            score = float(scores[idx])
+            if score_threshold is not None and score < score_threshold:
+                continue
+            results.append((skill, score))
+
+        results.sort(key=lambda x: x[1], reverse=True)
+        return results[:limit]
+
+    async def get_skill_by_name(self, name: str, namespace: str = "default") -> Skill | None:
+        """Get a skill by name."""
+        return self._skills.get(f"{namespace}.{name}")
+
+    async def delete_skill(self, name: str, namespace: str = "default") -> bool:
+        """Delete a skill."""
+        key = f"{namespace}.{name}"
+        if key in self._skills:
+            del self._skills[key]
+            self._skill_embeddings.pop(key, None)
+            self._skill_matrices.clear()
+            return True
+        return False
+
+    async def list_all_skills(
+        self,
+        namespace: str | None = None,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> list[Skill]:
+        """List all skills."""
+        skills = list(self._skills.values())
+        if namespace:
+            skills = [s for s in skills if s.namespace == namespace]
+        return skills[offset : offset + limit]
+
+    async def count_skills(self, namespace: str | None = None) -> int:
+        """Count skills."""
+        if namespace:
+            return sum(1 for s in self._skills.values() if s.namespace == namespace)
+        return len(self._skills)
+
+    def _skill_matrix_for(self, dim: int) -> tuple[np.ndarray, list[str]]:
+        """Return (matrix, keys) of normalized skill embeddings of this dimension."""
+        cached = self._skill_matrices.get(dim)
+        if cached is not None:
+            return cached
+        keys = [
+            k
+            for k in self._skills
+            if (emb := self._skill_embeddings.get(k)) is not None and len(emb) == dim
+        ]
+        if not keys:
+            empty: tuple[np.ndarray, list[str]] = (np.zeros((0, dim), dtype=np.float32), [])
+            self._skill_matrices[dim] = empty
+            return empty
+        mat = np.asarray([self._skill_embeddings[k] for k in keys], dtype=np.float32)
+        norms = np.linalg.norm(mat, axis=1, keepdims=True)
+        norms[norms == 0.0] = 1.0
+        result = (mat / norms, keys)
+        self._skill_matrices[dim] = result
+        return result
 
     @property
     def supports_metadata(self) -> bool:

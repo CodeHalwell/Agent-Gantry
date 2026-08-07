@@ -418,6 +418,9 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
             ns_filter = filters["namespace"]
             if isinstance(ns_filter, (list, tuple, set)):
                 ns_list = list(ns_filter)
+                if not ns_list:
+                    # Empty list matches nothing; "IN ()" is invalid SQL
+                    return []
                 if len(ns_list) == 1:
                     escaped_ns = _escape_sql_string(ns_list[0])
                     search = search.where(f"namespace = '{escaped_ns}'")
@@ -500,25 +503,32 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
 
         search = self._skills_table.search(query_vector).limit(limit * 2)
 
-        # Apply namespace filter (escape for SQL safety)
+        # Build ONE combined predicate: LanceDB's .where() is a setter, not
+        # an accumulator — a second call replaces the first, which silently
+        # dropped the namespace constraint when both filters were supplied.
+        where_clauses: list[str] = []
         if filters and "namespace" in filters:
             ns_filter = filters["namespace"]
             if isinstance(ns_filter, (list, tuple, set)):
                 ns_list = list(ns_filter)
+                if not ns_list:
+                    # An empty namespace list matches nothing (mirrors the
+                    # in-memory store); "IN ()" is invalid SQL in LanceDB
+                    return []
                 if len(ns_list) == 1:
                     escaped_ns = _escape_sql_string(ns_list[0])
-                    search = search.where(f"namespace = '{escaped_ns}'")
+                    where_clauses.append(f"namespace = '{escaped_ns}'")
                 else:
                     escaped_values = ", ".join(f"'{_escape_sql_string(ns)}'" for ns in ns_list)
-                    search = search.where(f"namespace IN ({escaped_values})")
+                    where_clauses.append(f"namespace IN ({escaped_values})")
             else:
                 escaped_ns = _escape_sql_string(ns_filter)
-                search = search.where(f"namespace = '{escaped_ns}'")
-
-        # Apply category filter (escape for SQL safety)
+                where_clauses.append(f"namespace = '{escaped_ns}'")
         if filters and "category" in filters:
             escaped_cat = _escape_sql_string(filters["category"])
-            search = search.where(f"category = '{escaped_cat}'")
+            where_clauses.append(f"category = '{escaped_cat}'")
+        if where_clauses:
+            search = search.where(" AND ".join(where_clauses))
 
         results = await asyncio.to_thread(search.to_list)
 
@@ -732,27 +742,32 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
         if category is not None:
             _validate_identifier(category, "category")
 
-        try:
-            query = self._skills_table.search()
-            where_clauses = []
-            if namespace:
-                where_clauses.append(f"namespace = '{_escape_sql_string(namespace)}'")
-            if category:
-                where_clauses.append(f"category = '{_escape_sql_string(category)}'")
+        # Table-level errors propagate: swallowing them into an empty list is
+        # indistinguishable from "no skills stored", which let callers (e.g.
+        # the facade's embedder-migration check) record success after having
+        # listed nothing. Only malformed individual rows are skipped.
+        query = self._skills_table.search()
+        where_clauses = []
+        if namespace:
+            where_clauses.append(f"namespace = '{_escape_sql_string(namespace)}'")
+        if category:
+            where_clauses.append(f"category = '{_escape_sql_string(category)}'")
 
-            if where_clauses:
-                query = query.where(" AND ".join(where_clauses))
+        if where_clauses:
+            query = query.where(" AND ".join(where_clauses))
 
-            records = await asyncio.to_thread(query.limit(limit).offset(offset).to_list)
+        records = await asyncio.to_thread(query.limit(limit).offset(offset).to_list)
 
-            return [
-                Skill.model_validate_json(r["skill_json"])
-                for r in records
-                if r.get("skill_json")  # Skip records with missing skill_json
-            ]
-        except Exception as e:
-            logger.warning(f"Error listing skills: {e}")
-            return []
+        skills: list[Skill] = []
+        for record in records:
+            raw = record.get("skill_json")
+            if not raw:
+                continue
+            try:
+                skills.append(Skill.model_validate_json(raw))
+            except Exception as e:
+                logger.warning(f"Skipping malformed skill record: {e}")
+        return skills
 
     async def count(self, namespace: str | None = None) -> int:
         """

@@ -24,6 +24,7 @@ from agent_gantry.integrations.semantic_tools import (
 from agent_gantry.observability.console import enable_console_logging
 from agent_gantry.schema.execution import ToolCall, ToolCallEvent, ToolResult
 from agent_gantry.schema.query import ConversationContext, ToolQuery
+from agent_gantry.schema.skill import Skill, SkillCategory, SkillSearchResult
 from agent_gantry.schema.tool import (
     ToolCapability,
     ToolCost,
@@ -65,7 +66,7 @@ def disable_af_instrumentation() -> bool:
     return _impl()
 
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 __all__ = [
     "AgentGantry",
     "GantryContextProvider",
@@ -83,6 +84,9 @@ __all__ = [
     "ToolResult",
     "ToolQuery",
     "ConversationContext",
+    "Skill",
+    "SkillCategory",
+    "SkillSearchResult",
     "ToolCapability",
     "ToolCost",
     "ToolDefinition",

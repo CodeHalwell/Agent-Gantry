@@ -58,6 +58,7 @@ class QdrantVectorStore:
         dimension: int = 1536,
         distance: str = "Cosine",
         prefer_grpc: bool = False,
+        quantization: str | None = None,
     ) -> None:
         """
         Initialize the Qdrant vector store.
@@ -69,6 +70,14 @@ class QdrantVectorStore:
             dimension: Vector dimension
             distance: Distance metric (Cosine, Euclid, Dot)
             prefer_grpc: Use gRPC if available
+            quantization: Optional quantized-search mode for the collection:
+                ``"scalar"`` (int8 scalar quantization — ~4x smaller vectors,
+                kept in RAM, minimal recall loss) or ``"binary"`` (~32x
+                smaller, fastest, best for high-dimensional embeddings such
+                as OpenAI's). Applied at collection creation; searches
+                rescore candidates against the original vectors so returned
+                scores stay exact. Existing collections are not migrated —
+                recreate the collection to change quantization.
         """
         try:
             from qdrant_client import AsyncQdrantClient
@@ -82,8 +91,14 @@ class QdrantVectorStore:
         self._url = url
         self._api_key = api_key
         self._collection_name = collection_name
+        if quantization not in (None, "scalar", "binary"):
+            raise ValueError(
+                f"Unsupported quantization mode: {quantization!r} "
+                f"(expected 'scalar', 'binary', or None)"
+            )
         self._dimension = dimension
         self._prefer_grpc = prefer_grpc
+        self._quantization = quantization
         self._initialized = False
 
         # Map distance string to Qdrant Distance enum
@@ -108,6 +123,48 @@ class QdrantVectorStore:
         """Return the vector dimension."""
         return self._dimension
 
+    def _build_quantization_config(self) -> Any:
+        """Translate the configured quantization mode to Qdrant config.
+
+        Returns None (no quantization) when unset. int8 scalar quantization
+        keeps the compressed vectors in RAM (that's where the speed win
+        comes from); binary quantization compresses 32x and suits
+        high-dimensional embeddings where sign bits retain enough signal.
+        """
+        if not self._quantization:
+            return None
+        # Import per mode: the binary-quantization models postdate older
+        # qdrant-client releases the extras still permit, so importing them
+        # unconditionally would break scalar mode (or plain construction) on
+        # clients that support everything scalar needs.
+        if self._quantization == "scalar":
+            try:
+                from qdrant_client.models import (
+                    ScalarQuantization,
+                    ScalarQuantizationConfig,
+                    ScalarType,
+                )
+            except ImportError as exc:
+                raise ImportError(
+                    "quantization='scalar' requires a qdrant-client version with "
+                    "scalar quantization support; upgrade qdrant-client."
+                ) from exc
+            return ScalarQuantization(
+                scalar=ScalarQuantizationConfig(
+                    type=ScalarType.INT8,
+                    quantile=0.99,
+                    always_ram=True,
+                )
+            )
+        try:
+            from qdrant_client.models import BinaryQuantization, BinaryQuantizationConfig
+        except ImportError as exc:
+            raise ImportError(
+                "quantization='binary' requires a qdrant-client version with "
+                "binary quantization support; upgrade qdrant-client."
+            ) from exc
+        return BinaryQuantization(binary=BinaryQuantizationConfig(always_ram=True))
+
     async def initialize(self) -> None:
         """Initialize the collection, creating it if needed."""
         if self._initialized:
@@ -128,8 +185,12 @@ class QdrantVectorStore:
                         size=self._dimension,
                         distance=self._distance,
                     ),
+                    quantization_config=self._build_quantization_config(),
                 )
-                logger.info(f"Created Qdrant collection: {self._collection_name}")
+                logger.info(
+                    f"Created Qdrant collection: {self._collection_name}"
+                    + (f" (quantization={self._quantization})" if self._quantization else "")
+                )
 
             self._initialized = True
         except Exception as e:
@@ -208,7 +269,22 @@ class QdrantVectorStore:
                 ]
             )
 
-        # Search with optional vector retrieval
+        # Search with optional vector retrieval. On a quantized collection,
+        # oversample candidates from the compressed index and rescore them
+        # against the original vectors so returned scores stay exact.
+        search_params = None
+        if self._quantization:
+            try:
+                from qdrant_client.models import QuantizationSearchParams, SearchParams
+
+                search_params = SearchParams(
+                    quantization=QuantizationSearchParams(rescore=True, oversampling=2.0)
+                )
+            except ImportError:
+                # A client old enough to lack these couldn't have created the
+                # quantized collection either, but degrade gracefully: the
+                # server still searches, just with its default rescoring.
+                logger.debug("qdrant-client lacks QuantizationSearchParams; using defaults")
         results = await self._client.search(
             collection_name=self._collection_name,
             query_vector=query_vector,
@@ -216,6 +292,7 @@ class QdrantVectorStore:
             query_filter=query_filter,
             score_threshold=score_threshold,
             with_vectors=include_embeddings,  # Request vectors if needed
+            search_params=search_params,
         )
 
         # Convert results to tools

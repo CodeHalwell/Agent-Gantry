@@ -7,7 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-07
+
 ### Added
+
+- **Semantic skill selection.** The `Skill` schema (procedural memory:
+  guidance retrieved by meaning and injected into prompts, never executed)
+  now has a facade API — `add_skill`/`add_skills`, `retrieve_skills`,
+  `retrieve_skills_as_prompt` (pre-formatted system-prompt block),
+  `delete_skill`, `list_skills`, `count_skills` — using the same embedder
+  and vector store as tools. The default `InMemoryVectorStore` gained full
+  skill support (add/search/get/delete/list/count with namespace/category
+  filters and per-dimension matrices), joining LanceDB, which already
+  persisted skills; stores without skill support raise a clear
+  `NotImplementedError`. `Skill`, `SkillCategory`, and `SkillSearchResult`
+  are exported from the top-level package. Example:
+  `examples/basics/skills_example.py`.
+- **Qdrant quantized vector search.** `QdrantVectorStore(quantization=...)`
+  enables int8 scalar quantization (`"scalar"`: ~4x smaller vectors kept in
+  RAM, minimal recall loss) or binary quantization (`"binary"`: ~32x
+  smaller, best for high-dimensional embeddings) at collection creation.
+  Searches oversample and rescore candidates against the original vectors,
+  so returned scores stay exact. Existing collections are not migrated —
+  recreate the collection to change quantization.
 
 - **mcp 1.x and 2.x are both supported** — the `mcp` dependency range widened
   from the emergency `<2.0.0` cap to `>=1.27.2,<3`. mcp 2.0.0 kept the entire
@@ -401,16 +423,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pydantic_ai.models.test.TestModel`, and the others gate their live
   agent/model run behind `OPENAI_API_KEY`. `examples/agent_frameworks/
   README.md` documents all five.
- 2026-06-16
-
-### Removed
-
-- **BREAKING — `ToolDefinition.to_openai_schema()`, `to_anthropic_schema()`, and
-  `to_gemini_schema()` removed.** These were thin deprecated shims over
-  `to_dialect()` with no internal or example callers. Use
-  `ToolDefinition.to_dialect("openai" | "anthropic" | "gemini", ...)` instead.
-  (`Skill` / `SkillRegistry.to_anthropic_schema` is a separate, actively-used
-  method and is unchanged.)
 
 ### Fixed
 
@@ -436,17 +448,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   row), which also removes the router's re-embed fallback for MMR.
 - `MCPManager.add_server` returned a `(count, tools)` tuple while annotated
   `-> int`; the annotation now matches the return value.
-- **MCP initialisation no longer masks real failures.** `AgentGantry` now
-  separates the *import* guard from the *construction* guard: an expected-absent
-  MCP install is logged at DEBUG and degrades silently to no-MCP, while an
-  unexpected construction failure (e.g. a broken/partial `mcp` install) is logged
-  at WARNING with a traceback instead of being swallowed at DEBUG. Either way
-  `AgentGantry()` still constructs successfully.
-- **`GantryContextProvider` is a class again.** It is now a thin class whose
-  `__new__` delegates to a cached implementation class, so it remains valid in
-  type annotations and `isinstance()` checks return `False` rather than raising
-  `TypeError`. The `score_threshold` property is now typed `float | str` to match
-  the config (relative-threshold strings are valid).
 - **BREAKING (bugfix) — a broken `gantry.retrieve()` mid-conversation no
   longer crashes six of the eight per-turn live providers.**
   `integrations/frameworks/{autogen_live,langgraph_live,llamaindex_live,
@@ -468,6 +469,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Callers who relied on a selection failure raising out of one of these six
   providers (e.g. to abort a run) must now check the `WARNING` log or wrap
   `gantry.retrieve()`/the vector store itself instead.
+
+## [0.9.0] - 2026-06-16
+
+### Removed
+
+- **BREAKING — `ToolDefinition.to_openai_schema()`, `to_anthropic_schema()`, and
+  `to_gemini_schema()` removed.** These were thin deprecated shims over
+  `to_dialect()` with no internal or example callers. Use
+  `ToolDefinition.to_dialect("openai" | "anthropic" | "gemini", ...)` instead.
+  (`Skill` / `SkillRegistry.to_anthropic_schema` is a separate, actively-used
+  method and is unchanged.)
+
+### Fixed
+
+- **MCP initialisation no longer masks real failures.** `AgentGantry` now
+  separates the *import* guard from the *construction* guard: an expected-absent
+  MCP install is logged at DEBUG and degrades silently to no-MCP, while an
+  unexpected construction failure (e.g. a broken/partial `mcp` install) is logged
+  at WARNING with a traceback instead of being swallowed at DEBUG. Either way
+  `AgentGantry()` still constructs successfully.
+- **`GantryContextProvider` is a class again.** It is now a thin class whose
+  `__new__` delegates to a cached implementation class, so it remains valid in
+  type annotations and `isinstance()` checks return `False` rather than raising
+  `TypeError`. The `score_threshold` property is now typed `float | str` to match
+  the config (relative-threshold strings are valid).
 
 ### Changed
 
@@ -1716,7 +1742,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.6.0...v0.7.0

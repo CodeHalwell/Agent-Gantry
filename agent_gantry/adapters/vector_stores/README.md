@@ -34,4 +34,26 @@ await gantry.sync()  # pushes tool embeddings into the chosen store
 ```
 
 Adding a new backend is as simple as implementing `VectorStoreAdapter`; the router will consume it
-without further changes.*** End Patch" serializer error? Actually apply_patch expects raw string not JSON. Let's re-run plain.
+without further changes.
+
+## Skills
+
+`InMemoryVectorStore` and `LanceDBVectorStore` also store **skills** (procedural memory retrieved
+semantically and injected into prompts — see `gantry.add_skills()` / `gantry.retrieve_skills()`).
+Stores without skill support raise `NotImplementedError` from the facade's skill methods.
+
+Notes: skill content is injected into prompts verbatim, so register skills only from trusted
+sources. Switching embedding models re-embeds stored skills automatically when the dimension is
+unchanged; a dimension change cannot be migrated in place on fixed-schema stores (LanceDB) —
+recreate the store. Concurrent gantry instances with *different* embedders sharing one store are
+unsupported (each would re-migrate the other's vectors). Multiple worker processes sharing one
+embedded store path follow the backend's multi-writer semantics — LanceDB's upsert is a
+non-atomic delete-then-add — so let one worker warm the store after a model switch before the
+others start (an atomic `merge_insert`-based upsert is a planned follow-up).
+
+## Qdrant quantized search
+
+`QdrantVectorStore(quantization="scalar")` enables int8 scalar quantization (~4x smaller vectors,
+kept in RAM, minimal recall loss); `quantization="binary"` compresses ~32x and suits
+high-dimensional embeddings. Searches oversample and rescore against the original vectors, so
+returned scores stay exact. Applied at collection creation — recreate the collection to change it.

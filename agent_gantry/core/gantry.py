@@ -37,6 +37,7 @@ from agent_gantry.schema.config import (
 from agent_gantry.schema.introspection import build_parameters_schema
 from agent_gantry.schema.mcp import MCPServerDefinition
 from agent_gantry.schema.query import RetrievalResult, ScoredTool, ToolQuery
+from agent_gantry.schema.skill import Skill, SkillSearchResult
 from agent_gantry.schema.tool import ToolCapability, ToolDefinition
 from agent_gantry.utils.fingerprint import compute_tool_fingerprint
 
@@ -215,6 +216,10 @@ class AgentGantry:
         not loaded here because import + embedding is async.
         """
         self._pending_tools: list[ToolDefinition] = []
+        # One-shot guard for _ensure_skill_vectors_current (embedder is fixed
+        # for this instance's lifetime); lock created lazily on first use
+        self._skill_vectors_checked = False
+        self._skill_vectors_lock: asyncio.Lock | None = None
         self._pending_mcp_servers: list[MCPServerDefinition] = []
         self._tool_handlers: dict[str, Callable[..., Any]] = {}
         # MCP clients created by add_mcp_server (immediate discovery), kept so
@@ -1812,6 +1817,239 @@ class AgentGantry:
                 result.append(tool)
 
         return result
+
+    # ------------------------------------------------------------------
+    # Skills — semantic procedural memory alongside tools: registered
+    # once, retrieved by meaning per prompt, and injected as context
+    # (never executed). Same embedder and vector store as tools.
+    # ------------------------------------------------------------------
+
+    _SKILL_STORE_METHODS = (
+        "add_skills",
+        "search_skills",
+        "get_skill_by_name",
+        "delete_skill",
+        "list_all_skills",
+        "count_skills",
+    )
+
+    def _skills_store(self) -> Any:
+        """Return the vector store if it supports skills, else raise.
+
+        Checks the full skill API surface up front so a partially
+        implemented adapter fails with this clear message instead of an
+        AttributeError from deep inside a later call.
+        """
+        store = self._vector_store
+        missing = [m for m in self._SKILL_STORE_METHODS if not hasattr(store, m)]
+        if missing:
+            raise NotImplementedError(
+                f"{type(store).__name__} does not support skills "
+                f"(missing: {', '.join(missing)}). "
+                f"InMemoryVectorStore (default) and LanceDBVectorStore do."
+            )
+        return store
+
+    async def add_skill(self, skill: Skill) -> None:
+        """
+        Add a single skill. See :meth:`add_skills`.
+
+        Args:
+            skill: The skill to add
+        """
+        await self.add_skills([skill])
+
+    async def _ensure_skill_vectors_current(self, store: Any) -> None:
+        """Re-embed persisted skills if they were made by a different embedder.
+
+        Tools get this via SyncManager's fingerprint/embedder-id machinery;
+        skills need the equivalent or reopening a persistent store with a new
+        embedding model silently searches the old model's vectors. Runs once
+        per gantry instance — the embedder is fixed for the instance's
+        lifetime. Stores without the metadata API skip the check (nothing to
+        compare against).
+
+        Limitations: switching to an embedder of a *different dimension*
+        cannot be migrated in place on fixed-schema stores (LanceDB tables
+        have a fixed vector width) — recreate the store instead; the failure
+        is surfaced with that guidance. Concurrent gantry instances using
+        *different* embedders against one shared store are unsupported: each
+        would re-migrate to its own vector space, thrashing the other's.
+        And the lock here serializes tasks within this process only —
+        multiple worker *processes* sharing one embedded store path follow
+        the backend's multi-writer semantics (LanceDB's upsert is a
+        non-atomic delete-then-add), so serialize the first post-model-switch
+        access externally when running multiple workers, or let one worker
+        warm the store before the others start.
+        """
+        if self._skill_vectors_checked:
+            return
+        # Serialize: concurrent first calls must not skip past an in-flight
+        # migration and search stale vectors, and the flag is only set after
+        # full success so a transient failure gets retried instead of
+        # permanently bypassing migration.
+        if self._skill_vectors_lock is None:
+            self._skill_vectors_lock = asyncio.Lock()
+        async with self._skill_vectors_lock:
+            if self._skill_vectors_checked:
+                return
+            get_meta = getattr(store, "get_metadata", None)
+            set_meta = getattr(store, "set_metadata", None)
+            if get_meta is not None and set_meta is not None:
+                # Scope the marker to the skills table where the store names
+                # one: multiple configured skills tables can share a single
+                # metadata table (LanceDB), and an unscoped key would let one
+                # table's migration mark the others as migrated too. Adapter
+                # contract: stores whose metadata table is shared across
+                # differently-configured skills tables should expose
+                # _skills_table_name; stores without it get a store-wide
+                # marker, which is correct when metadata is per-store.
+                table_id = getattr(store, "_skills_table_name", None)
+                marker_key = (
+                    f"skills_embedder_id:{table_id}" if table_id else "skills_embedder_id"
+                )
+                current = self._sync_manager.get_embedder_id()
+                stored = await get_meta(marker_key)
+                if stored != current:
+                    # Unknown or different embedder: re-embed whatever is
+                    # stored (covers both a model switch and pre-existing
+                    # skills with no recorded id)
+                    skills = await store.list_all_skills(limit=1_000_000)
+                    if skills:
+                        embeddings = await self._embedder.embed_batch(
+                            [skill.to_embedding_text() for skill in skills]
+                        )
+                        try:
+                            await store.add_skills(skills, embeddings, upsert=True)
+                        except Exception as exc:
+                            raise RuntimeError(
+                                f"Failed to re-embed stored skills for the current "
+                                f"embedder ({current!r}). If the new embedder has a "
+                                f"different dimension, fixed-schema stores (e.g. "
+                                f"LanceDB) cannot be migrated in place — recreate the "
+                                f"store, or use a same-dimension model."
+                            ) from exc
+                        logger.info(
+                            f"Re-embedded {len(skills)} skill(s): stored embedder id "
+                            f"{stored!r} != current {current!r}"
+                        )
+                    await set_meta(marker_key, current)
+            self._skill_vectors_checked = True
+
+    async def add_skills(self, skills: list[Skill]) -> int:
+        """
+        Embed and store skills for semantic retrieval.
+
+        Args:
+            skills: Skills to add (upserted by ``namespace.name``)
+
+        Returns:
+            Number of skills stored
+        """
+        if not skills:
+            return 0
+        store = self._skills_store()
+        await self._ensure_initialized()
+        await self._ensure_skill_vectors_current(store)
+        embeddings = await self._embedder.embed_batch(
+            [skill.to_embedding_text() for skill in skills]
+        )
+        return int(await store.add_skills(skills, embeddings, upsert=True))
+
+    async def retrieve_skills(
+        self,
+        query: str,
+        limit: int = 3,
+        namespace: str | list[str] | None = None,
+        category: str | None = None,
+        score_threshold: float | None = None,
+    ) -> list[SkillSearchResult]:
+        """
+        Retrieve the skills most relevant to a query.
+
+        Args:
+            query: Natural-language query (typically the user prompt)
+            limit: Maximum number of skills to return
+            namespace: Optional namespace (or list of namespaces) filter
+            category: Optional category filter as its string value, e.g.
+                ``"how_to"`` or ``SkillCategory.PATTERN.value``
+            score_threshold: Minimum similarity score (0-1)
+
+        Returns:
+            Scored skills, most relevant first
+        """
+        # A blank query has no semantic signal: it embeds to a zero vector,
+        # every skill ties at 0.0, and with no threshold the first `limit`
+        # skills would be returned (and prompt-injected) arbitrarily.
+        if not query.strip():
+            return []
+        store = self._skills_store()
+        await self._ensure_initialized()
+        await self._ensure_skill_vectors_current(store)
+        query_embedding = await self._embedder.embed_text(query)
+        filters: dict[str, Any] = {}
+        if namespace is not None:
+            filters["namespace"] = namespace
+        if category is not None:
+            filters["category"] = category
+        matches = await store.search_skills(
+            query_vector=query_embedding,
+            limit=limit,
+            filters=filters or None,
+            score_threshold=score_threshold,
+        )
+        # Clamp: float32 cosine can exceed 1.0 by rounding error, and the
+        # schema bounds score to [0, 1].
+        return [
+            SkillSearchResult(skill=skill, score=min(1.0, max(0.0, float(score))))
+            for skill, score in matches
+        ]
+
+    async def retrieve_skills_as_prompt(
+        self,
+        query: str,
+        limit: int = 3,
+        namespace: str | list[str] | None = None,
+        category: str | None = None,
+        score_threshold: float | None = None,
+    ) -> str:
+        """
+        Retrieve relevant skills formatted for system-prompt injection.
+
+        Returns an empty string when nothing matches, so the result can be
+        appended to a prompt unconditionally.
+
+        Skill content is injected into the prompt verbatim — register skills
+        only from sources you trust, exactly as you would tool descriptions.
+        """
+        results = await self.retrieve_skills(
+            query,
+            limit=limit,
+            namespace=namespace,
+            category=category,
+            score_threshold=score_threshold,
+        )
+        return "\n\n".join(result.skill.to_prompt_text() for result in results)
+
+    async def delete_skill(self, name: str, namespace: str = "default") -> bool:
+        """Delete a skill by name."""
+        store = self._skills_store()
+        await self._ensure_initialized()
+        return bool(await store.delete_skill(name, namespace))
+
+    async def list_skills(
+        self, namespace: str | None = None, limit: int = 1000, offset: int = 0
+    ) -> list[Skill]:
+        """List stored skills."""
+        store = self._skills_store()
+        await self._ensure_initialized()
+        return list(await store.list_all_skills(namespace=namespace, limit=limit, offset=offset))
+
+    async def count_skills(self, namespace: str | None = None) -> int:
+        """Count stored skills."""
+        store = self._skills_store()
+        await self._ensure_initialized()
+        return int(await store.count_skills(namespace=namespace))
 
     async def delete_tool(self, name: str, namespace: str = "default") -> bool:
         """
