@@ -447,3 +447,14 @@ async def test_lancedb_empty_namespace_list_matches_nothing(tmp_path):
     query = await embedder.embed_text("anything")
     assert await store.search_skills(query, limit=5, filters={"namespace": []}) == []
     assert await store.search(query, limit=5, filters={"namespace": []}) == []
+
+
+@pytest.mark.asyncio
+async def test_blank_query_retrieves_nothing():
+    """A blank query embeds to a zero vector where every skill ties at 0.0 —
+    it must return nothing rather than prompt-inject arbitrary guidance."""
+    gantry = AgentGantry()
+    await gantry.add_skills(_make_skills())
+    assert await gantry.retrieve_skills("") == []
+    assert await gantry.retrieve_skills("   ") == []
+    assert await gantry.retrieve_skills_as_prompt("") == ""

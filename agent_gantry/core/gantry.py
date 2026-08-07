@@ -1978,6 +1978,11 @@ class AgentGantry:
         Returns:
             Scored skills, most relevant first
         """
+        # A blank query has no semantic signal: it embeds to a zero vector,
+        # every skill ties at 0.0, and with no threshold the first `limit`
+        # skills would be returned (and prompt-injected) arbitrarily.
+        if not query.strip():
+            return []
         store = self._skills_store()
         await self._ensure_initialized()
         await self._ensure_skill_vectors_current(store)
