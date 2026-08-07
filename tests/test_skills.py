@@ -416,3 +416,34 @@ async def test_lancedb_search_skills_combines_namespace_and_category(tmp_path):
     )
     names = {s.name for s, _ in results}
     assert names == {"how_a"}, f"namespace filter dropped: got {names}"
+
+
+@pytest.mark.asyncio
+async def test_memory_add_skills_mismatch_mutates_nothing():
+    """A length mismatch must fail before any mutation — a strict zip alone
+    stores the matching prefix behind the failed call."""
+    store = InMemoryVectorStore()
+    with pytest.raises(ValueError):
+        await store.add_skills(_make_skills()[:2], [[1.0, 0.0]])
+    assert await store.count_skills() == 0
+
+
+@pytest.mark.asyncio
+async def test_lancedb_empty_namespace_list_matches_nothing(tmp_path):
+    """namespace=[] must return no matches, not build invalid 'IN ()' SQL."""
+    pytest.importorskip("lancedb")
+
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+
+    embedder = SimpleEmbedder()
+    store = LanceDBVectorStore(db_path=str(tmp_path / "db"), dimension=embedder.dimension)
+    await store.initialize()
+
+    skills = _make_skills()
+    embeddings = await embedder.embed_batch([s.to_embedding_text() for s in skills])
+    await store.add_skills(skills, embeddings)
+
+    query = await embedder.embed_text("anything")
+    assert await store.search_skills(query, limit=5, filters={"namespace": []}) == []
+    assert await store.search(query, limit=5, filters={"namespace": []}) == []

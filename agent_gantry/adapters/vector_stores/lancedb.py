@@ -418,6 +418,9 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
             ns_filter = filters["namespace"]
             if isinstance(ns_filter, (list, tuple, set)):
                 ns_list = list(ns_filter)
+                if not ns_list:
+                    # Empty list matches nothing; "IN ()" is invalid SQL
+                    return []
                 if len(ns_list) == 1:
                     escaped_ns = _escape_sql_string(ns_list[0])
                     search = search.where(f"namespace = '{escaped_ns}'")
@@ -508,6 +511,10 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
             ns_filter = filters["namespace"]
             if isinstance(ns_filter, (list, tuple, set)):
                 ns_list = list(ns_filter)
+                if not ns_list:
+                    # An empty namespace list matches nothing (mirrors the
+                    # in-memory store); "IN ()" is invalid SQL in LanceDB
+                    return []
                 if len(ns_list) == 1:
                     escaped_ns = _escape_sql_string(ns_list[0])
                     where_clauses.append(f"namespace = '{escaped_ns}'")

@@ -237,9 +237,14 @@ class InMemoryVectorStore:
         upsert: bool = True,
     ) -> int:
         """Add skills with their embeddings."""
+        # Validate BEFORE mutating: a strict zip alone would store the
+        # matching prefix and then raise, leaving a partial skill set behind
+        # a failed call. A length mismatch means an upstream embed failure.
+        if len(skills) != len(embeddings):
+            raise ValueError(
+                f"skills/embeddings length mismatch: {len(skills)} != {len(embeddings)}"
+            )
         count = 0
-        # strict: a length mismatch means an upstream embed failure — fail
-        # loudly instead of silently storing a partial skill set
         for skill, embedding in zip(skills, embeddings, strict=True):
             key = f"{skill.namespace}.{skill.name}"
             if key not in self._skills or upsert:
