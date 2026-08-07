@@ -147,3 +147,29 @@ async def test_gantry_skills_unsupported_store_raises():
     gantry = AgentGantry(vector_store=NoSkillsStore())  # type: ignore[arg-type]
     with pytest.raises(NotImplementedError, match="does not support skills"):
         await gantry.add_skills(_make_skills())
+
+
+@pytest.mark.asyncio
+async def test_memory_store_skill_upsert_false_skips_existing():
+    store = InMemoryVectorStore()
+    skill = _make_skills()[0]
+    await store.add_skills([skill], [[1.0, 0.0]])
+
+    updated = skill.model_copy(update={"content": "changed content"})
+    assert await store.add_skills([updated], [[0.0, 1.0]], upsert=False) == 0
+    stored = await store.get_skill_by_name("api_pagination")
+    assert stored is not None and stored.content != "changed content"
+
+
+@pytest.mark.asyncio
+async def test_memory_store_add_skills_length_mismatch_raises():
+    store = InMemoryVectorStore()
+    with pytest.raises(ValueError):
+        await store.add_skills(_make_skills()[:2], [[1.0, 0.0]])
+
+
+@pytest.mark.asyncio
+async def test_gantry_add_skill_singular():
+    gantry = AgentGantry()
+    await gantry.add_skill(_make_skills()[0])
+    assert await gantry.count_skills() == 1

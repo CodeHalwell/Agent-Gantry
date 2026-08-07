@@ -133,15 +133,22 @@ class QdrantVectorStore:
         """
         if not self._quantization:
             return None
-        from qdrant_client.models import (
-            BinaryQuantization,
-            BinaryQuantizationConfig,
-            ScalarQuantization,
-            ScalarQuantizationConfig,
-            ScalarType,
-        )
-
+        # Import per mode: the binary-quantization models postdate older
+        # qdrant-client releases the extras still permit, so importing them
+        # unconditionally would break scalar mode (or plain construction) on
+        # clients that support everything scalar needs.
         if self._quantization == "scalar":
+            try:
+                from qdrant_client.models import (
+                    ScalarQuantization,
+                    ScalarQuantizationConfig,
+                    ScalarType,
+                )
+            except ImportError as exc:
+                raise ImportError(
+                    "quantization='scalar' requires a qdrant-client version with "
+                    "scalar quantization support; upgrade qdrant-client."
+                ) from exc
             return ScalarQuantization(
                 scalar=ScalarQuantizationConfig(
                     type=ScalarType.INT8,
@@ -149,12 +156,14 @@ class QdrantVectorStore:
                     always_ram=True,
                 )
             )
-        if self._quantization == "binary":
-            return BinaryQuantization(binary=BinaryQuantizationConfig(always_ram=True))
-        raise ValueError(
-            f"Unsupported quantization mode: {self._quantization!r} "
-            f"(expected 'scalar', 'binary', or None)"
-        )
+        try:
+            from qdrant_client.models import BinaryQuantization, BinaryQuantizationConfig
+        except ImportError as exc:
+            raise ImportError(
+                "quantization='binary' requires a qdrant-client version with "
+                "binary quantization support; upgrade qdrant-client."
+            ) from exc
+        return BinaryQuantization(binary=BinaryQuantizationConfig(always_ram=True))
 
     async def initialize(self) -> None:
         """Initialize the collection, creating it if needed."""
@@ -265,11 +274,17 @@ class QdrantVectorStore:
         # against the original vectors so returned scores stay exact.
         search_params = None
         if self._quantization:
-            from qdrant_client.models import QuantizationSearchParams, SearchParams
+            try:
+                from qdrant_client.models import QuantizationSearchParams, SearchParams
 
-            search_params = SearchParams(
-                quantization=QuantizationSearchParams(rescore=True, oversampling=2.0)
-            )
+                search_params = SearchParams(
+                    quantization=QuantizationSearchParams(rescore=True, oversampling=2.0)
+                )
+            except ImportError:
+                # A client old enough to lack these couldn't have created the
+                # quantized collection either, but degrade gracefully: the
+                # server still searches, just with its default rescoring.
+                logger.debug("qdrant-client lacks QuantizationSearchParams; using defaults")
         results = await self._client.search(
             collection_name=self._collection_name,
             query_vector=query_vector,

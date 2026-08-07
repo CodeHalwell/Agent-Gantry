@@ -238,7 +238,9 @@ class InMemoryVectorStore:
     ) -> int:
         """Add skills with their embeddings."""
         count = 0
-        for skill, embedding in zip(skills, embeddings):
+        # strict: a length mismatch means an upstream embed failure — fail
+        # loudly instead of silently storing a partial skill set
+        for skill, embedding in zip(skills, embeddings, strict=True):
             key = f"{skill.namespace}.{skill.name}"
             if key not in self._skills or upsert:
                 self._skills[key] = skill

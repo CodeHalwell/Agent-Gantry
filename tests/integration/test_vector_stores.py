@@ -207,3 +207,30 @@ def test_qdrant_quantization_mode_validated() -> None:
 
     with pytest.raises(ValueError, match="Unsupported quantization mode"):
         QdrantVectorStore(url="http://localhost:6333", quantization="turbo")
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_qdrant_binary_quantized_search(qdrant_url: str) -> None:
+    """Binary-quantized collections search correctly with exact rescoring."""
+    pytest.importorskip("qdrant_client")
+
+    from agent_gantry.adapters.vector_stores.remote import QdrantVectorStore
+
+    store = QdrantVectorStore(
+        url=qdrant_url,
+        collection_name="test_quantized_binary",
+        dimension=128,
+        quantization="binary",
+    )
+    embedder = SimpleEmbedder()
+    await store.initialize()
+
+    tools = _make_tools(5)
+    embeddings = await embedder.embed_batch([t.to_searchable_text() for t in tools])
+    assert await store.add_tools(tools, embeddings, upsert=True) == 5
+
+    query = await embedder.embed_text(tools[2].to_searchable_text())
+    results = await store.search(query_vector=query, limit=3)
+    assert results
+    assert results[0][0].name == tools[2].name

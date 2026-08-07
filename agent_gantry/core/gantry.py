@@ -1820,12 +1820,28 @@ class AgentGantry:
     # (never executed). Same embedder and vector store as tools.
     # ------------------------------------------------------------------
 
+    _SKILL_STORE_METHODS = (
+        "add_skills",
+        "search_skills",
+        "get_skill_by_name",
+        "delete_skill",
+        "list_all_skills",
+        "count_skills",
+    )
+
     def _skills_store(self) -> Any:
-        """Return the vector store if it supports skills, else raise."""
+        """Return the vector store if it supports skills, else raise.
+
+        Checks the full skill API surface up front so a partially
+        implemented adapter fails with this clear message instead of an
+        AttributeError from deep inside a later call.
+        """
         store = self._vector_store
-        if not hasattr(store, "add_skills"):
+        missing = [m for m in self._SKILL_STORE_METHODS if not hasattr(store, m)]
+        if missing:
             raise NotImplementedError(
-                f"{type(store).__name__} does not support skills. "
+                f"{type(store).__name__} does not support skills "
+                f"(missing: {', '.join(missing)}). "
                 f"InMemoryVectorStore (default) and LanceDBVectorStore do."
             )
         return store
@@ -1873,7 +1889,8 @@ class AgentGantry:
             query: Natural-language query (typically the user prompt)
             limit: Maximum number of skills to return
             namespace: Optional namespace (or list of namespaces) filter
-            category: Optional ``SkillCategory`` value filter
+            category: Optional category filter as its string value, e.g.
+                ``"how_to"`` or ``SkillCategory.PATTERN.value``
             score_threshold: Minimum similarity score (0-1)
 
         Returns:
