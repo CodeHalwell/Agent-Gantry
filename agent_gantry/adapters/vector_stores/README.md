@@ -42,6 +42,12 @@ without further changes.
 semantically and injected into prompts — see `gantry.add_skills()` / `gantry.retrieve_skills()`).
 Stores without skill support raise `NotImplementedError` from the facade's skill methods.
 
+Notes: skill content is injected into prompts verbatim, so register skills only from trusted
+sources. Switching embedding models re-embeds stored skills automatically when the dimension is
+unchanged; a dimension change cannot be migrated in place on fixed-schema stores (LanceDB) —
+recreate the store. Concurrent gantry instances with *different* embedders sharing one store are
+unsupported (each would re-migrate the other's vectors).
+
 ## Qdrant quantized search
 
 `QdrantVectorStore(quantization="scalar")` enables int8 scalar quantization (~4x smaller vectors,

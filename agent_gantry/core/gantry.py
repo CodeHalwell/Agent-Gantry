@@ -1864,10 +1864,17 @@ class AgentGantry:
 
         Tools get this via SyncManager's fingerprint/embedder-id machinery;
         skills need the equivalent or reopening a persistent store with a new
-        embedding model silently searches the old model's vectors (or fails
-        outright on a dimension change). Runs once per gantry instance — the
-        embedder is fixed for the instance's lifetime. Stores without the
-        metadata API skip the check (nothing to compare against).
+        embedding model silently searches the old model's vectors. Runs once
+        per gantry instance — the embedder is fixed for the instance's
+        lifetime. Stores without the metadata API skip the check (nothing to
+        compare against).
+
+        Limitations: switching to an embedder of a *different dimension*
+        cannot be migrated in place on fixed-schema stores (LanceDB tables
+        have a fixed vector width) — recreate the store instead; the failure
+        is surfaced with that guidance. And concurrent gantry instances using
+        *different* embedders against one shared store are unsupported: each
+        would re-migrate to its own vector space, thrashing the other's.
         """
         if self._skill_vectors_checked:
             return
@@ -1894,7 +1901,16 @@ class AgentGantry:
                         embeddings = await self._embedder.embed_batch(
                             [skill.to_embedding_text() for skill in skills]
                         )
-                        await store.add_skills(skills, embeddings, upsert=True)
+                        try:
+                            await store.add_skills(skills, embeddings, upsert=True)
+                        except Exception as exc:
+                            raise RuntimeError(
+                                f"Failed to re-embed stored skills for the current "
+                                f"embedder ({current!r}). If the new embedder has a "
+                                f"different dimension, fixed-schema stores (e.g. "
+                                f"LanceDB) cannot be migrated in place — recreate the "
+                                f"store, or use a same-dimension model."
+                            ) from exc
                         logger.info(
                             f"Re-embedded {len(skills)} skill(s): stored embedder id "
                             f"{stored!r} != current {current!r}"
@@ -1979,6 +1995,9 @@ class AgentGantry:
 
         Returns an empty string when nothing matches, so the result can be
         appended to a prompt unconditionally.
+
+        Skill content is injected into the prompt verbatim — register skills
+        only from sources you trust, exactly as you would tool descriptions.
         """
         results = await self.retrieve_skills(
             query,

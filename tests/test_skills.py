@@ -294,3 +294,24 @@ async def test_skill_migration_retries_after_transient_failure():
     results = await gantry_b.retrieve_skills(query, limit=1)
     assert results and results[0].skill.name == "api_pagination"
     assert results[0].score == pytest.approx(1.0, abs=1e-5)
+
+
+@pytest.mark.asyncio
+async def test_lancedb_list_all_skills_propagates_table_errors(tmp_path):
+    """Table-level listing errors must propagate — returning [] on failure is
+    indistinguishable from an empty store, which let the embedder-migration
+    check record success after listing nothing."""
+    pytest.importorskip("lancedb")
+
+    from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+
+    store = LanceDBVectorStore(db_path=str(tmp_path / "db"), dimension=8)
+    await store.initialize()
+
+    class BrokenTable:
+        def search(self):
+            raise RuntimeError("table exploded")
+
+    store._skills_table = BrokenTable()
+    with pytest.raises(RuntimeError, match="table exploded"):
+        await store.list_all_skills()

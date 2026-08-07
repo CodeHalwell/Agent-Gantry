@@ -732,27 +732,32 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
         if category is not None:
             _validate_identifier(category, "category")
 
-        try:
-            query = self._skills_table.search()
-            where_clauses = []
-            if namespace:
-                where_clauses.append(f"namespace = '{_escape_sql_string(namespace)}'")
-            if category:
-                where_clauses.append(f"category = '{_escape_sql_string(category)}'")
+        # Table-level errors propagate: swallowing them into an empty list is
+        # indistinguishable from "no skills stored", which let callers (e.g.
+        # the facade's embedder-migration check) record success after having
+        # listed nothing. Only malformed individual rows are skipped.
+        query = self._skills_table.search()
+        where_clauses = []
+        if namespace:
+            where_clauses.append(f"namespace = '{_escape_sql_string(namespace)}'")
+        if category:
+            where_clauses.append(f"category = '{_escape_sql_string(category)}'")
 
-            if where_clauses:
-                query = query.where(" AND ".join(where_clauses))
+        if where_clauses:
+            query = query.where(" AND ".join(where_clauses))
 
-            records = await asyncio.to_thread(query.limit(limit).offset(offset).to_list)
+        records = await asyncio.to_thread(query.limit(limit).offset(offset).to_list)
 
-            return [
-                Skill.model_validate_json(r["skill_json"])
-                for r in records
-                if r.get("skill_json")  # Skip records with missing skill_json
-            ]
-        except Exception as e:
-            logger.warning(f"Error listing skills: {e}")
-            return []
+        skills: list[Skill] = []
+        for record in records:
+            raw = record.get("skill_json")
+            if not raw:
+                continue
+            try:
+                skills.append(Skill.model_validate_json(raw))
+            except Exception as e:
+                logger.warning(f"Skipping malformed skill record: {e}")
+        return skills
 
     async def count(self, namespace: str | None = None) -> int:
         """
