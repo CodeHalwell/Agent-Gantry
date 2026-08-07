@@ -173,3 +173,42 @@ async def test_gantry_add_skill_singular():
     gantry = AgentGantry()
     await gantry.add_skill(_make_skills()[0])
     assert await gantry.count_skills() == 1
+
+
+@pytest.mark.asyncio
+async def test_skills_reembedded_after_embedder_change():
+    """Reopening a store with a different embedder must re-embed persisted
+    skills — otherwise queries embed with the new model but search the old
+    model's vectors, silently returning wrong guidance."""
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+
+    class ShiftedEmbedder(SimpleEmbedder):
+        """Same dimension, different vector space and identity."""
+
+        @property
+        def model_name(self) -> str:
+            return "shifted-model"
+
+        def get_embedder_id(self) -> str:
+            return f"shifted:{self.dimension}"
+
+        async def embed_text(self, text: str) -> list[float]:
+            base = await super().embed_text(text)
+            return list(reversed(base))
+
+        async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+            return [await self.embed_text(t) for t in texts]
+
+    store = InMemoryVectorStore()
+    skills = _make_skills()
+
+    gantry_a = AgentGantry(vector_store=store)
+    await gantry_a.add_skills(skills)
+
+    # Same store, different embedder: retrieval must self-heal by
+    # re-embedding, so an exact-text query still ranks its skill first with
+    # a perfect score
+    gantry_b = AgentGantry(vector_store=store, embedder=ShiftedEmbedder())
+    results = await gantry_b.retrieve_skills(skills[0].to_embedding_text(), limit=1)
+    assert results and results[0].skill.name == "api_pagination"
+    assert results[0].score == pytest.approx(1.0, abs=1e-5)

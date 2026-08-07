@@ -216,6 +216,9 @@ class AgentGantry:
         not loaded here because import + embedding is async.
         """
         self._pending_tools: list[ToolDefinition] = []
+        # One-shot guard for _ensure_skill_vectors_current (embedder is fixed
+        # for this instance's lifetime)
+        self._skill_vectors_checked = False
         self._pending_mcp_servers: list[MCPServerDefinition] = []
         self._tool_handlers: dict[str, Callable[..., Any]] = {}
         # MCP clients created by add_mcp_server (immediate discovery), kept so
@@ -1855,6 +1858,41 @@ class AgentGantry:
         """
         await self.add_skills([skill])
 
+    async def _ensure_skill_vectors_current(self, store: Any) -> None:
+        """Re-embed persisted skills if they were made by a different embedder.
+
+        Tools get this via SyncManager's fingerprint/embedder-id machinery;
+        skills need the equivalent or reopening a persistent store with a new
+        embedding model silently searches the old model's vectors (or fails
+        outright on a dimension change). Runs once per gantry instance — the
+        embedder is fixed for the instance's lifetime. Stores without the
+        metadata API skip the check (nothing to compare against).
+        """
+        if self._skill_vectors_checked:
+            return
+        self._skill_vectors_checked = True
+        get_meta = getattr(store, "get_metadata", None)
+        set_meta = getattr(store, "set_metadata", None)
+        if get_meta is None or set_meta is None:
+            return
+        current = self._sync_manager.get_embedder_id()
+        stored = await get_meta("skills_embedder_id")
+        if stored == current:
+            return
+        # Unknown or different embedder: re-embed whatever is stored (covers
+        # both a model switch and pre-existing skills with no recorded id)
+        skills = await store.list_all_skills(limit=1_000_000)
+        if skills:
+            embeddings = await self._embedder.embed_batch(
+                [skill.to_embedding_text() for skill in skills]
+            )
+            await store.add_skills(skills, embeddings, upsert=True)
+            logger.info(
+                f"Re-embedded {len(skills)} skill(s): stored embedder id "
+                f"{stored!r} != current {current!r}"
+            )
+        await set_meta("skills_embedder_id", current)
+
     async def add_skills(self, skills: list[Skill]) -> int:
         """
         Embed and store skills for semantic retrieval.
@@ -1869,6 +1907,7 @@ class AgentGantry:
             return 0
         store = self._skills_store()
         await self._ensure_initialized()
+        await self._ensure_skill_vectors_current(store)
         embeddings = await self._embedder.embed_batch(
             [skill.to_embedding_text() for skill in skills]
         )
@@ -1898,6 +1937,7 @@ class AgentGantry:
         """
         store = self._skills_store()
         await self._ensure_initialized()
+        await self._ensure_skill_vectors_current(store)
         query_embedding = await self._embedder.embed_text(query)
         filters: dict[str, Any] = {}
         if namespace is not None:
