@@ -46,7 +46,10 @@ Notes: skill content is injected into prompts verbatim, so register skills only 
 sources. Switching embedding models re-embeds stored skills automatically when the dimension is
 unchanged; a dimension change cannot be migrated in place on fixed-schema stores (LanceDB) —
 recreate the store. Concurrent gantry instances with *different* embedders sharing one store are
-unsupported (each would re-migrate the other's vectors).
+unsupported (each would re-migrate the other's vectors). Multiple worker processes sharing one
+embedded store path follow the backend's multi-writer semantics — LanceDB's upsert is a
+non-atomic delete-then-add — so let one worker warm the store after a model switch before the
+others start (an atomic `merge_insert`-based upsert is a planned follow-up).
 
 ## Qdrant quantized search
 

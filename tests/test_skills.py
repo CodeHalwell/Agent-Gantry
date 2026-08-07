@@ -348,3 +348,28 @@ async def test_skill_embedder_marker_scoped_per_table():
     results = await gantry_b.retrieve_skills(query, limit=1)
     assert results and results[0].skill.name == "api_pagination"
     assert results[0].score == pytest.approx(1.0, abs=1e-5)
+
+
+@pytest.mark.asyncio
+async def test_gantry_skill_roundtrip_lancedb(tmp_path):
+    """Full facade round trip against the other skill-capable store."""
+    pytest.importorskip("lancedb")
+
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+
+    embedder = SimpleEmbedder()
+    store = LanceDBVectorStore(db_path=str(tmp_path / "db"), dimension=embedder.dimension)
+    gantry = AgentGantry(vector_store=store, embedder=embedder)
+
+    skills = _make_skills()
+    assert await gantry.add_skills(skills) == 3
+    assert await gantry.count_skills() == 3
+
+    results = await gantry.retrieve_skills(skills[0].to_embedding_text(), limit=2)
+    assert results and results[0].skill.name == "api_pagination"
+    assert results[0].score == pytest.approx(1.0, abs=1e-2)
+
+    assert await gantry.delete_skill("retry_backoff") is True
+    assert await gantry.count_skills() == 2
+    assert {s.name for s in await gantry.list_skills()} == {"api_pagination", "db_migration"}

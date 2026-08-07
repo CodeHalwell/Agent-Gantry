@@ -1872,9 +1872,15 @@ class AgentGantry:
         Limitations: switching to an embedder of a *different dimension*
         cannot be migrated in place on fixed-schema stores (LanceDB tables
         have a fixed vector width) — recreate the store instead; the failure
-        is surfaced with that guidance. And concurrent gantry instances using
+        is surfaced with that guidance. Concurrent gantry instances using
         *different* embedders against one shared store are unsupported: each
         would re-migrate to its own vector space, thrashing the other's.
+        And the lock here serializes tasks within this process only —
+        multiple worker *processes* sharing one embedded store path follow
+        the backend's multi-writer semantics (LanceDB's upsert is a
+        non-atomic delete-then-add), so serialize the first post-model-switch
+        access externally when running multiple workers, or let one worker
+        warm the store before the others start.
         """
         if self._skill_vectors_checked:
             return
@@ -1893,7 +1899,11 @@ class AgentGantry:
                 # Scope the marker to the skills table where the store names
                 # one: multiple configured skills tables can share a single
                 # metadata table (LanceDB), and an unscoped key would let one
-                # table's migration mark the others as migrated too.
+                # table's migration mark the others as migrated too. Adapter
+                # contract: stores whose metadata table is shared across
+                # differently-configured skills tables should expose
+                # _skills_table_name; stores without it get a store-wide
+                # marker, which is correct when metadata is per-store.
                 table_id = getattr(store, "_skills_table_name", None)
                 marker_key = (
                     f"skills_embedder_id:{table_id}" if table_id else "skills_embedder_id"
