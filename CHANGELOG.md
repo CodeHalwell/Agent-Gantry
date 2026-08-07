@@ -423,16 +423,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pydantic_ai.models.test.TestModel`, and the others gate their live
   agent/model run behind `OPENAI_API_KEY`. `examples/agent_frameworks/
   README.md` documents all five.
- 2026-06-16
-
-### Removed
-
-- **BREAKING — `ToolDefinition.to_openai_schema()`, `to_anthropic_schema()`, and
-  `to_gemini_schema()` removed.** These were thin deprecated shims over
-  `to_dialect()` with no internal or example callers. Use
-  `ToolDefinition.to_dialect("openai" | "anthropic" | "gemini", ...)` instead.
-  (`Skill` / `SkillRegistry.to_anthropic_schema` is a separate, actively-used
-  method and is unchanged.)
 
 ### Fixed
 
@@ -458,17 +448,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   row), which also removes the router's re-embed fallback for MMR.
 - `MCPManager.add_server` returned a `(count, tools)` tuple while annotated
   `-> int`; the annotation now matches the return value.
-- **MCP initialisation no longer masks real failures.** `AgentGantry` now
-  separates the *import* guard from the *construction* guard: an expected-absent
-  MCP install is logged at DEBUG and degrades silently to no-MCP, while an
-  unexpected construction failure (e.g. a broken/partial `mcp` install) is logged
-  at WARNING with a traceback instead of being swallowed at DEBUG. Either way
-  `AgentGantry()` still constructs successfully.
-- **`GantryContextProvider` is a class again.** It is now a thin class whose
-  `__new__` delegates to a cached implementation class, so it remains valid in
-  type annotations and `isinstance()` checks return `False` rather than raising
-  `TypeError`. The `score_threshold` property is now typed `float | str` to match
-  the config (relative-threshold strings are valid).
 - **BREAKING (bugfix) — a broken `gantry.retrieve()` mid-conversation no
   longer crashes six of the eight per-turn live providers.**
   `integrations/frameworks/{autogen_live,langgraph_live,llamaindex_live,
@@ -490,6 +469,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Callers who relied on a selection failure raising out of one of these six
   providers (e.g. to abort a run) must now check the `WARNING` log or wrap
   `gantry.retrieve()`/the vector store itself instead.
+
+## [0.9.0] - 2026-06-16
+
+### Removed
+
+- **BREAKING — `ToolDefinition.to_openai_schema()`, `to_anthropic_schema()`, and
+  `to_gemini_schema()` removed.** These were thin deprecated shims over
+  `to_dialect()` with no internal or example callers. Use
+  `ToolDefinition.to_dialect("openai" | "anthropic" | "gemini", ...)` instead.
+  (`Skill` / `SkillRegistry.to_anthropic_schema` is a separate, actively-used
+  method and is unchanged.)
+
+### Fixed
+
+- **MCP initialisation no longer masks real failures.** `AgentGantry` now
+  separates the *import* guard from the *construction* guard: an expected-absent
+  MCP install is logged at DEBUG and degrades silently to no-MCP, while an
+  unexpected construction failure (e.g. a broken/partial `mcp` install) is logged
+  at WARNING with a traceback instead of being swallowed at DEBUG. Either way
+  `AgentGantry()` still constructs successfully.
+- **`GantryContextProvider` is a class again.** It is now a thin class whose
+  `__new__` delegates to a cached implementation class, so it remains valid in
+  type annotations and `isinstance()` checks return `False` rather than raising
+  `TypeError`. The `score_threshold` property is now typed `float | str` to match
+  the config (relative-threshold strings are valid).
 
 ### Changed
 
