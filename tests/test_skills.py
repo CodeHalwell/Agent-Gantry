@@ -315,3 +315,36 @@ async def test_lancedb_list_all_skills_propagates_table_errors(tmp_path):
     store._skills_table = BrokenTable()
     with pytest.raises(RuntimeError, match="table exploded"):
         await store.list_all_skills()
+
+
+@pytest.mark.asyncio
+async def test_skill_embedder_marker_scoped_per_table():
+    """One store path can host multiple named skills tables sharing a single
+    metadata table (LanceDB): migrating one table must not mark the others
+    as migrated."""
+    shared_meta: dict[str, str] = {}
+
+    class NamedTableStore(InMemoryVectorStore):
+        def __init__(self, name: str) -> None:
+            super().__init__()
+            self._skills_table_name = name
+            self._metadata = shared_meta  # simulate the shared metadata table
+
+    store_a = NamedTableStore("skills_a")
+    store_b = NamedTableStore("skills_b")
+    skills = _make_skills()
+
+    # Both tables hold vectors from the default embedder
+    await AgentGantry(vector_store=store_a).add_skills(skills)
+    await AgentGantry(vector_store=store_b).add_skills(skills)
+
+    shifted = _shifted_embedder_cls()
+    # Migrate table A to the shifted embedder
+    await AgentGantry(vector_store=store_a, embedder=shifted()).retrieve_skills("q")
+
+    # Table B must still migrate for its own gantry — A's marker is not B's
+    gantry_b = AgentGantry(vector_store=store_b, embedder=shifted())
+    query = skills[0].to_embedding_text()
+    results = await gantry_b.retrieve_skills(query, limit=1)
+    assert results and results[0].skill.name == "api_pagination"
+    assert results[0].score == pytest.approx(1.0, abs=1e-5)

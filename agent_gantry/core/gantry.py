@@ -1890,8 +1890,16 @@ class AgentGantry:
             get_meta = getattr(store, "get_metadata", None)
             set_meta = getattr(store, "set_metadata", None)
             if get_meta is not None and set_meta is not None:
+                # Scope the marker to the skills table where the store names
+                # one: multiple configured skills tables can share a single
+                # metadata table (LanceDB), and an unscoped key would let one
+                # table's migration mark the others as migrated too.
+                table_id = getattr(store, "_skills_table_name", None)
+                marker_key = (
+                    f"skills_embedder_id:{table_id}" if table_id else "skills_embedder_id"
+                )
                 current = self._sync_manager.get_embedder_id()
-                stored = await get_meta("skills_embedder_id")
+                stored = await get_meta(marker_key)
                 if stored != current:
                     # Unknown or different embedder: re-embed whatever is
                     # stored (covers both a model switch and pre-existing
@@ -1915,7 +1923,7 @@ class AgentGantry:
                             f"Re-embedded {len(skills)} skill(s): stored embedder id "
                             f"{stored!r} != current {current!r}"
                         )
-                    await set_meta("skills_embedder_id", current)
+                    await set_meta(marker_key, current)
             self._skill_vectors_checked = True
 
     async def add_skills(self, skills: list[Skill]) -> int:
