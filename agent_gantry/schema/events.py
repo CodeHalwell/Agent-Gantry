@@ -9,7 +9,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, ConfigDict
+
+from agent_gantry.schema.base import reject_newlines
 
 from agent_gantry.schema.tool import ToolHealth
 
@@ -41,6 +43,13 @@ class ExecutionEvent(BaseModel):
     error: str | None = None
     error_type: str | None = None
 
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
+    @field_validator("trace_id", "span_id", "tool_name")
+    @classmethod
+    def validate_identifiers(cls, v: str | None) -> str | None:
+        return reject_newlines(v)
+
 
 class HealthChangeEvent(BaseModel):
     """Event emitted when a tool's health status changes."""
@@ -50,6 +59,13 @@ class HealthChangeEvent(BaseModel):
     old_health: ToolHealth
     new_health: ToolHealth
     reason: str
+
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
+    @field_validator("tool_name")
+    @classmethod
+    def validate_identifiers(cls, v: str | None) -> str | None:
+        return reject_newlines(v)
 
 
 class TokenUsageEvent(BaseModel):
@@ -66,3 +82,10 @@ class TokenUsageEvent(BaseModel):
     saved_prompt_tokens: int | None = None
     savings_pct: float | None = None
     trace_id: str | None = None
+
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
+    @field_validator("trace_id")
+    @classmethod
+    def validate_identifiers(cls, v: str | None) -> str | None:
+        return reject_newlines(v)

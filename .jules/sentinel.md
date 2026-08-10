@@ -89,3 +89,10 @@
 **Vulnerability:** The `AgentSkill` and `AgentCard` models lacked identifier validation for `id` and `name` fields, making them vulnerable to newline injection. This could lead to downstream log injection or command injection.
 **Learning:** Security validations for common schema patterns (like identifier sanitation) must be universally applied across all analogous models within a system (e.g., tools, MCP servers, skills, and A2A agents).
 **Prevention:** Always implement explicit string character checks (using `reject_newlines`) with `@field_validator` on all identifier fields across all Pydantic models. Ensure `model_config = ConfigDict(validate_assignment=True)` is set so these constraints cannot be bypassed after object instantiation.
+
+## 2026-06-08 - [HIGH] Fix regex bypass via newline injection in Events, Execution and Config models
+**Vulnerability:** Models representing configuration, events, and execution lacked identifier validation for fields like `trace_id`, `span_id`, `tool_name`, `name`, and `namespace`, making them vulnerable to newline injection. Similar to `ToolDefinition`, if validation relying on Pydantic v2's Rust regex crate (which treats `$` as end-of-line) were used, it would accept trailing newlines (e.g., `valid_name
+`). This could lead to downstream log injection, command injection, or path traversal.
+**Learning:** Security validations for common schema patterns (like identifier sanitation) must be universally applied across all analogous models within a system. Relying on Pydantic's pattern matching alone is unsafe against newline injection due to the regex engine's line anchor behavior.
+**Prevention:** Always implement explicit string character checks (`"
+" in v` and `"" in v`) using `@field_validator` on all identifier fields across all Pydantic models. Ensure `model_config = ConfigDict(validate_assignment=True)` is set so these constraints cannot be bypassed after object instantiation.
