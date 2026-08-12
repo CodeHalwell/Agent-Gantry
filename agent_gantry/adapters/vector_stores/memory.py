@@ -332,7 +332,11 @@ class InMemoryVectorStore:
     async def count_skills(self, namespace: str | None = None) -> int:
         """Count skills."""
         if namespace:
-            return sum(1 for s in self._skills.values() if s.namespace == namespace)
+            count = 0
+            for s in self._skills.values():
+                if s.namespace == namespace:
+                    count += 1
+            return count
         return len(self._skills)
 
     def _skill_matrix_for(self, dim: int) -> tuple[np.ndarray, list[str]]:
