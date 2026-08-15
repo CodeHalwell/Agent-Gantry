@@ -234,8 +234,7 @@ class LanceDBMetadataMixin:
         try:
             query = self._tools_table.search().select(["id", "fingerprint"]).limit(None)  # type: ignore
             table = await asyncio.to_thread(query.to_arrow)
-            records = table.to_pylist()
-            return {r["id"]: r.get("fingerprint", "") for r in records}
+            return dict(zip(table["id"].to_pylist(), [f or "" for f in table["fingerprint"].to_pylist()]))
         except Exception as e:
             logger.debug(f"get_stored_fingerprints failed: {e}")
             return {}
