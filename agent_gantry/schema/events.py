@@ -12,6 +12,8 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from agent_gantry.schema.tool import ToolHealth
+from agent_gantry.schema.base import reject_newlines
+from pydantic import field_validator, ConfigDict
 
 
 class RetrievalEvent(BaseModel):
@@ -27,6 +29,13 @@ class RetrievalEvent(BaseModel):
     scores: list[float]
     filters_applied: dict[str, Any] = Field(default_factory=dict)
 
+    model_config = ConfigDict(validate_assignment=True)
+
+    @field_validator("trace_id")
+    @classmethod
+    def validate_trace_id(cls, v: str) -> str:
+        return reject_newlines(v)
+
 
 class ExecutionEvent(BaseModel):
     """Event emitted after a tool execution."""
@@ -41,6 +50,13 @@ class ExecutionEvent(BaseModel):
     error: str | None = None
     error_type: str | None = None
 
+    model_config = ConfigDict(validate_assignment=True)
+
+    @field_validator("trace_id", "span_id", "tool_name")
+    @classmethod
+    def validate_identifiers(cls, v: str) -> str:
+        return reject_newlines(v)
+
 
 class HealthChangeEvent(BaseModel):
     """Event emitted when a tool's health status changes."""
@@ -50,6 +66,13 @@ class HealthChangeEvent(BaseModel):
     old_health: ToolHealth
     new_health: ToolHealth
     reason: str
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    @field_validator("tool_name")
+    @classmethod
+    def validate_tool_name(cls, v: str) -> str:
+        return reject_newlines(v)
 
 
 class TokenUsageEvent(BaseModel):
@@ -66,3 +89,10 @@ class TokenUsageEvent(BaseModel):
     saved_prompt_tokens: int | None = None
     savings_pct: float | None = None
     trace_id: str | None = None
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    @field_validator("trace_id")
+    @classmethod
+    def validate_trace_id(cls, v: str) -> str:
+        return reject_newlines(v)

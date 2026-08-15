@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, ConfigDict
+from agent_gantry.schema.base import reject_newlines
 
 from agent_gantry.schema.tool import ToolCapability, ToolDefinition, ToolSource
 
@@ -109,6 +110,13 @@ class RetrievalResult(BaseModel):
     filtered_count: int
 
     trace_id: str
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    @field_validator("trace_id")
+    @classmethod
+    def validate_trace_id(cls, v: str) -> str:
+        return reject_newlines(v)
 
     def to_openai_tools(self) -> list[dict[str, Any]]:
         """
