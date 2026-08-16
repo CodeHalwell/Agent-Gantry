@@ -50,3 +50,6 @@
 ## 2026-06-25 - Push LanceDB operations to database engine
 **Learning:** When querying LanceDB tables in Python, loading the entire table into memory via `table.to_arrow().to_pylist()` for filtering, counting, or pagination creates an O(N) memory bottleneck on large datasets. Additionally, retrieving all columns when only specific ones are needed (like 'id' and 'fingerprint') increases the payload significantly.
 **Action:** Use LanceDB native query builders like `search().where(condition).limit(limit).offset(offset).to_list()`, `count_rows(condition)`, and `.select(["col1", "col2"])` instead of pulling the data into Python lists to process them.
+## 2026-06-26 - Fast dictionary construction from columns
+**Learning:** When retrieving specific columns from LanceDB tables in Python (e.g., just IDs and fingerprints) to build a dictionary mapping, calling `.to_pylist()` on the entire resulting PyArrow table is inefficient because it allocates a dictionary for every row.
+**Action:** Use `.select(['col1', 'col2']).limit(None).to_arrow()` and directly construct the mapping by extracting and zipping the specific column lists (e.g., `dict(zip(table['col1'].to_pylist(), table['col2'].to_pylist()))`).
