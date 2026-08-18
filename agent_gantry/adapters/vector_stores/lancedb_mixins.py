@@ -234,8 +234,13 @@ class LanceDBMetadataMixin:
         try:
             query = self._tools_table.search().select(["id", "fingerprint"]).limit(None)  # type: ignore
             table = await asyncio.to_thread(query.to_arrow)
-            records = table.to_pylist()
-            return {r["id"]: r.get("fingerprint", "") for r in records}
+
+            # Bolt Optimization: Extract column lists directly instead of calling table.to_pylist()
+            # This avoids allocating a new Python dictionary for every row in O(N) time.
+            ids = table["id"].to_pylist()
+            fingerprints = table["fingerprint"].to_pylist()
+
+            return {id_val: (fp if fp is not None else "") for id_val, fp in zip(ids, fingerprints)}
         except Exception as e:
             logger.debug(f"get_stored_fingerprints failed: {e}")
             return {}
