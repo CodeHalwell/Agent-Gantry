@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (frameworks)
+
+- **The sync bridge no longer serializes every tool call, and no longer
+  deadlocks on a nested one.** `ToolSpec.invoke` hands its coroutine to a
+  worker thread when a loop is already running. That pool was `max_workers=1`
+  and process-wide, so every sync tool call in the process queued behind every
+  other — a multi-agent CrewAI run ran strictly one tool at a time — and a
+  handler that itself called `invoke` waited on the single worker it was
+  occupying, hanging forever. The pool now sizes like a normal
+  `ThreadPoolExecutor`, a re-entrant call gets its own thread instead of a pool
+  slot, and lazy construction is locked so a race cannot build two pools.
+- **OpenAI Agents tools keep their optional parameters optional.**
+  `FunctionTool.strict_json_schema` defaults to `True`, and the SDK's
+  `ensure_strict_json_schema` then rewrites `required` to list *every*
+  property. The adapter set only a top-level `additionalProperties: False`, so
+  that rewrite silently made every optional Gantry parameter mandatory with no
+  `null` union, raised `UserError` on nested `additionalProperties: true`, and
+  on older SDKs sent a non-strict schema with `strict=true` (a 400). It now
+  uses the shared strict transform.
+- **Structured tool results reach the model as JSON.** The OpenAI Agents
+  adapter and the AutoGen workbench rendered results with `str()`, so a dict
+  arrived as Python repr (single quotes, `None`, `True`) for the model to
+  guess at. Both now serialize non-strings as JSON, matching the Agent
+  Framework bridge.
+
 ### Added
 
 - **Token usage is now measured.** `TokenUsageEvent` was defined and never

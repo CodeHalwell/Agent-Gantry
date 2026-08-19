@@ -31,6 +31,7 @@ The ``autogen_core`` import is lazy (only inside the class/factory), so
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
@@ -245,9 +246,19 @@ def _build_workbench_class() -> type:
 
 
 def _as_text(value: Any) -> str:
-    """Render a tool's raw return value as text for a ``TextResultContent``."""
+    """Render a tool's raw return value as text for a ``TextResultContent``.
+
+    Structured results are serialized as JSON rather than ``str()``: the latter
+    yields Python repr (single quotes, ``None``/``True``) for a dict or list,
+    which the model then has to guess at. Matches the Agent Framework bridge.
+    """
     if isinstance(value, str):
         return value
+    if isinstance(value, (dict, list, tuple)):
+        try:
+            return json.dumps(value, default=str)
+        except (TypeError, ValueError):
+            return str(value)
     return str(value)
 
 

@@ -104,3 +104,63 @@ async def test_missing_openai_agents_raises_helpful_error(monkeypatch, gantry):
     specs = await GantryToolset(gantry).select("send an email", limit=1)
     with pytest.raises(ImportError, match="pip install openai-agents"):
         OpenAIAgentsAdapter.convert(specs[0])
+
+
+async def test_strict_schema_keeps_optional_params_optional(fake_agents, gantry):
+    """Strict mode must not silently promote optional params to mandatory.
+
+    ``FunctionTool.strict_json_schema`` defaults to True and the SDK then runs
+    ``ensure_strict_json_schema``, which rewrites ``required`` to list every
+    property. Setting only a top-level ``additionalProperties: False`` left
+    that rewrite to make ``body`` mandatory with no ``null`` union — the model
+    was then forced to invent a value for a parameter the tool defaults.
+    """
+    from agent_gantry.integrations.frameworks.base import GantryToolset
+    from agent_gantry.integrations.frameworks.openai_agents import OpenAIAgentsAdapter
+
+    specs = await GantryToolset(gantry).select("send an email", limit=1)
+    schema = OpenAIAgentsAdapter.convert(specs[0]).params_json_schema
+
+    assert schema["additionalProperties"] is False
+    # The SDK will force this anyway; the point is that `body` stays satisfiable.
+    assert set(schema["required"]) == {"to", "body"}
+    assert schema["properties"]["to"]["type"] == "string"
+    assert schema["properties"]["body"]["type"] == ["string", "null"]
+
+
+async def test_strict_schema_does_not_mutate_the_registry(fake_agents, gantry):
+    from agent_gantry.integrations.frameworks.base import GantryToolset
+    from agent_gantry.integrations.frameworks.openai_agents import OpenAIAgentsAdapter
+
+    specs = await GantryToolset(gantry).select("send an email", limit=1)
+    spec = specs[0]
+    before = spec.parameters.get("required", [])
+
+    OpenAIAgentsAdapter.convert(spec)
+
+    assert spec.parameters.get("required", []) == before
+    assert "additionalProperties" not in spec.parameters
+
+
+async def test_structured_results_are_json_not_python_repr(fake_agents, gantry):
+    """A dict result must reach the model as JSON, not ``str(dict)``."""
+    import json
+
+    from agent_gantry.integrations.frameworks.base import GantryToolset
+    from agent_gantry.integrations.frameworks.openai_agents import OpenAIAgentsAdapter
+
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @g.register(tags=["report"])
+    def build_report(name: str) -> dict:
+        "Build a structured report payload for a named subject."
+        return {"name": name, "ok": True, "items": None}
+
+    await g.sync()
+
+    specs = await GantryToolset(g).select("build a structured report", limit=1)
+    tool = OpenAIAgentsAdapter.convert(specs[0])
+    rendered = await tool.on_invoke_tool(None, json.dumps({"name": "q3"}))
+
+    assert json.loads(rendered) == {"name": "q3", "ok": True, "items": None}
+    assert "'" not in rendered, f"Python repr leaked to the model: {rendered}"
