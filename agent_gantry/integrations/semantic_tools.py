@@ -97,7 +97,8 @@ class SemanticToolSelector:
         tools_param: The parameter name for passing tools to the LLM.
         limit: Maximum number of tools to retrieve.
         dialect: The schema dialect for tool conversion (openai, anthropic, gemini).
-        auto_sync: Whether to automatically sync tools before retrieval.
+        auto_sync: Deprecated and ignored — the gantry always ensures an
+            (incremental) sync before retrieval.
         score_threshold: Minimum score threshold for tool selection.
     """
 
@@ -121,7 +122,9 @@ class SemanticToolSelector:
             tools_param: The parameter name for passing tools to the LLM.
             limit: Maximum number of tools to retrieve (default: 5).
             dialect: Schema dialect for tool conversion (default: "openai").
-            auto_sync: Whether to sync tools before retrieval (default: True).
+            auto_sync: Deprecated and ignored — ``AgentGantry.retrieve()``
+                always ensures an incremental sync before routing. Passing
+                ``False`` warns and changes nothing.
             score_threshold: Minimum score threshold (default: 0.0 — no
                 filtering, matching every framework adapter in
                 ``agent_gantry.integrations.frameworks``. This intentionally
@@ -136,6 +139,19 @@ class SemanticToolSelector:
         self._dialect = dialect
         self._auto_sync = auto_sync
         self._score_threshold = score_threshold
+        if not auto_sync:
+            import warnings
+
+            warnings.warn(
+                "auto_sync=False has no effect: AgentGantry.retrieve() always "
+                "calls ensure_synced() before routing, so tools are synced "
+                "regardless of this flag. The parameter is accepted for "
+                "backward compatibility and will be removed in a future "
+                "release; sync is incremental (fingerprint-based), so leaving "
+                "it enabled is cheap.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
 
     async def _retrieve_tools(self, prompt: str) -> list[dict[str, Any]]:
         """
@@ -410,7 +426,8 @@ def with_semantic_tools(
         tools_param: Parameter name for injecting tools (default: "tools").
         limit: Maximum tools to retrieve (default: 5).
         dialect: Tool schema format - "openai", "anthropic", "gemini" (default: "openai").
-        auto_sync: Whether to sync tools before retrieval (default: True).
+        auto_sync: Deprecated and ignored — the gantry always ensures an
+            incremental sync before retrieval.
         score_threshold: Minimum relevance score for tools (default: 0.0 — no
             filtering, matching every framework adapter in
             ``agent_gantry.integrations.frameworks``; the raw ``ToolQuery``
@@ -561,7 +578,7 @@ class SemanticToolsDecorator:
             tools_param: Default parameter name for tools.
             limit: Default maximum tools to retrieve.
             dialect: Default schema dialect.
-            auto_sync: Whether to auto-sync by default.
+            auto_sync: Deprecated and ignored (see ``with_semantic_tools``).
             score_threshold: Default score threshold (0.0 — no filtering,
                 matching every framework adapter; see the module-level note on
                 ``with_semantic_tools`` for why this differs from the raw

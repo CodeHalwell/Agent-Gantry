@@ -147,3 +147,34 @@ async def test_mmr_promotes_diversity() -> None:
     names = [tool.tool.name for tool in result.tools]
     assert "email_customer" in names
     assert "notify_customer" in names
+
+
+@pytest.mark.asyncio
+async def test_configured_reranker_runs_by_default(sample_tools) -> None:
+    """A configured reranker must apply when the query does not opt out.
+
+    ``retrieve()`` enables reranking when ``query.enable_reranking is None``,
+    but the field used to be ``bool = False`` -- never ``None`` -- so that
+    branch was dead and a configured reranker silently never ran. The field is
+    now tri-state: ``None`` defers to config, ``True``/``False`` force it.
+    """
+    from agent_gantry.schema.config import AgentGantryConfig, RerankerConfig
+
+    config = AgentGantryConfig(reranker=RerankerConfig(enabled=True))
+    gantry = AgentGantry(config=config, reranker=ForceReportReranker())
+    for tool in sample_tools:
+        await gantry.add_tool(tool)
+
+    context = ConversationContext(query="send an email summary to finance")
+
+    # No explicit enable_reranking -> defer to config -> reranker runs.
+    defaulted = await gantry.retrieve(
+        ToolQuery(context=context, limit=2, score_threshold=0.0),
+    )
+    assert defaulted.tools[0].tool.name == "generate_report"
+
+    # An explicit False still wins over the config.
+    opted_out = await gantry.retrieve(
+        ToolQuery(context=context, limit=2, enable_reranking=False, score_threshold=0.0),
+    )
+    assert opted_out.tools[0].tool.name == "send_email"

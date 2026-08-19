@@ -271,3 +271,73 @@ async def test_get_stats_and_reset():
         global_stats_after = limiter.get_stats()
         assert global_stats_after["total_keys"] == 0
         assert global_stats_after["total_concurrent"] == 0
+
+
+async def test_concurrency_cap_holds_when_the_strategy_check_yields():
+    """The cap must hold even if the rate-limit strategy check suspends.
+
+    ``acquire`` used to check the concurrency counter under the lock, release
+    it to run the strategy check, then re-acquire it to increment. Today's
+    strategy checks contain no real ``await`` and an uncontended
+    ``asyncio.Lock`` takes a non-yielding fast path, so that gap never actually
+    interleaved -- the bug was latent rather than live. It would surface the
+    moment any strategy check suspended (an async store, a clock lookup, an
+    I/O-backed window). This test forces exactly that suspension so the
+    invariant is pinned structurally instead of resting on the checks staying
+    synchronous forever.
+    """
+    import asyncio
+
+    config = RateLimitConfig(
+        enabled=True,
+        max_concurrent=1,
+        max_calls_per_minute=1000,
+        max_calls_per_hour=10000,
+        strategy="sliding_window",
+    )
+    limiter = RateLimiter(config=config)
+
+    original = limiter._sliding_window_check
+
+    async def yielding_check(key: str) -> None:
+        await asyncio.sleep(0)  # a strategy check that actually suspends
+        await original(key)
+
+    limiter._sliding_window_check = yielding_check  # type: ignore[method-assign]
+
+    admitted = 0
+
+    async def try_acquire() -> None:
+        nonlocal admitted
+        try:
+            await limiter.acquire("tool", "ns")
+        except RateLimitExceeded:
+            return
+        admitted += 1
+
+    await asyncio.gather(*(try_acquire() for _ in range(20)))
+
+    assert admitted == 1, f"admitted {admitted} callers against max_concurrent=1"
+    assert limiter._concurrent[limiter._get_key("tool", "ns")] == 1
+
+
+async def test_strategy_rejection_does_not_leak_a_concurrency_slot():
+    """A rate-limit rejection must not consume a concurrency slot."""
+    config = RateLimitConfig(
+        enabled=True,
+        max_concurrent=5,
+        max_calls_per_minute=1,
+        max_calls_per_hour=10000,
+        strategy="sliding_window",
+    )
+    limiter = RateLimiter(config=config)
+    key = limiter._get_key("tool", "ns")
+
+    await limiter.acquire("tool", "ns")
+    assert limiter._concurrent[key] == 1
+
+    with pytest.raises(RateLimitExceeded):
+        await limiter.acquire("tool", "ns")
+
+    # The rejected call must leave the counter untouched.
+    assert limiter._concurrent[key] == 1

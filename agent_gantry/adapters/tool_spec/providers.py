@@ -17,6 +17,8 @@ from agent_gantry.schema.execution import ToolCall
 if TYPE_CHECKING:
     from agent_gantry.schema.tool import ToolDefinition
 
+_logger = logging.getLogger(__name__)
+
 
 class OpenAIAdapter:
     """
@@ -96,6 +98,12 @@ class OpenAIAdapter:
             try:
                 arguments = json.loads(arguments)
             except json.JSONDecodeError:
+                _logger.warning(
+                    "OpenAIAdapter: malformed JSON in tool arguments "
+                    "for '%s', defaulting to empty dict: %s",
+                    tool_name,
+                    arguments[:200],
+                )
                 arguments = {}
 
         return ToolCallPayload(
@@ -228,6 +236,12 @@ class OpenAIResponsesAdapter:
             try:
                 arguments = json.loads(arguments)
             except json.JSONDecodeError:
+                _logger.warning(
+                    "OpenAIResponsesAdapter: malformed JSON in tool arguments "
+                    "for '%s', defaulting to empty dict: %s",
+                    tool_name,
+                    arguments[:200],
+                )
                 arguments = {}
 
         return ToolCallPayload(
@@ -535,9 +549,6 @@ class GroqAdapter(OpenAIAdapter):
     @property
     def dialect_name(self) -> str:
         return "groq"
-
-
-_logger = logging.getLogger(__name__)
 
 
 class AgentFrameworkAdapter(OpenAIAdapter):

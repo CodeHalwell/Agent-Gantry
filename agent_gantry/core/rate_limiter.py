@@ -128,24 +128,32 @@ class RateLimiter:
 
         key = self._get_key(tool_name, namespace)
 
-        # Check concurrent limit
+        # One critical section covering check -> strategy -> increment. These
+        # were previously three separate steps with the lock released in
+        # between. No overshoot was actually reachable -- the strategy checks
+        # contain no ``await`` and an uncontended ``asyncio.Lock`` takes a
+        # non-yielding fast path, so nothing could interleave -- but the
+        # ``max_concurrent`` guarantee rested on that remaining true. Holding
+        # one lock makes it structural, and costs one lock cycle instead of
+        # two. Safe because nothing in here suspends, so it cannot deadlock.
         async with self._lock_for_running_loop():
+            # Check concurrent limit
             if self._concurrent[key] >= self._config.max_concurrent:
                 raise RateLimitExceeded(
                     f"Concurrent execution limit ({self._config.max_concurrent}) exceeded for {key}",
                     retry_after=1.0,
                 )
 
-        # Check rate limit based on strategy
-        if self._config.strategy == "sliding_window":
-            await self._sliding_window_check(key)
-        elif self._config.strategy == "token_bucket":
-            await self._token_bucket_check(key)
-        elif self._config.strategy == "fixed_window":
-            await self._fixed_window_check(key)
+            # Check rate limit based on strategy. A raise here propagates
+            # without incrementing the concurrency counter, as before.
+            if self._config.strategy == "sliding_window":
+                await self._sliding_window_check(key)
+            elif self._config.strategy == "token_bucket":
+                await self._token_bucket_check(key)
+            elif self._config.strategy == "fixed_window":
+                await self._fixed_window_check(key)
 
-        # Increment concurrent counter
-        async with self._lock_for_running_loop():
+            # Increment concurrent counter
             self._concurrent[key] += 1
 
     async def release(

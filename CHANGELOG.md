@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Anthropic convenience clients no longer silently drop every tool.**
+  `AnthropicClient.create_message` and `SkillsClient.create_message` built
+  their `ToolQuery` without `score_threshold`, inheriting the schema default
+  of 0.5. That default is documented as a silent-drop trap for convenience
+  layers — long queries dilute absolute similarity, so retrieval could return
+  zero tools with no error. Both now pass `0.0`, matching every other
+  convenience surface.
+- **A configured reranker now actually runs.** `retrieve()` enables reranking
+  when `ToolQuery.enable_reranking is None`, but the field was `bool = False`
+  and never `None`, so the branch was dead and a configured reranker was
+  silently skipped unless the caller passed `enable_reranking=True`. The field
+  is now tri-state (`bool | None`, default `None`): `None` defers to the
+  reranker config, `True`/`False` force the behaviour.
+- **LangChain messages are now understood by the query strategies.**
+  `_msg_role` read only `.role`, but LangChain carries the role in `.type`
+  (`"human"`/`"ai"`/`"tool"`). Every LangChain message therefore resolved to
+  role `""`, so `latest_activity` could let an `AIMessage` drive retrieval and
+  never applied the tool-result character cap. Known LangChain type values are
+  now mapped to roles; an unrelated `.type` attribute is still ignored.
+- **Malformed tool-call arguments are logged instead of silently dropped.**
+  The OpenAI and OpenAI-Responses adapters swallowed `json.JSONDecodeError`
+  and returned `{}`, so the tool failed later with a misleading "missing
+  required parameter". Both now warn with the tool name and the offending
+  payload, matching the Agent Framework adapter's existing behaviour.
+- **`RateLimiter.acquire` holds one lock across check, strategy, and
+  increment.** It previously released the lock between the concurrency check
+  and the increment. No live overshoot was reachable (today's strategy checks
+  contain no `await` and an uncontended `asyncio.Lock` does not yield), but
+  the invariant rested on that staying true; it is now structural, and each
+  acquire takes one lock cycle instead of two.
+
+### Changed
+
+- **`DEFAULT_TOOL_LIMIT` is now honoured everywhere (default 3 -> 5).** The
+  shared constant exists so the static and live adapter families cannot drift
+  apart, but `_LLMToolAdapter` (the `OpenAIAdapter`/`AnthropicAdapter`/... LLM
+  SDK wrappers) and `ToolRefresher` still hardcoded 3. Both now use the
+  constant, so they surface 5 tools per call by default. Pass
+  `default_limit=3` / `limit=3` to restore the previous behaviour.
+- **`auto_sync` on `SemanticToolSelector` / `with_semantic_tools` is
+  deprecated.** It was accepted, stored, and never read — `AgentGantry.retrieve()`
+  always calls `ensure_synced()`. Passing `auto_sync=False` now raises a
+  `DeprecationWarning` and still changes nothing; the parameter will be removed
+  in a future release.
+
+### Internal
+
+- `agent_gantry.integrations.refresh` reuses the canonical `_msg_text` /
+  `_msg_role` from `agent_gantry.query.strategies` instead of keeping a second
+  copy that had already drifted (the canonical pair also understands
+  Responses-API `input_text` parts and Agent Framework `function_result`
+  blocks).
+
 ## [0.10.0] - 2026-08-07
 
 ### Added

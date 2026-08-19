@@ -488,3 +488,39 @@ class TestClaudeOpus48ThinkingGuards:
         assert client._features.adaptive_thinking_effort == "high"
         assert client._features.enable_extended_thinking is False
         assert client._features.enable_interleaved_thinking is False
+
+
+class TestRetrievalThreshold:
+    """The convenience clients must not inherit ``ToolQuery``'s 0.5 default.
+
+    ``ToolQuery.score_threshold`` defaults to 0.5 for backward compatibility
+    with direct callers, but its own docstring calls that a "silent-drop trap"
+    for convenience layers: long queries dilute absolute similarity, so a
+    non-zero cutoff can quietly return zero tools with no error. Every other
+    convenience surface passes 0.0; these two clients used to be the exception.
+    """
+
+    @pytest.mark.asyncio
+    async def test_create_message_retrieves_with_zero_threshold(self):
+        gantry = MagicMock(spec=AgentGantry)
+        retrieval_result = MagicMock()
+        retrieval_result.tools = []
+        gantry.retrieve = AsyncMock(return_value=retrieval_result)
+
+        client = AnthropicClient(api_key="test-key", gantry=gantry)
+        mock_response = MagicMock()
+        mock_response.content = []
+        client._client.messages.create = AsyncMock(return_value=mock_response)
+
+        await client.create_message(
+            model="claude-sonnet-4-6",
+            messages=[{"role": "user", "content": "what is the weather in Berlin?"}],
+            auto_retrieve_tools=True,
+        )
+
+        gantry.retrieve.assert_awaited_once()
+        query = gantry.retrieve.await_args.args[0]
+        assert query.score_threshold == 0.0, (
+            "AnthropicClient must request tools with score_threshold=0.0; "
+            f"got {query.score_threshold} (the silent-drop default)"
+        )

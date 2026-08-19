@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT
+
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
 
@@ -32,7 +34,7 @@ class _LLMToolAdapter:
 
     dialect: str = "openai"
 
-    def __init__(self, gantry: AgentGantry, *, default_limit: int = 3) -> None:
+    def __init__(self, gantry: AgentGantry, *, default_limit: int = DEFAULT_TOOL_LIMIT) -> None:
         self._gantry = gantry
         self._default_limit = default_limit
 

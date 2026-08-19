@@ -17,6 +17,7 @@ import pytest
 from agent_gantry.anthropic import AnthropicAdapter
 from agent_gantry.gemini import GeminiAdapter
 from agent_gantry.groq import GroqAdapter
+from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT
 from agent_gantry.mistral import MistralAdapter
 from agent_gantry.openai import OpenAIAdapter
 from agent_gantry.vertexai import VertexAIAdapter
@@ -57,10 +58,11 @@ async def test_tools_uses_provider_dialect(adapter_cls: type, dialect: str) -> N
 
 @pytest.mark.parametrize("adapter_cls, dialect", _ADAPTERS)
 async def test_tools_honours_default_limit(adapter_cls: type, dialect: str) -> None:
-    # default_limit defaults to 3
+    # default_limit falls back to the shared constant (not a hardcoded number,
+    # so the static and live adapter families cannot drift apart again)
     g1 = _RecordingGantry()
     await adapter_cls(g1).tools("q")
-    assert g1.calls[-1]["limit"] == 3
+    assert g1.calls[-1]["limit"] == DEFAULT_TOOL_LIMIT
     # a custom default_limit is respected
     g2 = _RecordingGantry()
     await adapter_cls(g2, default_limit=7).tools("q")

@@ -157,6 +157,9 @@ class AnthropicClient:
                 ToolQuery(
                     context=ConversationContext(query=query),
                     limit=tool_limit,
+                    # Convenience layers use 0.0: a flat absolute cutoff
+                    # silently drops everything on longer queries.
+                    score_threshold=0.0,
                 )
             )
             tools = [t.tool.to_dialect("anthropic") for t in retrieval_result.tools]
