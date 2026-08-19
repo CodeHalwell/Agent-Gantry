@@ -949,6 +949,15 @@ class AgentGantry:
             await self._telemetry.record_retrieval(query, retrieval)
         return retrieval
 
+    @property
+    def telemetry(self) -> Any:
+        """The configured telemetry adapter (``None`` when disabled).
+
+        Exposed so the integration layers can report provider-reported token
+        usage without reaching into a private attribute.
+        """
+        return self._telemetry
+
     async def retrieve_tools(
         self,
         query: str,

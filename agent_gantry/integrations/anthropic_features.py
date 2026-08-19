@@ -15,6 +15,7 @@ Provides easy access to Anthropic's beta features including:
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -22,6 +23,42 @@ from typing import Any, Literal
 from agent_gantry import AgentGantry
 from agent_gantry.schema.execution import ExecutionStatus, ToolCall
 from agent_gantry.schema.query import ConversationContext, ToolQuery
+
+logger = logging.getLogger(__name__)
+
+async def _record_provider_usage(gantry: Any, response: Any, model: str) -> None:
+    """Report Anthropic's ``usage`` block to telemetry, best effort.
+
+    Nothing in the library measured the token cost of a call before this:
+    ``record_token_usage`` existed on the telemetry protocol and was never
+    invoked outside tests. Failures here are swallowed -- accounting must never
+    break a user's request.
+    """
+    telemetry = getattr(gantry, "telemetry", None) if gantry is not None else None
+    if telemetry is None:
+        return
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return
+    fields = {
+        name: value
+        for name in (
+            "input_tokens",
+            "output_tokens",
+            "cache_creation_input_tokens",
+            "cache_read_input_tokens",
+        )
+        if isinstance(value := getattr(usage, name, None), (int, float))
+    }
+    if not fields:
+        return
+    try:
+        from agent_gantry.metrics.token_usage import ProviderUsage
+
+        await telemetry.record_token_usage(ProviderUsage.from_usage(fields), model_name=model)
+    except Exception as exc:
+        logger.debug("Token usage recording skipped: %s", exc)
+
 
 
 @dataclass
@@ -212,6 +249,7 @@ class AnthropicClient:
 
         # Create message
         response = await self._client.messages.create(**create_kwargs)
+        await _record_provider_usage(self._gantry, response, model)
 
         return response
 

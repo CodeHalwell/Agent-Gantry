@@ -29,7 +29,7 @@ import asyncio
 import functools
 import inspect
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, overload
 
@@ -255,6 +255,62 @@ class SemanticToolSelector:
 
         return None
 
+    async def _record_usage(self, response: Any) -> None:
+        """Report provider token usage for ``response``, best effort.
+
+        The flagship claim of semantic tool selection is a smaller prompt, but
+        nothing in the library measured it: ``TokenUsageEvent`` was defined and
+        never constructed, and ``record_token_usage`` was never called outside
+        tests. Every provider this decorator targets returns a ``usage`` block,
+        so the *actual* cost of each call is recorded here.
+
+        Savings are deliberately not inferred: computing them needs a real
+        baseline (the same prompt with every tool injected), and
+        ``agent_gantry.metrics.token_usage`` refuses approximate estimators so
+        reported numbers stay auditable. Callers who run a baseline can pass
+        both usages to ``calculate_token_savings`` and report it themselves.
+        """
+        telemetry = getattr(self._gantry, "telemetry", None)
+        if telemetry is None:
+            return
+
+        usage = getattr(response, "usage", None)
+        if usage is None and isinstance(response, dict):
+            usage = response.get("usage")
+        if usage is None:
+            return
+
+        if not isinstance(usage, Mapping):
+            # SDK usage objects are plain attribute holders; pull the fields
+            # the normalizer knows about rather than guessing at a dump method.
+            usage = {
+                field: value
+                for field in (
+                    "prompt_tokens",
+                    "completion_tokens",
+                    "total_tokens",
+                    "input_tokens",
+                    "output_tokens",
+                    "cache_creation_input_tokens",
+                    "cache_read_input_tokens",
+                    "prompt_token_count",
+                    "candidates_token_count",
+                    "total_token_count",
+                )
+                if isinstance(value := getattr(usage, field, None), (int, float))
+            }
+        if not usage:
+            return
+
+        try:
+            from agent_gantry.metrics.token_usage import ProviderUsage
+
+            provider_usage = ProviderUsage.from_usage(usage)
+            model_name = getattr(response, "model", None) or self._dialect
+            await telemetry.record_token_usage(provider_usage, model_name=str(model_name))
+        except Exception as exc:  # never fail a user's call over accounting
+            _logger.debug("Token usage recording skipped: %s", exc)
+
     def wrap_async(self, func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
         """
         Wrap an async function with semantic tool selection.
@@ -284,7 +340,9 @@ class SemanticToolSelector:
                     # If tool retrieval fails, call function without tools
                     _logger.warning("Tool retrieval failed, proceeding without tools: %s", e)
 
-            return await func(*args, **kwargs)
+            response = await func(*args, **kwargs)
+            await self._record_usage(response)
+            return response
 
         return wrapper
 

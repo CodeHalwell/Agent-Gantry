@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Token usage is now measured.** `TokenUsageEvent` was defined and never
+  constructed, and `record_token_usage` existed on the telemetry protocol and
+  both adapters yet was never called by library code — so the flagship
+  prompt-reduction claim went unmeasured. `with_semantic_tools` and the two
+  Anthropic clients now report each call's provider `usage` block to telemetry,
+  best effort: a response without usage is not an error, and a telemetry
+  failure never breaks the user's call. Savings are deliberately not inferred,
+  because that needs a real baseline and `agent_gantry.metrics.token_usage`
+  refuses approximate estimators so the numbers stay auditable — callers who
+  run a baseline can still pass both usages to `calculate_token_savings`.
+- `AgentGantry.telemetry` exposes the configured adapter, so integration layers
+  no longer have to reach into a private attribute.
+
 ### Performance
 
 - **Model loading no longer stalls the event loop.** The sentence-transformers
@@ -64,6 +79,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nested models) are inlined since the SDKs will not follow the pointers.
   Structural keywords are deliberately preserved — dropping one would silently
   change which values a schema accepts. Pass `sanitize=False` to opt out.
+- **Anthropic cache tokens count towards the prompt.** `ProviderUsage.from_usage`
+  read only `input_tokens`, ignoring `cache_creation_input_tokens` and
+  `cache_read_input_tokens`. Those tokens were processed, so omitting them made
+  a cached run look nearly free against an uncached baseline — a run that truly
+  saved 58% reported 98%. They are now included in `prompt_tokens` and also
+  surfaced separately as `cached_prompt_tokens`.
 - **Emitted schemas no longer alias the registry.** OpenAI, Anthropic-strict
   and Gemini conversions embedded `ToolDefinition.parameters_schema` by
   reference, so a caller mutating a returned schema corrupted every later
