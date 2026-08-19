@@ -1,4 +1,0 @@
-💡 What: Optimized the sliding window rate limiter in SecurityPolicy.check_permission by replacing an O(N) list comprehension with a fast forward-search and index slice.
-🎯 Why: When calculating counts over a chronologically sorted collection, iterating over the entire list with a comprehension is O(N). By finding the split index and breaking early, we reduce the overhead and take advantage of python slice optimizations.
-📊 Impact: Reduces CPU time for sliding window cleanup operations, making rate limiting faster.
-🔬 Measurement: Check the updated python unit test execution time or run microbenchmarks on agent_gantry.core.security.SecurityPolicy.check_permission under heavy load.
