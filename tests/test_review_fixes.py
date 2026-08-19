@@ -318,3 +318,35 @@ async def test_sync_manager_get_embedder_id() -> None:
     assert "SimpleEmbedder" in eid
     # Same call should return the same ID
     assert manager.get_embedder_id() == eid
+
+
+async def test_permission_denied_status_is_not_flattened_to_failure() -> None:
+    """A PermissionDeniedError must report PERMISSION_DENIED from every path.
+
+    The rate-limit path already did; the handler-retry path flattened the same
+    exception to FAILURE, so whether a permission failure was distinguishable
+    depended on which code path raised it. Carried from PR #316.
+    """
+    from agent_gantry import AgentGantry
+    from agent_gantry.core.security import PermissionDeniedError
+    from agent_gantry.schema.execution import ExecutionStatus, ToolCall
+    from agent_gantry.schema.tool import ToolDefinition
+
+    gantry = AgentGantry()
+
+    async def denied() -> str:
+        raise PermissionDeniedError("not allowed to touch this resource")
+
+    await gantry.add_tool(
+        ToolDefinition(
+            name="denied_tool",
+            description="A tool whose handler refuses on permission grounds.",
+            parameters_schema={"type": "object", "properties": {}},
+        ),
+        handler=denied,
+    )
+
+    result = await gantry.execute(ToolCall(tool_name="denied_tool", arguments={}))
+
+    assert result.error_type == "PermissionDeniedError"
+    assert result.status == ExecutionStatus.PERMISSION_DENIED

@@ -296,7 +296,12 @@ class ExecutionEngine:
                 await self._record_failure(tool)
                 result = ToolResult(
                     tool_name=call.tool_name,
-                    status=ExecutionStatus.FAILURE,
+                    # The rate-limit path below already reports this exception as
+                    # PERMISSION_DENIED; flattening it to FAILURE here made a
+                    # permission failure distinguishable or not depending on
+                    # which code path raised it. (Carried from PR #316, which
+                    # could not merge cleanly once .jules/sentinel.md moved.)
+                    status=ExecutionStatus.PERMISSION_DENIED,
                     error=str(e),
                     error_type="PermissionDeniedError",
                     queued_at=queued_at,
