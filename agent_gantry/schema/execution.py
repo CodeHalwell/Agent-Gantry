@@ -11,7 +11,9 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from agent_gantry.schema.base import reject_newlines
 
 
 class ExecutionStatus(str, Enum):
@@ -47,6 +49,12 @@ class ToolCall(BaseModel):
     trace_id: str | None = None
     parent_span_id: str | None = None
 
+    model_config = ConfigDict(validate_assignment=True)
+
+    _reject_newline_identifiers = field_validator("tool_name", "trace_id", "parent_span_id")(
+        reject_newlines
+    )
+
 
 class ToolResult(BaseModel):
     """Result of a tool execution."""
@@ -66,6 +74,12 @@ class ToolResult(BaseModel):
 
     trace_id: str
     span_id: str
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    _reject_newline_identifiers = field_validator("tool_name", "trace_id", "span_id")(
+        reject_newlines
+    )
 
     @property
     def latency_ms(self) -> float:
