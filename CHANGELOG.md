@@ -7,7 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (tool-use loop)
+
+- **The round-trip layer is now usable end to end.** Every dialect adapter
+  could already parse one tool-call payload and format one result, but nothing
+  joined those ends — no wrapper, no facade method, and no example used them,
+  so callers hand-rolled `json.loads(tc.function.arguments)` and the
+  parallel-call case was left to each caller to rediscover. New:
+  `extract_tool_calls(response, dialect)` pulls *every* call out of a whole
+  response (OpenAI chat and Responses, Anthropic, Gemini; SDK objects or plain
+  dicts), and `AgentGantry.execute_tool_calls(response)` runs them
+  concurrently through the full protection stack and returns provider-shaped
+  results ready to append to the conversation. A failing tool comes back as an
+  error-flagged result rather than raising, because that is what a tool-use
+  loop needs.
+- **Streaming tool calls are reassembled.** Nothing accumulated OpenAI
+  `delta.tool_calls` fragments or Anthropic `input_json_delta` — the
+  production-normal path got no help at all. `StreamingToolCallAccumulator`
+  folds chunks into complete calls (parallel streams stay separate, a
+  truncated stream yields empty arguments rather than raising) and its output
+  feeds straight into `execute_tool_calls`.
+- Both are exported from the top-level package.
+
 ### Fixed (frameworks)
+
+- **The two Anthropic `execute_tool_calls` implementations are now one.**
+  `AnthropicClient` ran its tools sequentially while `SkillsClient` gathered
+  them, and both re-implemented `AnthropicAdapter.format_tool_result` inline.
+  Both now delegate to the facade, so they share one concurrency model and one
+  formatter.
 
 - **The sync bridge no longer serializes every tool call, and no longer
   deadlocks on a nested one.** `ToolSpec.invoke` hands its coroutine to a

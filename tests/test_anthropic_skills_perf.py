@@ -1,5 +1,6 @@
 import asyncio
 import time
+from functools import partial
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -22,6 +23,10 @@ async def test_execute_tool_calls_performance():
         return mock_result
 
     gantry.execute = AsyncMock(side_effect=slow_execute)
+    # The concurrency now lives in AgentGantry.execute_tool_calls, which the
+    # spec'd mock would otherwise stub out; bind the real method so this
+    # still measures actual fan-out.
+    gantry.execute_tool_calls = partial(AgentGantry.execute_tool_calls, gantry)
 
     client = SkillsClient(api_key="test-key", gantry=gantry)
 

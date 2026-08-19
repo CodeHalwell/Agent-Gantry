@@ -12,15 +12,12 @@ that Claude can reason about and use effectively.
 
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 import os
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from agent_gantry import AgentGantry
-from agent_gantry.schema.execution import ExecutionStatus, ToolCall
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 
 logger = logging.getLogger(__name__)
@@ -338,61 +335,25 @@ class SkillsClient:
         response: Any,
     ) -> list[dict[str, Any]]:
         """
-        Execute tool calls from a Skills API response.
+        Execute the tool calls in an Anthropic response.
+
+        Delegates to :meth:`AgentGantry.execute_tool_calls`, which extracts
+        every ``tool_use`` block (including parallel ones), runs them
+        concurrently through the full protection stack, and formats each result
+        with the Anthropic adapter. This used to be hand-rolled here, and in
+        ``SkillsClient`` too, with the two copies having drifted apart on
+        concurrency.
 
         Args:
             response: Anthropic message response
 
         Returns:
-            List of tool results in Anthropic format
+            List of ``tool_result`` blocks in Anthropic format
         """
         if not self._gantry:
             raise ValueError("AgentGantry instance required for tool execution")
 
-        # Collect tools to execute and their IDs
-        tool_executions = []
-        tool_use_ids = []
-
-        for block in response.content:
-            if hasattr(block, "type") and block.type == "tool_use":
-                tool_use_ids.append(block.id)
-                tool_executions.append(
-                    self._gantry.execute(
-                        ToolCall(
-                            tool_name=block.name,
-                            arguments=block.input,
-                        )
-                    )
-                )
-
-        if not tool_executions:
-            return []
-
-        # Execute all tools concurrently
-        results = await asyncio.gather(*tool_executions)
-
-        # Format results for Anthropic.
-        # is_error signals model-level tool failure so the model can distinguish
-        # error content from normal tool output.
-        # Source: https://platform.claude.com/docs/en/api/messages (tool_result)
-        tool_results = []
-        for block_id, result in zip(tool_use_ids, results):
-            is_error = result.status != ExecutionStatus.SUCCESS
-            content: str
-            if is_error:
-                content = f"Error: {result.error}"
-            else:
-                content = result.result if isinstance(result.result, str) else json.dumps(result.result)
-            tool_result: dict[str, Any] = {
-                "type": "tool_result",
-                "tool_use_id": block_id,
-                "content": content,
-            }
-            if is_error:
-                tool_result["is_error"] = True
-            tool_results.append(tool_result)
-
-        return tool_results
+        return await self._gantry.execute_tool_calls(response, dialect="anthropic")
 
     def register_skill_from_gantry_tools(
         self,

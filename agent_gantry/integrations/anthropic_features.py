@@ -14,14 +14,12 @@ Provides easy access to Anthropic's beta features including:
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from agent_gantry import AgentGantry
-from agent_gantry.schema.execution import ExecutionStatus, ToolCall
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 
 logger = logging.getLogger(__name__)
@@ -258,48 +256,25 @@ class AnthropicClient:
         response: Any,
     ) -> list[dict[str, Any]]:
         """
-        Execute tool calls from an Anthropic response.
+        Execute the tool calls in an Anthropic response.
+
+        Delegates to :meth:`AgentGantry.execute_tool_calls`, which extracts
+        every ``tool_use`` block (including parallel ones), runs them
+        concurrently through the full protection stack, and formats each result
+        with the Anthropic adapter. This used to be hand-rolled here, and in
+        ``SkillsClient`` too, with the two copies having drifted apart on
+        concurrency.
 
         Args:
             response: Anthropic message response
 
         Returns:
-            List of tool results in Anthropic format
+            List of ``tool_result`` blocks in Anthropic format
         """
         if not self._gantry:
             raise ValueError("AgentGantry instance required for tool execution")
 
-        tool_results = []
-        for block in response.content:
-            if block.type == "tool_use":
-                # Execute via Agent-Gantry
-                result = await self._gantry.execute(
-                    ToolCall(
-                        tool_name=block.name,
-                        arguments=block.input,
-                    )
-                )
-
-                # Format result for Anthropic.
-                # is_error signals model-level tool failure; omitting it when the
-                # tool succeeded avoids unnecessary noise.
-                # Source: https://platform.claude.com/docs/en/api/messages (tool_result)
-                is_error = result.status != ExecutionStatus.SUCCESS
-                content: str
-                if is_error:
-                    content = f"Error: {result.error}"
-                else:
-                    content = result.result if isinstance(result.result, str) else json.dumps(result.result)
-                tool_result: dict[str, Any] = {
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": content,
-                }
-                if is_error:
-                    tool_result["is_error"] = True
-                tool_results.append(tool_result)
-
-        return tool_results
+        return await self._gantry.execute_tool_calls(response, dialect="anthropic")
 
     def extract_thinking(
         self,

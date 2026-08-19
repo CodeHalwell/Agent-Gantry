@@ -10,6 +10,7 @@ Tests the Anthropic integration including:
 from __future__ import annotations
 
 import sys
+from functools import partial
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
@@ -142,6 +143,9 @@ class TestAnthropicClient:
         mock_result.status = "success"
         mock_result.result = "Tool executed successfully"
         gantry.execute = AsyncMock(return_value=mock_result)
+        # The formatting/concurrency logic now lives in the facade; bind the
+        # real method to the mock so this still exercises the whole path.
+        gantry.execute_tool_calls = partial(AgentGantry.execute_tool_calls, gantry)
 
         client = AnthropicClient(api_key="test-key", gantry=gantry)
         tool_results = await client.execute_tool_calls(mock_anthropic_tool_response)
@@ -245,6 +249,9 @@ class TestAnthropicClient:
         mock_result.status = "failure"
         mock_result.error = "Tool crashed"
         gantry.execute = AsyncMock(return_value=mock_result)
+        # The formatting/concurrency logic now lives in the facade; bind the
+        # real method to the mock so this still exercises the whole path.
+        gantry.execute_tool_calls = partial(AgentGantry.execute_tool_calls, gantry)
 
         client = AnthropicClient(api_key="test-key", gantry=gantry)
         tool_results = await client.execute_tool_calls(mock_anthropic_tool_response)
@@ -261,6 +268,9 @@ class TestAnthropicClient:
         mock_result.status = "success"
         mock_result.result = {"temperature": 25, "unit": "C"}
         gantry.execute = AsyncMock(return_value=mock_result)
+        # The formatting/concurrency logic now lives in the facade; bind the
+        # real method to the mock so this still exercises the whole path.
+        gantry.execute_tool_calls = partial(AgentGantry.execute_tool_calls, gantry)
 
         client = AnthropicClient(api_key="test-key", gantry=gantry)
         tool_results = await client.execute_tool_calls(mock_anthropic_tool_response)

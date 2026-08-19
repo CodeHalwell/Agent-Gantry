@@ -7,6 +7,7 @@ Core Philosophy: Context is precious. Execution is sacred. Trust is earned.
 """
 
 import logging as _logging
+from typing import Any
 
 from agent_gantry.core.gantry import AgentGantry, create_default_gantry
 from agent_gantry.integrations.agent_framework_bridge import (
@@ -66,9 +67,29 @@ def disable_af_instrumentation() -> bool:
     return _impl()
 
 
+def extract_tool_calls(response: "Any", dialect: str = "openai") -> "list[Any]":
+    """Pull every tool call out of a provider response (parallel calls included).
+
+    See :func:`agent_gantry.adapters.tool_spec.round_trip.extract_tool_calls`.
+    """
+    from agent_gantry.adapters.tool_spec.round_trip import extract_tool_calls as _impl
+
+    return _impl(response, dialect)
+
+
+def __getattr__(name: str) -> "Any":
+    """Lazily surface the streaming accumulator at package level."""
+    if name == "StreamingToolCallAccumulator":
+        from agent_gantry.adapters.tool_spec import round_trip
+
+        return round_trip.StreamingToolCallAccumulator
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 __version__ = "0.10.0"
 __all__ = [
     "AgentGantry",
+    "StreamingToolCallAccumulator",
     "GantryContextProvider",
     "MissingRequiredToolError",
     "RetrievalCandidate",
@@ -76,6 +97,7 @@ __all__ = [
     "create_default_gantry",
     "disable_af_instrumentation",
     "enable_console_logging",
+    "extract_tool_calls",
     "render_result",
     "with_semantic_tools",
     "set_default_gantry",

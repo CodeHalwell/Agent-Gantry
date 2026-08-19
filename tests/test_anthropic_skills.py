@@ -11,6 +11,7 @@ Tests the Skills API features including:
 from __future__ import annotations
 
 import sys
+from functools import partial
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
@@ -218,6 +219,9 @@ class TestSkillsClient:
         mock_result.status = "success"
         mock_result.result = "Tool executed"
         gantry.execute = AsyncMock(return_value=mock_result)
+        # The formatting/concurrency logic now lives in the facade; bind the
+        # real method to the mock so this still exercises the whole path.
+        gantry.execute_tool_calls = partial(AgentGantry.execute_tool_calls, gantry)
 
         client = SkillsClient(api_key="test-key", gantry=gantry)
 
@@ -245,6 +249,9 @@ class TestSkillsClient:
         mock_result.status = "failure"
         mock_result.error = "Downstream service unavailable"
         gantry.execute = AsyncMock(return_value=mock_result)
+        # The formatting/concurrency logic now lives in the facade; bind the
+        # real method to the mock so this still exercises the whole path.
+        gantry.execute_tool_calls = partial(AgentGantry.execute_tool_calls, gantry)
 
         client = SkillsClient(api_key="test-key", gantry=gantry)
 
@@ -270,6 +277,9 @@ class TestSkillsClient:
         mock_result.status = "success"
         mock_result.result = {"order_id": "ORD-42", "status": "shipped"}
         gantry.execute = AsyncMock(return_value=mock_result)
+        # The formatting/concurrency logic now lives in the facade; bind the
+        # real method to the mock so this still exercises the whole path.
+        gantry.execute_tool_calls = partial(AgentGantry.execute_tool_calls, gantry)
 
         client = SkillsClient(api_key="test-key", gantry=gantry)
 
