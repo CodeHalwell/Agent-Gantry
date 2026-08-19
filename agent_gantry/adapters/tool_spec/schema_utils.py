@@ -226,6 +226,19 @@ def _sanitize_gemini_in_place(node: Any) -> None:
             _sanitize_gemini_in_place(node[key])
 
 
+def _contains_ref(node: Any) -> bool:
+    """Whether any ``$ref`` survives anywhere in ``node``."""
+    if isinstance(node, list):
+        return any(_contains_ref(item) for item in node)
+    if not isinstance(node, dict):
+        return False
+    if "$ref" in node:
+        return True
+    return any(
+        _contains_ref(value) for key, value in node.items() if key not in ("$defs", "definitions")
+    )
+
+
 def sanitize_gemini_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
     """Return a deep copy of ``schema`` accepted by Gemini and Vertex AI.
 
@@ -245,8 +258,13 @@ def sanitize_gemini_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
         return {"type": "object", "properties": {}}
     inlined = _inline_local_refs(copy.deepcopy(schema), schema)
     transformed = inlined if isinstance(inlined, dict) else copy.deepcopy(schema)
-    # ``$defs`` exists only to back the pointers just inlined.
-    transformed.pop("$defs", None)
-    transformed.pop("definitions", None)
+    # ``$defs`` exists only to back the pointers just inlined -- but the depth
+    # guard can leave a ``$ref`` unresolved on a deeply nested or recursive
+    # model. Dropping the definitions then would turn a schema the SDK rejects
+    # into a schema with a pointer to nothing, which is strictly worse. Keep
+    # them whenever anything still points at them.
+    if not _contains_ref(transformed):
+        transformed.pop("$defs", None)
+        transformed.pop("definitions", None)
     _sanitize_gemini_in_place(transformed)
     return transformed

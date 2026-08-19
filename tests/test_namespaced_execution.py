@@ -146,3 +146,86 @@ async def test_select_and_execute_uses_the_selected_tool(two_namespaces: AgentGa
         "search billing records", arguments={"q": "x"}
     )
     assert result.status == ExecutionStatus.SUCCESS
+
+
+async def test_both_calling_conventions_share_one_rate_limit_budget() -> None:
+    """A qualified name must not buy a second rate-limit allowance.
+
+    The limiter is keyed ``namespace.tool_name``. Keying it off the raw call
+    meant ``ToolCall(tool_name="billing.search")`` produced
+    ``billing.billing.search`` while ``namespace="billing"`` produced
+    ``billing.search`` — two independent budgets for one tool, so alternating
+    styles doubled the allowance. Reported on PR #367.
+    """
+    from agent_gantry.schema.config import AgentGantryConfig, RateLimitConfig
+
+    gantry = AgentGantry(
+        config=AgentGantryConfig(
+            rate_limit=RateLimitConfig(enabled=True, per_tool=True, max_concurrent=8)
+        )
+    )
+
+    async def billing_search(q: str) -> str:
+        return "billing-result"
+
+    await gantry.add_tool(
+        ToolDefinition(
+            name="search",
+            namespace="billing",
+            description="Search billing records for a query.",
+            parameters_schema=_QUERY_SCHEMA,
+        ),
+        handler=billing_search,
+    )
+
+    await gantry.execute(
+        ToolCall(tool_name="search", namespace="billing", arguments={"q": "x"})
+    )
+    await gantry.execute(ToolCall(tool_name="billing.search", arguments={"q": "x"}))
+
+    keys = set(gantry._executor._rate_limiter._call_history)
+    assert keys == {"billing.search"}, (
+        f"both calling conventions must share one budget; got {sorted(keys)}"
+    )
+
+
+async def test_security_policy_sees_the_resolved_tool_name() -> None:
+    """A qualified name must be matched against the same string as a bare one.
+
+    Policies fnmatch on the tool name, so passing the raw ``call.tool_name``
+    meant ``billing.search`` was matched against a different string than the
+    same tool reached via ``namespace=`` — one convention could slip a pattern
+    the other is caught by. Reported on PR #367.
+    """
+    from agent_gantry.core.security import SecurityPolicy
+    from agent_gantry.schema.config import AgentGantryConfig
+
+    seen: list[str] = []
+
+    class RecordingPolicy(SecurityPolicy):
+        def check_permission(self, tool_name: str, arguments: dict) -> None:  # type: ignore[override]
+            seen.append(tool_name)
+
+    gantry = AgentGantry(config=AgentGantryConfig(), security_policy=RecordingPolicy())
+
+    async def billing_search(q: str) -> str:
+        return "billing-result"
+
+    await gantry.add_tool(
+        ToolDefinition(
+            name="search",
+            namespace="billing",
+            description="Search billing records for a query.",
+            parameters_schema=_QUERY_SCHEMA,
+        ),
+        handler=billing_search,
+    )
+
+    await gantry.execute(
+        ToolCall(tool_name="search", namespace="billing", arguments={"q": "x"})
+    )
+    await gantry.execute(ToolCall(tool_name="billing.search", arguments={"q": "x"}))
+
+    assert seen == ["search", "search"], (
+        f"policy must see the resolved bare name from both conventions; got {seen}"
+    )

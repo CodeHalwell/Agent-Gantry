@@ -460,3 +460,47 @@ class TestStreamingAccumulation:
         results = await gantry.execute_tool_calls(acc.tool_calls())
 
         assert "Doha" in results[0]["content"]
+
+
+class TestMultipleChoicesAndCandidates:
+    """A "whole response" must mean every choice/candidate, not just the first.
+
+    With ``n > 1`` (OpenAI) or several candidates (Gemini), reading only index
+    0 silently dropped real tool calls. Reported on PR #367.
+    """
+
+    def test_openai_reads_every_choice(self) -> None:
+        response = {
+            "choices": [
+                {"message": {"tool_calls": [
+                    {"id": "c0", "function": {"name": "first", "arguments": "{}"}}
+                ]}},
+                {"message": {"tool_calls": [
+                    {"id": "c1", "function": {"name": "second", "arguments": "{}"}}
+                ]}},
+            ]
+        }
+
+        assert [c.tool_name for c in extract_tool_calls(response)] == ["first", "second"]
+
+    def test_openai_skips_choices_without_tool_calls(self) -> None:
+        response = {
+            "choices": [
+                {"message": {"content": "just text"}},
+                {"message": {"tool_calls": [
+                    {"id": "c1", "function": {"name": "only", "arguments": "{}"}}
+                ]}},
+            ]
+        }
+
+        assert [c.tool_name for c in extract_tool_calls(response)] == ["only"]
+
+    def test_gemini_reads_every_candidate(self) -> None:
+        response = {
+            "candidates": [
+                {"content": {"parts": [{"function_call": {"name": "a", "args": {}}}]}},
+                {"content": {"parts": [{"function_call": {"name": "b", "args": {}}}]}},
+            ]
+        }
+
+        assert [c.tool_name for c in extract_tool_calls(response, "gemini")] == ["a", "b"]

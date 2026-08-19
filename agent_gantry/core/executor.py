@@ -132,7 +132,7 @@ class ExecutionEngine:
             return cb_result
 
         # Security policy check
-        sp_result = await self._check_security_policy(call, queued_at, trace_id, span_id)
+        sp_result = await self._check_security_policy(tool, call, queued_at, trace_id, span_id)
         if sp_result:
             return sp_result
 
@@ -184,7 +184,8 @@ class ExecutionEngine:
             )
         finally:
             if self._rate_limiter:
-                await self._rate_limiter.release(call.tool_name, tool.namespace)
+                # Must mirror the acquire key above.
+                await self._rate_limiter.release(tool.name, tool.namespace)
 
     async def execute_batch(self, batch: BatchToolCall) -> BatchToolResult:
         """
@@ -380,6 +381,7 @@ class ExecutionEngine:
 
     async def _check_security_policy(
         self,
+        tool: ToolDefinition,
         call: ToolCall,
         queued_at: datetime,
         trace_id: str,
@@ -390,7 +392,12 @@ class ExecutionEngine:
             from agent_gantry.core.security import ConfirmationRequiredError, PermissionDeniedError
 
             try:
-                self._security_policy.check_permission(call.tool_name, call.arguments)
+                # Match policies against the *resolved* tool's bare name. A
+                # qualified ``call.tool_name`` ("billing.search") would
+                # otherwise be fnmatched as a different string than the same
+                # tool reached via ``namespace=``, so one calling convention
+                # could slip a pattern the other is caught by.
+                self._security_policy.check_permission(tool.name, call.arguments)
             except ConfirmationRequiredError:
                 result = ToolResult(
                     tool_name=call.tool_name,
@@ -433,7 +440,13 @@ class ExecutionEngine:
             from agent_gantry.core.rate_limiter import RateLimitExceeded
 
             try:
-                await self._rate_limiter.acquire(call.tool_name, tool.namespace)
+                # Key off the resolved tool, not the raw call: with per_tool
+                # keys, a qualified ``call.tool_name`` produced
+                # "billing.billing.search" while the ``namespace=`` form
+                # produced "billing.search", so the same tool held two
+                # independent budgets and a caller could double its allowance
+                # by alternating styles.
+                await self._rate_limiter.acquire(tool.name, tool.namespace)
             except RateLimitExceeded as e:
                 result = ToolResult(
                     tool_name=call.tool_name,

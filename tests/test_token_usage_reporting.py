@@ -173,3 +173,77 @@ class TestGantryExposesTelemetry:
     def test_telemetry_is_reachable_without_touching_privates(self) -> None:
         adapter = _RecordingTelemetry()
         assert AgentGantry(telemetry=adapter).telemetry is adapter
+
+
+class TestSyncWrapperRecordsUsage:
+    """``__call__`` routes every non-coroutine function to the sync wrapper.
+
+    That wrapper returned the response without recording anything, so the
+    telemetry path was dead by default for anyone decorating a blocking SDK
+    client. Reported on PR #367.
+    """
+
+    def test_sync_wrapper_reports_usage(self) -> None:
+        from agent_gantry.integrations.semantic_tools import with_semantic_tools
+
+        gantry = AgentGantry(telemetry=_RecordingTelemetry())
+
+        @with_semantic_tools(gantry)
+        def generate(prompt: str, *, tools: list[Any] | None = None) -> Any:
+            return _OpenAIResponse()
+
+        generate("what is the weather")
+
+        assert len(gantry.telemetry.usages) == 1
+        usage, model = gantry.telemetry.usages[0]
+        assert usage.prompt_tokens == 420
+        assert model == "gpt-4.1"
+
+    def test_sync_accounting_failure_never_breaks_the_call(self) -> None:
+        from agent_gantry.integrations.semantic_tools import with_semantic_tools
+
+        gantry = AgentGantry(telemetry=_RecordingTelemetry())
+
+        async def exploding(*args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("telemetry backend down")
+
+        gantry.telemetry.record_token_usage = exploding  # type: ignore[method-assign]
+
+        @with_semantic_tools(gantry)
+        def generate(prompt: str, *, tools: list[Any] | None = None) -> Any:
+            return _OpenAIResponse()
+
+        assert isinstance(generate("hello"), _OpenAIResponse)
+
+
+class TestModelNameExtraction:
+    async def test_dict_response_model_is_recorded(self) -> None:
+        """A dict response carries the model under a key, not an attribute.
+
+        Falling straight through to the dialect recorded "openai" in place of
+        the real model name. Reported on PR #367.
+        """
+        from agent_gantry.integrations.semantic_tools import with_semantic_tools
+
+        gantry = AgentGantry(telemetry=_RecordingTelemetry())
+
+        @with_semantic_tools(gantry)
+        async def generate(prompt: str, *, tools: list[Any] | None = None) -> dict[str, Any]:
+            return {"model": "gpt-4.1-mini", "usage": {"prompt_tokens": 10}}
+
+        await generate("hello")
+
+        assert gantry.telemetry.usages[0][1] == "gpt-4.1-mini"
+
+    async def test_missing_model_still_falls_back_to_the_dialect(self) -> None:
+        from agent_gantry.integrations.semantic_tools import with_semantic_tools
+
+        gantry = AgentGantry(telemetry=_RecordingTelemetry())
+
+        @with_semantic_tools(gantry)
+        async def generate(prompt: str, *, tools: list[Any] | None = None) -> dict[str, Any]:
+            return {"usage": {"prompt_tokens": 10}}
+
+        await generate("hello")
+
+        assert gantry.telemetry.usages[0][1] == "openai"

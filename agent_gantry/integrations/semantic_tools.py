@@ -255,6 +255,32 @@ class SemanticToolSelector:
 
         return None
 
+    def _record_usage_sync(self, response: Any) -> None:
+        """Report usage from a synchronously-returned response, best effort.
+
+        The sync wrapper has no loop to await on, and may itself be running
+        inside someone else's, so the recording is bridged the same way the
+        retrieval above is. Without this the whole telemetry path was dead for
+        sync callers -- and ``__call__`` routes every non-coroutine function
+        here, so that is the default for anyone wrapping a blocking SDK client.
+        """
+        telemetry = getattr(self._gantry, "telemetry", None)
+        if telemetry is None:
+            return
+        try:
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                asyncio.run(self._record_usage(response))
+                return
+
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                executor.submit(asyncio.run, self._record_usage(response)).result()
+        except Exception as exc:  # never fail a user's call over accounting
+            _logger.debug("Token usage recording skipped: %s", exc)
+
     async def _record_usage(self, response: Any) -> None:
         """Report provider token usage for ``response``, best effort.
 
@@ -306,7 +332,13 @@ class SemanticToolSelector:
             from agent_gantry.metrics.token_usage import ProviderUsage
 
             provider_usage = ProviderUsage.from_usage(usage)
-            model_name = getattr(response, "model", None) or self._dialect
+            # Dict-shaped responses (replayed fixtures, SDK dumps) carry the
+            # model under a key, not an attribute; falling straight through to
+            # the dialect recorded "openai" in place of the real model name.
+            model_name = getattr(response, "model", None)
+            if model_name is None and isinstance(response, Mapping):
+                model_name = response.get("model")
+            model_name = model_name or self._dialect
             await telemetry.record_token_usage(provider_usage, model_name=str(model_name))
         except Exception as exc:  # never fail a user's call over accounting
             _logger.debug("Token usage recording skipped: %s", exc)
@@ -403,7 +435,9 @@ class SemanticToolSelector:
                     # If tool retrieval fails, call function without tools
                     _logger.warning("Tool retrieval failed, proceeding without tools: %s", e)
 
-            return func(*args, **kwargs)
+            response = func(*args, **kwargs)
+            self._record_usage_sync(response)
+            return response
 
         return wrapper
 

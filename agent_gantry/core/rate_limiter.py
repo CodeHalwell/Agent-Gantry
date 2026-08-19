@@ -130,12 +130,17 @@ class RateLimiter:
 
         # One critical section covering check -> strategy -> increment. These
         # were previously three separate steps with the lock released in
-        # between. No overshoot was actually reachable -- the strategy checks
-        # contain no ``await`` and an uncontended ``asyncio.Lock`` takes a
-        # non-yielding fast path, so nothing could interleave -- but the
+        # between. No overshoot was actually reachable -- today's strategy
+        # checks contain no ``await`` and an uncontended ``asyncio.Lock`` takes
+        # a non-yielding fast path, so nothing could interleave -- but the
         # ``max_concurrent`` guarantee rested on that remaining true. Holding
-        # one lock makes it structural, and costs one lock cycle instead of
-        # two. Safe because nothing in here suspends, so it cannot deadlock.
+        # one lock makes it structural and costs one lock cycle instead of two.
+        #
+        # The strategy calls are awaited inside the lock, so a future strategy
+        # that performs real I/O would serialize acquires behind it rather than
+        # deadlock. That is the deliberate trade: correctness of the cap over
+        # throughput. A strategy needing I/O should do it outside this section
+        # and pass the result in.
         async with self._lock_for_running_loop():
             # Check concurrent limit
             if self._concurrent[key] >= self._config.max_concurrent:

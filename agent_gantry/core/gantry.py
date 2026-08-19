@@ -909,9 +909,16 @@ class AgentGantry:
                 )
 
         overall_start = perf_counter()
-        if self._config.reranker.enabled and self._reranker is not None:
-            if query.enable_reranking is None:
-                query.enable_reranking = True
+        if (
+            self._config.reranker.enabled
+            and self._reranker is not None
+            and query.enable_reranking is None
+        ):
+            # Copy rather than assign: this branch was unreachable while the
+            # field defaulted to False, so making it live also made the
+            # in-place mutation live, and a caller reusing one ToolQuery (a
+            # cached template, say) would have the field flipped underneath it.
+            query = query.model_copy(update={"enable_reranking": True})
 
         # Use telemetry span if available, otherwise use a no-op async context manager
         from agent_gantry.utils.async_utils import AsyncNoopContext

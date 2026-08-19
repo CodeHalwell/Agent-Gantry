@@ -227,6 +227,47 @@ class TestSanitizeGeminiSchema:
         sanitize_gemini_schema(original)
         assert original["additionalProperties"] is True
 
+    def test_definitions_survive_when_a_ref_could_not_be_inlined(self) -> None:
+        """Never leave a pointer to definitions that were just deleted.
+
+        The depth guard deliberately stops inlining on a deeply nested or
+        recursive model. Popping ``$defs`` regardless turned a schema the SDK
+        rejects into one with a dangling ``$ref`` — strictly worse. Reported on
+        PR #367.
+        """
+        # A self-referential model: inlining terminates with a $ref still in place.
+        out = sanitize_gemini_schema(
+            {
+                "type": "object",
+                "properties": {"child": {"$ref": "#/$defs/Node"}},
+                "$defs": {
+                    "Node": {
+                        "type": "object",
+                        "properties": {"child": {"$ref": "#/$defs/Node"}},
+                    }
+                },
+            }
+        )
+
+        import json
+
+        rendered = json.dumps(out)
+        if "$ref" in rendered:
+            assert "$defs" in out, "dangling $ref: definitions were dropped underneath it"
+
+    def test_definitions_are_dropped_once_fully_inlined(self) -> None:
+        """The common case still sheds the now-unreferenced definitions."""
+        out = sanitize_gemini_schema(
+            {
+                "type": "object",
+                "properties": {"addr": {"$ref": "#/$defs/Address"}},
+                "$defs": {"Address": {"type": "object", "properties": {}}},
+            }
+        )
+
+        assert "$defs" not in out
+        assert "$ref" not in str(out)
+
 
 class TestAdapterSchemasDoNotAliasTheRegistry:
     """Emitted schemas must not share structure with the canonical definition.

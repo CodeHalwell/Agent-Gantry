@@ -49,24 +49,25 @@ def _as_payload_dict(obj: Any, keys: tuple[str, ...]) -> dict[str, Any]:
 
 
 def _openai_chat_calls(response: Any) -> list[dict[str, Any]]:
-    choices = _get(response, "choices") or []
-    if not choices:
-        return []
-    message = _get(choices[0], "message")
-    raw_calls = _get(message, "tool_calls") or [] if message is not None else []
-
+    # Walk every choice, not just the first: with ``n > 1`` the tool calls in
+    # the other choices are just as real, and silently dropping them is worse
+    # than returning more than the caller expected.
     calls: list[dict[str, Any]] = []
-    for call in raw_calls:
-        function = _get(call, "function")
-        calls.append(
-            {
-                "id": _get(call, "id"),
-                "function": {
-                    "name": _get(function, "name", ""),
-                    "arguments": _get(function, "arguments", "{}"),
-                },
-            }
-        )
+    for choice in _get(response, "choices") or []:
+        message = _get(choice, "message")
+        if message is None:
+            continue
+        for call in _get(message, "tool_calls") or []:
+            function = _get(call, "function")
+            calls.append(
+                {
+                    "id": _get(call, "id"),
+                    "function": {
+                        "name": _get(function, "name", ""),
+                        "arguments": _get(function, "arguments", "{}"),
+                    },
+                }
+            )
     return calls
 
 
@@ -89,18 +90,17 @@ def _anthropic_calls(response: Any) -> list[dict[str, Any]]:
 
 
 def _gemini_calls(response: Any) -> list[dict[str, Any]]:
-    candidates = _get(response, "candidates") or []
-    if not candidates:
-        return []
-    content = _get(candidates[0], "content")
-    parts = _get(content, "parts") or [] if content is not None else []
-
+    # Every candidate, for the same reason as the OpenAI walk above.
     calls: list[dict[str, Any]] = []
-    for part in parts:
-        function_call = _get(part, "function_call") or _get(part, "functionCall")
-        if function_call is None:
+    for candidate in _get(response, "candidates") or []:
+        content = _get(candidate, "content")
+        if content is None:
             continue
-        calls.append(_as_payload_dict(function_call, ("name", "args", "id")))
+        for part in _get(content, "parts") or []:
+            function_call = _get(part, "function_call") or _get(part, "functionCall")
+            if function_call is None:
+                continue
+            calls.append(_as_payload_dict(function_call, ("name", "args", "id")))
     return calls
 
 
