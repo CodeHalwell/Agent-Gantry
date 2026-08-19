@@ -955,6 +955,7 @@ class AgentGantry:
         limit: int = 5,
         dialect: str = "openai",
         score_threshold: float = 0.0,
+        dialect_options: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """
@@ -972,19 +973,36 @@ class AgentGantry:
                 tools for embedders whose scores sit below it (e.g. MiniLM), so
                 the high-level convenience API opts out of filtering by default
                 and lets ranking + ``limit`` do the work.
-            **kwargs: Additional query parameters
+            dialect_options: Options forwarded to the dialect adapter rather
+                than the query — e.g. ``{"strict": True}`` for OpenAI. Any
+                keyword in ``**kwargs`` that is not a :class:`ToolQuery` field
+                is routed here too, so ``retrieve_tools(..., strict=True)``
+                works; this explicit dict wins on conflict.
+            **kwargs: Additional query parameters. Keywords matching a
+                ``ToolQuery`` field configure retrieval; the rest are treated
+                as dialect options (see ``dialect_options``). Previously any
+                non-``ToolQuery`` keyword was silently discarded, so ``strict``
+                never reached the adapter.
 
         Returns:
             List of provider-specific tool schemas
         """
         from agent_gantry.schema.query import ConversationContext, ToolQuery
 
+        # Split retrieval parameters from per-dialect adapter options so that
+        # neither silently swallows the other's keywords.
+        query_fields = set(ToolQuery.model_fields)
+        query_kwargs = {k: v for k, v in kwargs.items() if k in query_fields}
+        adapter_options = {k: v for k, v in kwargs.items() if k not in query_fields}
+        if dialect_options:
+            adapter_options.update(dialect_options)
+
         context = ConversationContext(query=query)
         tool_query = ToolQuery(
-            context=context, limit=limit, score_threshold=score_threshold, **kwargs
+            context=context, limit=limit, score_threshold=score_threshold, **query_kwargs
         )
         result = await self.retrieve(tool_query)
-        return result.to_dialect(dialect)
+        return result.to_dialect(dialect, **adapter_options)
 
     async def execute(self, call: ToolCall) -> ToolResult:
         """

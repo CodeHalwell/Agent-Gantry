@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **OpenAI strict mode now emits a schema the API accepts.** `strict=True`
+  only set the `strict` flag; it never reshaped the parameter schema. OpenAI
+  rejects a strict tool unless every object sets `additionalProperties: false`
+  and lists all of its properties in `required`, so any tool with an optional
+  parameter — including Agent-Gantry's own introspected tools — produced a 400.
+  Both the Chat Completions and Responses adapters now transform the schema,
+  widening formerly-optional properties to admit `null` so optionality is
+  preserved in meaning. The tool's canonical schema is never mutated.
+- **Per-dialect options now reach the adapter.** `retrieve_tools` forwarded
+  `**kwargs` into `ToolQuery`, whose `extra="ignore"` dropped anything that was
+  not a query field, then called `to_dialect` with no options — so
+  `retrieve_tools(..., strict=True)`, `OpenAIAdapter(gantry).tools(q,
+  strict=True)` and `with_semantic_tools(...)` all silently returned non-strict
+  schemas. Keywords are now split: `ToolQuery` fields configure retrieval, the
+  rest go to the adapter. `retrieve_tools` and `with_semantic_tools` also take
+  an explicit `dialect_options` dict.
+- **Gemini and Vertex AI schemas are sanitized.** The Gemini adapter passed
+  `parameters_schema` through verbatim, but the Google SDKs reject unknown
+  JSON-Schema keywords rather than ignoring them. `additionalProperties`,
+  `default`, `title` and similar are now stripped, `const` is converted to a
+  one-value `enum`, and local `$ref`/`$defs` pairs (what Pydantic emits for
+  nested models) are inlined since the SDKs will not follow the pointers.
+  Structural keywords are deliberately preserved — dropping one would silently
+  change which values a schema accepts. Pass `sanitize=False` to opt out.
+- **Emitted schemas no longer alias the registry.** OpenAI, Anthropic-strict
+  and Gemini conversions embedded `ToolDefinition.parameters_schema` by
+  reference, so a caller mutating a returned schema corrupted every later
+  conversion of that tool. The transforming paths now deep-copy.
+
 - **Anthropic convenience clients no longer silently drop every tool.**
   `AnthropicClient.create_message` and `SkillsClient.create_message` built
   their `ToolQuery` without `score_threshold`, inheriting the schema default

@@ -112,6 +112,7 @@ class SemanticToolSelector:
         dialect: str = "openai",
         auto_sync: bool = True,
         score_threshold: float = 0.0,
+        dialect_options: dict[str, Any] | None = None,
     ) -> None:
         """
         Initialize the semantic tool selector.
@@ -131,6 +132,8 @@ class SemanticToolSelector:
                 differs from the raw ``ToolQuery`` schema default of 0.5 — see
                 ``agent_gantry.schema.query.ToolQuery.score_threshold`` for why
                 a non-zero default is a silent-drop trap for convenience APIs).
+            dialect_options: Options forwarded to the dialect adapter on every
+                call — e.g. ``{"strict": True}`` for OpenAI structured outputs.
         """
         self._gantry = gantry
         self._prompt_param = prompt_param
@@ -139,6 +142,7 @@ class SemanticToolSelector:
         self._dialect = dialect
         self._auto_sync = auto_sync
         self._score_threshold = score_threshold
+        self._dialect_options = dialect_options or {}
         if not auto_sync:
             import warnings
 
@@ -181,7 +185,7 @@ class SemanticToolSelector:
         result = await self._gantry.retrieve(query)
 
         # Use the dialect registry for extensible provider support
-        return result.to_dialect(self._dialect)
+        return result.to_dialect(self._dialect, **self._dialect_options)
 
     def _extract_prompt(
         self,
@@ -372,6 +376,7 @@ def with_semantic_tools(
     dialect: str = ...,
     auto_sync: bool = ...,
     score_threshold: float = ...,
+    dialect_options: dict[str, Any] | None = ...,
 ) -> SemanticToolSelector: ...
 
 
@@ -390,6 +395,7 @@ def with_semantic_tools(
     dialect: str = "openai",
     auto_sync: bool = True,
     score_threshold: float = 0.0,
+    dialect_options: dict[str, Any] | None = None,
 ) -> SemanticToolSelector | Callable[..., Any]:
     """
     Decorator for automatic semantic tool selection in LLM generate functions.
@@ -428,6 +434,8 @@ def with_semantic_tools(
         dialect: Tool schema format - "openai", "anthropic", "gemini" (default: "openai").
         auto_sync: Deprecated and ignored — the gantry always ensures an
             incremental sync before retrieval.
+        dialect_options: Options forwarded to the dialect adapter on every
+            call, e.g. ``{"strict": True}`` for OpenAI structured outputs.
         score_threshold: Minimum relevance score for tools (default: 0.0 — no
             filtering, matching every framework adapter in
             ``agent_gantry.integrations.frameworks``; the raw ``ToolQuery``
@@ -492,6 +500,7 @@ def with_semantic_tools(
             dialect=dialect,
             auto_sync=auto_sync,
             score_threshold=score_threshold,
+            dialect_options=dialect_options,
         )
 
     # If gantry_or_func is an AgentGantry instance, return a selector
@@ -504,6 +513,7 @@ def with_semantic_tools(
             dialect=dialect,
             auto_sync=auto_sync,
             score_threshold=score_threshold,
+            dialect_options=dialect_options,
         )
 
     # Otherwise, assume it's a function and use default gantry
@@ -522,6 +532,7 @@ def with_semantic_tools(
             dialect=dialect,
             auto_sync=auto_sync,
             score_threshold=score_threshold,
+            dialect_options=dialect_options,
         )
         return selector(gantry_or_func)
 
@@ -568,6 +579,7 @@ class SemanticToolsDecorator:
         dialect: str = "openai",
         auto_sync: bool = True,
         score_threshold: float = 0.0,
+        dialect_options: dict[str, Any] | None = None,
     ) -> None:
         """
         Initialize the decorator factory.
@@ -579,6 +591,7 @@ class SemanticToolsDecorator:
             limit: Default maximum tools to retrieve.
             dialect: Default schema dialect.
             auto_sync: Deprecated and ignored (see ``with_semantic_tools``).
+            dialect_options: Default options forwarded to the dialect adapter.
             score_threshold: Default score threshold (0.0 — no filtering,
                 matching every framework adapter; see the module-level note on
                 ``with_semantic_tools`` for why this differs from the raw
@@ -591,6 +604,7 @@ class SemanticToolsDecorator:
         self._dialect = dialect
         self._auto_sync = auto_sync
         self._score_threshold = score_threshold
+        self._dialect_options = dialect_options or {}
 
     def wrap(
         self,
@@ -624,6 +638,7 @@ class SemanticToolsDecorator:
             dialect=dialect or self._dialect,
             auto_sync=self._auto_sync,
             score_threshold=self._score_threshold,
+            dialect_options=self._dialect_options,
         )
 
         if func is not None:
