@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Tool execution now honours the namespace selection resolved.** Selection is
+  namespace-aware everywhere — `ToolSpec` carries `_namespace`, pinning
+  distinguishes `"other.foo"` from `"foo"`, the Agent Framework bridge caches
+  per namespace — but `ToolCall` carried only a bare `tool_name`, and the
+  registry's bare-name lookup prefers `default.<name>`. With two MCP servers
+  exposing a same-named tool (a supported configuration, since MCP tools are
+  registered under per-server namespaces), the selected `other.search` could
+  silently execute `default.search`. `ToolCall` gains an optional `namespace`,
+  a qualified `tool_name` ("billing.search") is accepted, and every internal
+  call site that already knows which tool it selected — `ToolSpec.ainvoke`, the
+  Agent Framework bridge, `search_and_execute` — now passes it. A bare-name
+  call whose name exists in several namespaces logs a warning instead of
+  resolving silently. Bare-name execution still works unchanged, since a
+  provider tool-call payload cannot express more than the name the model saw.
+
 - **OpenAI strict mode now emits a schema the API accepts.** `strict=True`
   only set the `strict` flag; it never reshaped the parameter schema. OpenAI
   rejects a strict tool unless every object sets `additionalProperties: false`

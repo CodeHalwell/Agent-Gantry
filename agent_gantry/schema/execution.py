@@ -30,6 +30,14 @@ class ToolCall(BaseModel):
     """Request to execute a tool."""
 
     tool_name: str
+    #: Namespace the call targets. ``None`` means "resolve by bare name",
+    #: which is what a provider tool-call payload can express -- the model only
+    #: ever sees the bare name. Callers that already know which tool was
+    #: selected (every framework adapter, since selection is namespace-aware)
+    #: should set this, otherwise a same-named tool in another namespace can
+    #: be executed instead. A qualified ``tool_name`` ("billing.search") is
+    #: also accepted and takes effect when this field is unset.
+    namespace: str | None = None
     arguments: dict[str, Any]
 
     timeout_ms: int = Field(default=30000, ge=100, le=300000)

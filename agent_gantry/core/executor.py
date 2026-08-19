@@ -7,6 +7,7 @@ Handles tool execution with retries, timeouts, circuit breakers, and health trac
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -26,6 +27,8 @@ if TYPE_CHECKING:
     from agent_gantry.core.security import SecurityPolicy
     from agent_gantry.observability.telemetry import TelemetryAdapter
     from agent_gantry.schema.tool import ToolDefinition
+
+logger = logging.getLogger(__name__)
 
 
 class ExecutionEngine:
@@ -103,8 +106,14 @@ class ExecutionEngine:
         span_id = self._generate_span_id()
         queued_at = datetime.now(timezone.utc)
 
-        # Look up tool from registry (search across all namespaces)
-        tool = self._registry.get_tool_by_name(call.tool_name)
+        # Resolve the tool. Selection is namespace-aware, so execution must be
+        # too: with two MCP servers exposing a same-named tool, a bare-name
+        # lookup prefers ``default.<name>`` and would run a different tool than
+        # the one that was selected. An explicit ``call.namespace`` (set by
+        # every framework adapter) or a qualified ``tool_name`` pins it; a bare
+        # name still resolves as before, since a provider tool-call payload
+        # cannot express more than the name the model saw.
+        tool = self._resolve_tool(call)
         if not tool:
             return ToolResult(
                 tool_name=call.tool_name,
@@ -150,7 +159,7 @@ class ExecutionEngine:
                 return await self._get_a2a_executor().execute(tool, call, None)
 
             # Get handler for Python functions
-            handler = self._registry.get_handler(f"{tool.namespace}.{call.tool_name}")
+            handler = self._registry.get_handler(f"{tool.namespace}.{tool.name}")
             if not handler:
                 return ToolResult(
                     tool_name=call.tool_name,
@@ -612,6 +621,39 @@ class ExecutionEngine:
             await self._telemetry.record_health_change(
                 f"{tool.namespace}.{tool.name}", old_health, tool.health
             )
+
+    def _resolve_tool(self, call: ToolCall) -> ToolDefinition | None:
+        """Resolve the tool a call targets, honouring its namespace.
+
+        Precedence: an explicit ``call.namespace``, then a qualified
+        ``tool_name`` ("billing.search" -- tool names themselves cannot contain
+        a dot, so this is unambiguous), then a bare-name search across
+        namespaces for backward compatibility. The bare-name path logs when the
+        name exists in more than one namespace, because that is the case where
+        it can silently run a tool other than the one that was selected.
+        """
+        if call.namespace:
+            return self._registry.get_tool(call.tool_name, call.namespace)
+
+        if "." in call.tool_name:
+            namespace, _, bare = call.tool_name.rpartition(".")
+            qualified = self._registry.get_tool(bare, namespace)
+            if qualified is not None:
+                return qualified
+            # Fall through: a literal name containing a dot is invalid per the
+            # ToolDefinition pattern, but a stale caller may still send one.
+
+        candidates = self._registry.namespaces_for_name(call.tool_name)
+        if len(candidates) > 1:
+            logger.warning(
+                "Tool %r is registered in %d namespaces (%s); executing by bare "
+                "name resolves to one of them. Pass ToolCall(namespace=...) to "
+                "target a specific tool.",
+                call.tool_name,
+                len(candidates),
+                ", ".join(sorted(candidates)),
+            )
+        return self._registry.get_tool_by_name(call.tool_name)
 
     def _generate_trace_id(self) -> str:
         """Generate a unique trace ID."""

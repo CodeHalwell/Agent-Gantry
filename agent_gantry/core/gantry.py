@@ -1153,14 +1153,20 @@ class AgentGantry:
 
         # Use the best scoring tool
         best_tool = result.tools[0].tool
-        tool_name = best_tool.name
 
         # Use provided arguments or empty dict
         if arguments is None:
             arguments = {}
 
-        # Execute the tool
-        return await self.execute(ToolCall(tool_name=tool_name, arguments=arguments))
+        # Execute the tool we actually selected: passing the namespace keeps a
+        # same-named tool in another namespace from being run instead.
+        return await self.execute(
+            ToolCall(
+                tool_name=best_tool.name,
+                namespace=best_tool.namespace,
+                arguments=arguments,
+            )
+        )
 
     async def execute_batch(self, batch: BatchToolCall) -> BatchToolResult:
         """

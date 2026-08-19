@@ -122,7 +122,12 @@ class ToolSpec:
         arguments = _coerce_arguments(args, kwargs)
         required = set(self.parameters.get("required") or [])
         arguments = {k: v for k, v in arguments.items() if v is not None or k in required}
-        result = await self._gantry.execute(ToolCall(tool_name=self.name, arguments=arguments))
+        # Pass the namespace: selection resolved this spec to one specific
+        # tool, and a bare-name execute would prefer ``default.<name>`` if
+        # another namespace registers the same name.
+        result = await self._gantry.execute(
+            ToolCall(tool_name=self.name, namespace=self._namespace, arguments=arguments)
+        )
         if result.status != ExecutionStatus.SUCCESS:
             raise ToolExecutionError(
                 self.name, getattr(result.status, "value", str(result.status)), result.error
