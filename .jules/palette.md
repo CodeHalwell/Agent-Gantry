@@ -108,3 +108,8 @@
 ## 2026-10-25 - [Semantic Grouping for Pill Badges]
 **Learning:** When displaying groups of inline visual badges or pills (like tags or categories), flat `<span>` or `<div>` elements cause screen readers to read them as an unstructured text block. By wrapping them in a semantic `<ul role="list">` and `<li>` structure, screen readers will properly announce the item count and boundaries.
 **Action:** Always wrap visual pill or tag groups in a `<ul role="list">` and apply CSS flexbox for wrapping to maintain visual layout while providing semantic meaning.
+
+
+## 2026-07-21 - [Global Focus Outline Overriding Native Radii]
+**Learning:** Applying `border-radius` directly within a global `:focus-visible` rule overrides the element's native border radius on focus, turning rounded pill buttons into squares. Modern browsers automatically curve the `outline` property to match the element's `border-radius` anyway.
+**Action:** Never apply `border-radius` inside global focus-visible rules. Only apply `outline` and `outline-offset` to ensure the visual indicator conforms to the element's existing geometry.
