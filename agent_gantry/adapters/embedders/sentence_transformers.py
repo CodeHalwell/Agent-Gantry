@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import warnings
 from typing import Any
 
@@ -51,9 +52,37 @@ class SentenceTransformersEmbedder(EmbeddingAdapter):
         self._device = device
         self._model: Any = None
         self._native_dimension: int | None = None
+        self._load_lock = threading.Lock()
 
     def _ensure_initialized(self) -> None:
-        """Lazily load the model on first use."""
+        """Load the model on first use, blocking the caller.
+
+        Prefer :meth:`_aensure_initialized` from async code. This stays sync
+        because it is also reached from sync properties.
+        """
+        if self._model is not None:
+            return
+        with self._load_lock:
+            if self._model is not None:
+                return
+            self._load_model()
+
+    async def _aensure_initialized(self) -> None:
+        """Load the model without stalling the event loop.
+
+        Construction downloads weights on first use and takes seconds (minutes
+        on a cold cache). Running it inline in a coroutine freezes every other
+        task on the loop. The ``encode``/``predict`` calls were already
+        offloaded; only construction was not. The guard is a
+        ``threading.Lock`` rather than an ``asyncio.Lock`` because the work
+        runs in a worker thread and the adapter may outlive one event loop.
+        """
+        if self._model is not None:
+            return
+        await asyncio.to_thread(self._ensure_initialized)
+
+    def _load_model(self) -> None:
+        """Construct the model. Caller holds ``_load_lock``."""
         if self._model is not None:
             return
 
@@ -113,7 +142,7 @@ class SentenceTransformersEmbedder(EmbeddingAdapter):
         Returns:
             Embedding vector as a list of floats
         """
-        self._ensure_initialized()
+        await self._aensure_initialized()
 
         # Run in thread pool to avoid blocking the event loop
         embedding = await asyncio.to_thread(
@@ -148,7 +177,7 @@ class SentenceTransformersEmbedder(EmbeddingAdapter):
         if not texts:
             return []
 
-        self._ensure_initialized()
+        await self._aensure_initialized()
 
         kwargs: dict[str, Any] = {"normalize_embeddings": True}
         if batch_size:
@@ -171,7 +200,7 @@ class SentenceTransformersEmbedder(EmbeddingAdapter):
     async def health_check(self) -> bool:
         """Check if the embedder is operational."""
         try:
-            self._ensure_initialized()
+            await self._aensure_initialized()
             return self._model is not None
         except Exception:
             return False

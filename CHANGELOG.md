@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance
+
+- **Model loading no longer stalls the event loop.** The sentence-transformers
+  and Nomic embedders and the cross-encoder reranker construct their model on
+  first use. `encode`/`predict` were already offloaded with
+  `asyncio.to_thread`, but construction — the expensive part, downloading
+  weights on a cold cache — ran inline in the coroutine, freezing every other
+  task on the loop for seconds. Construction now runs in a worker thread,
+  guarded so concurrent first calls load the model exactly once. The sync
+  `dimension` property keeps working.
+- **LanceDB reads project only the columns they use.** `search_skills`,
+  `list_all`, and `list_all_skills` had no `.select()`, so every returned row
+  also materialized its full embedding vector just to discard it — measured at
+  ~630x the payload for a 50-row scan. `list_all_skills` matters most: the
+  facade's embedder-migration check calls it with a limit of 1,000,000.
+
 ### Fixed
 
 - **Tool execution now honours the namespace selection resolved.** Selection is

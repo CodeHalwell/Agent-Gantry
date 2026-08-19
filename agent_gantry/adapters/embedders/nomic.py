@@ -8,6 +8,8 @@ for efficient retrieval at various embedding dimensions.
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from typing import Any
 
 from agent_gantry.adapters.embedders.base import EmbeddingAdapter
@@ -94,6 +96,7 @@ class NomicEmbedder(EmbeddingAdapter):
         self._device = device
         self._model: Any = None
         self._initialized = False
+        self._load_lock = threading.Lock()
 
     @property
     def dimension(self) -> int:
@@ -118,7 +121,34 @@ class NomicEmbedder(EmbeddingAdapter):
         return f"{self._model_name}:{self._dimension}:{self._task_type}"
 
     def _ensure_initialized(self) -> None:
-        """Lazy-load the model on first use."""
+        """Load the model on first use, blocking the caller.
+
+        Prefer :meth:`_aensure_initialized` from async code. This stays sync
+        because it is also reached from sync properties.
+        """
+        if self._initialized:
+            return
+        with self._load_lock:
+            if self._initialized:
+                return
+            self._load_model()
+
+    async def _aensure_initialized(self) -> None:
+        """Load the model without stalling the event loop.
+
+        Construction downloads weights on first use and takes seconds (minutes
+        on a cold cache). Running it inline in a coroutine freezes every other
+        task on the loop. The ``encode``/``predict`` calls were already
+        offloaded; only construction was not. The guard is a
+        ``threading.Lock`` rather than an ``asyncio.Lock`` because the work
+        runs in a worker thread and the adapter may outlive one event loop.
+        """
+        if self._initialized:
+            return
+        await asyncio.to_thread(self._ensure_initialized)
+
+    def _load_model(self) -> None:
+        """Construct the model. Caller holds ``_load_lock``."""
         if self._initialized:
             return
 
@@ -165,7 +195,7 @@ class NomicEmbedder(EmbeddingAdapter):
         """
         import asyncio
 
-        self._ensure_initialized()
+        await self._aensure_initialized()
 
         # Add task prefix
         prefixed_text = f"{self._task_prefix}{text}"
@@ -200,7 +230,7 @@ class NomicEmbedder(EmbeddingAdapter):
         if not texts:
             return []
 
-        self._ensure_initialized()
+        await self._aensure_initialized()
 
         # Add task prefix to all texts
         prefixed_texts = [f"{self._task_prefix}{text}" for text in texts]
@@ -234,7 +264,7 @@ class NomicEmbedder(EmbeddingAdapter):
         """
         import asyncio
 
-        self._ensure_initialized()
+        await self._aensure_initialized()
 
         # Always use search_query prefix for queries (optimal for retrieval)
         prefixed_query = f"search_query: {query}"
@@ -258,7 +288,7 @@ class NomicEmbedder(EmbeddingAdapter):
         import asyncio
 
         try:
-            self._ensure_initialized()
+            await self._aensure_initialized()
             # Quick sanity check (run in thread pool to avoid blocking event loop)
             test_embedding = await asyncio.to_thread(
                 lambda: self._model.encode(["test"], normalize_embeddings=True)

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -45,9 +46,37 @@ class CrossEncoderReranker:
         self._model_name = model
         self._device = device
         self._model: Any = None
+        self._load_lock = threading.Lock()
 
     def _ensure_initialized(self) -> None:
-        """Lazily load the cross-encoder model on first use."""
+        """Load the model on first use, blocking the caller.
+
+        Prefer :meth:`_aensure_initialized` from async code. This stays sync
+        because it is also reached from sync properties.
+        """
+        if self._model is not None:
+            return
+        with self._load_lock:
+            if self._model is not None:
+                return
+            self._load_model()
+
+    async def _aensure_initialized(self) -> None:
+        """Load the model without stalling the event loop.
+
+        Construction downloads weights on first use and takes seconds (minutes
+        on a cold cache). Running it inline in a coroutine freezes every other
+        task on the loop. The ``encode``/``predict`` calls were already
+        offloaded; only construction was not. The guard is a
+        ``threading.Lock`` rather than an ``asyncio.Lock`` because the work
+        runs in a worker thread and the adapter may outlive one event loop.
+        """
+        if self._model is not None:
+            return
+        await asyncio.to_thread(self._ensure_initialized)
+
+    def _load_model(self) -> None:
+        """Construct the cross-encoder. Caller holds ``_load_lock``."""
         if self._model is not None:
             return
 
@@ -85,7 +114,7 @@ class CrossEncoderReranker:
         if not tools:
             return []
 
-        self._ensure_initialized()
+        await self._aensure_initialized()
 
         # Build query-document pairs for cross-encoder
         pairs = [
