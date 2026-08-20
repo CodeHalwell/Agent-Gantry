@@ -71,8 +71,13 @@ import inspect
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import GantryToolset, ToolSpec
+from agent_gantry.integrations.frameworks.base import (
+    DEFAULT_TOOL_LIMIT,
+    GantryToolset,
+    ToolSpec,
+)
 from agent_gantry.query import latest_activity
+from agent_gantry.query.strategies import _msg_role, _msg_text
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 
 if TYPE_CHECKING:
@@ -98,58 +103,10 @@ def _default_query_generator() -> Callable[[Iterable[Any] | None], str]:
     return latest_activity
 
 
-def _blocks_to_text(value: Any) -> str:
-    """Join text out of a list of content blocks (OpenAI/Anthropic/LangChain).
-
-    Modern message content is often a list of blocks like
-    ``[{"type": "text", "text": "..."}, {"type": "image", ...}]`` or plain
-    strings. Pull the text parts and join them; return ``""`` for non-lists.
-    """
-    if not isinstance(value, list):
-        return ""
-    parts: list[str] = []
-    for item in value:
-        if isinstance(item, str) and item.strip():
-            parts.append(item.strip())
-        elif isinstance(item, dict):
-            t = item.get("text")
-            if isinstance(t, str) and t.strip():
-                parts.append(t.strip())
-    return " ".join(parts)
-
-
-def _msg_text(msg: Any) -> str:
-    """Best-effort plain text from a message dict or object (last-resort).
-
-    Handles string content and list-of-content-blocks (multi-modal / rich-text
-    messages from OpenAI, Anthropic and LangChain).
-    """
-    text = getattr(msg, "text", None)
-    if isinstance(text, str) and text.strip():
-        return text.strip()
-    content = getattr(msg, "content", None)
-    if isinstance(content, str) and content.strip():
-        return content.strip()
-    blocks = _blocks_to_text(content)
-    if blocks:
-        return blocks
-    if isinstance(msg, dict):
-        for key in ("text", "content"):
-            value = msg.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-            blocks = _blocks_to_text(value)
-            if blocks:
-                return blocks
-    return ""
-
-
-def _msg_role(msg: Any) -> str:
-    """Lowercased role of a message dict or object."""
-    role = getattr(msg, "role", None)
-    if role is None and isinstance(msg, dict):
-        role = msg.get("role")
-    return str(role).lower() if role is not None else ""
+# ``_msg_text``/``_msg_role`` live in agent_gantry.query.strategies; this module
+# reuses them instead of keeping a second copy that drifts (the canonical pair
+# also understands Responses-API ``input_text`` parts, Agent Framework
+# ``contents``/``function_result`` blocks, and LangChain's ``.type`` role).
 
 
 def _msg_tool_name(msg: Any) -> str:
@@ -217,7 +174,7 @@ class ToolRefresher:
         self,
         gantry: AgentGantry,
         *,
-        limit: int = 3,
+        limit: int = DEFAULT_TOOL_LIMIT,
         dialect: str = "openai",
         score_threshold: float = 0.0,
         query_generator: Callable[[Iterable[Any] | None], Any] | None = None,
@@ -345,7 +302,9 @@ class ToolRefresher:
         if query:
             return query
         if messages:
-            return _msg_text(messages[-1])
+            # The canonical ``_msg_text`` returns text unstripped; this
+            # fallback has always yielded a stripped query.
+            return _msg_text(messages[-1]).strip()
         return ""
 
     def _accumulate_used(self, messages: list[Any]) -> None:

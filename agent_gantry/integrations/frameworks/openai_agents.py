@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from agent_gantry.adapters.tool_spec.schema_utils import strict_json_schema
 from agent_gantry.integrations.frameworks.base import (
     DEFAULT_TOOL_LIMIT,
     BaseFrameworkAdapter,
@@ -29,14 +30,21 @@ if TYPE_CHECKING:
 
 
 def _strict_schema(params: dict[str, Any]) -> dict[str, Any]:
-    """Return a copy of ``params`` with ``additionalProperties: False`` set.
+    """Return ``params`` reshaped for OpenAI Agents strict-mode function tools.
 
-    OpenAI strict-mode function tools require ``additionalProperties`` to be
-    ``False`` on the parameter schema.
+    ``FunctionTool.strict_json_schema`` defaults to ``True``, and the SDK then
+    runs ``ensure_strict_json_schema``, which rewrites ``required`` to list
+    *every* property. Setting only a top-level ``additionalProperties: False``
+    therefore silently promoted every optional Gantry parameter to mandatory
+    (no ``null`` union was added), raised ``UserError`` on any nested
+    ``additionalProperties: true``, and on SDK versions predating that
+    transform sent a non-strict schema with ``strict=true`` — a 400.
+
+    Delegating to the shared transform applies the constraints recursively and
+    keeps optionality by widening those properties to admit ``null``. It is
+    idempotent, so the SDK's own pass over the result is a no-op.
     """
-    schema = dict(params or {"type": "object", "properties": {}})
-    schema["additionalProperties"] = False
-    return schema
+    return strict_json_schema(params)
 
 
 def _spec_to_openai_agents(spec: ToolSpec) -> Any:
@@ -55,7 +63,11 @@ def _spec_to_openai_agents(spec: ToolSpec) -> Any:
 
     async def _on_invoke_tool(ctx: Any, args: Any) -> str:
         data = json.loads(args) if isinstance(args, str) else dict(args or {})
-        return str(await spec.ainvoke(**data))
+        result = await spec.ainvoke(**data)
+        # ``str()`` on a dict yields Python repr (single quotes), which the
+        # model then has to guess at. Serialize structured results as JSON,
+        # matching the Agent Framework bridge.
+        return result if isinstance(result, str) else json.dumps(result, default=str)
 
     return FunctionTool(
         name=spec.name,

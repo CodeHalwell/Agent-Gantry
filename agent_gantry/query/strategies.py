@@ -117,12 +117,34 @@ def _msg_text(msg: Any) -> str:
     return ""
 
 
+# LangChain messages expose the role as ``.type`` ("human"/"ai"/...) rather
+# than ``.role``. Only these known values are treated as roles so an unrelated
+# ``type`` attribute is never mistaken for one.
+_LANGCHAIN_ROLES = {
+    "human": "user",
+    "ai": "assistant",
+    "system": "system",
+    "tool": "tool",
+    "function": "function",
+}
+
+
 def _msg_role(msg: Any) -> str:
     """Get the role of a message as a lowercase string."""
     role = getattr(msg, "role", None)
     if role is None and isinstance(msg, dict):
         role = msg.get("role")
-    return str(role).lower() if role is not None else ""
+    if role is not None:
+        return str(role).lower()
+
+    # LangChain ``BaseMessage`` and its dict form carry the role in ``type``.
+    kind = getattr(msg, "type", None)
+    if kind is None and isinstance(msg, dict):
+        kind = msg.get("type")
+    if isinstance(kind, str):
+        return _LANGCHAIN_ROLES.get(kind.lower(), "")
+
+    return ""
 
 
 def _msg_name(msg: Any) -> str:

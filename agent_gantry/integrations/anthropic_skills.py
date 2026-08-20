@@ -12,15 +12,49 @@ that Claude can reason about and use effectively.
 
 from __future__ import annotations
 
-import asyncio
-import json
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from agent_gantry import AgentGantry
-from agent_gantry.schema.execution import ExecutionStatus, ToolCall
 from agent_gantry.schema.query import ConversationContext, ToolQuery
+
+logger = logging.getLogger(__name__)
+
+async def _record_provider_usage(gantry: Any, response: Any, model: str) -> None:
+    """Report Anthropic's ``usage`` block to telemetry, best effort.
+
+    Nothing in the library measured the token cost of a call before this:
+    ``record_token_usage`` existed on the telemetry protocol and was never
+    invoked outside tests. Failures here are swallowed -- accounting must never
+    break a user's request.
+    """
+    telemetry = getattr(gantry, "telemetry", None) if gantry is not None else None
+    if telemetry is None:
+        return
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return
+    fields = {
+        name: value
+        for name in (
+            "input_tokens",
+            "output_tokens",
+            "cache_creation_input_tokens",
+            "cache_read_input_tokens",
+        )
+        if isinstance(value := getattr(usage, name, None), (int, float))
+    }
+    if not fields:
+        return
+    try:
+        from agent_gantry.metrics.token_usage import ProviderUsage
+
+        await telemetry.record_token_usage(ProviderUsage.from_usage(fields), model_name=model)
+    except Exception as exc:
+        logger.debug("Token usage recording skipped: %s", exc)
+
 
 
 @dataclass
@@ -269,6 +303,9 @@ class SkillsClient:
                     ToolQuery(
                         context=ConversationContext(query=query),
                         limit=tool_limit,
+                        # Convenience layers use 0.0: a flat absolute cutoff
+                        # silently drops everything on longer queries.
+                        score_threshold=0.0,
                     )
                 )
                 tools = [t.tool.to_dialect("anthropic") for t in retrieval_result.tools]
@@ -289,6 +326,7 @@ class SkillsClient:
 
         # Create message
         response = await self._client.messages.create(**request_kwargs)
+        await _record_provider_usage(self._gantry, response, model)
 
         return response
 
@@ -297,61 +335,25 @@ class SkillsClient:
         response: Any,
     ) -> list[dict[str, Any]]:
         """
-        Execute tool calls from a Skills API response.
+        Execute the tool calls in an Anthropic response.
+
+        Delegates to :meth:`AgentGantry.execute_tool_calls`, which extracts
+        every ``tool_use`` block (including parallel ones), runs them
+        concurrently through the full protection stack, and formats each result
+        with the Anthropic adapter. This used to be hand-rolled here, and in
+        ``SkillsClient`` too, with the two copies having drifted apart on
+        concurrency.
 
         Args:
             response: Anthropic message response
 
         Returns:
-            List of tool results in Anthropic format
+            List of ``tool_result`` blocks in Anthropic format
         """
         if not self._gantry:
             raise ValueError("AgentGantry instance required for tool execution")
 
-        # Collect tools to execute and their IDs
-        tool_executions = []
-        tool_use_ids = []
-
-        for block in response.content:
-            if hasattr(block, "type") and block.type == "tool_use":
-                tool_use_ids.append(block.id)
-                tool_executions.append(
-                    self._gantry.execute(
-                        ToolCall(
-                            tool_name=block.name,
-                            arguments=block.input,
-                        )
-                    )
-                )
-
-        if not tool_executions:
-            return []
-
-        # Execute all tools concurrently
-        results = await asyncio.gather(*tool_executions)
-
-        # Format results for Anthropic.
-        # is_error signals model-level tool failure so the model can distinguish
-        # error content from normal tool output.
-        # Source: https://platform.claude.com/docs/en/api/messages (tool_result)
-        tool_results = []
-        for block_id, result in zip(tool_use_ids, results):
-            is_error = result.status != ExecutionStatus.SUCCESS
-            content: str
-            if is_error:
-                content = f"Error: {result.error}"
-            else:
-                content = result.result if isinstance(result.result, str) else json.dumps(result.result)
-            tool_result: dict[str, Any] = {
-                "type": "tool_result",
-                "tool_use_id": block_id,
-                "content": content,
-            }
-            if is_error:
-                tool_result["is_error"] = True
-            tool_results.append(tool_result)
-
-        return tool_results
+        return await self._gantry.execute_tool_calls(response, dialect="anthropic")
 
     def register_skill_from_gantry_tools(
         self,

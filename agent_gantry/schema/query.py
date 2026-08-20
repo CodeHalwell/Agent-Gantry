@@ -75,7 +75,10 @@ class ToolQuery(BaseModel):
     exclude_unhealthy: bool = True
 
     # Advanced
-    enable_reranking: bool = False
+    # ``None`` means "defer to the gantry's reranker config": ``retrieve()``
+    # turns it on when a reranker is configured. Set it explicitly to
+    # ``True``/``False`` to force the behaviour regardless of config.
+    enable_reranking: bool | None = None
     include_dependencies: bool = True
     diversity_factor: float = Field(default=0.0, ge=0.0, le=1.0)
 

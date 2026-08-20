@@ -27,6 +27,12 @@ class ProviderUsage:
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    #: Portion of ``prompt_tokens`` that Anthropic reported as cache writes or
+    #: reads. Broken out so a caller can still see the uncached figure, but
+    #: counted inside ``prompt_tokens`` because those tokens were processed --
+    #: excluding them makes a cached run look dramatically cheaper than an
+    #: uncached baseline and inflates any savings computed against it.
+    cached_prompt_tokens: int = 0
 
     @staticmethod
     def _coerce_token_value(value: int | float, field_name: str) -> int:
@@ -49,7 +55,10 @@ class ProviderUsage:
 
         Supports multiple provider token field conventions:
         - OpenAI: prompt_tokens, completion_tokens, total_tokens
-        - Anthropic: input_tokens, output_tokens
+        - Anthropic: input_tokens, output_tokens, and the cache counters
+          (cache_creation_input_tokens / cache_read_input_tokens), which are
+          added to the prompt total and also surfaced as
+          ``cached_prompt_tokens``
         - Google: prompt_token_count, candidates_token_count, total_token_count
 
         Checks each provider convention in order and uses the first present field,
@@ -74,9 +83,17 @@ class ProviderUsage:
                 completion_raw = usage[key]
                 break
 
+        # Anthropic reports cached prompt tokens separately from
+        # ``input_tokens``; both were processed, so both count as prompt tokens.
+        cached = 0
+        for key in ("cache_creation_input_tokens", "cache_read_input_tokens"):
+            if key in usage:
+                cached += cls._coerce_token_value(usage[key], key)
+
         prompt = (
             cls._coerce_token_value(prompt_raw, "prompt_tokens") if prompt_raw is not None else 0
         )
+        prompt += cached
         completion = (
             cls._coerce_token_value(completion_raw, "completion_tokens")
             if completion_raw is not None
@@ -100,6 +117,7 @@ class ProviderUsage:
             prompt_tokens=prompt,
             completion_tokens=completion,
             total_tokens=total,
+            cached_prompt_tokens=cached,
         )
 
 

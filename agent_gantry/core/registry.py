@@ -153,6 +153,14 @@ class ToolRegistry:
             return self._tools.get(key)
         return None
 
+    def namespaces_for_name(self, name: str) -> list[str]:
+        """Return every namespace registering a tool called ``name``.
+
+        Used to tell an unambiguous bare-name lookup apart from one that
+        silently picked a winner among same-named tools.
+        """
+        return [tool.namespace for tool in self._tools.values() if tool.name == name]
+
     def get_handler(self, key: str) -> Callable[..., Any] | None:
         """
         Get the handler for a tool by its full key (namespace.name).

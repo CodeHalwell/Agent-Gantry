@@ -501,7 +501,16 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
         """
         await self._ensure_initialized()
 
-        search = self._skills_table.search(query_vector).limit(limit * 2)
+        # Project only the columns used below. Without .select() every row also
+        # materializes its full embedding vector just to be discarded --
+        # the same fix already applied to the tools search above. `_distance`
+        # must be listed explicitly: newer Lance versions stop auto-projecting
+        # it once output columns are specified.
+        search = (
+            self._skills_table.search(query_vector)
+            .select(["skill_json", "_distance"])
+            .limit(limit * 2)
+        )
 
         # Build ONE combined predicate: LanceDB's .where() is a setter, not
         # an accumulator — a second call replaces the first, which silently
@@ -701,7 +710,10 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
             _validate_identifier(namespace, "namespace")
 
         try:
-            query = self._tools_table.search()
+            # Only tool_json is read below; projecting it keeps the embedding
+            # vector out of the scan. Filtering still works on unprojected
+            # columns -- the predicate is applied by the engine first.
+            query = self._tools_table.search().select(["tool_json"])
             if namespace:
                 query = query.where(f"namespace = '{_escape_sql_string(namespace)}'")
             records = await asyncio.to_thread(query.limit(limit).offset(offset).to_list)
@@ -746,7 +758,10 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
         # indistinguishable from "no skills stored", which let callers (e.g.
         # the facade's embedder-migration check) record success after having
         # listed nothing. Only malformed individual rows are skipped.
-        query = self._skills_table.search()
+        # Only skill_json is read below. This path is also called with a very
+        # large limit by the facade's embedder-migration check, so scanning the
+        # vector column here is the most expensive instance of the omission.
+        query = self._skills_table.search().select(["skill_json"])
         where_clauses = []
         if namespace:
             where_clauses.append(f"namespace = '{_escape_sql_string(namespace)}'")

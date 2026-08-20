@@ -349,7 +349,7 @@ def _tool_approval_mode(tool_def: ToolDefinition) -> str | None:
 
 
 def _build_tool_execute(
-    tool_name: str, gantry: AgentGantry
+    tool_name: str, gantry: AgentGantry, namespace: str | None = None
 ) -> Callable[..., Awaitable[str]]:
     """Build the async callable that runs ``tool_name`` through ``gantry.execute``.
 
@@ -357,11 +357,16 @@ def _build_tool_execute(
     string so the real root cause survives Agent Framework's tool runner — which
     otherwise replaces an uncaught error with the opaque ``"Error: Function
     failed."`` string when ``include_detailed_errors`` is off (the default).
+
+    ``namespace`` pins execution to the tool this wrapper was built for; without
+    it a same-named tool in another namespace could be run instead.
     """
 
     async def _execute(**kwargs: Any) -> str:
         try:
-            result = await gantry.execute(ToolCall(tool_name=tool_name, arguments=kwargs))
+            result = await gantry.execute(
+                ToolCall(tool_name=tool_name, namespace=namespace, arguments=kwargs)
+            )
         except Exception as exc:
             return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
         if result.status.value == "success":
@@ -507,7 +512,7 @@ def _build_callable_for_tool(
     properties = params_schema.get("properties", {})
     required_params = set(params_schema.get("required", []))
 
-    execute = _build_tool_execute(tool_def.name, gantry)
+    execute = _build_tool_execute(tool_def.name, gantry, tool_def.namespace)
     wrapper = _build_typed_wrapper(
         tool_def.name, tool_def.description, properties, required_params, execute
     )

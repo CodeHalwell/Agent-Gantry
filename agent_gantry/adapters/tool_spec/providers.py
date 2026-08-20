@@ -12,10 +12,16 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.adapters.tool_spec.base import ToolCallPayload
+from agent_gantry.adapters.tool_spec.schema_utils import (
+    sanitize_gemini_schema,
+    strict_json_schema,
+)
 from agent_gantry.schema.execution import ToolCall
 
 if TYPE_CHECKING:
     from agent_gantry.schema.tool import ToolDefinition
+
+_logger = logging.getLogger(__name__)
 
 
 class OpenAIAdapter:
@@ -51,18 +57,28 @@ class OpenAIAdapter:
 
         Args:
             tool: The tool definition to convert
-            strict: Enable OpenAI's strict mode (default: False)
+            strict: Enable OpenAI's structured-outputs strict mode. The
+                parameter schema is rewritten to satisfy it: every object gets
+                ``additionalProperties: false`` and lists all of its properties
+                in ``required``, with formerly-optional properties widened to
+                admit ``null``. Setting the flag without that rewrite makes the
+                API reject any tool that has an optional parameter. The
+                ToolDefinition's own schema is never mutated. Defaults to False.
+                Source: https://platform.openai.com/docs/guides/function-calling
             **options: Additional provider-specific options
 
         Returns:
             OpenAI-compatible tool schema
         """
+        parameters = (
+            strict_json_schema(tool.parameters_schema) if strict else tool.parameters_schema
+        )
         schema: dict[str, Any] = {
             "type": "function",
             "function": {
                 "name": tool.name,
                 "description": tool.description,
-                "parameters": tool.parameters_schema,
+                "parameters": parameters,
             },
         }
         if strict:
@@ -96,6 +112,12 @@ class OpenAIAdapter:
             try:
                 arguments = json.loads(arguments)
             except json.JSONDecodeError:
+                _logger.warning(
+                    "OpenAIAdapter: malformed JSON in tool arguments "
+                    "for '%s', defaulting to empty dict: %s",
+                    tool_name,
+                    arguments[:200],
+                )
                 arguments = {}
 
         return ToolCallPayload(
@@ -188,17 +210,25 @@ class OpenAIResponsesAdapter:
 
         Args:
             tool: The tool definition to convert
-            strict: Enable strict mode (default: False)
+            strict: Enable strict mode. The parameter schema is rewritten to
+                satisfy it (``additionalProperties: false``, every property in
+                ``required``, formerly-optional properties widened to admit
+                ``null``); the flag alone would make the API reject any tool
+                with an optional parameter. The ToolDefinition's own schema is
+                never mutated. Defaults to False.
             **options: Additional provider-specific options
 
         Returns:
             OpenAI Responses API compatible tool schema
         """
+        parameters = (
+            strict_json_schema(tool.parameters_schema) if strict else tool.parameters_schema
+        )
         schema: dict[str, Any] = {
             "type": "function",
             "name": tool.name,
             "description": tool.description,
-            "parameters": tool.parameters_schema,
+            "parameters": parameters,
         }
         if strict:
             schema["strict"] = True
@@ -228,6 +258,12 @@ class OpenAIResponsesAdapter:
             try:
                 arguments = json.loads(arguments)
             except json.JSONDecodeError:
+                _logger.warning(
+                    "OpenAIResponsesAdapter: malformed JSON in tool arguments "
+                    "for '%s', defaulting to empty dict: %s",
+                    tool_name,
+                    arguments[:200],
+                )
                 arguments = {}
 
         return ToolCallPayload(
@@ -430,17 +466,34 @@ class GeminiAdapter:
         """
         Convert ToolDefinition to Gemini function declaration format.
 
+        The parameter schema is sanitized first: Gemini and Vertex AI reject
+        unknown JSON-Schema keywords rather than ignoring them, so keywords
+        that are valid everywhere else (``additionalProperties``, ``default``,
+        ``title``, …) would turn into request errors. This matters for
+        Agent-Gantry's own tools — introspecting a ``**kwargs`` handler emits
+        ``additionalProperties``, which alone breaks the Gemini path. Local
+        ``$ref``/``$defs`` pairs (what Pydantic emits for nested models) are
+        inlined, since the SDKs will not follow the pointers.
+
         Args:
             tool: The tool definition to convert
+            sanitize: Set ``False`` to emit ``parameters_schema`` verbatim,
+                for callers on an SDK version that accepts more keywords.
+                Defaults to True.
             **options: Additional provider-specific options
 
         Returns:
             Gemini-compatible function declaration
         """
+        sanitize = options.get("sanitize", True)
         return {
             "name": tool.name,
             "description": tool.description,
-            "parameters": tool.parameters_schema,
+            "parameters": (
+                sanitize_gemini_schema(tool.parameters_schema)
+                if sanitize
+                else tool.parameters_schema
+            ),
         }
 
     def from_provider_payload(
@@ -535,9 +588,6 @@ class GroqAdapter(OpenAIAdapter):
     @property
     def dialect_name(self) -> str:
         return "groq"
-
-
-_logger = logging.getLogger(__name__)
 
 
 class AgentFrameworkAdapter(OpenAIAdapter):

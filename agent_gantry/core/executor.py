@@ -7,6 +7,7 @@ Handles tool execution with retries, timeouts, circuit breakers, and health trac
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -26,6 +27,8 @@ if TYPE_CHECKING:
     from agent_gantry.core.security import SecurityPolicy
     from agent_gantry.observability.telemetry import TelemetryAdapter
     from agent_gantry.schema.tool import ToolDefinition
+
+logger = logging.getLogger(__name__)
 
 
 class ExecutionEngine:
@@ -103,8 +106,14 @@ class ExecutionEngine:
         span_id = self._generate_span_id()
         queued_at = datetime.now(timezone.utc)
 
-        # Look up tool from registry (search across all namespaces)
-        tool = self._registry.get_tool_by_name(call.tool_name)
+        # Resolve the tool. Selection is namespace-aware, so execution must be
+        # too: with two MCP servers exposing a same-named tool, a bare-name
+        # lookup prefers ``default.<name>`` and would run a different tool than
+        # the one that was selected. An explicit ``call.namespace`` (set by
+        # every framework adapter) or a qualified ``tool_name`` pins it; a bare
+        # name still resolves as before, since a provider tool-call payload
+        # cannot express more than the name the model saw.
+        tool = self._resolve_tool(call)
         if not tool:
             return ToolResult(
                 tool_name=call.tool_name,
@@ -123,7 +132,7 @@ class ExecutionEngine:
             return cb_result
 
         # Security policy check
-        sp_result = await self._check_security_policy(call, queued_at, trace_id, span_id)
+        sp_result = await self._check_security_policy(tool, call, queued_at, trace_id, span_id)
         if sp_result:
             return sp_result
 
@@ -150,7 +159,7 @@ class ExecutionEngine:
                 return await self._get_a2a_executor().execute(tool, call, None)
 
             # Get handler for Python functions
-            handler = self._registry.get_handler(f"{tool.namespace}.{call.tool_name}")
+            handler = self._registry.get_handler(f"{tool.namespace}.{tool.name}")
             if not handler:
                 return ToolResult(
                     tool_name=call.tool_name,
@@ -175,7 +184,8 @@ class ExecutionEngine:
             )
         finally:
             if self._rate_limiter:
-                await self._rate_limiter.release(call.tool_name, tool.namespace)
+                # Must mirror the acquire key above.
+                await self._rate_limiter.release(tool.name, tool.namespace)
 
     async def execute_batch(self, batch: BatchToolCall) -> BatchToolResult:
         """
@@ -287,7 +297,12 @@ class ExecutionEngine:
                 await self._record_failure(tool)
                 result = ToolResult(
                     tool_name=call.tool_name,
-                    status=ExecutionStatus.FAILURE,
+                    # The rate-limit path below already reports this exception as
+                    # PERMISSION_DENIED; flattening it to FAILURE here made a
+                    # permission failure distinguishable or not depending on
+                    # which code path raised it. (Carried from PR #316, which
+                    # could not merge cleanly once .jules/sentinel.md moved.)
+                    status=ExecutionStatus.PERMISSION_DENIED,
                     error=str(e),
                     error_type="PermissionDeniedError",
                     queued_at=queued_at,
@@ -366,6 +381,7 @@ class ExecutionEngine:
 
     async def _check_security_policy(
         self,
+        tool: ToolDefinition,
         call: ToolCall,
         queued_at: datetime,
         trace_id: str,
@@ -376,7 +392,12 @@ class ExecutionEngine:
             from agent_gantry.core.security import ConfirmationRequiredError, PermissionDeniedError
 
             try:
-                self._security_policy.check_permission(call.tool_name, call.arguments)
+                # Match policies against the *resolved* tool's bare name. A
+                # qualified ``call.tool_name`` ("billing.search") would
+                # otherwise be fnmatched as a different string than the same
+                # tool reached via ``namespace=``, so one calling convention
+                # could slip a pattern the other is caught by.
+                self._security_policy.check_permission(tool.name, call.arguments)
             except ConfirmationRequiredError:
                 result = ToolResult(
                     tool_name=call.tool_name,
@@ -419,7 +440,13 @@ class ExecutionEngine:
             from agent_gantry.core.rate_limiter import RateLimitExceeded
 
             try:
-                await self._rate_limiter.acquire(call.tool_name, tool.namespace)
+                # Key off the resolved tool, not the raw call: with per_tool
+                # keys, a qualified ``call.tool_name`` produced
+                # "billing.billing.search" while the ``namespace=`` form
+                # produced "billing.search", so the same tool held two
+                # independent budgets and a caller could double its allowance
+                # by alternating styles.
+                await self._rate_limiter.acquire(tool.name, tool.namespace)
             except RateLimitExceeded as e:
                 result = ToolResult(
                     tool_name=call.tool_name,
@@ -612,6 +639,39 @@ class ExecutionEngine:
             await self._telemetry.record_health_change(
                 f"{tool.namespace}.{tool.name}", old_health, tool.health
             )
+
+    def _resolve_tool(self, call: ToolCall) -> ToolDefinition | None:
+        """Resolve the tool a call targets, honouring its namespace.
+
+        Precedence: an explicit ``call.namespace``, then a qualified
+        ``tool_name`` ("billing.search" -- tool names themselves cannot contain
+        a dot, so this is unambiguous), then a bare-name search across
+        namespaces for backward compatibility. The bare-name path logs when the
+        name exists in more than one namespace, because that is the case where
+        it can silently run a tool other than the one that was selected.
+        """
+        if call.namespace:
+            return self._registry.get_tool(call.tool_name, call.namespace)
+
+        if "." in call.tool_name:
+            namespace, _, bare = call.tool_name.rpartition(".")
+            qualified = self._registry.get_tool(bare, namespace)
+            if qualified is not None:
+                return qualified
+            # Fall through: a literal name containing a dot is invalid per the
+            # ToolDefinition pattern, but a stale caller may still send one.
+
+        candidates = self._registry.namespaces_for_name(call.tool_name)
+        if len(candidates) > 1:
+            logger.warning(
+                "Tool %r is registered in %d namespaces (%s); executing by bare "
+                "name resolves to one of them. Pass ToolCall(namespace=...) to "
+                "target a specific tool.",
+                call.tool_name,
+                len(candidates),
+                ", ".join(sorted(candidates)),
+            )
+        return self._registry.get_tool_by_name(call.tool_name)
 
     def _generate_trace_id(self) -> str:
         """Generate a unique trace ID."""

@@ -29,7 +29,7 @@ import asyncio
 import functools
 import inspect
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, overload
 
@@ -97,7 +97,8 @@ class SemanticToolSelector:
         tools_param: The parameter name for passing tools to the LLM.
         limit: Maximum number of tools to retrieve.
         dialect: The schema dialect for tool conversion (openai, anthropic, gemini).
-        auto_sync: Whether to automatically sync tools before retrieval.
+        auto_sync: Deprecated and ignored — the gantry always ensures an
+            (incremental) sync before retrieval.
         score_threshold: Minimum score threshold for tool selection.
     """
 
@@ -111,6 +112,7 @@ class SemanticToolSelector:
         dialect: str = "openai",
         auto_sync: bool = True,
         score_threshold: float = 0.0,
+        dialect_options: dict[str, Any] | None = None,
     ) -> None:
         """
         Initialize the semantic tool selector.
@@ -121,13 +123,17 @@ class SemanticToolSelector:
             tools_param: The parameter name for passing tools to the LLM.
             limit: Maximum number of tools to retrieve (default: 5).
             dialect: Schema dialect for tool conversion (default: "openai").
-            auto_sync: Whether to sync tools before retrieval (default: True).
+            auto_sync: Deprecated and ignored — ``AgentGantry.retrieve()``
+                always ensures an incremental sync before routing. Passing
+                ``False`` warns and changes nothing.
             score_threshold: Minimum score threshold (default: 0.0 — no
                 filtering, matching every framework adapter in
                 ``agent_gantry.integrations.frameworks``. This intentionally
                 differs from the raw ``ToolQuery`` schema default of 0.5 — see
                 ``agent_gantry.schema.query.ToolQuery.score_threshold`` for why
                 a non-zero default is a silent-drop trap for convenience APIs).
+            dialect_options: Options forwarded to the dialect adapter on every
+                call — e.g. ``{"strict": True}`` for OpenAI structured outputs.
         """
         self._gantry = gantry
         self._prompt_param = prompt_param
@@ -136,6 +142,20 @@ class SemanticToolSelector:
         self._dialect = dialect
         self._auto_sync = auto_sync
         self._score_threshold = score_threshold
+        self._dialect_options = dialect_options or {}
+        if not auto_sync:
+            import warnings
+
+            warnings.warn(
+                "auto_sync=False has no effect: AgentGantry.retrieve() always "
+                "calls ensure_synced() before routing, so tools are synced "
+                "regardless of this flag. The parameter is accepted for "
+                "backward compatibility and will be removed in a future "
+                "release; sync is incremental (fingerprint-based), so leaving "
+                "it enabled is cheap.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
 
     async def _retrieve_tools(self, prompt: str) -> list[dict[str, Any]]:
         """
@@ -165,7 +185,7 @@ class SemanticToolSelector:
         result = await self._gantry.retrieve(query)
 
         # Use the dialect registry for extensible provider support
-        return result.to_dialect(self._dialect)
+        return result.to_dialect(self._dialect, **self._dialect_options)
 
     def _extract_prompt(
         self,
@@ -235,6 +255,94 @@ class SemanticToolSelector:
 
         return None
 
+    def _record_usage_sync(self, response: Any) -> None:
+        """Report usage from a synchronously-returned response, best effort.
+
+        The sync wrapper has no loop to await on, and may itself be running
+        inside someone else's, so the recording is bridged the same way the
+        retrieval above is. Without this the whole telemetry path was dead for
+        sync callers -- and ``__call__`` routes every non-coroutine function
+        here, so that is the default for anyone wrapping a blocking SDK client.
+        """
+        telemetry = getattr(self._gantry, "telemetry", None)
+        if telemetry is None:
+            return
+        try:
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                asyncio.run(self._record_usage(response))
+                return
+
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                executor.submit(asyncio.run, self._record_usage(response)).result()
+        except Exception as exc:  # never fail a user's call over accounting
+            _logger.debug("Token usage recording skipped: %s", exc)
+
+    async def _record_usage(self, response: Any) -> None:
+        """Report provider token usage for ``response``, best effort.
+
+        The flagship claim of semantic tool selection is a smaller prompt, but
+        nothing in the library measured it: ``TokenUsageEvent`` was defined and
+        never constructed, and ``record_token_usage`` was never called outside
+        tests. Every provider this decorator targets returns a ``usage`` block,
+        so the *actual* cost of each call is recorded here.
+
+        Savings are deliberately not inferred: computing them needs a real
+        baseline (the same prompt with every tool injected), and
+        ``agent_gantry.metrics.token_usage`` refuses approximate estimators so
+        reported numbers stay auditable. Callers who run a baseline can pass
+        both usages to ``calculate_token_savings`` and report it themselves.
+        """
+        telemetry = getattr(self._gantry, "telemetry", None)
+        if telemetry is None:
+            return
+
+        usage = getattr(response, "usage", None)
+        if usage is None and isinstance(response, dict):
+            usage = response.get("usage")
+        if usage is None:
+            return
+
+        if not isinstance(usage, Mapping):
+            # SDK usage objects are plain attribute holders; pull the fields
+            # the normalizer knows about rather than guessing at a dump method.
+            usage = {
+                field: value
+                for field in (
+                    "prompt_tokens",
+                    "completion_tokens",
+                    "total_tokens",
+                    "input_tokens",
+                    "output_tokens",
+                    "cache_creation_input_tokens",
+                    "cache_read_input_tokens",
+                    "prompt_token_count",
+                    "candidates_token_count",
+                    "total_token_count",
+                )
+                if isinstance(value := getattr(usage, field, None), (int, float))
+            }
+        if not usage:
+            return
+
+        try:
+            from agent_gantry.metrics.token_usage import ProviderUsage
+
+            provider_usage = ProviderUsage.from_usage(usage)
+            # Dict-shaped responses (replayed fixtures, SDK dumps) carry the
+            # model under a key, not an attribute; falling straight through to
+            # the dialect recorded "openai" in place of the real model name.
+            model_name = getattr(response, "model", None)
+            if model_name is None and isinstance(response, Mapping):
+                model_name = response.get("model")
+            model_name = model_name or self._dialect
+            await telemetry.record_token_usage(provider_usage, model_name=str(model_name))
+        except Exception as exc:  # never fail a user's call over accounting
+            _logger.debug("Token usage recording skipped: %s", exc)
+
     def wrap_async(self, func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
         """
         Wrap an async function with semantic tool selection.
@@ -264,7 +372,9 @@ class SemanticToolSelector:
                     # If tool retrieval fails, call function without tools
                     _logger.warning("Tool retrieval failed, proceeding without tools: %s", e)
 
-            return await func(*args, **kwargs)
+            response = await func(*args, **kwargs)
+            await self._record_usage(response)
+            return response
 
         return wrapper
 
@@ -325,7 +435,9 @@ class SemanticToolSelector:
                     # If tool retrieval fails, call function without tools
                     _logger.warning("Tool retrieval failed, proceeding without tools: %s", e)
 
-            return func(*args, **kwargs)
+            response = func(*args, **kwargs)
+            self._record_usage_sync(response)
+            return response
 
         return wrapper
 
@@ -356,6 +468,7 @@ def with_semantic_tools(
     dialect: str = ...,
     auto_sync: bool = ...,
     score_threshold: float = ...,
+    dialect_options: dict[str, Any] | None = ...,
 ) -> SemanticToolSelector: ...
 
 
@@ -374,6 +487,7 @@ def with_semantic_tools(
     dialect: str = "openai",
     auto_sync: bool = True,
     score_threshold: float = 0.0,
+    dialect_options: dict[str, Any] | None = None,
 ) -> SemanticToolSelector | Callable[..., Any]:
     """
     Decorator for automatic semantic tool selection in LLM generate functions.
@@ -410,7 +524,10 @@ def with_semantic_tools(
         tools_param: Parameter name for injecting tools (default: "tools").
         limit: Maximum tools to retrieve (default: 5).
         dialect: Tool schema format - "openai", "anthropic", "gemini" (default: "openai").
-        auto_sync: Whether to sync tools before retrieval (default: True).
+        auto_sync: Deprecated and ignored — the gantry always ensures an
+            incremental sync before retrieval.
+        dialect_options: Options forwarded to the dialect adapter on every
+            call, e.g. ``{"strict": True}`` for OpenAI structured outputs.
         score_threshold: Minimum relevance score for tools (default: 0.0 — no
             filtering, matching every framework adapter in
             ``agent_gantry.integrations.frameworks``; the raw ``ToolQuery``
@@ -475,6 +592,7 @@ def with_semantic_tools(
             dialect=dialect,
             auto_sync=auto_sync,
             score_threshold=score_threshold,
+            dialect_options=dialect_options,
         )
 
     # If gantry_or_func is an AgentGantry instance, return a selector
@@ -487,6 +605,7 @@ def with_semantic_tools(
             dialect=dialect,
             auto_sync=auto_sync,
             score_threshold=score_threshold,
+            dialect_options=dialect_options,
         )
 
     # Otherwise, assume it's a function and use default gantry
@@ -505,6 +624,7 @@ def with_semantic_tools(
             dialect=dialect,
             auto_sync=auto_sync,
             score_threshold=score_threshold,
+            dialect_options=dialect_options,
         )
         return selector(gantry_or_func)
 
@@ -551,6 +671,7 @@ class SemanticToolsDecorator:
         dialect: str = "openai",
         auto_sync: bool = True,
         score_threshold: float = 0.0,
+        dialect_options: dict[str, Any] | None = None,
     ) -> None:
         """
         Initialize the decorator factory.
@@ -561,7 +682,8 @@ class SemanticToolsDecorator:
             tools_param: Default parameter name for tools.
             limit: Default maximum tools to retrieve.
             dialect: Default schema dialect.
-            auto_sync: Whether to auto-sync by default.
+            auto_sync: Deprecated and ignored (see ``with_semantic_tools``).
+            dialect_options: Default options forwarded to the dialect adapter.
             score_threshold: Default score threshold (0.0 — no filtering,
                 matching every framework adapter; see the module-level note on
                 ``with_semantic_tools`` for why this differs from the raw
@@ -574,6 +696,7 @@ class SemanticToolsDecorator:
         self._dialect = dialect
         self._auto_sync = auto_sync
         self._score_threshold = score_threshold
+        self._dialect_options = dialect_options or {}
 
     def wrap(
         self,
@@ -607,6 +730,7 @@ class SemanticToolsDecorator:
             dialect=dialect or self._dialect,
             auto_sync=self._auto_sync,
             score_threshold=self._score_threshold,
+            dialect_options=self._dialect_options,
         )
 
         if func is not None:

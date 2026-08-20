@@ -909,9 +909,16 @@ class AgentGantry:
                 )
 
         overall_start = perf_counter()
-        if self._config.reranker.enabled and self._reranker is not None:
-            if query.enable_reranking is None:
-                query.enable_reranking = True
+        if (
+            self._config.reranker.enabled
+            and self._reranker is not None
+            and query.enable_reranking is None
+        ):
+            # Copy rather than assign: this branch was unreachable while the
+            # field defaulted to False, so making it live also made the
+            # in-place mutation live, and a caller reusing one ToolQuery (a
+            # cached template, say) would have the field flipped underneath it.
+            query = query.model_copy(update={"enable_reranking": True})
 
         # Use telemetry span if available, otherwise use a no-op async context manager
         from agent_gantry.utils.async_utils import AsyncNoopContext
@@ -949,12 +956,22 @@ class AgentGantry:
             await self._telemetry.record_retrieval(query, retrieval)
         return retrieval
 
+    @property
+    def telemetry(self) -> Any:
+        """The configured telemetry adapter (``None`` when disabled).
+
+        Exposed so the integration layers can report provider-reported token
+        usage without reaching into a private attribute.
+        """
+        return self._telemetry
+
     async def retrieve_tools(
         self,
         query: str,
         limit: int = 5,
         dialect: str = "openai",
         score_threshold: float = 0.0,
+        dialect_options: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """
@@ -972,19 +989,36 @@ class AgentGantry:
                 tools for embedders whose scores sit below it (e.g. MiniLM), so
                 the high-level convenience API opts out of filtering by default
                 and lets ranking + ``limit`` do the work.
-            **kwargs: Additional query parameters
+            dialect_options: Options forwarded to the dialect adapter rather
+                than the query — e.g. ``{"strict": True}`` for OpenAI. Any
+                keyword in ``**kwargs`` that is not a :class:`ToolQuery` field
+                is routed here too, so ``retrieve_tools(..., strict=True)``
+                works; this explicit dict wins on conflict.
+            **kwargs: Additional query parameters. Keywords matching a
+                ``ToolQuery`` field configure retrieval; the rest are treated
+                as dialect options (see ``dialect_options``). Previously any
+                non-``ToolQuery`` keyword was silently discarded, so ``strict``
+                never reached the adapter.
 
         Returns:
             List of provider-specific tool schemas
         """
         from agent_gantry.schema.query import ConversationContext, ToolQuery
 
+        # Split retrieval parameters from per-dialect adapter options so that
+        # neither silently swallows the other's keywords.
+        query_fields = set(ToolQuery.model_fields)
+        query_kwargs = {k: v for k, v in kwargs.items() if k in query_fields}
+        adapter_options = {k: v for k, v in kwargs.items() if k not in query_fields}
+        if dialect_options:
+            adapter_options.update(dialect_options)
+
         context = ConversationContext(query=query)
         tool_query = ToolQuery(
-            context=context, limit=limit, score_threshold=score_threshold, **kwargs
+            context=context, limit=limit, score_threshold=score_threshold, **query_kwargs
         )
         result = await self.retrieve(tool_query)
-        return result.to_dialect(dialect)
+        return result.to_dialect(dialect, **adapter_options)
 
     async def execute(self, call: ToolCall) -> ToolResult:
         """
@@ -1135,14 +1169,94 @@ class AgentGantry:
 
         # Use the best scoring tool
         best_tool = result.tools[0].tool
-        tool_name = best_tool.name
 
         # Use provided arguments or empty dict
         if arguments is None:
             arguments = {}
 
-        # Execute the tool
-        return await self.execute(ToolCall(tool_name=tool_name, arguments=arguments))
+        # Execute the tool we actually selected: passing the namespace keeps a
+        # same-named tool in another namespace from being run instead.
+        return await self.execute(
+            ToolCall(
+                tool_name=best_tool.name,
+                namespace=best_tool.namespace,
+                arguments=arguments,
+            )
+        )
+
+    async def execute_tool_calls(
+        self,
+        response: Any,
+        *,
+        dialect: str = "openai",
+        timeout_ms: int = 30000,
+        parallel: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Run every tool call in ``response`` and format the results to send back.
+
+        Closes the loop that the dialect adapters could already describe but
+        nothing drove: extract the calls (including parallel ones), execute
+        each through the full protection stack, and format each result in the
+        provider's own reply shape, ready to append to the conversation.
+
+        Failures are reported to the model rather than raised: a tool that
+        errors comes back as an error-flagged result so the model can react,
+        which is what a tool-use loop needs. Genuine programming errors — an
+        unknown dialect, a malformed response — still raise.
+
+        Args:
+            response: The provider response, an equivalent dict, or an already
+                extracted list of ``ToolCallPayload`` (e.g. from
+                :class:`~agent_gantry.adapters.tool_spec.round_trip.StreamingToolCallAccumulator`).
+            dialect: Which provider shape to read and reply in.
+            timeout_ms: Per-call execution timeout.
+            parallel: Execute the calls concurrently (default). Set ``False``
+                to run them in the order the model emitted, for tools that
+                share mutable state.
+
+        Returns:
+            One provider-formatted tool result per call, in emission order.
+            Empty when the model called no tools.
+
+        Example:
+            >>> response = await client.chat.completions.create(...)  # doctest: +SKIP
+            >>> results = await gantry.execute_tool_calls(response)  # doctest: +SKIP
+            >>> messages.extend(results)  # doctest: +SKIP
+        """
+        from agent_gantry.adapters.tool_spec.base import ToolCallPayload
+        from agent_gantry.adapters.tool_spec.registry import get_adapter
+        from agent_gantry.adapters.tool_spec.round_trip import extract_tool_calls
+        from agent_gantry.schema.execution import ExecutionStatus
+
+        adapter = get_adapter(dialect)
+        if isinstance(response, list) and all(
+            isinstance(item, ToolCallPayload) for item in response
+        ):
+            payloads = response
+        else:
+            payloads = extract_tool_calls(response, dialect)
+        if not payloads:
+            return []
+
+        calls = [adapter.to_tool_call(p, timeout_ms=timeout_ms) for p in payloads]
+
+        if parallel and len(calls) > 1:
+            results = await asyncio.gather(*(self.execute(call) for call in calls))
+        else:
+            results = [await self.execute(call) for call in calls]
+
+        formatted: list[dict[str, Any]] = []
+        for payload, result in zip(payloads, results):
+            is_error = result.status != ExecutionStatus.SUCCESS
+            formatted.append(
+                adapter.format_tool_result(
+                    payload.tool_name,
+                    f"Error: {result.error}" if is_error else result.result,
+                    payload.tool_call_id,
+                    is_error=is_error,
+                )
+            )
+        return formatted
 
     async def execute_batch(self, batch: BatchToolCall) -> BatchToolResult:
         """

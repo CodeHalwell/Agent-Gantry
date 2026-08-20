@@ -96,11 +96,43 @@ class TestOpenAIAdapter:
         assert schema["function"]["parameters"]["type"] == "object"
 
     def test_to_provider_schema_strict_mode(self, sample_tool: ToolDefinition) -> None:
-        """Test converting with strict mode enabled."""
+        """Strict mode must reshape the schema, not just set the flag.
+
+        ``sample_tool`` has an optional ``unit``. OpenAI rejects a tool marked
+        ``strict: true`` unless every property is in ``required`` and
+        ``additionalProperties`` is false, so emitting the flag alone produced
+        a 400 for any tool with an optional parameter.
+        """
         adapter = OpenAIAdapter()
         schema = adapter.to_provider_schema(sample_tool, strict=True)
 
         assert schema["function"]["strict"] is True
+        params = schema["function"]["parameters"]
+        assert params["additionalProperties"] is False
+        assert set(params["required"]) == {"city", "unit"}
+        # The formerly-optional property stays optional in meaning by
+        # admitting null rather than by being dropped from ``required``.
+        assert params["properties"]["unit"]["type"] == ["string", "null"]
+        assert params["properties"]["unit"]["enum"] == ["celsius", "fahrenheit"]
+        # A genuinely required property is untouched.
+        assert params["properties"]["city"]["type"] == "string"
+
+    def test_strict_mode_does_not_mutate_the_tool(self, sample_tool: ToolDefinition) -> None:
+        """The registry's canonical schema must survive a strict conversion."""
+        adapter = OpenAIAdapter()
+        adapter.to_provider_schema(sample_tool, strict=True)
+
+        assert sample_tool.parameters_schema["required"] == ["city"]
+        assert "additionalProperties" not in sample_tool.parameters_schema
+        assert sample_tool.parameters_schema["properties"]["unit"]["type"] == "string"
+
+    def test_non_strict_schema_is_unchanged(self, sample_tool: ToolDefinition) -> None:
+        """Without strict mode the schema passes through as-is."""
+        adapter = OpenAIAdapter()
+        schema = adapter.to_provider_schema(sample_tool)
+
+        assert "strict" not in schema["function"]
+        assert schema["function"]["parameters"]["required"] == ["city"]
 
     def test_from_provider_payload(self) -> None:
         """Test parsing OpenAI tool call payload."""

@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT
+
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
 
@@ -32,7 +34,7 @@ class _LLMToolAdapter:
 
     dialect: str = "openai"
 
-    def __init__(self, gantry: AgentGantry, *, default_limit: int = 3) -> None:
+    def __init__(self, gantry: AgentGantry, *, default_limit: int = DEFAULT_TOOL_LIMIT) -> None:
         self._gantry = gantry
         self._default_limit = default_limit
 
@@ -44,7 +46,13 @@ class _LLMToolAdapter:
         score_threshold: float = 0.0,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
-        """Select tools for ``query`` and return them as ``self.dialect`` schemas."""
+        """Select tools for ``query`` and return them as ``self.dialect`` schemas.
+
+        Keywords are split by :meth:`AgentGantry.retrieve_tools`: those naming a
+        ``ToolQuery`` field configure retrieval, the rest are passed to the
+        dialect adapter — so ``tools(q, strict=True)`` reaches OpenAI's strict
+        mode, and ``namespaces=[...]`` still filters the query.
+        """
         return await self._gantry.retrieve_tools(
             query,
             limit=self._default_limit if limit is None else limit,

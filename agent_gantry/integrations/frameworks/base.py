@@ -32,6 +32,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
+import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
@@ -122,7 +124,12 @@ class ToolSpec:
         arguments = _coerce_arguments(args, kwargs)
         required = set(self.parameters.get("required") or [])
         arguments = {k: v for k, v in arguments.items() if v is not None or k in required}
-        result = await self._gantry.execute(ToolCall(tool_name=self.name, arguments=arguments))
+        # Pass the namespace: selection resolved this spec to one specific
+        # tool, and a bare-name execute would prefer ``default.<name>`` if
+        # another namespace registers the same name.
+        result = await self._gantry.execute(
+            ToolCall(tool_name=self.name, namespace=self._namespace, arguments=arguments)
+        )
         if result.status != ExecutionStatus.SUCCESS:
             raise ToolExecutionError(
                 self.name, getattr(result.status, "value", str(result.status)), result.error
@@ -255,10 +262,50 @@ def _json_type_to_python(json_type: Any) -> Any:
     return _JSON_TO_PYTHON.get(json_type, str)
 
 
-# A single shared worker thread for running coroutines from sync framework
-# callbacks while an event loop is active on the calling thread. Reused across
+# Shared worker threads for running coroutines from sync framework callbacks
+# while an event loop is active on the calling thread. Reused across
 # invocations so we don't pay the spawn/teardown cost of a fresh pool each call.
 _SYNC_BRIDGE_POOL: Any = None
+
+#: Guards lazy pool construction: without it two threads racing through the
+#: ``is None`` check each build a pool and one is silently discarded.
+_SYNC_BRIDGE_POOL_LOCK = threading.Lock()
+
+#: Set on threads owned by the bridge pool, so a nested sync invocation can
+#: tell it is about to wait on the very pool it is occupying.
+_BRIDGE_THREAD = threading.local()
+
+#: The bridge fans out concurrent sync tool calls, so it must not be a single
+#: worker: every sync tool call in the process shares this pool, and one slow
+#: tool (default timeout: 30s) would otherwise block all the others — a
+#: multi-agent CrewAI run serializes completely. Threads here are almost always
+#: parked waiting on a coroutine, so they are cheap; the cap mirrors
+#: ThreadPoolExecutor's own default.
+_SYNC_BRIDGE_MAX_WORKERS = min(32, (os.cpu_count() or 1) + 4)
+
+
+def _bridge_pool() -> Any:
+    """Return the shared bridge pool, constructing it once."""
+    global _SYNC_BRIDGE_POOL
+    if _SYNC_BRIDGE_POOL is None:
+        with _SYNC_BRIDGE_POOL_LOCK:
+            if _SYNC_BRIDGE_POOL is None:
+                import concurrent.futures
+
+                _SYNC_BRIDGE_POOL = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=_SYNC_BRIDGE_MAX_WORKERS,
+                    thread_name_prefix="gantry-sync-bridge",
+                )
+    return _SYNC_BRIDGE_POOL
+
+
+def _run_on_bridge_thread(coro: Any) -> Any:
+    """Run ``coro`` in a fresh event loop, marking the thread as the bridge's."""
+    _BRIDGE_THREAD.active = True
+    try:
+        return asyncio.run(coro)
+    finally:
+        _BRIDGE_THREAD.active = False
 
 
 def _run_coroutine_sync(coro: Any) -> Any:
@@ -266,24 +313,41 @@ def _run_coroutine_sync(coro: Any) -> Any:
 
     If no event loop runs on the current thread, use :func:`asyncio.run`.
     Otherwise (we're inside a running loop — e.g. a framework invoked our sync
-    tool from within its async agent loop), run the coroutine on a shared
+    tool from within its async agent loop), run the coroutine on a bridge
     worker thread with its own loop and block for the result. This avoids the
     "coroutine attached to a different loop" / "loop already running" errors
     that a naive ``asyncio.run`` would raise.
+
+    A *nested* call — a tool handler that itself calls ``ToolSpec.invoke`` —
+    gets its own throwaway thread rather than a pool slot. Submitting it to the
+    pool would make the occupied worker wait on the pool it is occupying, which
+    deadlocks outright at one worker and can still exhaust a larger pool at
+    depth. Nesting is rare, so paying for a thread there is the right trade.
     """
     try:
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(coro)
 
-    global _SYNC_BRIDGE_POOL
-    if _SYNC_BRIDGE_POOL is None:
-        import concurrent.futures
+    if getattr(_BRIDGE_THREAD, "active", False):
+        result: dict[str, Any] = {}
 
-        _SYNC_BRIDGE_POOL = concurrent.futures.ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="gantry-sync-bridge"
+        def _runner() -> None:
+            try:
+                result["value"] = _run_on_bridge_thread(coro)
+            except BaseException as exc:  # re-raised on the calling thread
+                result["error"] = exc
+
+        thread = threading.Thread(
+            target=_runner, name="gantry-sync-bridge-nested", daemon=True
         )
-    return _SYNC_BRIDGE_POOL.submit(lambda: asyncio.run(coro)).result()
+        thread.start()
+        thread.join()
+        if "error" in result:
+            raise result["error"]
+        return result.get("value")
+
+    return _bridge_pool().submit(_run_on_bridge_thread, coro).result()
 
 
 def _coerce_arguments(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:

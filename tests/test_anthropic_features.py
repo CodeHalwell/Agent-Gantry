@@ -10,6 +10,7 @@ Tests the Anthropic integration including:
 from __future__ import annotations
 
 import sys
+from functools import partial
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
@@ -142,6 +143,9 @@ class TestAnthropicClient:
         mock_result.status = "success"
         mock_result.result = "Tool executed successfully"
         gantry.execute = AsyncMock(return_value=mock_result)
+        # The formatting/concurrency logic now lives in the facade; bind the
+        # real method to the mock so this still exercises the whole path.
+        gantry.execute_tool_calls = partial(AgentGantry.execute_tool_calls, gantry)
 
         client = AnthropicClient(api_key="test-key", gantry=gantry)
         tool_results = await client.execute_tool_calls(mock_anthropic_tool_response)
@@ -245,6 +249,9 @@ class TestAnthropicClient:
         mock_result.status = "failure"
         mock_result.error = "Tool crashed"
         gantry.execute = AsyncMock(return_value=mock_result)
+        # The formatting/concurrency logic now lives in the facade; bind the
+        # real method to the mock so this still exercises the whole path.
+        gantry.execute_tool_calls = partial(AgentGantry.execute_tool_calls, gantry)
 
         client = AnthropicClient(api_key="test-key", gantry=gantry)
         tool_results = await client.execute_tool_calls(mock_anthropic_tool_response)
@@ -261,6 +268,9 @@ class TestAnthropicClient:
         mock_result.status = "success"
         mock_result.result = {"temperature": 25, "unit": "C"}
         gantry.execute = AsyncMock(return_value=mock_result)
+        # The formatting/concurrency logic now lives in the facade; bind the
+        # real method to the mock so this still exercises the whole path.
+        gantry.execute_tool_calls = partial(AgentGantry.execute_tool_calls, gantry)
 
         client = AnthropicClient(api_key="test-key", gantry=gantry)
         tool_results = await client.execute_tool_calls(mock_anthropic_tool_response)
@@ -488,3 +498,39 @@ class TestClaudeOpus48ThinkingGuards:
         assert client._features.adaptive_thinking_effort == "high"
         assert client._features.enable_extended_thinking is False
         assert client._features.enable_interleaved_thinking is False
+
+
+class TestRetrievalThreshold:
+    """The convenience clients must not inherit ``ToolQuery``'s 0.5 default.
+
+    ``ToolQuery.score_threshold`` defaults to 0.5 for backward compatibility
+    with direct callers, but its own docstring calls that a "silent-drop trap"
+    for convenience layers: long queries dilute absolute similarity, so a
+    non-zero cutoff can quietly return zero tools with no error. Every other
+    convenience surface passes 0.0; these two clients used to be the exception.
+    """
+
+    @pytest.mark.asyncio
+    async def test_create_message_retrieves_with_zero_threshold(self):
+        gantry = MagicMock(spec=AgentGantry)
+        retrieval_result = MagicMock()
+        retrieval_result.tools = []
+        gantry.retrieve = AsyncMock(return_value=retrieval_result)
+
+        client = AnthropicClient(api_key="test-key", gantry=gantry)
+        mock_response = MagicMock()
+        mock_response.content = []
+        client._client.messages.create = AsyncMock(return_value=mock_response)
+
+        await client.create_message(
+            model="claude-sonnet-4-6",
+            messages=[{"role": "user", "content": "what is the weather in Berlin?"}],
+            auto_retrieve_tools=True,
+        )
+
+        gantry.retrieve.assert_awaited_once()
+        query = gantry.retrieve.await_args.args[0]
+        assert query.score_threshold == 0.0, (
+            "AnthropicClient must request tools with score_threshold=0.0; "
+            f"got {query.score_threshold} (the silent-drop default)"
+        )

@@ -606,3 +606,71 @@ def test_latest_activity_empty_history():
 
     assert latest_activity([]) == ""
     assert latest_activity(None) == ""
+
+
+class _LangChainMessage:
+    """Stand-in for a LangChain ``BaseMessage``.
+
+    LangChain carries the role in ``.type`` ("human"/"ai"/"tool"), not
+    ``.role`` — see ``_LANGCHAIN_ROLES`` in ``agent_gantry.query.strategies``.
+    Built locally so these tests never import ``langchain_core``.
+    """
+
+    def __init__(self, type_: str, content: str, name: str | None = None) -> None:
+        self.type = type_
+        self.content = content
+        if name is not None:
+            self.name = name
+
+
+def test_msg_role_maps_langchain_type():
+    """``.type`` is a role only for the known LangChain values."""
+    from agent_gantry.query.strategies import _msg_role
+
+    assert _msg_role(_LangChainMessage("human", "hi")) == "user"
+    assert _msg_role(_LangChainMessage("ai", "hello")) == "assistant"
+    assert _msg_role(_LangChainMessage("tool", "42")) == "tool"
+    assert _msg_role(_LangChainMessage("system", "be nice")) == "system"
+
+
+def test_msg_role_ignores_unrelated_type_attribute():
+    """An object whose ``.type`` is not a role must not be misread as one."""
+    from agent_gantry.query.strategies import _msg_role
+
+    class ContentBlock:
+        type = "text"
+        content = "not a message role"
+
+    assert _msg_role(ContentBlock()) == ""
+
+
+def test_msg_role_prefers_explicit_role_over_type():
+    from agent_gantry.query.strategies import _msg_role
+
+    assert _msg_role({"role": "user", "type": "ai"}) == "user"
+
+
+def test_latest_activity_skips_langchain_ai_message():
+    """Regression: an AIMessage must not drive retrieval over the real user turn.
+
+    Before ``_msg_role`` understood ``.type``, every LangChain message resolved
+    to role ``""`` and fell into the user branch, so the assistant's text won.
+    """
+    from agent_gantry.query import latest_activity
+
+    messages = [
+        _LangChainMessage("human", "book me a flight to Berlin"),
+        _LangChainMessage("ai", "I should call the flight search tool"),
+    ]
+    assert latest_activity(messages) == "book me a flight to Berlin"
+
+
+def test_latest_activity_caps_langchain_tool_result():
+    """A LangChain ToolMessage is a tool result, so ``max_chars`` applies."""
+    from agent_gantry.query import latest_activity
+
+    messages = [
+        _LangChainMessage("human", "look it up"),
+        _LangChainMessage("tool", "y" * 2000, name="lookup"),
+    ]
+    assert len(latest_activity(messages, max_chars=100)) == 100
