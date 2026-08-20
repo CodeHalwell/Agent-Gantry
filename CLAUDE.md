@@ -93,7 +93,7 @@ Everything funnels through one facade: **`AgentGantry`** in `agent_gantry/core/g
 
 ## Repo notes
 
-- Version of record is `pyproject.toml` / `agent_gantry/__init__.py` `__version__` (currently `0.9.0`). The docs `package.json` and `README.md` may lag — `tests/test_version_consistency.py` guards consistency where it matters.
+- Version of record is `pyproject.toml` / `agent_gantry/__init__.py` `__version__` (currently `0.11.0`). The docs `package.json` and `README.md` may lag — `tests/test_version_consistency.py` guards consistency where it matters.
 - `.jules/` holds accumulated performance-optimization learnings (e.g. vectorized MMR, fast token matching) — useful context when optimizing the router or serialization paths.
 - `CHANGELOG.md` should be updated for user-facing changes.
 - Releasing/publishing: see `RELEASING.md` and `PUBLISHING.md`.
