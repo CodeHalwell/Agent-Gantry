@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-20
+
 ### Added (tool-use loop)
 
 - **The round-trip layer is now usable end to end.** Every dialect adapter
@@ -90,6 +92,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   also materialized its full embedding vector just to discard it — measured at
   ~630x the payload for a 50-row scan. `list_all_skills` matters most: the
   facade's embedder-migration check calls it with a limit of 1,000,000.
+- **LanceDB fingerprint reads are columnar.** `get_stored_fingerprints` called
+  `to_pylist()` on the whole Arrow table, allocating a dict per row just to
+  read two fields out of each. It now converts the two columns it needs and
+  zips them, which drops the per-row allocation on large stores. A null
+  fingerprint is coerced to `""` so the declared `dict[str, str]` holds.
 
 ### Fixed
 
@@ -173,6 +180,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   contain no `await` and an uncontended `asyncio.Lock` does not yield), but
   the invariant rested on that staying true; it is now structural, and each
   acquire takes one lock cycle instead of two.
+- **Security policies and rate limits key off the resolved tool.** The
+  qualified-name calling convention added above meant `call.tool_name` could be
+  `"billing.search"`, but `_check_security_policy` fnmatched policies against
+  the raw string and `_check_rate_limit` keyed the limiter off it — so one tool
+  matched different policy patterns depending on the convention used, and
+  produced two independent rate-limit budgets (`"billing.billing.search"` vs
+  `"billing.search"`), doubling the allowance for a caller who alternated
+  styles. Both now use the resolved tool: the policy sees the bare name from
+  either convention, preserving existing policy semantics exactly.
+- **A permission denial is reported the same from every path.**
+  `_execute_handler_with_retries` mapped `PermissionDeniedError` to
+  `ExecutionStatus.FAILURE` while `_check_rate_limit` mapped the same exception
+  to `PERMISSION_DENIED`, so whether a permission failure was distinguishable
+  depended on which code path raised it. Both now report `PERMISSION_DENIED`.
 
 ### Changed
 
@@ -187,6 +208,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   always calls `ensure_synced()`. Passing `auto_sync=False` now raises a
   `DeprecationWarning` and still changes nothing; the parameter will be removed
   in a future release.
+
+### Security
+
+- **Identifier fields reject embedded newlines.** `ToolCall`, `ToolResult`, the
+  telemetry event models, `RetrievalResult`, and the MCP/A2A config models
+  carried free-form identifiers (`tool_name`, `trace_id`, `span_id`, `name`,
+  `namespace`) with no newline validation, so a crafted identifier could inject
+  extra lines into logs or headers built from them. The existing
+  `reject_newlines` validator is now applied across those models, with
+  `validate_assignment=True` so a later assignment cannot bypass it.
+
+### Documentation
+
+- Docs site accessibility: the decorative sidebar logo is now `aria-hidden`,
+  the homepage hero CTAs are grouped as a semantic list so screen readers
+  announce their count and boundaries, and a global `:focus-visible` outline
+  replaces browser defaults for keyboard navigation.
 
 ### Internal
 
@@ -1931,7 +1969,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.7.0...v0.8.0

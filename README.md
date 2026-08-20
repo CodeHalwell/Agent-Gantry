@@ -4,7 +4,7 @@
 
 *Context is precious. Execution is sacred. Trust is earned.*
 
-Agent-Gantry is a Python **0.8.0** library for building agents that can discover, select, and execute the right tools without flooding every prompt with every schema your organization owns. It combines semantic retrieval, provider schema conversion, secure execution, framework bridges, MCP/A2A interoperability, persistence adapters, and observability into one tool orchestration layer.
+Agent-Gantry is a Python library (**v0.11.0**) for building agents that can discover, select, and execute the right tools without flooding every prompt with every schema your organization owns. It combines semantic retrieval, provider schema conversion, secure execution, framework bridges, MCP/A2A interoperability, persistence adapters, and observability into one tool orchestration layer.
 
 ## Documentation
 
