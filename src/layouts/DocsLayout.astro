@@ -40,7 +40,7 @@ const nav: Section[] = [
 ];
 ---
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width"/><meta name="description" content={description}/><title>{title}</title></head>
-<body><a href="#main-content" class="skip-link">Skip to main content</a><div class="shell"><aside class="sidebar"><a class="brand" href="/Agent-Gantry/"><span class="logo" aria-hidden="true"></span><span><h1>Agent-Gantry</h1><p>v0.11.0 docs</p></span></a><nav aria-label="Sidebar navigation">
+<body><a href="#main-content" class="skip-link">Skip to main content</a><div class="shell"><aside class="sidebar"><a class="brand" href="/Agent-Gantry/"><span class="logo" aria-hidden="true"></span><div><h1>Agent-Gantry</h1><p>v0.11.0 docs</p></div></a><nav aria-label="Sidebar navigation">
         {nav.map(({section,links})=>{
           const sectionId = `nav-${section.toLowerCase().replace(/\s+/g, '-')}`;
           return (
