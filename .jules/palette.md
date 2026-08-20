@@ -113,3 +113,7 @@
 ## 2026-07-21 - [Global Focus Outline Overriding Native Radii]
 **Learning:** Applying `border-radius` directly within a global `:focus-visible` rule overrides the element's native border radius on focus, turning rounded pill buttons into squares. Modern browsers automatically curve the `outline` property to match the element's `border-radius` anyway.
 **Action:** Never apply `border-radius` inside global focus-visible rules. Only apply `outline` and `outline-offset` to ensure the visual indicator conforms to the element's existing geometry.
+
+## 2026-08-20 - [Spatial Visual Context for Active Links]
+**Learning:** When sidebar navigation links indicate their active state only by changing text color and font weight, the change may be too subtle for users with low vision or cognitive impairments to quickly locate their current page within a dense menu. Sighted users benefit from a clear, spatial visual indicator (like a background block) corresponding to the `aria-current` state.
+**Action:** When implementing navigation links with `aria-current="page"`, always provide a strong spatial visual state (e.g., adding `background: var(--panel2)`) alongside text changes to ensure clear spatial context for sighted users.
