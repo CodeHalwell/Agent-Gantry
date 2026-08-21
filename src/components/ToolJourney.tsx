@@ -1,4 +1,4 @@
-import { KeyboardEvent, useMemo, useState } from 'react';
+import { type KeyboardEvent, useMemo, useState } from 'react';
 
 type Stage = { title: string; detail: string; codeHtml: string };
 
