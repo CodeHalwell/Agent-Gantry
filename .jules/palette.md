@@ -113,3 +113,7 @@
 ## 2026-07-21 - [Global Focus Outline Overriding Native Radii]
 **Learning:** Applying `border-radius` directly within a global `:focus-visible` rule overrides the element's native border radius on focus, turning rounded pill buttons into squares. Modern browsers automatically curve the `outline` property to match the element's `border-radius` anyway.
 **Action:** Never apply `border-radius` inside global focus-visible rules. Only apply `outline` and `outline-offset` to ensure the visual indicator conforms to the element's existing geometry.
+
+## 2026-08-21 - [Keyboard Navigation for ARIA Tablists]
+**Learning:** When building interactive tabbed interfaces, adding `role="tab"` and `role="tablist"` alone is insufficient. Keyboard power users expect standard tablist behavior: using arrow keys to switch tabs, and having only the active tab in the document tab sequence. Without this, users are forced to awkwardly Tab through every single inactive tab button to reach the content.
+**Action:** Always implement explicit keyboard event handlers (for ArrowRight/ArrowLeft) in ARIA tablists to switch tabs and manage focus, and apply `tabIndex={-1}` to all inactive tabs so users can bypass them efficiently.
