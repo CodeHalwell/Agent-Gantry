@@ -51,7 +51,7 @@ const nav: Section[] = [
                   const isActive = Astro.url.pathname === href || Astro.url.pathname === href + '/';
                   return (
                     <li>
-                      <a href={href} aria-current={isActive ? 'page' : undefined} style={isActive ? "color: var(--text); font-weight: 600;" : undefined}>{label}</a>
+                      <a href={href} aria-current={isActive ? 'page' : undefined} style={isActive ? "color: var(--text); font-weight: 600; background: var(--panel2);" : undefined}>{label}</a>
                     </li>
                   );
                 })}
@@ -63,7 +63,7 @@ const nav: Section[] = [
           <h2 id="nav-project">Project</h2>
           <ul aria-labelledby="nav-project" role="list" style="list-style:none;padding:0;margin:0">
             <li><a href="https://github.com/CodeHalwell/Agent-Gantry">GitHub</a></li>
-            <li><a href="/Agent-Gantry/docs/quick-reference/" aria-current={Astro.url.pathname === '/Agent-Gantry/docs/quick-reference/' ? 'page' : undefined} style={Astro.url.pathname === '/Agent-Gantry/docs/quick-reference/' ? 'color: var(--text); font-weight: 600;' : undefined}>Quick reference</a></li>
+            <li><a href="/Agent-Gantry/docs/quick-reference/" aria-current={Astro.url.pathname === '/Agent-Gantry/docs/quick-reference/' ? 'page' : undefined} style={Astro.url.pathname === '/Agent-Gantry/docs/quick-reference/' ? 'color: var(--text); font-weight: 600; background: var(--panel2);' : undefined}>Quick reference</a></li>
           </ul>
         </div>
         </nav></aside><main class="main" id="main-content" tabindex="-1"><div class="topbar"><span>Context is precious. Execution is sacred. Trust is earned.</span><span class="pill">Python 3.10–3.13</span></div><div class="content"><slot /></div><footer class="footer">Built with Astro, React, and TypeScript. Documentation reflects Agent-Gantry 0.11.0.</footer></main></div></body></html>
