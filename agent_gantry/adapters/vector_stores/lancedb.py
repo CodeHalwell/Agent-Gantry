@@ -310,6 +310,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
             ValueError: If tools and embeddings have different lengths or
                        if embedding dimensions don't match configured dimension
         """
+
         def to_record(tool: ToolDefinition, embedding: list[float], now: str) -> dict[str, Any]:
             return {
                 "id": f"{tool.namespace}.{tool.name}",
@@ -353,6 +354,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
             ValueError: If skills and embeddings have different lengths or
                        if embedding dimensions don't match configured dimension
         """
+
         def to_record(skill: Skill, embedding: list[float], now: str) -> dict[str, Any]:
             return {
                 "id": f"{skill.namespace}.{skill.name}",
@@ -405,7 +407,9 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
         # explicitly: newer Lance versions stop auto-projecting it when output
         # columns are specified.
         columns = (
-            ["tool_json", "vector", "_distance"] if include_embeddings else ["tool_json", "_distance"]
+            ["tool_json", "vector", "_distance"]
+            if include_embeddings
+            else ["tool_json", "_distance"]
         )
         search = (
             self._tools_table.search(query_vector)
@@ -716,12 +720,12 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
             query = self._tools_table.search().select(["tool_json"])
             if namespace:
                 query = query.where(f"namespace = '{_escape_sql_string(namespace)}'")
-            records = await asyncio.to_thread(query.limit(limit).offset(offset).to_list)
+            table = await asyncio.to_thread(query.limit(limit).offset(offset).to_arrow)
 
             return [
-                ToolDefinition.model_validate_json(r["tool_json"])
-                for r in records
-                if r.get("tool_json")  # Skip records with missing tool_json
+                ToolDefinition.model_validate_json(tj)
+                for tj in table["tool_json"].to_pylist()
+                if tj  # Skip records with missing tool_json
             ]
         except Exception as e:
             logger.warning(f"Error listing tools: {e}")
@@ -771,11 +775,10 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
         if where_clauses:
             query = query.where(" AND ".join(where_clauses))
 
-        records = await asyncio.to_thread(query.limit(limit).offset(offset).to_list)
+        table = await asyncio.to_thread(query.limit(limit).offset(offset).to_arrow)
 
         skills: list[Skill] = []
-        for record in records:
-            raw = record.get("skill_json")
+        for raw in table["skill_json"].to_pylist():
             if not raw:
                 continue
             try:
@@ -992,4 +995,3 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
     def dimension(self) -> int:
         """Return the vector dimension."""
         return self._dimension
-

@@ -54,3 +54,7 @@
 ## 2026-08-19 - Avoid row-wise dictionary allocation in PyArrow
 **Learning:** When retrieving specific columns from LanceDB/PyArrow tables to build a Python dictionary mapping, calling `.to_pylist()` on the entire table allocates a dictionary for every row, causing a memory and CPU bottleneck for large datasets.
 **Action:** Use columnar extraction via `.select(['col1', 'col2']).to_arrow()` and directly construct the mapping by zipping the specific column lists (e.g., `dict(zip(table['col1'].to_pylist(), table['col2'].to_pylist()))`).
+
+## 2026-08-25 - Avoid row-wise dictionary allocation with LanceDB to_list for single columns
+**Learning:** When retrieving a single column (like JSON strings) from LanceDB, using `.to_list()` allocates a dictionary for every row just to wrap the single field, causing O(N) memory overhead and slower execution on large tables.
+**Action:** Use columnar extraction via `.select(['col']).to_arrow()` and then extract the list of values directly using `table['col'].to_pylist()`. This avoids dictionary allocation per row.
