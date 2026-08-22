@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = ["HealthMetrics", "reject_newlines"]
 
@@ -28,6 +28,7 @@ def reject_newlines(value: str | None) -> str | None:
 
 
 class HealthMetrics(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
     """Runtime health fields shared by tools and MCP servers.
 
     Subclasses add the metrics specific to what they track (per-call latency
