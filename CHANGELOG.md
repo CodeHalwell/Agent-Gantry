@@ -106,6 +106,17 @@ adapters, and the provider dialects agree with it.
   throughout the nested model and `TypedDict` schemas introspection now
   inlines — and validation checked only `type` and `enum`, letting any value
   through. `const` equality is checked alongside `enum` membership now.
+- **An `allOf` was treated as nullable when only one branch admitted null.**
+  `allOf` intersects its branches, so the combined schema admits `null` only
+  when *every* branch does — `[{"type": ["string","null"]}, {"type":
+  "string"}]` does not. Treating it as nullable preserved a synthetic null
+  the schema forbids, so validation rejected the call instead of letting the
+  handler's default apply.
+- **An enum listing `null` was dropped entirely in framework args models.**
+  `{"enum": ["auto", null]}` is how a nullable choice is expressed, but the
+  bridge required every enum member to be a `str`/`int`/`bool`, so the whole
+  enum fell through to an unconstrained `Any`. `None` is a valid `Literal`
+  member and is now kept.
 - **`const` and `oneOf` exclusivity were lost in framework args models.**
   The CrewAI/LlamaIndex bridge ignored `const`, advertising an
   unconstrained scalar for a field the schema pins to one value; it now

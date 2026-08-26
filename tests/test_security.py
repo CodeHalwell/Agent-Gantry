@@ -221,20 +221,69 @@ def test_pending_confirmation_defers_accounting_without_relaxing_checks():
     from agent_gantry.core.security import PermissionDeniedError, SecurityPolicy
 
     policy = SecurityPolicy(
-        require_confirmation=[], allowed_domains=["example.com"], max_requests_per_minute=1
+        require_confirmation=[], allowed_domains=["example.com"], max_requests_per_minute=2
     )
 
-    # Probe: passes every check, but is not recorded.
-    policy.check_permission("risky_op", {}, pending_confirmation=True)
-    policy.check_permission("risky_op", {}, pending_confirmation=True)
+    # Probe: passes every check, but is not recorded — so several in a row
+    # never exhaust a budget of 2.
+    for _ in range(4):
+        policy.check_permission("risky_op", {}, pending_confirmation=True)
 
-    # Denial checks are untouched by the flag.
+    # Denial checks are untouched by the flag. (That a denial *is* recorded is
+    # covered separately by test_denied_probe_still_consumes_quota_*.)
     with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
         policy.check_permission(
             "risky_op", {"url": "https://evil.test/x"}, pending_confirmation=True
         )
 
-    # The replay that actually executes is recorded, and exhausts the budget.
+    # The replay that actually executes is recorded; with the denial above
+    # that exhausts the budget of 2.
     policy.check_permission("risky_op", {}, confirmation_approved=True)
     with pytest.raises(PermissionDeniedError, match="Rate limit exceeded"):
         policy.check_permission("risky_op", {})
+
+
+def test_denied_probe_still_consumes_quota_despite_pending_confirmation():
+    """``pending_confirmation`` defers accounting because the call will stop
+    at the executor's gate — but a *denial* is terminal regardless, and the
+    executor returns before its own rate limiter is acquired, so skipping it
+    here left rejected calls unbounded (PR #381 review)."""
+    import pytest
+
+    from agent_gantry.core.security import PermissionDeniedError, SecurityPolicy
+
+    policy = SecurityPolicy(
+        require_confirmation=[], allowed_domains=["example.com"], max_requests_per_minute=1
+    )
+
+    with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
+        policy.check_permission(
+            "risky", {"url": "https://evil.test/x"}, pending_confirmation=True
+        )
+    # The denial consumed the budget, so the next call is rate-limited rather
+    # than being able to repeat forever.
+    with pytest.raises(PermissionDeniedError, match="Rate limit exceeded"):
+        policy.check_permission(
+            "risky", {"url": "https://evil.test/x"}, pending_confirmation=True
+        )
+
+
+def test_clean_probes_remain_exempt_from_accounting():
+    """The denial carve-out must not undo the probe exemption itself."""
+    import pytest
+
+    from agent_gantry.core.security import PermissionDeniedError, SecurityPolicy
+
+    policy = SecurityPolicy(
+        require_confirmation=[], allowed_domains=["example.com"], max_requests_per_minute=1
+    )
+
+    for _ in range(3):
+        policy.check_permission(
+            "risky", {"url": "https://example.com/ok"}, pending_confirmation=True
+        )
+
+    # …and the call that actually executes is still counted.
+    policy.check_permission("risky", {"url": "https://example.com/ok"})
+    with pytest.raises(PermissionDeniedError, match="Rate limit exceeded"):
+        policy.check_permission("risky", {"url": "https://example.com/ok"})

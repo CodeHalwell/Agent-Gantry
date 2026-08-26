@@ -196,23 +196,33 @@ class SecurityPolicy:
                         f"Tool {tool_name} requires human approval."
                     )
 
-        # Past the confirmation gate the outcome is terminal — this call either
-        # executes or is denied below — so it counts exactly once. A denial
-        # still consumes quota, which keeps a flood of rejected calls bounded.
-        # ``pending_confirmation`` marks the one remaining non-terminal case:
-        # a gate the *executor* owns and this policy cannot see.
-        if now is not None and not pending_confirmation:
-            self._request_timestamps.append(now)
-
-        # 2. Check allowed domains if they are configured
+        # 2. Check allowed domains if they are configured. Resolved before
+        # recording, because a denial changes whether this call counts: a
+        # denied call is terminal even when it would otherwise have stopped
+        # at the executor's confirmation gate, and skipping it there would
+        # leave a flood of rejected calls unbounded.
+        denial: str | None = None
         if self.allowed_domains:
             for str_val in self._extract_all_strings(arguments):
-                domains = self._extract_domains(str_val)
-                for domain in domains:
+                for domain in self._extract_domains(str_val):
                     if not self._is_domain_allowed(domain):
-                        raise PermissionDeniedError(
+                        denial = (
                             f"Execution denied: Domain '{domain}' is not in allowed_domains."
                         )
+                        break
+                if denial is not None:
+                    break
+
+        # Past the confirmation gate the outcome is terminal — this call either
+        # executes or is denied — so it counts exactly once.
+        # ``pending_confirmation`` marks the one non-terminal case: a gate the
+        # *executor* owns and this policy cannot see, whose approved replay is
+        # counted instead. A denial is terminal regardless.
+        if now is not None and (denial is not None or not pending_confirmation):
+            self._request_timestamps.append(now)
+
+        if denial is not None:
+            raise PermissionDeniedError(denial)
 
     def _extract_all_strings(self, data: typing.Any) -> typing.Iterator[str]:
         """Recursively extract all string values from a data structure."""

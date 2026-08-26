@@ -644,9 +644,18 @@ class ExecutionEngine:
             prop_type = prop.get("type")
             if prop_type == "null" or (isinstance(prop_type, list) and "null" in prop_type):
                 return True
-            for key in ("anyOf", "oneOf", "allOf"):
+            for key in ("anyOf", "oneOf"):
                 branches = prop.get(key)
                 if isinstance(branches, list) and any(_declares_null(b) for b in branches):
+                    return True
+            # ``allOf`` intersects its branches, so the combined schema admits
+            # null only when *every* branch does. ``any()`` here would call
+            # ``[{"type": ["string", "null"]}, {"type": "string"}]`` nullable
+            # and preserve a synthetic null the schema actually forbids.
+            all_of = prop.get("allOf")
+            if isinstance(all_of, list):
+                usable = [b for b in all_of if isinstance(b, dict) and b]
+                if usable and all(_declares_null(b) for b in usable):
                     return True
             return False
 

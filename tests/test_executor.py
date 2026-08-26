@@ -765,3 +765,34 @@ async def test_validate_enforces_const(engine):
 
     is_valid, error = await engine._validate_arguments(tool, {"payload": {"kind": "expected"}})
     assert is_valid is True, error
+
+
+def test_normalize_allof_is_nullable_only_when_every_branch_is():
+    """``allOf`` intersects its branches, so the combined schema admits null
+    only when every branch does. ``any()`` would preserve a synthetic null
+    the schema actually forbids (PR #381 review)."""
+    partial = ToolDefinition(
+        name="allof_partial",
+        description="Only one allOf branch admits null",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "v": {"allOf": [{"type": ["string", "null"]}, {"type": "string"}]}
+            },
+            "required": [],
+        },
+    )
+    assert ExecutionEngine._normalize_arguments(partial, {"v": None}) == {}
+
+    every = ToolDefinition(
+        name="allof_every",
+        description="Every allOf branch admits null",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "v": {"allOf": [{"type": ["string", "null"]}, {"type": ["string", "null"]}]}
+            },
+            "required": [],
+        },
+    )
+    assert ExecutionEngine._normalize_arguments(every, {"v": None}) == {"v": None}

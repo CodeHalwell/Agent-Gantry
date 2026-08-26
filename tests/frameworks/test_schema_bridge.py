@@ -383,3 +383,19 @@ def test_anyof_still_permits_overlapping_branches():
     model = pydantic_model_from_schema("Args", schema)
     assert model(v=1).v == 1
     assert model(v=1.5).v == 1.5
+
+
+def test_enum_including_null_becomes_a_literal():
+    """``{"enum": ["auto", None]}`` is how a nullable choice is expressed —
+    ``None`` is a valid ``Literal`` member, and excluding it dropped the whole
+    enum to the unconstrained fallback (PR #381 review)."""
+    schema = {
+        "type": "object",
+        "properties": {"mode": {"enum": ["auto", None]}},
+        "required": ["mode"],
+    }
+    model = pydantic_model_from_schema("Args", schema)
+    assert model(mode="auto").mode == "auto"
+    assert model(mode=None).mode is None
+    with pytest.raises(ValidationError):
+        model(mode="zzz")

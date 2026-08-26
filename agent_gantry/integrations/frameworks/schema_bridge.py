@@ -211,7 +211,10 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
 
     enum_values = prop.get("enum")
     if isinstance(enum_values, list) and enum_values:
-        if all(isinstance(v, (str, int, bool)) for v in enum_values):
+        # ``None`` is a valid Literal member (``Literal["auto", None]``), and
+        # an enum listing it is exactly how a nullable choice is expressed —
+        # excluding it dropped the whole enum to the unconstrained fallback.
+        if all(isinstance(v, (str, int, bool)) or v is None for v in enum_values):
             return Literal[tuple(enum_values)]
         # Enum of exotic values — fall back to the declared/base type.
 
