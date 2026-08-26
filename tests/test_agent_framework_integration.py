@@ -677,3 +677,41 @@ class TestGantryToolBridgeEdgeCases:
         assert payload.arguments == {}
         assert payload.tool_name == "test"
         assert "malformed JSON" in caplog.text
+
+
+class TestDisableAFInstrumentation:
+    """`disable_af_instrumentation` must actually reach AF's switch.
+
+    Regression guard: an earlier revision imported a nonexistent
+    ``agent_framework.telemetry`` module and swallowed the ImportError, so the
+    documented AF>=1.6.0 concurrency workaround silently never applied. The
+    real switch is ``agent_framework.observability.disable_instrumentation``.
+    """
+
+    def test_matches_installed_af_capability(self) -> None:
+        pytest.importorskip("agent_framework", reason="agent-framework not installed")
+        from agent_framework import observability
+
+        from agent_gantry import disable_af_instrumentation
+
+        has_switch = callable(
+            getattr(observability, "disable_instrumentation", None)
+        )
+        # On AF >= 1.6.0 the switch exists and the helper must reach it (True).
+        # On AF < 1.6.0 there is no default instrumentation to disable (False).
+        assert disable_af_instrumentation() is has_switch
+
+    def test_returns_false_without_af(self, monkeypatch: Any) -> None:
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _no_af(name: str, *args: Any, **kwargs: Any) -> Any:
+            if name.startswith("agent_framework"):
+                raise ImportError(f"No module named {name!r}")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _no_af)
+        import agent_gantry.integrations.agent_framework_bridge as bridge_mod
+
+        assert bridge_mod.disable_af_instrumentation() is False

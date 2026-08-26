@@ -24,6 +24,7 @@ CI environments that don't pull the optional extra still pass.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from types import SimpleNamespace
 from typing import Any, ClassVar
 
 import pytest
@@ -53,7 +54,6 @@ except ImportError as _af_import_err:
 
 from agent_gantry import AgentGantry  # noqa: E402
 from agent_gantry.core.security import (  # noqa: E402
-    PermissionDeniedError,
     SecurityPolicy,
 )
 from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge  # noqa: E402
@@ -543,6 +543,56 @@ async def test_approval_middleware_blocks_destructive_tool(bridge: GantryToolBri
     with pytest.raises(MiddlewareTermination):
         await middleware.process(ctx, _never_called)
 
+    # AF only activates its native approval flow when the terminating
+    # middleware left a ``function_approval_request`` Content in
+    # ``context.result`` — a bare termination reaches the model as a null
+    # function result with the approval reason discarded.
+    from agent_framework import Content
+
+    assert isinstance(ctx.result, Content)
+    assert ctx.result.type == "function_approval_request"
+    assert ctx.result.function_call.name == "delete_user"
+
+
+@pytest.mark.asyncio
+async def test_approval_middleware_replays_honor_human_decision(
+    bridge: GantryToolBridge,
+) -> None:
+    """AF replays an approval-gated call with the human's decision in
+    ``metadata['approval_response']`` — an approved replay must execute, a
+    rejected one must report without executing (never re-request approval)."""
+    tools = await bridge.get_tools("delete user", limit=5, score_threshold=0.0)
+    delete_tool = next(t for t in tools if t.name == "delete_user")
+    policy = SecurityPolicy(require_confirmation=["delete_*"])
+    middleware = GantryApprovalMiddleware(policy)
+
+    class _Ctx:
+        def __init__(self, fn, args, approved):
+            self.function = fn
+            self.arguments = args
+            self.result = None
+            self.metadata: dict[str, Any] = {
+                "call_id": "call-1",
+                "approval_response": SimpleNamespace(approved=approved),
+            }
+
+    calls: list[str] = []
+
+    async def _call_next():
+        calls.append("ran")
+
+    approved_ctx = _Ctx(delete_tool, {"user_id": "abc"}, approved=True)
+    await middleware.process(approved_ctx, _call_next)
+    assert calls == ["ran"], "an approved replay must execute the tool"
+
+    async def _never_called():  # pragma: no cover - rejected replay
+        raise AssertionError("a rejected replay must not execute the tool")
+
+    rejected_ctx = _Ctx(delete_tool, {"user_id": "abc"}, approved=False)
+    await middleware.process(rejected_ctx, _never_called)
+    assert isinstance(rejected_ctx.result, str)
+    assert "rejected" in rejected_ctx.result
+
 
 @pytest.mark.asyncio
 async def test_approval_middleware_allows_safe_tool(bridge: GantryToolBridge) -> None:
@@ -572,8 +622,10 @@ async def test_approval_middleware_allows_safe_tool(bridge: GantryToolBridge) ->
 
 @pytest.mark.asyncio
 async def test_approval_middleware_denies_by_domain(bridge: GantryToolBridge) -> None:
-    """PermissionDeniedError propagates when policy denies on grounds other
-    than confirmation (here: disallowed domain in arguments)."""
+    """A policy denial (here: disallowed domain in arguments) never invokes
+    the tool and reports the reason as an explicit result — raising instead
+    would reach the model as AF's opaque ``"Error: Function failed."`` with
+    the denial reason discarded."""
     tools = await bridge.get_tools("weather", limit=5, score_threshold=0.0)
     tool = next(t for t in tools if t.name == "get_weather")
 
@@ -591,8 +643,10 @@ async def test_approval_middleware_denies_by_domain(bridge: GantryToolBridge) ->
         raise AssertionError("should not be called")
 
     ctx = _Ctx(tool, {"city": "see https://blocked.test/x"})
-    with pytest.raises(PermissionDeniedError):
-        await middleware.process(ctx, _never_called)
+    await middleware.process(ctx, _never_called)
+    assert isinstance(ctx.result, str)
+    assert "Permission denied by security policy" in ctx.result
+    assert "get_weather" in ctx.result
 
 
 # ---------------------------------------------------------------------------

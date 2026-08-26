@@ -271,34 +271,49 @@ def disable_af_instrumentation() -> bool:
     "Enable instrumentation by default")
     """
     ver = _get_af_version()
-    if ver is None or ver < (1, 6, 0):
+    if ver is not None and ver < (1, 6, 0):
         return False
+    # NOTE: the instrumentation switch lives in ``agent_framework.observability``
+    # (an earlier revision imported a nonexistent ``agent_framework.telemetry``
+    # module, which made this helper a silent no-op on every AF release — the
+    # import error was swallowed by a broad except). ``ver is None`` no longer
+    # early-returns: ``importlib.metadata.version("agent-framework")`` fails
+    # for an ``agent-framework-core``-only install even though the module —
+    # and the instrumentation to disable — is present.
     try:
-        from agent_framework import telemetry as _af_telemetry  # type: ignore[import-not-found]
-
-        _disable = getattr(_af_telemetry, "disable_instrumentation", None)
-        if callable(_disable):
-            _disable()
-            logger.debug(
-                "disable_af_instrumentation: called agent_framework.telemetry"
-                ".disable_instrumentation() (AF %d.%d.%d)",
-                *ver,
-            )
-            return True
-        logger.warning(
-            "disable_af_instrumentation: agent_framework.telemetry has no "
-            "'disable_instrumentation' callable (AF %d.%d.%d). "
-            "The ContextVar concurrency workaround could not be applied.",
-            *ver,
+        from agent_framework import observability as _af_observability
+    except ImportError:
+        logger.debug(
+            "disable_af_instrumentation: agent-framework is not installed; "
+            "nothing to disable."
         )
         return False
-    except Exception:
+    _disable = getattr(_af_observability, "disable_instrumentation", None)
+    if not callable(_disable):
+        # AF < 1.6.0 has no default instrumentation (and no switch) — not an
+        # error, there is simply nothing to disable.
         logger.debug(
-            "disable_af_instrumentation: failed to import or call "
-            "agent_framework.telemetry.disable_instrumentation",
+            "disable_af_instrumentation: agent_framework.observability has no "
+            "'disable_instrumentation' callable (AF %s) — nothing to disable.",
+            ".".join(map(str, ver)) if ver else "unknown version",
+        )
+        return False
+    try:
+        _disable()
+    except Exception:
+        logger.warning(
+            "disable_af_instrumentation: agent_framework.observability"
+            ".disable_instrumentation() raised; the ContextVar concurrency "
+            "workaround could not be applied.",
             exc_info=True,
         )
         return False
+    logger.debug(
+        "disable_af_instrumentation: called agent_framework.observability"
+        ".disable_instrumentation() (AF %s)",
+        ".".join(map(str, ver)) if ver else "unknown version",
+    )
+    return True
 
 
 # Private alias so GantryToolBridge.__init__ can call the module-level helper
@@ -400,19 +415,28 @@ def _build_typed_wrapper(
     signatures to one name.
     """
 
+    # Required parameters first (stable within each group): JSON-Schema
+    # ``properties`` carries no ordering guarantee — MCP servers, OpenAPI
+    # imports and round-tripped schemas routinely list an optional property
+    # before a required one, and ``inspect.Signature`` rejects a non-default
+    # parameter after a defaulted one (``ValueError``), which previously
+    # killed the whole run inside ``before_run``.
+    ordered_names = sorted(properties, key=lambda name: name not in required_params)
+
     async def _wrapper_no_args() -> str:
         return await execute()
 
     async def _wrapper_with_args(*args: Any, **kwargs: Any) -> str:
-        param_names = list(properties.keys())
+        # Positional args map onto the same required-first order the
+        # synthesized signature advertises.
         if args:
-            if len(args) > len(param_names):
+            if len(args) > len(ordered_names):
                 raise TypeError(
-                    f"{tool_name}() takes at most {len(param_names)} positional "
+                    f"{tool_name}() takes at most {len(ordered_names)} positional "
                     f"arguments but {len(args)} were given"
                 )
             for idx, value in enumerate(args):
-                p_name = param_names[idx]
+                p_name = ordered_names[idx]
                 if p_name not in kwargs:
                     kwargs[p_name] = value
         return await execute(**kwargs)
@@ -423,7 +447,8 @@ def _build_typed_wrapper(
     else:
         wrapper = _wrapper_with_args
         new_params = []
-        for p_name, p_info in properties.items():
+        for p_name in ordered_names:
+            p_info = properties[p_name]
             p_desc = p_info.get("description", f"Parameter: {p_name}")
             p_type = _json_type_to_python(p_info.get("type", "string"))
             default = (
@@ -473,12 +498,23 @@ def _maybe_wrap_as_function_tool(
             )
         return wrapper
 
-    return af_tool(
-        wrapper,
-        name=tool_def.name,
-        description=tool_def.description,
-        approval_mode=_tool_approval_mode(tool_def),
-    )
+    tool_kwargs: dict[str, Any] = {
+        "name": tool_def.name,
+        "description": tool_def.description,
+        "approval_mode": _tool_approval_mode(tool_def),
+    }
+    # Pass the Gantry JSON schema straight through when the installed AF
+    # supports it (``agent_framework.tool(schema=...)`` exists across the
+    # supported 1.x line): the model then sees the schema verbatim — enums,
+    # per-parameter descriptions, typed array items, defaults — instead of
+    # whatever survives signature introspection of the synthesized wrapper.
+    try:
+        if "schema" in inspect.signature(af_tool).parameters:
+            tool_kwargs["schema"] = tool_def.parameters_schema
+    except (TypeError, ValueError):  # pragma: no cover - builtin/exotic tool()
+        pass
+
+    return af_tool(wrapper, **tool_kwargs)
 
 
 def _build_callable_for_tool(
@@ -645,6 +681,17 @@ class GantryToolBridge:
         context_kwargs = {k: v for k, v in query_kwargs.items() if k in context_fields}
         tool_query_fields = set(ToolQuery.model_fields.keys()) - {"context", "limit", "score_threshold"}
         tq_kwargs = {k: v for k, v in query_kwargs.items() if k in tool_query_fields}
+        # An unknown kwarg here is a typo'd filter that would otherwise be
+        # dropped without a trace — e.g. ``namespace=`` (the field is
+        # ``namespaces``) silently querying every namespace.
+        unknown = set(query_kwargs) - context_fields - tool_query_fields
+        if unknown:
+            logger.warning(
+                "GantryToolBridge: ignoring unknown query kwarg(s) %s — valid "
+                "names are ToolQuery/ConversationContext fields (e.g. "
+                "'namespaces', 'tools_already_used').",
+                sorted(unknown),
+            )
 
         # Always push 0.0 to the underlying store and apply the threshold
         # post-hoc in :meth:`_apply_threshold`. This costs a few extra
@@ -1066,10 +1113,12 @@ class GantryToolBridge:
     ) -> Any:
         """Retrieve relevant tools and construct a bare AF ``Agent(client, ...)`` directly.
 
-        Unlike :meth:`build_agent` which uses ``client.as_agent()``, this
-        constructs ``Agent`` via its constructor so the result is a first-class
-        ``Agent`` object suitable for direct use with ``WorkflowBuilder``,
-        ``WorkflowAgent``, and other multi-agent orchestration patterns.
+        Both this and :meth:`build_agent` construct ``Agent`` via its
+        constructor; this variant additionally forwards ``**kwargs`` and
+        ``extra_tools``/``query_kwargs``, making it the flexible entry point
+        for ``WorkflowBuilder``, ``WorkflowAgent``, and other multi-agent
+        orchestration patterns. :meth:`build_agent` remains the minimal
+        convenience form.
 
         .. code-block:: python
 
@@ -1105,8 +1154,10 @@ class GantryToolBridge:
             middleware: Optional AF middleware sequence.
             cache: Whether to reuse cached tool wrappers.
             extra_tools: Additional static tools to append after Gantry-selected tools.
-            query_kwargs: Extra keyword arguments forwarded to :meth:`get_tools`
-                (e.g. ``conversation_context``, ``namespace``).
+            query_kwargs: Extra ``ToolQuery`` field overrides forwarded to
+                :meth:`get_tools` (e.g. ``namespaces=[...]``,
+                ``max_cost_tier=...`` — must be actual ``ToolQuery`` field
+                names; unknown keys are dropped).
             **kwargs: Additional keyword arguments forwarded to ``Agent()``.
 
         Returns:

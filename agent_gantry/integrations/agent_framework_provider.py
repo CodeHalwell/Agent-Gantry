@@ -987,14 +987,29 @@ def _build_impl_class(base: type) -> type:
             registry = getattr(self._gantry, "_registry", None)
             if registry is None:
                 return None
+            get_tool = getattr(registry, "get_tool", None)
+            # Qualified "namespace.name" form first: construction-time
+            # validation accepts it (``{t.namespace}.{t.name}``), so
+            # request-time resolution must resolve it too — previously a
+            # qualified ``required``/``always_include`` pin passed validation
+            # and was then warned-and-skipped on every round. Mirrors
+            # ``ExecutionEngine._resolve_tool``: tool names cannot contain a
+            # dot, so ``rpartition`` is unambiguous.
+            if "." in name and callable(get_tool):
+                namespace, _, bare = name.rpartition(".")
+                try:
+                    found = get_tool(bare, namespace)
+                except TypeError:  # registry double without a namespace arg
+                    found = None
+                if found is not None:
+                    return found
             lookup = getattr(registry, "get_tool_by_name", None)
             if callable(lookup):
                 found = lookup(name)
                 if found is not None:
                     return found
-            lookup = getattr(registry, "get_tool", None)
-            if callable(lookup):
-                return lookup(name)
+            if callable(get_tool):
+                return get_tool(name)
             return None
 
     return _GantryContextProviderImpl
@@ -1083,6 +1098,21 @@ class GantryContextProvider:
         **query_kwargs: Additional keyword arguments forwarded to
             :meth:`GantryToolBridge.get_tools` (e.g. ``namespaces``,
             ``required_capabilities``, ``enable_reranking``).
+
+    Note:
+        AF auto-injects an ``InMemoryHistoryProvider`` only when an agent's
+        ``context_providers`` list is *empty*, so attaching this provider
+        suppresses that automatic local conversation history. If you rely on
+        it for ``agent.run(..., session=...)`` history, add it back
+        explicitly::
+
+            from agent_framework import InMemoryHistoryProvider
+
+            agent = Agent(
+                client,
+                instructions,
+                context_providers=[provider, InMemoryHistoryProvider()],
+            )
 
     Example:
         .. code-block:: python

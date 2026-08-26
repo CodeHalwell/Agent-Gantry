@@ -9,9 +9,14 @@ setup.
 Available middleware:
 
 - :class:`GantryApprovalMiddleware` — routes AF tool invocations through
-  Gantry's :class:`~agent_gantry.core.security.SecurityPolicy`, raising
-  ``MiddlewareTermination`` for tools that require human approval and
-  ``PermissionDeniedError`` for tools that are outright disallowed.
+  Gantry's :class:`~agent_gantry.core.security.SecurityPolicy`. A tool that
+  requires human approval terminates the round with a
+  ``function_approval_request`` result (activating AF's native approval
+  flow; an approved replay executes, a rejected one reports without
+  executing). A tool that is outright disallowed is never invoked — the
+  model receives an explicit "Permission denied by security policy" result
+  carrying the reason (raising instead would surface as AF's opaque
+  ``"Error: Function failed."``).
 - :class:`GantryObservabilityMiddleware` — records every function
   invocation onto Gantry's telemetry via ``telemetry.span(...)`` so token
   savings, latency, and success rate are captured uniformly whether the
@@ -93,6 +98,37 @@ def _build_middleware_classes() -> tuple[type, type]:
     ``isinstance`` checks and eliminating per-instantiation overhead.
     """
     function_middleware, middleware_termination = _import_af_middleware_bits()
+    try:
+        from agent_framework import Content as _AFContent
+    except ImportError:  # pragma: no cover - Content ships with every AF 1.x
+        _AFContent = None  # noqa: N806 - mirrors the class-name import above
+
+    def _approval_request(call_id: str, name: str, args: Any) -> Any:
+        """Build the ``function_approval_request`` Content AF's flow expects.
+
+        Returns ``None`` when it can't be constructed (AF double without
+        ``Content``); callers then fall back to a plain-string result so the
+        approval *reason* still survives the termination.
+        """
+        if _AFContent is None:
+            return None
+        try:
+            if hasattr(args, "model_dump"):
+                args = args.model_dump()
+            function_call = _AFContent.from_function_call(
+                call_id=call_id, name=name, arguments=dict(args) if args else {}
+            )
+            return _AFContent.from_function_approval_request(
+                id=call_id, function_call=function_call
+            )
+        except Exception:  # pragma: no cover - best-effort; string fallback
+            logger.debug(
+                "GantryApprovalMiddleware: could not build a "
+                "function_approval_request Content; falling back to a plain "
+                "result message.",
+                exc_info=True,
+            )
+            return None
 
     class GantryApprovalMiddlewareImpl(function_middleware):  # type: ignore[misc,valid-type]
         """AF function middleware that enforces Gantry's SecurityPolicy.
@@ -110,24 +146,67 @@ def _build_middleware_classes() -> tuple[type, type]:
             function = context.function
             name = getattr(function, "name", getattr(function, "__name__", "?"))
             args = context.arguments or {}
+            metadata = getattr(context, "metadata", None) or {}
+            # AF replays an approved/rejected call with the human's response in
+            # metadata — that replay is how a confirmation-gated tool actually
+            # runs, so honour it before re-running the policy gate.
+            approval_response = metadata.get("approval_response")
+            approved: bool | None = getattr(approval_response, "approved", None)
+
+            if approved is False:
+                logger.info(
+                    "GantryApprovalMiddleware: human rejected approval for '%s'",
+                    name,
+                )
+                context.result = (
+                    f"Tool '{name}' was not executed: the approval request "
+                    "was rejected by the human reviewer."
+                )
+                return
+
             try:
                 # Pass raw arguments through: SecurityPolicy type-checks per
                 # value, and downstream policies may rely on numeric/boolean
                 # typing rather than stringified values.
                 self._policy.check_permission(name, args)
             except ConfirmationRequiredError as err:
-                logger.info(
-                    "GantryApprovalMiddleware: '%s' requires human approval (%s)",
-                    name,
-                    err,
-                )
-                # Surface the approval request to AF's native approval flow.
-                raise middleware_termination(str(err)) from err
-            except PermissionDeniedError:
+                if approved is True:
+                    # Replay of an approved request: the human said yes.
+                    logger.info(
+                        "GantryApprovalMiddleware: '%s' approved by human; "
+                        "proceeding.",
+                        name,
+                    )
+                else:
+                    logger.info(
+                        "GantryApprovalMiddleware: '%s' requires human "
+                        "approval (%s)",
+                        name,
+                        err,
+                    )
+                    # Surface the approval request to AF's native approval
+                    # flow: AF only activates it when ``context.result`` is a
+                    # ``function_approval_request`` Content at termination —
+                    # a bare MiddlewareTermination would reach the model as a
+                    # null function result with the reason discarded.
+                    call_id = str(metadata.get("call_id") or f"gantry-{name}")
+                    request = _approval_request(call_id, name, args)
+                    context.result = request if request is not None else str(err)
+                    raise middleware_termination(str(err)) from err
+            except PermissionDeniedError as err:
                 logger.warning(
                     "GantryApprovalMiddleware: denied execution of '%s'", name
                 )
-                raise
+                # An explicit result — NOT a raise: AF converts an exception
+                # from function middleware into an opaque "Error: Function
+                # failed." (detail only with include_detailed_errors), which
+                # discards the denial reason and reads as a tool crash. The
+                # tool is never invoked; the model sees exactly why.
+                context.result = (
+                    f"Permission denied by security policy: tool '{name}' was "
+                    f"not executed. {err}"
+                )
+                return
 
             await call_next()
 
