@@ -223,3 +223,28 @@ class TestAgentGantryModuleImport:
         """Test collect_tools_from_modules error handling."""
         with pytest.raises(ValueError, match="does not expose an AgentGantry instance"):
             await gantry.collect_tools_from_modules(["tests.test_modules.module_no_tools"])
+
+
+@pytest.mark.asyncio
+async def test_delete_tool_purges_registry_and_handlers():
+    """delete_tool must remove the tool everywhere: vector store, registry
+    (so list_tools_sync / required= pin resolution stop seeing it), and the
+    handler map (so execute stops running it)."""
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from agent_gantry.schema.execution import ExecutionStatus, ToolCall
+
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @gantry.register(tags=["email"])
+    def send_email(to: str) -> str:
+        "Send an email message."
+        return f"sent:{to}"
+
+    await gantry.sync()
+    assert any(t.name == "send_email" for t in gantry.list_tools_sync())
+
+    assert await gantry.delete_tool("send_email") is True
+
+    assert all(t.name != "send_email" for t in gantry.list_tools_sync())
+    result = await gantry.execute(ToolCall(tool_name="send_email", arguments={"to": "x"}))
+    assert result.status != ExecutionStatus.SUCCESS
