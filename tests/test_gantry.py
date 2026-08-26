@@ -243,8 +243,12 @@ async def test_delete_tool_purges_registry_and_handlers():
     await gantry.sync()
     assert any(t.name == "send_email" for t in gantry.list_tools_sync())
 
+    count_before = gantry.tool_count
     assert await gantry.delete_tool("send_email") is True
 
     assert all(t.name != "send_email" for t in gantry.list_tools_sync())
+    assert gantry.tool_count == count_before - 1, (
+        "tool_count reads the facade handler map, which delete_tool must purge"
+    )
     result = await gantry.execute(ToolCall(tool_name="send_email", arguments={"to": "x"}))
     assert result.status != ExecutionStatus.SUCCESS

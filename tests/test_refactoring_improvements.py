@@ -407,3 +407,16 @@ class TestSchemaFidelity:
 
         schema = build_parameters_schema(func)
         assert schema["properties"]["x"]["description"] == "The x value."
+
+
+def test_non_json_literal_values_degrade_to_string_schema():
+    """Literal admits bytes (and Enum members can carry arbitrary objects) —
+    non-JSON values must not leak into an ``enum`` payload (PR #381 review)."""
+    from typing import Literal
+
+    def func(marker: Literal[b"a", b"b"]) -> None:
+        pass
+
+    schema = build_parameters_schema(func)
+    assert schema["properties"]["marker"] == {"type": "string"}
+    assert "enum" not in schema["properties"]["marker"]

@@ -400,7 +400,11 @@ class ExecutionEngine:
     ) -> ToolResult | None:
         """Check security policy permissions."""
         if self._security_policy:
-            from agent_gantry.core.security import ConfirmationRequiredError, PermissionDeniedError
+            from agent_gantry.core.security import (
+                ConfirmationRequiredError,
+                PermissionDeniedError,
+                accepts_confirmation_approved,
+            )
 
             try:
                 # Match policies against the *resolved* tool's bare name. A
@@ -413,21 +417,16 @@ class ExecutionEngine:
                 # ``_check_confirmation_required`` honours for the tool-flag
                 # gate) — it skips only the confirmation-pattern gate; every
                 # denial check (rate limit, allowed domains) still runs.
-                # Duck-typed policies predating the keyword keep working via
-                # the two-argument fallback (their pattern gate then stays
-                # un-approvable, exactly as before).
-                try:
+                # The keyword is passed only when the policy's signature
+                # declares it (see ``accepts_confirmation_approved``), so
+                # duck-typed policies predating it keep working.
+                if accepts_confirmation_approved(self._security_policy):
                     self._security_policy.check_permission(
                         tool.name,
                         call.arguments,
                         confirmation_approved=call.require_confirmation is False,
                     )
-                except TypeError as exc:
-                    # Only the signature mismatch falls back — a TypeError
-                    # raised *inside* the policy must propagate, and must not
-                    # re-run rate-limit accounting.
-                    if "confirmation_approved" not in str(exc):
-                        raise
+                else:
                     self._security_policy.check_permission(tool.name, call.arguments)
             except ConfirmationRequiredError as e:
                 result = ToolResult(
@@ -675,13 +674,23 @@ class ExecutionEngine:
                         if not is_valid:
                             return False, err
             elif expected_type == "object":
-                # No declared properties (a plain ``dict`` parameter, or a
-                # free-form object) → any keys are acceptable.
                 obj_properties = val_schema.get("properties")
+                obj_additional = val_schema.get("additionalProperties")
                 if not isinstance(obj_properties, dict) or not obj_properties:
+                    # No declared properties (a plain ``dict`` parameter, or a
+                    # free-form object) → any keys are acceptable, but a
+                    # schema-valued ``additionalProperties`` (e.g. the
+                    # ``dict[str, int]`` schemas introspection emits) still
+                    # constrains every value.
+                    if isinstance(obj_additional, dict) and obj_additional:
+                        for prop_name, prop_value in value.items():
+                            is_valid, err = _validate_value(
+                                prop_value, obj_additional, f"{path}.{prop_name}"
+                            )
+                            if not is_valid:
+                                return False, err
                     return True, None
                 obj_required = val_schema.get("required", [])
-                obj_additional = val_schema.get("additionalProperties")
 
                 for req_prop in obj_required:
                     if req_prop not in value:

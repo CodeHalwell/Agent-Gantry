@@ -198,7 +198,15 @@ _SCALAR_MAP: dict[Any, dict[str, Any]] = {
 
 
 def _enum_schema(values: tuple[Any, ...]) -> dict[str, Any]:
-    """Build an ``enum`` schema from literal values, inferring a shared type."""
+    """Build an ``enum`` schema from literal values, inferring a shared type.
+
+    Only JSON-representable values can appear in a schema payload —
+    ``Literal`` admits ``bytes`` and Enum members can carry arbitrary
+    objects. Anything non-JSON degrades to a plain string schema (no
+    ``enum``) rather than emitting a payload providers would reject.
+    """
+    if not all(_json_safe(v) for v in values):
+        return {"type": "string"}
     schema: dict[str, Any] = {}
     kinds = set()
     for v in values:

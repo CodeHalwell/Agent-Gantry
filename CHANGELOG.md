@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (review follow-up)
+
+- **An approved Agent Framework replay could bypass the domain allowlist.**
+  `GantryApprovalMiddleware` swallowed `ConfirmationRequiredError` on an
+  approved replay instead of passing `confirmation_approved=True` through to
+  `check_permission` — and `SecurityPolicy` raises that error *before*
+  reaching its `allowed_domains` check, so a tool matched by both
+  `require_confirmation` and `allowed_domains` executed with a disallowed
+  domain once a human approved the confirmation prompt. The executor's own
+  `require_confirmation=False` path already did this correctly; the
+  middleware now shares the same call (via a new
+  `accepts_confirmation_approved` signature-inspection helper, replacing a
+  brittle `TypeError`-message string match with one that both call sites
+  use), so approval clears only the confirmation gate everywhere.
+- **`dict[str, int]`-shaped schemas — object with no declared `properties`
+  but a schema-valued `additionalProperties` — validated any value under any
+  key.** The free-form-object early return skipped the subschema entirely;
+  it's now applied to every value.
+- **`delete_tool` left the facade's own handler map stale.** `tool_count`
+  reads `AgentGantry._tool_handlers`, which the registry's own
+  `delete_tool` doesn't touch — a deleted tool's count never dropped. Purged
+  alongside the registry and vector store.
+- **Non-JSON `Literal`/`Enum` values degrade instead of producing an invalid
+  schema.** `Literal` admits `bytes` and an `Enum` member can wrap an
+  arbitrary object; `_enum_schema` now falls back to a plain string schema
+  (no `enum`) when any value isn't JSON-representable.
+- `SecurityPolicy.check_permission`'s `arguments` parameter is typed
+  `dict[str, Any]` (was `dict[str, str]`) to match what callers actually
+  pass — nested dicts/lists and non-string values, which
+  `_extract_all_strings` already handles.
+
 ### Added (schema fidelity — every framework and provider dialect benefits)
 
 - **`@gantry.register` now captures what the function actually declares.**

@@ -2184,13 +2184,21 @@ class AgentGantry:
         await self._ensure_initialized()
         deleted_from_store = await self._vector_store.delete(name, namespace)
         deleted_from_registry = self._registry.delete_tool(name, namespace)
+        # The facade keeps its own handler map (``tool_count`` reads it), so
+        # purge the qualified key here too — the registry only clears its own.
+        deleted_handler = self._tool_handlers.pop(f"{namespace}.{name}", None) is not None
         before = len(self._pending_tools)
         self._pending_tools = [
             t
             for t in self._pending_tools
             if not (t.name == name and t.namespace == namespace)
         ]
-        return deleted_from_store or deleted_from_registry or len(self._pending_tools) < before
+        return (
+            deleted_from_store
+            or deleted_from_registry
+            or deleted_handler
+            or len(self._pending_tools) < before
+        )
 
     async def health_check(self) -> dict[str, bool]:
         """

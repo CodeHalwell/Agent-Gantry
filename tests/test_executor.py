@@ -175,3 +175,34 @@ async def test_normalize_drops_none_for_declared_optional(engine, schema_aware_t
     assert kept == {"name": None}
     kept = engine._normalize_arguments(schema_aware_tool, {"name": "a", "bogus": None})
     assert kept == {"name": "a", "bogus": None}
+
+
+@pytest.mark.asyncio
+async def test_validate_typed_additional_properties_without_declared_properties(engine):
+    """A ``dict[str, int]`` schema — object with no ``properties`` but a
+    schema-valued ``additionalProperties`` — must still validate every value
+    against that subschema (PR #381 review: the free-form early return was
+    skipping it)."""
+    tool = ToolDefinition(
+        name="counts_tool",
+        description="Takes a mapping of counts",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "counts": {
+                    "type": "object",
+                    "additionalProperties": {"type": "integer"},
+                },
+            },
+            "required": ["counts"],
+        },
+    )
+
+    is_valid, error = await engine._validate_arguments(tool, {"counts": {"a": 1, "b": 2}})
+    assert is_valid is True, error
+
+    is_valid, error = await engine._validate_arguments(
+        tool, {"counts": {"a": "not-an-int"}}
+    )
+    assert is_valid is False
+    assert "counts.a" in error
