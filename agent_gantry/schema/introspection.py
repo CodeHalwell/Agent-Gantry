@@ -242,8 +242,40 @@ def _pydantic_object_schema(param_type: Any) -> dict[str, Any] | None:
 
             raw = TypeAdapter(param_type).json_schema()
     except Exception:  # noqa: BLE001 - best-effort; fall back to generic mapping
-        return None
+        import typing
+
+        if not typing.is_typeddict(param_type):
+            return None
+        raw = _typeddict_schema_via_typing_extensions(param_type)
+        if raw is None:
+            return None
     return _inline_local_refs(raw)
+
+
+def _typeddict_schema_via_typing_extensions(param_type: type) -> dict[str, Any] | None:
+    """Retry TypedDict introspection via ``typing_extensions.TypedDict``.
+
+    On Python < 3.12, Pydantic's schema generator only recognizes TypedDict
+    classes built from ``typing_extensions.TypedDict`` — a class written
+    with the standard-library ``typing.TypedDict`` (the import most code
+    reaches for) raises ``PydanticUserError`` instead, which would
+    otherwise silently flatten the parameter to a bare ``{"type":
+    "object"}``. Rebuilding an equivalent class from the same field
+    annotations and totality and retrying keeps the nested schema intact
+    on those Python versions too.
+    """
+    try:
+        import typing_extensions
+        from pydantic import TypeAdapter
+
+        rebuilt = typing_extensions.TypedDict(
+            param_type.__name__,
+            param_type.__annotations__,
+            total=param_type.__total__,
+        )
+        return TypeAdapter(rebuilt).json_schema()
+    except Exception:  # noqa: BLE001 - best-effort; fall back to generic mapping
+        return None
 
 
 def _inline_local_refs(schema: dict[str, Any]) -> dict[str, Any]:
@@ -261,7 +293,16 @@ def _inline_local_refs(schema: dict[str, Any]) -> dict[str, Any]:
         if isinstance(ref, str) and ref.rsplit("/", 1)[0] in ("#/$defs", "#/definitions"):
             target = defs.get(ref.rsplit("/", 1)[1])
             if isinstance(target, dict):
-                merged = {k: v for k, v in node.items() if k != "$ref"}
+                # Drop $ref itself plus $defs/definitions: a top-level
+                # schema is commonly ``{"$defs": {...}, "$ref": "#/..."}``
+                # (a model's own schema referencing its $defs sibling), and
+                # that raw $defs blob must not survive the merge below —
+                # it's the *unresolved* source the ref points into, not an
+                # overriding sibling key, and re-attaching it would leak an
+                # un-inlined $ref straight back into the output.
+                merged = {
+                    k: v for k, v in node.items() if k not in ("$ref", "$defs", "definitions")
+                }
                 resolved = _resolve(copy.deepcopy(target), depth + 1)
                 # Keys alongside the $ref (e.g. an overriding description) win.
                 return {**resolved, **merged}
@@ -297,12 +338,11 @@ def _type_to_json_schema(param_type: Any) -> dict[str, Any]:
         # Enum classes → enum of their values.
         if issubclass(param_type, enum.Enum):
             return _enum_schema(tuple(member.value for member in param_type))
-        # Bare containers.
-        if issubclass(param_type, (list, set, frozenset, tuple)):
-            return {"type": "array"}
-        if issubclass(param_type, dict):
-            return {"type": "object"}
-        # Pydantic models / TypedDict-like classes.
+        # Pydantic models / dataclasses / TypedDict-like classes: checked
+        # before the bare-container fallbacks below, because a TypedDict
+        # class *is* a `dict` subclass at runtime — matching `issubclass(
+        # param_type, dict)` first would silently flatten it to a bare
+        # {"type": "object"} and never reach the richer nested schema here.
         if hasattr(param_type, "model_json_schema") or typing.is_typeddict(param_type):
             nested = _pydantic_object_schema(param_type)
             if nested is not None:
@@ -311,6 +351,11 @@ def _type_to_json_schema(param_type: Any) -> dict[str, Any]:
             nested = _pydantic_object_schema(param_type)
             if nested is not None:
                 return nested
+        # Bare containers.
+        if issubclass(param_type, (list, set, frozenset, tuple)):
+            return {"type": "array"}
+        if issubclass(param_type, dict):
+            return {"type": "object"}
 
     # Generic types (list[str], dict[str, int], Optional[T], Literal, ...)
     try:

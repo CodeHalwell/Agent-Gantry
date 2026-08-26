@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (review follow-up, round 4)
+
+- **An approved confirmation replay was double-counted against the rate
+  limit.** `SecurityPolicy.check_permission(confirmation_approved=True)`
+  still recorded a new timestamp and checked it against
+  `max_requests_per_minute` — but the replay is the *same* logical call as
+  the probe that first raised `ConfirmationRequiredError` (already counted
+  then), not a new request. With a small enough limit this made any
+  confirmation-gated tool permanently unexecutable: the probe consumed the
+  sole slot, and the approved replay immediately hit the limit it should
+  have been exempt from. The rate-limit check is now skipped entirely for
+  an approved call, alongside the existing pattern-gate skip; the
+  `allowed_domains` denial check still runs either way.
+- **`schema_bridge.py` lost nullability on a required-but-nullable
+  field.** A schema property declared `{"type": ["string", "null"]}` and
+  listed in `required` means the caller must supply the key, but the value
+  itself may legitimately be `None` — the generated Pydantic model treated
+  it as a plain required `str`, which would reject a schema-valid `None`.
+  Required fields whose declared type admits `null` now get `T | None`
+  while staying required (`Field(...)`, no default) — omitting the key
+  still fails validation, but supplying `None` no longer does.
+- **`schema_bridge.py` widened a typed `additionalProperties` to a bare
+  `dict`.** A `dict[str, int]`-shaped schema (no declared `properties`, a
+  schema-valued `additionalProperties`) produced a plain `dict` annotation
+  that accepted any value type — CrewAI/LlamaIndex's generated args model
+  would admit a payload the executor's own (correctly strict) validator
+  then rejected. The value type is now preserved as `dict[str,
+  ValueType]`.
+- **`introspection.py`: a `TypedDict` parameter never actually reached its
+  nested-schema branch.** `_type_to_json_schema` checked `issubclass(
+  param_type, dict)` — true for *any* TypedDict class, since those are
+  real `dict` subclasses at runtime — before it reached the
+  Pydantic/TypedDict-specific branch, so every TypedDict parameter was
+  silently flattened to a bare `{"type": "object"}` with no properties or
+  required list, regardless of how detailed the TypedDict's own fields
+  were. The Pydantic-model/dataclass/TypedDict check now runs first.
+- **`introspection.py`: a `typing.TypedDict` parameter lost its schema on
+  Python < 3.12.** Even after the ordering fix above, Pydantic's schema
+  generator only recognizes TypedDict classes built from
+  `typing_extensions.TypedDict` on these versions — a class written with
+  the standard-library `typing.TypedDict` (the import most code reaches
+  for first) raised `PydanticUserError`, caught by the existing
+  best-effort handling and silently downgraded to the same bare
+  `{"type": "object"}`. Introspection now retries via an equivalent
+  `typing_extensions.TypedDict` rebuilt from the same field annotations
+  and totality before giving up.
+- **`introspection.py`: `_inline_local_refs` leaked an unresolved `$defs`
+  blob back into the output for a self-referential model.** A model's own
+  `model_json_schema()` output is commonly shaped
+  `{"$defs": {...}, "$ref": "#/$defs/Name"}` at the top level; resolving
+  the `$ref` only excluded the `$ref` key itself from the keys merged back
+  in alongside the recursively-resolved result, so the *raw, entirely
+  unresolved* `$defs` sibling — internal `$ref`s and all — was reattached
+  as an extra top-level key, defeating the whole point of inlining (and
+  the module's stated invariant that downstream consumers never see a
+  local `$ref`). `$defs`/`definitions` are now excluded from that merge
+  too, alongside `$ref`.
+
 ### Fixed (review follow-up, round 3)
 
 - **`additionalProperties: {}` (an explicit empty schema) was treated as

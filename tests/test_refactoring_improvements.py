@@ -408,6 +408,79 @@ class TestSchemaFidelity:
         schema = build_parameters_schema(func)
         assert schema["properties"]["x"]["description"] == "The x value."
 
+    def test_numpy_style_docstring_descriptions(self):
+        def func(city: str, days: int = 3) -> str:
+            """Get a weather forecast.
+
+            Parameters
+            ----------
+            city : str
+                Name of the city.
+            days : int
+                Forecast horizon in days.
+            """
+            return ""
+
+        schema = build_parameters_schema(func)
+        assert schema["properties"]["city"]["description"] == "Name of the city."
+        assert schema["properties"]["days"]["description"] == "Forecast horizon in days."
+
+    def test_pydantic_basemodel_param_inlines_nested_schema(self):
+        from pydantic import BaseModel
+
+        class Address(BaseModel):
+            street: str
+            city: str = "London"
+
+        def func(addr: Address) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        addr = schema["properties"]["addr"]
+        assert addr["type"] == "object"
+        assert addr["properties"]["street"]["type"] == "string"
+        assert addr["properties"]["city"]["default"] == "London"
+        assert "$ref" not in str(addr)
+
+    def test_typeddict_param_inlines_nested_schema(self):
+        from typing import TypedDict
+
+        class Address(TypedDict):
+            street: str
+            city: str
+
+        def func(addr: Address) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        addr = schema["properties"]["addr"]
+        assert addr["type"] == "object"
+        assert addr["properties"]["street"]["type"] == "string"
+        assert addr["properties"]["city"]["type"] == "string"
+        assert set(addr.get("required", [])) == {"street", "city"}
+
+    def test_self_referential_model_hits_ref_depth_limit(self):
+        from pydantic import BaseModel
+
+        class Node(BaseModel):
+            name: str
+            children: list["Node"] = []
+
+        Node.model_rebuild()
+
+        def func(root: Node) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        root = schema["properties"]["root"]
+        assert root["type"] == "object"
+        assert root["properties"]["name"]["type"] == "string"
+        # Self-reference is capped (_MAX_REF_DEPTH) rather than inlined
+        # forever or left as an unresolved $ref for consumers that don't
+        # follow JSON pointers (the executor's validator, several provider
+        # dialects).
+        assert "$ref" not in str(root)
+
 
 def test_non_json_literal_values_degrade_to_string_schema():
     """Literal admits bytes (and Enum members can carry arbitrary objects) —
