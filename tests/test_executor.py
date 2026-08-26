@@ -546,3 +546,54 @@ def test_normalize_preserves_null_declared_through_anyof():
         },
     )
     assert ExecutionEngine._normalize_arguments(plain, {"note": None}) == {}
+
+
+@pytest.mark.asyncio
+async def test_validate_enforces_combinator_only_nested_schemas(engine):
+    """A schema can constrain a value purely through combinators, with no
+    ``type`` of its own — ``{"anyOf": [{"type": "integer"}, {"type":
+    "null"}]}`` is what Pydantic emits for ``int | None``, including inside
+    the nested models introspection now inlines. Reading ``type`` alone saw
+    ``None`` and waved the value through (PR #381 review)."""
+    tool = ToolDefinition(
+        name="anyof_nested",
+        description="Nested field typed through an anyOf combinator",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "payload": {
+                    "type": "object",
+                    "properties": {
+                        "count": {"anyOf": [{"type": "integer"}, {"type": "null"}]}
+                    },
+                    "required": ["count"],
+                }
+            },
+            "required": ["payload"],
+        },
+    )
+
+    is_valid, error = await engine._validate_arguments(tool, {"payload": {"count": "bad"}})
+    assert is_valid is False
+    assert "payload.count" in error
+
+    for good in ({"count": 3}, {"count": None}):
+        is_valid, error = await engine._validate_arguments(tool, {"payload": good})
+        assert is_valid is True, error
+
+
+@pytest.mark.asyncio
+async def test_validate_allof_branches_are_all_enforced(engine):
+    tool = ToolDefinition(
+        name="allof_tool",
+        description="Value constrained by an allOf combinator",
+        parameters_schema={
+            "type": "object",
+            "properties": {"mode": {"allOf": [{"type": "string"}, {"enum": ["a", "b"]}]}},
+            "required": ["mode"],
+        },
+    )
+    is_valid, _ = await engine._validate_arguments(tool, {"mode": "a"})
+    assert is_valid is True
+    is_valid, _ = await engine._validate_arguments(tool, {"mode": "zzz"})
+    assert is_valid is False

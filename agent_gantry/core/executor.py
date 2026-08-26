@@ -720,6 +720,34 @@ class ExecutionEngine:
         ) -> tuple[bool, str | None]:
             expected_type = val_schema.get("type")
 
+            # A schema can constrain a value purely through combinators, with
+            # no ``type`` of its own — ``{"anyOf": [{"type": "integer"},
+            # {"type": "null"}]}`` is what Pydantic emits for ``int | None``,
+            # including for fields of the nested models this PR now inlines.
+            # Reading ``type`` alone would see ``None`` and wave the value
+            # through unchecked, so enforce the branches here.
+            if expected_type is None:
+                for key in ("anyOf", "oneOf"):
+                    branches = val_schema.get(key)
+                    if not isinstance(branches, list) or not branches:
+                        continue
+                    usable = [b for b in branches if isinstance(b, dict) and b]
+                    if not usable:
+                        continue
+                    if not any(_validate_value(value, b, path)[0] for b in usable):
+                        return (
+                            False,
+                            f"Parameter '{path}' does not match any permitted schema",
+                        )
+                allof = val_schema.get("allOf")
+                if isinstance(allof, list):
+                    for branch in allof:
+                        if not isinstance(branch, dict) or not branch:
+                            continue
+                        is_valid, err = _validate_value(value, branch, path)
+                        if not is_valid:
+                            return False, err
+
             # ``type`` may be a list (e.g. strict-mode ``["string", "null"]``):
             # the value is valid if it matches any listed type.
             if isinstance(expected_type, list):
