@@ -597,3 +597,45 @@ async def test_validate_allof_branches_are_all_enforced(engine):
     assert is_valid is True
     is_valid, _ = await engine._validate_arguments(tool, {"mode": "zzz"})
     assert is_valid is False
+
+
+@pytest.mark.asyncio
+async def test_validate_nullable_enum_still_enforces_membership(engine):
+    """``enum`` is an independent JSON-Schema constraint: a property typed
+    ``["string", "null"]`` whose enum lists only "a"/"b" does not admit
+    ``null``. The null fast-path used to return before the enum check ever
+    ran (PR #381 review)."""
+    tool = ToolDefinition(
+        name="nullable_enum",
+        description="Nullable property carrying an enum constraint",
+        parameters_schema={
+            "type": "object",
+            "properties": {"mode": {"type": ["string", "null"], "enum": ["a", "b"]}},
+            "required": ["mode"],
+        },
+    )
+    is_valid, error = await engine._validate_arguments(tool, {"mode": None})
+    assert is_valid is False
+    assert "must be one of" in error
+
+    is_valid, _ = await engine._validate_arguments(tool, {"mode": "a"})
+    assert is_valid is True
+
+
+@pytest.mark.asyncio
+async def test_validate_nullable_enum_admits_null_when_enum_lists_it(engine):
+    """…and when the enum *does* list ``None``, null stays valid."""
+    tool = ToolDefinition(
+        name="nullable_enum_ok",
+        description="Nullable enum that explicitly permits null",
+        parameters_schema={
+            "type": "object",
+            "properties": {"mode": {"type": ["string", "null"], "enum": ["a", None]}},
+            "required": ["mode"],
+        },
+    )
+    is_valid, error = await engine._validate_arguments(tool, {"mode": None})
+    assert is_valid is True, error
+
+    is_valid, _ = await engine._validate_arguments(tool, {"mode": "zzz"})
+    assert is_valid is False

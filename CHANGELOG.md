@@ -123,7 +123,9 @@ adapters, and the provider dialects agree with it.
   constrains a value purely through `anyOf`/`oneOf`/`allOf` with no `type`
   of its own — what Pydantic emits for `int | None`, including inside the
   nested models now inlined — has its branches enforced rather than being
-  waved through; and `enum` membership is enforced.
+  waved through; and `enum` membership is enforced as the independent
+  constraint JSON Schema says it is, including for a nullable property whose
+  enum does not itself list `null`.
 - **Emitted provider schemas no longer alias the registered tool.** Every
   adapter pass-through path put `ToolDefinition.parameters_schema` itself
   into the returned payload, so a caller that augmented the payload

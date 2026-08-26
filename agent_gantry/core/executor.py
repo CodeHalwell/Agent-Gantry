@@ -757,6 +757,17 @@ class ExecutionEngine:
                         f"Parameter '{path}' must be one of types {expected_type}",
                     )
                 if value is None:
+                    # ``null`` needs no structural checks, but ``enum`` is an
+                    # independent constraint: a schema typed ``["string",
+                    # "null"]`` whose enum lists only ``"a"``/``"b"`` does not
+                    # admit ``null``. Returning early here would skip that.
+                    # (Gantry's own emission can't produce this shape —
+                    # strict-mode widening deep-copies and never touches the
+                    # canonical schema the executor validates against — but a
+                    # hand-authored or MCP/OpenAPI-imported schema can.)
+                    null_enum = val_schema.get("enum")
+                    if isinstance(null_enum, list) and null_enum and None not in null_enum:
+                        return False, f"Parameter '{path}' must be one of {null_enum}"
                     return True, None
                 # Continue structural checks against the matching member.
                 expected_type = next(
