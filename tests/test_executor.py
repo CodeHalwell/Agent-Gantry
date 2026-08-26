@@ -206,3 +206,57 @@ async def test_validate_typed_additional_properties_without_declared_properties(
     )
     assert is_valid is False
     assert "counts.a" in error
+
+
+@pytest.mark.asyncio
+async def test_normalize_preserves_null_when_schema_explicitly_allows_it(engine):
+    """A caller-supplied ``None`` for an optional property whose own schema
+    explicitly types ``null`` (e.g. ``{"type": ["string", "null"]}``) is a
+    distinct, meaningful value the schema declares — not merely strict-mode's
+    "not provided" placeholder — and must survive normalization intact
+    (codex review, PR #381)."""
+    tool = ToolDefinition(
+        name="nullable_tool",
+        description="Has an explicitly nullable optional field",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                # Explicitly nullable — None is a real value here.
+                "note": {"type": ["string", "null"]},
+                # Ordinary optional — None here means "not provided".
+                "tag": {"type": "string"},
+            },
+            "required": ["name"],
+        },
+    )
+
+    normalized = engine._normalize_arguments(tool, {"name": "a", "note": None, "tag": None})
+    assert normalized == {"name": "a", "note": None}
+
+
+@pytest.mark.asyncio
+async def test_validate_closed_empty_object_rejects_any_keys(engine):
+    """``{"properties": {}, "additionalProperties": false}`` declares an
+    object that permits NO keys at all — a "no-argument object" schema, not
+    a free-form one. Must reject any payload with keys, and must not be
+    conflated with the (much more common) free-form-dict shape where
+    ``additionalProperties`` is absent/true (codex review, PR #381)."""
+    tool = ToolDefinition(
+        name="closed_object_tool",
+        description="Takes a strictly closed empty object",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "opts": {"type": "object", "properties": {}, "additionalProperties": False},
+            },
+            "required": ["opts"],
+        },
+    )
+
+    is_valid, error = await engine._validate_arguments(tool, {"opts": {}})
+    assert is_valid is True, error
+
+    is_valid, error = await engine._validate_arguments(tool, {"opts": {"unexpected": 1}})
+    assert is_valid is False
+    assert "opts" in error

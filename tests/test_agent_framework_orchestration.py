@@ -54,6 +54,7 @@ except ImportError as _af_import_err:
 
 from agent_gantry import AgentGantry  # noqa: E402
 from agent_gantry.core.security import (  # noqa: E402
+    ConfirmationRequiredError,
     SecurityPolicy,
 )
 from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge  # noqa: E402
@@ -1916,3 +1917,49 @@ async def test_approved_replay_still_enforces_denial_checks(
     await middleware.process(denied_ctx, _never_called)
     assert isinstance(denied_ctx.result, str)
     assert "Permission denied by security policy" in denied_ctx.result
+
+
+@pytest.mark.asyncio
+async def test_approved_replay_with_legacy_policy_stays_blocked(
+    bridge: GantryToolBridge,
+) -> None:
+    """A duck-typed policy that predates the ``confirmation_approved``
+    keyword has no way to selectively skip just the confirmation gate while
+    still enforcing whatever denial logic its own ``check_permission`` runs
+    afterward — so it must stay closed on an approved replay, not be
+    auto-bypassed. Only a policy that accepts the keyword (and itself
+    chooses not to raise once told about the approval) can execute
+    (codex review, PR #381)."""
+    tools = await bridge.get_tools("delete user", limit=5, score_threshold=0.0)
+    delete_tool = next(t for t in tools if t.name == "delete_user")
+
+    class LegacyPolicy:
+        """No ``confirmation_approved`` keyword — predates the PR's feature."""
+
+        def check_permission(self, tool_name, arguments):
+            if tool_name.startswith("delete_"):
+                raise ConfirmationRequiredError(f"{tool_name} requires approval")
+
+    middleware = GantryApprovalMiddleware(LegacyPolicy())
+
+    class _Ctx:
+        def __init__(self, fn, args):
+            self.function = fn
+            self.arguments = args
+            self.result = None
+            self.metadata: dict[str, Any] = {
+                "call_id": "call-1",
+                "approval_response": SimpleNamespace(approved=True),
+            }
+
+    async def _never_called():  # pragma: no cover - must stay blocked
+        raise AssertionError(
+            "a legacy policy with no confirmation_approved support must stay "
+            "closed even on an approved replay"
+        )
+
+    ctx = _Ctx(delete_tool, {"user_id": "abc"})
+    with pytest.raises(MiddlewareTermination):
+        await middleware.process(ctx, _never_called)
+    assert isinstance(ctx.result, Content)
+    assert ctx.result.type == "function_approval_request"

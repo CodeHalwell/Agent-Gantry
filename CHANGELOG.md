@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (review follow-up, round 2)
+
+- **A duck-typed `SecurityPolicy` without the new `confirmation_approved`
+  keyword could still be bypassed on an approved AF replay.** The prior
+  fix passed the keyword only to policies whose signature declares it; a
+  legacy policy fell back to a plain `check_permission(name, args)` call,
+  and on an approved replay the caught `ConfirmationRequiredError` was
+  treated as "proceed" — silently skipping whatever denial logic that
+  policy's own `check_permission` runs after its confirmation check
+  (it has no way to selectively honour just the approval). Such a policy
+  now stays closed on any confirmation-required raise, approved or not,
+  until it's upgraded to accept the keyword — matching how it behaved
+  before approval-replay support existed. The genuine "approved and
+  executes" path is unaffected: it already works via a *compliant* policy
+  simply not raising once told `confirmation_approved=True`.
+- **`_normalize_arguments` dropped `None` even when a schema explicitly
+  declares it valid.** A property typed `{"type": ["string", "null"]}`
+  (as opposed to Gantry's own strict-mode widening, which exists purely so
+  "not provided" round-trips as null) means a caller-supplied `None` is a
+  distinct, meaningful value the schema itself permits — not a placeholder
+  for omission. Only properties whose declared type does *not* include
+  `null` are treated as "omitted" now.
+- **A closed empty-object schema (`{"properties": {}, "additionalProperties":
+  false}`) validated any payload.** This shape declares an object that
+  permits *no* keys at all — distinct from the far more common free-form
+  `dict` shape (`additionalProperties` absent or `true`) the same
+  no-declared-properties branch also handles. An explicit `false` now
+  rejects any non-empty payload instead of being treated as free-form.
+- **Deferred, not fixed:** a registered function typed with a
+  dataclass/Pydantic-model/`set`/`tuple` parameter now advertises the
+  correct nested/typed schema, but the executor still invokes the raw
+  handler via `handler(**arguments)` with the JSON-decoded value (a plain
+  `dict` for a dataclass, a `list` for a `set`/`tuple`) rather than
+  reconstructing the original Python type — a handler that accesses
+  typed attributes (`addr.street`) will still fail. This is not a
+  regression (such handlers were never functionally invocable through
+  Gantry — the schema previously mistyped the parameter as a bare
+  string, which failed just as surely, only earlier and more opaquely),
+  and fixing it properly needs the original Python type available at
+  invocation time, which the schema/executor split doesn't currently
+  carry — tracked as a follow-up rather than rushed into this PR.
+
 ### Fixed (review follow-up)
 
 - **An approved Agent Framework replay could bypass the domain allowlist.**

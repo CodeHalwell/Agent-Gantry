@@ -12,11 +12,17 @@ Available middleware:
   Gantry's :class:`~agent_gantry.core.security.SecurityPolicy`. A tool that
   requires human approval terminates the round with a
   ``function_approval_request`` result (activating AF's native approval
-  flow; an approved replay executes, a rejected one reports without
-  executing). A tool that is outright disallowed is never invoked — the
-  model receives an explicit "Permission denied by security policy" result
-  carrying the reason (raising instead would surface as AF's opaque
-  ``"Error: Function failed."``).
+  flow); a rejected replay reports without executing. An *approved* replay
+  executes only when the policy itself, told about the approval via
+  ``check_permission(confirmation_approved=True)``, no longer raises —
+  every other check the policy runs (rate limit, allowed domains, custom
+  rules) still applies, and a policy that predates the
+  ``confirmation_approved`` keyword has no way to selectively honour an
+  approval at all, so it stays closed rather than being bypassed wholesale.
+  A tool that is outright disallowed is never invoked — the model receives
+  an explicit "Permission denied by security policy" result carrying the
+  reason (raising instead would surface as AF's opaque ``"Error: Function
+  failed."``).
 - :class:`GantryObservabilityMiddleware` — records every function
   invocation onto Gantry's telemetry via ``telemetry.span(...)`` so token
   savings, latency, and success rate are captured uniformly whether the
@@ -187,30 +193,36 @@ def _build_middleware_classes() -> tuple[type, type]:
                 else:
                     self._policy.check_permission(name, args)
             except ConfirmationRequiredError as err:
-                if approved is True:
-                    # Replay of an approved request on a policy without the
-                    # ``confirmation_approved`` keyword: the human said yes.
-                    logger.info(
-                        "GantryApprovalMiddleware: '%s' approved by human; "
-                        "proceeding.",
-                        name,
-                    )
-                else:
-                    logger.info(
-                        "GantryApprovalMiddleware: '%s' requires human "
-                        "approval (%s)",
-                        name,
-                        err,
-                    )
-                    # Surface the approval request to AF's native approval
-                    # flow: AF only activates it when ``context.result`` is a
-                    # ``function_approval_request`` Content at termination —
-                    # a bare MiddlewareTermination would reach the model as a
-                    # null function result with the reason discarded.
-                    call_id = str(metadata.get("call_id") or f"gantry-{name}")
-                    request = _approval_request(call_id, name, args)
-                    context.result = request if request is not None else str(err)
-                    raise middleware_termination(str(err)) from err
+                # Reaching here on an *approved* replay means one of two
+                # things, and both must still terminate rather than proceed:
+                # (a) the policy accepts ``confirmation_approved`` and was
+                #     given it, yet some *other* rule inside it still
+                #     requires confirmation — that rule's judgement must not
+                #     be silently overridden by this approval; or
+                # (b) the policy pre-dates the keyword entirely (a duck-typed
+                #     double), so it has no way to selectively skip just the
+                #     confirmation gate while still enforcing whatever denial
+                #     logic its own ``check_permission`` runs afterward
+                #     (allowed-domains, custom rules, …) — auto-proceeding
+                #     here would silently bypass all of it. Such a policy
+                #     must be upgraded to accept the keyword before its
+                #     confirmation-gated tools can be approved through this
+                #     middleware; until then it stays closed, matching how
+                #     it behaved before approval-replay support existed.
+                logger.info(
+                    "GantryApprovalMiddleware: '%s' requires human approval (%s)",
+                    name,
+                    err,
+                )
+                # Surface the approval request to AF's native approval flow:
+                # AF only activates it when ``context.result`` is a
+                # ``function_approval_request`` Content at termination — a
+                # bare MiddlewareTermination would reach the model as a null
+                # function result with the reason discarded.
+                call_id = str(metadata.get("call_id") or f"gantry-{name}")
+                request = _approval_request(call_id, name, args)
+                context.result = request if request is not None else str(err)
+                raise middleware_termination(str(err)) from err
             except PermissionDeniedError as err:
                 logger.warning(
                     "GantryApprovalMiddleware: denied execution of '%s'", name

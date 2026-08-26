@@ -574,8 +574,15 @@ class ExecutionEngine:
         Gantry itself advertised sends ``null`` for "not provided"; several
         frameworks likewise materialize unset optional fields as ``None``.
         Treating those as omitted lets the handler's own default apply.
-        ``None`` for a required parameter — and for keys the schema doesn't
-        declare at all — is preserved so validation errors stay accurate.
+
+        ``None`` is preserved — never dropped — in three cases: for a
+        *required* parameter and for keys the schema doesn't declare at all
+        (so validation errors stay accurate), and for an optional parameter
+        whose own schema *explicitly* types ``null`` as one of its allowed
+        values (``"type": ["string", "null"]`` or ``"type": "null"``) — there,
+        ``null`` is a distinct, meaningful value the schema itself declares,
+        not merely strict-mode's "not provided" placeholder, so a caller
+        that deliberately sends it must not have it silently discarded.
 
         Returns the original dict (identity) when nothing needs dropping.
         """
@@ -584,15 +591,22 @@ class ExecutionEngine:
         schema = tool.parameters_schema or {}
         properties = schema.get("properties") or {}
         required = set(schema.get("required") or [])
-        if not any(
-            value is None and name in properties and name not in required
-            for name, value in arguments.items()
-        ):
+
+        def _should_drop(name: str, value: Any) -> bool:
+            if value is not None or name not in properties or name in required:
+                return False
+            prop = properties[name]
+            prop_type = prop.get("type") if isinstance(prop, dict) else None
+            if prop_type == "null" or (
+                isinstance(prop_type, list) and "null" in prop_type
+            ):
+                return False
+            return True
+
+        if not any(_should_drop(name, value) for name, value in arguments.items()):
             return arguments
         return {
-            name: value
-            for name, value in arguments.items()
-            if not (value is None and name in properties and name not in required)
+            name: value for name, value in arguments.items() if not _should_drop(name, value)
         }
 
     async def _validate_arguments(
@@ -677,18 +691,27 @@ class ExecutionEngine:
                 obj_properties = val_schema.get("properties")
                 obj_additional = val_schema.get("additionalProperties")
                 if not isinstance(obj_properties, dict) or not obj_properties:
-                    # No declared properties (a plain ``dict`` parameter, or a
-                    # free-form object) → any keys are acceptable, but a
-                    # schema-valued ``additionalProperties`` (e.g. the
-                    # ``dict[str, int]`` schemas introspection emits) still
-                    # constrains every value.
-                    if isinstance(obj_additional, dict) and obj_additional:
+                    # No declared properties. Three distinct schema intents
+                    # share this shape and must not be conflated:
+                    if obj_additional is False:
+                        # Explicitly closed (``additionalProperties: false``
+                        # with no declared properties) → no keys at all are
+                        # permitted — a "no-argument object" schema, not a
+                        # free-form one.
+                        if value:
+                            return False, f"Parameter '{path}' does not permit any properties"
+                    elif isinstance(obj_additional, dict) and obj_additional:
+                        # A schema-valued additionalProperties (e.g. the
+                        # ``dict[str, int]`` schemas introspection emits)
+                        # constrains every value.
                         for prop_name, prop_value in value.items():
                             is_valid, err = _validate_value(
                                 prop_value, obj_additional, f"{path}.{prop_name}"
                             )
                             if not is_valid:
                                 return False, err
+                    # else: additionalProperties absent or True → free-form
+                    # (a plain ``dict`` parameter) — any keys are acceptable.
                     return True, None
                 obj_required = val_schema.get("required", [])
 
