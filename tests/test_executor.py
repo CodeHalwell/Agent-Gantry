@@ -329,3 +329,123 @@ async def test_validate_empty_schema_additional_properties_permits_extras(engine
         strict_tool, {"name": "a", "opts": {"level": 1, "extra": "x"}}
     )
     assert is_valid is False
+
+
+@pytest.mark.asyncio
+async def test_confirmation_probe_does_not_consume_rate_limit_budget():
+    """A tool-flag confirmation probe returns PENDING_CONFIRMATION without
+    running the handler, so it must not spend rate-limit budget: ``acquire``
+    records the call in the limiter's window and ``release`` only frees the
+    concurrency counter, so charging both the probe and the approved replay
+    would consume two units for one logical call — and at a limit of 1 would
+    leave the tool permanently unexecutable (PR #381 review)."""
+    from agent_gantry.core.rate_limiter import RateLimiter
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.schema.config import RateLimitConfig
+    from agent_gantry.schema.execution import ToolCall
+
+    registry = ToolRegistry()
+    tool = ToolDefinition(
+        name="delete_thing",
+        description="Destructive",
+        parameters_schema={"type": "object", "properties": {}},
+        requires_confirmation=True,
+    )
+    registry.register_tool(tool)
+    registry.register_handler("default.delete_thing", lambda: "deleted")
+
+    engine = ExecutionEngine(
+        registry=registry,
+        rate_limiter=RateLimiter(
+            RateLimitConfig(
+                enabled=True,
+                max_calls_per_minute=1,
+                max_calls_per_hour=100,
+                strategy="sliding_window",
+            )
+        ),
+    )
+
+    probe = await engine.execute(ToolCall(tool_name="delete_thing", arguments={}))
+    assert probe.status.value == "pending_confirmation"
+
+    approved = await engine.execute(
+        ToolCall(tool_name="delete_thing", arguments={}, require_confirmation=False)
+    )
+    assert approved.status.value == "success", approved.error
+    assert approved.result == "deleted"
+
+
+@pytest.mark.asyncio
+async def test_approved_calls_still_consume_rate_limit_budget():
+    """The probe exemption must not become a way around the limiter:
+    ``require_confirmation=False`` is caller-supplied, so a call that
+    actually executes always counts."""
+    from agent_gantry.core.rate_limiter import RateLimiter
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.schema.config import RateLimitConfig
+    from agent_gantry.schema.execution import ToolCall
+
+    registry = ToolRegistry()
+    tool = ToolDefinition(
+        name="delete_thing",
+        description="Destructive",
+        parameters_schema={"type": "object", "properties": {}},
+        requires_confirmation=True,
+    )
+    registry.register_tool(tool)
+    registry.register_handler("default.delete_thing", lambda: "deleted")
+
+    engine = ExecutionEngine(
+        registry=registry,
+        rate_limiter=RateLimiter(
+            RateLimitConfig(
+                enabled=True,
+                max_calls_per_minute=1,
+                max_calls_per_hour=100,
+                strategy="sliding_window",
+            )
+        ),
+    )
+
+    first = await engine.execute(
+        ToolCall(tool_name="delete_thing", arguments={}, require_confirmation=False)
+    )
+    assert first.status.value == "success", first.error
+
+    second = await engine.execute(
+        ToolCall(tool_name="delete_thing", arguments={}, require_confirmation=False)
+    )
+    assert second.error_type == "RateLimitExceeded"
+
+
+@pytest.mark.asyncio
+async def test_confirmation_probe_does_not_leak_concurrency_slots():
+    """The probe skips ``acquire``, so it must skip ``release`` too — an
+    unmatched release would decrement a counter it never incremented and
+    hand out extra concurrency."""
+    from agent_gantry.core.rate_limiter import RateLimiter
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.schema.config import RateLimitConfig
+    from agent_gantry.schema.execution import ToolCall
+
+    registry = ToolRegistry()
+    tool = ToolDefinition(
+        name="delete_thing",
+        description="Destructive",
+        parameters_schema={"type": "object", "properties": {}},
+        requires_confirmation=True,
+    )
+    registry.register_tool(tool)
+    registry.register_handler("default.delete_thing", lambda: "deleted")
+
+    limiter = RateLimiter(
+        RateLimitConfig(enabled=True, max_calls_per_minute=100, strategy="sliding_window")
+    )
+    engine = ExecutionEngine(registry=registry, rate_limiter=limiter)
+
+    for _ in range(3):
+        result = await engine.execute(ToolCall(tool_name="delete_thing", arguments={}))
+        assert result.status.value == "pending_confirmation"
+
+    assert all(count == 0 for count in limiter._concurrent.values())

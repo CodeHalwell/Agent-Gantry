@@ -135,13 +135,11 @@ def test_accepts_confirmation_approved():
     assert accepts_confirmation_approved(NotAPolicy()) is False
 
 
-def test_confirmation_approved_does_not_double_count_against_rate_limit():
-    """An approved replay is the same logical call as the probe that first
-    raised ConfirmationRequiredError, already counted then — not a second
-    request. With a limit of 1, counting the replay too would make any
-    confirmation-gated tool permanently unexecutable: the probe call would
-    consume the sole slot, and the replay would immediately hit the limit
-    it should be exempt from."""
+def test_confirmation_probe_is_not_counted_against_rate_limit():
+    """A call that comes back needing confirmation never executed, and the
+    approved replay that follows is the same logical call — so only the
+    replay is counted. With a limit of 1, counting the probe too would make
+    any confirmation-gated tool permanently unexecutable."""
     import pytest
 
     from agent_gantry.core.security import (
@@ -155,10 +153,45 @@ def test_confirmation_approved_does_not_double_count_against_rate_limit():
     with pytest.raises(ConfirmationRequiredError):
         policy.check_permission("delete_user", {"id": "1"})
 
-    # Approved replay must succeed even though the probe above already
-    # used the single available rate-limit slot.
+    # Approved replay succeeds: the probe above consumed no quota.
     policy.check_permission("delete_user", {"id": "1"}, confirmation_approved=True)
 
-    # A genuinely new (non-approved) request still hits the limit.
+    # …but the replay itself did, so the next call hits the limit.
     with pytest.raises(PermissionDeniedError, match="Rate limit exceeded"):
         policy.check_permission("other_tool", {})
+
+
+def test_confirmation_approved_cannot_bypass_the_rate_limit():
+    """``confirmation_approved`` reaches check_permission from
+    ``ToolCall(require_confirmation=False)`` — a caller-supplied field. It
+    must never relax a *denial* check, or any client could lift its own
+    rate limit just by setting the flag (PR #381 review)."""
+    import pytest
+
+    from agent_gantry.core.security import PermissionDeniedError, SecurityPolicy
+
+    policy = SecurityPolicy(require_confirmation=[], max_requests_per_minute=2)
+
+    policy.check_permission("search", {}, confirmation_approved=True)
+    policy.check_permission("search", {}, confirmation_approved=True)
+
+    with pytest.raises(PermissionDeniedError, match="Rate limit exceeded"):
+        policy.check_permission("search", {}, confirmation_approved=True)
+
+
+def test_denied_calls_still_consume_rate_limit_quota():
+    """Only the confirmation gate defers accounting — a denial is terminal,
+    so it counts, keeping a flood of rejected calls bounded."""
+    import pytest
+
+    from agent_gantry.core.security import PermissionDeniedError, SecurityPolicy
+
+    policy = SecurityPolicy(
+        require_confirmation=[], allowed_domains=["example.com"], max_requests_per_minute=1
+    )
+
+    with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
+        policy.check_permission("fetch", {"url": "https://evil.test/x"})
+
+    with pytest.raises(PermissionDeniedError, match="Rate limit exceeded"):
+        policy.check_permission("fetch", {"url": "https://example.com/x"})

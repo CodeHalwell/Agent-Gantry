@@ -134,18 +134,26 @@ class SecurityPolicy:
             arguments: Arguments for the tool
             confirmation_approved: When ``True``, the caller vouches that a
                 human already approved this specific call, so the
-                ``require_confirmation`` pattern gate is skipped. The
-                ``allowed_domains`` denial check still runs — approval is
-                not a policy bypass. The rate limit is also skipped for an
-                approved call: it's the replay of a call already counted
-                when it first requested confirmation, not a new request, so
-                counting it again would let one logical call consume two
-                slots of the budget (and, with a small enough limit, make
-                confirmation-gated tools permanently unexecutable). Set by
-                the executor when a call carries
+                ``require_confirmation`` pattern gate is skipped. Every
+                *denial* check (rate limit, allowed domains) still runs —
+                approval is not a policy bypass, and this flag is never
+                allowed to relax one: it reaches here from
+                ``ToolCall(require_confirmation=False)``, a caller-supplied
+                field, so anything it could switch off a client could switch
+                off at will. Set by the executor when a call carries
                 ``ToolCall(require_confirmation=False)``.
         """
-        if self.max_requests_per_minute > 0 and not confirmation_approved:
+        # Rate limit. The window is *checked* here, before any more expensive
+        # work, so a flood is rejected cheaply — but the call is only
+        # *recorded* once it clears the confirmation gate below. A call that
+        # comes back pending confirmation never executed, and the approved
+        # replay that follows is the same logical call: counting both would
+        # charge one call twice and, at a small enough limit, leave
+        # confirmation-gated tools permanently unexecutable. Recording after
+        # the gate fixes that without trusting ``confirmation_approved``,
+        # which the caller controls.
+        now: float | None = None
+        if self.max_requests_per_minute > 0:
             now = time.time()
             # ⚡ Bolt: Fast sliding window cleanup using index slice instead of O(N) comprehension
             split_idx = 0
@@ -160,7 +168,6 @@ class SecurityPolicy:
                 raise PermissionDeniedError(
                     f"Rate limit exceeded: maximum {self.max_requests_per_minute} requests per minute allowed."
                 )
-            self._request_timestamps.append(now)
 
         if not confirmation_approved:
             for pattern in self.require_confirmation:
@@ -168,6 +175,12 @@ class SecurityPolicy:
                     raise ConfirmationRequiredError(
                         f"Tool {tool_name} requires human approval."
                     )
+
+        # Past the confirmation gate the outcome is terminal — this call either
+        # executes or is denied below — so it counts exactly once. A denial
+        # still consumes quota, which keeps a flood of rejected calls bounded.
+        if now is not None:
+            self._request_timestamps.append(now)
 
         # 2. Check allowed domains if they are configured
         if self.allowed_domains:

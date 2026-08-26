@@ -147,10 +147,22 @@ class ExecutionEngine:
         if sp_result:
             return sp_result
 
+        # A call that will come back PENDING_CONFIRMATION never reaches the
+        # handler, so it must not consume rate-limit budget: ``acquire``
+        # records the call in the limiter's window and ``release`` only frees
+        # the concurrency counter, so counting the probe *and* the approved
+        # replay that follows would charge one logical call twice — the same
+        # double-count the SecurityPolicy pattern gate had, via the tool-flag
+        # path and the real RateLimiter. Deciding it here (a pure function of
+        # the call and tool) leaves the rest of the ordering alone, so
+        # arguments are still validated before a human is asked to approve.
+        pending_confirmation = self._needs_confirmation(tool, call)
+
         # Rate limiting check (acquires a concurrency slot on success)
-        rl_result = await self._check_rate_limit(tool, call, queued_at, trace_id, span_id)
-        if rl_result:
-            return rl_result
+        if not pending_confirmation:
+            rl_result = await self._check_rate_limit(tool, call, queued_at, trace_id, span_id)
+            if rl_result:
+                return rl_result
 
         # Every path past a successful acquire must release the slot —
         # including validation failures and early returns — or the concurrent
@@ -194,8 +206,9 @@ class ExecutionEngine:
                 tool, call, handler, queued_at, trace_id, span_id
             )
         finally:
-            if self._rate_limiter:
-                # Must mirror the acquire key above.
+            if self._rate_limiter and not pending_confirmation:
+                # Must mirror the acquire key above — and only when there was
+                # an acquire to mirror.
                 await self._rate_limiter.release(tool.name, tool.namespace)
 
     async def execute_batch(self, batch: BatchToolCall) -> BatchToolResult:
@@ -528,6 +541,20 @@ class ExecutionEngine:
             return result
         return None
 
+    @staticmethod
+    def _needs_confirmation(tool: ToolDefinition, call: ToolCall) -> bool:
+        """Whether this call short-circuits to ``PENDING_CONFIRMATION``.
+
+        A pure function of the call and the tool, so ``execute`` can settle it
+        before deciding whether to charge the call against the rate limiter.
+        ``ToolCall.require_confirmation`` overrides the tool's own flag in
+        either direction; ``None`` defers to the tool.
+        """
+        needs_confirm = call.require_confirmation
+        if needs_confirm is None:
+            needs_confirm = tool.requires_confirmation
+        return bool(needs_confirm)
+
     async def _check_confirmation_required(
         self,
         tool: ToolDefinition,
@@ -537,10 +564,7 @@ class ExecutionEngine:
         span_id: str,
     ) -> ToolResult | None:
         """Check if tool requires confirmation."""
-        needs_confirm = call.require_confirmation
-        if needs_confirm is None:
-            needs_confirm = tool.requires_confirmation
-        if needs_confirm:
+        if self._needs_confirmation(tool, call):
             result = ToolResult(
                 tool_name=call.tool_name,
                 status=ExecutionStatus.PENDING_CONFIRMATION,
