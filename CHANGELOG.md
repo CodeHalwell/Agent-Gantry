@@ -7,6 +7,137 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (schema fidelity — every framework and provider dialect benefits)
+
+- **`@gantry.register` now captures what the function actually declares.**
+  `build_parameters_schema` previously emitted bare types only — no
+  per-parameter descriptions ever, `Literal`/`Enum` flattened to `"string"`
+  with no `enum`, `dict[...]` params mislabelled `"string"` (then rejected by
+  the executor), `None | int` misread, defaults dropped, nested
+  models/dataclasses stringly-typed. It now reads docstring parameter
+  sections (Google `Args:`, NumPy `Parameters`, Sphinx `:param:`) and
+  `Annotated[T, "…"]` metadata into `description`, maps `Literal`/`Enum` to
+  `enum`, `dict`/`Mapping` to `object`, `set`/`tuple` to typed arrays,
+  Pydantic models/dataclasses/TypedDicts to inlined nested object schemas
+  (via Pydantic, local `$ref`s resolved), records JSON-safe defaults, and
+  handles PEP 604 unions in either order. `datetime`/`date`/`time`/`UUID`
+  gain string `format`s.
+- **Signature-introspecting frameworks stop flattening that schema.** The
+  three adapters whose framework re-derives its LLM schema from the wrapped
+  callable now pass the Gantry schema through natively: LlamaIndex gets an
+  explicit `fn_schema` args model, Google ADK gets a declaration carrying
+  `parameters_json_schema` verbatim (fixes ADK 1.x advertising *every*
+  parameter as required; falls back to signature introspection on genai
+  builds without the field), and Semantic Kernel reads per-parameter
+  descriptions from `Annotated` metadata. CrewAI's args model is rebuilt on a
+  shared JSON-schema→Pydantic bridge (`Literal` enums, typed array items,
+  nested objects, defaults, descriptions), AG2 registration carries
+  `Annotated` descriptions, and the Microsoft Agent Framework bridge passes
+  the schema to `agent_framework.tool(schema=…)` so enums/defaults survive
+  there too. `ToolSpec.python_signature` gains typed `list[T]` annotations,
+  schema-declared defaults, and opt-in `annotated_descriptions`.
+- **Typed non-success errors and a working approve/resume path.**
+  `ToolSpec.ainvoke` raises `ToolConfirmationRequiredError` /
+  `ToolPermissionDeniedError` (both subclasses of the existing
+  `ToolExecutionError`) for confirmation-gated and policy-denied calls, and
+  both executor confirmation paths now populate `error` with the reason and
+  the `require_confirmation=False` re-issue hint — previously the tool-flag
+  path surfaced as `status=pending_confirmation): no detail`. The hint is
+  now true for both gates: `ToolCall(require_confirmation=False)` also
+  clears the `SecurityPolicy` `require_confirmation` pattern gate (via a new
+  `check_permission(confirmation_approved=…)` keyword), while every denial
+  check — rate limit, allowed domains — still runs; previously a
+  pattern-gated tool had no per-call approval mechanism at all.
+
+### Fixed (frameworks)
+
+- **`disable_af_instrumentation()` never worked.** It imported
+  `agent_framework.telemetry` — a module that has never existed in any AF
+  release — and swallowed the `ImportError`, so the documented workaround for
+  AF ≥1.6.0's concurrent-`asyncio.gather` ContextVar crash was a silent no-op
+  in every install. It now calls the real switch,
+  `agent_framework.observability.disable_instrumentation()` (verified on AF
+  1.5.0 and 1.15.0), no longer requires the `agent-framework` *meta*-package
+  metadata to be present, and only downgrades to debug-logging when there is
+  genuinely nothing to disable.
+- **AF approval middleware no longer discards its own verdict.** On a
+  confirmation-gated tool it now sets a `function_approval_request` Content
+  on the context before terminating — the shape AF's native approval flow
+  requires; a bare termination reached the model as a null function result
+  with the reason lost. Replays carrying the human's decision are honoured
+  (approved → executes, rejected → explanatory result, never a re-request).
+  A policy *denial* returns an explicit "Permission denied by security
+  policy: …" result instead of raising — AF converts middleware exceptions
+  into an opaque `"Error: Function failed."`, which read as a tool crash and
+  hid the reason.
+- **AF bridge crash on out-of-order schemas.** `properties` order carries no
+  required-first guarantee (MCP servers, OpenAPI imports), and an optional
+  property listed before a required one made the synthesized
+  `inspect.Signature` raise `ValueError: non-default argument follows default
+  argument` — killing the whole run inside `before_run`. Parameters are now
+  ordered required-first.
+- **Qualified `required=[…]` pins resolve at request time.**
+  `GantryContextProvider` accepted `"namespace.name"` pins at construction
+  but resolved them per-round with bare-name lookups only, so a qualified pin
+  was warned-and-skipped on every round — inverting the guarantee. Request
+  -time lookup now mirrors the executor's namespace-aware resolution.
+- **`AutoGenAdapter.register`'s install hint pointed at the wrong package.**
+  `pip install pyautogen` now delivers a Microsoft autogen-agentchat shim
+  (≥0.10) with no `autogen.register_function`, and AG2 1.x renamed its import
+  to `ag2` with a new agent API. The hint and docs now name the classic line
+  that actually provides the API (`pip install "ag2[openai]<1"`, verified
+  end-to-end against AG2 0.14).
+- **`delete_tool` deletes everywhere.** It only removed the vector-store
+  entry, so a deleted tool kept appearing in `list_tools_sync()`, kept
+  resolving as a `required=` pin, and kept executing. It now also purges the
+  registry, the handler map, and any pending-sync entry.
+
+### Fixed (executor)
+
+- **Argument validation now understands the schemas Gantry itself emits.**
+  Explicit `None` for a declared optional parameter is treated as omitted
+  (models legitimately send `null` under the strict-mode widened schemas
+  Gantry advertises; frameworks materialize unset optionals as `None`) — the
+  workaround previously lived only in `ToolSpec.ainvoke`, so the
+  `execute_tool_calls` provider path rejected its own schema's output. A
+  truthy `additionalProperties` admits undeclared keys (top-level and
+  nested), `{"type": "object"}` without declared properties accepts any keys
+  (dict parameters), list-typed `type` (`["string","null"]`) validates
+  against any member, and `enum` membership is enforced.
+
+### CI
+
+- **The weekly drift-check now tests what it claims.** The semantic-kernel
+  cell silently resolved back to 1.36.0 (sk ≥1.43.1 needs a pre-release
+  `azure-ai-agents`; `uv pip install` refuses pre-releases by default) — it
+  now passes `--prerelease=allow`. New cells cover langchain/langgraph/
+  llamaindex/autogen-core at latest and classic AG2 (the `register()` API,
+  previously never installed in any job). Single-framework cells also run
+  `test_real_packages.py` (the only suite that builds *and invokes* the
+  native tool object). New real-package guards: `GantryLiveAgnoAgent.build`
+  and `GantryLiveSmolAgent.build` (the exact gap class that let the haystack
+  3.0 `ToolInvoker` removal slip past the stubbed suites), AG2 registration,
+  and `disable_af_instrumentation`.
+- `pyproject.toml` audit comments corrected 2026-08-26: the universal lock
+  holds agent-framework at 1.5.0 and google-adk at 1.14.1 (pre-release
+  `azure-ai-agents` refusal and semantic-kernel 1.36.0's `pydantic<2.12` pin,
+  respectively) — the comments previously claimed the resolver picked
+  1.13.0 / 2.x. Adapters re-verified standalone against agent-framework
+  1.15.0, google-adk 2.7.1, semantic-kernel 1.44.1, crewai 1.15.17,
+  langchain 1.3.17, langgraph 1.2.11, llama-index-core 0.14.24, pydantic-ai
+  2.35.0, openai-agents 0.22.0, smolagents 1.26.0, haystack-ai 3.1.0, agno
+  3.0.1, strands-agents 1.53.0, and dspy 3.3.1.
+
+### Docs
+
+- `examples/agent_frameworks/semantic_kernel_example.py` rewritten to use
+  `SemanticKernelAdapter` (it previously hand-rolled a plugin and never used
+  the integration it exemplifies); `langchain_example.py` moved off
+  `langgraph.prebuilt.create_react_agent` (removed in LangGraph 2.0) to
+  `langchain.agents.create_agent`; the examples README gained the four
+  missing entries (strands, dspy, generic adapters, AF harness) and the AG2
+  install guidance.
+
 ## [0.11.0] - 2026-08-20
 
 ### Added (tool-use loop)

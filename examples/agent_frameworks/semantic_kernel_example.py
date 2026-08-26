@@ -1,13 +1,31 @@
+"""
+Semantic Kernel + Agent-Gantry integration example.
+
+Uses ``SemanticKernelAdapter`` — the native integration — instead of
+hand-wiring a plugin per tool:
+
+- ``adapter.refresh(kernel, query)`` re-selects the relevant Gantry tools for
+  the query and (re)builds the kernel's ``gantry`` plugin with exactly that
+  slice, each function routing execution back through ``gantry.execute``
+  (retries, timeouts, circuit breakers, security policy all apply).
+- For a chat loop, hold a ``adapter.function_provider(kernel)`` and call
+  ``await provider.refresh(history)`` before each turn instead — the
+  function surface then tracks the conversation turn by turn.
+"""
+
 import asyncio
 import os
 
 from dotenv import load_dotenv
 from semantic_kernel import Kernel
-from semantic_kernel.connectors.ai.open_ai import OpenAIChatCompletion
-from semantic_kernel.functions import kernel_function
+from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
+from semantic_kernel.connectors.ai.open_ai import (
+    OpenAIChatCompletion,
+    OpenAIChatPromptExecutionSettings,
+)
 
 from agent_gantry import AgentGantry
-from agent_gantry.schema.execution import ToolCall
+from agent_gantry.semantic_kernel import SemanticKernelAdapter
 
 load_dotenv()
 
@@ -16,17 +34,31 @@ async def main():
     # 1. Initialize Agent-Gantry
     gantry = AgentGantry()
 
-    @gantry.register
+    @gantry.register(tags=["finance"])
     def calculate_roi(investment: float, return_amount: float) -> float:
-        """Calculate the Return on Investment (ROI) percentage."""
+        """Calculate the Return on Investment (ROI) percentage.
+
+        Args:
+            investment: The initial amount invested.
+            return_amount: The total amount returned.
+        """
         return ((return_amount - investment) / investment) * 100
+
+    @gantry.register(tags=["finance"])
+    def compound_interest(principal: float, rate: float, years: int) -> float:
+        """Compute compound interest on a principal.
+
+        Args:
+            principal: Starting amount.
+            rate: Annual interest rate (e.g. 0.05 for 5%).
+            years: Number of years.
+        """
+        return principal * ((1 + rate) ** years)
 
     await gantry.sync()
 
-    # 2. Initialize Semantic Kernel
+    # 2. Initialize Semantic Kernel with a chat service
     kernel = Kernel()
-
-    # Add AI Service
     service_id = "chat-gpt"
     kernel.add_service(
         OpenAIChatCompletion(
@@ -36,34 +68,19 @@ async def main():
         )
     )
 
-    # 3. Retrieve tools from Gantry
+    # 3. Let Gantry select the relevant tools for this query and register
+    #    them as the kernel's "gantry" plugin in one call. Per-parameter
+    #    descriptions from the tool docstrings flow through to the
+    #    KernelFunction metadata the model sees.
     user_query = "What is the ROI for a $1000 investment that returned $1200?"
     # Lowering threshold for SimpleEmbedder compatibility in this example
-    retrieved_tools = await gantry.retrieve_tools(user_query, limit=1, score_threshold=0.1)
-    print(f"Retrieved tools: {[tool['function']['name'] for tool in retrieved_tools]}")
+    functions = await SemanticKernelAdapter(gantry).refresh(
+        kernel, user_query, limit=1, score_threshold=0.1
+    )
+    print(f"Gantry registered functions: {sorted(functions)}")
 
-    # 4. Register Gantry tools as Semantic Kernel functions
-    class GantryPlugin:
-        @kernel_function(
-            name="calculate_roi", description="Calculate the Return on Investment (ROI) percentage."
-        )
-        async def calculate_roi(self, investment: float, return_amount: float) -> float:
-            result = await gantry.execute(
-                ToolCall(
-                    tool_name="calculate_roi",
-                    arguments={"investment": investment, "return_amount": return_amount},
-                )
-            )
-            return result.result
-
-    kernel.add_plugin(GantryPlugin(), plugin_name="Gantry")
-
-    # 5. Run the kernel
+    # 4. Run the kernel with automatic function choice
     print("--- Running Semantic Kernel with Agent-Gantry ---")
-
-    from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
-    from semantic_kernel.connectors.ai.open_ai import OpenAIChatPromptExecutionSettings
-
     settings = OpenAIChatPromptExecutionSettings(service_id=service_id)
     settings.function_choice_behavior = FunctionChoiceBehavior.Auto()
 

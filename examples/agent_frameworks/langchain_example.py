@@ -1,16 +1,23 @@
 """
 LangChain + LangGraph Agent-Gantry integration example.
 
-Uses LangGraph's create_react_agent (the recommended approach since LangChain
-dropped its own agent executor abstractions in favour of LangGraph in 1.x).
+Uses ``langchain.agents.create_agent`` (the recommended agent constructor
+since LangChain 1.0; the older ``langgraph.prebuilt.create_react_agent`` is
+deprecated and removed outright in LangGraph 2.0).
+
+Static tier shown here: Gantry selects the relevant slice once and the agent
+is built with that fixed tool list. For per-turn re-selection (tools re-chosen
+on every model turn), see ``LangGraphAdapter.areact_agent`` in
+``langgraph_example.py`` — LangChain itself fixes tools at construction, so
+the deeper tier lives one layer up in LangGraph.
 """
 
 import asyncio
 
 from dotenv import load_dotenv
+from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
-from langgraph.prebuilt import create_react_agent
 
 from agent_gantry import AgentGantry
 from agent_gantry.langchain import LangChainAdapter
@@ -39,21 +46,19 @@ async def main():
 
     # 3. Use Agent-Gantry to select relevant tools and get them as native
     #    LangChain StructuredTools in one call (retrieval + conversion +
-    #    execution wiring). LangGraph's create_react_agent consumes these.
+    #    execution wiring). create_agent consumes these directly.
     # Lowering threshold for SimpleEmbedder compatibility in this example
     langchain_tools = await LangChainAdapter(gantry).select(
         user_query, limit=2, score_threshold=0.1
     )
     print(f"Gantry retrieved {len(langchain_tools)} tools.")
 
-    # 5. Build and run a LangGraph ReAct agent
-    # create_react_agent is the LangGraph-native replacement for the old
-    # LangChain AgentExecutor pattern.
+    # 4. Build and run the agent with the Gantry-selected slice.
     # temperature is not supported on gpt-5.5 (reasoning model); omit it.
     llm = ChatOpenAI(model="gpt-5.5")
-    agent = create_react_agent(llm, tools=langchain_tools)
+    agent = create_agent(model=llm, tools=langchain_tools)
 
-    print("\n--- Running LangGraph ReAct Agent with Gantry-sourced tools ---")
+    print("\n--- Running LangChain agent with Gantry-sourced tools ---")
     result = await agent.ainvoke({"messages": [HumanMessage(content=user_query)]})
 
     print(f"\nFinal Response: {result['messages'][-1].content}")
