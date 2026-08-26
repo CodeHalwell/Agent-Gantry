@@ -175,6 +175,20 @@ class ExecutionEngine:
             if val_result:
                 return val_result
 
+            # Check confirmation requirement *before* dispatching by any
+            # mechanism. This used to sit after the special-source branch
+            # below, so an A2A tool was executed remotely without the gate
+            # ever being consulted — and once ``pending_confirmation`` also
+            # skips the rate limiter above, a caller could set
+            # ``require_confirmation=True`` to run A2A calls for free, past
+            # both the per-minute and concurrency limits. Gating here makes
+            # "pending confirmation means nothing ran" true for every source.
+            confirm_result = await self._check_confirmation_required(
+                tool, call, queued_at, trace_id, span_id
+            )
+            if confirm_result:
+                return confirm_result
+
             # Check if this requires special execution (A2A, MCP, etc.)
             from agent_gantry.schema.tool import ToolSource
 
@@ -194,13 +208,6 @@ class ExecutionEngine:
                     trace_id=trace_id,
                     span_id=span_id,
                 )
-
-            # Check confirmation requirement
-            confirm_result = await self._check_confirmation_required(
-                tool, call, queued_at, trace_id, span_id
-            )
-            if confirm_result:
-                return confirm_result
 
             return await self._execute_handler_with_retries(
                 tool, call, handler, queued_at, trace_id, span_id
@@ -616,16 +623,30 @@ class ExecutionEngine:
         properties = schema.get("properties") or {}
         required = set(schema.get("required") or [])
 
+        def _declares_null(prop: Any) -> bool:
+            """Whether a property schema gives ``null`` a declared meaning.
+
+            ``null`` reaches a schema two ways: a ``type`` that names it
+            (``"null"`` or a list containing it) and a combinator branch —
+            ``{"anyOf": [{"type": "string"}, {"type": "null"}]}``, which is
+            what Pydantic and OpenAPI emit for ``str | None``. Checking only
+            ``type`` would miss the far more common of the two.
+            """
+            if not isinstance(prop, dict):
+                return False
+            prop_type = prop.get("type")
+            if prop_type == "null" or (isinstance(prop_type, list) and "null" in prop_type):
+                return True
+            for key in ("anyOf", "oneOf", "allOf"):
+                branches = prop.get(key)
+                if isinstance(branches, list) and any(_declares_null(b) for b in branches):
+                    return True
+            return False
+
         def _should_drop(name: str, value: Any) -> bool:
             if value is not None or name not in properties or name in required:
                 return False
-            prop = properties[name]
-            prop_type = prop.get("type") if isinstance(prop, dict) else None
-            if prop_type == "null" or (
-                isinstance(prop_type, list) and "null" in prop_type
-            ):
-                return False
-            return True
+            return not _declares_null(properties[name])
 
         if not any(_should_drop(name, value) for name, value in arguments.items()):
             return arguments

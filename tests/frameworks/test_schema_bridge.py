@@ -220,6 +220,34 @@ def test_empty_additional_properties_schema_permits_extras():
     assert model(name="a", extra=1).model_dump() == {"name": "a", "extra": 1}
 
 
+def test_typed_additional_properties_constrains_extra_values():
+    """A *typed* ``additionalProperties`` constrains the extras' value type.
+    Bare ``extra="allow"`` would take every extra as ``Any``, so the
+    framework would accept a string where the schema — and the executor,
+    which does check the subschema — demand an integer."""
+    schema = {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+        "additionalProperties": {"type": "integer"},
+    }
+    model = pydantic_model_from_schema("Args", schema)
+    assert model(name="a", hits=3).model_dump() == {"name": "a", "hits": 3}
+    with pytest.raises(ValidationError):
+        model(name="a", hits="not an int")
+
+
+def test_untyped_additional_properties_leaves_extras_unconstrained():
+    schema = {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+        "additionalProperties": True,
+    }
+    model = pydantic_model_from_schema("Args", schema)
+    assert model(name="a", whatever="ok").model_dump() == {"name": "a", "whatever": "ok"}
+
+
 def test_closed_empty_nested_object_rejects_all_keys():
     """``{"properties": {}, "additionalProperties": false}`` permits no keys
     at all. A bare ``dict`` annotation would accept anything, so the

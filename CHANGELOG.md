@@ -78,7 +78,9 @@ adapters, and the provider dialects agree with it.
   own `additionalProperties` instead of Pydantic's default `extra="ignore"`,
   so a misspelled or hallucinated argument surfaces as an error rather than
   being silently dropped inside the framework — matching what the executor
-  does with the same key.
+  does with the same key. A *typed* `additionalProperties` also constrains
+  the extras' value type, so the framework won't accept a string where the
+  schema demands an integer.
 - **Asking for OpenAI strict mode on a schema it cannot express no longer
   breaks the request.** Strict mode has no representation for an object with
   arbitrary keys (a `dict[str, int]` parameter, an untyped `dict`), and
@@ -92,6 +94,15 @@ adapters, and the provider dialects agree with it.
 
 ### Fixed
 
+- **A confirmation-gated A2A tool executed remotely without ever being
+  gated.** The special-source dispatch branch returned before the
+  confirmation check ran, so `requires_confirmation=True` on an A2A tool was
+  silently ineffective — the remote agent was invoked and its side effects
+  happened before anyone was asked. The check now runs before dispatch by
+  any mechanism, making "pending confirmation means nothing ran" true for
+  every tool source (and closing a path by which a caller could set
+  `require_confirmation=True` to run A2A calls past both the per-minute and
+  concurrency limits).
 - **Argument validation understands the schemas Gantry itself emits.**
   Explicit `None` for a declared optional parameter is treated as omitted
   (models legitimately send `null` under the strict-mode widened schemas
@@ -99,7 +110,9 @@ adapters, and the provider dialects agree with it.
   `None`) — that workaround previously lived only in `ToolSpec.ainvoke`, so
   the `execute_tool_calls` provider path rejected its own schema's output.
   A property that explicitly declares `null` in its type keeps a
-  caller-supplied `None` as the meaningful value it is. Undeclared keys are
+  caller-supplied `None` as the meaningful value it is — whether it declares
+  `null` through its `type` or through an `anyOf`/`oneOf` branch, the shape
+  Pydantic and OpenAPI emit for `str | None`. Undeclared keys are
   admitted when `additionalProperties` permits them (`true` or a subschema,
   including the empty schema `{}`, which JSON Schema treats as `true`) and
   refused when it is `false` or absent; a `dict[str, int]`-shaped schema

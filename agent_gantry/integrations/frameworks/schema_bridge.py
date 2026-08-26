@@ -85,6 +85,15 @@ def _build_model(name: str, schema: dict[str, Any], depth: int) -> Any:
     # hallucinated argument would vanish inside the framework instead of
     # surfacing as an error. Mirror the schema instead.
     model_config = ConfigDict(extra="allow" if _permits_additional(schema) else "forbid")
+    additional = schema.get("additionalProperties")
+    extra_annotation: Any = None
+    if isinstance(additional, dict) and additional:
+        # A *typed* ``additionalProperties`` constrains the extras' value
+        # type. Bare ``extra="allow"`` would take every extra as ``Any``,
+        # so the framework would accept a string where the schema (and the
+        # executor, which does check the subschema) demand an integer.
+        # ``__pydantic_extra__`` carries that type into validation.
+        extra_annotation = _annotation(f"{name}_extra", additional, depth + 1)
 
     fields: dict[str, Any] = {}
     for prop_name, prop in properties.items():
@@ -113,6 +122,9 @@ def _build_model(name: str, schema: dict[str, Any], depth: int) -> Any:
                 annotation | None,
                 Field(default=default, **field_kwargs),
             )
+
+    if extra_annotation is not None:
+        fields["__pydantic_extra__"] = (dict[str, extra_annotation], Field(init=False))
 
     return create_model(name, __config__=model_config, **fields)
 

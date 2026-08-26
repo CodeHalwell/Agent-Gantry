@@ -449,3 +449,100 @@ async def test_confirmation_probe_does_not_leak_concurrency_slots():
         assert result.status.value == "pending_confirmation"
 
     assert all(count == 0 for count in limiter._concurrent.values())
+
+
+@pytest.mark.asyncio
+async def test_a2a_call_is_gated_by_confirmation_before_remote_dispatch():
+    """The A2A branch used to return before ``_check_confirmation_required``
+    ever ran, so a confirmation-gated remote agent executed unasked — and
+    once a pending call also skips the rate limiter, a caller could set
+    ``require_confirmation=True`` to run A2A calls past both the per-minute
+    and concurrency limits (PR #381 review)."""
+    from datetime import datetime, timezone
+
+    from agent_gantry.core.rate_limiter import RateLimiter
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.schema.config import RateLimitConfig
+    from agent_gantry.schema.execution import ExecutionStatus, ToolCall, ToolResult
+    from agent_gantry.schema.tool import ToolSource
+
+    class _StubA2A:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def execute(self, tool, call, _):
+            self.calls += 1
+            return ToolResult(
+                tool_name=call.tool_name,
+                status=ExecutionStatus.SUCCESS,
+                result="remote side effect",
+                queued_at=datetime.now(timezone.utc),
+                completed_at=datetime.now(timezone.utc),
+                trace_id="t",
+                span_id="s",
+            )
+
+    registry = ToolRegistry()
+    registry.register_tool(
+        ToolDefinition(
+            name="remote_delete",
+            description="Destructive remote agent call",
+            parameters_schema={"type": "object", "properties": {}},
+            source=ToolSource.A2A_AGENT,
+            requires_confirmation=True,
+        )
+    )
+    engine = ExecutionEngine(
+        registry=registry,
+        rate_limiter=RateLimiter(
+            RateLimitConfig(
+                enabled=True,
+                max_calls_per_minute=1,
+                max_calls_per_hour=100,
+                strategy="sliding_window",
+            )
+        ),
+    )
+    stub = _StubA2A()
+    engine._a2a_executor = stub
+
+    for _ in range(3):
+        result = await engine.execute(
+            ToolCall(tool_name="remote_delete", arguments={}, require_confirmation=True)
+        )
+        assert result.status.value == "pending_confirmation"
+
+    assert stub.calls == 0, "confirmation-gated A2A tool was dispatched remotely"
+
+    approved = await engine.execute(
+        ToolCall(tool_name="remote_delete", arguments={}, require_confirmation=False)
+    )
+    assert approved.status.value == "success"
+    assert stub.calls == 1
+
+
+def test_normalize_preserves_null_declared_through_anyof():
+    """``{"anyOf": [{"type": "string"}, {"type": "null"}]}`` is what Pydantic
+    and OpenAPI emit for ``str | None`` — far more common than a ``type``
+    list, and it gives ``null`` the same declared meaning."""
+    tool = ToolDefinition(
+        name="anyof_tool",
+        description="Nullable declared via an anyOf branch",
+        parameters_schema={
+            "type": "object",
+            "properties": {"note": {"anyOf": [{"type": "string"}, {"type": "null"}]}},
+            "required": [],
+        },
+    )
+    assert ExecutionEngine._normalize_arguments(tool, {"note": None}) == {"note": None}
+
+    plain = ToolDefinition(
+        name="plain_tool",
+        description="Plain optional string parameter",
+        parameters_schema={
+            "type": "object",
+            "properties": {"note": {"type": "string"}},
+            "required": [],
+        },
+    )
+    assert ExecutionEngine._normalize_arguments(plain, {"note": None}) == {}
