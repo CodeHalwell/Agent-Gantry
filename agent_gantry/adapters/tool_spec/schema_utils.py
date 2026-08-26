@@ -20,7 +20,11 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-__all__ = ["sanitize_gemini_schema", "strict_json_schema"]
+__all__ = [
+    "sanitize_gemini_schema",
+    "strict_json_schema",
+    "unsupported_strict_paths",
+]
 
 #: Keys that introduce a nested subschema whose value is itself a schema.
 _SUBSCHEMA_KEYS = ("items", "additionalItems", "contains", "not")
@@ -110,17 +114,114 @@ def strict_json_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
     Optional properties are preserved semantically by widening their type to
     admit ``null`` rather than by dropping them from ``required``.
 
+    An object with arbitrary keys (a ``dict[str, int]`` parameter, an
+    untyped ``dict``) has no strict-mode representation and is left
+    untouched rather than being forced to ``additionalProperties: false``,
+    which would turn it into an object accepting no keys at all and
+    silently discard the parameter's data. The result is then *not* safe to
+    publish with ``strict: true`` — call :func:`unsupported_strict_paths`
+    first and fall back to a non-strict request when it reports anything.
+
     Args:
         schema: The tool's JSON-Schema ``parameters`` object.
 
     Returns:
-        A new schema safe to publish alongside ``strict: true``.
+        A new schema safe to publish alongside ``strict: true``, provided
+        :func:`unsupported_strict_paths` reported nothing for it.
     """
     if not schema:
         return {"type": "object", "properties": {}, "required": [], "additionalProperties": False}
     transformed = copy.deepcopy(schema)
     _strict_in_place(transformed)
     return transformed
+
+
+def _is_open_map(node: dict[str, Any]) -> bool:
+    """Whether an object schema admits keys it does not enumerate.
+
+    Strict mode can only describe an object whose full key set is written
+    out in ``properties``. Anything else — a ``dict[str, int]`` parameter
+    (schema-valued ``additionalProperties``, no ``properties``), a bare
+    ``{"type": "object"}`` from an untyped ``dict`` parameter — is an open
+    map with no strict-mode representation.
+    """
+    properties = node.get("properties")
+    if isinstance(properties, dict) and properties:
+        # Enumerated. ``additionalProperties: true`` alongside real
+        # properties (what a ``**kwargs`` handler emits) is a narrowing
+        # strict mode handles by forcing it to false, not an open map.
+        return False
+    if node.get("additionalProperties") is False:
+        return False  # explicitly closed: an object permitting no keys
+    if isinstance(properties, dict):
+        # ``properties: {}`` with no explicit ``additionalProperties`` is the
+        # "tool takes no arguments" shape ``strict_json_schema`` itself emits.
+        additional = node.get("additionalProperties")
+        return additional is True or isinstance(additional, dict)
+    return True
+
+
+def _collect_open_maps(node: Any, path: str, out: list[str]) -> None:
+    if isinstance(node, list):
+        for index, item in enumerate(node):
+            _collect_open_maps(item, f"{path}[{index}]", out)
+        return
+    if not isinstance(node, dict):
+        return
+
+    properties = node.get("properties")
+    if node.get("type") == "object" or isinstance(properties, dict):
+        if _is_open_map(node):
+            out.append(path or "<root>")
+
+    if isinstance(properties, dict):
+        for name, subschema in properties.items():
+            _collect_open_maps(subschema, f"{path}.{name}" if path else name, out)
+    additional = node.get("additionalProperties")
+    if isinstance(additional, dict):
+        _collect_open_maps(additional, f"{path}.<values>" if path else "<values>", out)
+    for key in _SUBSCHEMA_KEYS:
+        if key in node:
+            _collect_open_maps(node[key], f"{path}.{key}" if path else key, out)
+    for key in _SUBSCHEMA_LIST_KEYS:
+        if isinstance(node.get(key), list):
+            _collect_open_maps(node[key], f"{path}.{key}" if path else key, out)
+    for defs_key in ("$defs", "definitions"):
+        if isinstance(node.get(defs_key), dict):
+            for name, subschema in node[defs_key].items():
+                _collect_open_maps(subschema, f"{defs_key}.{name}", out)
+
+
+def unsupported_strict_paths(schema: dict[str, Any] | None) -> list[str]:
+    """Locations in ``schema`` that OpenAI strict mode cannot express.
+
+    Strict mode requires every object to enumerate its properties and set
+    ``additionalProperties: false``; it has no representation for an object
+    with arbitrary keys. A ``dict[str, int]`` parameter — which
+    ``build_parameters_schema`` emits as an object with a schema-valued
+    ``additionalProperties`` and no ``properties`` — therefore cannot be
+    published alongside ``strict: true``: OpenAI rejects the whole request
+    rather than ignoring the shape, so the tool becomes unusable instead of
+    merely unconstrained.
+
+    :func:`strict_json_schema` deliberately leaves such a node alone —
+    forcing ``additionalProperties: false`` on it would produce an object
+    accepting *no* keys, silently discarding the parameter's data. Callers
+    should check this first and fall back to a non-strict request for the
+    affected tool.
+
+    Args:
+        schema: The tool's JSON-Schema ``parameters`` object.
+
+    Returns:
+        Dotted paths (``"counts"``, ``"payload.tags"``) of the offending
+        object nodes; empty when the schema is expressible in strict mode.
+    """
+    if not schema:
+        return []
+    found: list[str] = []
+    _collect_open_maps(schema, "", found)
+    return found
 
 
 #: Keywords Gemini and Vertex AI reject whose removal cannot change which

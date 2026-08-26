@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (review follow-up, round 5)
+
+- **The round-4 rate-limit exemption trusted a caller-controlled flag.**
+  Skipping the rate limit whenever `confirmation_approved=True` was the
+  wrong shape of fix: that flag reaches `check_permission` from
+  `ToolCall(require_confirmation=False)`, a field the *caller* supplies, so
+  any client could lift its own `max_requests_per_minute` simply by setting
+  it — turning a fix for double-counting into a way around the limiter, and
+  contradicting the policy's own documented invariant that approval never
+  relaxes a denial check. The accounting is restructured instead: the
+  sliding window is still *checked* up front (a flood is still rejected
+  cheaply), but a call is only *recorded* once it clears the confirmation
+  gate. A probe that comes back needing confirmation never executed and now
+  costs nothing; the approved replay that follows is counted, exactly once;
+  and a call denied by `allowed_domains` still consumes quota, so rejected
+  floods stay bounded. `confirmation_approved` is back to affecting only
+  the pattern gate.
+- **The same double-count existed on the tool-flag confirmation path, via
+  the real `RateLimiter`.** `ToolDefinition.requires_confirmation` is
+  enforced by the executor, not by `SecurityPolicy`, and that path runs
+  `RateLimiter.acquire()` *before* returning `PENDING_CONFIRMATION` —
+  while `release()` only frees the concurrency counter, never the window
+  slot the call consumed. A probe plus its approved replay therefore spent
+  two units for one logical call, and at `max_calls_per_minute=1` left the
+  tool permanently unexecutable. The executor now settles whether a call
+  will short-circuit to `PENDING_CONFIRMATION` (a pure function of the call
+  and tool) before deciding to acquire at all, and skips the matching
+  release so no unpaired decrement hands out extra concurrency. Argument
+  validation still runs first, so a human is never asked to approve a
+  malformed call.
+- **OpenAI strict mode emitted schemas the API rejects.** `strict_json_schema`
+  only applied strict-mode constraints to objects that declare a
+  `properties` mapping, so an object with arbitrary keys — a
+  `dict[str, int]` parameter (schema-valued `additionalProperties`, no
+  `properties`) or an untyped `dict` (a bare `{"type": "object"}`), both of
+  which the new introspection now emits — passed through unchanged and was
+  then published alongside `strict: true`. OpenAI rejects that request
+  outright rather than ignoring the shape, so asking for strict mode made
+  the *entire request* fail rather than merely leaving one tool
+  unconstrained. Strict mode has no representation for such an object, and
+  forcing `additionalProperties: false` onto it would produce an object
+  accepting no keys at all — silently discarding the parameter's data — so
+  the transform deliberately leaves it alone and a new
+  `unsupported_strict_paths()` reports the offending locations. Both OpenAI
+  dialects now consult it and emit the affected tool unmodified and
+  *without* the flag, logging a warning that names the tool and parameter.
+  Tools whose schemas are fully declared are unaffected.
+
 ### Fixed (review follow-up, round 4)
 
 - **An approved confirmation replay was double-counted against the rate

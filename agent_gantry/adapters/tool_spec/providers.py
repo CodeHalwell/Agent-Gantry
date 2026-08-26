@@ -15,6 +15,7 @@ from agent_gantry.adapters.tool_spec.base import ToolCallPayload
 from agent_gantry.adapters.tool_spec.schema_utils import (
     sanitize_gemini_schema,
     strict_json_schema,
+    unsupported_strict_paths,
 )
 from agent_gantry.schema.execution import ToolCall
 
@@ -22,6 +23,31 @@ if TYPE_CHECKING:
     from agent_gantry.schema.tool import ToolDefinition
 
 _logger = logging.getLogger(__name__)
+
+
+def _strict_parameters(tool: ToolDefinition, dialect: str) -> tuple[dict[str, Any], bool]:
+    """Strict-mode ``parameters`` for ``tool``, and whether strict is usable.
+
+    OpenAI rejects the whole request when a tool marked ``strict: true``
+    carries an object with arbitrary keys — a ``dict[str, int]`` parameter,
+    an untyped ``dict`` — because strict mode cannot express one. Publishing
+    the tool without the flag keeps it callable (merely unconstrained),
+    where honouring the caller's ``strict=True`` verbatim would take down
+    every request the tool appears in.
+    """
+    unsupported = unsupported_strict_paths(tool.parameters_schema)
+    if unsupported:
+        _logger.warning(
+            "Tool %r cannot use %s strict mode: %s describes an object with "
+            "arbitrary keys, which strict mode cannot express. Emitting the "
+            "tool without strict:true so the request still succeeds — declare "
+            "the object's properties explicitly to make it strict-compatible.",
+            tool.name,
+            dialect,
+            ", ".join(unsupported),
+        )
+        return tool.parameters_schema, False
+    return strict_json_schema(tool.parameters_schema), True
 
 
 class OpenAIAdapter:
@@ -64,15 +90,21 @@ class OpenAIAdapter:
                 admit ``null``. Setting the flag without that rewrite makes the
                 API reject any tool that has an optional parameter. The
                 ToolDefinition's own schema is never mutated. Defaults to False.
+                A tool whose schema contains an object with arbitrary keys (a
+                ``dict[str, int]`` parameter, an untyped ``dict``) has no
+                strict-mode representation; it is emitted unmodified and
+                *without* ``strict: true``, with a warning, since claiming
+                strict there makes OpenAI reject the entire request.
                 Source: https://platform.openai.com/docs/guides/function-calling
             **options: Additional provider-specific options
 
         Returns:
             OpenAI-compatible tool schema
         """
-        parameters = (
-            strict_json_schema(tool.parameters_schema) if strict else tool.parameters_schema
-        )
+        parameters = tool.parameters_schema
+        use_strict = strict
+        if strict:
+            parameters, use_strict = _strict_parameters(tool, "OpenAI")
         schema: dict[str, Any] = {
             "type": "function",
             "function": {
@@ -81,7 +113,7 @@ class OpenAIAdapter:
                 "parameters": parameters,
             },
         }
-        if strict:
+        if use_strict:
             schema["function"]["strict"] = True
         return schema
 
@@ -215,22 +247,28 @@ class OpenAIResponsesAdapter:
                 ``required``, formerly-optional properties widened to admit
                 ``null``); the flag alone would make the API reject any tool
                 with an optional parameter. The ToolDefinition's own schema is
-                never mutated. Defaults to False.
+                never mutated. Defaults to False. A tool whose schema contains
+                an object with arbitrary keys (a ``dict[str, int]`` parameter,
+                an untyped ``dict``) has no strict-mode representation; it is
+                emitted unmodified and *without* ``strict: true``, with a
+                warning, since claiming strict there makes the API reject the
+                entire request.
             **options: Additional provider-specific options
 
         Returns:
             OpenAI Responses API compatible tool schema
         """
-        parameters = (
-            strict_json_schema(tool.parameters_schema) if strict else tool.parameters_schema
-        )
+        parameters = tool.parameters_schema
+        use_strict = strict
+        if strict:
+            parameters, use_strict = _strict_parameters(tool, "OpenAI Responses")
         schema: dict[str, Any] = {
             "type": "function",
             "name": tool.name,
             "description": tool.description,
             "parameters": parameters,
         }
-        if strict:
+        if use_strict:
             schema["strict"] = True
         return schema
 

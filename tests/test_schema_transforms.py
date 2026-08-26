@@ -12,10 +12,15 @@ from __future__ import annotations
 import pytest
 
 from agent_gantry import AgentGantry
-from agent_gantry.adapters.tool_spec.providers import GeminiAdapter, OpenAIAdapter
+from agent_gantry.adapters.tool_spec.providers import (
+    GeminiAdapter,
+    OpenAIAdapter,
+    OpenAIResponsesAdapter,
+)
 from agent_gantry.adapters.tool_spec.schema_utils import (
     sanitize_gemini_schema,
     strict_json_schema,
+    unsupported_strict_paths,
 )
 from agent_gantry.schema.tool import ToolDefinition
 
@@ -123,6 +128,170 @@ class TestStrictJsonSchema:
         out = strict_json_schema({})
         assert out["additionalProperties"] is False
         assert out["required"] == []
+
+
+class TestUnsupportedStrictPaths:
+    """Objects with arbitrary keys have no strict-mode representation, so
+    they must be detected rather than silently mangled (PR #381 review)."""
+
+    def test_typed_mapping_is_unsupported(self) -> None:
+        # dict[str, int] as build_parameters_schema emits it.
+        assert unsupported_strict_paths(
+            {
+                "type": "object",
+                "properties": {
+                    "counts": {
+                        "type": "object",
+                        "additionalProperties": {"type": "integer"},
+                    }
+                },
+                "required": ["counts"],
+            }
+        ) == ["counts"]
+
+    def test_untyped_dict_is_unsupported(self) -> None:
+        # dict[str, Any] → a bare {"type": "object"}; strict mode needs the
+        # key set enumerated, which this does not provide.
+        assert unsupported_strict_paths(
+            {
+                "type": "object",
+                "properties": {"meta": {"type": "object"}},
+                "required": ["meta"],
+            }
+        ) == ["meta"]
+
+    def test_fully_declared_schema_is_supported(self) -> None:
+        assert (
+            unsupported_strict_paths(
+                {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "addr": {
+                            "type": "object",
+                            "properties": {"street": {"type": "string"}},
+                            "required": ["street"],
+                        },
+                    },
+                    "required": ["name", "addr"],
+                }
+            )
+            == []
+        )
+
+    def test_no_argument_tool_is_supported(self) -> None:
+        # properties: {} is the "takes no arguments" shape strict_json_schema
+        # itself emits — not an open map.
+        assert unsupported_strict_paths({"type": "object", "properties": {}}) == []
+        assert unsupported_strict_paths({}) == []
+
+    def test_kwargs_style_additional_properties_is_supported(self) -> None:
+        # Real properties plus additionalProperties: true (a **kwargs
+        # handler). Strict mode narrows it by forcing false, which is a
+        # documented narrowing rather than an inexpressible shape.
+        assert (
+            unsupported_strict_paths(
+                {
+                    "type": "object",
+                    "properties": {"a": {"type": "string"}},
+                    "required": ["a"],
+                    "additionalProperties": True,
+                }
+            )
+            == []
+        )
+
+    def test_nested_and_array_item_mappings_are_found(self) -> None:
+        found = unsupported_strict_paths(
+            {
+                "type": "object",
+                "properties": {
+                    "payload": {
+                        "type": "object",
+                        "properties": {
+                            "tags": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "additionalProperties": {"type": "string"},
+                                },
+                            }
+                        },
+                        "required": ["tags"],
+                    }
+                },
+                "required": ["payload"],
+            }
+        )
+        assert found == ["payload.tags.items"]
+
+    def test_strict_transform_leaves_open_maps_alone(self) -> None:
+        # Forcing additionalProperties: false here would produce an object
+        # accepting no keys at all, silently discarding the parameter.
+        out = strict_json_schema(
+            {
+                "type": "object",
+                "properties": {
+                    "counts": {
+                        "type": "object",
+                        "additionalProperties": {"type": "integer"},
+                    }
+                },
+                "required": ["counts"],
+            }
+        )
+        assert out["properties"]["counts"]["additionalProperties"] == {"type": "integer"}
+
+
+class TestStrictFallbackInAdapters:
+    """A tool strict mode cannot express is emitted without the flag rather
+    than with a schema OpenAI rejects outright."""
+
+    @staticmethod
+    def _mapping_tool() -> ToolDefinition:
+        return ToolDefinition(
+            name="tally",
+            description="Count things",
+            parameters_schema={
+                "type": "object",
+                "properties": {
+                    "counts": {
+                        "type": "object",
+                        "additionalProperties": {"type": "integer"},
+                    }
+                },
+                "required": ["counts"],
+            },
+        )
+
+    def test_openai_drops_strict_for_open_maps(self, caplog: pytest.LogCaptureFixture) -> None:
+        tool = self._mapping_tool()
+        with caplog.at_level("WARNING"):
+            out = OpenAIAdapter().to_provider_schema(tool, strict=True)
+
+        assert "strict" not in out["function"]
+        # The schema is passed through untouched, so the tool stays callable.
+        assert out["function"]["parameters"] == tool.parameters_schema
+        assert "tally" in caplog.text
+        assert "counts" in caplog.text
+
+    def test_openai_responses_drops_strict_for_open_maps(self) -> None:
+        out = OpenAIResponsesAdapter().to_provider_schema(self._mapping_tool(), strict=True)
+        assert "strict" not in out
+
+    def test_strict_still_applies_to_fully_declared_tools(self) -> None:
+        tool = ToolDefinition(
+            name="greet",
+            description="Greet someone",
+            parameters_schema={
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": [],
+            },
+        )
+        out = OpenAIAdapter().to_provider_schema(tool, strict=True)
+        assert out["function"]["strict"] is True
+        assert out["function"]["parameters"]["additionalProperties"] is False
 
 
 class TestSanitizeGeminiSchema:
