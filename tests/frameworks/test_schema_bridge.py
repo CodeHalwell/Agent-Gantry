@@ -327,3 +327,59 @@ def test_null_only_field_rejects_other_types():
         assert model(nothing=None).nothing is None
         with pytest.raises(ValidationError):
             model(nothing="oops")
+
+
+def test_const_becomes_a_single_value_literal():
+    """``const`` is what Pydantic emits for a single-value ``Literal``, so it
+    turns up inside the nested models this bridge inlines. Ignoring it
+    advertised an unconstrained scalar the executor then rejected
+    (PR #381 review)."""
+    schema = {
+        "type": "object",
+        "properties": {"kind": {"type": "string", "const": "expected"}},
+        "required": ["kind"],
+    }
+    model = pydantic_model_from_schema("Args", schema)
+    assert model(kind="expected").kind == "expected"
+    with pytest.raises(ValidationError):
+        model(kind="anything")
+
+
+def test_oneof_requires_exactly_one_matching_branch():
+    """A Python union is ``anyOf`` semantics: it accepts a value matching
+    several branches, which ``oneOf`` forbids. ``1`` satisfies both
+    ``number`` and ``integer`` (PR #381 review)."""
+    schema = {
+        "type": "object",
+        "properties": {"v": {"oneOf": [{"type": "number"}, {"type": "integer"}]}},
+        "required": ["v"],
+    }
+    model = pydantic_model_from_schema("Args", schema)
+    with pytest.raises(ValidationError):
+        model(v=1)  # matches both branches
+    assert model(v=1.5).v == 1.5  # matches only "number"
+    with pytest.raises(ValidationError):
+        model(v="x")  # matches neither
+
+
+def test_oneof_with_disjoint_branches_accepts_each():
+    schema = {
+        "type": "object",
+        "properties": {"v": {"oneOf": [{"type": "string"}, {"type": "integer"}]}},
+        "required": ["v"],
+    }
+    model = pydantic_model_from_schema("Args", schema)
+    assert model(v="a").v == "a"
+    assert model(v=7).v == 7
+
+
+def test_anyof_still_permits_overlapping_branches():
+    """The exclusivity check must not leak into ``anyOf``."""
+    schema = {
+        "type": "object",
+        "properties": {"v": {"anyOf": [{"type": "number"}, {"type": "integer"}]}},
+        "required": ["v"],
+    }
+    model = pydantic_model_from_schema("Args", schema)
+    assert model(v=1).v == 1
+    assert model(v=1.5).v == 1.5

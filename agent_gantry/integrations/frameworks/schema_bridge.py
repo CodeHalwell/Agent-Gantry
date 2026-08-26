@@ -161,12 +161,54 @@ def _union_annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
         annotation = parts[0]
         for part in parts[1:]:
             annotation = annotation | part
+        if key == "oneOf" and len(parts) > 1:
+            # A Python union is ``anyOf``: it accepts a value matching several
+            # branches, which ``oneOf`` forbids (``1`` satisfies both
+            # ``number`` and ``integer``). The union still earns its place —
+            # it rejects everything outside every branch, where ``Any`` would
+            # not — so keep it and add the exclusivity the union can't carry.
+            annotation = _with_exclusivity(annotation, parts)
         return annotation
     return None
 
 
+def _with_exclusivity(annotation: Any, parts: list[Any]) -> Any:
+    """Attach an "exactly one branch matches" check to a ``oneOf`` union."""
+    from typing import Annotated
+
+    from pydantic import AfterValidator, TypeAdapter
+
+    adapters = [TypeAdapter(part) for part in parts]
+
+    def _exactly_one(value: Any) -> Any:
+        matched = 0
+        for adapter in adapters:
+            try:
+                adapter.validate_python(value, strict=True)
+            except Exception:  # noqa: BLE001 - a branch simply not matching
+                continue
+            matched += 1
+        if matched > 1:
+            raise ValueError(
+                f"matches {matched} oneOf branches; exactly one must match"
+            )
+        return value
+
+    return Annotated[annotation, AfterValidator(_exactly_one)]
+
+
 def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
     """Python annotation for one property schema (recursive)."""
+    # ``const`` is a one-value ``enum`` — the shape Pydantic emits for a
+    # single-value ``Literal``, so it turns up inside the nested models this
+    # bridge inlines. Ignoring it advertised an unconstrained scalar that
+    # accepted values the executor then rejected.
+    if "const" in prop:
+        const_value = prop["const"]
+        if isinstance(const_value, (str, int, bool)) or const_value is None:
+            return Literal[const_value]
+        # Exotic const value — fall back to the declared/base type.
+
     enum_values = prop.get("enum")
     if isinstance(enum_values, list) and enum_values:
         if all(isinstance(v, (str, int, bool)) for v in enum_values):

@@ -106,6 +106,14 @@ adapters, and the provider dialects agree with it.
   throughout the nested model and `TypedDict` schemas introspection now
   inlines — and validation checked only `type` and `enum`, letting any value
   through. `const` equality is checked alongside `enum` membership now.
+- **`const` and `oneOf` exclusivity were lost in framework args models.**
+  The CrewAI/LlamaIndex bridge ignored `const`, advertising an
+  unconstrained scalar for a field the schema pins to one value; it now
+  becomes a single-value `Literal`, mirroring how `enum` is handled. And a
+  `oneOf` translated to a Python union carries *`anyOf`* semantics — `1`
+  satisfies both a `number` and an `integer` branch, which `oneOf` forbids
+  — so the union now also carries an "exactly one branch matches" check.
+  `anyOf` is unaffected.
 - **A null-only property widened to `Any` in framework args models.** A
   property typed `{"type": "null"}` permits only `null`, but the
   CrewAI/LlamaIndex bridge fell through to an unconstrained `Any` that
