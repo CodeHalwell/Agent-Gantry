@@ -294,3 +294,20 @@ def test_base_name_is_sanitized_to_valid_identifier():
     model = pydantic_model_from_schema("weird name!!", schema)
     assert model is not None
     assert model(x="ok").x == "ok"
+
+
+def test_combinator_only_field_becomes_a_union():
+    """``{"anyOf": [{"type": "integer"}, {"type": "null"}]}`` is what Pydantic
+    emits for ``int | None``, so it appears in every nested model this bridge
+    inlines. Falling through to ``Any`` advertised an unconstrained field that
+    accepted values the executor rejects after dispatch (PR #381 review)."""
+    schema = {
+        "type": "object",
+        "properties": {"count": {"anyOf": [{"type": "integer"}, {"type": "null"}]}},
+        "required": ["count"],
+    }
+    model = pydantic_model_from_schema("Args", schema)
+    assert model(count=3).count == 3
+    assert model(count=None).count is None
+    with pytest.raises(ValidationError):
+        model(count="bad")

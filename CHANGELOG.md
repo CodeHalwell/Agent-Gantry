@@ -94,6 +94,30 @@ adapters, and the provider dialects agree with it.
 
 ### Fixed
 
+- **`Sequence`/`Iterable`/`Set` parameters were advertised as scalars.**
+  `typing.get_origin(Sequence[int])` returns the `collections.abc` class —
+  neither the `typing` alias nor a `list` subclass — so the container branch
+  missed it and fell through to a "use the first type argument" fallback,
+  emitting `{"type": "integer"}` for a parameter that takes a list. The
+  executor then rejected every valid payload. All the `collections.abc`
+  container origins are matched now, with mappings checked first (a Mapping
+  is also a Collection, so the reverse order would classify `dict[str, int]`
+  as an array).
+- **An optional enum parameter could not express "not provided" in strict
+  mode.** Widening a property's `type` to admit `null` left its `enum`
+  untouched, and `enum` is an independent constraint — so a
+  `Literal["fast", "slow"] | None = None` parameter advertised
+  `type: ["string", "null"]` alongside `enum: ["fast", "slow"]`. Strict mode
+  makes every property required, so the model's constrained grammar could
+  not emit `null` and had to invent `"fast"` or `"slow"` rather than let the
+  handler apply its `None` default. Widening now adds `null` to the enum too.
+- **A combinator-typed field became `Any` in framework args models.**
+  `{"anyOf": [{"type": "integer"}, {"type": "null"}]}` — what Pydantic emits
+  for `int | None`, so it appears throughout the nested models now inlined —
+  has no top-level `type`, so the CrewAI/LlamaIndex bridge widened it to an
+  unconstrained `Any` that accepted values the executor rejects after
+  dispatch. Supported `anyOf`/`oneOf` branches are translated recursively
+  into a union instead.
 - **A confirmation-gated A2A tool executed remotely without ever being
   gated.** The special-source dispatch branch returned before the
   confirmation check ran, so `requires_confirmation=True` on an A2A tool was

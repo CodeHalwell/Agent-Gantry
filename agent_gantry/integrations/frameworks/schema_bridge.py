@@ -135,6 +135,36 @@ def _is_nullable(prop: dict[str, Any]) -> bool:
     return json_type == "null" or (isinstance(json_type, list) and "null" in json_type)
 
 
+def _union_annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
+    """Annotation for an ``anyOf``/``oneOf`` schema, or ``None`` if absent.
+
+    Each branch is translated recursively and the results unioned, so
+    ``{"anyOf": [{"type": "integer"}, {"type": "null"}]}`` becomes
+    ``int | None`` rather than a bare ``Any``. ``allOf`` is deliberately not
+    handled: intersecting constraints has no faithful Python annotation, and
+    a wrong one is worse than the unconstrained fallback.
+    """
+    for key in ("anyOf", "oneOf"):
+        branches = prop.get(key)
+        if not isinstance(branches, list) or not branches:
+            continue
+        parts: list[Any] = []
+        for index, branch in enumerate(branches):
+            if not isinstance(branch, dict) or not branch:
+                continue
+            if branch.get("type") == "null":
+                parts.append(type(None))
+            else:
+                parts.append(_annotation(f"{name}_{index}", branch, depth + 1))
+        if not parts:
+            continue
+        annotation = parts[0]
+        for part in parts[1:]:
+            annotation = annotation | part
+        return annotation
+    return None
+
+
 def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
     """Python annotation for one property schema (recursive)."""
     enum_values = prop.get("enum")
@@ -144,6 +174,17 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
         # Enum of exotic values — fall back to the declared/base type.
 
     json_type = prop.get("type")
+    if json_type is None:
+        # A field can be typed purely through a combinator, with no ``type``
+        # of its own — ``{"anyOf": [{"type": "integer"}, {"type": "null"}]}``
+        # is what Pydantic emits for ``int | None``, so it appears in every
+        # nested model this bridge inlines. Falling through to ``Any`` would
+        # advertise an unconstrained field that accepts values the executor
+        # rejects after dispatch.
+        union = _union_annotation(name, prop, depth)
+        if union is not None:
+            return union
+
     if isinstance(json_type, list):  # e.g. ["string", "null"]
         json_type = next((t for t in json_type if t != "null"), None)
 

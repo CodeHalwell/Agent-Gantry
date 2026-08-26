@@ -371,6 +371,36 @@ class TestSchemaFidelity:
         schema = build_parameters_schema(func)
         assert schema["properties"]["x"]["type"] == "integer"
 
+    def test_collections_abc_container_origins(self):
+        """``typing.get_origin(Sequence[int])`` is ``collections.abc.Sequence``
+        — neither the ``typing`` alias nor a ``list`` subclass — so matching
+        only aliases and concrete containers advertised ``Sequence[int]`` as
+        ``{"type": "integer"}`` (PR #381 review)."""
+        # ``typing.Sequence[int]`` and ``collections.abc.Sequence[int]``
+        # normalize to the same origin, so these cover both spellings.
+        from collections.abc import Iterable, Mapping, Sequence, Set
+
+        def func(
+            a: Sequence[int],
+            b: Iterable[str],
+            c: Set[int],
+            d: Mapping[str, int],
+        ) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        props = schema["properties"]
+        assert props["a"] == {"type": "array", "items": {"type": "integer"}}
+        assert props["b"] == {"type": "array", "items": {"type": "string"}}
+        assert props["c"]["type"] == "array"
+        assert props["c"]["uniqueItems"] is True
+        # A Mapping is also a Collection/Iterable, so it must not be caught by
+        # the sequence branch.
+        assert props["d"] == {
+            "type": "object",
+            "additionalProperties": {"type": "integer"},
+        }
+
     def test_typed_containers(self):
         def func(tags: set[str], pair: tuple[int, ...] = ()) -> None:
             pass

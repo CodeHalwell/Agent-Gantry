@@ -33,6 +33,22 @@ _SUBSCHEMA_KEYS = ("items", "additionalItems", "contains", "not")
 _SUBSCHEMA_LIST_KEYS = ("anyOf", "oneOf", "allOf", "prefixItems")
 
 
+def _admit_null_in_enum(subschema: dict[str, Any]) -> None:
+    """Let ``null`` through an ``enum`` alongside a widened ``type``.
+
+    ``enum`` is an independent constraint, so widening ``type`` to admit
+    ``null`` is not enough on its own: an optional ``Literal["fast",
+    "slow"] | None`` would advertise ``type: ["string", "null"]`` while its
+    enum still listed only the two strings. Strict mode makes every property
+    required, so the model could then not express "not provided" at all —
+    the constrained grammar would force it to invent ``"fast"`` or
+    ``"slow"`` rather than let the handler apply its ``None`` default.
+    """
+    enum_values = subschema.get("enum")
+    if isinstance(enum_values, list) and enum_values and None not in enum_values:
+        subschema["enum"] = [*enum_values, None]
+
+
 def _make_nullable(subschema: dict[str, Any]) -> None:
     """Widen ``subschema`` in place so ``null`` is a valid value.
 
@@ -49,9 +65,11 @@ def _make_nullable(subschema: dict[str, Any]) -> None:
     if isinstance(declared, str):
         if declared != "null":
             subschema["type"] = [declared, "null"]
+            _admit_null_in_enum(subschema)
     elif isinstance(declared, list):
         if "null" not in declared:
             subschema["type"] = [*declared, "null"]
+            _admit_null_in_enum(subschema)
     else:
         # No usable type to widen (e.g. an enum-only or unconstrained schema).
         # Wrapping it in anyOf keeps the original constraints intact.

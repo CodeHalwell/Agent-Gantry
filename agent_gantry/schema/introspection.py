@@ -27,6 +27,7 @@ can express:
 
 from __future__ import annotations
 
+import collections.abc as _abc
 import copy
 import dataclasses
 import datetime
@@ -37,6 +38,25 @@ import types
 import uuid
 from collections.abc import Callable
 from typing import Any
+
+#: Generic origins that describe an ordered/unordered collection of items.
+#: ``typing.get_origin`` normalizes ``typing.Sequence[int]`` and
+#: ``collections.abc.Sequence[int]`` alike to the ``collections.abc`` class,
+#: so the ABCs — not the ``typing`` aliases — are what must be matched.
+#: Mappings are excluded by being handled first (a Mapping is a Collection).
+_SEQUENCE_ORIGINS: tuple[type, ...] = (
+    list,
+    tuple,
+    set,
+    frozenset,
+    _abc.Sequence,
+    _abc.Set,
+    _abc.Collection,
+    _abc.Iterable,
+)
+
+#: Of those, the ones whose items are unordered and distinct.
+_UNIQUE_ORIGINS: tuple[type, ...] = (set, frozenset, _abc.Set)
 
 #: Hard bound on ``$ref`` inlining recursion (self-referential models).
 _MAX_REF_DEPTH = 16
@@ -377,14 +397,28 @@ def _type_to_json_schema(param_type: Any) -> dict[str, Any]:
                     return _type_to_json_schema(non_none_args[0])
                 return {"type": "string"}
 
-            # Sequences → array (with typed items when parameterized).
-            if origin in (list, typing.Sequence, typing.Iterable, tuple, set, frozenset) or (
-                isinstance(origin, type)
-                and issubclass(origin, (list, tuple, set, frozenset))
+            # Mappings → object (value schema recorded via additionalProperties).
+            # Checked *before* sequences: a Mapping is also a Collection and an
+            # Iterable, so the sequence test below would otherwise classify
+            # ``dict[str, int]`` as an array.
+            if origin is dict or (
+                isinstance(origin, type) and issubclass(origin, _abc.Mapping)
             ):
-                if origin in (set, frozenset) or (
-                    isinstance(origin, type) and issubclass(origin, (set, frozenset))
-                ):
+                schema = {"type": "object"}
+                if len(args) == 2 and args[1] is not Any:
+                    schema["additionalProperties"] = _type_to_json_schema(args[1])
+                return schema
+
+            # Sequences and sets → array (with typed items when parameterized).
+            # ``typing.get_origin(Sequence[int])`` returns the
+            # ``collections.abc`` class, not the ``typing`` alias and not a
+            # ``list`` subclass, so matching only aliases and concrete
+            # containers dropped ``Sequence``/``Iterable``/``Set`` parameters
+            # through to the first-type-argument fallback below — advertising
+            # ``Sequence[int]`` as ``{"type": "integer"}``, which the executor
+            # then rejected for every valid list payload.
+            if isinstance(origin, type) and issubclass(origin, _SEQUENCE_ORIGINS):
+                if issubclass(origin, _UNIQUE_ORIGINS):
                     schema = {"type": "array", "uniqueItems": True}
                 else:
                     schema = {"type": "array"}
@@ -394,25 +428,6 @@ def _type_to_json_schema(param_type: Any) -> dict[str, Any]:
                 if item_type is not None and item_type is not Any:
                     schema["items"] = _type_to_json_schema(item_type)
                 return schema
-
-            # Mappings → object (value schema recorded via additionalProperties).
-            if origin is dict or (isinstance(origin, type) and issubclass(origin, dict)):
-                schema = {"type": "object"}
-                if len(args) == 2 and args[1] is not Any:
-                    schema["additionalProperties"] = _type_to_json_schema(args[1])
-                return schema
-            try:
-                from collections.abc import Mapping
-
-                if origin is Mapping or (
-                    isinstance(origin, type) and issubclass(origin, Mapping)
-                ):
-                    schema = {"type": "object"}
-                    if len(args) == 2 and args[1] is not Any:
-                        schema["additionalProperties"] = _type_to_json_schema(args[1])
-                    return schema
-            except TypeError:
-                pass
 
             # Fallback for other generics: use the first argument if available
             if args:

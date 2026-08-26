@@ -571,3 +571,34 @@ class TestDialectOptionThreading:
 
         tools = await OpenAIRetrievalAdapter(gantry).tools("weather", strict=True)
         assert tools[0]["function"]["strict"] is True
+
+
+class TestStrictNullableEnums:
+    """Widening ``type`` to admit ``null`` is not enough on its own — ``enum``
+    is an independent constraint (PR #381 review)."""
+
+    def test_optional_enum_admits_null_after_widening(self) -> None:
+        out = strict_json_schema(
+            {
+                "type": "object",
+                "properties": {"mode": {"type": "string", "enum": ["fast", "slow"]}},
+                "required": [],
+            }
+        )
+        mode = out["properties"]["mode"]
+        assert mode["type"] == ["string", "null"]
+        # Without this the model cannot express "not provided": strict mode
+        # makes every property required, and the enum would forbid null.
+        assert mode["enum"] == ["fast", "slow", None]
+
+    def test_required_enum_is_left_alone(self) -> None:
+        out = strict_json_schema(
+            {
+                "type": "object",
+                "properties": {"mode": {"type": "string", "enum": ["fast", "slow"]}},
+                "required": ["mode"],
+            }
+        )
+        mode = out["properties"]["mode"]
+        assert mode["type"] == "string"
+        assert mode["enum"] == ["fast", "slow"]
