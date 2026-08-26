@@ -7,295 +7,128 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed (review follow-up, round 6)
+## [0.12.0] - 2026-08-26
 
-- **Emitted provider schemas aliased the tool's canonical schema.** Every
-  adapter pass-through path — including the strict-mode fallback added in
-  round 5 — put `ToolDefinition.parameters_schema` itself into the returned
-  payload, so a caller that augmented the payload (adding a property,
-  tweaking a nested subschema) silently corrupted the registered tool,
-  every later conversion of it, and the executor's own validation, which
-  reads the same object. `schema_utils`'s module docstring already states
-  this invariant — *"Adapters must never hand out a structure that aliases
-  `ToolDefinition.parameters_schema`"* — and `strict_json_schema` /
-  `sanitize_gemini_schema` honour it by deep-copying; the pass-through
-  paths never did. All of them now route through a shared `_emitted_schema`
-  helper. The Anthropic adapter's strict path was a *shallow* `{**schema}`
-  spread, which left every nested property dict shared even though the
-  comment above it claimed the copy protected the shared definition — that
-  is now a deep copy too.
-- **Generated framework args models silently ignored undeclared
-  arguments.** `schema_bridge.py` built models with `create_model` and no
-  `extra` configuration, so Pydantic's default (`extra="ignore"`) applied:
-  a misspelled or hallucinated argument was dropped inside CrewAI /
-  LlamaIndex rather than raising, even though the executor rejects exactly
-  that key for the same schema. The generated model now mirrors the
-  schema's own `additionalProperties` — `forbid` when it is absent or
-  `false` (Gantry's deliberate strict default), `allow` when it is `true`
-  or a subschema (including the empty schema `{}`, spec-equivalent to
-  `true`) — reusing the same rule the executor applies.
-- **A closed empty nested object widened to a bare `dict` in the bridge.**
-  `{"properties": {}, "additionalProperties": false}` describes an object
-  permitting no keys at all, but the bridge fell through to a bare `dict`
-  annotation that accepts anything — so a framework waved through a payload
-  the executor then rejected after dispatch. This is the same
-  closed-empty-object shape already fixed in the executor; the bridge now
-  builds an empty, extra-forbidding model for it.
+Tool schemas now carry what your functions actually declare. Everything a
+tool advertises — to every LLM provider dialect and all ~16 agent-framework
+adapters — is derived from one schema, and that schema previously threw away
+most of what the function said: no parameter descriptions ever, enums
+flattened to bare strings, `dict` parameters mislabelled (and then rejected
+by the executor), defaults dropped, nested models stringly typed. This
+release fixes that at the source and makes the executor, the framework
+adapters, and the provider dialects agree with it.
 
-### Fixed (review follow-up, round 5)
+### Added
 
-- **The round-4 rate-limit exemption trusted a caller-controlled flag.**
-  Skipping the rate limit whenever `confirmation_approved=True` was the
-  wrong shape of fix: that flag reaches `check_permission` from
-  `ToolCall(require_confirmation=False)`, a field the *caller* supplies, so
-  any client could lift its own `max_requests_per_minute` simply by setting
-  it — turning a fix for double-counting into a way around the limiter, and
-  contradicting the policy's own documented invariant that approval never
-  relaxes a denial check. The accounting is restructured instead: the
-  sliding window is still *checked* up front (a flood is still rejected
-  cheaply), but a call is only *recorded* once it clears the confirmation
-  gate. A probe that comes back needing confirmation never executed and now
-  costs nothing; the approved replay that follows is counted, exactly once;
-  and a call denied by `allowed_domains` still consumes quota, so rejected
-  floods stay bounded. `confirmation_approved` is back to affecting only
-  the pattern gate.
-- **The same double-count existed on the tool-flag confirmation path, via
-  the real `RateLimiter`.** `ToolDefinition.requires_confirmation` is
-  enforced by the executor, not by `SecurityPolicy`, and that path runs
-  `RateLimiter.acquire()` *before* returning `PENDING_CONFIRMATION` —
-  while `release()` only frees the concurrency counter, never the window
-  slot the call consumed. A probe plus its approved replay therefore spent
-  two units for one logical call, and at `max_calls_per_minute=1` left the
-  tool permanently unexecutable. The executor now settles whether a call
-  will short-circuit to `PENDING_CONFIRMATION` (a pure function of the call
-  and tool) before deciding to acquire at all, and skips the matching
-  release so no unpaired decrement hands out extra concurrency. Argument
-  validation still runs first, so a human is never asked to approve a
-  malformed call.
-- **OpenAI strict mode emitted schemas the API rejects.** `strict_json_schema`
-  only applied strict-mode constraints to objects that declare a
-  `properties` mapping, so an object with arbitrary keys — a
-  `dict[str, int]` parameter (schema-valued `additionalProperties`, no
-  `properties`) or an untyped `dict` (a bare `{"type": "object"}`), both of
-  which the new introspection now emits — passed through unchanged and was
-  then published alongside `strict: true`. OpenAI rejects that request
-  outright rather than ignoring the shape, so asking for strict mode made
-  the *entire request* fail rather than merely leaving one tool
-  unconstrained. Strict mode has no representation for such an object, and
-  forcing `additionalProperties: false` onto it would produce an object
-  accepting no keys at all — silently discarding the parameter's data — so
-  the transform deliberately leaves it alone and a new
-  `unsupported_strict_paths()` reports the offending locations. Both OpenAI
-  dialects now consult it and emit the affected tool unmodified and
-  *without* the flag, logging a warning that names the tool and parameter.
-  Tools whose schemas are fully declared are unaffected.
-
-### Fixed (review follow-up, round 4)
-
-- **An approved confirmation replay was double-counted against the rate
-  limit.** `SecurityPolicy.check_permission(confirmation_approved=True)`
-  still recorded a new timestamp and checked it against
-  `max_requests_per_minute` — but the replay is the *same* logical call as
-  the probe that first raised `ConfirmationRequiredError` (already counted
-  then), not a new request. With a small enough limit this made any
-  confirmation-gated tool permanently unexecutable: the probe consumed the
-  sole slot, and the approved replay immediately hit the limit it should
-  have been exempt from. The rate-limit check is now skipped entirely for
-  an approved call, alongside the existing pattern-gate skip; the
-  `allowed_domains` denial check still runs either way.
-- **`schema_bridge.py` lost nullability on a required-but-nullable
-  field.** A schema property declared `{"type": ["string", "null"]}` and
-  listed in `required` means the caller must supply the key, but the value
-  itself may legitimately be `None` — the generated Pydantic model treated
-  it as a plain required `str`, which would reject a schema-valid `None`.
-  Required fields whose declared type admits `null` now get `T | None`
-  while staying required (`Field(...)`, no default) — omitting the key
-  still fails validation, but supplying `None` no longer does.
-- **`schema_bridge.py` widened a typed `additionalProperties` to a bare
-  `dict`.** A `dict[str, int]`-shaped schema (no declared `properties`, a
-  schema-valued `additionalProperties`) produced a plain `dict` annotation
-  that accepted any value type — CrewAI/LlamaIndex's generated args model
-  would admit a payload the executor's own (correctly strict) validator
-  then rejected. The value type is now preserved as `dict[str,
-  ValueType]`.
-- **`introspection.py`: a `TypedDict` parameter never actually reached its
-  nested-schema branch.** `_type_to_json_schema` checked `issubclass(
-  param_type, dict)` — true for *any* TypedDict class, since those are
-  real `dict` subclasses at runtime — before it reached the
-  Pydantic/TypedDict-specific branch, so every TypedDict parameter was
-  silently flattened to a bare `{"type": "object"}` with no properties or
-  required list, regardless of how detailed the TypedDict's own fields
-  were. The Pydantic-model/dataclass/TypedDict check now runs first.
-- **`introspection.py`: a `typing.TypedDict` parameter lost its schema on
-  Python < 3.12.** Even after the ordering fix above, Pydantic's schema
-  generator only recognizes TypedDict classes built from
-  `typing_extensions.TypedDict` on these versions — a class written with
-  the standard-library `typing.TypedDict` (the import most code reaches
-  for first) raised `PydanticUserError`, caught by the existing
-  best-effort handling and silently downgraded to the same bare
-  `{"type": "object"}`. Introspection now retries via an equivalent
-  `typing_extensions.TypedDict` rebuilt from the same field annotations
-  and totality before giving up.
-- **`introspection.py`: `_inline_local_refs` leaked an unresolved `$defs`
-  blob back into the output for a self-referential model.** A model's own
-  `model_json_schema()` output is commonly shaped
-  `{"$defs": {...}, "$ref": "#/$defs/Name"}` at the top level; resolving
-  the `$ref` only excluded the `$ref` key itself from the keys merged back
-  in alongside the recursively-resolved result, so the *raw, entirely
-  unresolved* `$defs` sibling — internal `$ref`s and all — was reattached
-  as an extra top-level key, defeating the whole point of inlining (and
-  the module's stated invariant that downstream consumers never see a
-  local `$ref`). `$defs`/`definitions` are now excluded from that merge
-  too, alongside `$ref`.
-
-### Fixed (review follow-up, round 3)
-
-- **`additionalProperties: {}` (an explicit empty schema) was treated as
-  `additionalProperties: false`.** Per JSON Schema, an empty schema
-  validates every value and is spec-equivalent to `true` — but Python's
-  `bool({})` is `False`, so it collapsed with the falsy "absent" case at
-  three call sites (top-level, a nested object with declared properties,
-  and a nested object with none). Gantry's own default for *absent*
-  `additionalProperties` intentionally stays strict (no extras) —
-  `introspection.py` only ever sets it explicitly `True` for a `**kwargs`
-  function — so the fix distinguishes "unset" (still strict) from "present
-  as `{}`" (now correctly permissive) via a shared `_permits_additional`
-  helper, rather than loosening the default. Gantry's own schema emission
-  never produces this shape, so the practical exposure was limited to
-  hand-authored or externally-imported (MCP, OpenAPI) schemas.
-
-### Fixed (review follow-up, round 2)
-
-- **A duck-typed `SecurityPolicy` without the new `confirmation_approved`
-  keyword could still be bypassed on an approved AF replay.** The prior
-  fix passed the keyword only to policies whose signature declares it; a
-  legacy policy fell back to a plain `check_permission(name, args)` call,
-  and on an approved replay the caught `ConfirmationRequiredError` was
-  treated as "proceed" — silently skipping whatever denial logic that
-  policy's own `check_permission` runs after its confirmation check
-  (it has no way to selectively honour just the approval). Such a policy
-  now stays closed on any confirmation-required raise, approved or not,
-  until it's upgraded to accept the keyword — matching how it behaved
-  before approval-replay support existed. The genuine "approved and
-  executes" path is unaffected: it already works via a *compliant* policy
-  simply not raising once told `confirmation_approved=True`.
-- **`_normalize_arguments` dropped `None` even when a schema explicitly
-  declares it valid.** A property typed `{"type": ["string", "null"]}`
-  (as opposed to Gantry's own strict-mode widening, which exists purely so
-  "not provided" round-trips as null) means a caller-supplied `None` is a
-  distinct, meaningful value the schema itself permits — not a placeholder
-  for omission. Only properties whose declared type does *not* include
-  `null` are treated as "omitted" now.
-- **A closed empty-object schema (`{"properties": {}, "additionalProperties":
-  false}`) validated any payload.** This shape declares an object that
-  permits *no* keys at all — distinct from the far more common free-form
-  `dict` shape (`additionalProperties` absent or `true`) the same
-  no-declared-properties branch also handles. An explicit `false` now
-  rejects any non-empty payload instead of being treated as free-form.
-- **Deferred, not fixed:** a registered function typed with a
-  dataclass/Pydantic-model/`set`/`tuple` parameter now advertises the
-  correct nested/typed schema, but the executor still invokes the raw
-  handler via `handler(**arguments)` with the JSON-decoded value (a plain
-  `dict` for a dataclass, a `list` for a `set`/`tuple`) rather than
-  reconstructing the original Python type — a handler that accesses
-  typed attributes (`addr.street`) will still fail. This is not a
-  regression (such handlers were never functionally invocable through
-  Gantry — the schema previously mistyped the parameter as a bare
-  string, which failed just as surely, only earlier and more opaquely),
-  and fixing it properly needs the original Python type available at
-  invocation time, which the schema/executor split doesn't currently
-  carry — tracked as a follow-up rather than rushed into this PR.
-
-### Fixed (review follow-up)
-
-- **An approved Agent Framework replay could bypass the domain allowlist.**
-  `GantryApprovalMiddleware` swallowed `ConfirmationRequiredError` on an
-  approved replay instead of passing `confirmation_approved=True` through to
-  `check_permission` — and `SecurityPolicy` raises that error *before*
-  reaching its `allowed_domains` check, so a tool matched by both
-  `require_confirmation` and `allowed_domains` executed with a disallowed
-  domain once a human approved the confirmation prompt. The executor's own
-  `require_confirmation=False` path already did this correctly; the
-  middleware now shares the same call (via a new
-  `accepts_confirmation_approved` signature-inspection helper, replacing a
-  brittle `TypeError`-message string match with one that both call sites
-  use), so approval clears only the confirmation gate everywhere.
-- **`dict[str, int]`-shaped schemas — object with no declared `properties`
-  but a schema-valued `additionalProperties` — validated any value under any
-  key.** The free-form-object early return skipped the subschema entirely;
-  it's now applied to every value.
-- **`delete_tool` left the facade's own handler map stale.** `tool_count`
-  reads `AgentGantry._tool_handlers`, which the registry's own
-  `delete_tool` doesn't touch — a deleted tool's count never dropped. Purged
-  alongside the registry and vector store.
-- **Non-JSON `Literal`/`Enum` values degrade instead of producing an invalid
-  schema.** `Literal` admits `bytes` and an `Enum` member can wrap an
-  arbitrary object; `_enum_schema` now falls back to a plain string schema
-  (no `enum`) when any value isn't JSON-representable.
-- `SecurityPolicy.check_permission`'s `arguments` parameter is typed
-  `dict[str, Any]` (was `dict[str, str]`) to match what callers actually
-  pass — nested dicts/lists and non-string values, which
-  `_extract_all_strings` already handles.
-
-### Added (schema fidelity — every framework and provider dialect benefits)
-
-- **`@gantry.register` now captures what the function actually declares.**
-  `build_parameters_schema` previously emitted bare types only — no
-  per-parameter descriptions ever, `Literal`/`Enum` flattened to `"string"`
-  with no `enum`, `dict[...]` params mislabelled `"string"` (then rejected by
-  the executor), `None | int` misread, defaults dropped, nested
-  models/dataclasses stringly-typed. It now reads docstring parameter
-  sections (Google `Args:`, NumPy `Parameters`, Sphinx `:param:`) and
-  `Annotated[T, "…"]` metadata into `description`, maps `Literal`/`Enum` to
-  `enum`, `dict`/`Mapping` to `object`, `set`/`tuple` to typed arrays,
-  Pydantic models/dataclasses/TypedDicts to inlined nested object schemas
-  (via Pydantic, local `$ref`s resolved), records JSON-safe defaults, and
-  handles PEP 604 unions in either order. `datetime`/`date`/`time`/`UUID`
-  gain string `format`s.
+- **`@gantry.register` captures what the function declares.**
+  `build_parameters_schema` now reads docstring parameter sections (Google
+  `Args:`, NumPy `Parameters`, Sphinx `:param:`) and `Annotated[T, "…"]`
+  metadata into `description`; maps `Literal`/`Enum` to `enum` with an
+  inferred type; `dict`/`Mapping` to `object` (with typed
+  `additionalProperties` when parameterized); `set`/`frozenset`/`tuple` to
+  arrays (`uniqueItems` for sets, homogeneous tuple item types); Pydantic
+  models, dataclasses and `TypedDict`s to inlined nested object schemas via
+  Pydantic, with local `$ref`s resolved; records JSON-safe defaults (`Enum`
+  defaults unwrapped to their values); handles PEP 604 unions in either
+  order; and adds string `format`s for `datetime`/`date`/`time`/`UUID`.
 - **Signature-introspecting frameworks stop flattening that schema.** The
-  three adapters whose framework re-derives its LLM schema from the wrapped
+  adapters whose framework re-derives its own LLM schema from the wrapped
   callable now pass the Gantry schema through natively: LlamaIndex gets an
   explicit `fn_schema` args model, Google ADK gets a declaration carrying
-  `parameters_json_schema` verbatim (fixes ADK 1.x advertising *every*
+  `parameters_json_schema` verbatim (fixing ADK 1.x advertising *every*
   parameter as required; falls back to signature introspection on genai
   builds without the field), and Semantic Kernel reads per-parameter
-  descriptions from `Annotated` metadata. CrewAI's args model is rebuilt on a
-  shared JSON-schema→Pydantic bridge (`Literal` enums, typed array items,
-  nested objects, defaults, descriptions), AG2 registration carries
-  `Annotated` descriptions, and the Microsoft Agent Framework bridge passes
-  the schema to `agent_framework.tool(schema=…)` so enums/defaults survive
-  there too. `ToolSpec.python_signature` gains typed `list[T]` annotations,
+  descriptions from `Annotated` metadata. CrewAI's args model is rebuilt on
+  a shared JSON-schema→Pydantic bridge (`Literal` enums, typed array items,
+  nested objects, defaults, descriptions, nullability), AG2 registration
+  carries `Annotated` descriptions, and the Microsoft Agent Framework bridge
+  passes the schema to `agent_framework.tool(schema=…)`.
+  `ToolSpec.python_signature` gains typed `list[T]` annotations,
   schema-declared defaults, and opt-in `annotated_descriptions`.
 - **Typed non-success errors and a working approve/resume path.**
   `ToolSpec.ainvoke` raises `ToolConfirmationRequiredError` /
   `ToolPermissionDeniedError` (both subclasses of the existing
   `ToolExecutionError`) for confirmation-gated and policy-denied calls, and
-  both executor confirmation paths now populate `error` with the reason and
-  the `require_confirmation=False` re-issue hint — previously the tool-flag
-  path surfaced as `status=pending_confirmation): no detail`. The hint is
-  now true for both gates: `ToolCall(require_confirmation=False)` also
-  clears the `SecurityPolicy` `require_confirmation` pattern gate (via a new
-  `check_permission(confirmation_approved=…)` keyword), while every denial
-  check — rate limit, allowed domains — still runs; previously a
+  both executor confirmation paths populate `error` with the reason and the
+  re-issue hint — previously the tool-flag path surfaced as
+  `status=pending_confirmation): no detail`. That hint is now true for both
+  gates: `ToolCall(require_confirmation=False)` also clears the
+  `SecurityPolicy` `require_confirmation` pattern gate, via a new
+  `check_permission(confirmation_approved=…)` keyword. Previously a
   pattern-gated tool had no per-call approval mechanism at all.
+- **`unsupported_strict_paths()`** (`adapters.tool_spec.schema_utils`)
+  reports the locations in a schema that OpenAI strict mode cannot express.
 
-### Fixed (frameworks)
+### Changed
 
+- **Approval clears the confirmation gate and nothing else.** Every denial
+  check — rate limit, allowed domains — runs whether or not a call is
+  approved, on both the executor's `require_confirmation=False` path and the
+  Agent Framework middleware's native approval replay. A `SecurityPolicy`
+  replacement that predates the `confirmation_approved` keyword stays closed
+  on approval rather than being bypassed.
+- **A confirmation prompt no longer costs rate-limit budget.** A call that
+  comes back `PENDING_CONFIRMATION` never executed, and the approved replay
+  that follows is the same logical call, so only the replay is counted. Both
+  the `SecurityPolicy` window and the executor's `RateLimiter` previously
+  charged both, which at a limit of 1 left confirmation-gated tools
+  permanently unexecutable. Denied calls still consume quota.
+- **Framework args models reject undeclared arguments.** The generated
+  CrewAI/LlamaIndex model takes its `extra` configuration from the schema's
+  own `additionalProperties` instead of Pydantic's default `extra="ignore"`,
+  so a misspelled or hallucinated argument surfaces as an error rather than
+  being silently dropped inside the framework — matching what the executor
+  does with the same key.
+- **Asking for OpenAI strict mode on a schema it cannot express no longer
+  breaks the request.** Strict mode has no representation for an object with
+  arbitrary keys (a `dict[str, int]` parameter, an untyped `dict`), and
+  OpenAI rejects such a request outright rather than ignoring the shape.
+  Affected tools are now emitted unmodified and *without* `strict: true`,
+  with a warning naming the tool and parameter, so one tool stays
+  unconstrained instead of the whole request failing. Forcing
+  `additionalProperties: false` onto such an object is deliberately not done
+  — it would produce an object accepting no keys and silently discard the
+  parameter's data.
+
+### Fixed
+
+- **Argument validation understands the schemas Gantry itself emits.**
+  Explicit `None` for a declared optional parameter is treated as omitted
+  (models legitimately send `null` under the strict-mode widened schemas
+  Gantry advertises, and several frameworks materialize unset optionals as
+  `None`) — that workaround previously lived only in `ToolSpec.ainvoke`, so
+  the `execute_tool_calls` provider path rejected its own schema's output.
+  A property that explicitly declares `null` in its type keeps a
+  caller-supplied `None` as the meaningful value it is. Undeclared keys are
+  admitted when `additionalProperties` permits them (`true` or a subschema,
+  including the empty schema `{}`, which JSON Schema treats as `true`) and
+  refused when it is `false` or absent; a `dict[str, int]`-shaped schema
+  validates every value against its subschema instead of accepting anything;
+  a closed empty object (`{"properties": {}, "additionalProperties": false}`)
+  rejects any payload rather than being treated as free-form; list-typed
+  `type` (`["string", "null"]`) validates against any member; and `enum`
+  membership is enforced.
+- **Emitted provider schemas no longer alias the registered tool.** Every
+  adapter pass-through path put `ToolDefinition.parameters_schema` itself
+  into the returned payload, so a caller that augmented the payload
+  corrupted the registered tool, every later conversion of it, and the
+  executor's validation, which reads the same object. The Anthropic strict
+  path's `{**schema}` spread left every nested property dict shared. All
+  paths now deep-copy.
 - **`disable_af_instrumentation()` never worked.** It imported
   `agent_framework.telemetry` — a module that has never existed in any AF
-  release — and swallowed the `ImportError`, so the documented workaround for
-  AF ≥1.6.0's concurrent-`asyncio.gather` ContextVar crash was a silent no-op
-  in every install. It now calls the real switch,
+  release — and swallowed the `ImportError`, so the documented workaround
+  for AF ≥1.6.0's concurrent-`asyncio.gather` ContextVar crash was a silent
+  no-op in every install. It now calls the real switch,
   `agent_framework.observability.disable_instrumentation()` (verified on AF
   1.5.0 and 1.15.0), no longer requires the `agent-framework` *meta*-package
   metadata to be present, and only downgrades to debug-logging when there is
   genuinely nothing to disable.
 - **AF approval middleware no longer discards its own verdict.** On a
-  confirmation-gated tool it now sets a `function_approval_request` Content
-  on the context before terminating — the shape AF's native approval flow
+  confirmation-gated tool it sets a `function_approval_request` Content on
+  the context before terminating — the shape AF's native approval flow
   requires; a bare termination reached the model as a null function result
-  with the reason lost. Replays carrying the human's decision are honoured
-  (approved → executes, rejected → explanatory result, never a re-request).
+  with the reason lost. Replays carrying the human's decision are honoured.
   A policy *denial* returns an explicit "Permission denied by security
   policy: …" result instead of raising — AF converts middleware exceptions
   into an opaque `"Error: Function failed."`, which read as a tool crash and
@@ -303,37 +136,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **AF bridge crash on out-of-order schemas.** `properties` order carries no
   required-first guarantee (MCP servers, OpenAPI imports), and an optional
   property listed before a required one made the synthesized
-  `inspect.Signature` raise `ValueError: non-default argument follows default
-  argument` — killing the whole run inside `before_run`. Parameters are now
-  ordered required-first.
+  `inspect.Signature` raise `ValueError: non-default argument follows
+  default argument` — killing the whole run inside `before_run`. Parameters
+  are now ordered required-first.
 - **Qualified `required=[…]` pins resolve at request time.**
   `GantryContextProvider` accepted `"namespace.name"` pins at construction
-  but resolved them per-round with bare-name lookups only, so a qualified pin
-  was warned-and-skipped on every round — inverting the guarantee. Request
-  -time lookup now mirrors the executor's namespace-aware resolution.
+  but resolved them per-round with bare-name lookups only, so a qualified
+  pin was warned-and-skipped on every round — inverting the guarantee.
+  Request-time lookup now mirrors the executor's namespace-aware resolution.
 - **`AutoGenAdapter.register`'s install hint pointed at the wrong package.**
   `pip install pyautogen` now delivers a Microsoft autogen-agentchat shim
-  (≥0.10) with no `autogen.register_function`, and AG2 1.x renamed its import
-  to `ag2` with a new agent API. The hint and docs now name the classic line
-  that actually provides the API (`pip install "ag2[openai]<1"`, verified
-  end-to-end against AG2 0.14).
+  (≥0.10) with no `autogen.register_function`, and AG2 1.x renamed its
+  import to `ag2` with a new agent API. The hint and docs now name the
+  classic line that actually provides the API (`pip install "ag2[openai]<1"`,
+  verified end-to-end against AG2 0.14).
 - **`delete_tool` deletes everywhere.** It only removed the vector-store
   entry, so a deleted tool kept appearing in `list_tools_sync()`, kept
   resolving as a `required=` pin, and kept executing. It now also purges the
-  registry, the handler map, and any pending-sync entry.
+  registry, the handler map, the facade's own `_tool_handlers` (which
+  `tool_count` reads), and any pending-sync entry.
+- **Non-JSON `Literal`/`Enum` values degrade instead of producing an invalid
+  schema.** `Literal` admits `bytes` and an `Enum` member can wrap an
+  arbitrary object; `_enum_schema` falls back to a plain string schema (no
+  `enum`) when any value isn't JSON-representable.
+- `SecurityPolicy.check_permission`'s `arguments` parameter is typed
+  `dict[str, Any]` (was `dict[str, str]`) to match what callers actually
+  pass — nested dicts/lists and non-string values, which
+  `_extract_all_strings` already handles.
 
-### Fixed (executor)
+### Known limitation
 
-- **Argument validation now understands the schemas Gantry itself emits.**
-  Explicit `None` for a declared optional parameter is treated as omitted
-  (models legitimately send `null` under the strict-mode widened schemas
-  Gantry advertises; frameworks materialize unset optionals as `None`) — the
-  workaround previously lived only in `ToolSpec.ainvoke`, so the
-  `execute_tool_calls` provider path rejected its own schema's output. A
-  truthy `additionalProperties` admits undeclared keys (top-level and
-  nested), `{"type": "object"}` without declared properties accepts any keys
-  (dict parameters), list-typed `type` (`["string","null"]`) validates
-  against any member, and `enum` membership is enforced.
+- A registered function typed with a dataclass/Pydantic-model/`set`/`tuple`
+  parameter now advertises the correct nested/typed schema, but the executor
+  still invokes the handler via `handler(**arguments)` with the JSON-decoded
+  value (a plain `dict` for a dataclass, a `list` for a `set`/`tuple`)
+  rather than reconstructing the original Python type — a handler that
+  accesses typed attributes (`addr.street`) will still fail. This is not a
+  regression: such handlers were never functionally invocable through Gantry
+  (the schema previously mistyped the parameter as a bare string, which
+  failed just as surely, only earlier and more opaquely). Fixing it properly
+  needs the original Python type available at invocation time, which the
+  schema/executor split doesn't currently carry.
 
 ### CI
 
@@ -350,8 +193,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `disable_af_instrumentation`.
 - `pyproject.toml` audit comments corrected 2026-08-26: the universal lock
   holds agent-framework at 1.5.0 and google-adk at 1.14.1 (pre-release
-  `azure-ai-agents` refusal and semantic-kernel 1.36.0's `pydantic<2.12` pin,
-  respectively) — the comments previously claimed the resolver picked
+  `azure-ai-agents` refusal and semantic-kernel 1.36.0's `pydantic<2.12`
+  pin, respectively) — the comments previously claimed the resolver picked
   1.13.0 / 2.x. Adapters re-verified standalone against agent-framework
   1.15.0, google-adk 2.7.1, semantic-kernel 1.44.1, crewai 1.15.17,
   langchain 1.3.17, langgraph 1.2.11, llama-index-core 0.14.24, pydantic-ai
@@ -2330,7 +2173,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.8.0...v0.9.0
