@@ -52,11 +52,23 @@ def _spec_to_llamaindex(spec: ToolSpec) -> Any:
     _sync_fn.__signature__ = async_fn.__signature__  # type: ignore[attr-defined]
     _sync_fn.__annotations__ = dict(getattr(async_fn, "__annotations__", {}))
 
+    # Prefer an explicit args model built from the Gantry JSON schema:
+    # LlamaIndex otherwise re-derives the schema from the wrapper's signature,
+    # which flattens per-parameter descriptions, enums, and typed array items.
+    from agent_gantry.integrations.frameworks.schema_bridge import (
+        pydantic_model_from_schema,
+    )
+
+    fn_schema = None
+    if spec.parameters.get("properties"):
+        fn_schema = pydantic_model_from_schema(f"{spec.name}_Args", spec.parameters)
+
     return FunctionTool.from_defaults(
         fn=_sync_fn,
         async_fn=async_fn,
         name=spec.name,
         description=spec.description,
+        fn_schema=fn_schema,
     )
 
 

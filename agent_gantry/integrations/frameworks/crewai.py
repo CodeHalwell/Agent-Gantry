@@ -58,30 +58,22 @@ def _spec_to_crewai(spec: ToolSpec) -> Any:
 def _build_args_schema(spec: ToolSpec) -> Any:
     """Build a Pydantic args model from the spec's JSON-Schema parameters.
 
-    Returns ``None`` when there are no properties (CrewAI then uses its own
-    default empty schema). Best-effort: if Pydantic model creation fails for any
-    reason, fall back to ``None`` so the tool is still usable (sans typed args).
+    Delegates to the shared
+    :func:`~agent_gantry.integrations.frameworks.schema_bridge.pydantic_model_from_schema`
+    bridge, so per-parameter descriptions, enums (as ``Literal``), typed array
+    items, nested objects, and defaults all survive into the model CrewAI
+    advertises to the LLM. Returns ``None`` when there are no properties
+    (CrewAI then uses its own default empty schema) or when the schema can't
+    be expressed — the tool is still usable, sans typed args.
     """
     properties = spec.parameters.get("properties") or {}
     if not properties:
         return None
-    try:
-        from pydantic import Field, create_model
+    from agent_gantry.integrations.frameworks.schema_bridge import (
+        pydantic_model_from_schema,
+    )
 
-        from agent_gantry.integrations.frameworks.base import _json_type_to_python
-
-        required = set(spec.parameters.get("required") or [])
-        fields: dict[str, Any] = {}
-        for name, prop in properties.items():
-            annotation = _json_type_to_python(prop.get("type") if isinstance(prop, dict) else None)
-            description = prop.get("description", "") if isinstance(prop, dict) else ""
-            if name in required:
-                fields[name] = (annotation, Field(..., description=description))
-            else:
-                fields[name] = (annotation | None, Field(default=None, description=description))
-        return create_model(f"{spec.name}_Args", **fields)
-    except Exception:  # noqa: BLE001 - schema is best-effort
-        return None
+    return pydantic_model_from_schema(f"{spec.name}_Args", spec.parameters)
 
 
 async def _for_crewai(

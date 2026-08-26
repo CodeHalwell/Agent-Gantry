@@ -17,7 +17,9 @@ from agent_gantry.integrations.frameworks.agno import AgnoAdapter
 from agent_gantry.integrations.frameworks.autogen import AutoGenAdapter
 from agent_gantry.integrations.frameworks.base import (
     GantryToolset,
+    ToolConfirmationRequiredError,
     ToolExecutionError,
+    ToolPermissionDeniedError,
     ToolSpec,
     spec_from_tool,
 )
@@ -39,7 +41,9 @@ __all__ = [
     # shared selection core
     "GantryToolset",
     "MissingRequiredToolError",
+    "ToolConfirmationRequiredError",
     "ToolExecutionError",
+    "ToolPermissionDeniedError",
     "ToolSpec",
     "spec_from_tool",
     # per-framework adapters

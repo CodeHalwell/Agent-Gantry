@@ -75,13 +75,29 @@ LiveTier = Literal["per-turn", "per-call"]
 
 
 class ToolExecutionError(RuntimeError):
-    """Raised when a Gantry-backed tool invocation does not succeed."""
+    """Raised when a Gantry-backed tool invocation does not succeed.
+
+    Two subclasses distinguish the "never executed by design" outcomes so a
+    framework caller can branch without string-matching the status:
+    :class:`ToolConfirmationRequiredError` (the tool is confirmation-gated and was
+    not run — approve by re-issuing with ``ToolCall(require_confirmation=
+    False)``) and :class:`ToolPermissionDeniedError` (the security policy refused
+    it). Catching :class:`ToolExecutionError` still catches every outcome.
+    """
 
     def __init__(self, tool_name: str, status: str, error: str | None) -> None:
         self.tool_name = tool_name
         self.status = status
         self.error = error
         super().__init__(f"Tool {tool_name!r} failed (status={status}): {error or 'no detail'}")
+
+
+class ToolConfirmationRequiredError(ToolExecutionError):
+    """The tool requires human confirmation and was deliberately not executed."""
+
+
+class ToolPermissionDeniedError(ToolExecutionError):
+    """The security policy denied the tool call; it was not executed."""
 
 
 @dataclass(frozen=True)
@@ -131,7 +147,12 @@ class ToolSpec:
             ToolCall(tool_name=self.name, namespace=self._namespace, arguments=arguments)
         )
         if result.status != ExecutionStatus.SUCCESS:
-            raise ToolExecutionError(
+            exc_cls = ToolExecutionError
+            if result.status == ExecutionStatus.PENDING_CONFIRMATION:
+                exc_cls = ToolConfirmationRequiredError
+            elif result.status == ExecutionStatus.PERMISSION_DENIED:
+                exc_cls = ToolPermissionDeniedError
+            raise exc_cls(
                 self.name, getattr(result.status, "value", str(result.status)), result.error
             )
         return result.result
@@ -149,7 +170,11 @@ class ToolSpec:
         return _run_coroutine_sync(self.ainvoke(*args, **kwargs))
 
     def callable_for_signature(
-        self, *, union_optional: bool = False, type_matched_defaults: bool = False
+        self,
+        *,
+        union_optional: bool = False,
+        type_matched_defaults: bool = False,
+        annotated_descriptions: bool = False,
     ) -> Callable[..., Any]:
         """Return a plain async function that calls this tool by keyword.
 
@@ -161,8 +186,10 @@ class ToolSpec:
         parameters instead of a bare ``**kwargs`` (which would surface as a
         no-argument tool).
 
-        ``union_optional`` (Semantic Kernel) and ``type_matched_defaults``
-        (Google ADK) are opt-in signature tweaks — see :meth:`python_signature`.
+        ``union_optional`` (Semantic Kernel), ``type_matched_defaults``
+        (Google ADK) and ``annotated_descriptions`` (frameworks that read
+        parameter descriptions from ``Annotated`` metadata — Semantic Kernel,
+        AG2) are opt-in signature tweaks — see :meth:`python_signature`.
         """
 
         async def _fn(**kwargs: Any) -> Any:
@@ -171,7 +198,9 @@ class ToolSpec:
         _fn.__name__ = self.name
         _fn.__doc__ = self.description
         _fn.__signature__ = self.python_signature(  # type: ignore[attr-defined]
-            union_optional=union_optional, type_matched_defaults=type_matched_defaults
+            union_optional=union_optional,
+            type_matched_defaults=type_matched_defaults,
+            annotated_descriptions=annotated_descriptions,
         )
         _fn.__annotations__ = {
             p.name: p.annotation
@@ -181,38 +210,64 @@ class ToolSpec:
         return _fn
 
     def python_signature(
-        self, *, union_optional: bool = False, type_matched_defaults: bool = False
+        self,
+        *,
+        union_optional: bool = False,
+        type_matched_defaults: bool = False,
+        annotated_descriptions: bool = False,
     ) -> inspect.Signature:
         """Build an :class:`inspect.Signature` from the JSON-Schema parameters.
 
         Each property becomes a keyword-only parameter; required properties have
-        no default. By default optional properties default to ``None``. Two
-        opt-in modes adapt the signature for stricter frameworks:
+        no default. Optional properties default to the schema's own ``default``
+        when it declares one, else ``None``. Array properties with a typed
+        ``items`` schema annotate as ``list[T]`` so signature-introspecting
+        frameworks surface the item type. Three opt-in modes adapt the
+        signature for stricter frameworks:
 
         - ``union_optional``: annotate optional params ``T | None`` (Semantic
           Kernel infers required-ness from the annotation, not the default).
-        - ``type_matched_defaults``: default optional params to a type-matched
-          empty value (``""`` / ``0`` / ``False`` / ``[]`` / ``{}``) instead of
-          ``None`` (Google ADK's automatic function calling rejects both union
-          types and a ``None`` default whose type mismatches the annotation).
+        - ``type_matched_defaults``: for optional params with no schema
+          ``default``, default to a type-matched empty value (``""`` / ``0`` /
+          ``False`` / ``[]`` / ``{}``) instead of ``None`` (Google ADK's
+          automatic function calling rejects both union types and a ``None``
+          default whose type mismatches the annotation).
+        - ``annotated_descriptions``: wrap each annotation in
+          ``Annotated[T, "<description>"]`` when the property carries a
+          ``description`` — the convention Semantic Kernel and AG2 read
+          parameter descriptions from.
         """
+        from typing import Annotated
+
         properties = self.parameters.get("properties") or {}
         required = set(self.parameters.get("required") or [])
         params: list[inspect.Parameter] = []
         for name, prop in properties.items():
-            json_type = prop.get("type") if isinstance(prop, dict) else None
-            annotation = _json_type_to_python(json_type)
+            prop = prop if isinstance(prop, dict) else {}
+            json_type = prop.get("type")
+            annotation = _annotation_for_prop(prop)
             if name in required:
                 default = inspect.Parameter.empty
-            elif union_optional:
-                # `T | None` — valid at runtime on the project's floor (3.10+,
-                # enforced by ruff UP) and the form SK uses to infer optionality.
-                annotation = annotation | None
-                default = None
-            elif type_matched_defaults:
-                default = _typed_default(json_type)
             else:
-                default = None
+                if union_optional:
+                    # `T | None` — valid at runtime on the project's floor
+                    # (3.10+, enforced by ruff UP) and the form SK uses to
+                    # infer optionality.
+                    annotation = annotation | None
+                schema_default = prop.get("default")
+                if schema_default is not None and _matches_json_type(
+                    schema_default, json_type
+                ):
+                    # The schema's own default is the most faithful signal —
+                    # surface it instead of a synthetic placeholder.
+                    default = schema_default
+                elif type_matched_defaults:
+                    default = _typed_default(json_type)
+                else:
+                    default = None
+            description = prop.get("description")
+            if annotated_descriptions and isinstance(description, str) and description:
+                annotation = Annotated[annotation, description]
             params.append(
                 inspect.Parameter(
                     name,
@@ -260,6 +315,55 @@ def _json_type_to_python(json_type: Any) -> Any:
     if isinstance(json_type, list):  # e.g. ["string", "null"]
         json_type = next((t for t in json_type if t != "null"), None)
     return _JSON_TO_PYTHON.get(json_type, str)
+
+
+def _annotation_for_prop(prop: dict[str, Any]) -> Any:
+    """Python annotation for one property schema, item types included.
+
+    ``{"type": "array", "items": {"type": "string"}}`` annotates as
+    ``list[str]`` rather than bare ``list``, so frameworks that rebuild their
+    LLM schema from the signature (Semantic Kernel, Google ADK's fallback
+    path, AG2) advertise the item type instead of an untyped array. Untyped
+    or unrecognized item schemas keep the bare container annotation.
+    """
+    json_type = prop.get("type")
+    annotation = _json_type_to_python(json_type)
+    if annotation is list:
+        items = prop.get("items")
+        if isinstance(items, dict):
+            item_type = items.get("type")
+            if isinstance(item_type, list):
+                item_type = next((t for t in item_type if t != "null"), None)
+            item_annotation = _JSON_TO_PYTHON.get(item_type)
+            if item_annotation is not None:
+                return list[item_annotation]
+    return annotation
+
+
+def _matches_json_type(value: Any, json_type: Any) -> bool:
+    """Whether a schema ``default`` is usable for its declared JSON type.
+
+    Guards against surfacing a mistyped default (e.g. ``default: "5"`` on an
+    ``integer`` property) as a Python signature default, where a strict
+    framework validator would then reject the tool outright.
+    """
+    if isinstance(json_type, list):
+        json_type = next((t for t in json_type if t != "null"), None)
+    if json_type is None:
+        return True
+    if json_type == "boolean":
+        return isinstance(value, bool)
+    if json_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if json_type == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if json_type == "string":
+        return isinstance(value, str)
+    if json_type == "array":
+        return isinstance(value, list)
+    if json_type == "object":
+        return isinstance(value, dict)
+    return True
 
 
 # Shared worker threads for running coroutines from sync framework callbacks
