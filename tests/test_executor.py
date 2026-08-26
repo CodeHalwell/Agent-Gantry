@@ -855,3 +855,23 @@ async def test_numeric_bounds_do_not_apply_to_booleans(engine):
     )
     is_valid, error = await engine._validate_arguments(tool, {"flag": True})
     assert is_valid is True, error
+
+
+@pytest.mark.asyncio
+async def test_validate_treats_empty_combinator_branch_as_wildcard(engine):
+    """An empty schema ``{}`` validates every value, so it is a branch that
+    always matches. Excluding it turned ``{"anyOf": [{}, {"type": "integer"}]}``
+    — semantically "anything" — into an integer-only constraint
+    (PR #381 review)."""
+    tool = ToolDefinition(
+        name="wildcard",
+        description="anyOf carrying an empty wildcard branch",
+        parameters_schema={
+            "type": "object",
+            "properties": {"v": {"anyOf": [{}, {"type": "integer"}]}},
+            "required": ["v"],
+        },
+    )
+    for value in ("a string", 5, None, [1, 2]):
+        is_valid, error = await engine._validate_arguments(tool, {"v": value})
+        assert is_valid is True, f"{value!r}: {error}"

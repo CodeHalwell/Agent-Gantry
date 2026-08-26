@@ -106,6 +106,34 @@ adapters, and the provider dialects agree with it.
   throughout the nested model and `TypedDict` schemas introspection now
   inlines — and validation checked only `type` and `enum`, letting any value
   through. `const` equality is checked alongside `enum` membership now.
+- **The OpenAI Agents adapter didn't use the strict-mode safety gate.**
+  `FunctionTool.strict_json_schema` defaults to `True`, and the SDK then runs
+  its own `ensure_strict_json_schema`, which raises `UserError` on an object
+  with arbitrary keys. `strict_json_schema()` deliberately leaves such a
+  schema alone, so exporting a tool with a `dict[str, int]` parameter through
+  `OpenAIAgentsAdapter` handed the SDK exactly what it refuses. The adapter
+  now consults `unsupported_strict_paths()` like the provider adapters do and
+  builds the tool with `strict_json_schema=False`, with a warning.
+- **An empty combinator branch was ignored.** `{}` validates every value, so
+  `{"anyOf": [{}, {"type": "integer"}]}` means "anything" — but the empty
+  branch was filtered out, turning it into an integer-only constraint that
+  rejected valid payloads.
+- **Two more schema-aliasing sites.** The Agent Framework bridge passed
+  `parameters_schema` straight into `agent_framework.tool(schema=...)`, and
+  the Google ADK declaration used a shallow `dict()` that left every nested
+  subschema shared. Both now deep-copy, matching the provider adapters.
+- **A broken `agent-framework` install could crash
+  `disable_af_instrumentation()`.** Its import guard caught only
+  `ImportError`, so a version mismatch raising anything else propagated to
+  the caller. Other exceptions now degrade to a warning — at warning level
+  rather than debug, since a silent broad `except` is what hid this helper's
+  original bug.
+- **Framework args models disagreed with the executor in three more shapes.**
+  A closed object with no `properties` key at all fell through to a bare
+  `dict`; a `type` list with several real members collapsed to the first,
+  rejecting values the executor accepts; and a nullable-typed property whose
+  `enum` omits `null` was widened to accept `None`, which the executor then
+  correctly rejected at dispatch.
 - **Constraint keywords were never enforced during argument validation.**
   Numeric bounds (`minimum`/`maximum`/their exclusive variants,
   `multipleOf`), string `minLength`/`maxLength`/`pattern`, and array

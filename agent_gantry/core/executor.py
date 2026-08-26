@@ -817,10 +817,16 @@ class ExecutionEngine:
                     branches = val_schema.get(key)
                     if not isinstance(branches, list) or not branches:
                         continue
-                    usable = [b for b in branches if isinstance(b, dict) and b]
+                    usable = [b for b in branches if isinstance(b, dict)]
                     if not usable:
                         continue
-                    matches = sum(1 for b in usable if _validate_value(value, b, path)[0])
+                    # An empty schema ``{}`` validates every value, so it is a
+                    # branch that always matches — excluding it turned
+                    # ``{"anyOf": [{}, {"type": "integer"}]}`` (semantically
+                    # "anything") into an integer-only constraint.
+                    matches = sum(
+                        1 for b in usable if not b or _validate_value(value, b, path)[0]
+                    )
                     if matches == 0:
                         return (
                             False,

@@ -130,9 +130,19 @@ def _build_model(name: str, schema: dict[str, Any], depth: int) -> Any:
 
 
 def _is_nullable(prop: dict[str, Any]) -> bool:
-    """Whether a property schema's declared type admits ``null``."""
+    """Whether a property schema actually admits ``null``."""
     json_type = prop.get("type")
-    return json_type == "null" or (isinstance(json_type, list) and "null" in json_type)
+    declared = json_type == "null" or (isinstance(json_type, list) and "null" in json_type)
+    if not declared:
+        return False
+    # ``enum`` is an independent constraint: ``{"type": ["string", "null"],
+    # "enum": ["a", "b"]}`` does *not* admit null, and the executor enforces
+    # that. Widening the field to accept ``None`` here would let a call pass
+    # the framework's own validation only to be rejected at dispatch.
+    enum_values = prop.get("enum")
+    if isinstance(enum_values, list) and enum_values and None not in enum_values:
+        return False
+    return True
 
 
 def _union_annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
@@ -249,9 +259,21 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
         return type(None)
 
     if isinstance(json_type, list):  # e.g. ["string", "null"]
-        json_type = next((t for t in json_type if t != "null"), None)
-        if json_type is None:  # e.g. ["null"]
+        non_null = [t for t in json_type if t != "null"]
+        if not non_null:  # e.g. ["null"]
             return type(None)
+        if len(non_null) > 1:
+            # Several real member types. Collapsing to the first would reject
+            # values the executor accepts (it validates against *any* listed
+            # member), so union them. Each member is re-entered with a scalar
+            # ``type``, so this cannot re-enter this branch.
+            annotation = _annotation(f"{name}_0", {**prop, "type": non_null[0]}, depth + 1)
+            for index, member in enumerate(non_null[1:], start=1):
+                annotation = annotation | _annotation(
+                    f"{name}_{index}", {**prop, "type": member}, depth + 1
+                )
+            return annotation
+        json_type = non_null[0]
 
     if json_type in _SCALARS:
         return _SCALARS[json_type]
@@ -264,12 +286,13 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
         properties = prop.get("properties")
         if isinstance(properties, dict) and properties:
             return _build_model(f"{name}_obj", prop, depth + 1)
-        if isinstance(properties, dict) and not _permits_additional(prop):
-            # ``{"properties": {}, "additionalProperties": false}`` — an
-            # object that permits no keys at all, which the executor
-            # enforces. A bare ``dict`` here would accept anything, so the
-            # framework would wave through a payload the engine rejects.
-            return _build_model(f"{name}_obj", prop, depth + 1)
+        if prop.get("additionalProperties") is False:
+            # An object that permits no keys at all, which the executor
+            # enforces — whether or not it spells out an empty ``properties``.
+            # A bare ``dict`` here would accept anything, so the framework
+            # would wave through a payload the engine rejects.
+            closed = {**prop, "properties": properties if isinstance(properties, dict) else {}}
+            return _build_model(f"{name}_obj", closed, depth + 1)
         additional = prop.get("additionalProperties")
         if isinstance(additional, dict) and additional:
             # No declared properties, but a typed ``additionalProperties``

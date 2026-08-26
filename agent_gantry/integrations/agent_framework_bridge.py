@@ -33,6 +33,7 @@ Usage:
 
 from __future__ import annotations
 
+import copy
 import inspect
 import json
 import logging
@@ -288,6 +289,18 @@ def disable_af_instrumentation() -> bool:
             "nothing to disable."
         )
         return False
+    except Exception:  # noqa: BLE001 - a broken/mismatched AF install
+        # Anything other than ImportError means AF *is* present but its
+        # observability module failed to import (a version mismatch raising
+        # AttributeError, say). Degrade rather than take down the caller —
+        # but at warning level, not debug: the original bug this helper had
+        # was a real failure hidden behind a silent broad except.
+        logger.warning(
+            "disable_af_instrumentation: agent_framework.observability failed "
+            "to import; leaving instrumentation as-is.",
+            exc_info=True,
+        )
+        return False
     _disable = getattr(_af_observability, "disable_instrumentation", None)
     if not callable(_disable):
         # AF < 1.6.0 has no default instrumentation (and no switch) — not an
@@ -510,7 +523,12 @@ def _maybe_wrap_as_function_tool(
     # whatever survives signature introspection of the synthesized wrapper.
     try:
         if "schema" in inspect.signature(af_tool).parameters:
-            tool_kwargs["schema"] = tool_def.parameters_schema
+            # Deep-copied for the same reason the provider adapters copy:
+            # the registry holds one canonical parameters_schema per tool, so
+            # handing AF the object itself lets anything that adjusts the
+            # emitted schema corrupt every later conversion and the
+            # executor's own validation.
+            tool_kwargs["schema"] = copy.deepcopy(tool_def.parameters_schema)
     except (TypeError, ValueError):  # pragma: no cover - builtin/exotic tool()
         pass
 

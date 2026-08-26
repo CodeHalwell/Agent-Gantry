@@ -11,6 +11,7 @@ Public entry point: :class:`GoogleADKAdapter`.
 
 from __future__ import annotations
 
+import copy
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import (
@@ -87,7 +88,11 @@ def _declaration_from_schema(spec: ToolSpec) -> Any:
         declaration_cls, "model_fields", {}
     ):
         return None
-    schema = dict(spec.parameters or {})
+    # Deep, not shallow: a ``dict(...)`` leaves every nested ``properties`` /
+    # ``items`` subschema aliased to the registry's canonical
+    # ``ToolDefinition.parameters_schema``, so anything that adjusts the
+    # declaration corrupts the tool for every other consumer.
+    schema = copy.deepcopy(spec.parameters) if spec.parameters else {}
     schema.setdefault("type", "object")
     schema.setdefault("properties", {})
     try:

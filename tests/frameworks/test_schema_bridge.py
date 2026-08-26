@@ -440,3 +440,63 @@ def test_oneof_with_disjoint_object_branches_still_works():
     )
     assert model(v={"a": 1}).v.a == 1
     assert model(v={"b": "x"}).v.b == "x"
+
+
+def test_closed_object_without_properties_key_rejects_all_keys():
+    """``{"type": "object", "additionalProperties": false}`` permits no keys
+    whether or not it spells out an empty ``properties`` — the executor
+    enforces that either way (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"v": {"type": "object", "additionalProperties": False}},
+            "required": ["v"],
+        },
+    )
+    assert model(v={}) is not None
+    with pytest.raises(ValidationError):
+        model(v={"anything": 1})
+
+
+def test_type_list_with_several_members_becomes_a_union():
+    """The executor validates a list-typed property against *any* listed
+    member, so collapsing to the first would reject values it accepts."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"v": {"type": ["string", "integer"]}},
+            "required": ["v"],
+        },
+    )
+    assert model(v="a").v == "a"
+    assert model(v=7).v == 7
+
+
+def test_nullable_enum_field_matches_executor_semantics():
+    """``enum`` is an independent constraint: ``{"type": ["string","null"],
+    "enum": ["a","b"]}`` does not admit null, and the executor enforces that.
+    Widening here would pass framework validation and fail at dispatch."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"mode": {"type": ["string", "null"], "enum": ["a", "b"]}},
+            "required": ["mode"],
+        },
+    )
+    with pytest.raises(ValidationError):
+        model(mode=None)
+    assert model(mode="a").mode == "a"
+
+    # …but an enum that *does* list null stays nullable.
+    permissive = pydantic_model_from_schema(
+        "Args2",
+        {
+            "type": "object",
+            "properties": {"mode": {"type": ["string", "null"], "enum": ["a", None]}},
+            "required": ["mode"],
+        },
+    )
+    assert permissive(mode=None).mode is None
