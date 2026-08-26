@@ -413,11 +413,22 @@ class ExecutionEngine:
                 # ``_check_confirmation_required`` honours for the tool-flag
                 # gate) — it skips only the confirmation-pattern gate; every
                 # denial check (rate limit, allowed domains) still runs.
-                self._security_policy.check_permission(
-                    tool.name,
-                    call.arguments,
-                    confirmation_approved=call.require_confirmation is False,
-                )
+                # Duck-typed policies predating the keyword keep working via
+                # the two-argument fallback (their pattern gate then stays
+                # un-approvable, exactly as before).
+                try:
+                    self._security_policy.check_permission(
+                        tool.name,
+                        call.arguments,
+                        confirmation_approved=call.require_confirmation is False,
+                    )
+                except TypeError as exc:
+                    # Only the signature mismatch falls back — a TypeError
+                    # raised *inside* the policy must propagate, and must not
+                    # re-run rate-limit accounting.
+                    if "confirmation_approved" not in str(exc):
+                        raise
+                    self._security_policy.check_permission(tool.name, call.arguments)
             except ConfirmationRequiredError as e:
                 result = ToolResult(
                     tool_name=call.tool_name,
