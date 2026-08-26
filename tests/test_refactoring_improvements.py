@@ -296,3 +296,114 @@ class TestToolSearchableText:
 
         # Should be identical
         assert text1 == text2
+
+
+class TestSchemaFidelity:
+    """build_parameters_schema preserves declared intent (descriptions, enums,
+    containers, defaults) — what every provider dialect and framework adapter
+    ultimately advertises to the LLM."""
+
+    def test_docstring_descriptions_google_style(self):
+        def func(city: str, days: int = 3) -> str:
+            """Get a weather forecast.
+
+            Args:
+                city: Name of the city.
+                days: Forecast horizon in days.
+            """
+            return ""
+
+        schema = build_parameters_schema(func)
+        assert schema["properties"]["city"]["description"] == "Name of the city."
+        assert schema["properties"]["days"]["description"] == "Forecast horizon in days."
+        assert schema["properties"]["days"]["default"] == 3
+
+    def test_annotated_description_wins_over_docstring(self):
+        from typing import Annotated
+
+        def func(city: Annotated[str, "City name override"]) -> str:
+            """Get weather.
+
+            Args:
+                city: Ignored.
+            """
+            return ""
+
+        schema = build_parameters_schema(func)
+        assert schema["properties"]["city"]["description"] == "City name override"
+
+    def test_literal_and_enum_become_enum(self):
+        import enum
+        from typing import Literal
+
+        class Color(str, enum.Enum):
+            RED = "red"
+            BLUE = "blue"
+
+        def func(mode: Literal["fast", "slow"], color: Color = Color.RED) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        assert schema["properties"]["mode"] == {
+            "type": "string",
+            "enum": ["fast", "slow"],
+        }
+        assert schema["properties"]["color"]["enum"] == ["red", "blue"]
+        assert schema["properties"]["color"]["default"] == "red"
+
+    def test_dict_maps_to_object(self):
+        from typing import Any
+
+        def func(meta: dict[str, Any], counts: dict[str, int] | None = None) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        assert schema["properties"]["meta"] == {"type": "object"}
+        assert schema["properties"]["counts"]["type"] == "object"
+        assert schema["properties"]["counts"]["additionalProperties"] == {
+            "type": "integer"
+        }
+
+    def test_pep604_union_none_first(self):
+        def func(x: None | int = None) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        assert schema["properties"]["x"]["type"] == "integer"
+
+    def test_typed_containers(self):
+        def func(tags: set[str], pair: tuple[int, ...] = ()) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        assert schema["properties"]["tags"]["type"] == "array"
+        assert schema["properties"]["tags"]["uniqueItems"] is True
+        assert schema["properties"]["tags"]["items"] == {"type": "string"}
+        assert schema["properties"]["pair"]["items"] == {"type": "integer"}
+
+    def test_dataclass_param_inlines_nested_schema(self):
+        import dataclasses
+
+        @dataclasses.dataclass
+        class Address:
+            street: str
+            city: str = "London"
+
+        def func(addr: Address) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        addr = schema["properties"]["addr"]
+        assert addr["type"] == "object"
+        assert addr["properties"]["street"]["type"] == "string"
+        assert "$ref" not in str(addr)
+
+    def test_sphinx_param_docs(self):
+        def func(x: int) -> None:
+            """Do a thing.
+
+            :param x: The x value.
+            """
+
+        schema = build_parameters_schema(func)
+        assert schema["properties"]["x"]["description"] == "The x value."
