@@ -133,3 +133,32 @@ def test_accepts_confirmation_approved():
         pass
 
     assert accepts_confirmation_approved(NotAPolicy()) is False
+
+
+def test_confirmation_approved_does_not_double_count_against_rate_limit():
+    """An approved replay is the same logical call as the probe that first
+    raised ConfirmationRequiredError, already counted then — not a second
+    request. With a limit of 1, counting the replay too would make any
+    confirmation-gated tool permanently unexecutable: the probe call would
+    consume the sole slot, and the replay would immediately hit the limit
+    it should be exempt from."""
+    import pytest
+
+    from agent_gantry.core.security import (
+        ConfirmationRequiredError,
+        PermissionDeniedError,
+        SecurityPolicy,
+    )
+
+    policy = SecurityPolicy(require_confirmation=["delete_*"], max_requests_per_minute=1)
+
+    with pytest.raises(ConfirmationRequiredError):
+        policy.check_permission("delete_user", {"id": "1"})
+
+    # Approved replay must succeed even though the probe above already
+    # used the single available rate-limit slot.
+    policy.check_permission("delete_user", {"id": "1"}, confirmation_approved=True)
+
+    # A genuinely new (non-approved) request still hits the limit.
+    with pytest.raises(PermissionDeniedError, match="Rate limit exceeded"):
+        policy.check_permission("other_tool", {})

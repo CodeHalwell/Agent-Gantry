@@ -134,12 +134,18 @@ class SecurityPolicy:
             arguments: Arguments for the tool
             confirmation_approved: When ``True``, the caller vouches that a
                 human already approved this specific call, so the
-                ``require_confirmation`` pattern gate is skipped. Every
-                *denial* check (rate limit, allowed domains) still runs —
-                approval is not a policy bypass. Set by the executor when a
-                call carries ``ToolCall(require_confirmation=False)``.
+                ``require_confirmation`` pattern gate is skipped. The
+                ``allowed_domains`` denial check still runs — approval is
+                not a policy bypass. The rate limit is also skipped for an
+                approved call: it's the replay of a call already counted
+                when it first requested confirmation, not a new request, so
+                counting it again would let one logical call consume two
+                slots of the budget (and, with a small enough limit, make
+                confirmation-gated tools permanently unexecutable). Set by
+                the executor when a call carries
+                ``ToolCall(require_confirmation=False)``.
         """
-        if self.max_requests_per_minute > 0:
+        if self.max_requests_per_minute > 0 and not confirmation_approved:
             now = time.time()
             # ⚡ Bolt: Fast sliding window cleanup using index slice instead of O(N) comprehension
             split_idx = 0
