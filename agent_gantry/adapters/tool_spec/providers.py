@@ -115,10 +115,12 @@ class OpenAIAdapter:
         Returns:
             OpenAI-compatible tool schema
         """
-        parameters = _emitted_schema(tool.parameters_schema)
-        use_strict = strict
+        # ``_strict_parameters`` returns its own copy on both branches, so
+        # only the non-strict path needs one made here.
         if strict:
             parameters, use_strict = _strict_parameters(tool, "OpenAI")
+        else:
+            parameters, use_strict = _emitted_schema(tool.parameters_schema), False
         schema: dict[str, Any] = {
             "type": "function",
             "function": {
@@ -272,10 +274,12 @@ class OpenAIResponsesAdapter:
         Returns:
             OpenAI Responses API compatible tool schema
         """
-        parameters = _emitted_schema(tool.parameters_schema)
-        use_strict = strict
+        # ``_strict_parameters`` returns its own copy on both branches, so
+        # only the non-strict path needs one made here.
         if strict:
             parameters, use_strict = _strict_parameters(tool, "OpenAI Responses")
+        else:
+            parameters, use_strict = _emitted_schema(tool.parameters_schema), False
         schema: dict[str, Any] = {
             "type": "function",
             "name": tool.name,

@@ -33,6 +33,7 @@ import dataclasses
 import datetime
 import enum
 import inspect
+import math
 import re
 import types
 import uuid
@@ -192,6 +193,11 @@ def _split_annotated(param_type: Any) -> tuple[Any, str | None]:
 
 def _json_safe(value: Any) -> bool:
     """Whether ``value`` can be embedded in a JSON schema as a default."""
+    if isinstance(value, float) and not math.isfinite(value):
+        # NaN/±inf are Python floats but not JSON values: ``json.dumps``
+        # emits the bare tokens ``NaN``/``Infinity`` unless ``allow_nan`` is
+        # off, and a provider parsing strict JSON rejects the request.
+        return False
     if isinstance(value, (str, int, float, bool)) or value is None:
         return True
     if isinstance(value, (list, tuple)):
@@ -352,9 +358,9 @@ def _type_to_json_schema(param_type: Any) -> dict[str, Any]:
 
     # Direct type match (most reliable)
     if isinstance(param_type, type):
-        for scalar, schema in _SCALAR_MAP.items():
-            if param_type is scalar:
-                return dict(schema)
+        scalar_schema = _SCALAR_MAP.get(param_type)
+        if scalar_schema is not None:
+            return dict(scalar_schema)
         # Enum classes → enum of their values.
         if issubclass(param_type, enum.Enum):
             return _enum_schema(tuple(member.value for member in param_type))

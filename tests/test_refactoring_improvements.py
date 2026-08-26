@@ -371,6 +371,33 @@ class TestSchemaFidelity:
         schema = build_parameters_schema(func)
         assert schema["properties"]["x"]["type"] == "integer"
 
+    def test_non_finite_float_defaults_are_dropped(self):
+        """NaN/±inf are Python floats but not JSON values: ``json.dumps``
+        emits bare ``NaN``/``Infinity`` tokens, which a provider parsing
+        strict JSON rejects (PR #381 review)."""
+        import json
+
+        def func(
+            ratio: float = float("nan"),
+            cap: float = float("inf"),
+            ok: float = 1.5,
+        ) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        assert "default" not in schema["properties"]["ratio"]
+        assert "default" not in schema["properties"]["cap"]
+        assert schema["properties"]["ok"]["default"] == 1.5
+        # The emitted schema must survive strict JSON serialization.
+        json.dumps(schema, allow_nan=False)
+
+    def test_nested_non_finite_defaults_are_dropped(self):
+        def func(bounds: list[float] = [1.0, float("inf")]) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        assert "default" not in schema["properties"]["bounds"]
+
     def test_collections_abc_container_origins(self):
         """``typing.get_origin(Sequence[int])`` is ``collections.abc.Sequence``
         — neither the ``typing`` alias nor a ``list`` subclass — so matching

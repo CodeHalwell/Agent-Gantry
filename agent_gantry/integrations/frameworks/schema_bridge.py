@@ -185,8 +185,16 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
         if union is not None:
             return union
 
+    if json_type == "null":
+        # A property permitting *only* null. Falling through to ``Any`` would
+        # let the framework accept strings and numbers the canonical schema
+        # forbids.
+        return type(None)
+
     if isinstance(json_type, list):  # e.g. ["string", "null"]
         json_type = next((t for t in json_type if t != "null"), None)
+        if json_type is None:  # e.g. ["null"]
+            return type(None)
 
     if json_type in _SCALARS:
         return _SCALARS[json_type]

@@ -737,3 +737,31 @@ async def test_validate_oneof_requires_exactly_one_matching_branch(engine):
     )
     is_valid, error = await engine._validate_arguments(any_of, {"v": 1})
     assert is_valid is True, error
+
+
+@pytest.mark.asyncio
+async def test_validate_enforces_const(engine):
+    """Pydantic emits ``const`` (not ``enum``) for a single-value ``Literal``,
+    so it appears inside the nested model/TypedDict schemas introspection now
+    inlines. Checking only ``enum`` let those through (PR #381 review)."""
+    tool = ToolDefinition(
+        name="const_tool",
+        description="Single-value Literal represented as const",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "payload": {
+                    "type": "object",
+                    "properties": {"kind": {"const": "expected", "type": "string"}},
+                    "required": ["kind"],
+                }
+            },
+            "required": ["payload"],
+        },
+    )
+    is_valid, error = await engine._validate_arguments(tool, {"payload": {"kind": "unexpected"}})
+    assert is_valid is False
+    assert "payload.kind" in error
+
+    is_valid, error = await engine._validate_arguments(tool, {"payload": {"kind": "expected"}})
+    assert is_valid is True, error

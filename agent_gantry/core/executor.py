@@ -799,6 +799,13 @@ class ExecutionEngine:
             if isinstance(enum_values, list) and enum_values and value not in enum_values:
                 return False, f"Parameter '{path}' must be one of {enum_values}"
 
+            # ``const`` is a one-value ``enum``. Pydantic emits it for a
+            # single-value ``Literal``, so it appears inside the nested
+            # model/TypedDict schemas introspection now inlines — checking
+            # only ``enum`` let those values through unvalidated.
+            if "const" in val_schema and value != val_schema["const"]:
+                return False, f"Parameter '{path}' must be {val_schema['const']!r}"
+
             if expected_type == "array":
                 item_schema = val_schema.get("items")
                 if isinstance(item_schema, dict) and item_schema:

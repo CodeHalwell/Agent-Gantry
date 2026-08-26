@@ -311,3 +311,19 @@ def test_combinator_only_field_becomes_a_union():
     assert model(count=None).count is None
     with pytest.raises(ValidationError):
         model(count="bad")
+
+
+def test_null_only_field_rejects_other_types():
+    """A property permitting *only* null must not widen to ``Any`` — the
+    framework would then accept strings and numbers the canonical schema
+    forbids (PR #381 review)."""
+    for schema_type in ("null", ["null"]):
+        schema = {
+            "type": "object",
+            "properties": {"nothing": {"type": schema_type}},
+            "required": ["nothing"],
+        }
+        model = pydantic_model_from_schema("Args", schema)
+        assert model(nothing=None).nothing is None
+        with pytest.raises(ValidationError):
+            model(nothing="oops")

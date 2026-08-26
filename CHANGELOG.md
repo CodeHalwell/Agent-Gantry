@@ -94,6 +94,22 @@ adapters, and the provider dialects agree with it.
 
 ### Fixed
 
+- **A non-finite float default produced a schema that isn't valid JSON.** A
+  parameter defaulting to `float("nan")` or `float("inf")` had that value
+  embedded in the schema's `default`, and `json.dumps` emits the bare tokens
+  `NaN`/`Infinity` for them — so a provider parsing strict JSON rejects the
+  request. Non-finite floats are no longer treated as JSON-safe, at the top
+  level and inside nested container defaults, so the default is simply
+  omitted.
+- **`const` was not enforced during argument validation.** Pydantic emits
+  `const` rather than `enum` for a single-value `Literal`, so it appears
+  throughout the nested model and `TypedDict` schemas introspection now
+  inlines — and validation checked only `type` and `enum`, letting any value
+  through. `const` equality is checked alongside `enum` membership now.
+- **A null-only property widened to `Any` in framework args models.** A
+  property typed `{"type": "null"}` permits only `null`, but the
+  CrewAI/LlamaIndex bridge fell through to an unconstrained `Any` that
+  accepted strings and numbers the canonical schema forbids.
 - **A tool gated by `requires_confirmation=True` could be made unexecutable
   by the rate limit.** That flag is enforced by the executor, not by
   `SecurityPolicy`, so the policy had no way to know a call would stop at
