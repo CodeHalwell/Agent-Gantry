@@ -260,3 +260,72 @@ async def test_validate_closed_empty_object_rejects_any_keys(engine):
     is_valid, error = await engine._validate_arguments(tool, {"opts": {"unexpected": 1}})
     assert is_valid is False
     assert "opts" in error
+
+
+@pytest.mark.asyncio
+async def test_validate_empty_schema_additional_properties_permits_extras(engine):
+    """``additionalProperties: {}`` is, per JSON Schema, spec-equivalent to
+    ``true`` (the empty schema validates every value) — plain Python
+    truthiness collapses it with ``False``/absent (both falsy), wrongly
+    rejecting valid extra keys. Covers all three call sites: top-level,
+    nested-with-declared-properties, and nested-with-no-declared-properties
+    (claude[bot] review, PR #381)."""
+    top_level_tool = ToolDefinition(
+        name="top_level_tool",
+        description="Empty-schema additionalProperties at the top level",
+        parameters_schema={
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+            "additionalProperties": {},
+        },
+    )
+    is_valid, error = await engine._validate_arguments(
+        top_level_tool, {"name": "a", "extra": 123}
+    )
+    assert is_valid is True, error
+
+    nested_with_props_tool = ToolDefinition(
+        name="nested_tool",
+        description="Empty-schema additionalProperties on a nested object",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "opts": {
+                    "type": "object",
+                    "properties": {"level": {"type": "integer"}},
+                    "additionalProperties": {},
+                },
+            },
+            "required": ["opts"],
+        },
+    )
+    is_valid, error = await engine._validate_arguments(
+        nested_with_props_tool, {"opts": {"level": 1, "extra": "x"}}
+    )
+    assert is_valid is True, error
+
+    # Sanity: absent additionalProperties (Gantry's own strict default,
+    # distinct from the JSON Schema spec default) must still reject extras
+    # at both call sites — the fix must not blur this back together.
+    strict_tool = ToolDefinition(
+        name="strict_tool",
+        description="No additionalProperties declared anywhere",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "opts": {
+                    "type": "object",
+                    "properties": {"level": {"type": "integer"}},
+                },
+            },
+            "required": ["name"],
+        },
+    )
+    is_valid, _ = await engine._validate_arguments(strict_tool, {"name": "a", "extra": 1})
+    assert is_valid is False
+    is_valid, _ = await engine._validate_arguments(
+        strict_tool, {"name": "a", "opts": {"level": 1, "extra": "x"}}
+    )
+    assert is_valid is False

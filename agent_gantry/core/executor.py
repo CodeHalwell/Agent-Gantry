@@ -632,7 +632,25 @@ class ExecutionEngine:
         schema = tool.parameters_schema
         properties = schema.get("properties", {})
         required = schema.get("required", [])
-        allow_additional = bool(schema.get("additionalProperties"))
+
+        def _permits_additional(value: Any) -> bool:
+            """Whether an ``additionalProperties`` value allows extra keys.
+
+            ``True`` permits them unconstrained. A dict schema — including
+            the empty schema ``{}``, which per JSON Schema validates every
+            value and is thus spec-equivalent to ``true`` — also permits
+            them (constrained by that schema when it declares anything; an
+            empty one is a harmless no-op via ``_validate_value``'s graceful
+            handling of a typeless schema, so it need not be special-cased).
+            Plain ``bool(value)`` would wrongly collapse ``{}`` with
+            ``False``/absent, since an empty dict is falsy in Python.
+            ``False`` and an absent/``None`` key (Gantry's own default for
+            schemas it emits itself, stricter than the JSON Schema spec
+            default of ``true``) both forbid extras.
+            """
+            return value is True or isinstance(value, dict)
+
+        allow_additional = _permits_additional(schema.get("additionalProperties"))
 
         def _matches_type(value: Any, expected_type: str) -> bool:
             if expected_type == "boolean":
@@ -700,10 +718,11 @@ class ExecutionEngine:
                         # free-form one.
                         if value:
                             return False, f"Parameter '{path}' does not permit any properties"
-                    elif isinstance(obj_additional, dict) and obj_additional:
+                    elif isinstance(obj_additional, dict):
                         # A schema-valued additionalProperties (e.g. the
                         # ``dict[str, int]`` schemas introspection emits)
-                        # constrains every value.
+                        # constrains every value; an empty schema ``{}`` is a
+                        # harmless no-op here (see ``_permits_additional``).
                         for prop_name, prop_value in value.items():
                             is_valid, err = _validate_value(
                                 prop_value, obj_additional, f"{path}.{prop_name}"
@@ -721,7 +740,7 @@ class ExecutionEngine:
 
                 for prop_name, prop_value in value.items():
                     if prop_name not in obj_properties:
-                        if obj_additional:
+                        if _permits_additional(obj_additional):
                             if isinstance(obj_additional, dict):
                                 is_valid, err = _validate_value(
                                     prop_value, obj_additional, f"{path}.{prop_name}"

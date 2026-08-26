@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (review follow-up, round 3)
+
+- **`additionalProperties: {}` (an explicit empty schema) was treated as
+  `additionalProperties: false`.** Per JSON Schema, an empty schema
+  validates every value and is spec-equivalent to `true` — but Python's
+  `bool({})` is `False`, so it collapsed with the falsy "absent" case at
+  three call sites (top-level, a nested object with declared properties,
+  and a nested object with none). Gantry's own default for *absent*
+  `additionalProperties` intentionally stays strict (no extras) —
+  `introspection.py` only ever sets it explicitly `True` for a `**kwargs`
+  function — so the fix distinguishes "unset" (still strict) from "present
+  as `{}`" (now correctly permissive) via a shared `_permits_additional`
+  helper, rather than loosening the default. Gantry's own schema emission
+  never produces this shape, so the practical exposure was limited to
+  hand-authored or externally-imported (MCP, OpenAPI) schemas.
+
 ### Fixed (review follow-up, round 2)
 
 - **A duck-typed `SecurityPolicy` without the new `confirmation_approved`
