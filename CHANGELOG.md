@@ -106,6 +106,15 @@ adapters, and the provider dialects agree with it.
   throughout the nested model and `TypedDict` schemas introspection now
   inlines — and validation checked only `type` and `enum`, letting any value
   through. `const` equality is checked alongside `enum` membership now.
+- **Constraint keywords were never enforced during argument validation.**
+  Numeric bounds (`minimum`/`maximum`/their exclusive variants,
+  `multipleOf`), string `minLength`/`maxLength`/`pattern`, and array
+  `minItems`/`maxItems`/`uniqueItems` were all ignored, so a value violating
+  them reached the handler. These arrive from any Pydantic-constrained field
+  (`Annotated[int, Field(gt=0)]` becomes `exclusiveMinimum: 0`) inside the
+  nested schemas now inlined — and `uniqueItems` is emitted by Gantry itself
+  for a `set` parameter. Booleans are exempt from numeric bounds, since
+  `bool` is an `int` subclass.
 - **An `allOf` was treated as nullable when only one branch admitted null.**
   `allOf` intersects its branches, so the combined schema admits `null` only
   when *every* branch does — `[{"type": ["string","null"]}, {"type":

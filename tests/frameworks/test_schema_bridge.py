@@ -399,3 +399,44 @@ def test_enum_including_null_becomes_a_literal():
     assert model(mode=None).mode is None
     with pytest.raises(ValidationError):
         model(mode="zzz")
+
+
+def test_oneof_exclusivity_sees_the_raw_input_for_object_branches():
+    """The check runs before the union converts. An ``AfterValidator`` would
+    receive the model the union already built and count only that one branch,
+    silently passing a payload matching several (PR #381 review)."""
+    branch = {"type": "object", "properties": {"a": {"type": "integer"}}, "required": ["a"]}
+    model = pydantic_model_from_schema(
+        "Args",
+        {"type": "object", "properties": {"v": {"oneOf": [branch, branch]}}, "required": ["v"]},
+    )
+    with pytest.raises(ValidationError):
+        model(v={"a": 1})  # satisfies both identical branches
+
+
+def test_oneof_with_disjoint_object_branches_still_works():
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "v": {
+                    "oneOf": [
+                        {
+                            "type": "object",
+                            "properties": {"a": {"type": "integer"}},
+                            "required": ["a"],
+                        },
+                        {
+                            "type": "object",
+                            "properties": {"b": {"type": "string"}},
+                            "required": ["b"],
+                        },
+                    ]
+                }
+            },
+            "required": ["v"],
+        },
+    )
+    assert model(v={"a": 1}).v.a == 1
+    assert model(v={"b": "x"}).v.b == "x"

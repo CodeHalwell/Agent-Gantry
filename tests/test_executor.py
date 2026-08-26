@@ -796,3 +796,62 @@ def test_normalize_allof_is_nullable_only_when_every_branch_is():
         },
     )
     assert ExecutionEngine._normalize_arguments(every, {"v": None}) == {"v": None}
+
+
+@pytest.mark.asyncio
+async def test_validate_enforces_constraint_keywords(engine):
+    """Pydantic emits these for any constrained field (``Annotated[int,
+    Field(gt=0)]`` becomes ``exclusiveMinimum: 0``), so they arrive inside
+    the nested schemas introspection now inlines; ``uniqueItems`` is emitted
+    by Gantry itself for a ``set`` parameter (PR #381 review)."""
+    tool = ToolDefinition(
+        name="bounded",
+        description="Carries numeric, string and array constraints",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "n": {"type": "integer", "exclusiveMinimum": 0},
+                "m": {"type": "integer", "minimum": 10, "maximum": 20},
+                "s": {"type": "string", "minLength": 3, "pattern": "^a"},
+                "arr": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "minItems": 2,
+                    "uniqueItems": True,
+                },
+            },
+            "required": [],
+        },
+    )
+    for args in (
+        {"n": -1},
+        {"m": 99},
+        {"s": "ab"},
+        {"s": "bcd"},
+        {"arr": [1]},
+        {"arr": [1, 1]},
+    ):
+        is_valid, error = await engine._validate_arguments(tool, args)
+        assert is_valid is False, f"{args} should have been rejected"
+        assert error
+
+    for args in ({"n": 5}, {"m": 15}, {"s": "abc"}, {"arr": [1, 2]}):
+        is_valid, error = await engine._validate_arguments(tool, args)
+        assert is_valid is True, error
+
+
+@pytest.mark.asyncio
+async def test_numeric_bounds_do_not_apply_to_booleans(engine):
+    """``bool`` is an ``int`` subclass, so a stray bound must not reject a
+    perfectly good boolean."""
+    tool = ToolDefinition(
+        name="flagged",
+        description="Boolean alongside a bounded integer",
+        parameters_schema={
+            "type": "object",
+            "properties": {"flag": {"type": "boolean"}, "n": {"type": "integer", "minimum": 1}},
+            "required": [],
+        },
+    )
+    is_valid, error = await engine._validate_arguments(tool, {"flag": True})
+    assert is_valid is True, error

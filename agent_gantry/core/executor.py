@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -29,6 +30,75 @@ if TYPE_CHECKING:
     from agent_gantry.schema.tool import ToolDefinition
 
 logger = logging.getLogger(__name__)
+
+
+def _check_constraints(value: Any, schema: dict[str, Any], path: str) -> str | None:
+    """Enforce the JSON-Schema constraint keywords, or ``None`` if all hold.
+
+    Covers what Pydantic actually emits for constrained fields and what
+    Gantry's own introspection emits: numeric bounds, string length and
+    pattern, and array length/uniqueness. Keywords whose value is the wrong
+    shape are ignored rather than raising — a malformed schema should not
+    turn every call into a validation error.
+    """
+    if isinstance(value, bool):
+        return None  # bool is an int subclass; numeric bounds don't apply
+
+    if isinstance(value, (int, float)):
+        for keyword, ok, describe in (
+            ("minimum", lambda v, b: v >= b, "at least"),
+            ("maximum", lambda v, b: v <= b, "at most"),
+            ("exclusiveMinimum", lambda v, b: v > b, "greater than"),
+            ("exclusiveMaximum", lambda v, b: v < b, "less than"),
+        ):
+            bound = schema.get(keyword)
+            if isinstance(bound, (int, float)) and not isinstance(bound, bool):
+                if not ok(value, bound):
+                    return f"Parameter '{path}' must be {describe} {bound}"
+        multiple = schema.get("multipleOf")
+        if (
+            isinstance(multiple, (int, float))
+            and not isinstance(multiple, bool)
+            and multiple > 0
+            and value % multiple != 0
+        ):
+            return f"Parameter '{path}' must be a multiple of {multiple}"
+
+    if isinstance(value, str):
+        min_length = schema.get("minLength")
+        if isinstance(min_length, int) and not isinstance(min_length, bool):
+            if len(value) < min_length:
+                return f"Parameter '{path}' must be at least {min_length} characters"
+        max_length = schema.get("maxLength")
+        if isinstance(max_length, int) and not isinstance(max_length, bool):
+            if len(value) > max_length:
+                return f"Parameter '{path}' must be at most {max_length} characters"
+        pattern = schema.get("pattern")
+        if isinstance(pattern, str) and pattern:
+            try:
+                matches = re.search(pattern, value) is not None
+            except re.error:
+                matches = True  # unusable pattern: don't reject on our own bug
+            if not matches:
+                return f"Parameter '{path}' must match pattern {pattern!r}"
+
+    if isinstance(value, list):
+        min_items = schema.get("minItems")
+        if isinstance(min_items, int) and not isinstance(min_items, bool):
+            if len(value) < min_items:
+                return f"Parameter '{path}' must have at least {min_items} items"
+        max_items = schema.get("maxItems")
+        if isinstance(max_items, int) and not isinstance(max_items, bool):
+            if len(value) > max_items:
+                return f"Parameter '{path}' must have at most {max_items} items"
+        if schema.get("uniqueItems") is True:
+            seen: list[Any] = []
+            for item in value:
+                if item in seen:
+                    return f"Parameter '{path}' must not contain duplicate items"
+                seen.append(item)
+
+    return None
 
 
 class ExecutionEngine:
@@ -814,6 +884,16 @@ class ExecutionEngine:
             # only ``enum`` let those values through unvalidated.
             if "const" in val_schema and value != val_schema["const"]:
                 return False, f"Parameter '{path}' must be {val_schema['const']!r}"
+
+            # Constraint keywords. Pydantic emits these for any constrained
+            # field (``Annotated[int, Field(gt=0)]`` becomes ``type: integer``
+            # plus ``exclusiveMinimum: 0``), so they arrive inside the nested
+            # model and TypedDict schemas introspection now inlines — and
+            # ``uniqueItems`` is emitted by Gantry itself for a ``set``
+            # parameter. Checking only the type let every one of them through.
+            constraint_error = _check_constraints(value, val_schema, path)
+            if constraint_error is not None:
+                return False, constraint_error
 
             if expected_type == "array":
                 item_schema = val_schema.get("items")

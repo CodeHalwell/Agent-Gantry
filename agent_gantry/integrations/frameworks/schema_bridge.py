@@ -173,28 +173,40 @@ def _union_annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
 
 
 def _with_exclusivity(annotation: Any, parts: list[Any]) -> Any:
-    """Attach an "exactly one branch matches" check to a ``oneOf`` union."""
+    """Attach an "exactly one branch matches" check to a ``oneOf`` union.
+
+    Runs *before* the union converts, not after: an ``AfterValidator`` would
+    receive the instance the union already built (for object branches, a
+    model of whichever branch won), and counting matches against that instead
+    of the caller's raw mapping would find only the one branch — silently
+    passing a payload that matches several.
+    """
     from typing import Annotated
 
-    from pydantic import AfterValidator, TypeAdapter
+    from pydantic import BaseModel, BeforeValidator, TypeAdapter
 
-    adapters = [TypeAdapter(part) for part in parts]
+    # Strict validation is what mirrors JSON Schema for scalars: without it
+    # ``"1"`` would coerce into an ``int`` branch and inflate the count. A
+    # model branch is the exception — a JSON object arrives as a mapping, and
+    # strict mode would reject every dict, making the count meaningless.
+    checks = [
+        (TypeAdapter(part), not (isinstance(part, type) and issubclass(part, BaseModel)))
+        for part in parts
+    ]
 
     def _exactly_one(value: Any) -> Any:
         matched = 0
-        for adapter in adapters:
+        for adapter, strict in checks:
             try:
-                adapter.validate_python(value, strict=True)
+                adapter.validate_python(value, strict=strict)
             except Exception:  # noqa: BLE001 - a branch simply not matching
                 continue
             matched += 1
         if matched > 1:
-            raise ValueError(
-                f"matches {matched} oneOf branches; exactly one must match"
-            )
+            raise ValueError(f"matches {matched} oneOf branches; exactly one must match")
         return value
 
-    return Annotated[annotation, AfterValidator(_exactly_one)]
+    return Annotated[annotation, BeforeValidator(_exactly_one)]
 
 
 def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
