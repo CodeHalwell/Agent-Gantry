@@ -94,6 +94,20 @@ adapters, and the provider dialects agree with it.
 
 ### Fixed
 
+- **A tool gated by `requires_confirmation=True` could be made unexecutable
+  by the rate limit.** That flag is enforced by the executor, not by
+  `SecurityPolicy`, so the policy had no way to know a call would stop at
+  it: with no matching `require_confirmation` *pattern*, the policy recorded
+  the probe against its window, and the approved replay was then denied for
+  the rest of the minute. The executor now tells the policy when a call will
+  stop at a gate it can't see, via a `pending_confirmation` keyword — every
+  check still runs (a probe that would be denied says so before a human is
+  asked), only the recording is deferred to the replay that actually
+  executes.
+- **`oneOf` was validated with `anyOf` semantics.** `oneOf` requires
+  *exactly* one matching branch, so a value matching several — `1` against
+  `[{"type": "number"}, {"type": "integer"}]` — violates the schema but was
+  accepted. Matching branches are counted now; `anyOf` is unaffected.
 - **`Sequence`/`Iterable`/`Set` parameters were advertised as scalars.**
   `typing.get_origin(Sequence[int])` returns the `collections.abc` class —
   neither the `typing` alias nor a `list` subclass — so the container branch

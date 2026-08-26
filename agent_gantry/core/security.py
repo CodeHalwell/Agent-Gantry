@@ -57,17 +57,14 @@ class ValidationError(Exception):
     pass
 
 
-def accepts_confirmation_approved(policy: typing.Any) -> bool:
-    """Whether ``policy.check_permission`` accepts ``confirmation_approved``.
+def accepts_keyword(policy: typing.Any, keyword: str) -> bool:
+    """Whether ``policy.check_permission`` accepts ``keyword``.
 
-    Callers that honour a human approval (the executor's
-    ``ToolCall(require_confirmation=False)`` path, the Agent Framework
-    approval middleware's replay path) pass the keyword only when the
-    policy's signature declares it (or takes ``**kwargs``), so duck-typed
-    policies predating the keyword keep working — their pattern gate then
-    simply stays un-approvable, exactly as before the keyword existed.
-    Inspecting the signature once is what decides; never call-and-retry,
-    which would re-run rate-limit accounting on a mismatch.
+    Callers pass an optional keyword only when the policy's signature
+    declares it (or takes ``**kwargs``), so duck-typed policies predating
+    it keep working — they simply behave as they did before the keyword
+    existed. Inspecting the signature once is what decides; never
+    call-and-retry, which would re-run rate-limit accounting on a mismatch.
     """
     check = getattr(policy, "check_permission", None)
     if not callable(check):
@@ -79,9 +76,19 @@ def accepts_confirmation_approved(policy: typing.Any) -> bool:
     except (TypeError, ValueError):  # C callables / exotic doubles
         return False
     return any(
-        p.name == "confirmation_approved" or p.kind is inspect.Parameter.VAR_KEYWORD
-        for p in parameters
+        p.name == keyword or p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters
     )
+
+
+def accepts_confirmation_approved(policy: typing.Any) -> bool:
+    """Whether ``policy.check_permission`` accepts ``confirmation_approved``.
+
+    Used by the callers that honour a human approval (the executor's
+    ``ToolCall(require_confirmation=False)`` path, the Agent Framework
+    approval middleware's replay path). A policy without the keyword keeps
+    its pattern gate un-approvable, exactly as before the keyword existed.
+    """
+    return accepts_keyword(policy, "confirmation_approved")
 
 
 class SecurityPolicy:
@@ -121,6 +128,7 @@ class SecurityPolicy:
         arguments: dict[str, typing.Any],
         *,
         confirmation_approved: bool = False,
+        pending_confirmation: bool = False,
     ) -> None:
         """
         Check if tool execution is permitted.
@@ -142,6 +150,18 @@ class SecurityPolicy:
                 field, so anything it could switch off a client could switch
                 off at will. Set by the executor when a call carries
                 ``ToolCall(require_confirmation=False)``.
+            pending_confirmation: When ``True``, the caller knows this call
+                will stop at a confirmation gate *it* owns — the executor's
+                ``ToolDefinition.requires_confirmation`` flag, which this
+                policy cannot see — so nothing will execute. Every check
+                still runs (a probe that would be denied should say so
+                before a human is asked to approve it), but the call is not
+                recorded against the rate limit, for the same reason this
+                method defers recording past its own confirmation gate:
+                the approved replay that follows is the same logical call
+                and is counted then. Without this, a tool gated by the
+                *flag* rather than by a ``require_confirmation`` pattern
+                would have its probe counted and its replay denied.
         """
         # Rate limit. The window is *checked* here, before any more expensive
         # work, so a flood is rejected cheaply — but the call is only
@@ -179,7 +199,9 @@ class SecurityPolicy:
         # Past the confirmation gate the outcome is terminal — this call either
         # executes or is denied below — so it counts exactly once. A denial
         # still consumes quota, which keeps a flood of rejected calls bounded.
-        if now is not None:
+        # ``pending_confirmation`` marks the one remaining non-terminal case:
+        # a gate the *executor* owns and this policy cannot see.
+        if now is not None and not pending_confirmation:
             self._request_timestamps.append(now)
 
         # 2. Check allowed domains if they are configured

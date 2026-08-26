@@ -195,3 +195,46 @@ def test_denied_calls_still_consume_rate_limit_quota():
 
     with pytest.raises(PermissionDeniedError, match="Rate limit exceeded"):
         policy.check_permission("fetch", {"url": "https://example.com/x"})
+
+
+def test_accepts_keyword_generalizes_the_signature_check():
+    from agent_gantry.core.security import SecurityPolicy, accepts_keyword
+
+    policy = SecurityPolicy()
+    assert accepts_keyword(policy, "confirmation_approved") is True
+    assert accepts_keyword(policy, "pending_confirmation") is True
+    assert accepts_keyword(policy, "not_a_real_keyword") is False
+
+    class LegacyPolicy:
+        def check_permission(self, tool_name, arguments):
+            pass
+
+    assert accepts_keyword(LegacyPolicy(), "pending_confirmation") is False
+
+
+def test_pending_confirmation_defers_accounting_without_relaxing_checks():
+    """A gate the *executor* owns (ToolDefinition.requires_confirmation) is
+    invisible to the policy, so the executor tells it. Every check still
+    runs; only the recording is deferred to the replay."""
+    import pytest
+
+    from agent_gantry.core.security import PermissionDeniedError, SecurityPolicy
+
+    policy = SecurityPolicy(
+        require_confirmation=[], allowed_domains=["example.com"], max_requests_per_minute=1
+    )
+
+    # Probe: passes every check, but is not recorded.
+    policy.check_permission("risky_op", {}, pending_confirmation=True)
+    policy.check_permission("risky_op", {}, pending_confirmation=True)
+
+    # Denial checks are untouched by the flag.
+    with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
+        policy.check_permission(
+            "risky_op", {"url": "https://evil.test/x"}, pending_confirmation=True
+        )
+
+    # The replay that actually executes is recorded, and exhausts the budget.
+    policy.check_permission("risky_op", {}, confirmation_approved=True)
+    with pytest.raises(PermissionDeniedError, match="Rate limit exceeded"):
+        policy.check_permission("risky_op", {})

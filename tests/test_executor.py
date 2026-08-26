@@ -639,3 +639,101 @@ async def test_validate_nullable_enum_admits_null_when_enum_lists_it(engine):
 
     is_valid, _ = await engine._validate_arguments(tool, {"mode": "zzz"})
     assert is_valid is False
+
+
+@pytest.mark.asyncio
+async def test_tool_flag_probe_is_not_charged_to_the_security_policy():
+    """A tool gated by ``requires_confirmation=True`` rather than by a
+    ``require_confirmation`` *pattern* stops at a gate the SecurityPolicy
+    cannot see. Without being told, the policy recorded the probe against
+    its window and then denied the approved replay for the rest of the
+    minute, making the tool unexecutable (PR #381 review)."""
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.core.security import SecurityPolicy
+    from agent_gantry.schema.execution import ToolCall
+
+    registry = ToolRegistry()
+    registry.register_tool(
+        ToolDefinition(
+            name="risky_op",
+            description="Gated by the tool flag, not by a policy pattern",
+            parameters_schema={"type": "object", "properties": {}},
+            requires_confirmation=True,
+        )
+    )
+    registry.register_handler("default.risky_op", lambda: "done")
+    engine = ExecutionEngine(
+        registry=registry,
+        security_policy=SecurityPolicy(require_confirmation=[], max_requests_per_minute=1),
+    )
+
+    probe = await engine.execute(ToolCall(tool_name="risky_op", arguments={}))
+    assert probe.status.value == "pending_confirmation"
+
+    approved = await engine.execute(
+        ToolCall(tool_name="risky_op", arguments={}, require_confirmation=False)
+    )
+    assert approved.status.value == "success", approved.error
+    assert approved.result == "done"
+
+
+@pytest.mark.asyncio
+async def test_executed_calls_still_consume_the_security_policy_budget():
+    """The probe exemption must not leak into calls that actually run."""
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.core.security import SecurityPolicy
+    from agent_gantry.schema.execution import ToolCall
+
+    registry = ToolRegistry()
+    registry.register_tool(
+        ToolDefinition(
+            name="plain_op",
+            description="No confirmation gate of any kind",
+            parameters_schema={"type": "object", "properties": {}},
+        )
+    )
+    registry.register_handler("default.plain_op", lambda: "done")
+    engine = ExecutionEngine(
+        registry=registry,
+        security_policy=SecurityPolicy(require_confirmation=[], max_requests_per_minute=1),
+    )
+
+    assert (await engine.execute(ToolCall(tool_name="plain_op", arguments={}))).status.value == (
+        "success"
+    )
+    second = await engine.execute(ToolCall(tool_name="plain_op", arguments={}))
+    assert second.status.value == "permission_denied"
+
+
+@pytest.mark.asyncio
+async def test_validate_oneof_requires_exactly_one_matching_branch(engine):
+    """``oneOf`` means *exactly* one, unlike ``anyOf``: ``1`` matches both
+    ``number`` and ``integer``, so it violates the schema (PR #381 review)."""
+    one_of = ToolDefinition(
+        name="oneof_tool",
+        description="Overlapping oneOf branches",
+        parameters_schema={
+            "type": "object",
+            "properties": {"v": {"oneOf": [{"type": "number"}, {"type": "integer"}]}},
+            "required": ["v"],
+        },
+    )
+    is_valid, error = await engine._validate_arguments(one_of, {"v": 1})
+    assert is_valid is False
+    assert "exactly one" in error
+
+    is_valid, _ = await engine._validate_arguments(one_of, {"v": "x"})
+    assert is_valid is False
+
+    # anyOf is unaffected — overlapping branches are fine there.
+    any_of = ToolDefinition(
+        name="anyof_tool",
+        description="Overlapping anyOf branches",
+        parameters_schema={
+            "type": "object",
+            "properties": {"v": {"anyOf": [{"type": "number"}, {"type": "integer"}]}},
+            "required": ["v"],
+        },
+    )
+    is_valid, error = await engine._validate_arguments(any_of, {"v": 1})
+    assert is_valid is True, error

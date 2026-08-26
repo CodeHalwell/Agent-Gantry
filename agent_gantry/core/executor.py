@@ -424,6 +424,7 @@ class ExecutionEngine:
                 ConfirmationRequiredError,
                 PermissionDeniedError,
                 accepts_confirmation_approved,
+                accepts_keyword,
             )
 
             try:
@@ -437,17 +438,23 @@ class ExecutionEngine:
                 # ``_check_confirmation_required`` honours for the tool-flag
                 # gate) — it skips only the confirmation-pattern gate; every
                 # denial check (rate limit, allowed domains) still runs.
-                # The keyword is passed only when the policy's signature
-                # declares it (see ``accepts_confirmation_approved``), so
-                # duck-typed policies predating it keep working.
+                # The keywords are passed only when the policy's signature
+                # declares them (see ``accepts_keyword``), so duck-typed
+                # policies predating either keep working.
+                #
+                # ``pending_confirmation`` tells the policy this call will
+                # stop at the executor's own tool-flag gate, which the policy
+                # cannot see: without it, the probe for a tool gated by
+                # ``requires_confirmation=True`` (rather than by a
+                # ``require_confirmation`` pattern) was recorded against the
+                # rate limit even though nothing ran, and the approved replay
+                # was then denied for the rest of the window.
+                kwargs: dict[str, Any] = {}
                 if accepts_confirmation_approved(self._security_policy):
-                    self._security_policy.check_permission(
-                        tool.name,
-                        call.arguments,
-                        confirmation_approved=call.require_confirmation is False,
-                    )
-                else:
-                    self._security_policy.check_permission(tool.name, call.arguments)
+                    kwargs["confirmation_approved"] = call.require_confirmation is False
+                if accepts_keyword(self._security_policy, "pending_confirmation"):
+                    kwargs["pending_confirmation"] = self._needs_confirmation(tool, call)
+                self._security_policy.check_permission(tool.name, call.arguments, **kwargs)
             except ConfirmationRequiredError as e:
                 result = ToolResult(
                     tool_name=call.tool_name,
@@ -734,10 +741,20 @@ class ExecutionEngine:
                     usable = [b for b in branches if isinstance(b, dict) and b]
                     if not usable:
                         continue
-                    if not any(_validate_value(value, b, path)[0] for b in usable):
+                    matches = sum(1 for b in usable if _validate_value(value, b, path)[0])
+                    if matches == 0:
                         return (
                             False,
                             f"Parameter '{path}' does not match any permitted schema",
+                        )
+                    # ``oneOf`` means *exactly* one, unlike ``anyOf``: with
+                    # overlapping branches (``number``/``integer``) a value
+                    # matching both violates the schema.
+                    if key == "oneOf" and matches > 1:
+                        return (
+                            False,
+                            f"Parameter '{path}' matches {matches} oneOf schemas; "
+                            "exactly one must match",
                         )
                 allof = val_schema.get("allOf")
                 if isinstance(allof, list):
