@@ -7,6 +7,7 @@ Gemini, Mistral, Groq, and Microsoft Agent Framework.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 from typing import TYPE_CHECKING, Any
@@ -23,6 +24,19 @@ if TYPE_CHECKING:
     from agent_gantry.schema.tool import ToolDefinition
 
 _logger = logging.getLogger(__name__)
+
+
+def _emitted_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """A caller-owned deep copy of a tool's parameter schema.
+
+    The registry holds one canonical ``ToolDefinition.parameters_schema``
+    per tool, so a payload that aliases it lets any caller that augments
+    the emitted schema corrupt every later conversion of that tool — and
+    the executor's own validation, which reads the same object.
+    :func:`strict_json_schema` and :func:`sanitize_gemini_schema` already
+    deep-copy their input; every pass-through path has to do it here.
+    """
+    return copy.deepcopy(schema)
 
 
 def _strict_parameters(tool: ToolDefinition, dialect: str) -> tuple[dict[str, Any], bool]:
@@ -46,7 +60,7 @@ def _strict_parameters(tool: ToolDefinition, dialect: str) -> tuple[dict[str, An
             dialect,
             ", ".join(unsupported),
         )
-        return tool.parameters_schema, False
+        return _emitted_schema(tool.parameters_schema), False
     return strict_json_schema(tool.parameters_schema), True
 
 
@@ -101,7 +115,7 @@ class OpenAIAdapter:
         Returns:
             OpenAI-compatible tool schema
         """
-        parameters = tool.parameters_schema
+        parameters = _emitted_schema(tool.parameters_schema)
         use_strict = strict
         if strict:
             parameters, use_strict = _strict_parameters(tool, "OpenAI")
@@ -258,7 +272,7 @@ class OpenAIResponsesAdapter:
         Returns:
             OpenAI Responses API compatible tool schema
         """
-        parameters = tool.parameters_schema
+        parameters = _emitted_schema(tool.parameters_schema)
         use_strict = strict
         if strict:
             parameters, use_strict = _strict_parameters(tool, "OpenAI Responses")
@@ -394,16 +408,15 @@ class AnthropicAdapter:
         Returns:
             Anthropic-compatible tool schema
         """
-        # Use the raw schema for non-strict mode; for strict mode, shallow-copy
-        # and inject additionalProperties: false so the API constraint is met
-        # without mutating the shared ToolDefinition.parameters_schema.
+        # Always emit a deep copy: a ``{**schema}`` spread would leave every
+        # nested property dict aliasing the shared
+        # ToolDefinition.parameters_schema, so a caller adjusting one nested
+        # subschema on the payload would still corrupt the registered tool.
+        input_schema: dict[str, Any] = _emitted_schema(tool.parameters_schema)
         if strict:
-            input_schema: dict[str, Any] = {
-                **tool.parameters_schema,
-                "additionalProperties": False,
-            }
-        else:
-            input_schema = tool.parameters_schema
+            # Anthropic requires additionalProperties: false for strict mode
+            # to take effect.
+            input_schema["additionalProperties"] = False
 
         schema: dict[str, Any] = {
             "name": tool.name,
@@ -530,7 +543,7 @@ class GeminiAdapter:
             "parameters": (
                 sanitize_gemini_schema(tool.parameters_schema)
                 if sanitize
-                else tool.parameters_schema
+                else _emitted_schema(tool.parameters_schema)
             ),
         }
 

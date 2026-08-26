@@ -13,6 +13,7 @@ import pytest
 
 from agent_gantry import AgentGantry
 from agent_gantry.adapters.tool_spec.providers import (
+    AnthropicAdapter,
     GeminiAdapter,
     OpenAIAdapter,
     OpenAIResponsesAdapter,
@@ -292,6 +293,60 @@ class TestStrictFallbackInAdapters:
         out = OpenAIAdapter().to_provider_schema(tool, strict=True)
         assert out["function"]["strict"] is True
         assert out["function"]["parameters"]["additionalProperties"] is False
+
+
+class TestEmittedSchemasAreCallerOwned:
+    """The registry holds one canonical ``parameters_schema`` per tool, so no
+    adapter may hand out a payload that aliases it — a caller augmenting the
+    payload would otherwise corrupt every later conversion of that tool and
+    the executor's own validation (PR #381 review)."""
+
+    @staticmethod
+    def _tool() -> ToolDefinition:
+        return ToolDefinition(
+            name="tally",
+            description="Count things carefully",
+            parameters_schema={
+                "type": "object",
+                "properties": {
+                    "counts": {
+                        "type": "object",
+                        "additionalProperties": {"type": "integer"},
+                    }
+                },
+                "required": ["counts"],
+            },
+        )
+
+    @pytest.mark.parametrize(
+        ("adapter_factory", "options", "extract"),
+        [
+            # strict=True on an open map takes the new fallback path.
+            (OpenAIAdapter, {"strict": True}, lambda o: o["function"]["parameters"]),
+            (OpenAIAdapter, {}, lambda o: o["function"]["parameters"]),
+            (OpenAIResponsesAdapter, {"strict": True}, lambda o: o["parameters"]),
+            (OpenAIResponsesAdapter, {}, lambda o: o["parameters"]),
+            (AnthropicAdapter, {"strict": True}, lambda o: o["input_schema"]),
+            (AnthropicAdapter, {}, lambda o: o["input_schema"]),
+            (GeminiAdapter, {"sanitize": False}, lambda o: o["parameters"]),
+            (GeminiAdapter, {}, lambda o: o["parameters"]),
+        ],
+    )
+    def test_mutating_the_payload_leaves_the_tool_untouched(
+        self, adapter_factory, options, extract
+    ) -> None:
+        tool = self._tool()
+        emitted = extract(adapter_factory().to_provider_schema(tool, **options))
+
+        emitted.setdefault("properties", {})["INJECTED"] = {"type": "string"}
+        # Nested too: a ``{**schema}`` spread would leave this dict shared.
+        if "counts" in tool.parameters_schema["properties"]:
+            nested = emitted.get("properties", {}).get("counts")
+            if isinstance(nested, dict):
+                nested["MUTATED"] = True
+
+        assert "INJECTED" not in tool.parameters_schema["properties"]
+        assert "MUTATED" not in tool.parameters_schema["properties"]["counts"]
 
 
 class TestSanitizeGeminiSchema:
