@@ -38,6 +38,7 @@ from agent_gantry.core.security import (
     ConfirmationRequiredError,
     PermissionDeniedError,
     SecurityPolicy,
+    accepts_confirmation_approved,
 )
 
 if TYPE_CHECKING:
@@ -168,10 +169,27 @@ def _build_middleware_classes() -> tuple[type, type]:
                 # Pass raw arguments through: SecurityPolicy type-checks per
                 # value, and downstream policies may rely on numeric/boolean
                 # typing rather than stringified values.
-                self._policy.check_permission(name, args)
+                #
+                # An approved replay passes ``confirmation_approved=True`` so
+                # only the confirmation-pattern gate is skipped and every
+                # *denial* check (rate limit, allowed domains) still runs —
+                # swallowing the ConfirmationRequiredError instead would skip
+                # them too, because the policy raises it before the domain
+                # check is reached, silently turning a human's confirmation
+                # into a domain-allowlist bypass. The keyword is passed only
+                # when the policy's signature declares it (duck-typed
+                # policies predating it fall back to the swallow branch
+                # below, matching their pre-keyword behaviour).
+                if accepts_confirmation_approved(self._policy):
+                    self._policy.check_permission(
+                        name, args, confirmation_approved=approved is True
+                    )
+                else:
+                    self._policy.check_permission(name, args)
             except ConfirmationRequiredError as err:
                 if approved is True:
-                    # Replay of an approved request: the human said yes.
+                    # Replay of an approved request on a policy without the
+                    # ``confirmation_approved`` keyword: the human said yes.
                     logger.info(
                         "GantryApprovalMiddleware: '%s' approved by human; "
                         "proceeding.",

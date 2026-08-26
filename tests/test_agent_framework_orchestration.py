@@ -1869,3 +1869,50 @@ async def test_context_provider_refresh_mutates_non_dict_options_in_place() -> N
     assert "load_skill" in tool_names, tool_names
     # Gantry's dynamic selection added.
     assert "get_weather" in tool_names, tool_names
+
+
+@pytest.mark.asyncio
+async def test_approved_replay_still_enforces_denial_checks(
+    bridge: GantryToolBridge,
+) -> None:
+    """A human's approval clears only the confirmation gate — never the
+    denial checks. SecurityPolicy raises its ConfirmationRequiredError
+    *before* the allowed_domains check runs, so swallowing that error on an
+    approved replay (instead of passing confirmation_approved=True through)
+    silently turned approval into a domain-allowlist bypass (PR #381
+    review)."""
+    tools = await bridge.get_tools("delete user", limit=5, score_threshold=0.0)
+    delete_tool = next(t for t in tools if t.name == "delete_user")
+    policy = SecurityPolicy(
+        require_confirmation=["delete_*"], allowed_domains=["example.com"]
+    )
+    middleware = GantryApprovalMiddleware(policy)
+
+    class _Ctx:
+        def __init__(self, fn, args):
+            self.function = fn
+            self.arguments = args
+            self.result = None
+            self.metadata: dict[str, Any] = {
+                "call_id": "call-1",
+                "approval_response": SimpleNamespace(approved=True),
+            }
+
+    calls: list[str] = []
+
+    async def _call_next():
+        calls.append("ran")
+
+    # Approved + clean arguments: executes (domain check ran and passed).
+    ok_ctx = _Ctx(delete_tool, {"user_id": "https://example.com/u/1"})
+    await middleware.process(ok_ctx, _call_next)
+    assert calls == ["ran"]
+
+    async def _never_called():  # pragma: no cover - denial must block
+        raise AssertionError("a denied call must not execute, approved or not")
+
+    # Approved + disallowed domain: the denial check still fires.
+    denied_ctx = _Ctx(delete_tool, {"user_id": "see https://evil.test/x"})
+    await middleware.process(denied_ctx, _never_called)
+    assert isinstance(denied_ctx.result, str)
+    assert "Permission denied by security policy" in denied_ctx.result

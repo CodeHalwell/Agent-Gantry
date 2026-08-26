@@ -107,3 +107,29 @@ def test_confirmation_approved_skips_pattern_gate_but_not_denials():
             {"url": "https://evil.test/x"},
             confirmation_approved=True,
         )
+
+
+def test_accepts_confirmation_approved():
+    """The signature-inspection guard both call sites (executor,
+    Agent Framework approval middleware) share to decide whether a policy's
+    check_permission understands confirmation_approved."""
+    from agent_gantry.core.security import SecurityPolicy, accepts_confirmation_approved
+
+    assert accepts_confirmation_approved(SecurityPolicy()) is True
+
+    class LegacyPolicy:
+        def check_permission(self, tool_name, arguments):
+            pass
+
+    assert accepts_confirmation_approved(LegacyPolicy()) is False
+
+    class KwargsPolicy:
+        def check_permission(self, tool_name, arguments, **kwargs):
+            pass
+
+    assert accepts_confirmation_approved(KwargsPolicy()) is True
+
+    class NotAPolicy:
+        pass
+
+    assert accepts_confirmation_approved(NotAPolicy()) is False

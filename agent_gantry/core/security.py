@@ -57,6 +57,33 @@ class ValidationError(Exception):
     pass
 
 
+def accepts_confirmation_approved(policy: typing.Any) -> bool:
+    """Whether ``policy.check_permission`` accepts ``confirmation_approved``.
+
+    Callers that honour a human approval (the executor's
+    ``ToolCall(require_confirmation=False)`` path, the Agent Framework
+    approval middleware's replay path) pass the keyword only when the
+    policy's signature declares it (or takes ``**kwargs``), so duck-typed
+    policies predating the keyword keep working — their pattern gate then
+    simply stays un-approvable, exactly as before the keyword existed.
+    Inspecting the signature once is what decides; never call-and-retry,
+    which would re-run rate-limit accounting on a mismatch.
+    """
+    check = getattr(policy, "check_permission", None)
+    if not callable(check):
+        return False
+    import inspect
+
+    try:
+        parameters = inspect.signature(check).parameters.values()
+    except (TypeError, ValueError):  # C callables / exotic doubles
+        return False
+    return any(
+        p.name == "confirmation_approved" or p.kind is inspect.Parameter.VAR_KEYWORD
+        for p in parameters
+    )
+
+
 class SecurityPolicy:
     """
     Rules of Engagement for tools.
@@ -91,7 +118,7 @@ class SecurityPolicy:
     def check_permission(
         self,
         tool_name: str,
-        arguments: dict[str, str],
+        arguments: dict[str, typing.Any],
         *,
         confirmation_approved: bool = False,
     ) -> None:
