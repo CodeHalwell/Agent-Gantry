@@ -126,6 +126,17 @@ class ExecutionEngine:
                 span_id=span_id,
             )
 
+        # Normalize away explicit ``None``s for optional parameters before any
+        # policy/validation sees the arguments. Strict-mode provider schemas
+        # (see ``strict_json_schema``) widen optional parameters to admit
+        # ``null`` — the model then legitimately sends ``null`` for "not
+        # provided" — and several frameworks materialize every optional field
+        # as ``None``. Dropping them lets the tool's own default apply; a
+        # ``None`` for a *required* parameter is kept so the error stays clear.
+        normalized = self._normalize_arguments(tool, call.arguments)
+        if normalized is not call.arguments:
+            call = call.model_copy(update={"arguments": normalized})
+
         # Check circuit breaker
         cb_result = await self._check_circuit_breaker(tool, call, queued_at, trace_id, span_id)
         if cb_result:
@@ -397,12 +408,30 @@ class ExecutionEngine:
                 # otherwise be fnmatched as a different string than the same
                 # tool reached via ``namespace=``, so one calling convention
                 # could slip a pattern the other is caught by.
-                self._security_policy.check_permission(tool.name, call.arguments)
-            except ConfirmationRequiredError:
+                # ``require_confirmation=False`` is the caller's explicit
+                # "a human approved this call" signal (the same override
+                # ``_check_confirmation_required`` honours for the tool-flag
+                # gate) — it skips only the confirmation-pattern gate; every
+                # denial check (rate limit, allowed domains) still runs.
+                self._security_policy.check_permission(
+                    tool.name,
+                    call.arguments,
+                    confirmation_approved=call.require_confirmation is False,
+                )
+            except ConfirmationRequiredError as e:
                 result = ToolResult(
                     tool_name=call.tool_name,
                     status=ExecutionStatus.PENDING_CONFIRMATION,
-                    error="Tool requires human confirmation",
+                    # Relay the policy's own reason (it names the matched
+                    # tool/pattern) so callers that only surface (status,
+                    # error) report why nothing ran, plus the approve/resume
+                    # hint (require_confirmation=False clears this gate too).
+                    error=(
+                        f"{e} It was not run. Re-issue the call with "
+                        "require_confirmation=False once approved."
+                        if str(e)
+                        else "Tool requires human confirmation"
+                    ),
                     queued_at=queued_at,
                     completed_at=datetime.now(timezone.utc),
                     trace_id=trace_id,
@@ -505,6 +534,15 @@ class ExecutionEngine:
             result = ToolResult(
                 tool_name=call.tool_name,
                 status=ExecutionStatus.PENDING_CONFIRMATION,
+                # Populate error so callers that only surface (status, error) —
+                # e.g. framework adapters raising ToolExecutionError — report
+                # why nothing ran instead of "no detail". Approve by re-issuing
+                # the call with ``ToolCall(require_confirmation=False)``.
+                error=(
+                    f"Tool '{tool.name}' requires human confirmation before "
+                    "execution; it was not run. Re-issue the call with "
+                    "require_confirmation=False once approved."
+                ),
                 queued_at=queued_at,
                 completed_at=datetime.now(timezone.utc),
                 trace_id=trace_id,
@@ -515,11 +553,50 @@ class ExecutionEngine:
             return result
         return None
 
+    @staticmethod
+    def _normalize_arguments(
+        tool: ToolDefinition, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Drop explicit ``None``s for declared *optional* parameters.
+
+        Strict-mode provider schemas widen optional parameters to accept
+        ``null`` (``strict_json_schema``), so a model following the schema
+        Gantry itself advertised sends ``null`` for "not provided"; several
+        frameworks likewise materialize unset optional fields as ``None``.
+        Treating those as omitted lets the handler's own default apply.
+        ``None`` for a required parameter — and for keys the schema doesn't
+        declare at all — is preserved so validation errors stay accurate.
+
+        Returns the original dict (identity) when nothing needs dropping.
+        """
+        if not arguments:
+            return arguments
+        schema = tool.parameters_schema or {}
+        properties = schema.get("properties") or {}
+        required = set(schema.get("required") or [])
+        if not any(
+            value is None and name in properties and name not in required
+            for name, value in arguments.items()
+        ):
+            return arguments
+        return {
+            name: value
+            for name, value in arguments.items()
+            if not (value is None and name in properties and name not in required)
+        }
+
     async def _validate_arguments(
         self, tool: ToolDefinition, arguments: dict[str, Any]
     ) -> tuple[bool, str | None]:
         """
         Validate arguments against tool schema.
+
+        Schema-aware where it matters for real provider/framework payloads:
+        ``type`` may be a list (strict-mode ``["string", "null"]`` widening),
+        ``enum`` membership is enforced, a truthy ``additionalProperties``
+        admits undeclared keys (both top-level and nested), and an ``object``
+        schema with no declared ``properties`` (e.g. a ``dict`` parameter)
+        accepts any keys.
 
         Args:
             tool: Tool definition with parameter schema
@@ -531,40 +608,69 @@ class ExecutionEngine:
         schema = tool.parameters_schema
         properties = schema.get("properties", {})
         required = schema.get("required", [])
+        allow_additional = bool(schema.get("additionalProperties"))
+
+        def _matches_type(value: Any, expected_type: str) -> bool:
+            if expected_type == "boolean":
+                return isinstance(value, bool)
+            if expected_type == "integer":
+                return isinstance(value, int) and not isinstance(value, bool)
+            if expected_type == "number":
+                return isinstance(value, (int, float)) and not isinstance(value, bool)
+            if expected_type == "string":
+                return isinstance(value, str)
+            if expected_type == "array":
+                return isinstance(value, list)
+            if expected_type == "object":
+                return isinstance(value, dict)
+            if expected_type == "null":
+                return value is None
+            # Unknown type keyword: don't reject what we don't understand.
+            return True
 
         def _validate_value(
             value: Any, val_schema: dict[str, Any], path: str
         ) -> tuple[bool, str | None]:
             expected_type = val_schema.get("type")
 
-            if expected_type == "boolean":
-                if not isinstance(value, bool):
-                    return False, f"Parameter '{path}' must be a boolean"
-            elif expected_type == "integer":
-                if not isinstance(value, int) or isinstance(value, bool):
-                    return False, f"Parameter '{path}' must be an integer"
-            elif expected_type == "number":
-                if not isinstance(value, (int, float)) or isinstance(value, bool):
-                    return False, f"Parameter '{path}' must be a number"
-            elif expected_type == "string":
-                if not isinstance(value, str):
-                    return False, f"Parameter '{path}' must be a string"
-            elif expected_type == "array":
-                if not isinstance(value, list):
-                    return False, f"Parameter '{path}' must be an array"
+            # ``type`` may be a list (e.g. strict-mode ``["string", "null"]``):
+            # the value is valid if it matches any listed type.
+            if isinstance(expected_type, list):
+                if not any(_matches_type(value, t) for t in expected_type):
+                    return (
+                        False,
+                        f"Parameter '{path}' must be one of types {expected_type}",
+                    )
+                if value is None:
+                    return True, None
+                # Continue structural checks against the matching member.
+                expected_type = next(
+                    (t for t in expected_type if _matches_type(value, t)), None
+                )
 
+            if isinstance(expected_type, str) and not _matches_type(value, expected_type):
+                article = "an" if expected_type[0] in "aoiue" else "a"
+                return False, f"Parameter '{path}' must be {article} {expected_type}"
+
+            enum_values = val_schema.get("enum")
+            if isinstance(enum_values, list) and enum_values and value not in enum_values:
+                return False, f"Parameter '{path}' must be one of {enum_values}"
+
+            if expected_type == "array":
                 item_schema = val_schema.get("items")
-                if item_schema:
+                if isinstance(item_schema, dict) and item_schema:
                     for i, item in enumerate(value):
                         is_valid, err = _validate_value(item, item_schema, f"{path}[{i}]")
                         if not is_valid:
                             return False, err
             elif expected_type == "object":
-                if not isinstance(value, dict):
-                    return False, f"Parameter '{path}' must be an object"
-
-                obj_properties = val_schema.get("properties", {})
+                # No declared properties (a plain ``dict`` parameter, or a
+                # free-form object) → any keys are acceptable.
+                obj_properties = val_schema.get("properties")
+                if not isinstance(obj_properties, dict) or not obj_properties:
+                    return True, None
                 obj_required = val_schema.get("required", [])
+                obj_additional = val_schema.get("additionalProperties")
 
                 for req_prop in obj_required:
                     if req_prop not in value:
@@ -572,6 +678,14 @@ class ExecutionEngine:
 
                 for prop_name, prop_value in value.items():
                     if prop_name not in obj_properties:
+                        if obj_additional:
+                            if isinstance(obj_additional, dict):
+                                is_valid, err = _validate_value(
+                                    prop_value, obj_additional, f"{path}.{prop_name}"
+                                )
+                                if not is_valid:
+                                    return False, err
+                            continue
                         return False, f"Unknown parameter: {path}.{prop_name}"
 
                     is_valid, err = _validate_value(
@@ -588,8 +702,17 @@ class ExecutionEngine:
                 return False, f"Missing required parameter: {param}"
 
         # Check parameter types
+        additional_schema = schema.get("additionalProperties")
         for param_name, param_value in arguments.items():
             if param_name not in properties:
+                if allow_additional:
+                    if isinstance(additional_schema, dict):
+                        is_valid, err = _validate_value(
+                            param_value, additional_schema, param_name
+                        )
+                        if not is_valid:
+                            return False, err
+                    continue
                 return False, f"Unknown parameter: {param_name}"
 
             is_valid, err = _validate_value(param_value, properties[param_name], param_name)

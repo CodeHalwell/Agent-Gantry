@@ -75,3 +75,35 @@ def test_ssrf_invalid_port_with_hostname():
     for url in malicious_urls:
         with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
             sp.check_permission("test_tool", {"url": url})
+
+
+def test_confirmation_approved_skips_pattern_gate_but_not_denials():
+    """check_permission(confirmation_approved=True) — the executor's
+    ToolCall(require_confirmation=False) approval signal — skips only the
+    require_confirmation pattern gate; denial checks (allowed domains) still
+    run."""
+    import pytest
+
+    from agent_gantry.core.security import (
+        ConfirmationRequiredError,
+        PermissionDeniedError,
+        SecurityPolicy,
+    )
+
+    policy = SecurityPolicy(
+        require_confirmation=["delete_*"], allowed_domains=["example.com"]
+    )
+
+    with pytest.raises(ConfirmationRequiredError):
+        policy.check_permission("delete_user", {"id": "1"})
+
+    # Approved: the confirmation gate is skipped …
+    policy.check_permission("delete_user", {"id": "1"}, confirmation_approved=True)
+
+    # … but a domain denial still applies even when approved.
+    with pytest.raises(PermissionDeniedError):
+        policy.check_permission(
+            "delete_user",
+            {"url": "https://evil.test/x"},
+            confirmation_approved=True,
+        )

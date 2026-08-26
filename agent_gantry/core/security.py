@@ -88,7 +88,13 @@ class SecurityPolicy:
         self.max_requests_per_minute = max_requests_per_minute
         self._request_timestamps: list[float] = []
 
-    def check_permission(self, tool_name: str, arguments: dict[str, str]) -> None:
+    def check_permission(
+        self,
+        tool_name: str,
+        arguments: dict[str, str],
+        *,
+        confirmation_approved: bool = False,
+    ) -> None:
         """
         Check if tool execution is permitted.
 
@@ -99,6 +105,12 @@ class SecurityPolicy:
         Args:
             tool_name: Name of the tool to execute
             arguments: Arguments for the tool
+            confirmation_approved: When ``True``, the caller vouches that a
+                human already approved this specific call, so the
+                ``require_confirmation`` pattern gate is skipped. Every
+                *denial* check (rate limit, allowed domains) still runs —
+                approval is not a policy bypass. Set by the executor when a
+                call carries ``ToolCall(require_confirmation=False)``.
         """
         if self.max_requests_per_minute > 0:
             now = time.time()
@@ -117,9 +129,12 @@ class SecurityPolicy:
                 )
             self._request_timestamps.append(now)
 
-        for pattern in self.require_confirmation:
-            if fnmatch.fnmatch(tool_name, pattern):
-                raise ConfirmationRequiredError(f"Tool {tool_name} requires human approval.")
+        if not confirmation_approved:
+            for pattern in self.require_confirmation:
+                if fnmatch.fnmatch(tool_name, pattern):
+                    raise ConfirmationRequiredError(
+                        f"Tool {tool_name} requires human approval."
+                    )
 
         # 2. Check allowed domains if they are configured
         if self.allowed_domains:
