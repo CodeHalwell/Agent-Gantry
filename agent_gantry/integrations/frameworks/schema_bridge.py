@@ -78,7 +78,13 @@ def _build_model(name: str, schema: dict[str, Any], depth: int) -> Any:
         if isinstance(description, str) and description:
             field_kwargs["description"] = description
         if prop_name in required:
-            fields[prop_name] = (annotation, Field(..., **field_kwargs))
+            if _is_nullable(prop):
+                # Required-but-nullable (``type: ["string", "null"]`` in
+                # ``required``): the field must still be supplied, but a
+                # schema-valid ``None`` must not be rejected by Pydantic.
+                fields[prop_name] = (annotation | None, Field(..., **field_kwargs))
+            else:
+                fields[prop_name] = (annotation, Field(..., **field_kwargs))
         else:
             # Optional: admit ``None`` (frameworks and models routinely send
             # null for "not provided"; ``ToolSpec.ainvoke`` drops it) and
@@ -90,6 +96,12 @@ def _build_model(name: str, schema: dict[str, Any], depth: int) -> Any:
             )
 
     return create_model(name, **fields)
+
+
+def _is_nullable(prop: dict[str, Any]) -> bool:
+    """Whether a property schema's declared type admits ``null``."""
+    json_type = prop.get("type")
+    return json_type == "null" or (isinstance(json_type, list) and "null" in json_type)
 
 
 def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
@@ -115,6 +127,12 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
         properties = prop.get("properties")
         if isinstance(properties, dict) and properties:
             return _build_model(f"{name}_obj", prop, depth + 1)
+        additional = prop.get("additionalProperties")
+        if isinstance(additional, dict) and additional:
+            # No declared properties, but a typed ``additionalProperties``
+            # (e.g. ``dict[str, int]``) — preserve the value type instead of
+            # widening to a bare ``dict`` that would accept any value type.
+            return dict[str, _annotation(f"{name}_value", additional, depth + 1)]
         return dict
     return Any
 
