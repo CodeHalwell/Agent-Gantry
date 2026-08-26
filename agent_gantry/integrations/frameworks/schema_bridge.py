@@ -57,15 +57,34 @@ def _sanitize_identifier(name: str) -> str:
     return cleaned
 
 
+def _permits_additional(schema: dict[str, Any]) -> bool:
+    """Whether an object schema admits keys beyond those it declares.
+
+    Mirrors the executor's own rule (``core/executor.py``) so a framework's
+    args model enforces what Gantry enforces: ``True`` and a subschema —
+    including the empty schema ``{}``, which JSON Schema says validates
+    everything — permit extras; ``False`` and an absent key forbid them.
+    Absent being strict is Gantry's own deliberate default, stricter than
+    the JSON Schema default.
+    """
+    additional = schema.get("additionalProperties")
+    return additional is True or isinstance(additional, dict)
+
+
 def _build_model(name: str, schema: dict[str, Any], depth: int) -> Any:
     if depth > _MAX_DEPTH:
         raise ValueError("schema nesting too deep")
-    from pydantic import Field, create_model
+    from pydantic import ConfigDict, Field, create_model
 
     properties = schema.get("properties")
     if not isinstance(properties, dict):
         raise ValueError("not an object schema")
     required = set(schema.get("required") or [])
+    # Pydantic defaults to ``extra="ignore"``, which would silently drop an
+    # undeclared key the executor would have rejected — a misspelled or
+    # hallucinated argument would vanish inside the framework instead of
+    # surfacing as an error. Mirror the schema instead.
+    model_config = ConfigDict(extra="allow" if _permits_additional(schema) else "forbid")
 
     fields: dict[str, Any] = {}
     for prop_name, prop in properties.items():
@@ -95,7 +114,7 @@ def _build_model(name: str, schema: dict[str, Any], depth: int) -> Any:
                 Field(default=default, **field_kwargs),
             )
 
-    return create_model(name, **fields)
+    return create_model(name, __config__=model_config, **fields)
 
 
 def _is_nullable(prop: dict[str, Any]) -> bool:
@@ -126,6 +145,12 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
     if json_type == "object":
         properties = prop.get("properties")
         if isinstance(properties, dict) and properties:
+            return _build_model(f"{name}_obj", prop, depth + 1)
+        if isinstance(properties, dict) and not _permits_additional(prop):
+            # ``{"properties": {}, "additionalProperties": false}`` — an
+            # object that permits no keys at all, which the executor
+            # enforces. A bare ``dict`` here would accept anything, so the
+            # framework would wave through a payload the engine rejects.
             return _build_model(f"{name}_obj", prop, depth + 1)
         additional = prop.get("additionalProperties")
         if isinstance(additional, dict) and additional:

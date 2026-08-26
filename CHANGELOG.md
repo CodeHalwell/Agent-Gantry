@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (review follow-up, round 6)
+
+- **Emitted provider schemas aliased the tool's canonical schema.** Every
+  adapter pass-through path — including the strict-mode fallback added in
+  round 5 — put `ToolDefinition.parameters_schema` itself into the returned
+  payload, so a caller that augmented the payload (adding a property,
+  tweaking a nested subschema) silently corrupted the registered tool,
+  every later conversion of it, and the executor's own validation, which
+  reads the same object. `schema_utils`'s module docstring already states
+  this invariant — *"Adapters must never hand out a structure that aliases
+  `ToolDefinition.parameters_schema`"* — and `strict_json_schema` /
+  `sanitize_gemini_schema` honour it by deep-copying; the pass-through
+  paths never did. All of them now route through a shared `_emitted_schema`
+  helper. The Anthropic adapter's strict path was a *shallow* `{**schema}`
+  spread, which left every nested property dict shared even though the
+  comment above it claimed the copy protected the shared definition — that
+  is now a deep copy too.
+- **Generated framework args models silently ignored undeclared
+  arguments.** `schema_bridge.py` built models with `create_model` and no
+  `extra` configuration, so Pydantic's default (`extra="ignore"`) applied:
+  a misspelled or hallucinated argument was dropped inside CrewAI /
+  LlamaIndex rather than raising, even though the executor rejects exactly
+  that key for the same schema. The generated model now mirrors the
+  schema's own `additionalProperties` — `forbid` when it is absent or
+  `false` (Gantry's deliberate strict default), `allow` when it is `true`
+  or a subschema (including the empty schema `{}`, spec-equivalent to
+  `true`) — reusing the same rule the executor applies.
+- **A closed empty nested object widened to a bare `dict` in the bridge.**
+  `{"properties": {}, "additionalProperties": false}` describes an object
+  permitting no keys at all, but the bridge fell through to a bare `dict`
+  annotation that accepts anything — so a framework waved through a payload
+  the executor then rejected after dispatch. This is the same
+  closed-empty-object shape already fixed in the executor; the bridge now
+  builds an empty, extra-forbidding model for it.
+
 ### Fixed (review follow-up, round 5)
 
 - **The round-4 rate-limit exemption trusted a caller-controlled flag.**

@@ -179,6 +179,65 @@ def test_untyped_additional_properties_stays_bare_dict():
     assert model(metadata={"a": 1, "b": "two"}).metadata == {"a": 1, "b": "two"}
 
 
+def test_undeclared_keys_are_rejected_like_the_executor_rejects_them():
+    """Pydantic defaults to ``extra="ignore"``, which would silently drop an
+    argument the executor would have rejected — a misspelled or hallucinated
+    key would vanish inside CrewAI/LlamaIndex instead of surfacing as an
+    error. The model mirrors the schema instead (PR #381 review)."""
+    schema = {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+    }
+    model = pydantic_model_from_schema("Args", schema)
+    with pytest.raises(ValidationError):
+        model(name="a", typoed_arg=123)
+
+
+def test_declared_additional_properties_permits_extras():
+    """The ``**kwargs`` shape (``additionalProperties: true``) must stay
+    open — mirroring the schema means permissive as well as strict."""
+    schema = {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+        "additionalProperties": True,
+    }
+    model = pydantic_model_from_schema("Args", schema)
+    assert model(name="a", extra=1).model_dump() == {"name": "a", "extra": 1}
+
+
+def test_empty_additional_properties_schema_permits_extras():
+    """``additionalProperties: {}`` is spec-equivalent to ``true`` — the
+    same distinction the executor's ``_permits_additional`` draws."""
+    schema = {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+        "additionalProperties": {},
+    }
+    model = pydantic_model_from_schema("Args", schema)
+    assert model(name="a", extra=1).model_dump() == {"name": "a", "extra": 1}
+
+
+def test_closed_empty_nested_object_rejects_all_keys():
+    """``{"properties": {}, "additionalProperties": false}`` permits no keys
+    at all. A bare ``dict`` annotation would accept anything, so the
+    framework would wave through a payload the executor rejects — the same
+    closed-empty-object gap already fixed in the executor."""
+    schema = {
+        "type": "object",
+        "properties": {
+            "opts": {"type": "object", "properties": {}, "additionalProperties": False}
+        },
+        "required": ["opts"],
+    }
+    model = pydantic_model_from_schema("Args", schema)
+    assert model(opts={}) is not None
+    with pytest.raises(ValidationError):
+        model(opts={"anything": 1})
+
+
 def test_invalid_identifier_property_name_returns_none():
     schema = {
         "type": "object",
