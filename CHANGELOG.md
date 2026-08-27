@@ -986,6 +986,20 @@ adapters, and the provider dialects agree with it.
   all and `{}` was dispatched despite the missing key. Both now dispatch on
   what the value is, which leaves a schema asserting nothing unconstrained and
   still admits a string under object keywords that cannot apply to one.
+- **A concrete mapping that isn't a `dict` is rebuilt.** The mapping side of
+  the same rule: the branch asked about the key type and the value types, so
+  `collections.OrderedDict[str, int]` — ordinary on both counts — was
+  advertised as a JSON object and reported as needing nothing, and the handler
+  got a plain `dict` where `move_to_end()` raised. Both the parameterized and
+  the bare spellings are covered; `dict` and the `Mapping` ABCs are satisfied
+  by a `dict` and stay excluded.
+- **A typeless `additionalProperties` map is detected before strict mode.**
+  The sibling of the pattern-only fix, which reached only its own keyword:
+  `{"additionalProperties": {"type": "integer"}}` — an imported
+  `dict[str, int]` with no `type` — was reported strict-safe while its typed
+  twin was flagged, so the strict transform published a schema-valued keyword
+  strict mode cannot express and the provider rejected the whole tool request.
+  The two spellings now agree for every form of the keyword.
 
 ### Performance
 

@@ -233,6 +233,16 @@ def _needs_reconstruction(param_type: Any) -> bool:
             # then failed. ``TypeAdapter`` converts them back.
             if args and args[0] is not str and args[0] is not Any:
                 return True
+            # And the same rule the sequence branch below applies, on the
+            # mapping side: rebuild whenever a JSON object — which arrives as
+            # a ``dict`` — is not already an instance of the declared
+            # container. ``collections.OrderedDict[str, int]`` was advertised
+            # as an object but reported as needing nothing, because both its
+            # key and value types need nothing, so the handler got a plain
+            # ``dict`` and ``move_to_end()`` failed. ``dict`` and the
+            # ``Mapping`` ABCs are satisfied by one and stay excluded.
+            if not isinstance({}, origin):
+                return True
         elif isinstance(origin, type) and issubclass(origin, _SEQUENCE_ORIGINS):
             # The container itself needs rebuilding whenever a JSON array —
             # which arrives as a ``list`` — is not already an instance of it.
@@ -289,6 +299,13 @@ def _needs_reconstruction(param_type: Any) -> bool:
         except Exception:  # noqa: BLE001 - unresolvable: coerce nothing
             return False
         return any(_needs_reconstruction(hint) for hint in hints.values())
+    # The bare spellings of the mapping rule above, which reach here because
+    # ``get_origin`` is ``None`` for them. Checked *after* the ``TypedDict``
+    # block: a ``TypedDict`` class is a ``dict`` subclass at runtime, so it
+    # would match ``issubclass(..., Mapping)`` — and ``isinstance`` against one
+    # raises outright.
+    if issubclass(param_type, _abc.Mapping) and not isinstance({}, param_type):
+        return True
     if dataclasses.is_dataclass(param_type):
         return True
     try:

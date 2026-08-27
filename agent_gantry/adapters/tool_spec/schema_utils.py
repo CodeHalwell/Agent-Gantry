@@ -291,10 +291,22 @@ def _collect_open_maps(node: Any, path: str, out: list[str]) -> None:
     # only patterns — no ``type``, no ``properties`` — constrains objects just
     # as much as one that spells the type out. Gating on type-or-properties
     # let that spelling past as strict-safe while its typed twin was flagged.
+    # ``additionalProperties`` counts on its own for the same reason, and the
+    # pattern fix reached only its own keyword: ``{"additionalProperties":
+    # {"type": "integer"}}`` — an imported ``dict[str, int]`` with no ``type``
+    # — was reported strict-safe while its typed twin was flagged, and the
+    # strict transform then published the schema-valued keyword strict mode
+    # cannot express. Only where the node declares *no* type, though: unlike
+    # ``properties`` and ``patternProperties``, which nothing but an object
+    # schema carries, a stray ``additionalProperties`` beside ``type:
+    # "string"`` asserts nothing, and flagging it would cost that tool strict
+    # mode for no reason. ``_is_open_map`` still decides — an explicitly
+    # closed ``additionalProperties: false`` passes through it as safe.
     if (
         _declares_object(node.get("type"))
         or isinstance(properties, dict)
         or (isinstance(patterns, dict) and patterns)
+        or ("additionalProperties" in node and node.get("type") is None)
     ):
         if _is_open_map(node):
             out.append(path or "<root>")

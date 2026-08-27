@@ -994,3 +994,53 @@ def test_a_pattern_only_object_is_strict_unsupported_without_a_type():
         {"type": "object", "properties": {"a": {"type": "string"}}, "required": ["a"]},
     ):
         assert unsupported_strict_paths(supported) == []
+
+
+def test_a_typeless_additional_properties_map_is_strict_unsupported():
+    """The sibling of the pattern-only fix, and reached only its own keyword:
+    ``{"additionalProperties": {"type": "integer"}}`` — an imported
+    ``dict[str, int]`` with no ``type`` — was reported strict-safe while its
+    typed twin was flagged, so the strict transform published the
+    schema-valued keyword strict mode cannot express and the provider rejected
+    the whole tool request (PR #381 review).
+
+    The invariant is that the two spellings agree, since JSON Schema applies
+    an object's keywords whenever the instance *is* an object and writing the
+    type out is optional rather than load-bearing."""
+
+    def wrap(prop: dict) -> dict:
+        return {"type": "object", "properties": {"m": prop}, "required": ["m"]}
+
+    for keyword, expected in (
+        ({"additionalProperties": {"type": "integer"}}, ["m"]),
+        ({"additionalProperties": True}, ["m"]),
+        ({"additionalProperties": {}}, ["m"]),
+        # Explicitly closed is the one that is genuinely representable, and it
+        # still passes through ``_is_open_map`` as safe rather than being
+        # excluded by the gate.
+        ({"additionalProperties": False}, []),
+    ):
+        untyped = unsupported_strict_paths(wrap(dict(keyword)))
+        typed = unsupported_strict_paths(wrap({"type": "object", **keyword}))
+        assert untyped == typed == expected, (keyword, untyped, typed)
+
+    # Only where the node declares no type: unlike properties and
+    # patternProperties, which nothing but an object schema carries, a stray
+    # additionalProperties beside a scalar type asserts nothing — and flagging
+    # it would cost that tool strict mode for no reason.
+    assert unsupported_strict_paths(
+        wrap({"type": "string", "additionalProperties": {"type": "integer"}})
+    ) == []
+
+    # Schemas strict mode genuinely handles must stay handled.
+    for supported in (
+        {
+            "type": "object",
+            "properties": {"a": {"type": "string"}},
+            "required": ["a"],
+            "additionalProperties": False,
+        },
+        {"type": "object", "properties": {}},
+        {"type": "object", "properties": {"a": {"type": "string"}}, "required": ["a"]},
+    ):
+        assert unsupported_strict_paths(supported) == []

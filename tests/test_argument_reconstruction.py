@@ -1172,3 +1172,71 @@ async def test_a_container_of_formatted_values_survives_the_dispatch_boundary():
     assert await spec.ainvoke(
         stamps=["2026-08-27T00:00:00"], by_id={"a": str(uuid.UUID(int=1))}
     ) == "datetime:2026:a"
+
+
+def test_a_concrete_mapping_that_is_not_a_dict_is_rebuilt():
+    """The mapping side of the concrete-container rule, and a follow-on from
+    fixing only the sequence side: the branch asked about the *key* type and
+    the *value* types, so ``collections.OrderedDict[str, int]`` — ordinary on
+    both counts — was advertised as a JSON object and reported as needing
+    nothing. The handler got a plain ``dict`` and ``move_to_end()`` raised
+    (PR #381 review)."""
+    from agent_gantry.schema.introspection import (
+        _needs_reconstruction,
+        _type_to_json_schema,
+    )
+
+    assert _type_to_json_schema(collections.OrderedDict[str, int]) == {
+        "type": "object",
+        "additionalProperties": {"type": "integer"},
+    }
+    for parameterized in (
+        collections.OrderedDict[str, int],
+        collections.defaultdict[str, int],
+        collections.Counter[str],
+    ):
+        assert _needs_reconstruction(parameterized) is True, parameterized
+    # The bare spellings reach the direct-type branch instead, which is where
+    # the equivalent sequence rule had to be repeated too.
+    for bare in (collections.OrderedDict, collections.defaultdict, collections.Counter):
+        assert _needs_reconstruction(bare) is True, bare
+
+    # A ``dict`` already is one, and a ``Mapping`` is satisfied by one, so
+    # neither is rebuilt — in either spelling.
+    for unchanged in (
+        dict[str, int],
+        abc.Mapping[str, int],
+        abc.MutableMapping[str, int],
+        dict,
+        abc.Mapping,
+        abc.MutableMapping,
+    ):
+        assert _needs_reconstruction(unchanged) is False, unchanged
+    # The non-string-key rule the branch already had is untouched.
+    assert _needs_reconstruction(dict[int, str]) is True
+
+    # A ``TypedDict`` is a ``dict`` subclass at runtime, so it would match the
+    # bare mapping check — and ``isinstance`` against one raises. It must stay
+    # classified by its members.
+    assert _needs_reconstruction(Options) is False
+    assert _needs_reconstruction(RichPayload) is True
+
+
+async def test_an_ordered_mapping_reaches_the_handler_as_its_declared_type():
+    """End-to-end: as with the deque, the only thing distinguishing an
+    ``OrderedDict`` from the dict it arrives as is the API the handler then
+    calls on it."""
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @g.register(tags=["demo"])
+    def promote(counts: collections.OrderedDict[str, int]) -> str:
+        """Move a named entry to the end of an ordered tally of counts."""
+        counts.move_to_end("a")
+        return f"{type(counts).__name__}:{list(counts)}"
+
+    await g.sync()
+    result = await g.execute(
+        ToolCall(tool_name="promote", arguments={"counts": {"a": 1, "b": 2}})
+    )
+    assert result.status.value == "success", result.error
+    assert result.result == "OrderedDict:['b', 'a']"
