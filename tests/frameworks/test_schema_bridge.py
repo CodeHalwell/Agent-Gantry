@@ -758,3 +758,37 @@ def test_unique_items_handles_unhashable_members():
     assert len(model(rows=[{"x": 1}, {"x": 2}]).rows) == 2
     with pytest.raises(ValidationError):
         model(rows=[{"x": 1}, {"x": 1}])
+
+
+def test_empty_anyof_branch_admits_everything():
+    """``{}`` is the always-valid JSON Schema, not an absent branch. Dropping
+    it made ``anyOf: [{}, {"type": "integer"}]`` — which admits every value —
+    reject strings (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"v": {"anyOf": [{}, {"type": "integer"}]}},
+            "required": ["v"],
+        },
+    )
+    assert model(v=1).v == 1
+    assert model(v="str").v == "str"
+    assert model(v=[1]).v == [1]
+
+
+def test_empty_oneof_branch_makes_other_branches_ambiguous():
+    """With ``oneOf`` the empty branch matches everything, so a value another
+    branch also admits matches twice and must be rejected — only a value no
+    other branch accepts is valid."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"v": {"oneOf": [{}, {"type": "integer"}]}},
+            "required": ["v"],
+        },
+    )
+    assert model(v="str").v == "str"
+    with pytest.raises(ValidationError):
+        model(v=1)

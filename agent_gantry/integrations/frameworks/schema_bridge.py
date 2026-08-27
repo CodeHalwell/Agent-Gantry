@@ -263,8 +263,17 @@ def _union_annotation(
         if not isinstance(branches, list) or not branches:
             continue
         parts: list[Any] = []
+        has_empty = False
         for index, branch in enumerate(branches):
-            if not isinstance(branch, dict) or not branch:
+            if not isinstance(branch, dict):
+                continue
+            if not branch:
+                # ``{}`` is the always-valid schema, not an absent branch.
+                # Dropping it made ``anyOf: [{}, {"type": "integer"}]`` — which
+                # admits every value — reject strings, and let ``oneOf`` accept
+                # an integer that in fact matches both branches.
+                has_empty = True
+                parts.append(Any)
                 continue
             if branch.get("type") == "null":
                 parts.append(type(None))
@@ -276,6 +285,16 @@ def _union_annotation(
             )
         if not parts:
             continue
+        if has_empty:
+            if key == "anyOf":
+                # One branch matching is enough and one of them matches
+                # everything, so the union is unconstrained.
+                return Any
+            # ``oneOf``: the empty branch matches every value, so anything a
+            # *another* branch also admits matches at least twice and must be
+            # rejected — only a value no other branch accepts is valid. The
+            # annotation carries nothing; the exclusivity check carries it all.
+            return _with_exclusivity(Any, parts)
         annotation = parts[0]
         for part in parts[1:]:
             annotation = annotation | part

@@ -327,6 +327,65 @@ class TestUnsupportedStrictPaths:
         # "not provided" is a value both constraints accept.
         assert out["required"] == ["speed"]
 
+    def test_anyof_with_a_sibling_assertion_wraps_the_whole_schema(self) -> None:
+        """Appending a null branch only works when the combinator is the whole
+        schema. A sibling ``type`` applies independently, so a null added
+        *inside* the ``anyOf`` still fails it — and strict mode makes the
+        property required, leaving no satisfiable value (PR #381 review)."""
+        out = strict_json_schema(
+            {
+                "type": "object",
+                "properties": {
+                    "n": {"type": "integer", "anyOf": [{"minimum": 10}, {"maximum": 0}]}
+                },
+                "required": [],
+            }
+        )
+        n = out["properties"]["n"]
+        assert n == {
+            "anyOf": [
+                {"type": "integer", "anyOf": [{"minimum": 10}, {"maximum": 0}]},
+                {"type": "null"},
+            ]
+        }
+        assert out["required"] == ["n"]
+
+    def test_bare_anyof_still_gains_a_flat_null_branch(self) -> None:
+        """No sibling assertion means the combinator *is* the schema, so
+        appending is equivalent and keeps the emitted schema flat. A
+        ``description`` alongside it annotates rather than constrains."""
+        out = strict_json_schema(
+            {
+                "type": "object",
+                "properties": {
+                    "n": {"description": "d", "anyOf": [{"type": "integer"}]}
+                },
+                "required": [],
+            }
+        )
+        assert out["properties"]["n"] == {
+            "description": "d",
+            "anyOf": [{"type": "integer"}, {"type": "null"}],
+        }
+
+    def test_oneof_is_always_wrapped_rather_than_extended(self) -> None:
+        """``oneOf`` demands *exactly* one match, and null passes most
+        constraint-only branches vacuously — an appended null branch would
+        make null match several and fail."""
+        out = strict_json_schema(
+            {
+                "type": "object",
+                "properties": {"n": {"oneOf": [{"type": "integer"}, {"type": "string"}]}},
+                "required": [],
+            }
+        )
+        assert out["properties"]["n"] == {
+            "anyOf": [
+                {"oneOf": [{"type": "integer"}, {"type": "string"}]},
+                {"type": "null"},
+            ]
+        }
+
     def test_single_type_enum_widening_is_unchanged(self) -> None:
         out = strict_json_schema(
             {

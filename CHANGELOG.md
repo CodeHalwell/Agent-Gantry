@@ -177,6 +177,21 @@ adapters, and the provider dialects agree with it.
   normalized too: strict mode widens the optional properties of a positional
   *object* exactly as it does anywhere else, so a `tuple[Payload, int]`
   parameter kept its nested nulls while only `items` was consulted.
+- **A null branch appended inside `anyOf`/`oneOf` didn't make the property
+  nullable.** A sibling assertion applies independently of a combinator, so
+  `{"type": "integer", "anyOf": [{"minimum": 10}, {"maximum": 0}]}` kept
+  failing its untouched `type: integer` on `null` — and strict mode makes the
+  property required, so no value satisfied both. Such a schema is now wrapped
+  whole as `anyOf: [<original>, {"type": "null"}]`. `oneOf` is wrapped
+  unconditionally: it demands *exactly* one match, and `null` passes most
+  constraint-only branches vacuously, so an appended branch would make it
+  match several. A bare `anyOf` still gains a flat null branch.
+- **An empty combinator branch was dropped from framework args models.**
+  `{}` is the always-valid JSON Schema, not an absent branch — so
+  `anyOf: [{}, {"type": "integer"}]`, which admits every value, generated a
+  model that rejected strings, and `oneOf: [{}, {"type": "integer"}]` accepted
+  an integer that in fact matches both branches. The validator already counted
+  the empty branch as always-matching; the bridge now does too.
 - **A pre-widened nullable enum still forbade `null` under strict mode.**
   `_make_nullable` returned early when `null` was already in a property's
   `type` list, so the enum was never widened alongside it: a schema arriving

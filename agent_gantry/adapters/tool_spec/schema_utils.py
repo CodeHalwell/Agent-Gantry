@@ -49,6 +49,40 @@ def _admit_null_in_enum(subschema: dict[str, Any]) -> None:
         subschema["enum"] = [*enum_values, None]
 
 
+#: Keywords that annotate a schema without constraining what it accepts.
+#: Everything else is an assertion that keeps applying alongside a combinator.
+_ANNOTATION_KEYS = frozenset(
+    {
+        "description",
+        "title",
+        "default",
+        "examples",
+        "$comment",
+        "deprecated",
+        "readOnly",
+        "writeOnly",
+    }
+)
+
+
+def _wrap_in_nullable_anyof(subschema: dict[str, Any]) -> None:
+    """Replace ``subschema`` with ``anyOf: [<original>, {"type": "null"}]``.
+
+    The general way to make any schema nullable: null satisfies the added
+    branch, and the original is preserved untouched as the other. ``description``
+    is lifted out so the property keeps its documentation at the top level,
+    where every provider looks for it.
+    """
+    description = subschema.get("description")
+    remainder = {k: v for k, v in subschema.items() if k != "description"}
+    if not remainder:
+        return
+    subschema.clear()
+    subschema["anyOf"] = [remainder, {"type": "null"}]
+    if description is not None:
+        subschema["description"] = description
+
+
 def _make_nullable(subschema: dict[str, Any]) -> None:
     """Widen ``subschema`` in place so ``null`` is a valid value.
 
@@ -56,9 +90,25 @@ def _make_nullable(subschema: dict[str, Any]) -> None:
     required — so a parameter that was optional has to accept ``null`` instead.
     """
     if "anyOf" in subschema and isinstance(subschema["anyOf"], list):
+        # Appending a null branch only works when the combinator is the *whole*
+        # schema. A sibling assertion applies independently of it, so
+        # ``{"type": "integer", "anyOf": [...]}`` with a null branch added
+        # inside still fails the untouched ``type: integer`` — and strict mode
+        # makes the property required, leaving no value that satisfies both.
+        if set(subschema) - {"anyOf"} - _ANNOTATION_KEYS:
+            _wrap_in_nullable_anyof(subschema)
+            return
         branches = subschema["anyOf"]
         if not any(isinstance(b, dict) and b.get("type") == "null" for b in branches):
             branches.append({"type": "null"})
+        return
+
+    if "oneOf" in subschema and isinstance(subschema["oneOf"], list):
+        # Never appended to, sibling assertions or not: ``oneOf`` demands
+        # *exactly* one match, and null passes most constraint-only branches
+        # vacuously (``{"minimum": 10}`` says nothing about null), so an added
+        # null branch would make null match several and fail.
+        _wrap_in_nullable_anyof(subschema)
         return
 
     if "const" in subschema:
@@ -68,12 +118,7 @@ def _make_nullable(subschema: dict[str, Any]) -> None:
         # and strict mode makes the property required, so the model could not
         # express omission at all. Wrapping keeps the constant intact while
         # adding a null alternative beside it.
-        description = subschema.get("description")
-        remainder = {k: v for k, v in subschema.items() if k != "description"}
-        subschema.clear()
-        subschema["anyOf"] = [remainder, {"type": "null"}]
-        if description is not None:
-            subschema["description"] = description
+        _wrap_in_nullable_anyof(subschema)
         return
 
     declared = subschema.get("type")
@@ -94,13 +139,7 @@ def _make_nullable(subschema: dict[str, Any]) -> None:
     else:
         # No usable type to widen (e.g. an enum-only or unconstrained schema).
         # Wrapping it in anyOf keeps the original constraints intact.
-        remainder = {k: v for k, v in subschema.items() if k != "description"}
-        if remainder:
-            description = subschema.get("description")
-            subschema.clear()
-            subschema["anyOf"] = [remainder, {"type": "null"}]
-            if description is not None:
-                subschema["description"] = description
+        _wrap_in_nullable_anyof(subschema)
 
 
 def _strict_in_place(node: Any) -> None:
