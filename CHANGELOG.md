@@ -106,6 +106,27 @@ adapters, and the provider dialects agree with it.
   throughout the nested model and `TypedDict` schemas introspection now
   inlines — and validation checked only `type` and `enum`, letting any value
   through. `const` equality is checked alongside `enum` membership now.
+- **Combinators were only enforced when the schema had no `type`.** JSON
+  Schema applies `anyOf`/`oneOf`/`allOf` independently of `type`, so
+  `{"type": "integer", "allOf": [{"minimum": 1}]}` — a shape merged and
+  imported schemas do produce — accepted `0`. They now run regardless.
+- **A `TypedDict` subclass lost its inherited required keys.** The
+  rebuild used for Python < 3.12 replayed a single `total=` flag over the
+  merged annotations, so `class Child(Base, total=False)` made *Base*'s
+  required keys optional too. Requiredness is now rebuilt per key from
+  `__required_keys__`.
+- **A malformed confirmation probe consumed no quota.** A call whose
+  arguments fail validation is terminal even on a confirmation-gated tool —
+  it returns a `ValidationError`, never a pending prompt — but it was
+  taking the probe's rate-limit exemption, so malformed calls were
+  unlimited. Arguments are now validated before that decision is made; the
+  result is still returned after the policy check, so a denial outranks a
+  validation error exactly as before.
+- **Constraints didn't reach recursive framework annotations.**
+  `list[Annotated[int, Field(gt=0)]]` carries `exclusiveMinimum` on the
+  *item* schema, but constraints were only applied to the outer property,
+  so array items, typed `additionalProperties` values, and combinator
+  branches were all unconstrained in the generated model.
 - **Strict-mode nulls were only normalized at the top level.** Widening
   applies to *every* object in the schema, so an optional *nested* property
   also comes back as an explicit `null` meaning "not provided" — but

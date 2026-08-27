@@ -516,6 +516,25 @@ class TestSchemaFidelity:
         assert addr["properties"]["city"]["type"] == "string"
         assert set(addr.get("required", [])) == {"street", "city"}
 
+    def test_typeddict_inheritance_keeps_required_keys(self):
+        """``class Child(Base, total=False)`` still requires ``Base``'s keys.
+        Replaying one ``total=`` flag over the merged annotations made every
+        one of them optional (PR #381 review)."""
+        from typing import TypedDict
+
+        class Base(TypedDict):
+            a: str
+
+        class Child(Base, total=False):
+            b: int
+
+        def func(x: Child) -> None:
+            pass
+
+        schema = build_parameters_schema(func)["properties"]["x"]
+        assert set(schema["properties"]) == {"a", "b"}
+        assert schema["required"] == ["a"]
+
     def test_self_referential_model_hits_ref_depth_limit(self):
         from pydantic import BaseModel
 

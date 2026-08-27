@@ -238,7 +238,11 @@ def _union_annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
             if branch.get("type") == "null":
                 parts.append(type(None))
             else:
-                parts.append(_annotation(f"{name}_{index}", branch, depth + 1))
+                parts.append(
+                    _with_constraints(
+                        _annotation(f"{name}_{index}", branch, depth + 1), branch
+                    )
+                )
         if not parts:
             continue
         annotation = parts[0]
@@ -363,7 +367,12 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
     if json_type == "array":
         items = prop.get("items")
         if isinstance(items, dict) and items:
-            return list[_annotation(f"{name}_item", items, depth + 1)]
+            # Constraints ride along on the *item* schema too
+            # (``list[Annotated[int, Field(gt=0)]]`` puts them there), so
+            # apply them here as well as on the outer property.
+            return list[
+                _with_constraints(_annotation(f"{name}_item", items, depth + 1), items)
+            ]
         return list
     if json_type == "object":
         properties = prop.get("properties")
@@ -381,7 +390,12 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
             # No declared properties, but a typed ``additionalProperties``
             # (e.g. ``dict[str, int]``) — preserve the value type instead of
             # widening to a bare ``dict`` that would accept any value type.
-            return dict[str, _annotation(f"{name}_value", additional, depth + 1)]
+            return dict[
+                str,
+                _with_constraints(
+                    _annotation(f"{name}_value", additional, depth + 1), additional
+                ),
+            ]
         return dict
     return Any
 

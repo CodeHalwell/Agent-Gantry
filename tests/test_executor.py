@@ -961,3 +961,95 @@ def test_normalize_recurses_into_array_items():
     assert ExecutionEngine._normalize_arguments(tool, {"rows": [{"x": 1, "y": None}]}) == {
         "rows": [{"x": 1}]
     }
+
+
+@pytest.mark.asyncio
+async def test_validate_runs_combinators_alongside_an_explicit_type(engine):
+    """JSON Schema applies ``anyOf``/``oneOf``/``allOf`` independently of
+    ``type``, so gating them on a missing ``type`` let
+    ``{"type": "integer", "allOf": [{"minimum": 1}]}`` accept ``0``
+    (PR #381 review)."""
+    tool = ToolDefinition(
+        name="typed_allof",
+        description="Typed property carrying an allOf constraint",
+        parameters_schema={
+            "type": "object",
+            "properties": {"n": {"type": "integer", "allOf": [{"minimum": 1}]}},
+            "required": ["n"],
+        },
+    )
+    is_valid, error = await engine._validate_arguments(tool, {"n": 0})
+    assert is_valid is False
+    assert error
+
+    is_valid, error = await engine._validate_arguments(tool, {"n": 5})
+    assert is_valid is True, error
+
+
+@pytest.mark.asyncio
+async def test_malformed_confirmation_probe_consumes_quota():
+    """A call whose arguments don't match the schema is terminal even on a
+    confirmation-gated tool — it returns a ValidationError, never a pending
+    prompt — so it must not take the probe exemption (PR #381 review)."""
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.core.security import SecurityPolicy
+    from agent_gantry.schema.execution import ToolCall
+
+    registry = ToolRegistry()
+    registry.register_tool(
+        ToolDefinition(
+            name="risky",
+            description="Confirmation-gated tool with a required argument",
+            parameters_schema={
+                "type": "object",
+                "properties": {"n": {"type": "integer"}},
+                "required": ["n"],
+            },
+            requires_confirmation=True,
+        )
+    )
+    registry.register_handler("default.risky", lambda n: n)
+    engine = ExecutionEngine(
+        registry=registry,
+        security_policy=SecurityPolicy(require_confirmation=[], max_requests_per_minute=1),
+    )
+
+    first = await engine.execute(ToolCall(tool_name="risky", arguments={"n": "bad"}))
+    assert first.error_type == "ValidationError"
+    # It consumed the budget, so malformed calls can't repeat forever.
+    second = await engine.execute(ToolCall(tool_name="risky", arguments={"n": "bad"}))
+    assert second.error_type == "PermissionDeniedError"
+
+
+@pytest.mark.asyncio
+async def test_valid_confirmation_probe_is_still_exempt():
+    """The malformed-probe carve-out must not undo the exemption itself."""
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.core.security import SecurityPolicy
+    from agent_gantry.schema.execution import ToolCall
+
+    registry = ToolRegistry()
+    registry.register_tool(
+        ToolDefinition(
+            name="risky",
+            description="Confirmation-gated tool with a required argument",
+            parameters_schema={
+                "type": "object",
+                "properties": {"n": {"type": "integer"}},
+                "required": ["n"],
+            },
+            requires_confirmation=True,
+        )
+    )
+    registry.register_handler("default.risky", lambda n: n)
+    engine = ExecutionEngine(
+        registry=registry,
+        security_policy=SecurityPolicy(require_confirmation=[], max_requests_per_minute=1),
+    )
+
+    probe = await engine.execute(ToolCall(tool_name="risky", arguments={"n": 1}))
+    assert probe.status.value == "pending_confirmation"
+    approved = await engine.execute(
+        ToolCall(tool_name="risky", arguments={"n": 1}, require_confirmation=False)
+    )
+    assert approved.status.value == "success", approved.error

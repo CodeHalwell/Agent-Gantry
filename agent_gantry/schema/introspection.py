@@ -287,18 +287,31 @@ def _typeddict_schema_via_typing_extensions(param_type: type) -> dict[str, Any] 
     reaches for) raises ``PydanticUserError`` instead, which would
     otherwise silently flatten the parameter to a bare ``{"type":
     "object"}``. Rebuilding an equivalent class from the same field
-    annotations and totality and retrying keeps the nested schema intact
-    on those Python versions too.
+    annotations and retrying keeps the nested schema intact on those Python
+    versions too.
+
+    Requiredness is rebuilt per key from ``__required_keys__`` rather than by
+    replaying one ``total=`` flag: with inheritance the two disagree.
+    ``class Child(Base, total=False)`` still requires ``Base``'s keys, but
+    applying ``total=False`` to the merged annotations would make every one
+    of them optional, so the emitted schema would permit omitting a key the
+    handler relies on.
     """
     try:
         import typing_extensions
         from pydantic import TypeAdapter
 
-        rebuilt = typing_extensions.TypedDict(
-            param_type.__name__,
-            param_type.__annotations__,
-            total=param_type.__total__,
-        )
+        required_keys = frozenset(getattr(param_type, "__required_keys__", ()) or ())
+        annotations = {
+            key: (
+                typing_extensions.Required[annotation]
+                if key in required_keys
+                else typing_extensions.NotRequired[annotation]
+            )
+            for key, annotation in param_type.__annotations__.items()
+        }
+        # Every key now states its own requiredness, so ``total`` is moot.
+        rebuilt = typing_extensions.TypedDict(param_type.__name__, annotations)
         return TypeAdapter(rebuilt).json_schema()
     except Exception:  # noqa: BLE001 - best-effort; fall back to generic mapping
         return None

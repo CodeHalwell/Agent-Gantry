@@ -216,21 +216,32 @@ class ExecutionEngine:
         if cb_result:
             return cb_result
 
-        # Security policy check
-        sp_result = await self._check_security_policy(tool, call, queued_at, trace_id, span_id)
-        if sp_result:
-            return sp_result
-
         # A call that will come back PENDING_CONFIRMATION never reaches the
         # handler, so it must not consume rate-limit budget: ``acquire``
         # records the call in the limiter's window and ``release`` only frees
         # the concurrency counter, so counting the probe *and* the approved
         # replay that follows would charge one logical call twice — the same
         # double-count the SecurityPolicy pattern gate had, via the tool-flag
-        # path and the real RateLimiter. Deciding it here (a pure function of
-        # the call and tool) leaves the rest of the ordering alone, so
-        # arguments are still validated before a human is asked to approve.
-        pending_confirmation = self._needs_confirmation(tool, call)
+        # path and the real RateLimiter.
+        #
+        # Arguments are validated first so that decision is accurate: a call
+        # whose arguments don't match the schema is terminal even on a
+        # confirmation-gated tool — it returns a ValidationError, never a
+        # pending prompt — so it must not take the probe exemption, or
+        # malformed calls would be unlimited. The *result* is still returned
+        # below, after the policy check, so a denial still outranks a
+        # validation error exactly as before.
+        val_result = await self._validate_call_arguments(
+            tool, call, queued_at, trace_id, span_id
+        )
+        pending_confirmation = val_result is None and self._needs_confirmation(tool, call)
+
+        # Security policy check
+        sp_result = await self._check_security_policy(
+            tool, call, queued_at, trace_id, span_id, pending_confirmation
+        )
+        if sp_result:
+            return sp_result
 
         # Rate limiting check (acquires a concurrency slot on success)
         if not pending_confirmation:
@@ -242,10 +253,6 @@ class ExecutionEngine:
         # including validation failures and early returns — or the concurrent
         # counter leaks and eventually rejects all calls for this key.
         try:
-            # Argument validation
-            val_result = await self._validate_call_arguments(
-                tool, call, queued_at, trace_id, span_id
-            )
             if val_result:
                 return val_result
 
@@ -491,8 +498,16 @@ class ExecutionEngine:
         queued_at: datetime,
         trace_id: str,
         span_id: str,
+        pending_confirmation: bool = False,
     ) -> ToolResult | None:
-        """Check security policy permissions."""
+        """Check security policy permissions.
+
+        Args:
+            pending_confirmation: Whether this call will stop at the
+                executor's own confirmation gate — decided by the caller,
+                which knows whether the arguments validated, so a malformed
+                call is not mistaken for a pending one.
+        """
         if self._security_policy:
             from agent_gantry.core.security import (
                 ConfirmationRequiredError,
@@ -527,7 +542,7 @@ class ExecutionEngine:
                 if accepts_confirmation_approved(self._security_policy):
                     kwargs["confirmation_approved"] = call.require_confirmation is False
                 if accepts_keyword(self._security_policy, "pending_confirmation"):
-                    kwargs["pending_confirmation"] = self._needs_confirmation(tool, call)
+                    kwargs["pending_confirmation"] = pending_confirmation
                 self._security_policy.check_permission(tool.name, call.arguments, **kwargs)
             except ConfirmationRequiredError as e:
                 result = ToolResult(
@@ -844,44 +859,47 @@ class ExecutionEngine:
             # {"type": "null"}]}`` is what Pydantic emits for ``int | None``,
             # including for fields of the nested models this PR now inlines.
             # Reading ``type`` alone would see ``None`` and wave the value
-            # through unchecked, so enforce the branches here.
-            if expected_type is None:
-                for key in ("anyOf", "oneOf"):
-                    branches = val_schema.get(key)
-                    if not isinstance(branches, list) or not branches:
-                        continue
-                    usable = [b for b in branches if isinstance(b, dict)]
-                    if not usable:
-                        continue
-                    # An empty schema ``{}`` validates every value, so it is a
-                    # branch that always matches — excluding it turned
-                    # ``{"anyOf": [{}, {"type": "integer"}]}`` (semantically
-                    # "anything") into an integer-only constraint.
-                    matches = sum(
-                        1 for b in usable if not b or _validate_value(value, b, path)[0]
+            # through unchecked, so enforce the branches here. Run regardless
+            # of whether the schema also declares a ``type``: JSON Schema
+            # applies these independently, so ``{"type": "integer", "allOf":
+            # [{"minimum": 1}]}`` — a shape merged/imported schemas do use —
+            # must honour both assertions, not just the type.
+            for key in ("anyOf", "oneOf"):
+                branches = val_schema.get(key)
+                if not isinstance(branches, list) or not branches:
+                    continue
+                usable = [b for b in branches if isinstance(b, dict)]
+                if not usable:
+                    continue
+                # An empty schema ``{}`` validates every value, so it is a
+                # branch that always matches — excluding it turned
+                # ``{"anyOf": [{}, {"type": "integer"}]}`` (semantically
+                # "anything") into an integer-only constraint.
+                matches = sum(
+                    1 for b in usable if not b or _validate_value(value, b, path)[0]
+                )
+                if matches == 0:
+                    return (
+                        False,
+                        f"Parameter '{path}' does not match any permitted schema",
                     )
-                    if matches == 0:
-                        return (
-                            False,
-                            f"Parameter '{path}' does not match any permitted schema",
-                        )
-                    # ``oneOf`` means *exactly* one, unlike ``anyOf``: with
-                    # overlapping branches (``number``/``integer``) a value
-                    # matching both violates the schema.
-                    if key == "oneOf" and matches > 1:
-                        return (
-                            False,
-                            f"Parameter '{path}' matches {matches} oneOf schemas; "
-                            "exactly one must match",
-                        )
-                allof = val_schema.get("allOf")
-                if isinstance(allof, list):
-                    for branch in allof:
-                        if not isinstance(branch, dict) or not branch:
-                            continue
-                        is_valid, err = _validate_value(value, branch, path)
-                        if not is_valid:
-                            return False, err
+                # ``oneOf`` means *exactly* one, unlike ``anyOf``: with
+                # overlapping branches (``number``/``integer``) a value
+                # matching both violates the schema.
+                if key == "oneOf" and matches > 1:
+                    return (
+                        False,
+                        f"Parameter '{path}' matches {matches} oneOf schemas; "
+                        "exactly one must match",
+                    )
+            allof = val_schema.get("allOf")
+            if isinstance(allof, list):
+                for branch in allof:
+                    if not isinstance(branch, dict) or not branch:
+                        continue
+                    is_valid, err = _validate_value(value, branch, path)
+                    if not is_valid:
+                        return False, err
 
             # ``type`` may be a list (e.g. strict-mode ``["string", "null"]``):
             # the value is valid if it matches any listed type.

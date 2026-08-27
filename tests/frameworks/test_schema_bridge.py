@@ -576,3 +576,41 @@ def test_float_enum_members_are_preserved():
     assert model(v=0.5).v == 0.5
     with pytest.raises(ValidationError):
         model(v=2.5)
+
+
+def test_constraints_apply_to_array_items():
+    """Constraints ride along on the *item* schema too — ``list[Annotated[
+    int, Field(gt=0)]]`` puts them there, not on the outer property
+    (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "nums": {"type": "array", "items": {"type": "integer", "exclusiveMinimum": 0}}
+            },
+            "required": ["nums"],
+        },
+    )
+    assert model(nums=[1, 2]).nums == [1, 2]
+    with pytest.raises(ValidationError):
+        model(nums=[-1])
+
+
+def test_constraints_apply_to_typed_additional_properties():
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "scores": {
+                    "type": "object",
+                    "additionalProperties": {"type": "integer", "minimum": 0},
+                }
+            },
+            "required": ["scores"],
+        },
+    )
+    assert model(scores={"a": 1}).scores == {"a": 1}
+    with pytest.raises(ValidationError):
+        model(scores={"a": -1})
