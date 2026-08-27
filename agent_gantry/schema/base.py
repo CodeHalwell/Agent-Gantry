@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime
+import uuid
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any
 
@@ -25,6 +26,47 @@ __all__ = [
     "resolve_numeric_bounds",
     "schema_declares_null",
 ]
+
+
+#: The string ``format``s Gantry emits itself, mapped to the Python type each
+#: one is reconstructed into. Deliberately not every format the spec names:
+#: ``format`` is an *annotation* by default in JSON Schema, and enforcing
+#: ``email``/``uri``/``hostname`` on an imported schema that uses them loosely
+#: would reject calls that work. These four are different — Gantry emits them
+#: precisely because the handler's annotation demands them, so a string that
+#: doesn't parse is a call the handler cannot serve.
+RECONSTRUCTED_STRING_FORMATS: dict[str, Any] = {
+    "date-time": datetime,
+    "date": date,
+    "time": time,
+    "uuid": uuid.UUID,
+}
+
+_FORMAT_ADAPTERS: dict[str, Any] = {}
+
+
+def _format_adapter(fmt: str) -> Any:
+    """A memoized ``TypeAdapter`` for one reconstructed string format.
+
+    The *same* parser reconstruction uses, so validation and reconstruction
+    agree by construction: previously a malformed ``date-time`` passed
+    validation (which read only the JSON type), failed to reconstruct, and the
+    fallback handed a `str` to a handler annotated ``datetime`` — reported as
+    a success.
+    """
+    if fmt in _FORMAT_ADAPTERS:
+        return _FORMAT_ADAPTERS[fmt]
+    python_type = RECONSTRUCTED_STRING_FORMATS.get(fmt)
+    if python_type is None:
+        return None
+    try:
+        from pydantic import TypeAdapter
+
+        adapter = TypeAdapter(python_type)
+    except Exception:  # noqa: BLE001 - never let this break validation
+        adapter = None
+    _FORMAT_ADAPTERS[fmt] = adapter
+    return adapter
 
 
 def check_json_constraints(value: Any, schema: dict[str, Any], path: str) -> str | None:
@@ -97,6 +139,14 @@ def check_json_constraints(value: Any, schema: dict[str, Any], path: str) -> str
                 matches = True
             if not matches:
                 return f"Parameter '{path}' must match pattern {pattern!r}"
+        fmt = schema.get("format")
+        if isinstance(fmt, str) and fmt in RECONSTRUCTED_STRING_FORMATS:
+            adapter = _format_adapter(fmt)
+            if adapter is not None:
+                try:
+                    adapter.validate_python(value)
+                except Exception:  # noqa: BLE001 - any parse failure is a reject
+                    return f"Parameter '{path}' must be a valid {fmt} string"
 
     if isinstance(value, list):
         min_items = schema.get("minItems")

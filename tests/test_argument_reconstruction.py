@@ -574,3 +574,82 @@ async def test_integer_mapping_keys_reach_the_handler_as_integers():
     )
     assert result.status.value == "success", result.error
     assert result.result == "3:int"
+
+
+def test_bare_container_and_bytes_annotations_are_rebuilt_too():
+    """``get_origin`` is ``None`` for an unparameterized ``set``/``frozenset``/
+    ``tuple``, so those spellings missed the generic branch entirely — while
+    introspection still advertised them as JSON arrays, leaving the handler a
+    ``list``. Bare ``bytes`` is the same story one type over (PR #381
+    review)."""
+    from agent_gantry.schema.introspection import _needs_reconstruction
+
+    for bare in (set, frozenset, tuple, bytes):
+        assert _needs_reconstruction(bare) is True, bare
+    # The types that genuinely arrive as themselves are still excluded —
+    # coercing them would change what every existing handler receives.
+    for unchanged in (list, dict, str, int, float, bool):
+        assert _needs_reconstruction(unchanged) is False, unchanged
+
+
+async def test_a_bare_set_annotation_reaches_the_handler_as_a_set():
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @g.register(tags=["demo"])
+    def dedupe(tags: set) -> str:
+        """Report the runtime type and size of a bare-set parameter."""
+        return f"{type(tags).__name__}:{len(tags)}"
+
+    await g.sync()
+    result = await g.execute(
+        ToolCall(tool_name="dedupe", arguments={"tags": ["a", "b", "a"]})
+    )
+    assert result.status.value == "success", result.error
+    assert result.result == "set:2"
+
+
+async def test_a_malformed_formatted_string_is_rejected_not_passed_through():
+    """Validation read only the JSON *type*, so a bad ``date-time`` passed,
+    reconstruction then failed, and the fallback handed the raw ``str`` to a
+    handler annotated ``datetime`` — reported as a success. The format is
+    enforced with the same parser reconstruction uses (PR #381 review)."""
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @g.register(tags=["demo"])
+    def when(at: datetime.datetime) -> str:
+        """Report the runtime type of a timestamp argument."""
+        return type(at).__name__
+
+    await g.sync()
+    good = await g.execute(
+        ToolCall(tool_name="when", arguments={"at": "2026-08-27T00:00:00"})
+    )
+    assert good.status.value == "success", good.error
+    assert good.result == "datetime"
+
+    bad = await g.execute(ToolCall(tool_name="when", arguments={"at": "not-a-date"}))
+    assert bad.status.value == "failure"
+    assert bad.error_type == "ValidationError"
+
+
+def test_only_the_formats_gantry_reconstructs_are_enforced():
+    """``format`` is an annotation by default in JSON Schema. Enforcing every
+    one of them would reject calls that work against an imported schema using
+    ``email``/``uri`` loosely; these four are different because Gantry emits
+    them precisely because the handler's annotation demands them."""
+    from agent_gantry.schema.base import check_json_constraints
+
+    for fmt, ok, bad in (
+        ("date-time", "2026-08-27T00:00:00", "not-a-date"),
+        ("date", "2026-08-27", "nope"),
+        ("time", "12:30:00", "nope"),
+        ("uuid", "12345678-1234-5678-1234-567812345678", "xx"),
+    ):
+        schema = {"type": "string", "format": fmt}
+        assert check_json_constraints(ok, schema, "v") is None, fmt
+        assert check_json_constraints(bad, schema, "v") is not None, fmt
+
+    # Left as an annotation, per the spec's default.
+    assert check_json_constraints("nope", {"type": "string", "format": "email"}, "v") is None
+    # A non-string value is not a format's business.
+    assert check_json_constraints(5, {"type": "string", "format": "date-time"}, "v") is None

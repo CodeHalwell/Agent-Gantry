@@ -157,3 +157,21 @@ def test_a_declared_type_outranks_the_members_it_disagrees_with():
     assert _annotation_for_prop({"type": "string", "enum": [{"a": 1}]}) is str
     # Mixed members name no single container, so the fallback still applies.
     assert _annotation_for_prop({"enum": [[0, 0], "x"]}) is str
+
+
+def test_reconstructed_string_formats_survive_into_the_signature():
+    """Semantic Kernel, AG2 and Google ADK's fallback path rebuild their
+    provider schema from this signature, so flattening
+    ``{"type": "string", "format": "date-time"}`` to ``str`` dropped the format
+    the schema had just gained — and the model could then answer with a string
+    the handler can't take (PR #381 review)."""
+    import datetime
+    import uuid
+
+    assert _annotation_for_prop({"type": "string", "format": "date-time"}) is datetime.datetime
+    assert _annotation_for_prop({"type": "string", "format": "date"}) is datetime.date
+    assert _annotation_for_prop({"type": "string", "format": "time"}) is datetime.time
+    assert _annotation_for_prop({"type": "string", "format": "uuid"}) is uuid.UUID
+    # Formats Gantry neither emits nor reconstructs stay plain strings.
+    assert _annotation_for_prop({"type": "string", "format": "email"}) is str
+    assert _annotation_for_prop({"type": "string"}) is str

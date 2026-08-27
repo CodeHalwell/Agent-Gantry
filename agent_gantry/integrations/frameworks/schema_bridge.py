@@ -22,6 +22,7 @@ from collections import OrderedDict
 from typing import Any, Literal
 
 from agent_gantry.schema.base import (
+    RECONSTRUCTED_STRING_FORMATS,
     check_json_constraints,
     json_identity_key,
     resolve_numeric_bounds,
@@ -804,6 +805,14 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
         # through advertised an unconstrained ``Any``. Check membership
         # directly instead.
         return _enum_membership(enum_values)
+
+    if prop.get("type") == "string":
+        # The same mapping the signature path uses: a ``date-time`` property
+        # advertised as a bare ``str`` let the CrewAI/LlamaIndex model accept
+        # a string the executor now rejects for not parsing.
+        formatted = RECONSTRUCTED_STRING_FORMATS.get(prop.get("format"))
+        if formatted is not None:
+            return formatted
 
     json_type = prop.get("type")
     # A field can be typed purely through a combinator, with no ``type`` of

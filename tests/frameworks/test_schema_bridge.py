@@ -1467,3 +1467,33 @@ def test_the_model_cache_evicts_rather_than_growing():
         schema_bridge._MODEL_CACHE_MAX = original_max
         schema_bridge._MODEL_CACHE.clear()
         schema_bridge._MODEL_CACHE.update(original_cache)
+
+
+def test_the_bridge_types_reconstructed_formats_like_the_executor():
+    """A ``date-time`` property advertised as a bare ``str`` let the
+    CrewAI/LlamaIndex model accept a string the executor rejects for not
+    parsing. Both sides read one shared table now (PR #381 review)."""
+    import datetime
+
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"at": {"type": "string", "format": "date-time"}},
+            "required": ["at"],
+        },
+    )
+    assert model(at="2026-08-27T00:00:00").at == datetime.datetime(2026, 8, 27)
+    with pytest.raises(ValidationError):
+        model(at="not-a-date")
+
+    # An unenforced format is still a plain string on both sides.
+    loose = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"who": {"type": "string", "format": "email"}},
+            "required": ["who"],
+        },
+    )
+    assert loose(who="not-an-email").who == "not-an-email"

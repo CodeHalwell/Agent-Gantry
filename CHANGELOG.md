@@ -733,6 +733,25 @@ adapters, and the provider dialects agree with it.
   `{"1": "value"}` and every lookup or arithmetic on those keys failed.
   Reconstruction looked only at the *value* type; it now flags a non-string
   key annotation too.
+- **A bare `set`/`frozenset`/`tuple`/`bytes` annotation was never rebuilt.**
+  `typing.get_origin` is `None` for an unparameterized container, so those
+  spellings missed the generic branch entirely — while introspection still
+  advertised them as JSON arrays, leaving the handler a `list` (and a `str`
+  for `bytes`). The parameterized forms were already covered.
+- **A malformed `date-time`/`date`/`time`/`uuid` string was passed through as
+  a string.** Validation read only the JSON *type*, so it accepted the value;
+  reconstruction then failed and the fallback handed the raw `str` to a
+  handler annotated `datetime` — reported as a **success**. Those four formats
+  are now enforced with the same parser reconstruction uses, so the two agree
+  by construction. Deliberately only those four: `format` is an annotation by
+  default in JSON Schema, and enforcing `email`/`uri` on an imported schema
+  that uses them loosely would reject calls that work.
+- **The same formats reached the framework adapters as a bare `str`.**
+  Semantic Kernel, AG2 and Google ADK's fallback path rebuild their provider
+  schema from `python_signature`, so a `datetime` parameter was advertised to
+  them as a free-form string and the model could answer with one the handler
+  can't take. The CrewAI/LlamaIndex bridge had the same gap. Both now read one
+  shared `RECONSTRUCTED_STRING_FORMATS` table.
 
 ### Performance
 

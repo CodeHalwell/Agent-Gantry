@@ -243,6 +243,14 @@ def _needs_reconstruction(param_type: Any) -> bool:
         return False
     if param_type in (datetime.datetime, datetime.date, datetime.time, uuid.UUID):
         return True
+    # A *bare* ``set``/``frozenset``/``tuple`` annotation reaches here rather
+    # than the parameterized branch above, because ``get_origin`` is ``None``
+    # for it — but introspection still advertises it as a JSON array, so the
+    # handler was receiving a ``list``. Same for bare ``bytes``, advertised as
+    # a string. The parameterized forms were already covered; only the
+    # unparameterized spellings slipped through.
+    if param_type in (set, frozenset, tuple, bytes):
+        return True
     if issubclass(param_type, enum.Enum):
         return True
     # A ``TypedDict`` *is* a dict at runtime, so it needs nothing — and it

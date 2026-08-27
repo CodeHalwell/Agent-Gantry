@@ -39,7 +39,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
-from agent_gantry.schema.base import schema_declares_null
+from agent_gantry.schema.base import RECONSTRUCTED_STRING_FORMATS, schema_declares_null
 from agent_gantry.schema.execution import ExecutionStatus, ToolCall
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 
@@ -420,6 +420,18 @@ def _annotation_for_prop(prop: dict[str, Any]) -> Any:
         # a string, and the string the model dutifully produced was then
         # rejected by the executor.
         return type(None)
+
+    if json_type == "string":
+        # ``{"type": "string", "format": "date-time"}`` is what introspection
+        # emits for a ``datetime`` parameter. Reducing it to a bare ``str``
+        # dropped the format from the schema Semantic Kernel, AG2 and Google
+        # ADK's fallback path rebuild off this signature, so they advertised a
+        # free-form string and the model could answer with one the handler
+        # can't take. Only the formats Gantry emits and reconstructs are
+        # mapped; ``email``/``uri`` and friends stay ``str``.
+        formatted = RECONSTRUCTED_STRING_FORMATS.get(prop.get("format"))
+        if formatted is not None:
+            return formatted
 
     annotation = _json_type_to_python(json_type)
 
