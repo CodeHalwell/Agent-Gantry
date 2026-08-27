@@ -260,6 +260,22 @@ def _is_open_map(node: dict[str, Any]) -> bool:
     return True
 
 
+def _declares_object(declared: Any) -> bool:
+    """Whether a ``type`` names ``object``, as a scalar or in a list.
+
+    ``type`` is a *list* whenever nullability is spelled into it — which
+    introspection now emits for a required ``dict[str, int] | None`` — so
+    matching only the scalar string let a nullable open mapping past this
+    check and into strict mode, which cannot represent it. The provider then
+    rejects the whole tool request rather than that one parameter.
+    """
+    if isinstance(declared, str):
+        return declared == "object"
+    if isinstance(declared, list):
+        return "object" in declared
+    return False
+
+
 def _collect_open_maps(node: Any, path: str, out: list[str]) -> None:
     if isinstance(node, list):
         for index, item in enumerate(node):
@@ -269,7 +285,7 @@ def _collect_open_maps(node: Any, path: str, out: list[str]) -> None:
         return
 
     properties = node.get("properties")
-    if node.get("type") == "object" or isinstance(properties, dict):
+    if _declares_object(node.get("type")) or isinstance(properties, dict):
         if _is_open_map(node):
             out.append(path or "<root>")
 

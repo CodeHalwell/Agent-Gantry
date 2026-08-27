@@ -928,6 +928,13 @@ adapters, and the provider dialects agree with it.
   default was still derived from the raw JSON type and stayed `""` —
   recreating the annotation/default mismatch `type_matched_defaults` exists to
   avoid, which ADK rejects during signature processing.
+- **A nullable open mapping is still strict-unsupported.** `type` is a *list*
+  whenever nullability is spelled into it — which introspection emits for a
+  required `dict[str, int] | None` — and the strict-mode check matched only
+  the scalar string `"object"`. A nullable open mapping therefore passed as
+  strict-safe, and the provider rejected the whole tool request rather than
+  that one parameter. A nullable *closed* object is unaffected: it remains
+  perfectly representable.
 
 ### Performance
 

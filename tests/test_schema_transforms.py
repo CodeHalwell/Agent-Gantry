@@ -911,3 +911,39 @@ def test_a_property_forbidden_by_its_schema_has_no_strict_representation():
             "additionalProperties": False,
         }
     ) == []
+
+
+def test_a_nullable_open_mapping_is_still_strict_unsupported():
+    """``type`` is a *list* whenever nullability is spelled into it — which
+    introspection emits for a required ``dict[str, int] | None`` — so matching
+    only the scalar string let a nullable open mapping past the check and into
+    strict mode, which cannot represent it. The provider then rejects the
+    whole tool request rather than that one parameter (PR #381 review)."""
+    from agent_gantry.adapters.tool_spec.schema_utils import unsupported_strict_paths
+    from agent_gantry.schema.introspection import build_parameters_schema
+
+    def nullable_map(m: dict[str, int] | None) -> None: ...
+
+    def plain_map(m: dict[str, int]) -> None: ...
+
+    emitted = build_parameters_schema(nullable_map)
+    assert emitted["properties"]["m"]["type"] == ["object", "null"]
+    assert unsupported_strict_paths(emitted) == ["m"]
+    # The non-nullable spelling was already correct and must stay so.
+    assert unsupported_strict_paths(build_parameters_schema(plain_map)) == ["m"]
+
+    # A nullable *closed* object is perfectly representable — widening the
+    # check must not sweep it up.
+    closed = {
+        "type": "object",
+        "properties": {
+            "p": {
+                "type": ["object", "null"],
+                "properties": {"a": {"type": "string"}},
+                "required": ["a"],
+                "additionalProperties": False,
+            }
+        },
+        "required": ["p"],
+    }
+    assert unsupported_strict_paths(closed) == []
