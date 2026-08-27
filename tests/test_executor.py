@@ -2337,7 +2337,97 @@ async def test_a_gated_probe_is_not_refused_by_the_admission_peek():
     assert probe.status.value == "pending_confirmation", probe.error
 
     # The exemption is the gate's, not a hole in the limiter: an ungated tool
-    # at the same saturation is still refused.
+    # at the same saturation — the loop above spent its two calls too — is
+    # still refused.
     refused = await engine.execute(ToolCall(tool_name="read_thing", arguments={}))
     assert refused.status.value == "failure"
     assert refused.error_type == "RateLimitExceeded"
+
+
+async def test_an_over_quota_gated_call_answers_without_validating(engine):
+    """The exemption above must not put the validator back in front of the
+    quota. Malformed arguments make ``pending_confirmation`` false, so skipping
+    the limiter peek outright for a gated tool let an attacker force the full
+    recursive validator — ``re.search`` over caller-controlled payloads — on
+    every rejected request while already over quota (PR #381 review).
+
+    The peek runs for every call now; what changes is the *answer*. A gated
+    call answers with the gate rather than a denial, because its quota never
+    charges it and the window may have room again by the time a human
+    approves — and it skips validation either way, which is the work the quota
+    exists to protect."""
+    from agent_gantry.core.rate_limiter import RateLimiter
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.schema.config import RateLimitConfig
+    from agent_gantry.schema.execution import ToolCall
+
+    registry = ToolRegistry()
+    tool = ToolDefinition(
+        name="delete_thing",
+        description="Destructive, and gated behind human confirmation",
+        parameters_schema={
+            "type": "object",
+            "properties": {"x": {"type": "integer"}},
+            "required": ["x"],
+        },
+        requires_confirmation=True,
+    )
+    registry.register_tool(tool)
+    registry.register_handler("default.delete_thing", lambda x=0: x)
+
+    saturated = ExecutionEngine(
+        registry=registry,
+        rate_limiter=RateLimiter(
+            RateLimitConfig(
+                enabled=True,
+                max_calls_per_minute=2,
+                max_calls_per_hour=100,
+                strategy="sliding_window",
+            )
+        ),
+    )
+    for i in range(2):
+        approved = await saturated.execute(
+            ToolCall(
+                tool_name="delete_thing", arguments={"x": i}, require_confirmation=False
+            )
+        )
+        assert approved.status.value == "success", approved.error
+
+    validations = {"count": 0}
+    original = saturated._validate_call_arguments
+
+    async def counting(*args, **kwargs):
+        validations["count"] += 1
+        return await original(*args, **kwargs)
+
+    saturated._validate_call_arguments = counting
+
+    malformed = await saturated.execute(
+        ToolCall(tool_name="delete_thing", arguments={"x": "not an integer"})
+    )
+    assert malformed.status.value == "pending_confirmation", malformed.error
+    assert validations["count"] == 0
+
+    # With quota to spare, a malformed call to the same tool is terminal — the
+    # property the early exit must not cost, since deferring a call that can
+    # never succeed puts a schema violation in front of a human to approve.
+    spare = ExecutionEngine(
+        registry=registry,
+        rate_limiter=RateLimiter(
+            RateLimitConfig(
+                enabled=True,
+                max_calls_per_minute=50,
+                max_calls_per_hour=100,
+                strategy="sliding_window",
+            )
+        ),
+    )
+    terminal = await spare.execute(
+        ToolCall(tool_name="delete_thing", arguments={"x": "not an integer"})
+    )
+    assert terminal.status.value == "failure"
+    assert terminal.error_type == "ValidationError"
+    assert (
+        await spare.execute(ToolCall(tool_name="delete_thing", arguments={"x": 1}))
+    ).status.value == "pending_confirmation"

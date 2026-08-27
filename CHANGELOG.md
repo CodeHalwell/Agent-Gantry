@@ -1059,6 +1059,36 @@ adapters, and the provider dialects agree with it.
   annotate as a `tuple`, and the dispatch boundary normalizes a materialized
   one back to a JSON array, since the executor's validator accepts a `list`
   and nothing else. A partly described array keeps the bare container.
+- **The smolagents adapter no longer crashes on a nullable parameter.**
+  `_admit_null` widens `type` to a *list* for any parameter admitting `None`
+  that is required or carries a non-`None` default, and this was the one
+  adapter reading `type` directly — `dict.get` on a list raises
+  `TypeError: unhashable type: 'list'`, so a single `int | None` parameter
+  took the whole smolagents integration down for that tool. The list and
+  `anyOf` spellings are both unwrapped now, and a *required* parameter whose
+  schema admits null is marked `nullable`, which smolagents needs to permit
+  the value the schema declares.
+- **An over-quota confirmation-gated call no longer buys free validation.**
+  Skipping the quota peek outright for a gated tool put the recursive
+  validator back in front of the limits: malformed arguments make the call
+  non-pending, so the limiter refuses it only *after* the validator has run
+  `re.search` over a caller-controlled payload. The peek runs for every call
+  again; what changes is the answer. A gated call answers with the gate rather
+  than a denial — its quota never charges it, and the window may have room
+  again by the time a human approves — and skips validation either way.
+- **A typeless `enum` is reported as strict-unsupported.** `Literal[1, "auto"]`
+  and a tuple-valued `Enum` have no single JSON kind, so no `type` is emitted
+  alongside the members. Strict mode requires every property to name its type,
+  so the provider rejected the whole tool request rather than that one
+  parameter. Reported rather than repaired: a type *list* is not strict-legal
+  either, so the tool goes out non-strict.
+- **Sphinx-style docstrings describe `*args`/`**kwargs`.** The Google-style
+  parser always matched them; the Sphinx pattern excluded the stars, so those
+  descriptions were silently dropped.
+- **`tuple[()]` has no item type.** Its sibling helper reads both spellings
+  Python uses for the empty tuple's arguments; this one did not, so `((),)`
+  read as a single distinct member type and typed the items of an array that
+  permits none.
 
 ### Performance
 

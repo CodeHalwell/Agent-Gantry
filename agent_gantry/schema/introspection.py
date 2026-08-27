@@ -970,8 +970,16 @@ def _type_to_json_schema(param_type: Any, *, in_container: bool = False) -> dict
 
 
 def _tuple_item_type(origin: Any, args: tuple[Any, ...]) -> Any:
-    """Item type for a ``tuple[...]`` annotation (homogeneous forms only)."""
-    if not args:
+    """Item type for a ``tuple[...]`` annotation (homogeneous forms only).
+
+    ``tuple[()]`` has no members, so it has no item type. Both spellings
+    Python uses for its arguments are excluded, matching
+    :func:`_fixed_tuple_args`: reading ``((),)`` as one distinct member type
+    returned ``()`` itself, which then fell through
+    ``_type_to_json_schema``'s string fallback and typed the items of an array
+    that permits none.
+    """
+    if not args or args == ((),):
         return None
     # tuple[T, ...] — homogeneous variable-length tuple.
     if len(args) == 2 and args[1] is Ellipsis:
@@ -1000,7 +1008,10 @@ _ANY_SECTION = re.compile(
 #: ``name (type): description`` / ``name: description`` entry line.
 _GOOGLE_ENTRY = re.compile(r"^(\*{0,2}[\w]+)\s*(?:\(([^)]*)\))?\s*:\s*(.*)$")
 #: Sphinx ``:param name: description`` (with optional inline type).
-_SPHINX_PARAM = re.compile(r"^:param\s+(?:[\w\[\],\. ]+\s+)?(\w+)\s*:\s*(.*)$")
+#: ``*args``/``**kwargs`` are matched as well as plain names — the Google-style
+#: sibling has always handled them, and excluding the stars here silently lost
+#: every varargs description from a Sphinx-style docstring.
+_SPHINX_PARAM = re.compile(r"^:param\s+(?:[\w\[\],\. ]+\s+)?(\*{0,2}\w+)\s*:\s*(.*)$")
 
 
 def _parse_param_docs(doc: str) -> dict[str, str]:

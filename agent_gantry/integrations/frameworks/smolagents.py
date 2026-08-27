@@ -20,6 +20,7 @@ from agent_gantry.integrations.frameworks.base import (
     GantryToolset,
     ToolSpec,
 )
+from agent_gantry.schema.base import schema_declares_null
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
@@ -41,20 +42,68 @@ def _build_inputs(parameters: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Convert a JSON-Schema ``properties`` map into smolagents ``inputs``.
 
     Optional parameters are marked ``nullable`` — smolagents requires this for
-    any input that isn't always supplied, otherwise it rejects the tool.
+    any input that isn't always supplied, otherwise it rejects the tool. So is
+    a *required* parameter whose schema admits ``null``: ``def f(t: int |
+    None)`` must be supplied, but the value itself may legitimately be null,
+    and smolagents has no other way to say so. Decided by the same
+    ``schema_declares_null`` the executor and the framework bridge use, so the
+    three cannot disagree about which values a parameter accepts.
+
+    ``type`` is read through :func:`_smolagents_type`, which unwraps the list
+    spelling nullability uses.
     """
     properties = parameters.get("properties", {}) or {}
     required = set(parameters.get("required") or [])
     inputs: dict[str, dict[str, Any]] = {}
     for argname, schema in properties.items():
-        schema = schema or {}
-        smol_type = _JSON_TO_SMOLAGENTS.get(schema.get("type"), "string")
+        schema = schema if isinstance(schema, dict) else {}
         description = schema.get("description") or f"{argname} argument"
-        entry: dict[str, Any] = {"type": smol_type, "description": description}
-        if argname not in required:
+        entry: dict[str, Any] = {
+            "type": _smolagents_type(schema),
+            "description": description,
+        }
+        if argname not in required or schema_declares_null(schema):
             entry["nullable"] = True
         inputs[argname] = entry
     return inputs
+
+
+def _smolagents_type(schema: dict[str, Any]) -> str:
+    """The smolagents input type for one property schema.
+
+    ``type`` is a *list* whenever nullability is spelled into it — which
+    introspection emits for any parameter admitting ``None`` that is required
+    or carries a non-``None`` default. ``dict.get`` on a list raises
+    ``TypeError: unhashable type: 'list'``, so a single ``int | None``
+    parameter took the whole smolagents integration down for that tool. Every
+    other adapter reads the type through a helper that unwraps this; this one
+    read it directly.
+
+    ``null`` itself has no smolagents spelling — nullability is carried by the
+    ``nullable`` flag instead — so it is skipped in favour of the real member.
+    """
+    declared = schema.get("type")
+    if declared is None:
+        # ``{"anyOf": [{"type": "integer"}, {"type": "null"}]}`` is the other
+        # spelling of the same thing, and what an imported or MCP schema uses.
+        # The non-null branch carries the real type; nullability is the
+        # ``nullable`` flag's job either way. Mirrors how the signature path's
+        # ``_annotation_for_prop`` reads it.
+        for key in ("anyOf", "oneOf"):
+            branches = schema.get(key)
+            if not isinstance(branches, list):
+                continue
+            for branch in branches:
+                if isinstance(branch, dict) and branch.get("type") not in (None, "null"):
+                    declared = branch.get("type")
+                    break
+            if declared is not None:
+                break
+    if isinstance(declared, list):
+        declared = next((t for t in declared if t != "null"), None)
+    if not isinstance(declared, str):
+        return "string"
+    return _JSON_TO_SMOLAGENTS.get(declared, "string")
 
 
 def _forward_signature(parameters: dict[str, Any]) -> inspect.Signature:

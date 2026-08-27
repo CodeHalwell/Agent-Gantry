@@ -288,28 +288,43 @@ class ExecutionEngine:
         # ``acquire``/``check_permission`` remain the authority. It only
         # short-circuits a call that is over quota *before* validation runs.
         #
-        # ``_needs_confirmation`` is settled first so the peek can predict the
-        # right authority. A call stopping at the tool's own confirmation gate
-        # never reaches ``acquire`` at all (see ``if not pending_confirmation``
-        # below), so charging it against the ``RateLimiter`` here refused a
-        # probe that should have returned ``PENDING_CONFIRMATION`` — the
-        # earlier check being *stricter* than the one it stands in for. The
-        # policy window is deliberately still consulted: ``check_permission``
-        # runs every denial check for a pending call too, deferring only the
-        # *recording*, so a probe that would be denied says so before a human
-        # is asked to approve it.
+        # ``_needs_confirmation`` is settled first, because an exhausted quota
+        # means two different things depending on it — but it changes the
+        # *answer*, never whether the peek runs. Skipping the ``RateLimiter``
+        # half outright for a gated tool put the validator back in front of
+        # the quota for exactly the calls an attacker controls: malformed
+        # arguments make ``pending_confirmation`` false, so the real limiter
+        # refuses the call *after* the recursive validator has already run its
+        # ``re.search`` over the payload. Peeking and answering differently
+        # keeps both properties.
         #
-        # Only the *gate* is settled here, not ``pending_confirmation``, which
-        # also needs ``arguments_valid`` and so cannot be known before
-        # validation. A malformed call to a gated tool is therefore not
-        # short-circuited early — the real limiter below still charges it,
-        # which is the conservative direction.
+        # The policy window is a genuine refusal for a gated call:
+        # ``check_permission`` runs every denial check for a pending one too,
+        # deferring only the *recording*, so a probe that would be denied says
+        # so before a human is asked to approve it.
+        #
+        # The ``RateLimiter`` is not. A gated call never reaches ``acquire``
+        # (see ``if not pending_confirmation`` below), so its quota cannot
+        # refuse the call — and refusing one is wrong twice over: the window
+        # may well have room again by the time a human approves, and the probe
+        # was never going to be charged. So an over-quota gated call answers
+        # with the gate rather than a denial, and still skips validation, which
+        # is the work the quota exists to protect. Nothing executes on either
+        # path; the approved replay carries no gate, so it meets the limiter
+        # head-on and is refused there if the window is still full.
         confirmation_gated = self._needs_confirmation(tool, call)
-        admission_denial = self._admission_denial(
-            tool, skip_rate_limiter=confirmation_gated
-        )
+        admission_denial = self._admission_denial(tool)
+        if admission_denial is not None and confirmation_gated and admission_denial[3]:
+            # Records its own telemetry and re-asks ``_needs_confirmation``,
+            # which is a pure function of the call and the tool.
+            gate_result = await self._check_confirmation_required(
+                tool, call, queued_at, trace_id, span_id
+            )
+            if gate_result is not None:
+                return gate_result
+            admission_denial = None
         if admission_denial is not None:
-            denial_reason, denial_status, denial_type = admission_denial
+            denial_reason, denial_status, denial_type, _ = admission_denial
             result = ToolResult(
                 tool_name=call.tool_name,
                 status=denial_status,
@@ -772,9 +787,13 @@ class ExecutionEngine:
         return None
 
     def _admission_denial(
-        self, tool: ToolDefinition, *, skip_rate_limiter: bool = False
-    ) -> tuple[str, ExecutionStatus, str] | None:
+        self, tool: ToolDefinition
+    ) -> tuple[str, ExecutionStatus, str, bool] | None:
         """The reason this call is already over quota, or ``None``.
+
+        The fourth element says the ``RateLimiter`` was the one refusing, which
+        the caller needs because a confirmation-gated call is not subject to it
+        — see ``execute``.
 
         Consults both limiters read-only, and reports the result the *denying*
         limiter would have produced: the ``SecurityPolicy`` window raises
@@ -787,11 +806,6 @@ class ExecutionEngine:
         now, so a call it admits still goes through the real, recording checks
         unchanged.
 
-        ``skip_rate_limiter`` omits the ``RateLimiter`` half for a call that
-        will stop at the tool's own confirmation gate, because the real path
-        skips ``acquire`` entirely for one. The policy window is still
-        consulted: ``check_permission`` runs its denial checks for a pending
-        call too, and only defers the recording.
         """
         policy = self._security_policy
         if policy is not None:
@@ -806,14 +820,20 @@ class ExecutionEngine:
                         str(reason),
                         ExecutionStatus.PERMISSION_DENIED,
                         "PermissionDeniedError",
+                        False,
                     )
         limiter = self._rate_limiter
-        if limiter is not None and not skip_rate_limiter:
+        if limiter is not None:
             check = getattr(limiter, "would_exceed", None)
             if callable(check):
                 reason = check(tool.name, tool.namespace)
                 if reason:
-                    return str(reason), ExecutionStatus.FAILURE, "RateLimitExceeded"
+                    return (
+                        str(reason),
+                        ExecutionStatus.FAILURE,
+                        "RateLimitExceeded",
+                        True,
+                    )
         return None
 
     async def _validate_call_arguments(

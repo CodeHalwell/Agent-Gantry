@@ -1093,3 +1093,45 @@ def test_a_nested_empty_properties_object_is_strict_unsupported():
     # break: a no-argument tool is genuinely closed, and the executor says so.
     assert unsupported_strict_paths({"type": "object", "properties": {}}) == []
     assert unsupported_strict_paths({"type": "object", "properties": {}, "required": []}) == []
+
+
+def test_a_typeless_enum_is_strict_unsupported():
+    """``_enum_schema`` declares a ``type`` only when the members share one
+    scalar JSON kind, so ``Literal[1, "auto"]`` — and a tuple-valued ``Enum``
+    — publishes a *typeless* property. Strict mode requires every property to
+    name its type, so the provider rejects the whole tool request rather than
+    that one parameter (PR #381 review).
+
+    Reported rather than repaired: widening to a type *list* is not something
+    strict mode accepts either, so the honest answer is that the schema has no
+    strict spelling and the tool should go out non-strict."""
+
+    def wrap(prop: dict) -> dict:
+        return {"type": "object", "properties": {"mode": prop}, "required": ["mode"]}
+
+    # What introspection actually emits for each of these, asserted here so
+    # the two halves cannot drift apart.
+    import typing
+
+    from agent_gantry.schema.introspection import _type_to_json_schema
+
+    assert _type_to_json_schema(typing.Literal[1, "auto"]) == {"enum": [1, "auto"]}
+    for typeless in (
+        {"enum": [1, "auto"]},
+        # ``integer`` and ``number`` are distinct JSON kinds.
+        {"enum": [1, 2.5]},
+        # A tuple-valued ``Enum``: composite members no scalar type names.
+        {"enum": [[0, 0], [1, 1]]},
+    ):
+        assert unsupported_strict_paths(wrap(typeless)) == ["mode"], typeless
+
+    # Anything that does carry a type is untouched — this gate decides whether
+    # a tool gets strict guarantees at all.
+    for supported in (
+        {"type": "string", "enum": ["a", "b"]},
+        {"type": "integer", "enum": [1, 2]},
+        {"type": ["string", "null"], "enum": ["a", None]},
+        # An enum of nothing but null: ``{"type": "null"}`` fits it.
+        {"enum": [None]},
+    ):
+        assert unsupported_strict_paths(wrap(supported)) == [], supported

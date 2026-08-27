@@ -138,3 +138,61 @@ def test_spec_to_smolagents_missing_dependency(
 
     with pytest.raises(ImportError, match="pip install smolagents"):
         SmolagentsAdapter.convert(_DummySpec())
+
+
+def test_a_nullable_parameter_does_not_crash_the_input_builder():
+    """``_admit_null`` widens ``type`` to a *list* for any parameter admitting
+    ``None`` that is required or carries a non-``None`` default, and this was
+    the one adapter reading ``type`` directly — ``dict.get`` on a list raises
+    ``TypeError: unhashable type: 'list'``, so a single ``int | None``
+    parameter took the whole smolagents integration down for that tool
+    (PR #381 review)."""
+    from agent_gantry.integrations.frameworks.smolagents import _build_inputs
+
+    inputs = _build_inputs(
+        {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "timeout": {"type": ["integer", "null"]},
+            },
+            "required": ["query", "timeout"],
+        }
+    )
+    assert inputs["query"] == {"type": "string", "description": "query argument"}
+    # The real member type survives, and ``nullable`` carries the null — a
+    # *required* parameter whose schema admits null must still be marked, or
+    # smolagents forbids the value the schema declares. Decided by the same
+    # ``schema_declares_null`` the executor and the bridge use.
+    assert inputs["timeout"]["type"] == "integer"
+    assert inputs["timeout"]["nullable"] is True
+
+    # The ``anyOf`` spelling of the same thing, which is what an imported or
+    # MCP schema uses.
+    from_anyof = _build_inputs(
+        {
+            "type": "object",
+            "properties": {"a": {"anyOf": [{"type": "array"}, {"type": "null"}]}},
+            "required": ["a"],
+        }
+    )
+    assert from_anyof["a"]["type"] == "array"
+    assert from_anyof["a"]["nullable"] is True
+
+    # Unchanged: an optional plain parameter, and an unrecognized type.
+    plain = _build_inputs(
+        {
+            "type": "object",
+            "properties": {"q": {"type": "string"}, "t": {"type": "integer"}},
+            "required": ["q"],
+        }
+    )
+    assert "nullable" not in plain["q"]
+    assert plain["t"] == {
+        "type": "integer",
+        "description": "t argument",
+        "nullable": True,
+    }
+    assert _build_inputs(
+        {"type": "object", "properties": {"n": {"type": "null"}}, "required": ["n"]}
+    )["n"]["type"] == "string"
