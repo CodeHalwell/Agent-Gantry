@@ -9,6 +9,8 @@ Tests:
 - ToolDefinition.to_searchable_text()
 """
 
+import json
+
 import pytest
 
 from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
@@ -336,7 +338,11 @@ class TestSchemaFidelity:
         import enum
         from typing import Literal
 
-        class Color(str, enum.Enum):
+        # Deliberately *not* a ``str`` mixin. A ``class Color(str, Enum)``
+        # compares and serializes equal to its value either way, so it would
+        # pass whether or not the default is actually unwrapped — the
+        # assertion below would not catch a regression (PR #381 review).
+        class Color(enum.Enum):
             RED = "red"
             BLUE = "blue"
 
@@ -349,7 +355,13 @@ class TestSchemaFidelity:
             "enum": ["fast", "slow"],
         }
         assert schema["properties"]["color"]["enum"] == ["red", "blue"]
-        assert schema["properties"]["color"]["default"] == "red"
+        default = schema["properties"]["color"]["default"]
+        assert default == "red"
+        # The unwrapping is the point: a bare ``Enum`` member is not JSON
+        # serializable, so leaving it in place emits a schema no provider
+        # can parse.
+        assert type(default) is str
+        json.dumps(schema)
 
     def test_dict_maps_to_object(self):
         from typing import Any
@@ -579,3 +591,34 @@ def test_non_json_literal_values_degrade_to_string_schema():
     schema = build_parameters_schema(func)
     assert schema["properties"]["marker"] == {"type": "string"}
     assert "enum" not in schema["properties"]["marker"]
+
+
+class TestStringFormats:
+    """``build_parameters_schema`` emits a JSON-Schema ``format`` for the
+    stdlib scalar types providers understand, so a model gets the shape of the
+    string it must produce rather than "any string" (PR #381 review noted this
+    was claimed in the changelog but untested)."""
+
+    def test_datetime_family_and_uuid_carry_a_format(self):
+        import uuid
+        from datetime import date, datetime, time
+
+        def func(
+            at: datetime,
+            on: date,
+            clock: time,
+            ident: uuid.UUID,
+        ) -> None:
+            pass
+
+        props = build_parameters_schema(func)["properties"]
+        assert props["at"] == {"type": "string", "format": "date-time"}
+        assert props["on"] == {"type": "string", "format": "date"}
+        assert props["clock"] == {"type": "string", "format": "time"}
+        assert props["ident"] == {"type": "string", "format": "uuid"}
+
+    def test_plain_strings_carry_no_format(self):
+        def func(name: str) -> None:
+            pass
+
+        assert build_parameters_schema(func)["properties"]["name"] == {"type": "string"}

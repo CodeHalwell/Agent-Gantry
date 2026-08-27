@@ -177,6 +177,21 @@ adapters, and the provider dialects agree with it.
   normalized too: strict mode widens the optional properties of a positional
   *object* exactly as it does anywhere else, so a `tuple[Payload, int]`
   parameter kept its nested nulls while only `items` was consulted.
+- **A schema carrying both `anyOf` and `oneOf` lost the `oneOf`.** They are
+  independent assertions a value must satisfy together, but the framework
+  args-model translation returned on whichever it found first — so `oneOf`'s
+  exactly-one rule was never applied and the model accepted a value the
+  executor then rejected. Both are honoured now: the union comes from `anyOf`,
+  and `oneOf` contributes its exclusivity check on top.
+- **A malformed call to a policy-gated tool reported "pending confirmation".**
+  The invariant that a call whose arguments don't match the schema is terminal
+  held for the tool's own `requires_confirmation` flag but not for
+  `SecurityPolicy`'s `require_confirmation` *pattern* gate, whose result was
+  returned before the validation result was consulted — putting a schema
+  violation in front of a human to approve, and failing it anyway once
+  approved. Validation now wins over a *pending* policy result; a *denial*
+  still outranks validation, so nothing leaks about a tool the caller may not
+  invoke at all.
 - **`uniqueItems` conflated booleans with numbers.** Python says `True == 1`,
   but JSON Schema compares types before values, so `[1, true]` is two distinct
   items — it was being rejected as a duplicate at dispatch, and by the
@@ -208,6 +223,10 @@ adapters, and the provider dialects agree with it.
   than merely leaving it unconstrained. It now uses the same
   `unsupported_strict_paths()` gate as the OpenAI adapters: such a tool is
   emitted without `strict: true`, with a warning naming the offending path.
+- **Strict-mode fallback warnings named the wrong dialect.** `MistralAdapter`
+  and `GroqAdapter` inherit the OpenAI path, which passed a hardcoded
+  `"OpenAI"`, so their warnings pointed at the wrong provider. Each adapter
+  now reports its own `dialect_name`.
 - **An uncompilable `pattern` was silently unenforced.** A schema declaring an
   ECMA-262-only construct (`\p{L}`) fails Python's `re`, and validation
   correctly fails open rather than rejecting every value — but gave the schema's

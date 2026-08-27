@@ -118,7 +118,7 @@ class OpenAIAdapter:
         # ``_strict_parameters`` returns its own copy on both branches, so
         # only the non-strict path needs one made here.
         if strict:
-            parameters, use_strict = _strict_parameters(tool, "OpenAI")
+            parameters, use_strict = _strict_parameters(tool, self.dialect_name)
         else:
             parameters, use_strict = _emitted_schema(tool.parameters_schema), False
         schema: dict[str, Any] = {
@@ -277,7 +277,7 @@ class OpenAIResponsesAdapter:
         # ``_strict_parameters`` returns its own copy on both branches, so
         # only the non-strict path needs one made here.
         if strict:
-            parameters, use_strict = _strict_parameters(tool, "OpenAI Responses")
+            parameters, use_strict = _strict_parameters(tool, self.dialect_name)
         else:
             parameters, use_strict = _emitted_schema(tool.parameters_schema), False
         schema: dict[str, Any] = {
@@ -429,12 +429,13 @@ class AnthropicAdapter:
             unsupported = unsupported_strict_paths(tool.parameters_schema)
             if unsupported:
                 _logger.warning(
-                    "Tool %r cannot use Anthropic strict mode: %s describes an "
+                    "Tool %r cannot use %s strict mode: %s describes an "
                     "object with arbitrary keys, which strict mode cannot "
                     "express. Emitting the tool without strict:true so the "
                     "keys stay usable — declare the object's properties "
                     "explicitly to make it strict-compatible.",
                     tool.name,
+                    self.dialect_name,
                     ", ".join(unsupported),
                 )
             else:

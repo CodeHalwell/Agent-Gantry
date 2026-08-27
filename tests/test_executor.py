@@ -1327,3 +1327,76 @@ def test_unique_items_separates_booleans_from_numbers():
     assert asyncio.run(valid([1, 1.0])) is False
     assert asyncio.run(valid([True, True])) is False
     assert asyncio.run(valid([{"a": 1}, {"a": 1}])) is False
+
+
+async def test_malformed_args_outrank_a_pattern_confirmation_gate():
+    """A call whose arguments don't match the schema is terminal, so it must
+    return a ValidationError rather than a pending prompt. That held for the
+    tool's own ``requires_confirmation`` flag but not for ``SecurityPolicy``'s
+    ``require_confirmation`` *pattern* gate, whose result was returned before
+    the validation result was ever consulted — putting a schema violation in
+    front of a human to approve and then failing it anyway (PR #381 review)."""
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.core.security import SecurityPolicy
+    from agent_gantry.schema.execution import ToolCall
+
+    registry = ToolRegistry()
+    tool = ToolDefinition(
+        name="delete_thing",
+        description="Destructive tool behind a policy pattern",
+        parameters_schema={
+            "type": "object",
+            "properties": {"count": {"type": "integer"}},
+            "required": ["count"],
+        },
+    )
+    registry.register_tool(tool)
+    registry.register_handler("default.delete_thing", lambda count: f"deleted {count}")
+
+    engine = ExecutionEngine(
+        registry=registry,
+        security_policy=SecurityPolicy(require_confirmation=["delete_*"]),
+    )
+
+    malformed = await engine.execute(
+        ToolCall(tool_name="delete_thing", arguments={"count": "not-an-int"})
+    )
+    assert malformed.status.value == "failure", malformed.status
+    assert malformed.error_type == "ValidationError", malformed.error
+
+    # A well-formed call still stops at the gate, unchanged.
+    gated = await engine.execute(ToolCall(tool_name="delete_thing", arguments={"count": 1}))
+    assert gated.status.value == "pending_confirmation", gated.status
+
+
+async def test_denial_still_outranks_a_validation_error():
+    """A denial must not leak "your arguments are malformed" about a tool the
+    caller may not invoke at all, so it still wins over validation."""
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.core.security import SecurityPolicy
+    from agent_gantry.schema.execution import ToolCall
+
+    registry = ToolRegistry()
+    tool = ToolDefinition(
+        name="fetch",
+        description="Fetches a URL from an allowlisted domain",
+        parameters_schema={
+            "type": "object",
+            "properties": {"url": {"type": "string"}, "count": {"type": "integer"}},
+            "required": ["url", "count"],
+        },
+    )
+    registry.register_tool(tool)
+    registry.register_handler("default.fetch", lambda url, count: url)
+
+    engine = ExecutionEngine(
+        registry=registry,
+        security_policy=SecurityPolicy(allowed_domains=["allowed.test"]),
+    )
+    result = await engine.execute(
+        ToolCall(
+            tool_name="fetch",
+            arguments={"url": "https://blocked.test/x", "count": "not-an-int"},
+        )
+    )
+    assert result.status.value == "permission_denied", result.status

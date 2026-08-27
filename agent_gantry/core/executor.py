@@ -264,8 +264,21 @@ class ExecutionEngine:
         sp_result = await self._check_security_policy(
             tool, call, queued_at, trace_id, span_id, pending_confirmation
         )
-        if sp_result:
+        if sp_result is not None and not (
+            sp_result.status is ExecutionStatus.PENDING_CONFIRMATION and val_result is not None
+        ):
             return sp_result
+        # A *denial* still outranks a validation error — it must not leak
+        # "your arguments are malformed" about a tool the caller may not
+        # invoke at all — so it returned above. A pending confirmation is
+        # different: it defers rather than refuses, and deferring a call that
+        # can never succeed puts a schema violation in front of a human to
+        # approve and then fails it anyway. Falling through lets ``val_result``
+        # be returned below, which makes "malformed arguments are terminal"
+        # true for the policy's ``require_confirmation`` *pattern* gate as
+        # well as the tool's own flag. The fall-through is deliberate rather
+        # than an early return so the accounting below stays identical to a
+        # malformed call against a tool with no confirmation gate at all.
 
         # Rate limiting check (acquires a concurrency slot on success)
         if not pending_confirmation:

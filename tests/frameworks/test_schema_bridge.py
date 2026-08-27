@@ -884,3 +884,44 @@ def test_unique_items_separates_booleans_from_numbers():
     # Numbers stay equal when mathematically equal, as JSON Schema requires.
     with pytest.raises(ValidationError):
         model(v=[1, 1.0])
+
+
+def test_anyof_and_oneof_are_both_honoured():
+    """They are independent assertions a value must satisfy together, but the
+    translation returned on whichever it found first — so a schema carrying
+    both silently lost ``oneOf``'s exclusivity and the bridge accepted a value
+    the executor rejects (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "v": {
+                    "anyOf": [{"type": "integer"}, {"type": "number"}],
+                    "oneOf": [{"type": "integer"}, {"type": "number"}],
+                }
+            },
+            "required": ["v"],
+        },
+    )
+    # ``1`` satisfies ``anyOf`` but matches *both* ``oneOf`` branches.
+    with pytest.raises(ValidationError):
+        model(v=1)
+    # ``"x"`` matches no branch of either.
+    with pytest.raises(ValidationError):
+        model(v="x")
+
+
+def test_anyof_alone_is_unaffected_by_the_oneof_pass():
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"v": {"anyOf": [{"type": "integer"}, {"type": "null"}]}},
+            "required": ["v"],
+        },
+    )
+    assert model(v=3).v == 3
+    assert model(v=None).v is None
+    with pytest.raises(ValidationError):
+        model(v="x")

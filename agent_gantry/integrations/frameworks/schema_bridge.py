@@ -253,6 +253,34 @@ def _is_nullable(prop: dict[str, Any]) -> bool:
     return True
 
 
+def _combinator_parts(
+    name: str, branches: list[Any], depth: int, inherited_type: Any
+) -> tuple[list[Any], bool]:
+    """Translate one combinator's branches, and whether any was the empty schema."""
+    parts: list[Any] = []
+    has_empty = False
+    for index, branch in enumerate(branches):
+        if not isinstance(branch, dict):
+            continue
+        if not branch:
+            # ``{}`` is the always-valid schema, not an absent branch.
+            # Dropping it made ``anyOf: [{}, {"type": "integer"}]`` — which
+            # admits every value — reject strings, and let ``oneOf`` accept
+            # an integer that in fact matches both branches.
+            has_empty = True
+            parts.append(Any)
+            continue
+        if branch.get("type") == "null":
+            parts.append(type(None))
+            continue
+        if inherited_type is not None and "type" not in branch:
+            branch = {**branch, "type": inherited_type}
+        parts.append(
+            _with_constraints(_annotation(f"{name}_{index}", branch, depth + 1), branch)
+        )
+    return parts, has_empty
+
+
 def _union_annotation(
     name: str, prop: dict[str, Any], depth: int, inherited_type: Any = None
 ) -> Any:
@@ -268,59 +296,57 @@ def _union_annotation(
 
     Each branch is translated recursively and the results unioned, so
     ``{"anyOf": [{"type": "integer"}, {"type": "null"}]}`` becomes
-    ``int | None`` rather than a bare ``Any``. ``allOf`` is deliberately not
-    handled: intersecting constraints has no faithful Python annotation, and
-    a wrong one is worse than the unconstrained fallback.
+    ``int | None`` rather than a bare ``Any``.
+
+    Both keywords are honoured when both appear. They are independent
+    assertions that a value must satisfy together, but this used to return on
+    whichever it found first, so a schema carrying both silently lost
+    ``oneOf``'s exclusivity — the bridge accepted a value the executor then
+    rejected. The union comes from ``anyOf`` (the narrower annotation) and
+    ``oneOf`` contributes its exactly-one check on top.
+
+    ``allOf`` is deliberately not handled: intersecting constraints has no
+    faithful Python annotation, and a wrong one is worse than the
+    unconstrained fallback.
     """
+    annotation: Any = None
+    oneof_parts: list[Any] | None = None
     for key in ("anyOf", "oneOf"):
         branches = prop.get(key)
         if not isinstance(branches, list) or not branches:
             continue
-        parts: list[Any] = []
-        has_empty = False
-        for index, branch in enumerate(branches):
-            if not isinstance(branch, dict):
-                continue
-            if not branch:
-                # ``{}`` is the always-valid schema, not an absent branch.
-                # Dropping it made ``anyOf: [{}, {"type": "integer"}]`` — which
-                # admits every value — reject strings, and let ``oneOf`` accept
-                # an integer that in fact matches both branches.
-                has_empty = True
-                parts.append(Any)
-                continue
-            if branch.get("type") == "null":
-                parts.append(type(None))
-                continue
-            if inherited_type is not None and "type" not in branch:
-                branch = {**branch, "type": inherited_type}
-            parts.append(
-                _with_constraints(_annotation(f"{name}_{index}", branch, depth + 1), branch)
-            )
+        parts, has_empty = _combinator_parts(
+            f"{name}_{key}" if "oneOf" in prop and "anyOf" in prop else name,
+            branches,
+            depth,
+            inherited_type,
+        )
         if not parts:
             continue
+        if key == "oneOf":
+            oneof_parts = parts
         if has_empty:
-            if key == "anyOf":
-                # One branch matching is enough and one of them matches
-                # everything, so the union is unconstrained.
-                return Any
-            # ``oneOf``: the empty branch matches every value, so anything a
-            # *another* branch also admits matches at least twice and must be
-            # rejected — only a value no other branch accepts is valid. The
-            # annotation carries nothing; the exclusivity check carries it all.
-            return _with_exclusivity(Any, parts)
-        annotation = parts[0]
-        for part in parts[1:]:
-            annotation = annotation | part
-        if key == "oneOf" and len(parts) > 1:
-            # A Python union is ``anyOf``: it accepts a value matching several
-            # branches, which ``oneOf`` forbids (``1`` satisfies both
-            # ``number`` and ``integer``). The union still earns its place —
-            # it rejects everything outside every branch, where ``Any`` would
-            # not — so keep it and add the exclusivity the union can't carry.
-            annotation = _with_exclusivity(annotation, parts)
-        return annotation
-    return None
+            # One branch matches everything, so the union constrains nothing.
+            # For ``oneOf`` that is not the end of it: the exclusivity check
+            # below still rejects any value another branch also admits.
+            member: Any = Any
+        else:
+            member = parts[0]
+            for part in parts[1:]:
+                member = member | part
+        if annotation is None:
+            annotation = member
+
+    if annotation is None:
+        return None
+    if oneof_parts is not None and len(oneof_parts) > 1:
+        # A Python union is ``anyOf``: it accepts a value matching several
+        # branches, which ``oneOf`` forbids (``1`` satisfies both ``number``
+        # and ``integer``). The union still earns its place — it rejects
+        # everything outside every branch, where ``Any`` would not — so keep
+        # it and add the exclusivity the union can't carry.
+        annotation = _with_exclusivity(annotation, oneof_parts)
+    return annotation
 
 
 def _with_exclusivity(annotation: Any, parts: list[Any]) -> Any:
