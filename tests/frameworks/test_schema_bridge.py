@@ -1075,3 +1075,82 @@ def test_genuine_multi_type_parent_is_not_pushed_down():
         },
     )
     assert model(v="anything").v == "anything"
+
+
+def test_parent_type_intersects_a_combinator_with_typed_branches():
+    """A branch declaring its own type doesn't take the inherited one, so the
+    parent's ``type`` assertion was simply lost — the model became
+    ``float | str`` while the executor applies both and rejects each
+    (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "n": {"type": "integer", "anyOf": [{"type": "number"}, {"type": "string"}]}
+            },
+            "required": ["n"],
+        },
+    )
+    assert model(n=1).n == 1
+    for bad in (1.5, "x"):
+        with pytest.raises(ValidationError):
+            model(n=bad)
+
+
+def test_parent_number_still_admits_an_integer():
+    """JSON Schema's number/integer relationship must survive the
+    intersection: an integer *is* a valid number."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "n": {"type": "number", "anyOf": [{"type": "integer"}, {"type": "number"}]}
+            },
+            "required": ["n"],
+        },
+    )
+    assert model(n=1).n == 1
+    assert model(n=1.5).n == 1.5
+    with pytest.raises(ValidationError):
+        model(n="x")
+
+
+def test_nullable_parent_intersection_still_admits_null():
+    """The parent's type list declares null, so intersecting on the non-null
+    member must not reject the very value the schema allows."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "n": {
+                    "type": ["integer", "null"],
+                    "anyOf": [{"type": "number"}, {"type": "string"}],
+                }
+            },
+            "required": ["n"],
+        },
+    )
+    assert model(n=1).n == 1
+    assert model(n=None).n is None
+    for bad in (1.5, "x"):
+        with pytest.raises(ValidationError):
+            model(n=bad)
+
+
+def test_combinator_without_a_parent_type_is_unconstrained_by_one():
+    """Nothing to intersect with — the union stands alone, as before."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"v": {"anyOf": [{"type": "integer"}, {"type": "string"}]}},
+            "required": ["v"],
+        },
+    )
+    assert model(v=1).v == 1
+    assert model(v="x").v == "x"
+    with pytest.raises(ValidationError):
+        model(v=1.5)

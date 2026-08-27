@@ -23,6 +23,17 @@ from agent_gantry.schema.base import json_identity_key
 #: Hard bound on nested-object recursion (self-referential schemas).
 _MAX_DEPTH = 8
 
+#: The bare Python kind each JSON type asserts, used to intersect a parent
+#: ``type`` back onto a combinator whose branches declared their own.
+_PARENT_KINDS: dict[str, Any] = {
+    "string": str,
+    "integer": int,
+    "number": float,
+    "boolean": bool,
+    "array": list,
+    "object": dict,
+}
+
 _SCALARS: dict[str, Any] = {
     "string": str,
     "integer": int,
@@ -576,8 +587,22 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
     # not inheriting it left both constraint-only branches as a bare ``Any``
     # that matched everything. It returns ``None`` for a genuine multi-type
     # list, where no single type applies to every branch.
-    union = _union_annotation(name, prop, depth, inherited_type=_effective_type(prop))
+    parent_type = _effective_type(prop)
+    union = _union_annotation(name, prop, depth, inherited_type=parent_type)
     if union is not None:
+        # A branch that declares its *own* type doesn't take the inherited
+        # one, so the parent's ``type`` assertion would simply be lost —
+        # ``{"type": "integer", "anyOf": [{"type": "number"}, {"type":
+        # "string"}]}`` became ``float | str`` while the executor applies both
+        # and rejects each. Intersecting the union with the parent type
+        # restores it, and is a no-op for branches that already inherited it.
+        base = _PARENT_KINDS.get(parent_type) if isinstance(parent_type, str) else None
+        if base is not None:
+            if _is_nullable(prop):
+                # The parent admits null, so the intersection must too, or it
+                # would reject the very value the type list declares.
+                base = base | None
+            union = _with_intersection(union, [base])
         return union
 
     if json_type == "null":

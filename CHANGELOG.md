@@ -195,6 +195,14 @@ adapters, and the provider dialects agree with it.
   key was rejected because none counted as declared. Matched keys are now
   validated against their pattern's schema and treated as declared by both
   paths. An uncompilable pattern fails open with a warning, as `pattern` does.
+- **A parent `type` was dropped when its combinator branches declared their
+  own.** JSON Schema applies both, and the executor does — but the framework
+  args model inherited the parent type only into *typeless* branches, so
+  `{"type": "integer", "anyOf": [{"type": "number"}, {"type": "string"}]}`
+  became `float | str` and admitted values the engine rejects. The union is
+  now intersected with the parent type, which is a no-op for branches that
+  already inherited it. An integer still satisfies a `number` parent, and a
+  nullable parent still admits `null`.
 - **A nullable parent type didn't reach its combinator branches.** The
   framework args model inherited a parent's type into typeless branches only
   when it was a bare string, so `{"type": ["integer", "null"], "anyOf":
