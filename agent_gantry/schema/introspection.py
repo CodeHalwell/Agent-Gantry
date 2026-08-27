@@ -219,10 +219,12 @@ def _needs_reconstruction(param_type: Any) -> bool:
             a is not type(None) and _needs_reconstruction(a)
             for a in typing.get_args(param_type)
         )
-    if origin in (set, frozenset, tuple, _abc.Set):
-        return True
     if origin is not None:
         args = typing.get_args(param_type)
+        # Mappings are tested *before* sequences for the same reason
+        # ``_type_to_json_schema`` orders them that way: a Mapping is also a
+        # Collection and an Iterable, so the sequence rule below would
+        # otherwise claim ``dict[str, int]`` — which arrives as itself.
         if origin is dict or (isinstance(origin, type) and issubclass(origin, _abc.Mapping)):
             # JSON object keys are *always* strings, so a mapping annotated
             # with any other key type never arrives as itself however simple
@@ -230,6 +232,19 @@ def _needs_reconstruction(param_type: Any) -> bool:
             # ``{"1": "value"}``, and every lookup or arithmetic on those keys
             # then failed. ``TypeAdapter`` converts them back.
             if args and args[0] is not str and args[0] is not Any:
+                return True
+        elif isinstance(origin, type) and issubclass(origin, _SEQUENCE_ORIGINS):
+            # The container itself needs rebuilding whenever a JSON array —
+            # which arrives as a ``list`` — is not already an instance of it.
+            # That covers ``set``/``frozenset``/``tuple`` as the spelled-out
+            # list did, and any other concrete sequence besides:
+            # ``collections.deque[int]`` was advertised as an array but
+            # reported as needing nothing, because its *member* type needed
+            # nothing, so the handler got a ``list`` and ``popleft()`` failed.
+            # ``Sequence``/``Iterable``/``list`` are satisfied by a list and
+            # stay excluded, which is what keeps this from rebuilding values
+            # that already arrive correctly.
+            if not isinstance([], origin):
                 return True
         # Any other parameterized generic — ``list[Payload]``,
         # ``dict[str, datetime]``, ``Sequence[Mode]``. The *container* arrives
@@ -423,6 +438,22 @@ def _split_annotated(param_type: Any) -> tuple[Any, str | None]:
             None,
         )
     return base, description
+
+
+def _fixed_tuple_args(args: tuple[Any, ...]) -> tuple[Any, ...] | None:
+    """The positional members of a fixed-length tuple, or ``None``.
+
+    ``None`` for a variadic ``tuple[int, ...]``, which has no fixed arity to
+    pin. ``tuple[()]`` is the empty *fixed* tuple and returns ``()`` — Python
+    spells its args either ``()`` or ``((),)`` depending on version, and both
+    mean "no members", so both must pin a length of zero rather than reading
+    as "unparameterized".
+    """
+    if Ellipsis in args:
+        return None
+    if not args or args == ((),):
+        return ()
+    return args
 
 
 def _admits_none(param_type: Any) -> bool:
@@ -841,7 +872,7 @@ def _type_to_json_schema(param_type: Any, *, in_container: bool = False) -> dict
                 )
                 if item_type is not None and item_type is not Any:
                     schema["items"] = _type_to_json_schema(item_type, in_container=True)
-                elif origin is tuple and args and Ellipsis not in args:
+                elif origin is tuple and _fixed_tuple_args(args) is not None:
                     # A *heterogeneous* fixed-length tuple — ``tuple[int, str]``
                     # — has no single item type, so each position needs typing
                     # separately. Emitting a bare ``{"type": "array"}`` let a
@@ -851,15 +882,19 @@ def _type_to_json_schema(param_type: Any, *, in_container: bool = False) -> dict
                     schema["prefixItems"] = [
                         _type_to_json_schema(a, in_container=True) for a in args
                     ]
-                if origin is tuple and args and Ellipsis not in args:
+                fixed = _fixed_tuple_args(args) if origin is tuple else None
+                if fixed is not None:
                     # The arity is pinned for *every* fixed-length tuple, not
                     # only the ones that needed ``prefixItems``. A homogeneous
                     # ``tuple[int, int]`` takes the ``items`` branch above and
                     # would otherwise accept an array of any length, failing
-                    # reconstruction the same way. Both bounds are enforced by
-                    # the executor and by the framework bridge already.
-                    schema["minItems"] = len(args)
-                    schema["maxItems"] = len(args)
+                    # reconstruction the same way. ``tuple[()]`` is the
+                    # degenerate case: it permits *no* items, and reading a
+                    # truthy ``args`` skipped it into an unrestricted array.
+                    # Both bounds are enforced by the executor and by the
+                    # framework bridge already.
+                    schema["minItems"] = len(fixed)
+                    schema["maxItems"] = len(fixed)
                 return schema
 
             # Fallback for other generics: use the first argument if available

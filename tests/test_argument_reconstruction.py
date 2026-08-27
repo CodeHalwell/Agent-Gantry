@@ -10,6 +10,7 @@ rebuilt, and the ones deliberately left alone.
 
 from __future__ import annotations
 
+import collections
 import collections.abc as abc
 import dataclasses
 import datetime
@@ -990,3 +991,113 @@ async def test_typed_members_of_a_typeddict_reach_the_handler_rebuilt():
     )
     assert result.status.value == "success", result.error
     assert result.result == "datetime/Mode/set/2026"
+
+
+def test_a_concrete_sequence_that_is_not_a_list_is_rebuilt():
+    """The rebuild list was spelled out — ``set``, ``frozenset``, ``tuple``,
+    ``abc.Set`` — so any *other* concrete sequence fell through whenever its
+    member type needed nothing itself. ``collections.deque[int]`` was
+    advertised as a JSON array and reported as needing no reconstruction, so
+    the handler received a plain ``list`` and ``popleft()`` raised
+    ``AttributeError`` on a perfectly valid call (PR #381 review).
+
+    The rule that replaced the list is the one the docstring always claimed:
+    rebuild whenever the JSON form — a ``list`` — is not already an instance
+    of the declared container.
+    """
+    from agent_gantry.schema.introspection import (
+        _needs_reconstruction,
+        _type_to_json_schema,
+    )
+
+    # It was advertised as an array all along; only the rebuild was missing.
+    assert _type_to_json_schema(collections.deque[int]) == {
+        "type": "array",
+        "items": {"type": "integer"},
+    }
+    assert _needs_reconstruction(collections.deque[int]) is True
+
+    # The conservative half is unchanged: a ``list`` already *is* a list, and
+    # ``Sequence``/``Iterable`` are satisfied by one, so none of them is
+    # rebuilt. Rebuilding an ``Iterable`` would hand the handler a one-shot
+    # iterator in place of a perfectly good list.
+    assert _needs_reconstruction(list[int]) is False
+    assert _needs_reconstruction(abc.Sequence[int]) is False
+    assert _needs_reconstruction(abc.Iterable[int]) is False
+    # And the kinds the spelled-out list covered still are.
+    for annotation in (set[int], frozenset[int], tuple[int, ...], abc.Set[int]):
+        assert _needs_reconstruction(annotation) is True, annotation
+
+
+async def test_a_deque_parameter_reaches_the_handler_as_a_deque():
+    """End-to-end consequence: the only thing distinguishing a ``deque`` from
+    the list it arrives as is the API the handler then calls on it."""
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @g.register(tags=["demo"])
+    def drain(items: collections.deque[int]) -> str:
+        """Report the head of a queue of integers and the container's type."""
+        return f"{items.popleft()}:{type(items).__name__}:{len(items)}"
+
+    await g.sync()
+    result = await g.execute(ToolCall(tool_name="drain", arguments={"items": [1, 2, 3]}))
+    assert result.status.value == "success", result.error
+    assert result.result == "1:deque:2"
+
+
+def test_the_empty_tuple_pins_a_length_of_zero():
+    """``tuple[()]`` has no arguments, so the truthy-``args`` guard that gated
+    the arity bounds skipped it and emitted an unrestricted array — the exact
+    failure the bounds exist to prevent, on the one tuple that permits *no*
+    items at all (PR #381 review).
+
+    Python spells the empty tuple's arguments either ``()`` or ``((),)``
+    depending on version, so the helper is asserted on both directly rather
+    than only through whichever spelling this interpreter happens to use.
+    """
+    from agent_gantry.schema.introspection import (
+        _fixed_tuple_args,
+        _type_to_json_schema,
+    )
+
+    assert _fixed_tuple_args(()) == ()
+    assert _fixed_tuple_args(((),)) == ()
+    # A variadic tuple still has no fixed arity to pin.
+    assert _fixed_tuple_args((int, Ellipsis)) is None
+    assert _fixed_tuple_args((int, str)) == (int, str)
+
+    assert _type_to_json_schema(tuple[()]) == {
+        "type": "array",
+        "prefixItems": [],
+        "minItems": 0,
+        "maxItems": 0,
+    }
+
+
+async def test_a_non_empty_array_for_an_empty_tuple_is_rejected():
+    """End-to-end consequence of the bounds above. Both spellings refuse
+    ``[1]``, so the failure to look for is *where* the refusal comes from: an
+    unbounded ``{"type": "array"}`` admitted the call and only then failed
+    rebuilding it, meaning the schema a provider read had advertised the value
+    as acceptable. With the bounds it is the schema's own refusal, phrased as
+    the arity violation it is."""
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @g.register(tags=["demo"])
+    def sentinel(marker: tuple[()]) -> str:
+        """Accept an empty positional marker and report its runtime type."""
+        return f"{type(marker).__name__}:{len(marker)}"
+
+    await g.sync()
+    tool = await g.get_tool("sentinel")
+    assert tool.parameters_schema["properties"]["marker"]["maxItems"] == 0
+
+    ok = await g.execute(ToolCall(tool_name="sentinel", arguments={"marker": []}))
+    assert ok.status.value == "success", ok.error
+    assert ok.result == "tuple:0"
+
+    result = await g.execute(ToolCall(tool_name="sentinel", arguments={"marker": [1]}))
+    assert result.status.value == "failure"
+    assert result.error_type == "ValidationError"
+    assert "at most 0 items" in (result.error or "")
+    assert "could not be rebuilt" not in (result.error or "")

@@ -955,6 +955,20 @@ adapters, and the provider dialects agree with it.
   — turning a call the caller made correctly into an error. The dump now
   carries only what the caller supplied; the coercions that function exists for
   are unaffected.
+- **A concrete sequence that isn't a `list` is rebuilt.** The reconstruction
+  rule named `set`/`frozenset`/`tuple` outright, so any other concrete
+  sequence fell through whenever its member type needed nothing itself:
+  `collections.deque[int]` was advertised as a JSON array and reported as
+  needing no rebuild, so the handler received a plain `list` and `popleft()`
+  raised on a schema-valid call. The rule is now the one the docstring always
+  claimed — rebuild whenever a JSON array is not already an instance of the
+  declared container — which leaves `list`, `Sequence` and `Iterable`
+  untouched as before.
+- **`tuple[()]` advertised an unrestricted array.** The empty tuple has no
+  type arguments, so the truthy check that gated the arity bounds skipped the
+  one tuple that permits *no* items at all. The call then validated and failed
+  at reconstruction, giving a dispatch error for a value the schema had said
+  was acceptable. Both bounds are now pinned at zero.
 
 ### Performance
 
