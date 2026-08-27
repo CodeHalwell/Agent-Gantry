@@ -725,6 +725,18 @@ def _type_to_json_schema(param_type: Any) -> dict[str, Any]:
                 )
                 if item_type is not None and item_type is not Any:
                     schema["items"] = _type_to_json_schema(item_type)
+                elif origin is tuple and args and Ellipsis not in args:
+                    # A *heterogeneous* fixed-length tuple — ``tuple[int, str]``
+                    # — has no single item type, and emitting a bare
+                    # ``{"type": "array"}`` let a provider send ``["bad", 1]``:
+                    # validation accepted it, reconstruction then couldn't
+                    # build the tuple, and the fallback handed the handler the
+                    # raw list. ``prefixItems`` types each position, and the
+                    # length bounds pin the arity, which the executor and the
+                    # framework bridge both already enforce.
+                    schema["prefixItems"] = [_type_to_json_schema(a) for a in args]
+                    schema["minItems"] = len(args)
+                    schema["maxItems"] = len(args)
                 return schema
 
             # Fallback for other generics: use the first argument if available

@@ -1300,3 +1300,79 @@ def test_named_properties_are_not_treated_as_unmatched_keys():
         },
     )
     assert model(m={"fixed": "ok"}) is not None
+
+
+def test_pattern_properties_also_constrain_a_declared_property():
+    """A key satisfying its ``properties`` schema must *also* satisfy every
+    matching ``patternProperties`` schema — JSON Schema applies both. Skipping
+    declared keys outright dropped the pattern's constraint, so the model
+    accepted a value the executor rejects (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "m": {
+                    "type": "object",
+                    "properties": {"n_fixed": {"type": "integer"}},
+                    "patternProperties": {"^n_": {"minimum": 5}},
+                }
+            },
+            "required": ["m"],
+        },
+    )
+    assert model(m={"n_fixed": 7}) is not None
+    with pytest.raises(ValidationError):
+        model(m={"n_fixed": 1})
+
+
+def test_a_typeless_constraint_schema_keeps_its_constraint():
+    """``{"minimum": 5}`` with no ``type`` is what a ``patternProperties``
+    branch looks like. Every keyword-family gate reads ``type`` first, so the
+    constraint was silently dropped."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"v": {"minimum": 5}},
+            "required": ["v"],
+        },
+    )
+    assert model(v=7) is not None
+    with pytest.raises(ValidationError):
+        model(v=1)
+
+
+def test_a_typeless_numeric_constraint_still_admits_a_string():
+    """The other half: a numeric keyword says nothing about a non-number, so
+    ``{"minimum": 5}`` must accept ``"x"``. ``Annotated[Any, Ge(5)]`` would
+    reject it — turning a call the executor accepts into a framework-side
+    error, the worse failure of the two."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"v": {"minimum": 5}},
+            "required": ["v"],
+        },
+    )
+    assert model(v="x") is not None
+
+
+def test_composite_const_is_enforced_by_identity():
+    """A ``const`` that isn't a scalar can't be a ``Literal`` member. Falling
+    through advertised a plain ``list`` accepting anything, while the executor
+    enforced the constant — the model and the executor disagreeing about the
+    same call (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"v": {"type": "array", "const": [1, 2]}},
+            "required": ["v"],
+        },
+    )
+    assert model(v=[1, 2]) is not None
+    for bad in ([2, 1], [1], [1, 2, 3], []):
+        with pytest.raises(ValidationError):
+            model(v=bad)

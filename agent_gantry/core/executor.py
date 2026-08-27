@@ -12,12 +12,13 @@ import re
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
-from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.schema.base import (
+    check_json_constraints as _check_constraints,
+)
+from agent_gantry.schema.base import (
     json_identity_key,
-    resolve_numeric_bounds,
     schema_declares_null,
 )
 from agent_gantry.schema.execution import (
@@ -40,114 +41,6 @@ logger = logging.getLogger(__name__)
 
 #: Memoized per-handler argument coercers (see ``_coercers_for``).
 _COERCER_CACHE: dict[Any, dict[str, Any]] = {}
-
-
-def _check_constraints(value: Any, schema: dict[str, Any], path: str) -> str | None:
-    """Enforce the JSON-Schema constraint keywords, or ``None`` if all hold.
-
-    Covers what Pydantic actually emits for constrained fields and what
-    Gantry's own introspection emits: numeric bounds, string length and
-    pattern, and array length/uniqueness. Keywords whose value is the wrong
-    shape are ignored rather than raising — a malformed schema should not
-    turn every call into a validation error.
-    """
-    if isinstance(value, bool):
-        return None  # bool is an int subclass; numeric bounds don't apply
-
-    if isinstance(value, (int, float)):
-        lower, upper, excl_lower, excl_upper = resolve_numeric_bounds(schema)
-        for bound, ok, describe in (
-            (lower, lambda v, b: v >= b, "at least"),
-            (upper, lambda v, b: v <= b, "at most"),
-            (excl_lower, lambda v, b: v > b, "greater than"),
-            (excl_upper, lambda v, b: v < b, "less than"),
-        ):
-            if bound is not None and not ok(value, bound):
-                return f"Parameter '{path}' must be {describe} {bound}"
-        multiple = schema.get("multipleOf")
-        if isinstance(multiple, (int, float)) and not isinstance(multiple, bool) and multiple > 0:
-            # Decimal, not ``%``: binary floats make ``0.3 % 0.1`` ≈ 0.1, so a
-            # schema-valid JSON number would be rejected. Going through
-            # ``str`` gives the decimal the value was written as.
-            try:
-                divisible = Decimal(str(value)) % Decimal(str(multiple)) == 0
-            except (ArithmeticError, ValueError):  # inf/nan and friends
-                divisible = True
-            if not divisible:
-                return f"Parameter '{path}' must be a multiple of {multiple}"
-
-    if isinstance(value, str):
-        min_length = schema.get("minLength")
-        if isinstance(min_length, int) and not isinstance(min_length, bool):
-            if len(value) < min_length:
-                return f"Parameter '{path}' must be at least {min_length} characters"
-        max_length = schema.get("maxLength")
-        if isinstance(max_length, int) and not isinstance(max_length, bool):
-            if len(value) > max_length:
-                return f"Parameter '{path}' must be at most {max_length} characters"
-        pattern = schema.get("pattern")
-        if isinstance(pattern, str) and pattern:
-            try:
-                matches = re.search(pattern, value) is not None
-            except re.error as exc:
-                # Fail open: a pattern Python's ``re`` can't compile is often
-                # a valid ECMA-262 one (``\p{L}``), and rejecting every value
-                # would break a tool whose schema is fine everywhere else.
-                # Logged because the constraint is then silently unenforced —
-                # without this the schema's author gets no signal at all.
-                logger.warning(
-                    "Parameter '%s' declares a pattern %r that Python's re "
-                    "cannot compile (%s); the constraint is not enforced.",
-                    path,
-                    pattern,
-                    exc,
-                )
-                matches = True
-            if not matches:
-                return f"Parameter '{path}' must match pattern {pattern!r}"
-
-    if isinstance(value, list):
-        min_items = schema.get("minItems")
-        if isinstance(min_items, int) and not isinstance(min_items, bool):
-            if len(value) < min_items:
-                return f"Parameter '{path}' must have at least {min_items} items"
-        max_items = schema.get("maxItems")
-        if isinstance(max_items, int) and not isinstance(max_items, bool):
-            if len(value) > max_items:
-                return f"Parameter '{path}' must have at most {max_items} items"
-        if schema.get("uniqueItems") is True:
-            # Keyed by JSON identity, not Python equality: ``True == 1`` in
-            # Python, but JSON Schema compares types before values, so
-            # ``[1, true]`` is two distinct items rather than a duplicate.
-            # The keys are hashable, so this is a set rather than a scan.
-            seen: set[Any] = set()
-            unhashable: list[Any] = []
-            for item in value:
-                key = json_identity_key(item)
-                try:
-                    if key in seen:
-                        return f"Parameter '{path}' must not contain duplicate items"
-                    seen.add(key)
-                except TypeError:  # a non-JSON value that isn't hashable
-                    if key in unhashable:
-                        return f"Parameter '{path}' must not contain duplicate items"
-                    unhashable.append(key)
-
-    if isinstance(value, dict):
-        # A Pydantic ``dict`` field constrained with ``Field(min_length=1)``
-        # emits these, so they arrive inside the inlined mapping schemas —
-        # and checking only numbers, strings and arrays let an empty or
-        # oversized mapping through to the handler.
-        min_properties = schema.get("minProperties")
-        if isinstance(min_properties, int) and not isinstance(min_properties, bool):
-            if len(value) < min_properties:
-                return f"Parameter '{path}' must have at least {min_properties} properties"
-        max_properties = schema.get("maxProperties")
-        if isinstance(max_properties, int) and not isinstance(max_properties, bool):
-            if len(value) > max_properties:
-                return f"Parameter '{path}' must have at most {max_properties} properties"
-
-    return None
 
 
 def _coercers_for(handler: Callable[..., Any]) -> dict[str, Any]:

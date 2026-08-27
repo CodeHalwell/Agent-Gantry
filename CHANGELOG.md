@@ -653,6 +653,37 @@ adapters, and the provider dialects agree with it.
   `dict[str, Any]` (was `dict[str, str]`) to match what callers actually
   pass — nested dicts/lists and non-string values, which
   `_extract_all_strings` already handles.
+- **A heterogeneous tuple advertised an untyped array.** `tuple[int, str]`
+  has no single item type, so the emitted schema was a bare
+  `{"type": "array"}` — validation accepted `["bad", 1]`, reconstruction then
+  couldn't build the tuple, and the fallback handed the handler the raw list,
+  the exact failure reconstruction exists to prevent. It now emits
+  `prefixItems` plus `minItems`/`maxItems`, both of which the executor and
+  the framework bridge already enforce. A variadic `tuple[int, ...]` keeps
+  its homogeneous `items`.
+- **`oneOf` was read as `anyOf` when deciding nullability.** `oneOf` means
+  *exactly* one branch matches, so `{"oneOf": [{"type": "null"}, {}]}` makes
+  `null` match twice and is therefore invalid — but the shared any-branch
+  reading called it nullable and preserved a strict-mode placeholder that
+  validation immediately rejected. Branches admitting `null` are now counted,
+  and exactly one is required; `anyOf` is unchanged.
+- **A declared property escaped its matching `patternProperties` schema.**
+  JSON Schema requires a key to satisfy its `properties` schema *and* every
+  matching pattern schema, but the framework bridge skipped declared keys
+  outright, so `n_fixed: {"type": "integer"}` beside
+  `{"^n_": {"minimum": 5}}` dropped the minimum. Declared keys are now exempt
+  only from the closed-object "matches no pattern" check. Fixing it exposed
+  the underlying cause: a constraint-only schema with no `type` — what a
+  pattern branch looks like — lost its constraint entirely, because every
+  keyword-family gate reads `type` first. The executor's JSON-constraint
+  checker moved to `agent_gantry.schema.base` as `check_json_constraints` and
+  the bridge now applies it to such schemas, so the two agree by
+  construction rather than by parallel maintenance.
+- **A composite `const` advertised an unconstrained container.**
+  `{"type": "array", "const": [1, 2]}` can't be a `Literal` member, so it
+  fell through to a plain `list` that accepted anything while the executor
+  enforced the constant. It is now checked by JSON identity, exactly as a
+  composite `enum` already was.
 
 ### Known limitation
 

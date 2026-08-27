@@ -330,3 +330,62 @@ def test_plain_scalar_enums_need_no_recovery():
     assert _with_enum_recovery(Mode) is Mode
     assert _with_enum_recovery(list[Mode]) == list[Mode]
     assert _with_enum_recovery(Point) is not Point
+
+
+async def test_heterogeneous_tuple_is_typed_position_by_position(gantry):
+    """``tuple[int, str]`` has no single item type, so the emitted schema used
+    to be a bare ``{"type": "array"}``. That accepted ``["bad", 1]``,
+    reconstruction then couldn't build the tuple, and the fallback handed the
+    handler the raw list — the exact failure reconstruction exists to prevent
+    (PR #381 review)."""
+    tool = await gantry.get_tool("use_many")
+    assert tool is not None
+    pair = tool.parameters_schema["properties"]["pair"]
+    assert pair["prefixItems"] == [{"type": "integer"}, {"type": "string"}]
+    assert pair["minItems"] == pair["maxItems"] == 2
+
+    # Right arity, wrong order: rejected at validation rather than reaching
+    # the handler as a ``list``.
+    swapped = await gantry.execute(
+        ToolCall(
+            tool_name="use_many",
+            arguments={
+                "pair": ["bad", 1],
+                "at": "2026-08-27T00:00:00",
+                "ident": "urn:uuid:12345678-1234-5678-1234-567812345678",
+                "mode": "fast",
+                "frozen": ["a"],
+                "payloads": [{"x": 1}],
+            },
+        )
+    )
+    assert swapped.status.value == "failure"
+    assert swapped.error_type == "ValidationError"
+
+    # And the arity itself is pinned.
+    short = await gantry.execute(
+        ToolCall(
+            tool_name="use_many",
+            arguments={
+                "pair": [1],
+                "at": "2026-08-27T00:00:00",
+                "ident": "urn:uuid:12345678-1234-5678-1234-567812345678",
+                "mode": "fast",
+                "frozen": ["a"],
+                "payloads": [{"x": 1}],
+            },
+        )
+    )
+    assert short.status.value == "failure"
+    assert short.error_type == "ValidationError"
+
+
+def test_a_variadic_tuple_keeps_its_homogeneous_item_type():
+    """``tuple[int, ...]`` *does* have a single item type — the positional
+    branch must not steal it and pin a length of two."""
+    from agent_gantry.schema.introspection import _type_to_json_schema
+
+    schema = _type_to_json_schema(tuple[int, ...])
+    assert schema["items"] == {"type": "integer"}
+    assert "prefixItems" not in schema
+    assert "maxItems" not in schema

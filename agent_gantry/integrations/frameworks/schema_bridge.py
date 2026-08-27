@@ -19,7 +19,11 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal
 
-from agent_gantry.schema.base import json_identity_key, resolve_numeric_bounds
+from agent_gantry.schema.base import (
+    check_json_constraints,
+    json_identity_key,
+    resolve_numeric_bounds,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -353,6 +357,25 @@ def _with_constraints(annotation: Any, prop: dict[str, Any]) -> Any:
         if high is not None:
             marks.append(at.MaxLen(high))
 
+    if json_type is None:
+        # A constraint-only schema with no declared ``type`` — what a
+        # ``patternProperties`` branch like ``{"minimum": 5}`` looks like. The
+        # keyword-family gates above all miss it, so the constraint was
+        # silently dropped. It can't be expressed as ``annotated_types``
+        # metadata either: ``Annotated[Any, Ge(5)]`` rejects ``"x"``, which the
+        # schema permits, and rejecting a valid call is the worse error. The
+        # shared checker applies each family only to its own JSON type, so the
+        # model agrees with the executor by construction.
+        from pydantic import AfterValidator
+
+        def _check(value: Any, _schema: dict[str, Any] = prop) -> Any:
+            error = check_json_constraints(value, _schema, "value")
+            if error is not None:
+                raise ValueError(error)
+            return value
+
+        marks.append(AfterValidator(_check))
+
     if not marks:
         return annotation
     return Annotated[tuple([annotation, *marks])]
@@ -637,9 +660,12 @@ def _pattern_key_validator(
 ) -> Any:
     """A callable enforcing ``patternProperties`` over a mapping's keys.
 
-    ``declared`` names the keys the surrounding model already types, so they
-    are neither re-checked here nor treated as unmatched when the object is
-    closed.
+    ``declared`` names the keys the surrounding model already types. They are
+    exempt from the closed-object "matches no pattern" check — a named property
+    is declared by definition — but *not* from pattern validation itself: JSON
+    Schema requires a key to satisfy its ``properties`` schema **and** every
+    matching ``patternProperties`` schema, so ``n_fixed`` declared as an
+    integer beside ``{"^n_": {"minimum": 5}}`` must satisfy both.
     """
     import re
 
@@ -667,8 +693,6 @@ def _pattern_key_validator(
         if not isinstance(value, dict):
             return value
         for key, item in value.items():
-            if key in declared:
-                continue
             matched = False
             for matcher, adapter in compiled:
                 if not matcher.search(str(key)):
@@ -676,7 +700,7 @@ def _pattern_key_validator(
                 matched = True
                 if adapter is not None:
                     adapter.validate_python(item)
-            if closed and not matched:
+            if closed and not matched and key not in declared:
                 raise ValueError(f"key {key!r} matches no patternProperties entry")
         return value
 
@@ -699,7 +723,11 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
         # advertised an unconstrained ``float``.
         if isinstance(const_value, (str, int, bool, float)) or const_value is None:
             return _literal_annotation([const_value])
-        # Exotic const value — fall back to the declared/base type.
+        # A composite constant (``{"type": "array", "const": [1, 2]}``) can't
+        # be a ``Literal`` member, and falling through advertised a plain
+        # ``list`` that accepted anything while the executor enforced the
+        # constant. Checked by JSON identity, exactly as a composite enum is.
+        return _enum_membership([const_value])
 
     enum_values = prop.get("enum")
     if isinstance(enum_values, list) and enum_values:

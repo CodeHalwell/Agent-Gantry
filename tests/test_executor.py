@@ -1733,3 +1733,38 @@ def test_a_sibling_type_governs_combinator_nullability():
         schema_declares_null({"type": ["string", "null"], "anyOf": [{"type": "null"}]})
         is True
     )
+
+
+def test_oneof_null_must_match_exactly_one_branch():
+    """``oneOf`` means *exactly* one, so a permissive sibling branch makes
+    ``null`` match twice — and a value matching two branches is invalid.
+    Sharing the ``anyOf`` any-branch reading called that nullable and
+    preserved a placeholder validation then rejected (PR #381 review)."""
+    from agent_gantry.schema.base import schema_declares_null
+
+    # ``{}`` matches everything, so ``null`` matches both branches.
+    assert schema_declares_null({"oneOf": [{"type": "null"}, {}]}) is False
+    # Two null-admitting branches are ambiguous for the same reason.
+    assert (
+        schema_declares_null({"oneOf": [{"type": "null"}, {"type": ["string", "null"]}]})
+        is False
+    )
+    # Exactly one branch admits null — the ordinary nullable spelling.
+    assert schema_declares_null({"oneOf": [{"type": "string"}, {"type": "null"}]}) is True
+    # ``anyOf`` is unaffected: any branch admitting null is enough.
+    assert schema_declares_null({"anyOf": [{"type": "null"}, {}]}) is True
+
+
+def test_ambiguous_oneof_null_is_dropped_not_preserved():
+    """End-to-end consequence: the placeholder is dropped rather than
+    surviving to fail the validation that runs immediately after."""
+    tool = ToolDefinition(
+        name="ambiguous",
+        description="Nullability spelled through overlapping oneOf branches",
+        parameters_schema={
+            "type": "object",
+            "properties": {"note": {"oneOf": [{"type": "null"}, {}]}},
+            "required": [],
+        },
+    )
+    assert ExecutionEngine._normalize_arguments(tool, {"note": None}) == {}
