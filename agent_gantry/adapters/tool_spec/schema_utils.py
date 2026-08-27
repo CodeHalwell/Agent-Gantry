@@ -80,11 +80,17 @@ def _make_nullable(subschema: dict[str, Any]) -> None:
     if isinstance(declared, str):
         if declared != "null":
             subschema["type"] = [declared, "null"]
-            _admit_null_in_enum(subschema)
+        _admit_null_in_enum(subschema)
     elif isinstance(declared, list):
         if "null" not in declared:
             subschema["type"] = [*declared, "null"]
-            _admit_null_in_enum(subschema)
+        # Widened *unconditionally*, including when ``null`` was already in
+        # the list. A schema that arrives as ``{"type": ["string", "null"],
+        # "enum": ["fast", "slow"]}`` — an optional ``Literal`` some emitters
+        # produce pre-widened — looks nullable but is not: the enum still
+        # forbids null. Returning early there left strict mode making the
+        # property required with no value that satisfies both constraints.
+        _admit_null_in_enum(subschema)
     else:
         # No usable type to widen (e.g. an enum-only or unconstrained schema).
         # Wrapping it in anyOf keeps the original constraints intact.

@@ -746,15 +746,49 @@ class ExecutionEngine:
                     return True
             return False
 
+        def _declaring_subschema(prop: dict[str, Any], key: str) -> dict[str, Any] | None:
+            """The subschema that actually carries ``key``, through combinators.
+
+            An optional nested model is ``{"anyOf": [{"type": "object",
+            "properties": {...}}, {"type": "null"}]}`` — the shape Pydantic
+            emits for ``Payload | None`` — so the node handed down here often
+            has no ``properties``/``items`` of its own. Reading only the top
+            level left every value under such a property un-normalized, and
+            its strict-mode nulls then failed validation.
+
+            Ambiguity yields ``None`` rather than a guess: with two branches
+            declaring the key (an ``allOf`` intersection, or a genuine union
+            of two object shapes) there is no single ``required`` list to
+            decide against, and dropping a key the other branch requires
+            would be worse than leaving the value alone.
+            """
+            own = prop.get(key)
+            if isinstance(own, dict) and own:
+                return prop
+            found: list[dict[str, Any]] = []
+            for combinator in ("anyOf", "oneOf", "allOf"):
+                branches = prop.get(combinator)
+                if not isinstance(branches, list):
+                    continue
+                for branch in branches:
+                    if not isinstance(branch, dict):
+                        continue
+                    nested = branch.get(key)
+                    if isinstance(nested, dict) and nested:
+                        found.append(branch)
+            return found[0] if len(found) == 1 else None
+
         def _normalize_child(value: Any, prop: Any) -> Any:
             """Recurse into an object/array value against its own subschema."""
             if not isinstance(prop, dict):
                 return value
             if isinstance(value, dict):
-                return _normalize_object(value, prop)
+                target = _declaring_subschema(prop, "properties")
+                return _normalize_object(value, target) if target is not None else value
             if isinstance(value, list):
-                item_schema = prop.get("items")
-                if isinstance(item_schema, dict) and item_schema:
+                target = _declaring_subschema(prop, "items")
+                if target is not None:
+                    item_schema = target["items"]
                     items = [_normalize_child(item, item_schema) for item in value]
                     if any(new is not old for new, old in zip(items, value)):
                         return items

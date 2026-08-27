@@ -138,6 +138,17 @@ def _effective_type(prop: dict[str, Any]) -> Any:
     return json_type
 
 
+def _reject_duplicates(value: Any) -> Any:
+    """Enforce ``uniqueItems`` on a parsed array value."""
+    if isinstance(value, (list, tuple)):
+        seen: list[Any] = []
+        for item in value:
+            if item in seen:
+                raise ValueError("must not contain duplicate items")
+            seen.append(item)
+    return value
+
+
 def _with_constraints(annotation: Any, prop: dict[str, Any]) -> Any:
     """Fold the schema's constraint keywords into ``annotation``.
 
@@ -196,6 +207,16 @@ def _with_constraints(annotation: Any, prop: dict[str, Any]) -> Any:
             marks.append(at.MinLen(low))
         if high is not None:
             marks.append(at.MaxLen(high))
+        if prop.get("uniqueItems") is True:
+            # Gantry's own introspection emits this for every ``set`` and
+            # ``frozenset`` parameter, and the executor rejects duplicates at
+            # dispatch — so without it the framework happily accepts a list
+            # the engine then refuses. Equality scan rather than a ``set``:
+            # array items may be dicts or lists, which are unhashable, and
+            # the executor compares the same way.
+            from pydantic import AfterValidator
+
+            marks.append(AfterValidator(_reject_duplicates))
 
     if not marks:
         return annotation
@@ -310,6 +331,48 @@ def _with_exclusivity(annotation: Any, parts: list[Any]) -> Any:
     return Annotated[annotation, BeforeValidator(_exactly_one)]
 
 
+def _positional_array(name: str, prefix_items: list[Any], items: Any, depth: int) -> Any:
+    """Annotation for an array whose positions are typed independently.
+
+    ``prefixItems`` is what Pydantic emits for a heterogeneous
+    ``tuple[int, str]``, so it arrives inside the nested models this bridge
+    inlines, and the executor validates each position against its own entry.
+    Returning a bare ``list`` here advertised an array of anything.
+
+    The annotation stays ``list`` rather than becoming ``tuple[int, str]``:
+    the value flows on to :meth:`ExecutionEngine.execute`, whose validator
+    requires a JSON array (a ``list``), so coercing to a tuple to gain
+    positional typing would only trade a permissive framework for a rejected
+    dispatch. A ``BeforeValidator`` gets the same per-position checking while
+    leaving the runtime type alone.
+    """
+    from typing import Annotated
+
+    from pydantic import BeforeValidator, TypeAdapter
+
+    def _adapter(entry: Any, label: str) -> Any:
+        if not isinstance(entry, dict) or not entry:
+            return None
+        return TypeAdapter(_with_constraints(_annotation(label, entry, depth + 1), entry))
+
+    adapters = [_adapter(entry, f"{name}_{index}") for index, entry in enumerate(prefix_items)]
+    # ``items`` alongside ``prefixItems`` types the positions past the prefix,
+    # matching how the executor applies the two.
+    tail = _adapter(items, f"{name}_item")
+
+    def _by_position(value: Any) -> Any:
+        if not isinstance(value, (list, tuple)):
+            return value
+        out = list(value)
+        for index, item in enumerate(out):
+            adapter = adapters[index] if index < len(adapters) else tail
+            if adapter is not None:
+                out[index] = adapter.validate_python(item)
+        return out
+
+    return Annotated[list, BeforeValidator(_by_position)]
+
+
 def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
     """Python annotation for one property schema (recursive)."""
     # ``const`` is a one-value ``enum`` — the shape Pydantic emits for a
@@ -318,7 +381,13 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
     # accepted values the executor then rejected.
     if "const" in prop:
         const_value = prop["const"]
-        if isinstance(const_value, (str, int, bool)) or const_value is None:
+        # Floats included, for the same reason the ``enum`` path below admits
+        # them: PEP 586 disallows a float ``Literal`` member statically, but
+        # ``typing`` and Pydantic both enforce it correctly at runtime, and
+        # ``{"type": "number", "const": 0.5}`` is what a single-value float
+        # ``Literal`` emits. Excluding it dropped the constraint entirely and
+        # advertised an unconstrained ``float``.
+        if isinstance(const_value, (str, int, bool, float)) or const_value is None:
             return Literal[const_value]
         # Exotic const value — fall back to the declared/base type.
 
@@ -379,6 +448,9 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
         return _SCALARS[json_type]
     if json_type == "array":
         items = prop.get("items")
+        prefix_items = prop.get("prefixItems")
+        if isinstance(prefix_items, list) and prefix_items:
+            return _positional_array(name, prefix_items, items, depth)
         if isinstance(items, dict) and items:
             # Constraints ride along on the *item* schema too
             # (``list[Annotated[int, Field(gt=0)]]`` puts them there), so

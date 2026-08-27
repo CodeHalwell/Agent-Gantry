@@ -653,3 +653,108 @@ def test_plain_combinator_without_a_type_is_unaffected():
     assert model(v=None).v is None
     with pytest.raises(ValidationError):
         model(v="bad")
+
+
+def test_prefix_items_type_each_position_independently():
+    """``prefixItems`` is what Pydantic emits for ``tuple[int, str]``, and the
+    executor validates each position against its own entry. A bare ``list``
+    advertised an array of anything (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "pair": {
+                    "type": "array",
+                    "prefixItems": [{"type": "integer"}, {"type": "string"}],
+                }
+            },
+            "required": ["pair"],
+        },
+    )
+    assert model(pair=[1, "a"]).pair == [1, "a"]
+    # The runtime type stays a list — the executor's validator requires a JSON
+    # array, so coercing to a tuple here would trade a permissive framework
+    # for a rejected dispatch.
+    assert isinstance(model(pair=[1, "a"]).pair, list)
+    with pytest.raises(ValidationError):
+        model(pair=["bad", 42])
+
+
+def test_items_alongside_prefix_items_covers_the_tail():
+    """``items`` types the positions past the prefix, matching the executor."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "row": {
+                    "type": "array",
+                    "prefixItems": [{"type": "string"}],
+                    "items": {"type": "integer"},
+                }
+            },
+            "required": ["row"],
+        },
+    )
+    assert model(row=["label", 1, 2]).row == ["label", 1, 2]
+    with pytest.raises(ValidationError):
+        model(row=["label", 1, "not-an-int"])
+
+
+def test_float_const_becomes_a_single_value_literal():
+    """The adjacent ``enum`` path already admits floats; excluding them here
+    dropped ``{"type": "number", "const": 0.5}`` to an unconstrained ``float``
+    that accepted values the executor rejects (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"ratio": {"type": "number", "const": 0.5}},
+            "required": ["ratio"],
+        },
+    )
+    assert model(ratio=0.5).ratio == 0.5
+    with pytest.raises(ValidationError):
+        model(ratio=1.5)
+
+
+def test_unique_items_rejects_duplicates():
+    """Gantry's own introspection emits ``uniqueItems`` for every ``set``
+    parameter and the executor rejects duplicates at dispatch, so a model that
+    accepted them waved through a call the engine refuses (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "tags": {"type": "array", "items": {"type": "string"}, "uniqueItems": True}
+            },
+            "required": ["tags"],
+        },
+    )
+    assert model(tags=["a", "b"]).tags == ["a", "b"]
+    with pytest.raises(ValidationError):
+        model(tags=["a", "a"])
+
+
+def test_unique_items_handles_unhashable_members():
+    """Array members may be objects or arrays, which a ``set`` cannot hold —
+    the executor compares by equality and so must the bridge."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "rows": {
+                    "type": "array",
+                    "items": {"type": "object", "properties": {"x": {"type": "integer"}}},
+                    "uniqueItems": True,
+                }
+            },
+            "required": ["rows"],
+        },
+    )
+    assert len(model(rows=[{"x": 1}, {"x": 2}]).rows) == 2
+    with pytest.raises(ValidationError):
+        model(rows=[{"x": 1}, {"x": 1}])

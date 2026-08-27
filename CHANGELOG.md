@@ -156,6 +156,30 @@ adapters, and the provider dialects agree with it.
   against the canonical non-null schema. Normalization now recurses through
   nested objects and array items. A *required* nested `null` is still
   preserved, so its error stays accurate.
+- **The framework bridge lagged the executor on four schema keywords.**
+  Every one of them is a rule the executor enforces at dispatch, so the
+  CrewAI/LlamaIndex args model advertised and accepted calls the engine then
+  refused: `prefixItems` yielded a bare `list` (each position is now checked
+  against its own entry, with `items` covering the tail, and the value stays
+  a `list` because the executor's validator requires a JSON array);
+  `uniqueItems` — which Gantry's own introspection emits for every `set` and
+  `frozenset` parameter — wasn't enforced at all; and a float `const`
+  (`{"type": "number", "const": 0.5}`) fell through to an unconstrained
+  `float`, though the adjacent `enum` path already admitted floats.
+- **Normalization stopped at a combinator node.** An optional nested model is
+  `{"anyOf": [{object…}, {"type": "null"}]}` — what Pydantic emits for
+  `Payload | None` — and normalization read only a node's own `properties`,
+  so every value beneath such a property kept its strict-mode nulls and
+  failed validation. It now resolves the branch that declares the shape, for
+  nested objects and array items alike, and leaves genuinely ambiguous unions
+  (two branches declaring `properties`, with no single `required` list to
+  decide against) untouched.
+- **A pre-widened nullable enum still forbade `null` under strict mode.**
+  `_make_nullable` returned early when `null` was already in a property's
+  `type` list, so the enum was never widened alongside it: a schema arriving
+  as `{"type": ["string", "null"], "enum": ["fast", "slow"]}` looked nullable
+  but wasn't, and strict mode then made the property required with no value
+  satisfying both constraints.
 - **A typed `additionalProperties` alongside declared properties wasn't
   detected as strict-incompatible.** `unsupported_strict_paths()` returned
   early once an object declared any properties, so an object with both

@@ -305,6 +305,39 @@ class TestUnsupportedStrictPaths:
         )
         assert out["properties"]["counts"]["additionalProperties"] == {"type": "integer"}
 
+    def test_pre_widened_nullable_enum_still_admits_null(self) -> None:
+        """A schema that already lists ``null`` in its ``type`` is not
+        necessarily nullable: ``enum`` is an independent constraint, and some
+        emitters produce an optional ``Literal`` pre-widened. Returning early
+        there left strict mode making the property required with no value that
+        satisfies both constraints (PR #381 review)."""
+        out = strict_json_schema(
+            {
+                "type": "object",
+                "properties": {
+                    "speed": {"type": ["string", "null"], "enum": ["fast", "slow"]}
+                },
+                "required": [],
+            }
+        )
+        speed = out["properties"]["speed"]
+        assert speed["type"] == ["string", "null"]
+        assert None in speed["enum"]
+        # Strict mode requires every property, so the only way to express
+        # "not provided" is a value both constraints accept.
+        assert out["required"] == ["speed"]
+
+    def test_single_type_enum_widening_is_unchanged(self) -> None:
+        out = strict_json_schema(
+            {
+                "type": "object",
+                "properties": {"speed": {"type": "string", "enum": ["fast", "slow"]}},
+                "required": [],
+            }
+        )
+        assert out["properties"]["speed"]["type"] == ["string", "null"]
+        assert out["properties"]["speed"]["enum"] == ["fast", "slow", None]
+
 
 class TestStrictFallbackInAdapters:
     """A tool strict mode cannot express is emitted without the flag rather

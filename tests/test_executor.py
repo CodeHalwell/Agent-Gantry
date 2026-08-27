@@ -1109,3 +1109,106 @@ async def test_prefix_items_and_items_cover_different_positions(engine):
 
     is_valid, _ = await engine._validate_arguments(tool, {"row": ["a", 1, "b"]})
     assert is_valid is False
+
+
+def test_normalize_reaches_objects_behind_a_combinator():
+    """An optional nested model is ``{"anyOf": [{object...}, {"type": "null"}]}``
+    — the shape Pydantic emits for ``Payload | None``. Reading only the node's
+    own ``properties`` left every value under it un-normalized, so its
+    strict-mode nulls survived to fail validation (PR #381 review)."""
+    tool = ToolDefinition(
+        name="wrapped",
+        description="Optional nested model expressed through a combinator",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "payload": {
+                    "anyOf": [
+                        {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "nickname": {"type": "string"},
+                            },
+                            "required": ["name"],
+                        },
+                        {"type": "null"},
+                    ]
+                }
+            },
+            "required": ["payload"],
+        },
+    )
+    assert ExecutionEngine._normalize_arguments(
+        tool, {"payload": {"name": "a", "nickname": None}}
+    ) == {"payload": {"name": "a"}}
+
+    # The branch's own ``required`` still decides: a required nested null is
+    # preserved so the validation error stays accurate.
+    assert ExecutionEngine._normalize_arguments(tool, {"payload": {"name": None}}) == {
+        "payload": {"name": None}
+    }
+
+
+def test_normalize_reaches_array_items_behind_a_combinator():
+    tool = ToolDefinition(
+        name="wrapped_rows",
+        description="Optional array of objects expressed through a combinator",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "rows": {
+                    "anyOf": [
+                        {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "x": {"type": "integer"},
+                                    "y": {"type": "integer"},
+                                },
+                                "required": ["x"],
+                            },
+                        },
+                        {"type": "null"},
+                    ]
+                }
+            },
+            "required": ["rows"],
+        },
+    )
+    assert ExecutionEngine._normalize_arguments(tool, {"rows": [{"x": 1, "y": None}]}) == {
+        "rows": [{"x": 1}]
+    }
+
+
+def test_normalize_leaves_ambiguous_combinators_alone():
+    """Two branches declaring ``properties`` give no single ``required`` list to
+    decide against, so dropping a key one of them requires would be worse than
+    leaving the value intact."""
+    tool = ToolDefinition(
+        name="ambiguous",
+        description="Union of two object shapes with different required keys",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "payload": {
+                    "anyOf": [
+                        {
+                            "type": "object",
+                            "properties": {"a": {"type": "string"}},
+                            "required": [],
+                        },
+                        {
+                            "type": "object",
+                            "properties": {"a": {"type": "string"}},
+                            "required": ["a"],
+                        },
+                    ]
+                }
+            },
+            "required": ["payload"],
+        },
+    )
+    arguments = {"payload": {"a": None}}
+    assert ExecutionEngine._normalize_arguments(tool, arguments) is arguments
