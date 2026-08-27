@@ -262,10 +262,18 @@ def _needs_reconstruction(param_type: Any) -> bool:
         return True
     if issubclass(param_type, enum.Enum):
         return True
-    # A ``TypedDict`` *is* a dict at runtime, so it needs nothing — and it
-    # would otherwise be caught by the dataclass check below on some versions.
+    # A ``TypedDict`` *is* a dict at runtime, so the container itself needs
+    # nothing — and it would otherwise be caught by the dataclass check below
+    # on some versions. Its *members* can still need rebuilding, though: a
+    # field annotated ``datetime``/``Enum``/``set``/a dataclass is advertised
+    # in its JSON form, and returning ``False`` unconditionally installed no
+    # coercer at all, so ``payload["at"].year`` failed on a schema-valid call.
     if hasattr(param_type, "__required_keys__"):
-        return False
+        try:
+            hints = typing.get_type_hints(param_type)
+        except Exception:  # noqa: BLE001 - unresolvable: coerce nothing
+            return False
+        return any(_needs_reconstruction(hint) for hint in hints.values())
     if dataclasses.is_dataclass(param_type):
         return True
     try:
@@ -373,8 +381,20 @@ def build_argument_coercers(func: Callable[..., Any]) -> dict[str, Any]:
             continue
         try:
             coercers[name] = TypeAdapter(_with_enum_recovery(annotation))
-        except Exception:  # noqa: BLE001 - not adaptable: leave the value alone
             continue
+        except Exception:  # noqa: BLE001 - retried below, then given up on
+            pass
+        # Pydantic only recognizes ``typing_extensions.TypedDict`` on Python
+        # < 3.12, and raises for a standard-library one — so without this
+        # retry the members of a ``TypedDict`` parameter stayed unrebuilt on
+        # exactly the versions the schema path already works around.
+        if isinstance(annotation, type) and hasattr(annotation, "__required_keys__"):
+            rebuilt = _typeddict_via_typing_extensions(annotation)
+            if rebuilt is not None:
+                try:
+                    coercers[name] = TypeAdapter(_with_enum_recovery(rebuilt))
+                except Exception:  # noqa: BLE001 - not adaptable: leave it alone
+                    continue
     return coercers
 
 
@@ -555,9 +575,35 @@ def _typeddict_schema_via_typing_extensions(param_type: type) -> dict[str, Any] 
     of them optional, so the emitted schema would permit omitting a key the
     handler relies on.
     """
+    rebuilt = _typeddict_via_typing_extensions(param_type)
+    if rebuilt is None:
+        return None
+    try:
+        from pydantic import TypeAdapter
+
+        return TypeAdapter(rebuilt).json_schema()
+    except Exception:  # noqa: BLE001 - best-effort; fall back to generic mapping
+        return None
+
+
+def _typeddict_via_typing_extensions(param_type: type) -> Any:
+    """An equivalent ``typing_extensions.TypedDict``, or ``None``.
+
+    Pydantic only recognizes ``typing_extensions.TypedDict`` on Python < 3.12;
+    a class written with the standard-library ``typing.TypedDict`` — the
+    import most code reaches for — raises ``PydanticUserError`` instead.
+    Rebuilding an equivalent from the same annotations makes it usable, for
+    schema generation and for the argument coercer alike.
+
+    Requiredness is rebuilt per key from ``__required_keys__`` rather than by
+    replaying one ``total=`` flag: with inheritance the two disagree.
+    ``class Child(Base, total=False)`` still requires ``Base``'s keys, but
+    applying ``total=False`` to the merged annotations would make every one of
+    them optional, so the result would permit omitting a key the handler
+    relies on.
+    """
     try:
         import typing_extensions
-        from pydantic import TypeAdapter
 
         required_keys = frozenset(getattr(param_type, "__required_keys__", ()) or ())
         annotations = {
@@ -569,9 +615,8 @@ def _typeddict_schema_via_typing_extensions(param_type: type) -> dict[str, Any] 
             for key, annotation in param_type.__annotations__.items()
         }
         # Every key now states its own requiredness, so ``total`` is moot.
-        rebuilt = typing_extensions.TypedDict(param_type.__name__, annotations)
-        return TypeAdapter(rebuilt).json_schema()
-    except Exception:  # noqa: BLE001 - best-effort; fall back to generic mapping
+        return typing_extensions.TypedDict(param_type.__name__, annotations)
+    except Exception:  # noqa: BLE001 - best-effort; the caller falls back
         return None
 
 

@@ -892,6 +892,20 @@ adapters, and the provider dialects agree with it.
   routed booleans through the annotation builder, but a plain array with no
   `prefixItems` fell through to a bare `list` in the framework bridge and
   accepted the elements the executor rejects.
+- **A `TypedDict`'s members are rebuilt, though the container isn't.** A
+  `TypedDict` *is* a dict at runtime, so the container arrives as itself — but
+  a member annotated `datetime`, `Enum`, `set` or a dataclass does not, and
+  declining reconstruction for the whole thing installed no coercer at all, so
+  `payload["at"].year` failed on a schema-valid call. Pydantic recognizes only
+  `typing_extensions.TypedDict` before 3.12, so the coercer retries through
+  the same rebuild the schema path already used — otherwise the fix would have
+  been silently inert on exactly the versions that need it.
+- **A property Pydantic cannot make a field from is declined explicitly.**
+  `isidentifier()` accepts `_token`, but Pydantic reserves leading underscores
+  for private attributes. It raises today, which already produced the
+  documented fallback — but it *silently drops* such a name when one arrives
+  as a keyword rather than through the field mapping, so the bridge no longer
+  depends on which spelling Pydantic sees.
 
 ### Performance
 

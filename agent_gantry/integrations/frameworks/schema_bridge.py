@@ -205,8 +205,18 @@ def _build_model(name: str, schema: dict[str, Any], depth: int) -> Any:
 
     fields: dict[str, Any] = {}
     for prop_name, prop in properties.items():
-        if not prop_name.isidentifier():
-            raise ValueError(f"property {prop_name!r} is not a valid identifier")
+        if not prop_name.isidentifier() or prop_name.startswith("_"):
+            # ``isidentifier()`` accepts ``_token``, but Pydantic reserves
+            # leading underscores for private attributes and will not make a
+            # normal field from one. It raises today, which the caller turns
+            # into the documented fallback — but it *silently drops* such a
+            # name when one is passed as a keyword rather than through the
+            # field mapping, so relying on the raise is relying on which
+            # spelling Pydantic happens to see. Declining explicitly keeps the
+            # fallback deliberate: a partially faithful model would omit a
+            # required canonical property, and reject an explicitly supplied
+            # one as an extra when the object is closed.
+            raise ValueError(f"property {prop_name!r} cannot be a model field")
         annotation = _annotation(f"{name}_{prop_name}", prop, depth)
         if isinstance(prop, dict):
             annotation = _with_constraints(annotation, prop)

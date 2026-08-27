@@ -942,3 +942,51 @@ async def test_a_null_enum_member_reaches_the_handler_end_to_end():
     result = await g.execute(ToolCall(tool_name="read_mode", arguments={"mode": None}))
     assert result.status.value == "success", result.error
     assert result.result == "NullableMode.UNSET"
+
+
+class RichPayload(TypedDict):
+    """A ``TypedDict`` whose members' JSON and Python forms differ."""
+
+    at: datetime.datetime
+    mode: Mode
+    tags: set[str]
+
+
+def test_a_typeddict_container_needs_nothing_but_its_members_might():
+    """A ``TypedDict`` *is* a dict at runtime, so the container arrives as
+    itself — but a member annotated ``datetime``/``Enum``/``set`` does not, and
+    returning ``False`` unconditionally installed no coercer at all
+    (PR #381 review)."""
+    from agent_gantry.schema.introspection import _needs_reconstruction
+
+    assert _needs_reconstruction(RichPayload) is True
+    # The conservative half: a TypedDict of scalars still arrives as itself.
+    assert _needs_reconstruction(Options) is False
+
+
+async def test_typed_members_of_a_typeddict_reach_the_handler_rebuilt():
+    """End-to-end, and the reason the fix needed a second step: Pydantic only
+    recognizes ``typing_extensions.TypedDict`` before 3.12, so building the
+    adapter from a standard-library one silently produced no coercer on
+    exactly the versions the schema path already works around."""
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @g.register(tags=["demo"])
+    def use_rich(p: RichPayload) -> str:
+        """Report the runtime types inside a TypedDict argument."""
+        return (
+            f"{type(p['at']).__name__}/{type(p['mode']).__name__}"
+            f"/{type(p['tags']).__name__}/{p['at'].year}"
+        )
+
+    await g.sync()
+    result = await g.execute(
+        ToolCall(
+            tool_name="use_rich",
+            arguments={
+                "p": {"at": "2026-08-27T00:00:00", "mode": "fast", "tags": ["a"]}
+            },
+        )
+    )
+    assert result.status.value == "success", result.error
+    assert result.result == "datetime/Mode/set/2026"

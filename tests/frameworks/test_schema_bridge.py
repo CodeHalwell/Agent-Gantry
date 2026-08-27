@@ -1760,3 +1760,35 @@ def test_a_boolean_items_schema_types_a_plain_array_too():
     # ``items: true`` permits any.
     assert accepts(True, [1, "x"]) is True
     assert accepts(True, []) is True
+
+
+def test_a_property_pydantic_cannot_field_falls_back():
+    """``isidentifier()`` accepts ``_token``, but Pydantic reserves leading
+    underscores for private attributes and will not make a normal field from
+    one. Pydantic raises today, which the caller turns into the documented
+    fallback — but it *silently drops* such a name when it arrives as a
+    keyword rather than through the field mapping, so the rejection is
+    explicit now rather than depending on which spelling Pydantic sees
+    (PR #381 review)."""
+    for schema in (
+        {
+            "type": "object",
+            "properties": {"_token": {"type": "string"}, "name": {"type": "string"}},
+            "required": ["_token", "name"],
+        },
+        {"type": "object", "properties": {"_token": {"type": "string"}}, "required": []},
+        {
+            "type": "object",
+            "properties": {"m": {"type": "object", "properties": {"_t": {"type": "string"}}}},
+            "required": ["m"],
+        },
+    ):
+        assert pydantic_model_from_schema("Args", schema) is None
+
+    # Ordinary names are unaffected — the fallback must stay the exception.
+    ordinary = pydantic_model_from_schema(
+        "Args",
+        {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
+    )
+    assert ordinary is not None
+    assert list(ordinary.model_fields) == ["name"]
