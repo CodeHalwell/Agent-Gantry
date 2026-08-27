@@ -801,6 +801,31 @@ adapters, and the provider dialects agree with it.
   laddering. Two tests changed with it — one had pinned the old asymmetry, and
   one had asserted that a generated model must accept a `null` its own
   `anyOf` forbids, which the executor has always rejected.
+- **A rejected argument no longer degrades tool health.** An argument the
+  handler's own type refuses is caller-supplied input, not a sick tool, but it
+  was being recorded as a failure — so after five malformed calls the circuit
+  breaker opened and the next *valid* call came back `CIRCUIT_OPEN`, letting a
+  caller disable a healthy tool for everyone. The schema validation path has
+  always left health alone; this now matches it.
+- **`true` and `false` are schemas.** Draft-06 made a bare boolean a valid
+  schema — `true` matches every value, `false` none — but combinator branches
+  were filtered to dicts, so `{"anyOf": [true, {"type": "integer"}]}`
+  (semantically "anything") rejected a string, a `false` branch silently
+  stopped counting against `oneOf` exclusivity, and `allOf: [false]` permitted
+  everything instead of nothing.
+- **The `$ref` expansion budget bounded the wrong thing.** Its guard ran on
+  entry to every node rather than at an expansion, so once spent it replaced
+  *every* remaining value with `{}` — a `type` string, a `required` list — and
+  a model wide enough to exhaust it emitted malformed metadata a provider
+  rejects rather than merely unconstrained subschemas.
+- **`additionalProperties` typed the wrong keys beside `patternProperties`.**
+  JSON Schema applies it to exactly the keys matched by neither `properties`
+  nor a pattern. The framework bridge passed its pattern validator only a
+  boolean "is it closed" flag, leaving those keys typed by nothing, while
+  typing *every* extra from the additional schema — so a pattern-matched
+  `{"s_a": "ok"}` was checked against `additionalProperties: {"type":
+  "integer"}` and rejected. Verified against the executor across all forty
+  `properties` × `additionalProperties` × payload combinations.
 
 ### Performance
 

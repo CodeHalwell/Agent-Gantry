@@ -184,12 +184,23 @@ def _build_model(name: str, schema: dict[str, Any], depth: int) -> Any:
     model_config = ConfigDict(extra="allow" if _permits_additional(schema) else "forbid")
     additional = schema.get("additionalProperties")
     extra_annotation: Any = None
-    if isinstance(additional, dict) and additional:
+    has_patterns = isinstance(schema.get("patternProperties"), dict) and schema.get(
+        "patternProperties"
+    )
+    if isinstance(additional, dict) and additional and not has_patterns:
         # A *typed* ``additionalProperties`` constrains the extras' value
         # type. Bare ``extra="allow"`` would take every extra as ``Any``,
         # so the framework would accept a string where the schema (and the
         # executor, which does check the subschema) demand an integer.
         # ``__pydantic_extra__`` carries that type into validation.
+        #
+        # Skipped when the object also declares ``patternProperties``: JSON
+        # Schema applies ``additionalProperties`` only to keys matched by
+        # *neither* ``properties`` nor a pattern, but ``__pydantic_extra__``
+        # types every extra — so a pattern-matched key was checked against the
+        # additional schema instead of its own, and a valid ``{"s_a": "ok"}``
+        # beside ``additionalProperties: {"type": "integer"}`` was rejected.
+        # The pattern validator below applies both, to the right key sets.
         extra_annotation = _annotation(f"{name}_extra", additional, depth + 1)
 
     fields: dict[str, Any] = {}
@@ -238,7 +249,12 @@ def _build_model(name: str, schema: dict[str, Any], depth: int) -> Any:
         # way, so an ``Annotated`` alias raised a ValidationError at tool
         # construction instead of degrading to the documented fallback.
         check = _pattern_key_validator(
-            name, patterns, not _admits_undeclared(schema), depth, set(properties)
+            name,
+            patterns,
+            not _admits_undeclared(schema),
+            depth,
+            set(properties),
+            schema.get("additionalProperties"),
         )
         validators["_check_pattern_properties"] = model_validator(mode="before")(
             classmethod(lambda cls, value, _check=check: _check(value))
@@ -692,7 +708,11 @@ def _enum_membership(values: list[Any]) -> Any:
 
 
 def _with_pattern_properties(
-    name: str, patterns: dict[str, Any], closed: bool, depth: int
+    name: str,
+    patterns: dict[str, Any],
+    closed: bool,
+    depth: int,
+    additional: Any = None,
 ) -> Any:
     """Annotation for a mapping whose keys are typed by regex.
 
@@ -708,7 +728,9 @@ def _with_pattern_properties(
 
     from pydantic import BeforeValidator
 
-    check = _pattern_key_validator(name, patterns, closed, depth, frozenset())
+    check = _pattern_key_validator(
+        name, patterns, closed, depth, frozenset(), additional
+    )
     return Annotated[dict, BeforeValidator(check)]
 
 
@@ -718,6 +740,7 @@ def _pattern_key_validator(
     closed: bool,
     depth: int,
     declared: Any,
+    additional: Any = None,
 ) -> Any:
     """A callable enforcing ``patternProperties`` over a mapping's keys.
 
@@ -727,6 +750,13 @@ def _pattern_key_validator(
     Schema requires a key to satisfy its ``properties`` schema **and** every
     matching ``patternProperties`` schema, so ``n_fixed`` declared as an
     integer beside ``{"^n_": {"minimum": 5}}`` must satisfy both.
+
+    ``additional`` is the object's ``additionalProperties`` schema when it has
+    one. JSON Schema applies it to exactly the keys no pattern matched, and the
+    executor does; passing only a boolean "is it closed" flag left those keys
+    typed by nothing, so a mapping with ``{"^s_": {"type": "string"}}`` beside
+    ``additionalProperties: {"type": "integer"}`` accepted ``{"other": "bad"}``
+    that the engine rejects.
     """
     import re
 
@@ -750,6 +780,14 @@ def _pattern_key_validator(
             )
         compiled.append((matcher, adapter))
 
+    additional_adapter = None
+    if isinstance(additional, dict) and additional:
+        additional_adapter = TypeAdapter(
+            _with_constraints(
+                _annotation(f"{name}_additional", additional, depth + 1), additional
+            )
+        )
+
     def _check(value: Any) -> Any:
         if not isinstance(value, dict):
             return value
@@ -761,8 +799,14 @@ def _pattern_key_validator(
                 matched = True
                 if adapter is not None:
                     adapter.validate_python(item)
-            if closed and not matched and key not in declared:
+            if matched or key in declared:
+                continue
+            if closed:
                 raise ValueError(f"key {key!r} matches no patternProperties entry")
+            if additional_adapter is not None:
+                # Matched no pattern, so this is exactly the set
+                # ``additionalProperties`` governs.
+                additional_adapter.validate_python(item)
         return value
 
     return _check
@@ -903,7 +947,11 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
             # build a model permitting *no* keys, rejecting the very keys the
             # patterns declare.
             return _with_pattern_properties(
-                name, patterns, not _admits_undeclared(prop), depth
+                name,
+                patterns,
+                not _admits_undeclared(prop),
+                depth,
+                prop.get("additionalProperties"),
             )
         if prop.get("additionalProperties") is False:
             # An object that permits no keys at all, which the executor

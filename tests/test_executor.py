@@ -1980,3 +1980,36 @@ async def test_an_explicit_null_for_a_nullable_literal_reaches_the_handler():
         },
     )
     assert ExecutionEngine._normalize_arguments(tool, {"x": None}) == {"x": None}
+
+
+@pytest.mark.asyncio
+async def test_boolean_combinator_branches_are_schemas(engine):
+    """``true`` and ``false`` are schemas from draft-06 on — ``true`` matches
+    every value, ``false`` none. Filtering branches to dicts dropped them, so
+    ``{"anyOf": [true, {"type": "integer"}]}`` (semantically "anything")
+    rejected a string (PR #381 review)."""
+
+    async def check(prop, value):
+        tool = ToolDefinition(
+            name="bools",
+            description="Combinator branches spelled as boolean schemas",
+            parameters_schema={
+                "type": "object",
+                "properties": {"v": prop},
+                "required": ["v"],
+            },
+        )
+        return (await engine._validate_arguments(tool, {"v": value}))[0]
+
+    # ``true`` always matches.
+    assert await check({"anyOf": [True, {"type": "integer"}]}, "x") is True
+    assert await check({"allOf": [True, {"type": "integer"}]}, 1) is True
+    assert await check({"allOf": [True, {"type": "integer"}]}, "x") is False
+    # ``false`` never does — including as an allOf branch, which then forbids
+    # every value.
+    assert await check({"anyOf": [False, {"type": "integer"}]}, "x") is False
+    assert await check({"anyOf": [False, {"type": "integer"}]}, 1) is True
+    assert await check({"allOf": [False, {"type": "integer"}]}, 1) is False
+    # And it counts for ``oneOf`` exclusivity: ``1`` matches both branches.
+    assert await check({"oneOf": [True, {"type": "integer"}]}, 1) is False
+    assert await check({"oneOf": [True, {"type": "integer"}]}, "x") is True

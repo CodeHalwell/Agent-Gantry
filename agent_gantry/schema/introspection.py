@@ -577,14 +577,6 @@ def _inline_local_refs(schema: dict[str, Any]) -> dict[str, Any]:
     budget = [_MAX_REF_NODES]
 
     def _resolve(node: Any, depth: int) -> Any:
-        if budget[0] <= 0:
-            logger.debug(
-                "Stopped inlining $refs after %d expansions; the remaining "
-                "subschema is emitted as {} and constrains nothing. A model "
-                "with several recursive fields per level is the usual cause.",
-                _MAX_REF_NODES,
-            )
-            return {}
         if depth > _MAX_REF_DEPTH:
             # A self-referential model would recurse forever, so the guard is
             # necessary — but a legitimately deep (acyclic) schema is truncated
@@ -603,6 +595,20 @@ def _inline_local_refs(schema: dict[str, Any]) -> dict[str, Any]:
             return node
         ref = node.get("$ref")
         if isinstance(ref, str) and ref.rsplit("/", 1)[0] in ("#/$defs", "#/definitions"):
+            if budget[0] <= 0:
+                # Checked here rather than on entry: the budget bounds *ref
+                # expansion*, and applying it to every visited node replaced
+                # ordinary values with ``{}`` once it ran out — a ``"type"``
+                # string, a ``"required"`` list — so a model wide enough to
+                # exhaust it emitted malformed metadata a provider rejects,
+                # rather than merely unconstrained remaining subschemas.
+                logger.debug(
+                    "Stopped inlining $refs after %d expansions; the remaining "
+                    "subschema is emitted as {} and constrains nothing. A model "
+                    "with several recursive fields per level is the usual cause.",
+                    _MAX_REF_NODES,
+                )
+                return {}
             target = defs.get(ref.rsplit("/", 1)[1])
             if isinstance(target, dict):
                 # One expansion. Counted here rather than per visited node so

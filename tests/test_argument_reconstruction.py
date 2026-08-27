@@ -723,3 +723,66 @@ async def test_a_formatted_value_survives_the_framework_dispatch_boundary():
     )
     assert _json_native({"a": 1}, {"type": "object"}) == {"a": 1}
     assert _json_native("x", None) == "x"
+
+
+def test_the_ref_budget_bounds_expansion_not_every_visited_node():
+    """The guard ran on entry, so once the budget was spent *every* value was
+    replaced with ``{}`` — a ``type`` string, a ``required`` list — and a model
+    wide enough to exhaust it emitted malformed metadata a provider rejects
+    rather than merely unconstrained subschemas (PR #381 review)."""
+    from agent_gantry.schema import introspection
+
+    original = introspection._MAX_REF_NODES
+    introspection._MAX_REF_NODES = 3
+    try:
+        # ``title``/``required`` deliberately sit *after* ``properties``:
+        # resolution walks keys in order, so metadata declared first would be
+        # visited before the budget ran out and the bug would not show.
+        raw = {
+            "type": "object",
+            "$defs": {"Inner": {"type": "object", "properties": {"x": {"type": "integer"}}}},
+            "properties": {f"f{i}": {"$ref": "#/$defs/Inner"} for i in range(5)},
+            "title": "Wide",
+            "required": [f"f{i}" for i in range(5)],
+        }
+        out = introspection._inline_local_refs(raw)
+    finally:
+        introspection._MAX_REF_NODES = original
+
+    # Metadata survives intact.
+    assert out["type"] == "object"
+    assert out["title"] == "Wide"
+    assert out["required"] == [f"f{i}" for i in range(5)]
+    # Refs within budget are expanded; those past it degrade to ``{}`` only.
+    assert out["properties"]["f0"]["properties"]["x"] == {"type": "integer"}
+    assert out["properties"]["f4"] == {}
+
+
+async def test_a_rejected_argument_does_not_degrade_tool_health():
+    """A reconstruction failure is caller-supplied input, not a sick tool.
+    Recording it opened the circuit breaker after five malformed calls, so a
+    caller could disable a healthy tool for everyone — the valid call that
+    followed came back ``CIRCUIT_OPEN``. The schema validation path has always
+    left health alone; this now matches it (PR #381 review)."""
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @g.register(tags=["demo"])
+    def use_positive(p: Positive) -> str:
+        """Read a field off a model with a custom validator."""
+        return f"ok:{p.x}"
+
+    await g.sync()
+    for _ in range(10):
+        bad = await g.execute(
+            ToolCall(tool_name="use_positive", arguments={"p": {"x": -1}})
+        )
+        assert bad.status.value == "failure"
+        assert bad.error_type == "ValidationError"
+
+    healthy = await g.execute(
+        ToolCall(tool_name="use_positive", arguments={"p": {"x": 5}})
+    )
+    assert healthy.status.value == "success", healthy.error
+    tool = await g.get_tool("use_positive")
+    assert tool.health.consecutive_failures == 0
+    assert tool.health.circuit_breaker_open is False

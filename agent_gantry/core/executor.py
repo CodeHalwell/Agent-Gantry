@@ -467,8 +467,14 @@ class ExecutionEngine:
                 # and reported as a validation failure because that is what it
                 # is: the value satisfied the JSON Schema but not the handler's
                 # own declared type, an invariant the schema could not express.
+                #
+                # Health is deliberately *not* recorded, matching the schema
+                # validation path above: a rejected argument says nothing about
+                # whether the tool works, and the arguments are caller-supplied.
+                # Counting them opened the circuit breaker after five malformed
+                # calls, so a caller could disable a perfectly healthy tool for
+                # everyone — the valid call that followed came back CIRCUIT_OPEN.
                 completed_at = datetime.now(timezone.utc)
-                await self._record_failure(tool)
                 result = ToolResult(
                     tool_name=call.tool_name,
                     status=ExecutionStatus.FAILURE,
@@ -1023,6 +1029,19 @@ class ExecutionEngine:
                             return False, matched, err
             return True, matched, None
 
+        def _branch_matches(value: Any, branch: Any, path: str) -> bool:
+            """Whether one combinator branch accepts ``value``.
+
+            Handles the boolean schemas draft-06 added — ``true`` validates
+            every value, ``false`` none — alongside the empty schema ``{}``,
+            which means the same as ``true``.
+            """
+            if branch is True or branch == {}:
+                return True
+            if branch is False:
+                return False
+            return _validate_value(value, branch, path)[0]
+
         def _validate_value(
             value: Any, val_schema: dict[str, Any], path: str
         ) -> tuple[bool, str | None]:
@@ -1042,16 +1061,20 @@ class ExecutionEngine:
                 branches = val_schema.get(key)
                 if not isinstance(branches, list) or not branches:
                     continue
-                usable = [b for b in branches if isinstance(b, dict)]
+                # ``true`` and ``false`` are schemas in their own right from
+                # draft-06 on: ``true`` validates every value, ``false`` none.
+                # Filtering to dicts dropped them, so ``{"anyOf": [true,
+                # {"type": "integer"}]}`` — semantically "anything" — rejected
+                # a string, and a ``false`` branch silently stopped counting
+                # against ``oneOf``'s exclusivity.
+                usable = [b for b in branches if isinstance(b, (dict, bool))]
                 if not usable:
                     continue
-                # An empty schema ``{}`` validates every value, so it is a
-                # branch that always matches — excluding it turned
-                # ``{"anyOf": [{}, {"type": "integer"}]}`` (semantically
-                # "anything") into an integer-only constraint.
-                matches = sum(
-                    1 for b in usable if not b or _validate_value(value, b, path)[0]
-                )
+                # An empty schema ``{}`` validates every value too, so it is
+                # likewise a branch that always matches — excluding it turned
+                # ``{"anyOf": [{}, {"type": "integer"}]}`` into an
+                # integer-only constraint.
+                matches = sum(1 for b in usable if _branch_matches(value, b, path))
                 if matches == 0:
                     return (
                         False,
@@ -1069,6 +1092,14 @@ class ExecutionEngine:
             allof = val_schema.get("allOf")
             if isinstance(allof, list):
                 for branch in allof:
+                    if branch is False:
+                        # ``false`` validates nothing, so intersecting with it
+                        # forbids every value.
+                        return (
+                            False,
+                            f"Parameter '{path}' has an allOf branch that "
+                            "permits no value",
+                        )
                     if not isinstance(branch, dict) or not branch:
                         continue
                     is_valid, err = _validate_value(value, branch, path)

@@ -1573,3 +1573,35 @@ def test_a_genuinely_nullable_required_field_still_takes_none():
     )
     with pytest.raises(ValidationError):
         enum_model(v=None)
+
+
+def test_additional_properties_types_only_the_keys_no_pattern_matched():
+    """JSON Schema applies ``additionalProperties`` to exactly the keys matched
+    by neither ``properties`` nor a pattern. The bridge passed the pattern
+    validator only a boolean "is it closed" flag, leaving those keys typed by
+    nothing — and typed every *extra* from the additional schema, so a
+    pattern-matched key was checked against the wrong one (PR #381 review)."""
+    schema = {
+        "type": "object",
+        "properties": {
+            "m": {
+                "type": "object",
+                "properties": {"fixed": {"type": "string"}},
+                "patternProperties": {"^s_": {"type": "string"}},
+                "additionalProperties": {"type": "integer"},
+            }
+        },
+        "required": ["m"],
+    }
+    model = pydantic_model_from_schema("Args", schema)
+
+    # Pattern-matched: typed by its pattern, not by additionalProperties.
+    assert model(m={"s_a": "ok"}) is not None
+    with pytest.raises(ValidationError):
+        model(m={"s_a": 1})
+    # Matched no pattern: typed by additionalProperties.
+    assert model(m={"other": 1}) is not None
+    with pytest.raises(ValidationError):
+        model(m={"other": "bad"})
+    # Declared: typed by its own schema.
+    assert model(m={"fixed": "ok"}) is not None
