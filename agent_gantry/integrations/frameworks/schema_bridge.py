@@ -207,8 +207,14 @@ def _build_model(name: str, schema: dict[str, Any], depth: int) -> Any:
     for prop_name, prop in properties.items():
         if not prop_name.isidentifier():
             raise ValueError(f"property {prop_name!r} is not a valid identifier")
-        prop = prop if isinstance(prop, dict) else {}
-        annotation = _with_constraints(_annotation(f"{name}_{prop_name}", prop, depth), prop)
+        annotation = _annotation(f"{name}_{prop_name}", prop, depth)
+        if isinstance(prop, dict):
+            annotation = _with_constraints(annotation, prop)
+        else:
+            # A boolean property schema carries no constraint keywords, and
+            # coercing it to ``{}`` first made ``false`` — which forbids every
+            # value — indistinguishable from "unconstrained".
+            prop = {}
         description = prop.get("description")
         field_kwargs: dict[str, Any] = {}
         if isinstance(description, str) and description:
@@ -689,6 +695,10 @@ def _positional_array(name: str, prefix_items: list[Any], items: Any, depth: int
     from pydantic import BeforeValidator, TypeAdapter
 
     def _adapter(entry: Any, label: str) -> Any:
+        if isinstance(entry, bool):
+            # ``items: false`` beside ``prefixItems`` is how a fixed-length
+            # tuple forbids positions past the prefix; ``true`` permits any.
+            return TypeAdapter(_annotation(label, entry, depth + 1))
         if not isinstance(entry, dict) or not entry:
             return None
         return TypeAdapter(_with_constraints(_annotation(label, entry, depth + 1), entry))
@@ -800,7 +810,10 @@ def _pattern_key_validator(
             # Fail open, as the executor does for an ECMA-only pattern.
             continue
         adapter = None
-        if isinstance(subschema, dict) and subschema:
+        if isinstance(subschema, bool):
+            # ``{"^blocked_": false}`` forbids every matching key.
+            adapter = TypeAdapter(_annotation(f"{name}_pattern{index}", subschema, depth + 1))
+        elif isinstance(subschema, dict) and subschema:
             adapter = TypeAdapter(
                 _with_constraints(
                     _annotation(f"{name}_pattern{index}", subschema, depth + 1), subschema
@@ -853,8 +866,21 @@ def _pattern_key_validator(
     return _check
 
 
-def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
-    """Python annotation for one property schema (recursive)."""
+def _annotation(name: str, prop: Any, depth: int) -> Any:
+    """Python annotation for one property schema (recursive).
+
+    A schema may be a bare boolean anywhere a schema is allowed — a named
+    property, a ``patternProperties`` entry, an ``items`` tail — not only in a
+    combinator branch. Handled here, at the one funnel every subschema passes
+    through, so the model agrees with the executor, which reads them at the
+    equivalent point in its own validator.
+    """
+    if prop is True:
+        return Any
+    if prop is False:
+        return _never_annotation()
+    if not isinstance(prop, dict):
+        return Any
     # ``const`` is a one-value ``enum`` — the shape Pydantic emits for a
     # single-value ``Literal``, so it turns up inside the nested models this
     # bridge inlines. Ignoring it advertised an unconstrained scalar that

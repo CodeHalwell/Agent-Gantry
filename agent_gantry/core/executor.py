@@ -1021,7 +1021,13 @@ class ExecutionEngine:
                     if not compiled.search(prop_name):
                         continue
                     matched.add(prop_name)
-                    if isinstance(subschema, dict) and subschema:
+                    if isinstance(subschema, bool) or (
+                        isinstance(subschema, dict) and subschema
+                    ):
+                        # A ``false`` pattern schema forbids every matching
+                        # key. Skipping booleans here accepted them *and*
+                        # counted them as declared, so a closed object let them
+                        # through as well.
                         is_valid, err = _validate_value(
                             prop_value, subschema, f"{path}.{prop_name}" if path else prop_name
                         )
@@ -1043,8 +1049,23 @@ class ExecutionEngine:
             return _validate_value(value, branch, path)[0]
 
         def _validate_value(
-            value: Any, val_schema: dict[str, Any], path: str
+            value: Any, val_schema: Any, path: str
         ) -> tuple[bool, str | None]:
+            # A schema may be a bare boolean anywhere a schema is allowed, not
+            # only in a combinator branch: ``properties: {"disabled": false}``,
+            # ``patternProperties: {"^blocked_": false}``, ``items: false``.
+            # Handled here, at the one funnel every subschema passes through,
+            # rather than at each call site — reading ``.get`` on ``False`` let
+            # an ``AttributeError`` escape ``execute()`` instead of returning a
+            # validation failure.
+            if val_schema is True:
+                return True, None
+            if val_schema is False:
+                return False, f"Parameter '{path}' is forbidden by its schema"
+            if not isinstance(val_schema, dict):
+                # Not a schema at all — don't reject what we can't interpret.
+                return True, None
+
             expected_type = val_schema.get("type")
 
             # A schema can constrain a value purely through combinators, with
@@ -1182,13 +1203,23 @@ class ExecutionEngine:
                 if isinstance(prefix_items, list) and prefix_items:
                     prefix_len = len(prefix_items)
                     for i, entry in enumerate(prefix_items):
-                        if i >= len(value) or not isinstance(entry, dict) or not entry:
+                        if i >= len(value):
+                            continue
+                        if not isinstance(entry, bool) and (
+                            not isinstance(entry, dict) or not entry
+                        ):
                             continue
                         is_valid, err = _validate_value(value[i], entry, f"{path}[{i}]")
                         if not is_valid:
                             return False, err
                 item_schema = val_schema.get("items")
-                if isinstance(item_schema, dict) and item_schema:
+                if isinstance(item_schema, bool) or (
+                    isinstance(item_schema, dict) and item_schema
+                ):
+                    # ``items: false`` beside ``prefixItems`` is the standard
+                    # way to forbid positions past the prefix — a fixed-length
+                    # tuple. Skipping booleans accepted the extra elements the
+                    # schema exists to refuse.
                     for i, item in enumerate(value):
                         if i < prefix_len:
                             continue

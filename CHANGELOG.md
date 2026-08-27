@@ -862,6 +862,16 @@ adapters, and the provider dialects agree with it.
   abstract-base checks with a generic alias, where `issubclass` raises
   `TypeError: arg 1 must be a class`. `get_origin` now gates that branch, so
   every version routes a parameterized generic the same way.
+- **A boolean schema is honoured wherever a schema may appear.** Draft-06
+  booleans were handled only in combinator branches, but they are valid in
+  every schema position — so `properties: {"disabled": false}` let an
+  `AttributeError` escape `execute()` instead of returning a validation
+  failure, `patternProperties: {"^blocked_": false}` accepted the keys it
+  exists to forbid (and counted them declared, slipping them past a closed
+  object), and `items: false` beside `prefixItems` — the standard spelling of
+  a fixed-length tuple — accepted the extra elements. Both the executor's
+  validator and the framework bridge now read them at their own single
+  subschema funnel, so the two agree by construction.
 
 ### Performance
 

@@ -2013,3 +2013,69 @@ async def test_boolean_combinator_branches_are_schemas(engine):
     # And it counts for ``oneOf`` exclusivity: ``1`` matches both branches.
     assert await check({"oneOf": [True, {"type": "integer"}]}, 1) is False
     assert await check({"oneOf": [True, {"type": "integer"}]}, "x") is True
+
+
+@pytest.mark.asyncio
+async def test_a_boolean_schema_is_honoured_wherever_a_schema_may_appear(engine):
+    """Draft-06 booleans are schemas in *any* schema position, not only in a
+    combinator branch. Reading ``.get`` on ``False`` let an ``AttributeError``
+    escape ``execute()`` instead of returning a validation failure, and the
+    positions that skipped booleans accepted values the schema forbids
+    (PR #381 review)."""
+
+    async def check(parameters, arguments):
+        tool = ToolDefinition(
+            name="booleans",
+            description="Boolean subschemas in assorted positions",
+            parameters_schema=parameters,
+        )
+        return await engine._validate_arguments(tool, arguments)
+
+    # A named property. ``false`` forbids the key outright; ``true`` permits
+    # any value. Previously this raised rather than returning a verdict.
+    named = {"type": "object", "properties": {"disabled": False, "ok": True}, "required": []}
+    valid, err = await check(named, {"disabled": 1})
+    assert valid is False and "disabled" in err
+    assert await check(named, {"ok": "anything"}) == (True, None)
+    assert await check(named, {}) == (True, None)
+
+    # A pattern entry. ``false`` must reject every matching key — and not
+    # count it as declared, which would also slip it past a closed object.
+    patterned = {
+        "type": "object",
+        "properties": {
+            "m": {
+                "type": "object",
+                "patternProperties": {"^blocked_": False, "^ok_": True},
+            }
+        },
+        "required": ["m"],
+    }
+    valid, _ = await check(patterned, {"m": {"blocked_x": 1}})
+    assert valid is False
+    assert await check(patterned, {"m": {"ok_x": "anything"}}) == (True, None)
+
+    # An ``items`` tail. ``items: false`` beside ``prefixItems`` is the
+    # standard spelling of a fixed-length tuple.
+    fixed = {
+        "type": "object",
+        "properties": {
+            "v": {"type": "array", "prefixItems": [{"type": "integer"}], "items": False}
+        },
+        "required": ["v"],
+    }
+    assert await check(fixed, {"v": [1]}) == (True, None)
+    valid, _ = await check(fixed, {"v": [1, 2]})
+    assert valid is False
+    # The prefix itself is still typed.
+    valid, _ = await check(fixed, {"v": ["x"]})
+    assert valid is False
+    # ``items: true`` permits any tail, the mirror of the above.
+    open_tail = {
+        "type": "object",
+        "properties": {
+            "v": {"type": "array", "prefixItems": [{"type": "integer"}], "items": True}
+        },
+        "required": ["v"],
+    }
+    assert await check(open_tail, {"v": [1, "anything"]}) == (True, None)

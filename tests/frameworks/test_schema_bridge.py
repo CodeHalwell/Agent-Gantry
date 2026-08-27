@@ -1685,3 +1685,51 @@ def test_boolean_combinator_branches_reach_the_generated_model():
     # And boolean branches count for ``oneOf`` exclusivity: ``1`` matches both.
     assert accepts({"oneOf": [True, {"type": "integer"}]}, 1) is False
     assert accepts({"oneOf": [True, {"type": "integer"}]}, "x") is True
+
+
+def test_boolean_subschemas_reach_the_generated_model_everywhere():
+    """The executor honours a boolean schema in any position; the bridge has
+    to agree, or the framework accepts calls the engine rejects. Found by
+    asking whether the executor-side fix needed mirroring, rather than by
+    waiting for it to be reported (PR #381 review)."""
+
+    def accepts(schema, payload):
+        try:
+            pydantic_model_from_schema("Args", schema)(**payload)
+            return True
+        except ValidationError:
+            return False
+
+    named = {"type": "object", "properties": {"disabled": False, "ok": True}, "required": []}
+    assert accepts(named, {"disabled": 1}) is False
+    assert accepts(named, {"ok": "anything"}) is True
+    assert accepts(named, {}) is True
+
+    patterned = {
+        "type": "object",
+        "properties": {
+            "m": {"type": "object", "patternProperties": {"^blocked_": False, "^ok_": True}}
+        },
+        "required": ["m"],
+    }
+    assert accepts(patterned, {"m": {"blocked_x": 1}}) is False
+    assert accepts(patterned, {"m": {"ok_x": "anything"}}) is True
+
+    fixed = {
+        "type": "object",
+        "properties": {
+            "v": {"type": "array", "prefixItems": [{"type": "integer"}], "items": False}
+        },
+        "required": ["v"],
+    }
+    assert accepts(fixed, {"v": [1]}) is True
+    assert accepts(fixed, {"v": [1, 2]}) is False
+
+    open_tail = {
+        "type": "object",
+        "properties": {
+            "v": {"type": "array", "prefixItems": [{"type": "integer"}], "items": True}
+        },
+        "required": ["v"],
+    }
+    assert accepts(open_tail, {"v": [1, "anything"]}) is True
