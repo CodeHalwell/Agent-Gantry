@@ -737,6 +737,55 @@ async def test_a_formatted_value_survives_the_framework_dispatch_boundary():
     assert _json_native("x", None) == "x"
 
 
+def test_every_matching_pattern_property_restores_its_own_format():
+    """``patternProperties`` intersect — a key matching two regexes is governed
+    by both — but the restoration walk kept only the *first* hit, so a
+    ``format`` declared on a later matching pattern was never applied and the
+    value reached the executor as a live ``datetime`` for ``type: string`` to
+    reject (PR #385 review)."""
+    from agent_gantry.integrations.frameworks.base import _json_native
+
+    # ``a_created_at`` matches both; only the second names the format.
+    schema = {
+        "type": "object",
+        "patternProperties": {
+            "^a": {"type": "string"},
+            "_at$": {"type": "string", "format": "date-time"},
+        },
+    }
+    stamped = datetime.datetime(2026, 8, 27, 9, 30)
+    assert _json_native({"a_created_at": stamped}, schema) == {
+        "a_created_at": "2026-08-27T09:30:00"
+    }
+
+    # Order-independent: the same two patterns the other way round.
+    reversed_schema = {
+        "type": "object",
+        "patternProperties": {
+            "_at$": {"type": "string", "format": "date-time"},
+            "^a": {"type": "string"},
+        },
+    }
+    assert _json_native({"a_created_at": stamped}, reversed_schema) == {
+        "a_created_at": "2026-08-27T09:30:00"
+    }
+
+    # A key only the formatless pattern covers is still left alone, so the
+    # fold cannot invent a conversion no pattern asked for.
+    assert _json_native({"alpha": stamped}, schema) == {"alpha": stamped}
+
+    # ``additionalProperties`` still governs only what no pattern claimed.
+    with_additional = {
+        "type": "object",
+        "patternProperties": {"^a": {"type": "string"}},
+        "additionalProperties": {"type": "string", "format": "date-time"},
+    }
+    assert _json_native({"a_x": stamped, "b_x": stamped}, with_additional) == {
+        "a_x": stamped,
+        "b_x": "2026-08-27T09:30:00",
+    }
+
+
 def test_the_ref_budget_bounds_expansion_not_every_visited_node():
     """The guard ran on entry, so once the budget was spent *every* value was
     replaced with ``{}`` — a ``type`` string, a ``required`` list — and a model

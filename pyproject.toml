@@ -188,14 +188,31 @@ agent-frameworks = [
     "google-adk>=2.6.1",
 ]
 # NOTE: the native-tool-adapter frameworks (pydantic-ai, openai-agents,
-# haystack-ai, agno, strands-agents, dspy) are intentionally NOT a project extra: several
-# of them (e.g. openai-agents requires pydantic>=2.12.2) cannot co-resolve with
-# the `agent-frameworks` extra (pydantic<2.12 via crewai/agent-framework), and a
-# project extra must satisfy uv's *universal* lock alongside every other extra.
-# They are installed directly (in an isolated env) by the `framework-adapters`
-# CI job, which runs tests/frameworks/test_real_packages.py to guard each
-# adapter against real-API drift. langchain/langgraph/llamaindex/crewai/
-# google-adk are validated by the main matrix via `agent-frameworks`.
+# haystack-ai, agno, strands-agents, dspy) are NOT a project extra. They are
+# installed directly (in an isolated env) by the `framework-adapters` CI job,
+# which runs tests/frameworks/test_real_packages.py to guard each adapter
+# against real-API drift. langchain/langgraph/llamaindex/crewai/google-adk are
+# validated by the main matrix via `agent-frameworks`.
+#
+# The original reason was a resolution conflict: openai-agents requires
+# pydantic>=2.12.2 while the `agent-frameworks` extra was held on pydantic
+# <2.12, and a project extra must satisfy uv's *universal* lock alongside
+# every other extra. **That conflict is gone as of 0.13.0** — the pin came
+# from semantic-kernel 1.36.0, which left with its adapter, and the extra now
+# resolves pydantic 2.12.5 (see google-adk above). Re-tested 2026-08-27 by
+# adding all six to this extra and running `uv lock`: it resolves, at
+# pydantic-ai 2.31.1, openai-agents 0.20.0, haystack-ai 3.1.0, agno 3.0.1,
+# strands-agents 1.54.0, dspy 3.3.1, with pydantic 2.12.5 and google-adk
+# 2.8.0 unmoved. (openai-agents needs an explicit `>=0.20` to get there — uv
+# does not climb past a satisfied floor, the same behaviour documented for
+# google-adk above; a bare requirement locks 0.4.2.)
+#
+# So the split is now a deliberate choice, not a constraint: it keeps the
+# main test matrix off six heavy dependency trees and keeps real-API drift
+# isolated to one job. Only *resolution* was retested — co-installing them has
+# its own hazards this arrangement avoids (see `disable_af_instrumentation` in
+# agent_gantry/__init__.py for one). Merging them in is a real option now, but
+# it is a CI-shape decision rather than a dependency fix.
 #
 # REMOVED in 0.13.0: the smolagents, AutoGen / AG2 and Semantic Kernel adapters,
 # along with their packages (smolagents, autogen-agentchat, autogen-ext,

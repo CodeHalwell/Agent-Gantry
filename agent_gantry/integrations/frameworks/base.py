@@ -451,14 +451,19 @@ def _json_native(value: Any, prop: Any, _depth: int = 0) -> Any:
         rebuilt: dict[Any, Any] = {}
         changed = False
         for key, item in value.items():
-            sub = None
+            subs: list[Any] = []
             if isinstance(properties, dict) and key in properties:
-                sub = properties[key]
+                subs.append(properties[key])
             elif isinstance(patterns, dict) and isinstance(key, str):
-                sub = _pattern_subschema(patterns, key)
-            if sub is None and isinstance(additional, dict):
-                sub = additional
-            new_item = _json_native(item, sub, _depth + 1) if isinstance(sub, dict) else item
+                subs.extend(_pattern_subschemas(patterns, key))
+            if not subs and isinstance(additional, dict):
+                # ``additionalProperties`` governs only the keys neither
+                # ``properties`` nor ``patternProperties`` claimed.
+                subs.append(additional)
+            new_item = item
+            for sub in subs:
+                if isinstance(sub, dict):
+                    new_item = _json_native(new_item, sub, _depth + 1)
             changed = changed or new_item is not item
             rebuilt[key] = new_item
         if changed:
@@ -468,22 +473,36 @@ def _json_native(value: Any, prop: Any, _depth: int = 0) -> Any:
     return value
 
 
-def _pattern_subschema(patterns: dict[str, Any], key: str) -> Any:
-    """The first ``patternProperties`` schema whose regex matches ``key``.
+def _pattern_subschemas(patterns: dict[str, Any], key: str) -> list[Any]:
+    """Every ``patternProperties`` schema whose regex matches ``key``.
+
+    All of them apply — JSON Schema intersects the matching patterns rather
+    than picking one — and the caller folds ``_json_native`` through them in
+    turn. Returning only the *first* match dropped the restoration a later one
+    asked for: ``{"^a": {"type": "string"}, "_at$": {"format": "date-time"}}``
+    covers ``a_created_at`` twice, and a ``datetime`` under that key reached
+    the executor unserialized, to be rejected against ``type: string``
+    (PR #385 review).
+
+    Folding is safe because ``_json_native`` converts only a temporal or UUID
+    value under a matching ``format``; once one pattern has turned it into a
+    string the rest pass it through untouched, so order does not matter and no
+    pattern can undo another's work.
 
     ``re.search`` and the fail-open on an uncompilable pattern both mirror the
     executor's ``_check_pattern_properties``, so the two cannot disagree about
     which keys a pattern covers.
     """
+    matched: list[Any] = []
     for regex, subschema in patterns.items():
         if not isinstance(regex, str):
             continue
         try:
             if re.search(regex, key):
-                return subschema
+                matched.append(subschema)
         except re.error:
             continue
-    return None
+    return matched
 
 
 def _json_native_via_branches(value: Any, prop: dict[str, Any], depth: int) -> Any:

@@ -2431,3 +2431,325 @@ async def test_an_over_quota_gated_call_answers_without_validating(engine):
     assert (
         await spare.execute(ToolCall(tool_name="delete_thing", arguments={"x": 1}))
     ).status.value == "pending_confirmation"
+
+
+async def test_an_over_quota_gated_call_still_reports_a_policy_denial():
+    """The over-quota exemption above answered with the gate straight from the
+    admission peek — which consults ``would_exceed_rate_limit`` and nothing
+    else. A call that also violated ``allowed_domains`` therefore came back
+    ``pending_confirmation``, asking a human to approve something policy would
+    refuse on replay, and reporting a different status than the identical call
+    with quota to spare (PR #385 review).
+
+    A denial outranks a gate everywhere else in ``execute``; it does here too
+    now. What must *not* come back is the validator: that is the expensive,
+    caller-controlled work the quota is protecting."""
+    from agent_gantry.core.rate_limiter import RateLimiter
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.core.security import SecurityPolicy
+    from agent_gantry.schema.config import RateLimitConfig
+    from agent_gantry.schema.execution import ToolCall
+
+    def build() -> tuple[ToolRegistry, SecurityPolicy]:
+        registry = ToolRegistry()
+        tool = ToolDefinition(
+            name="fetch_page",
+            description="Fetches a page, gated behind human confirmation",
+            parameters_schema={
+                "type": "object",
+                "properties": {"url": {"type": "string"}},
+                "required": ["url"],
+            },
+            requires_confirmation=True,
+        )
+        registry.register_tool(tool)
+        registry.register_handler("default.fetch_page", lambda url="": url)
+        return registry, SecurityPolicy(allowed_domains=["good.example"])
+
+    registry, policy = build()
+    saturated = ExecutionEngine(
+        registry=registry,
+        security_policy=policy,
+        rate_limiter=RateLimiter(
+            RateLimitConfig(
+                enabled=True,
+                max_calls_per_minute=2,
+                max_calls_per_hour=100,
+                strategy="sliding_window",
+            )
+        ),
+    )
+    # Approved replays record, saturating the tool's own limiter key while
+    # leaving the *policy* window untouched — which is the shape that reaches
+    # the exemption: ``_admission_denial`` reports the ``RateLimiter``.
+    for _ in range(2):
+        approved = await saturated.execute(
+            ToolCall(
+                tool_name="fetch_page",
+                arguments={"url": "https://good.example/x"},
+                require_confirmation=False,
+            )
+        )
+        assert approved.status.value == "success", approved.error
+    assert saturated._rate_limiter.would_exceed("fetch_page", "default")
+    assert policy.would_exceed_rate_limit() is None
+
+    validations = {"count": 0}
+    original = saturated._validate_call_arguments
+
+    async def counting(*args, **kwargs):
+        validations["count"] += 1
+        return await original(*args, **kwargs)
+
+    saturated._validate_call_arguments = counting
+
+    denied = await saturated.execute(
+        ToolCall(tool_name="fetch_page", arguments={"url": "https://evil.example/x"})
+    )
+    assert denied.status.value == "permission_denied", denied.error
+    assert denied.error_type == "PermissionDeniedError"
+    assert "evil.example" in denied.error
+
+    # The gate is still the answer when policy has no objection...
+    gated = await saturated.execute(
+        ToolCall(tool_name="fetch_page", arguments={"url": "https://good.example/y"})
+    )
+    assert gated.status.value == "pending_confirmation", gated.error
+
+    # ...and neither answer bought the caller any validation.
+    assert validations["count"] == 0
+
+    # The same two calls with quota to spare agree, which is the invariant that
+    # broke: the peek changes *when* an answer is reached, never which one.
+    spare_registry, spare_policy = build()
+    spare = ExecutionEngine(
+        registry=spare_registry,
+        security_policy=spare_policy,
+        rate_limiter=RateLimiter(
+            RateLimitConfig(
+                enabled=True,
+                max_calls_per_minute=50,
+                max_calls_per_hour=100,
+                strategy="sliding_window",
+            )
+        ),
+    )
+    unsaturated_denial = await spare.execute(
+        ToolCall(tool_name="fetch_page", arguments={"url": "https://evil.example/x"})
+    )
+    assert unsaturated_denial.status.value == denied.status.value
+    assert unsaturated_denial.error_type == denied.error_type
+
+
+async def test_an_over_quota_gated_call_runs_a_custom_policy_check():
+    """``would_exceed_rate_limit`` is the only question the admission peek can
+    ask, so a replacement policy's own denial reason was invisible to it — the
+    finding is not confined to ``allowed_domains``. Every check
+    ``check_permission`` makes has to run before a human is asked to approve
+    the call (PR #385 review)."""
+    from agent_gantry.core.rate_limiter import RateLimiter
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.core.security import PermissionDeniedError, SecurityPolicy
+    from agent_gantry.schema.config import RateLimitConfig
+    from agent_gantry.schema.execution import ToolCall
+
+    class RefusesFridays(SecurityPolicy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.probes = 0
+
+        def check_permission(self, tool_name, arguments, **kwargs):
+            self.probes += 1
+            super().check_permission(tool_name, arguments, **kwargs)
+            if arguments.get("day") == "friday":
+                raise PermissionDeniedError("Execution denied: not on Fridays.")
+
+    registry = ToolRegistry()
+    tool = ToolDefinition(
+        name="deploy",
+        description="Deploys, gated behind human confirmation",
+        parameters_schema={
+            "type": "object",
+            "properties": {"day": {"type": "string"}},
+            "required": ["day"],
+        },
+        requires_confirmation=True,
+    )
+    registry.register_tool(tool)
+    registry.register_handler("default.deploy", lambda day="": day)
+
+    policy = RefusesFridays()
+    engine = ExecutionEngine(
+        registry=registry,
+        security_policy=policy,
+        rate_limiter=RateLimiter(
+            RateLimitConfig(
+                enabled=True,
+                max_calls_per_minute=1,
+                max_calls_per_hour=100,
+                strategy="sliding_window",
+            )
+        ),
+    )
+    approved = await engine.execute(
+        ToolCall(
+            tool_name="deploy", arguments={"day": "monday"}, require_confirmation=False
+        )
+    )
+    assert approved.status.value == "success", approved.error
+    assert engine._rate_limiter.would_exceed("deploy", "default")
+
+    refused = await engine.execute(ToolCall(tool_name="deploy", arguments={"day": "friday"}))
+    assert refused.status.value == "permission_denied", refused.error
+    assert "not on Fridays" in refused.error
+    assert policy.probes == 2
+
+
+@pytest.mark.asyncio
+async def test_root_level_assertions_are_enforced(engine):
+    """The top-level walk read ``required``, ``properties``,
+    ``patternProperties`` and ``additionalProperties`` off the root and
+    nothing else, so every other assertion JSON Schema applies to the argument
+    object as a whole bound nothing — a root ``allOf`` naming further required
+    keys, a root ``anyOf``/``oneOf``, a root ``const``/``enum``, a root
+    ``not``, ``minProperties``/``maxProperties``. Merged and imported schemas
+    (MCP, OpenAPI) put constraints there routinely (PR #385 review)."""
+
+    def tool_with(schema: dict) -> ToolDefinition:
+        return ToolDefinition(
+            name="rooted",
+            description="A tool whose root schema carries assertions",
+            parameters_schema=schema,
+        )
+
+    both = {"a": {"type": "integer"}, "b": {"type": "integer"}}
+
+    # ``allOf`` — a branch's own ``required`` now binds.
+    allof = tool_with({"type": "object", "properties": both, "allOf": [{"required": ["a"]}]})
+    ok, err = await engine._validate_arguments(allof, {"b": 1})
+    assert ok is False and "Missing required parameter: a" in err
+    assert await engine._validate_arguments(allof, {"a": 1}) == (True, None)
+
+    # ``anyOf`` — at least one branch must hold.
+    anyof = tool_with(
+        {
+            "type": "object",
+            "properties": both,
+            "anyOf": [{"required": ["a"]}, {"required": ["b"]}],
+        }
+    )
+    ok, err = await engine._validate_arguments(anyof, {})
+    assert ok is False and "does not match any permitted schema" in err
+    assert await engine._validate_arguments(anyof, {"b": 1}) == (True, None)
+
+    # ``oneOf`` — exactly one.
+    oneof = tool_with(
+        {
+            "type": "object",
+            "properties": both,
+            "oneOf": [{"required": ["a"]}, {"required": ["b"]}],
+        }
+    )
+    ok, err = await engine._validate_arguments(oneof, {"a": 1, "b": 2})
+    assert ok is False and "exactly one must match" in err
+    assert await engine._validate_arguments(oneof, {"a": 1}) == (True, None)
+
+    # ``not`` — a shape the schema exists to forbid.
+    negated = tool_with({"type": "object", "properties": both, "not": {"required": ["a"]}})
+    ok, err = await engine._validate_arguments(negated, {"a": 1})
+    assert ok is False and "required not to" in err
+    assert await engine._validate_arguments(negated, {"b": 1}) == (True, None)
+
+    # Object-length constraints.
+    sized = tool_with({"type": "object", "properties": both, "minProperties": 2})
+    ok, err = await engine._validate_arguments(sized, {"a": 1})
+    assert ok is False and "at least 2 properties" in err
+    assert await engine._validate_arguments(sized, {"a": 1, "b": 2}) == (True, None)
+
+    capped = tool_with({"type": "object", "properties": both, "maxProperties": 1})
+    ok, err = await engine._validate_arguments(capped, {"a": 1, "b": 2})
+    assert ok is False and "at most 1 properties" in err
+
+    # A root ``const``/``enum`` pins the whole argument object.
+    pinned = tool_with({"type": "object", "properties": both, "const": {"a": 1}})
+    ok, err = await engine._validate_arguments(pinned, {"a": 2})
+    assert ok is False and "must be" in err
+    assert await engine._validate_arguments(pinned, {"a": 1}) == (True, None)
+
+
+@pytest.mark.asyncio
+async def test_root_assertions_do_not_reopen_a_closed_tool_schema(engine):
+    """The root is handed to ``_validate_value`` as a schema of *just* its
+    assertion keywords. Passing the whole thing would re-walk the properties
+    the top-level loop already covers at every dispatch, and would resolve the
+    root's ``additionalProperties`` under the nested branch's rules — where
+    absent means free-form, while a tool schema treats it as closed."""
+    closed = ToolDefinition(
+        name="closed",
+        description="An ordinary tool schema with no additionalProperties key",
+        parameters_schema={
+            "type": "object",
+            "properties": {"a": {"type": "integer"}},
+            "minProperties": 1,
+        },
+    )
+    # The assertion holds and the closure still stands.
+    assert await engine._validate_arguments(closed, {"a": 1}) == (True, None)
+    ok, err = await engine._validate_arguments(closed, {"a": 1, "z": 2})
+    assert ok is False and "Unknown parameter: z" in err
+
+    # A no-argument tool keeps rejecting arguments, which is the top-level
+    # walk's own rule rather than the nested branch's.
+    empty = ToolDefinition(
+        name="empty",
+        description="A tool that declares no parameters at all",
+        parameters_schema={"type": "object", "properties": {}},
+    )
+    ok, err = await engine._validate_arguments(empty, {"z": 1})
+    assert ok is False and "Unknown parameter: z" in err
+
+
+@pytest.mark.asyncio
+async def test_the_not_keyword_is_evaluated(engine):
+    """``not`` was parsed nowhere: the provider transforms walk into it, so it
+    survived a round-trip through them and then bound nothing — a schema whose
+    whole purpose is to forbid a shape accepted it (PR #385 review)."""
+    forbidding = ToolDefinition(
+        name="unlucky",
+        description="Takes any integer except one",
+        parameters_schema={
+            "type": "object",
+            "properties": {"n": {"type": "integer", "not": {"const": 13}}},
+            "required": ["n"],
+        },
+    )
+    ok, err = await engine._validate_arguments(forbidding, {"n": 13})
+    assert ok is False and "Parameter 'n'" in err and "required not to" in err
+    assert await engine._validate_arguments(forbidding, {"n": 7}) == (True, None)
+
+    # Boolean schemas mean what they mean here too: ``not: false`` forbids
+    # nothing, ``not: true`` forbids everything.
+    for negation, accepted in ((False, True), (True, False), ({}, False)):
+        tool = ToolDefinition(
+            name="boolean_not",
+            description="A not-branch spelled as a boolean schema",
+            parameters_schema={
+                "type": "object",
+                "properties": {"n": {"type": "integer", "not": negation}},
+            },
+        )
+        ok, _ = await engine._validate_arguments(tool, {"n": 1})
+        assert ok is accepted, negation
+
+    # A ``not`` that is not a schema at all is ignored rather than read as an
+    # always-matching branch — which would reject every value and turn a
+    # malformed schema into an uncallable tool.
+    malformed = ToolDefinition(
+        name="malformed_not",
+        description="A not-branch that is not a schema at all",
+        parameters_schema={
+            "type": "object",
+            "properties": {"n": {"type": "integer", "not": "nonsense"}},
+        },
+    )
+    assert await engine._validate_arguments(malformed, {"n": 1}) == (True, None)

@@ -19,6 +19,7 @@ from agent_gantry.schema.base import (
     check_json_constraints as _check_constraints,
 )
 from agent_gantry.schema.base import (
+    describe_path,
     json_identity_key,
     schema_declares_null,
 )
@@ -39,6 +40,25 @@ if TYPE_CHECKING:
     from agent_gantry.schema.tool import ToolDefinition
 
 logger = logging.getLogger(__name__)
+
+#: Assertions a tool's *root* schema can carry that ``_validate_arguments``'
+#: own top-level walk does not implement — it reads ``required``,
+#: ``properties``, ``patternProperties`` and ``additionalProperties`` and
+#: nothing else. Each is applied by ``_validate_value``, which is handed a
+#: schema of just these keys so ownership of the structural keywords stays
+#: with the walk. Keep this to keywords ``_validate_value`` actually
+#: implements: one it ignores would be listed as enforced without being so.
+_ROOT_ASSERTIONS = (
+    "allOf",
+    "anyOf",
+    "oneOf",
+    "not",
+    "const",
+    "enum",
+    "minProperties",
+    "maxProperties",
+)
+
 
 class ArgumentReconstructionError(ValueError):
     """An argument could not be rebuilt into the type its handler declares.
@@ -315,14 +335,56 @@ class ExecutionEngine:
         confirmation_gated = self._needs_confirmation(tool, call)
         admission_denial = self._admission_denial(tool)
         if admission_denial is not None and confirmation_gated and admission_denial[3]:
+            # The gate is the answer here — but the policy has to have its say
+            # first. ``_admission_denial`` consults ``would_exceed_rate_limit``
+            # and nothing else, so it knows about neither ``allowed_domains``
+            # nor any check a replacement policy adds; answering straight from
+            # the peek asked a human to approve a call policy would refuse on
+            # replay, and reported ``pending_confirmation`` where every other
+            # path reports ``permission_denied``. Running the real check
+            # restores the ordering the rest of ``execute`` already has: a
+            # denial outranks a gate (PR #385 review).
+            #
+            # ``pending_confirmation=True`` keeps the probe off the policy's
+            # own window, for the reason it always does — the approved replay
+            # is the same logical call and is counted then. A *denial* is
+            # terminal and ``check_permission`` charges it regardless, so the
+            # flood this exempts stays bounded.
+            #
+            # ``arguments_valid=True`` because validation is precisely what
+            # this path skips: the call is not known to be malformed, and
+            # claiming otherwise would charge a terminal call that may yet be
+            # approved and succeed.
+            #
+            # Validation still does not run, which is the point of the peek.
+            # The recursive validator drives schema-supplied ``pattern`` and
+            # ``patternProperties`` through ``re.search`` over caller-supplied
+            # payloads; the policy's own walk uses fixed patterns and is
+            # bounded by the payload, so it is not the work the quota is
+            # protecting.
+            policy_result = await self._check_security_policy(
+                tool,
+                call,
+                queued_at,
+                trace_id,
+                span_id,
+                pending_confirmation=True,
+                arguments_valid=True,
+            )
+            if policy_result is not None:
+                return policy_result
             # Records its own telemetry and re-asks ``_needs_confirmation``,
-            # which is a pure function of the call and the tool.
+            # which is a pure function of the call and the tool and answered
+            # true a few lines up. Should that ever stop holding, falling
+            # through returns the quota denial below — the previous spelling
+            # cleared ``admission_denial`` instead, which would have sent an
+            # over-quota caller into the validator the peek exists to keep
+            # them out of.
             gate_result = await self._check_confirmation_required(
                 tool, call, queued_at, trace_id, span_id
             )
             if gate_result is not None:
                 return gate_result
-            admission_denial = None
         if admission_denial is not None:
             denial_reason, denial_status, denial_type, _ = admission_denial
             result = ToolResult(
@@ -1168,6 +1230,15 @@ class ExecutionEngine:
                 return False
             return _validate_value(value, branch, path)[0]
 
+        def _child(path: str, name: str) -> str:
+            """The path of a property, unprefixed at the root.
+
+            The object branch validates the tool's own argument object as well
+            as nested ones now, and the root has no name to prefix with —
+            ``f"{path}.{name}"`` there reported ``'.token'``.
+            """
+            return f"{path}.{name}" if path else name
+
         def _validate_value(
             value: Any, val_schema: Any, path: str
         ) -> tuple[bool, str | None]:
@@ -1181,7 +1252,7 @@ class ExecutionEngine:
             if val_schema is True:
                 return True, None
             if val_schema is False:
-                return False, f"Parameter '{path}' is forbidden by its schema"
+                return False, f"{describe_path(path)} is forbidden by its schema"
             if not isinstance(val_schema, dict):
                 # Not a schema at all — don't reject what we can't interpret.
                 return True, None
@@ -1219,7 +1290,7 @@ class ExecutionEngine:
                 if matches == 0:
                     return (
                         False,
-                        f"Parameter '{path}' does not match any permitted schema",
+                        f"{describe_path(path)} does not match any permitted schema",
                     )
                 # ``oneOf`` means *exactly* one, unlike ``anyOf``: with
                 # overlapping branches (``number``/``integer``) a value
@@ -1227,9 +1298,30 @@ class ExecutionEngine:
                 if key == "oneOf" and matches > 1:
                     return (
                         False,
-                        f"Parameter '{path}' matches {matches} oneOf schemas; "
+                        f"{describe_path(path)} matches {matches} oneOf schemas; "
                         "exactly one must match",
                     )
+            # ``not`` is an assertion like any other and applies whatever
+            # else the schema declares, so it sits beside the combinators
+            # rather than inside a ``type`` branch. It was parsed nowhere:
+            # ``_SUBSCHEMA_KEYS`` in the provider transforms walks into it, so
+            # the keyword survived a round-trip through them and then bound
+            # nothing here — a schema that exists to *forbid* a shape accepted
+            # it (PR #385 review).
+            if "not" in val_schema:
+                forbidden = val_schema["not"]
+                # A non-schema value is ignored rather than treated as an
+                # always-matching branch: reading it as one would reject every
+                # value, turning a malformed schema into a tool nobody can
+                # call. Same fail-open reasoning as an uncompilable pattern.
+                if isinstance(forbidden, (dict, bool)) and _branch_matches(
+                    value, forbidden, path
+                ):
+                    return (
+                        False,
+                        f"{describe_path(path)} matches a schema it is required not to",
+                    )
+
             allof = val_schema.get("allOf")
             if isinstance(allof, list):
                 for branch in allof:
@@ -1238,7 +1330,7 @@ class ExecutionEngine:
                         # forbids every value.
                         return (
                             False,
-                            f"Parameter '{path}' has an allOf branch that "
+                            f"{describe_path(path)} has an allOf branch that "
                             "permits no value",
                         )
                     if not isinstance(branch, dict) or not branch:
@@ -1253,7 +1345,7 @@ class ExecutionEngine:
                 if not any(_matches_type(value, t) for t in expected_type):
                     return (
                         False,
-                        f"Parameter '{path}' must be one of types {expected_type}",
+                        f"{describe_path(path)} must be one of types {expected_type}",
                     )
                 if value is None:
                     # ``null`` needs no structural checks, but ``enum`` and
@@ -1268,9 +1360,9 @@ class ExecutionEngine:
                     # MCP/OpenAPI-imported schema can.)
                     null_enum = val_schema.get("enum")
                     if isinstance(null_enum, list) and null_enum and None not in null_enum:
-                        return False, f"Parameter '{path}' must be one of {null_enum}"
+                        return False, f"{describe_path(path)} must be one of {null_enum}"
                     if "const" in val_schema and val_schema["const"] is not None:
-                        return False, f"Parameter '{path}' must be {val_schema['const']!r}"
+                        return False, f"{describe_path(path)} must be {val_schema['const']!r}"
                     return True, None
                 # Continue structural checks against the matching member.
                 expected_type = next(
@@ -1279,7 +1371,7 @@ class ExecutionEngine:
 
             if isinstance(expected_type, str) and not _matches_type(value, expected_type):
                 article = "an" if expected_type[0] in "aoiue" else "a"
-                return False, f"Parameter '{path}' must be {article} {expected_type}"
+                return False, f"{describe_path(path)} must be {article} {expected_type}"
 
             # Membership and equality both go through JSON identity rather
             # than Python's ``==``. ``True == 1`` in Python, so a boolean
@@ -1291,7 +1383,7 @@ class ExecutionEngine:
             if isinstance(enum_values, list) and enum_values:
                 value_key = json_identity_key(value)
                 if all(value_key != json_identity_key(v) for v in enum_values):
-                    return False, f"Parameter '{path}' must be one of {enum_values}"
+                    return False, f"{describe_path(path)} must be one of {enum_values}"
 
             # ``const`` is a one-value ``enum``. Pydantic emits it for a
             # single-value ``Literal``, so it appears inside the nested
@@ -1300,7 +1392,7 @@ class ExecutionEngine:
             if "const" in val_schema and json_identity_key(value) != json_identity_key(
                 val_schema["const"]
             ):
-                return False, f"Parameter '{path}' must be {val_schema['const']!r}"
+                return False, f"{describe_path(path)} must be {val_schema['const']!r}"
 
             # Constraint keywords. Pydantic emits these for any constrained
             # field (``Annotated[int, Field(gt=0)]`` becomes ``type: integer``
@@ -1379,7 +1471,7 @@ class ExecutionEngine:
                     # schema produces — was accepting ``{}`` outright.
                     for req_prop in obj_required_early:
                         if isinstance(req_prop, str) and req_prop not in value:
-                            return False, f"Missing required parameter: {path}.{req_prop}"
+                            return False, f"Missing required parameter: {_child(path, req_prop)}"
 
                 if not isinstance(obj_properties, dict) or not obj_properties:
                     # No declared properties. Three distinct schema intents
@@ -1392,7 +1484,7 @@ class ExecutionEngine:
                         # matched *is* declared, so it survives the closure.
                         undeclared = [k for k in value if k not in pattern_matched]
                         if undeclared:
-                            return False, f"Parameter '{path}' does not permit any properties"
+                            return False, f"{describe_path(path)} does not permit any properties"
                     elif isinstance(obj_additional, dict):
                         # A schema-valued additionalProperties (e.g. the
                         # ``dict[str, int]`` schemas introspection emits)
@@ -1402,7 +1494,7 @@ class ExecutionEngine:
                             if prop_name in pattern_matched:
                                 continue  # already checked against its pattern
                             is_valid, err = _validate_value(
-                                prop_value, obj_additional, f"{path}.{prop_name}"
+                                prop_value, obj_additional, _child(path, prop_name)
                             )
                             if not is_valid:
                                 return False, err
@@ -1413,7 +1505,7 @@ class ExecutionEngine:
 
                 for req_prop in obj_required:
                     if req_prop not in value:
-                        return False, f"Missing required parameter: {path}.{req_prop}"
+                        return False, f"Missing required parameter: {_child(path, req_prop)}"
 
                 for prop_name, prop_value in value.items():
                     if prop_name not in obj_properties:
@@ -1422,15 +1514,15 @@ class ExecutionEngine:
                         if _permits_additional(obj_additional):
                             if isinstance(obj_additional, dict):
                                 is_valid, err = _validate_value(
-                                    prop_value, obj_additional, f"{path}.{prop_name}"
+                                    prop_value, obj_additional, _child(path, prop_name)
                                 )
                                 if not is_valid:
                                     return False, err
                             continue
-                        return False, f"Unknown parameter: {path}.{prop_name}"
+                        return False, f"Unknown parameter: {_child(path, prop_name)}"
 
                     is_valid, err = _validate_value(
-                        prop_value, obj_properties[prop_name], f"{path}.{prop_name}"
+                        prop_value, obj_properties[prop_name], _child(path, prop_name)
                     )
                     if not is_valid:
                         return False, err
@@ -1441,6 +1533,29 @@ class ExecutionEngine:
         for param in required:
             if param not in arguments:
                 return False, f"Missing required parameter: {param}"
+
+        # The walk below reads only ``required``, ``properties``,
+        # ``patternProperties`` and ``additionalProperties`` off the root, so
+        # every other assertion JSON Schema applies to the argument object as
+        # a whole bound nothing at all — a root ``allOf``/``anyOf``/``oneOf``
+        # naming further required keys, a root ``const``/``enum``, a root
+        # ``not``, and ``minProperties``/``maxProperties``. Merged and
+        # imported schemas (MCP, OpenAPI) put constraints there routinely
+        # (PR #385 review).
+        #
+        # Handed to ``_validate_value`` — which implements all of them, and
+        # was simply never called on the root — as a schema of *just* those
+        # keywords. Passing the whole schema instead would re-walk the
+        # properties the loop below already covers, at every dispatch, and
+        # would resolve the root's ``additionalProperties`` under the nested
+        # branch's rules: absent means free-form there, while a tool schema
+        # treats it as closed, so an undeclared argument would stop being
+        # reported. Selecting the keywords keeps one owner for each.
+        root_assertions = {key: schema[key] for key in _ROOT_ASSERTIONS if key in schema}
+        if root_assertions:
+            is_valid, err = _validate_value(arguments, root_assertions, "")
+            if not is_valid:
+                return False, err
 
         # A tool schema can type its keys by regex too — the same construct
         # the nested-object branch handles, one level up. Reading only
