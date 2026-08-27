@@ -1060,7 +1060,59 @@ def _annotation(name: str, prop: Any, depth: int) -> Any:
                 ),
             ]
         return dict
+
+    conditional = _by_instance_kind(name, prop, depth) if json_type is None else None
+    if conditional is not None:
+        return conditional
     return Any
+
+
+#: Keywords that assert something about an object instance, and about an array
+#: instance. A schema carrying either governs values of that kind even with no
+#: ``type`` of its own — the rule the executor applies at dispatch.
+_OBJECT_KEYWORDS = ("properties", "required", "patternProperties", "additionalProperties")
+_ARRAY_KEYWORDS = ("items", "prefixItems")
+
+
+def _by_instance_kind(name: str, prop: dict[str, Any], depth: int) -> Any:
+    """Annotation for a schema that asserts a kind without declaring a ``type``.
+
+    ``{"properties": {"token": {"type": "string"}}, "required": ["token"]}`` is
+    legal and is what an MCP or OpenAPI import produces; JSON Schema applies
+    those assertions to any object instance. Reading ``type`` alone left this
+    as a bare ``Any``, so the framework accepted ``{}`` and the executor —
+    which now applies the same keywords — rejects it after dispatch.
+
+    The checks are hung off a validator that first asks what the value *is*,
+    rather than annotating the model outright: a schema with object keywords
+    still admits a string, because the keywords simply do not apply to one.
+    Annotating it as the model would reject values the executor accepts, which
+    is the more damaging direction of disagreement.
+    """
+    from typing import Annotated
+
+    from pydantic import BeforeValidator, TypeAdapter
+
+    has_object = any(key in prop for key in _OBJECT_KEYWORDS)
+    has_array = any(key in prop for key in _ARRAY_KEYWORDS)
+    if not has_object and not has_array:
+        return None
+
+    def _adapter(json_type: str) -> Any:
+        # Re-entered with a scalar ``type``, so it cannot land back here.
+        return TypeAdapter(_annotation(f"{name}_{json_type}", {**prop, "type": json_type}, depth + 1))
+
+    object_adapter = _adapter("object") if has_object else None
+    array_adapter = _adapter("array") if has_array else None
+
+    def _by_kind(value: Any) -> Any:
+        if isinstance(value, dict) and object_adapter is not None:
+            return object_adapter.validate_python(value)
+        if isinstance(value, list) and array_adapter is not None:
+            return array_adapter.validate_python(value)
+        return value
+
+    return Annotated[Any, BeforeValidator(_by_kind)]
 
 
 __all__ = ["pydantic_model_from_schema"]

@@ -34,6 +34,7 @@ import datetime
 import inspect
 import logging
 import os
+import re
 import threading
 import uuid
 from collections.abc import Callable, Sequence
@@ -403,7 +404,13 @@ def _default_for_annotation(annotation: Any, json_type: Any) -> Any:
     return _typed_default(json_type)
 
 
-def _json_native(value: Any, prop: Any) -> Any:
+#: Recursion bound for :func:`_json_native`. Argument values are small and
+#: their schemas are already ``$ref``-inlined, so this only exists so a
+#: pathologically self-referential imported schema cannot spin.
+_MAX_NATIVE_DEPTH = 16
+
+
+def _json_native(value: Any, prop: Any, _depth: int = 0) -> Any:
     """Return ``value`` in the JSON form its schema declares.
 
     The executor validates against the *canonical* schema, which types a
@@ -415,17 +422,109 @@ def _json_native(value: Any, prop: Any) -> Any:
     rejecting a *valid* call. Serializing here keeps the dispatch boundary
     JSON-native whichever framework is in play.
 
-    Only applied where the schema actually declares one of those formats, so
-    a parameter genuinely typed ``object`` or ``array`` is untouched.
+    Applied at every depth the annotation can carry a format to, not only at
+    the top: ``_annotation_for_prop`` advertises ``list[datetime]`` from
+    ``items`` and ``dict[str, datetime]`` from ``additionalProperties``, so a
+    framework hands back a *container* of real ``datetime`` objects and
+    inspecting only the parent schema's ``format`` left every one of them to
+    be rejected item by item.
+
+    Still only where the schema actually declares one of those formats, so a
+    parameter genuinely typed ``object`` or ``array`` — or a free-form
+    ``dict`` whose values happen to be temporal — is untouched. The container
+    branches return ``value`` *itself* when nothing changed, which is what
+    lets the combinator fallback below tell "no branch applied" from "a
+    branch applied and produced an equal value".
     """
-    if not isinstance(prop, dict):
+    if not isinstance(prop, dict) or _depth > _MAX_NATIVE_DEPTH:
         return value
-    if prop.get("format") not in RECONSTRUCTED_STRING_FORMATS:
-        return value
-    if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
-        return value.isoformat()
-    if isinstance(value, uuid.UUID):
-        return str(value)
+
+    if isinstance(value, (datetime.datetime, datetime.date, datetime.time, uuid.UUID)):
+        if prop.get("format") in RECONSTRUCTED_STRING_FORMATS:
+            if isinstance(value, uuid.UUID):
+                return str(value)
+            return value.isoformat()
+        return _json_native_via_branches(value, prop, _depth)
+
+    if isinstance(value, list):
+        prefix = prop.get("prefixItems")
+        items = prop.get("items")
+        restored: list[Any] = []
+        changed = False
+        for index, item in enumerate(value):
+            sub: Any = None
+            if isinstance(prefix, list) and index < len(prefix):
+                sub = prefix[index]
+            elif isinstance(items, dict):
+                sub = items
+            new_item = _json_native(item, sub, _depth + 1) if isinstance(sub, dict) else item
+            changed = changed or new_item is not item
+            restored.append(new_item)
+        if changed:
+            return restored
+        return _json_native_via_branches(value, prop, _depth)
+
+    if isinstance(value, dict):
+        properties = prop.get("properties")
+        patterns = prop.get("patternProperties")
+        additional = prop.get("additionalProperties")
+        rebuilt: dict[Any, Any] = {}
+        changed = False
+        for key, item in value.items():
+            sub = None
+            if isinstance(properties, dict) and key in properties:
+                sub = properties[key]
+            elif isinstance(patterns, dict) and isinstance(key, str):
+                sub = _pattern_subschema(patterns, key)
+            if sub is None and isinstance(additional, dict):
+                sub = additional
+            new_item = _json_native(item, sub, _depth + 1) if isinstance(sub, dict) else item
+            changed = changed or new_item is not item
+            rebuilt[key] = new_item
+        if changed:
+            return rebuilt
+        return _json_native_via_branches(value, prop, _depth)
+
+    return value
+
+
+def _pattern_subschema(patterns: dict[str, Any], key: str) -> Any:
+    """The first ``patternProperties`` schema whose regex matches ``key``.
+
+    ``re.search`` and the fail-open on an uncompilable pattern both mirror the
+    executor's ``_check_pattern_properties``, so the two cannot disagree about
+    which keys a pattern covers.
+    """
+    for regex, subschema in patterns.items():
+        if not isinstance(regex, str):
+            continue
+        try:
+            if re.search(regex, key):
+                return subschema
+        except re.error:
+            continue
+    return None
+
+
+def _json_native_via_branches(value: Any, prop: dict[str, Any], depth: int) -> Any:
+    """Retry ``value`` against each combinator branch, keeping the first hit.
+
+    ``list[datetime] | None`` is spelled ``{"anyOf": [{"type": "array",
+    "items": {"format": "date-time", …}}, {"type": "null"}]}``, so the format
+    lives one level below the property the argument is keyed by. A branch that
+    does not apply returns the value unchanged, so the first *changed* result
+    is the branch that matched.
+    """
+    for key in ("anyOf", "oneOf", "allOf"):
+        branches = prop.get(key)
+        if not isinstance(branches, list):
+            continue
+        for branch in branches:
+            if not isinstance(branch, dict) or not branch:
+                continue
+            restored = _json_native(value, branch, depth + 1)
+            if restored is not value:
+                return restored
     return value
 
 

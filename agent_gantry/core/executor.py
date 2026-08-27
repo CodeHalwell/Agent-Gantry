@@ -1266,7 +1266,19 @@ class ExecutionEngine:
             if constraint_error is not None:
                 return False, constraint_error
 
-            if expected_type == "array":
+            # JSON Schema applies an array's or an object's keywords whenever
+            # the *instance* is of that kind, whether or not the schema also
+            # spells out a ``type``. Gating these branches on ``type`` alone
+            # meant an imported or merged property such as ``{"properties":
+            # {"token": {"type": "string"}}, "required": ["token"]}`` — legal,
+            # and what an MCP server or an OpenAPI import produces — governed
+            # nothing at all: ``{}`` was dispatched despite the missing key.
+            # Both branches are no-ops when the schema declares none of their
+            # keywords, so widening the gate cannot reject anything a typed
+            # schema wouldn't.
+            if expected_type == "array" or (
+                expected_type is None and isinstance(value, list)
+            ):
                 # ``prefixItems`` types each position independently — what
                 # Pydantic emits for a heterogeneous ``tuple[int, str]``, so
                 # it arrives inside the nested models introspection now
@@ -1300,7 +1312,9 @@ class ExecutionEngine:
                         is_valid, err = _validate_value(item, item_schema, f"{path}[{i}]")
                         if not is_valid:
                             return False, err
-            elif expected_type == "object":
+            elif expected_type == "object" or (
+                expected_type is None and isinstance(value, dict)
+            ):
                 obj_properties = val_schema.get("properties")
                 obj_additional = val_schema.get("additionalProperties")
 

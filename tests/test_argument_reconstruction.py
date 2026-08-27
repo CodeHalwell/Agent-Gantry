@@ -1101,3 +1101,74 @@ async def test_a_non_empty_array_for_an_empty_tuple_is_rejected():
     assert result.error_type == "ValidationError"
     assert "at most 0 items" in (result.error or "")
     assert "could not be rebuilt" not in (result.error or "")
+
+
+def test_a_formatted_value_is_restored_at_every_depth_it_can_reach():
+    """The guard read only the parent schema's ``format``, so it covered the
+    top-level ``datetime`` parameter and nothing else. ``_annotation_for_prop``
+    advertises ``list[datetime]`` from ``items`` and ``dict[str, UUID]`` from
+    ``additionalProperties``, so a signature-reading framework hands back a
+    *container* of real objects — and every element was then rejected against
+    the canonical formatted-string schema (PR #381 review)."""
+    from agent_gantry.integrations.frameworks.base import _json_native
+
+    stamp = datetime.datetime(2026, 8, 27)
+    iso = "2026-08-27T00:00:00"
+    date_time = {"type": "string", "format": "date-time"}
+
+    assert _json_native([stamp], {"type": "array", "items": date_time}) == [iso]
+    assert _json_native(
+        {"a": stamp}, {"type": "object", "additionalProperties": date_time}
+    ) == {"a": iso}
+    assert _json_native(
+        {"at": stamp}, {"type": "object", "properties": {"at": date_time}}
+    ) == {"at": iso}
+    assert _json_native(
+        {"ts_a": stamp}, {"type": "object", "patternProperties": {"^ts_": date_time}}
+    ) == {"ts_a": iso}
+    assert _json_native(
+        [stamp, uuid.UUID(int=1)],
+        {"type": "array", "prefixItems": [date_time, {"type": "string", "format": "uuid"}]},
+    ) == [iso, str(uuid.UUID(int=1))]
+    # Nested a level further down, which is where reading one level would
+    # still have left it.
+    assert _json_native(
+        [[stamp]], {"type": "array", "items": {"type": "array", "items": date_time}}
+    ) == [[iso]]
+    # ``list[datetime] | None`` puts the format below a combinator branch.
+    nullable = {"anyOf": [{"type": "array", "items": date_time}, {"type": "null"}]}
+    assert _json_native([stamp], nullable) == [iso]
+    assert _json_native(None, nullable) is None
+
+    # The conservatism the top-level guard had is kept: a container whose
+    # schema declares no such format is returned *as it was*, so a free-form
+    # ``dict`` parameter still reaches the handler with whatever it held.
+    free_form = {"a": stamp}
+    assert _json_native(free_form, {"type": "object"}) is free_form
+    untyped_items = [stamp]
+    assert _json_native(untyped_items, {"type": "array"}) is untyped_items
+
+
+async def test_a_container_of_formatted_values_survives_the_dispatch_boundary():
+    """End-to-end through the framework spec, which is where the rejection
+    happened: the signature says ``list[datetime]``, so the value handed back
+    is a list of real ``datetime`` objects."""
+    from agent_gantry.integrations.frameworks.base import spec_from_tool
+
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @g.register(tags=["demo"])
+    def log_events(stamps: list[datetime.datetime], by_id: dict[str, uuid.UUID]) -> str:
+        """Record a list of event timestamps and a mapping of owner ids."""
+        return f"{type(stamps[0]).__name__}:{stamps[0].year}:{sorted(by_id)[0]}"
+
+    await g.sync()
+    spec = spec_from_tool(g, await g.get_tool("log_events"))
+    stamp = datetime.datetime(2026, 8, 27)
+    assert await spec.ainvoke(stamps=[stamp], by_id={"a": uuid.UUID(int=1)}) == (
+        "datetime:2026:a"
+    )
+    # A framework that hands back the JSON form is unaffected.
+    assert await spec.ainvoke(
+        stamps=["2026-08-27T00:00:00"], by_id={"a": str(uuid.UUID(int=1))}
+    ) == "datetime:2026:a"

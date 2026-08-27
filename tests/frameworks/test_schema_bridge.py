@@ -1830,3 +1830,54 @@ def test_a_required_false_property_is_not_widened_to_null():
         {"type": "object", "properties": {"v": {"type": ["string", "null"]}}, "required": ["v"]},
     )
     assert nullable(v=None).v is None
+
+
+def test_object_and_array_keywords_apply_without_a_declared_type():
+    """Mirrors the executor rule: JSON Schema applies an object's or an
+    array's keywords whenever the *instance* is of that kind, whether or not
+    the schema spells out a ``type``. Reading ``type`` alone left
+    ``{"properties": {...}, "required": [...]}`` — what an MCP or OpenAPI
+    import produces — as a bare ``Any``, so the framework accepted a payload
+    the executor now rejects after dispatch (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "payload": {
+                    "properties": {"token": {"type": "string"}},
+                    "required": ["token"],
+                },
+                "vals": {"items": {"type": "integer"}},
+            },
+        },
+    )
+    with pytest.raises(ValidationError):
+        model(payload={})
+    with pytest.raises(ValidationError):
+        model(payload={"token": 1})
+    # A submodel, exactly as a declared-``type`` object property produces —
+    # the adapters dump it back before dispatch.
+    payload = model(payload={"token": "x"}).payload
+    assert issubclass(type(payload), BaseModel) and payload.token == "x"
+
+    with pytest.raises(ValidationError):
+        model(vals=["a"])
+    assert model(vals=[1, 2]).vals == [1, 2]
+
+    # The checks hang off the value's kind rather than annotating the model
+    # outright, because object keywords do not apply to a string — and a
+    # framework rejecting what the executor accepts is the more damaging
+    # direction of disagreement.
+    assert model(payload="a string").payload == "a string"
+
+
+def test_a_property_asserting_nothing_still_accepts_everything():
+    """Companion guard on the rule above: a property carrying no object or
+    array keywords must stay unconstrained rather than acquiring a kind."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {"type": "object", "properties": {"free": {"description": "anything"}}},
+    )
+    for value in ({"anything": [1]}, [1, "two"], "scalar", 7, None):
+        assert model(free=value).free == value

@@ -2225,3 +2225,58 @@ async def test_required_keys_hold_in_an_object_declaring_no_properties(engine):
         },
     )
     assert await engine._validate_arguments(free_form, {"m": {"anything": 1}}) == (True, None)
+
+
+async def test_object_and_array_keywords_apply_without_a_declared_type(engine):
+    """JSON Schema applies an object's or an array's keywords whenever the
+    *instance* is of that kind, whether or not the schema also spells out a
+    ``type``. Gating the branches on ``type`` alone meant a property such as
+    ``{"properties": {...}, "required": [...]}`` — legal, and what an MCP or
+    OpenAPI import produces — governed nothing at all (PR #381 review)."""
+    tool = ToolDefinition(
+        name="typeless",
+        description="Object and array assertions carried without a type",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "payload": {
+                    "properties": {"token": {"type": "string"}},
+                    "required": ["token"],
+                },
+                "vals": {"items": {"type": "integer"}},
+            },
+        },
+    )
+    ok, err = await engine._validate_arguments(tool, {"payload": {}})
+    assert ok is False and "payload.token" in err
+    ok, err = await engine._validate_arguments(tool, {"payload": {"token": 1}})
+    assert ok is False and "payload.token" in err
+    assert await engine._validate_arguments(tool, {"payload": {"token": "x"}}) == (
+        True,
+        None,
+    )
+
+    ok, err = await engine._validate_arguments(tool, {"vals": ["a"]})
+    assert ok is False and "vals[0]" in err
+    assert await engine._validate_arguments(tool, {"vals": [1, 2]}) == (True, None)
+
+    # The other half of the same rule, and the reason the gate is the value's
+    # kind rather than the presence of the keywords: object keywords do not
+    # apply to a *string*, so one is still admitted by a schema that declares
+    # them and no type.
+    assert await engine._validate_arguments(tool, {"payload": "a string"}) == (True, None)
+
+
+async def test_a_schema_asserting_nothing_still_admits_everything(engine):
+    """The companion guard on the fix above: widening the gate must not start
+    rejecting values under a property that simply says nothing about them."""
+    tool = ToolDefinition(
+        name="unconstrained",
+        description="A property carrying no assertions at all",
+        parameters_schema={
+            "type": "object",
+            "properties": {"free": {"description": "anything at all"}},
+        },
+    )
+    for value in ({"anything": [1, {"x": None}]}, [1, "two", None], "scalar", 7, None):
+        assert await engine._validate_arguments(tool, {"free": value}) == (True, None), value

@@ -969,6 +969,23 @@ adapters, and the provider dialects agree with it.
   one tuple that permits *no* items at all. The call then validated and failed
   at reconstruction, giving a dispatch error for a value the schema had said
   was acceptable. Both bounds are now pinned at zero.
+- **Formatted values are restored to JSON at every depth.** The dispatch guard
+  read only the parent schema's `format`, so it covered a top-level `datetime`
+  parameter and nothing below it. `list[datetime]` and `dict[str, UUID]` are
+  advertised on the signature that framework adapters introspect, so a
+  framework hands back a *container* of real Python objects and every element
+  was then rejected against the canonical formatted-string schema. The guard
+  now recurses through `items`, `prefixItems`, `properties`,
+  `patternProperties`, `additionalProperties` and combinator branches, still
+  only where the schema declares one of those formats.
+- **Object and array keywords apply without a declared `type`.** JSON Schema
+  applies them whenever the *instance* is of that kind, but both the executor
+  and the framework bridge gated their checks on `type` alone — so a property
+  such as `{"properties": {"token": {"type": "string"}}, "required":
+  ["token"]}`, which an MCP or OpenAPI import produces, governed nothing at
+  all and `{}` was dispatched despite the missing key. Both now dispatch on
+  what the value is, which leaves a schema asserting nothing unconstrained and
+  still admits a string under object keywords that cannot apply to one.
 
 ### Performance
 
