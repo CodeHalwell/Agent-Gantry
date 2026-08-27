@@ -1376,3 +1376,94 @@ def test_composite_const_is_enforced_by_identity():
     for bad in ([2, 1], [1], [1, 2, 3], []):
         with pytest.raises(ValidationError):
             model(v=bad)
+
+
+def test_an_absent_additional_properties_closes_an_object_that_declares_some():
+    """The bridge read an absent ``additionalProperties`` as permissive
+    whenever patterns were present, so it accepted a key the executor rejects
+    at dispatch. Gantry's documented default is that absent means closed —
+    *for an object that declares properties* (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "m": {
+                    "type": "object",
+                    "properties": {"fixed": {"type": "string"}},
+                    "patternProperties": {"^n_": {"type": "integer"}},
+                }
+            },
+            "required": ["m"],
+        },
+    )
+    assert model(m={"fixed": "ok", "n_x": 1}) is not None
+    with pytest.raises(ValidationError):
+        model(m={"fixed": "ok", "other": 1})
+
+
+def test_an_object_declaring_no_properties_stays_free_form():
+    """The asymmetry that makes the rule above correct rather than merely
+    strict: no declared properties and no ``additionalProperties`` is Gantry's
+    own shape for a plain ``dict`` parameter, which the executor treats as
+    free-form. Closing it would reject calls the engine accepts."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "m": {"type": "object", "patternProperties": {"^n_": {"type": "integer"}}}
+            },
+            "required": ["m"],
+        },
+    )
+    assert model(m={"n_x": 1}).m == {"n_x": 1}
+    assert model(m={"other": "x"}).m == {"other": "x"}
+    # The pattern still constrains the keys it matches.
+    with pytest.raises(ValidationError):
+        model(m={"n_x": "bad"})
+
+
+def test_generated_models_are_reused_for_an_identical_schema():
+    """The model is a pure function of (name, schema), and the live CrewAI and
+    LlamaIndex adapters rebuild their tools on every retrieval — so without
+    memoization the whole recursive build reran per query, per tool."""
+    schema = {
+        "type": "object",
+        "properties": {"a": {"type": "integer"}},
+        "required": ["a"],
+    }
+    first = pydantic_model_from_schema("Reused", schema)
+    assert first is pydantic_model_from_schema("Reused", dict(schema))
+    # Keyed on content, so a changed schema is a different entry.
+    changed = pydantic_model_from_schema(
+        "Reused",
+        {"type": "object", "properties": {"a": {"type": "string"}}, "required": ["a"]},
+    )
+    assert changed is not first
+    assert first(a=1) is not None
+    with pytest.raises(ValidationError):
+        first(a="x")
+
+
+def test_the_model_cache_evicts_rather_than_growing():
+    """Bounded for the same reason the executor's coercer cache is: a
+    long-running gantry with MCP tool churn would otherwise grow without
+    limit."""
+    from agent_gantry.integrations.frameworks import schema_bridge
+
+    original_max = schema_bridge._MODEL_CACHE_MAX
+    original_cache = schema_bridge._MODEL_CACHE.copy()
+    schema_bridge._MODEL_CACHE.clear()
+    schema_bridge._MODEL_CACHE_MAX = 3
+    try:
+        for i in range(5):
+            pydantic_model_from_schema(
+                f"Bounded{i}",
+                {"type": "object", "properties": {f"p{i}": {"type": "integer"}}},
+            )
+        assert len(schema_bridge._MODEL_CACHE) == 3
+    finally:
+        schema_bridge._MODEL_CACHE_MAX = original_max
+        schema_bridge._MODEL_CACHE.clear()
+        schema_bridge._MODEL_CACHE.update(original_cache)

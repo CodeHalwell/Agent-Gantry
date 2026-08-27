@@ -389,3 +389,100 @@ def test_a_variadic_tuple_keeps_its_homogeneous_item_type():
     assert schema["items"] == {"type": "integer"}
     assert "prefixItems" not in schema
     assert "maxItems" not in schema
+
+
+def test_optional_members_of_a_container_keep_their_null():
+    """A top-level ``int | None = None`` can express "no value" by being
+    omitted, which is why the emitted schema stays a bare ``integer``. A
+    container member has no such escape hatch, so collapsing the union there
+    left the schema forbidding a value the handler's own annotation accepts
+    (PR #381 review)."""
+    from agent_gantry.schema.introspection import _type_to_json_schema
+
+    assert _type_to_json_schema(list[int | None]) == {
+        "type": "array",
+        "items": {"type": ["integer", "null"]},
+    }
+    assert _type_to_json_schema(dict[str, int | None]) == {
+        "type": "object",
+        "additionalProperties": {"type": ["integer", "null"]},
+    }
+    assert _type_to_json_schema(tuple[int | None, str])["prefixItems"] == [
+        {"type": ["integer", "null"]},
+        {"type": "string"},
+    ]
+    # Nesting is threaded, not applied once at the outermost container.
+    assert _type_to_json_schema(list[list[int | None]]) == {
+        "type": "array",
+        "items": {"type": "array", "items": {"type": ["integer", "null"]}},
+    }
+    # The top level is deliberately untouched: requiredness carries it there.
+    assert _type_to_json_schema(int | None) == {"type": "integer"}
+    assert _type_to_json_schema(list[int]) == {
+        "type": "array",
+        "items": {"type": "integer"},
+    }
+
+
+async def test_a_null_container_member_survives_validation():
+    """End-to-end: the handler declares ``list[int | None]``, so ``[1, None, 2]``
+    is a call it accepts and validation must not refuse."""
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @g.register(tags=["demo"])
+    def count_present(values: list[int | None]) -> str:
+        """Count how many members are not None."""
+        return f"{sum(1 for v in values if v is not None)}/{len(values)}"
+
+    await g.sync()
+    result = await g.execute(
+        ToolCall(tool_name="count_present", arguments={"values": [1, None, 2]})
+    )
+    assert result.status.value == "success", result.error
+    assert result.result == "2/3"
+
+    # The member type is still enforced — widening admits null, not anything.
+    bad = await g.execute(
+        ToolCall(tool_name="count_present", arguments={"values": [1, "x"]})
+    )
+    assert bad.status.value == "failure"
+    assert bad.error_type == "ValidationError"
+
+
+def test_the_coercer_cache_evicts_rather_than_stopping():
+    """A hard cap with no eviction pins the first N handlers for the life of
+    the process and re-inspects every handler after them on *every* call. The
+    bound has to evict (PR #381 review)."""
+    import agent_gantry.core.executor as executor_module
+
+    original_max = executor_module._COERCER_CACHE_MAX
+    original_cache = executor_module._COERCER_CACHE.copy()
+    executor_module._COERCER_CACHE.clear()
+    executor_module._COERCER_CACHE_MAX = 3
+    try:
+
+        def make(i: int):
+            namespace: dict[str, Any] = {}
+            exec(f"def h{i}(tags: set[str]) -> None: ...", namespace)
+            return namespace[f"h{i}"]
+
+        handlers = [make(i) for i in range(5)]
+        for handler in handlers:
+            executor_module._coercers_for(handler)
+
+        assert len(executor_module._COERCER_CACHE) == 3
+        assert handlers[0] not in executor_module._COERCER_CACHE  # evicted
+        assert handlers[4] in executor_module._COERCER_CACHE
+
+        # Least-*recently-used*, not merely least-recently-inserted.
+        executor_module._coercers_for(handlers[2])
+        executor_module._coercers_for(make(9))
+        assert handlers[2] in executor_module._COERCER_CACHE
+
+        # Targeted invalidation still works — the reason this isn't lru_cache.
+        executor_module.forget_handler(handlers[2])
+        assert handlers[2] not in executor_module._COERCER_CACHE
+    finally:
+        executor_module._COERCER_CACHE_MAX = original_max
+        executor_module._COERCER_CACHE.clear()
+        executor_module._COERCER_CACHE.update(original_cache)

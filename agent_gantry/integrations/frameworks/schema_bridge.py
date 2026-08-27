@@ -16,7 +16,9 @@ previous behaviour — the tool still works, sans the richer schema.
 
 from __future__ import annotations
 
+import json
 import logging
+from collections import OrderedDict
 from typing import Any, Literal
 
 from agent_gantry.schema.base import (
@@ -26,6 +28,16 @@ from agent_gantry.schema.base import (
 )
 
 _logger = logging.getLogger(__name__)
+
+#: Memoized generated models, keyed by ``(name, canonical schema JSON)``.
+#: The model is a pure function of those two, and the "live" CrewAI and
+#: LlamaIndex adapters rebuild their tools on *every* retrieval — so without
+#: this the same recursive ``create_model`` (plus its ``TypeAdapter``
+#: constructions and ``re.compile`` calls) reran per query, per tool. Bounded
+#: and LRU for the same reason the executor's coercer cache is: a long-running
+#: gantry with MCP tool churn would otherwise grow without limit.
+_MODEL_CACHE: OrderedDict[tuple[str, str], tuple[Any]] = OrderedDict()
+_MODEL_CACHE_MAX = 256
 
 #: Hard bound on nested-object recursion (self-referential schemas).
 _MAX_DEPTH = 8
@@ -64,10 +76,30 @@ def pydantic_model_from_schema(name: str, schema: dict[str, Any]) -> Any:
         of it) can't be expressed — callers should fall back to their
         function-signature path in that case.
     """
+    key: tuple[str, str] | None
     try:
-        return _build_model(_sanitize_identifier(name) or "ToolArgs", schema, 0)
+        key = (name, json.dumps(schema, sort_keys=True, default=str))
+    except (TypeError, ValueError):  # not serializable — build it uncached
+        key = None
+    if key is not None:
+        cached = _MODEL_CACHE.get(key)
+        if cached is not None:
+            _MODEL_CACHE.move_to_end(key)
+            return cached[0]
+
+    try:
+        model = _build_model(_sanitize_identifier(name) or "ToolArgs", schema, 0)
     except Exception:  # noqa: BLE001 - best-effort; schema stays advisory
-        return None
+        model = None
+
+    if key is not None:
+        # Wrapped in a tuple so a ``None`` result (an inexpressible schema) is
+        # cached too — that path costs a full recursive build before it fails,
+        # and it fails identically every time.
+        _MODEL_CACHE[key] = (model,)
+        if len(_MODEL_CACHE) > _MODEL_CACHE_MAX:
+            _MODEL_CACHE.popitem(last=False)
+    return model
 
 
 def _sanitize_identifier(name: str) -> str:
@@ -95,8 +127,33 @@ def _permits_additional(schema: dict[str, Any]) -> bool:
         # ``_build_model`` is what then enforces them, including rejecting a
         # key no pattern matches when the object is closed.
         return True
+    return _admits_undeclared(schema)
+
+
+def _admits_undeclared(schema: dict[str, Any]) -> bool:
+    """Whether a key matching no declared property and no pattern is allowed.
+
+    The same rule as ``_permits_additional`` minus its ``patternProperties``
+    escape hatch, which exists only so matching keys can reach the model.
+    Once they have, *this* is the question the pattern validator has to
+    answer, and answering it with a bare ``additionalProperties is False``
+    read an absent key as permissive wherever the object also declared
+    properties — so the generated model accepted a key the engine rejects at
+    dispatch.
+
+    Mirrors the executor's asymmetry rather than simplifying it away: an
+    object declaring *no* properties and no ``additionalProperties`` is a
+    free-form mapping — Gantry's own shape for a plain ``dict`` parameter —
+    while one that declares properties and omits ``additionalProperties`` is
+    closed, which is the stricter-than-spec default this module documents.
+    """
     additional = schema.get("additionalProperties")
-    return additional is True or isinstance(additional, dict)
+    if additional is True or isinstance(additional, dict):
+        return True
+    if additional is False:
+        return False
+    properties = schema.get("properties")
+    return not (isinstance(properties, dict) and properties)
 
 
 def _build_model(name: str, schema: dict[str, Any], depth: int) -> Any:
@@ -179,7 +236,7 @@ def _build_model(name: str, schema: dict[str, Any], depth: int) -> Any:
         # way, so an ``Annotated`` alias raised a ValidationError at tool
         # construction instead of degrading to the documented fallback.
         check = _pattern_key_validator(
-            name, patterns, schema.get("additionalProperties") is False, depth, set(properties)
+            name, patterns, not _admits_undeclared(schema), depth, set(properties)
         )
         validators["_check_pattern_properties"] = model_validator(mode="before")(
             classmethod(lambda cls, value, _check=check: _check(value))
@@ -841,7 +898,7 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
             # build a model permitting *no* keys, rejecting the very keys the
             # patterns declare.
             return _with_pattern_properties(
-                name, patterns, prop.get("additionalProperties") is False, depth
+                name, patterns, not _admits_undeclared(prop), depth
             )
         if prop.get("additionalProperties") is False:
             # An object that permits no keys at all, which the executor

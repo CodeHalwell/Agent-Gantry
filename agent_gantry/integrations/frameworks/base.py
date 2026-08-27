@@ -355,6 +355,29 @@ def _literal_members(prop: dict[str, Any]) -> tuple[Any, ...] | None:
     return tuple(values)
 
 
+def _composite_choice_type(prop: dict[str, Any]) -> Any:
+    """The container type a non-scalar ``enum``/``const`` pins a value to.
+
+    ``None`` unless every member is a JSON array, or every member is a JSON
+    object. Only consulted when the schema declares no ``type`` of its own —
+    an explicit ``type`` is the author's statement and outranks whatever the
+    members suggest, even when the two disagree. Membership itself is not
+    enforced here: a Python signature can
+    carry the type but not the value set (that is what ``Literal`` is for,
+    and these members can't be ``Literal`` members), so the frameworks
+    reading this signature see the right *type* and the executor still
+    enforces the *values* at dispatch.
+    """
+    values = [prop["const"]] if "const" in prop else prop.get("enum")
+    if not isinstance(values, list) or not values:
+        return None
+    if all(isinstance(v, list) for v in values):
+        return list
+    if all(isinstance(v, dict) for v in values):
+        return dict
+    return None
+
+
 def _annotation_for_prop(prop: dict[str, Any]) -> Any:
     """Python annotation for one property schema, recursively.
 
@@ -377,6 +400,17 @@ def _annotation_for_prop(prop: dict[str, Any]) -> Any:
     literal = _literal_members(prop)
     if literal is not None:
         return Literal[literal]
+
+    composite = _composite_choice_type(prop) if "type" not in prop else None
+    if composite is not None:
+        # A tuple-valued ``Enum`` emits ``{"enum": [[0, 0], [1, 1]]}`` — no
+        # ``type``, because its members share none of the scalar kinds. With
+        # no ``Literal`` to build and no ``type`` to read, this fell all the
+        # way to ``_json_type_to_python``'s ``str`` fallback and advertised a
+        # *string* for an array-valued parameter, so the string the model
+        # produced was rejected by the executor. The members themselves name
+        # the type even when they can't name a ``Literal``.
+        return composite
 
     json_type = prop.get("type")
     if json_type == "null" or (isinstance(json_type, list) and set(json_type) == {"null"}):

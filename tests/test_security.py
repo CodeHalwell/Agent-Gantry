@@ -335,3 +335,33 @@ def test_arguments_valid_defaults_to_true_and_keeps_the_exemption():
     policy.check_permission("delete_thing", {}, confirmation_approved=True)
     with pytest.raises(PermissionDeniedError, match="Rate limit"):
         policy.check_permission("delete_thing", {}, confirmation_approved=True)
+
+
+def test_pattern_gated_execution_is_rate_limited_like_any_other():
+    """Deferring a *probe*'s charge must not exempt the tool itself. Only the
+    prompt is free: every call that actually clears the gate is counted, so a
+    ``require_confirmation`` pattern cannot be used to make a sensitive tool
+    unlimited (PR #381 review)."""
+    import pytest
+
+    from agent_gantry.core.security import (
+        ConfirmationRequiredError,
+        PermissionDeniedError,
+        SecurityPolicy,
+    )
+
+    policy = SecurityPolicy(require_confirmation=["delete_*"], max_requests_per_minute=3)
+
+    # Any number of unapproved probes: none executes, so none is charged.
+    for _ in range(10):
+        with pytest.raises(ConfirmationRequiredError):
+            policy.check_permission("delete_thing", {})
+    assert not policy._request_timestamps
+
+    # Approved calls do execute, and are charged exactly like an ungated tool.
+    for _ in range(3):
+        policy.check_permission("delete_thing", {}, confirmation_approved=True)
+    for _ in range(2):
+        with pytest.raises(PermissionDeniedError, match="Rate limit"):
+            policy.check_permission("delete_thing", {}, confirmation_approved=True)
+    assert len(policy._request_timestamps) == 3

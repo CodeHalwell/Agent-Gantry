@@ -10,6 +10,7 @@ import asyncio
 import logging
 import re
 import uuid
+from collections import OrderedDict
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -40,7 +41,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 #: Memoized per-handler argument coercers (see ``_coercers_for``).
-_COERCER_CACHE: dict[Any, dict[str, Any]] = {}
+#: An ``OrderedDict`` rather than a plain one so the bound below can *evict*
+#: rather than stop caching: a hard cap alone means that once N distinct
+#: handlers have been seen, every handler after them re-runs the (not cheap)
+#: signature inspection on every call, forever, while the first N are pinned
+#: for the life of the process. A long-running gantry with MCP tool churn is
+#: exactly that shape. ``functools.lru_cache`` would do this, but it cannot
+#: drop one entry, and ``forget_handler`` needs to when a tool is deleted.
+_COERCER_CACHE: OrderedDict[Any, dict[str, Any]] = OrderedDict()
+
+#: How many handlers' coercers to keep. Least-recently-used beyond this.
+_COERCER_CACHE_MAX = 512
 
 
 def _coercers_for(handler: Callable[..., Any]) -> dict[str, Any]:
@@ -51,14 +62,18 @@ def _coercers_for(handler: Callable[..., Any]) -> dict[str, Any]:
     it per call rather than failing.
     """
     try:
-        return _COERCER_CACHE[handler]
+        coercers = _COERCER_CACHE[handler]
     except TypeError:  # unhashable handler
         return build_argument_coercers(handler)
     except KeyError:
         pass
+    else:
+        _COERCER_CACHE.move_to_end(handler)
+        return coercers
     coercers = build_argument_coercers(handler)
-    if len(_COERCER_CACHE) < 512:
-        _COERCER_CACHE[handler] = coercers
+    _COERCER_CACHE[handler] = coercers
+    if len(_COERCER_CACHE) > _COERCER_CACHE_MAX:
+        _COERCER_CACHE.popitem(last=False)
     return coercers
 
 
@@ -921,6 +936,57 @@ class ExecutionEngine:
             # Unknown type keyword: don't reject what we don't understand.
             return True
 
+        def _check_pattern_properties(
+            value: dict[str, Any], val_schema: dict[str, Any], path: str
+        ) -> tuple[bool, set[str], str | None]:
+            """Validate ``patternProperties`` over a mapping's keys.
+
+            ``patternProperties`` types keys by regex rather than by name,
+            which Pydantic emits for a mapping with constrained keys. Ignoring
+            it meant a matching key's value was never checked — and, with
+            ``additionalProperties: false``, that every key was rejected
+            because none counted as declared.
+
+            Returns ``(ok, matched_keys, error)``. The matched keys are
+            *declared* for the purposes of every closed-object check, at the
+            top level of a tool schema and inside a nested object alike: this
+            lived only in the nested branch, so an identical construct one
+            level up both rejected valid keys and skipped their validation.
+            """
+            patterns = val_schema.get("patternProperties")
+            matched: set[str] = set()
+            if not isinstance(patterns, dict) or not patterns:
+                return True, matched, None
+            for regex, subschema in patterns.items():
+                if not isinstance(regex, str):
+                    continue
+                try:
+                    compiled = re.compile(regex)
+                except re.error as exc:
+                    # Same fail-open reasoning as ``pattern``: an ECMA-only
+                    # regex must not make every call fail, but the author
+                    # needs to know it isn't enforced.
+                    logger.warning(
+                        "Parameter '%s' declares patternProperties %r that "
+                        "Python's re cannot compile (%s); those keys are "
+                        "not validated.",
+                        path,
+                        regex,
+                        exc,
+                    )
+                    continue
+                for prop_name, prop_value in value.items():
+                    if not compiled.search(prop_name):
+                        continue
+                    matched.add(prop_name)
+                    if isinstance(subschema, dict) and subschema:
+                        is_valid, err = _validate_value(
+                            prop_value, subschema, f"{path}.{prop_name}" if path else prop_name
+                        )
+                        if not is_valid:
+                            return False, matched, err
+            return True, matched, None
+
         def _validate_value(
             value: Any, val_schema: dict[str, Any], path: str
         ) -> tuple[bool, str | None]:
@@ -1062,44 +1128,11 @@ class ExecutionEngine:
                 obj_properties = val_schema.get("properties")
                 obj_additional = val_schema.get("additionalProperties")
 
-                # ``patternProperties`` types keys by regex rather than by
-                # name, which Pydantic emits for a mapping with constrained
-                # keys. Ignoring it meant a matching key's value was never
-                # checked — and, with ``additionalProperties: false``, that
-                # every key was rejected because none counted as declared.
-                # Matched keys are validated here and then treated as declared
-                # by both paths below.
-                obj_patterns = val_schema.get("patternProperties")
-                pattern_matched: set[str] = set()
-                if isinstance(obj_patterns, dict) and obj_patterns:
-                    for regex, subschema in obj_patterns.items():
-                        if not isinstance(regex, str):
-                            continue
-                        try:
-                            compiled = re.compile(regex)
-                        except re.error as exc:
-                            # Same fail-open reasoning as ``pattern``: an
-                            # ECMA-only regex must not make every call fail,
-                            # but the author needs to know it isn't enforced.
-                            logger.warning(
-                                "Parameter '%s' declares patternProperties %r that "
-                                "Python's re cannot compile (%s); those keys are "
-                                "not validated.",
-                                path,
-                                regex,
-                                exc,
-                            )
-                            continue
-                        for prop_name, prop_value in value.items():
-                            if not compiled.search(prop_name):
-                                continue
-                            pattern_matched.add(prop_name)
-                            if isinstance(subschema, dict) and subschema:
-                                is_valid, err = _validate_value(
-                                    prop_value, subschema, f"{path}.{prop_name}"
-                                )
-                                if not is_valid:
-                                    return False, err
+                matched_ok, pattern_matched, pattern_err = _check_pattern_properties(
+                    value, val_schema, path
+                )
+                if not matched_ok:
+                    return False, pattern_err
 
                 if not isinstance(obj_properties, dict) or not obj_properties:
                     # No declared properties. Three distinct schema intents
@@ -1162,10 +1195,23 @@ class ExecutionEngine:
             if param not in arguments:
                 return False, f"Missing required parameter: {param}"
 
+        # A tool schema can type its keys by regex too — the same construct
+        # the nested-object branch handles, one level up. Reading only
+        # ``properties`` here rejected a schema-valid key as unknown when the
+        # schema was closed, and skipped the pattern's own constraint when it
+        # was open.
+        top_ok, top_pattern_matched, top_err = _check_pattern_properties(
+            arguments, schema, ""
+        )
+        if not top_ok:
+            return False, top_err
+
         # Check parameter types
         additional_schema = schema.get("additionalProperties")
         for param_name, param_value in arguments.items():
             if param_name not in properties:
+                if param_name in top_pattern_matched:
+                    continue  # already checked against its pattern
                 if allow_additional:
                     if isinstance(additional_schema, dict):
                         is_valid, err = _validate_value(

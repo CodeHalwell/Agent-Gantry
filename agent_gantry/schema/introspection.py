@@ -613,12 +613,19 @@ def _inline_local_refs(schema: dict[str, Any]) -> dict[str, Any]:
     return _resolve(schema, 0)
 
 
-def _type_to_json_schema(param_type: Any) -> dict[str, Any]:
+def _type_to_json_schema(param_type: Any, *, in_container: bool = False) -> dict[str, Any]:
     """
     Map Python type to JSON Schema.
 
     Args:
         param_type: Python type annotation
+        in_container: Whether this type sits *inside* a container — an array
+            item, a mapping value, a tuple position. A top-level parameter can
+            express ``None`` by being omitted, which is why
+            ``build_parameters_schema`` collapses ``int | None = None`` to a
+            bare ``integer``; a container member has no such escape hatch, so
+            ``list[int | None]`` must spell ``null`` out or the emitted schema
+            forbids a value the handler's own annotation accepts.
 
     Returns:
         Dict describing the type as JSON Schema (always at least a ``type``
@@ -692,7 +699,19 @@ def _type_to_json_schema(param_type: Any) -> dict[str, Any]:
                             param_type,
                             non_none_args[0],
                         )
-                    return _type_to_json_schema(non_none_args[0])
+                    member = _type_to_json_schema(
+                        non_none_args[0], in_container=in_container
+                    )
+                    if in_container and type(None) in args:
+                        # Inside a container, ``None`` is a value the member
+                        # schema has to admit outright. The top-level path
+                        # deliberately doesn't widen (see ``in_container``),
+                        # but there is no "omitted" for an array element or a
+                        # mapping value, so collapsing the union here left the
+                        # schema rejecting ``[1, None, 2]`` for a handler
+                        # declaring ``list[int | None]``.
+                        _admit_null(member)
+                    return member
                 return {"type": "string"}
 
             # Mappings → object (value schema recorded via additionalProperties).
@@ -704,7 +723,9 @@ def _type_to_json_schema(param_type: Any) -> dict[str, Any]:
             ):
                 schema = {"type": "object"}
                 if len(args) == 2 and args[1] is not Any:
-                    schema["additionalProperties"] = _type_to_json_schema(args[1])
+                    schema["additionalProperties"] = _type_to_json_schema(
+                        args[1], in_container=True
+                    )
                 return schema
 
             # Sequences and sets → array (with typed items when parameterized).
@@ -724,7 +745,7 @@ def _type_to_json_schema(param_type: Any) -> dict[str, Any]:
                     args[0] if args else None
                 )
                 if item_type is not None and item_type is not Any:
-                    schema["items"] = _type_to_json_schema(item_type)
+                    schema["items"] = _type_to_json_schema(item_type, in_container=True)
                 elif origin is tuple and args and Ellipsis not in args:
                     # A *heterogeneous* fixed-length tuple — ``tuple[int, str]``
                     # — has no single item type, and emitting a bare
@@ -734,14 +755,16 @@ def _type_to_json_schema(param_type: Any) -> dict[str, Any]:
                     # raw list. ``prefixItems`` types each position, and the
                     # length bounds pin the arity, which the executor and the
                     # framework bridge both already enforce.
-                    schema["prefixItems"] = [_type_to_json_schema(a) for a in args]
+                    schema["prefixItems"] = [
+                        _type_to_json_schema(a, in_container=True) for a in args
+                    ]
                     schema["minItems"] = len(args)
                     schema["maxItems"] = len(args)
                 return schema
 
             # Fallback for other generics: use the first argument if available
             if args:
-                return _type_to_json_schema(args[0])
+                return _type_to_json_schema(args[0], in_container=in_container)
     except (AttributeError, ImportError):
         pass
 

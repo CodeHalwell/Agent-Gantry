@@ -684,6 +684,44 @@ adapters, and the provider dialects agree with it.
   fell through to a plain `list` that accepted anything while the executor
   enforced the constant. It is now checked by JSON identity, exactly as a
   composite `enum` already was.
+- **An optional member of a container lost its `null`.** The widening that
+  re-admits `null` for `T | None` ran only on a top-level parameter, where
+  omission already expresses "no value" — so `list[int | None]` was emitted as
+  `{"type": "array", "items": {"type": "integer"}}` and validation rejected
+  `[1, None, 2]` for a handler whose own annotation accepts it. An array item,
+  a mapping value and a tuple position have no "omitted", so nullability is
+  now threaded through the recursion. The top level is deliberately unchanged.
+- **Top-level `patternProperties` was never validated.** The construct was
+  handled inside a nested object but not at the top level of a tool schema, so
+  an identical declaration one level up both rejected a schema-valid matching
+  key as `Unknown parameter` and skipped the pattern's own constraint when the
+  schema was open. Both paths now share one implementation.
+- **A composite `enum` was advertised as a *string*.** A tuple-valued `Enum`
+  emits `{"enum": [[0, 0], [1, 1]]}` with no `type`, since its members share
+  no scalar kind — so with no `Literal` to build and no `type` to read, the
+  signature path fell through to its `str` fallback and told Semantic Kernel,
+  AG2 and ADK's fallback path that an array-valued parameter was a string. The
+  members now name the container type when the schema declares none; an
+  explicit `type` still outranks them.
+- **The framework bridge read an absent `additionalProperties` as open.** For
+  an object that declares properties, absent means closed — Gantry's own
+  documented default, and what the executor enforces — so the generated
+  CrewAI/LlamaIndex model accepted a key the engine rejects at dispatch. The
+  bridge now mirrors the executor's rule including its asymmetry: an object
+  declaring *no* properties stays free-form, that being the shape a plain
+  `dict` parameter emits.
+
+### Performance
+
+- **Generated framework models are memoized.** `pydantic_model_from_schema` is
+  a pure function of its name and schema, but the live CrewAI and LlamaIndex
+  adapters rebuild their tools on *every* retrieval — so the whole recursive
+  `create_model` (plus its `TypeAdapter` constructions and `re.compile` calls)
+  reran per query, per tool. Bounded and LRU.
+- **The handler-coercer cache evicts instead of stopping.** Its hard cap left
+  the first 512 handlers pinned for the life of the process and re-ran
+  signature inspection on every call for every handler after them. It is an
+  LRU now, keeping the targeted invalidation `functools.lru_cache` can't do.
 
 ### Known limitation
 

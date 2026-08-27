@@ -137,3 +137,23 @@ async def test_ainvoke_keeps_a_null_the_schema_declares():
     # which is what stops frameworks' synthetic Nones failing validation.
     if "label_it" in by_name:
         assert await by_name["label_it"].ainvoke(note=None) == "label:hi"
+
+
+def test_a_composite_enum_is_annotated_as_its_container_not_a_string():
+    """A tuple-valued ``Enum`` emits ``{"enum": [[0, 0], [1, 1]]}`` — no
+    ``type``, since its members share no scalar kind. With no ``Literal`` to
+    build and no ``type`` to read, this fell through to the ``str`` fallback
+    and advertised a *string* for an array-valued parameter to Semantic
+    Kernel, AG2 and ADK's fallback path, so the string the model produced was
+    rejected by the executor (PR #381 review)."""
+    assert _annotation_for_prop({"enum": [[0, 0], [1, 1]]}) is list
+    assert _annotation_for_prop({"enum": [{"a": 1}, {"a": 2}]}) is dict
+    assert _annotation_for_prop({"const": [1, 2]}) is list
+
+
+def test_a_declared_type_outranks_the_members_it_disagrees_with():
+    """An explicit ``type`` is the author's statement, so member inference is
+    consulted only when there is none."""
+    assert _annotation_for_prop({"type": "string", "enum": [{"a": 1}]}) is str
+    # Mixed members name no single container, so the fallback still applies.
+    assert _annotation_for_prop({"enum": [[0, 0], "x"]}) is str

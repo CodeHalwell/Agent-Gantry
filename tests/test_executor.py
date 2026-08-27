@@ -1768,3 +1768,70 @@ def test_ambiguous_oneof_null_is_dropped_not_preserved():
         },
     )
     assert ExecutionEngine._normalize_arguments(tool, {"note": None}) == {}
+
+
+@pytest.mark.asyncio
+async def test_top_level_pattern_properties_are_validated(engine):
+    """``patternProperties`` was handled only inside a nested object, so the
+    identical construct at the top level of a tool schema both rejected a
+    schema-valid key as unknown and skipped the pattern's own constraint
+    (PR #381 review)."""
+    closed = ToolDefinition(
+        name="closed_patterns",
+        description="Top-level keys typed by regex, closed to anything else",
+        parameters_schema={
+            "type": "object",
+            "properties": {},
+            "patternProperties": {"^n_[a-z]+$": {"type": "integer"}},
+            "additionalProperties": False,
+        },
+    )
+    # A matching key *is* declared, so the closure must not reject it.
+    assert await engine._validate_arguments(closed, {"n_abc": 1}) == (True, None)
+    # Its value is still checked against the pattern's schema.
+    ok, err = await engine._validate_arguments(closed, {"n_abc": "bad"})
+    assert ok is False and "n_abc" in err
+    # And a key matching no pattern is still refused.
+    ok, err = await engine._validate_arguments(closed, {"other": 1})
+    assert ok is False and "Unknown parameter: other" in err
+
+
+@pytest.mark.asyncio
+async def test_top_level_pattern_properties_apply_when_the_schema_is_open(engine):
+    """The other half: ``additionalProperties: true`` admits the key, but a
+    pattern that matches it still constrains its value."""
+    tool = ToolDefinition(
+        name="open_patterns",
+        description="Top-level regex-typed keys alongside free-form ones",
+        parameters_schema={
+            "type": "object",
+            "properties": {},
+            "patternProperties": {"^n_": {"type": "integer"}},
+            "additionalProperties": True,
+        },
+    )
+    assert await engine._validate_arguments(tool, {"n_x": 1}) == (True, None)
+    assert await engine._validate_arguments(tool, {"free": "anything"}) == (True, None)
+    ok, err = await engine._validate_arguments(tool, {"n_x": "bad"})
+    assert ok is False and "n_x" in err
+
+
+@pytest.mark.asyncio
+async def test_top_level_pattern_properties_coexist_with_declared_ones(engine):
+    """A named property keeps its own schema; the patterns type the rest."""
+    tool = ToolDefinition(
+        name="mixed_patterns",
+        description="A declared parameter beside regex-typed extras",
+        parameters_schema={
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "patternProperties": {"^n_": {"type": "integer"}},
+            "additionalProperties": False,
+            "required": ["name"],
+        },
+    )
+    assert await engine._validate_arguments(tool, {"name": "x", "n_a": 1}) == (True, None)
+    ok, _ = await engine._validate_arguments(tool, {"name": "x", "n_a": "bad"})
+    assert ok is False
+    ok, _ = await engine._validate_arguments(tool, {"name": 1, "n_a": 1})
+    assert ok is False
