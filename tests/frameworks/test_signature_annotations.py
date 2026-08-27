@@ -223,3 +223,35 @@ def test_a_combinator_only_property_resolves_to_its_real_type():
     ) == list[int]
     # A schema constraining nothing still has nothing to say.
     assert _annotation_for_prop({}) is str
+
+
+def test_adk_placeholders_match_the_annotation_they_accompany():
+    """Google ADK's fallback path rejects a default whose type mismatches the
+    annotation — which is what ``type_matched_defaults`` exists to avoid. Once
+    a formatted string became a ``datetime`` and an enum a ``Literal``, the
+    placeholder was still derived from the raw JSON type and stayed ``""``,
+    recreating the mismatch (PR #381 review)."""
+    import datetime
+    import typing
+
+    from agent_gantry.integrations.frameworks.base import ToolSpec
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "at": {"type": "string", "format": "date-time"},
+            "mode": {"type": "string", "enum": ["a", "b"]},
+            "name": {"type": "string"},
+            "n": {"type": "integer"},
+        },
+        "required": [],
+    }
+    spec = ToolSpec.__new__(ToolSpec)
+    object.__setattr__(spec, "parameters", schema)
+    params = ToolSpec.python_signature(spec, type_matched_defaults=True).parameters
+
+    assert isinstance(params["at"].default, datetime.datetime)
+    assert params["mode"].default in typing.get_args(params["mode"].annotation)
+    # The plain cases keep the type-matched empty values they always had.
+    assert params["name"].default == ""
+    assert params["n"].default == 0

@@ -277,6 +277,33 @@ class ExecutionEngine:
         # malformed calls would be unlimited. The *result* is still returned
         # below, after the policy check, so a denial still outranks a
         # validation error exactly as before.
+        # ...but a caller *already* over quota must not buy that validation
+        # with a rejected request. The recursive validator walks the whole
+        # payload and runs ``re.search`` against schema-supplied ``pattern``
+        # and ``patternProperties`` on caller-controlled input, so putting it
+        # in front of every admission check handed an over-quota caller
+        # unlimited CPU — the limits stopped protecting the work they exist to
+        # protect. This peek is read-only: it records nothing, consumes no
+        # token and prunes no window, so the accounting below is untouched and
+        # ``acquire``/``check_permission`` remain the authority. It only
+        # short-circuits a call that is over quota *before* validation runs.
+        admission_denial = self._admission_denial(tool)
+        if admission_denial is not None:
+            denial_reason, denial_status, denial_type = admission_denial
+            result = ToolResult(
+                tool_name=call.tool_name,
+                status=denial_status,
+                error=denial_reason,
+                error_type=denial_type,
+                queued_at=queued_at,
+                completed_at=datetime.now(timezone.utc),
+                trace_id=trace_id,
+                span_id=span_id,
+            )
+            if self._telemetry:
+                await self._telemetry.record_execution(call, result)
+            return result
+
         val_result = await self._validate_call_arguments(
             tool, call, queued_at, trace_id, span_id
         )
@@ -722,6 +749,45 @@ class ExecutionEngine:
                 if self._telemetry:
                     await self._telemetry.record_execution(call, result)
                 return result
+        return None
+
+    def _admission_denial(
+        self, tool: ToolDefinition
+    ) -> tuple[str, ExecutionStatus, str] | None:
+        """The reason this call is already over quota, or ``None``.
+
+        Consults both limiters read-only, and reports the result the *denying*
+        limiter would have produced: the ``SecurityPolicy`` window raises
+        ``PermissionDeniedError`` and the ``RateLimiter`` raises
+        ``RateLimitExceeded``, so short-circuiting must not relabel one as the
+        other — a caller distinguishing them would see the reason change
+        depending only on how early the refusal happened.
+
+        Deliberately conservative: it reports only what is *certainly* refused
+        now, so a call it admits still goes through the real, recording checks
+        unchanged.
+        """
+        policy = self._security_policy
+        if policy is not None:
+            check = getattr(policy, "would_exceed_rate_limit", None)
+            if callable(check):
+                # ``getattr``: a replacement policy predating this method must
+                # not break, exactly as the ``check_permission`` keywords are
+                # probed rather than assumed.
+                reason = check()
+                if reason:
+                    return (
+                        str(reason),
+                        ExecutionStatus.PERMISSION_DENIED,
+                        "PermissionDeniedError",
+                    )
+        limiter = self._rate_limiter
+        if limiter is not None:
+            check = getattr(limiter, "would_exceed", None)
+            if callable(check):
+                reason = check(tool.name, tool.namespace)
+                if reason:
+                    return str(reason), ExecutionStatus.FAILURE, "RateLimitExceeded"
         return None
 
     async def _validate_call_arguments(
@@ -1243,6 +1309,17 @@ class ExecutionEngine:
                 )
                 if not matched_ok:
                     return False, pattern_err
+
+                obj_required_early = val_schema.get("required")
+                if isinstance(obj_required_early, list) and obj_required_early:
+                    # Checked before the no-properties shortcut below: a
+                    # ``required`` name needs no matching ``properties`` entry,
+                    # so ``{"type": "object", "properties": {}, "required":
+                    # ["token"]}`` — valid, and what a merged or imported
+                    # schema produces — was accepting ``{}`` outright.
+                    for req_prop in obj_required_early:
+                        if isinstance(req_prop, str) and req_prop not in value:
+                            return False, f"Missing required parameter: {path}.{req_prop}"
 
                 if not isinstance(obj_properties, dict) or not obj_properties:
                     # No declared properties. Three distinct schema intents

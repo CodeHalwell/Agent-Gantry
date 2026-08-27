@@ -906,6 +906,28 @@ adapters, and the provider dialects agree with it.
   documented fallback — but it *silently drops* such a name when one arrives
   as a keyword rather than through the field mapping, so the bridge no longer
   depends on which spelling Pydantic sees.
+- **An over-quota call is refused before it buys schema validation.**
+  Validating arguments ahead of the security policy (so the confirmation
+  probe's rate-limit exemption could be decided accurately) meant *every*
+  request ran the full recursive validator first — including one already over
+  quota. Since the validator runs `re.search` against schema-supplied
+  `pattern`/`patternProperties` on caller-controlled input, the limits stopped
+  protecting the work they exist to protect. A read-only admission peek now
+  runs first: it records no call, consumes no token and prunes no window, so
+  the accounting is unchanged and `acquire`/`check_permission` remain the
+  authority — it only short-circuits a call that is *certainly* over quota.
+  Each limiter's own result shape is preserved, so a `SecurityPolicy` refusal
+  still reports `PERMISSION_DENIED` rather than being relabelled.
+- **`required` holds in an object declaring no properties.** A `required` name
+  needs no matching `properties` entry, so
+  `{"type": "object", "properties": {}, "required": ["token"]}` is valid — but
+  the no-properties shortcut ran before the required loop and accepted `{}`
+  outright.
+- **Google ADK placeholders match the annotation they accompany.** Once a
+  formatted string became a `datetime` and an enum a `Literal`, the synthetic
+  default was still derived from the raw JSON type and stayed `""` —
+  recreating the annotation/default mismatch `type_matched_defaults` exists to
+  avoid, which ADK rejects during signature processing.
 
 ### Performance
 

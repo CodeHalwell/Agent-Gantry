@@ -2079,3 +2079,149 @@ async def test_a_boolean_schema_is_honoured_wherever_a_schema_may_appear(engine)
         "required": ["v"],
     }
     assert await check(open_tail, {"v": [1, "anything"]}) == (True, None)
+
+
+@pytest.mark.asyncio
+async def test_an_over_quota_call_is_refused_before_it_buys_validation():
+    """The recursive validator walks the whole payload and runs ``re.search``
+    against schema-supplied patterns on caller-controlled input. Running it
+    ahead of every admission check handed an over-quota caller unlimited CPU —
+    the limits stopped protecting the work they exist to protect
+    (PR #381 review)."""
+    import agent_gantry.core.executor as executor_module
+    from agent_gantry import AgentGantry
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from agent_gantry.core.security import SecurityPolicy
+    from agent_gantry.schema.execution import ToolCall
+
+    evaluations = {"count": 0}
+    original = executor_module._check_constraints
+
+    def counting(value, schema, path):
+        if isinstance(schema, dict) and "pattern" in schema:
+            evaluations["count"] += 1
+        return original(value, schema, path)
+
+    executor_module._check_constraints = counting
+    try:
+        gantry = AgentGantry(
+            embedder=SimpleEmbedder(dimension=64),
+            security_policy=SecurityPolicy(require_confirmation=[], max_requests_per_minute=2),
+        )
+
+        async def handler(s):
+            return s
+
+        await gantry.add_tool(
+            ToolDefinition(
+                name="patterned",
+                description="A tool whose schema pattern-matches its argument",
+                parameters_schema={
+                    "type": "object",
+                    "properties": {"s": {"type": "string", "pattern": "^a+$"}},
+                    "required": ["s"],
+                },
+                tags=["demo"],
+            ),
+            handler=handler,
+        )
+        await gantry.sync()
+
+        for _ in range(2):
+            result = await gantry.execute(
+                ToolCall(tool_name="patterned", arguments={"s": "aaaa!"})
+            )
+            assert result.error_type == "ValidationError"
+        spent = evaluations["count"]
+        assert spent == 2
+
+        # Over quota now: further calls are refused without the pattern ever
+        # being evaluated again.
+        for _ in range(4):
+            denied = await gantry.execute(
+                ToolCall(tool_name="patterned", arguments={"s": "aaaa!"})
+            )
+            assert denied.status.value == "permission_denied"
+        assert evaluations["count"] == spent
+    finally:
+        executor_module._check_constraints = original
+
+
+def test_the_admission_peek_spends_nothing():
+    """It runs before the recording checks, so it has to leave both limiters
+    exactly as it found them — otherwise it would double-charge every call it
+    admits, the very bug the ordering it protects was introduced to fix."""
+    import asyncio
+
+    from agent_gantry.core.rate_limiter import RateLimiter
+    from agent_gantry.core.security import SecurityPolicy
+    from agent_gantry.schema.config import RateLimitConfig
+
+    for strategy in ("sliding_window", "token_bucket", "fixed_window"):
+        limiter = RateLimiter(
+            RateLimitConfig(
+                enabled=True,
+                max_calls_per_minute=3,
+                max_calls_per_hour=100,
+                strategy=strategy,
+            )
+        )
+
+        async def spend(limiter=limiter):
+            for _ in range(50):
+                limiter.would_exceed("t", "default")
+            admitted = 0
+            for _ in range(10):
+                try:
+                    await limiter.acquire("t", "default")
+                except Exception:
+                    break
+                admitted += 1
+                await limiter.release("t", "default")
+            return admitted
+
+        assert asyncio.run(spend()) == 3, strategy
+
+    policy = SecurityPolicy(require_confirmation=[], max_requests_per_minute=2)
+    assert policy.would_exceed_rate_limit() is None
+    for _ in range(50):
+        policy.would_exceed_rate_limit()
+    assert not policy._request_timestamps
+    for _ in range(2):
+        policy.check_permission("t", {})
+    assert policy.would_exceed_rate_limit() is not None
+    assert len(policy._request_timestamps) == 2
+
+
+@pytest.mark.asyncio
+async def test_required_keys_hold_in_an_object_declaring_no_properties(engine):
+    """``required`` names need no matching ``properties`` entry, so
+    ``{"type": "object", "properties": {}, "required": ["token"]}`` is valid —
+    and the no-properties shortcut ran before the required loop, accepting
+    ``{}`` outright (PR #381 review)."""
+    tool = ToolDefinition(
+        name="propertyless",
+        description="A nested object that requires a key it does not declare",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "payload": {"type": "object", "properties": {}, "required": ["token"]}
+            },
+            "required": ["payload"],
+        },
+    )
+    ok, err = await engine._validate_arguments(tool, {"payload": {}})
+    assert ok is False and "payload.token" in err
+    assert await engine._validate_arguments(tool, {"payload": {"token": "x"}}) == (True, None)
+
+    # A genuinely free-form object is untouched: it requires nothing.
+    free_form = ToolDefinition(
+        name="free_form",
+        description="A plain dict parameter, requiring no particular key",
+        parameters_schema={
+            "type": "object",
+            "properties": {"m": {"type": "object"}},
+            "required": ["m"],
+        },
+    )
+    assert await engine._validate_arguments(free_form, {"m": {"anything": 1}}) == (True, None)

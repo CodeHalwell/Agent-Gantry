@@ -294,7 +294,13 @@ class ToolSpec:
                     # surface it instead of a synthetic placeholder.
                     default = schema_default
                 elif type_matched_defaults:
-                    default = _typed_default(json_type)
+                    # Derived from the *final* annotation, not the raw JSON
+                    # type. Those diverged once a formatted string became a
+                    # ``datetime`` and an enum a ``Literal``: the placeholder
+                    # stayed ``""``, recreating the annotation/default mismatch
+                    # this mode exists to avoid, and ADK rejects such a tool
+                    # during signature processing.
+                    default = _default_for_annotation(annotation, json_type)
                 else:
                     default = None
             description = prop.get("description")
@@ -370,6 +376,31 @@ def _literal_members(prop: dict[str, Any]) -> tuple[Any, ...] | None:
     if not all(isinstance(v, (str, int, bool, float)) or v is None for v in values):
         return None
     return tuple(values)
+
+
+def _default_for_annotation(annotation: Any, json_type: Any) -> Any:
+    """A placeholder value an annotation will actually accept.
+
+    Google ADK's fallback path rejects a default whose type mismatches the
+    annotation, so the two have to be derived together. A ``Literal`` takes
+    its own first member; a reconstructed string format takes a real value of
+    that type; everything else falls back to the type-matched empty value.
+    """
+    import typing
+
+    if typing.get_origin(annotation) is Literal:
+        members = typing.get_args(annotation)
+        if members:
+            return members[0]
+    if annotation is datetime.datetime:
+        return datetime.datetime(1970, 1, 1)
+    if annotation is datetime.date:
+        return datetime.date(1970, 1, 1)
+    if annotation is datetime.time:
+        return datetime.time(0, 0)
+    if annotation is uuid.UUID:
+        return uuid.UUID(int=0)
+    return _typed_default(json_type)
 
 
 def _json_native(value: Any, prop: Any) -> Any:

@@ -260,6 +260,24 @@ class SecurityPolicy:
         if denial is not None:
             raise PermissionDeniedError(denial)
 
+    def would_exceed_rate_limit(self) -> str | None:
+        """Whether :meth:`check_permission` would refuse on rate limit alone.
+
+        Read-only: it neither records a call nor prunes the window, so it can
+        run *before* the work the limit is meant to protect.
+        ``check_permission`` remains the authority.
+        """
+        if self.max_requests_per_minute <= 0:
+            return None
+        now = time.time()
+        recent = sum(1 for stamp in self._request_timestamps if now - stamp < 60)
+        if recent >= self.max_requests_per_minute:
+            return (
+                f"Rate limit exceeded: maximum {self.max_requests_per_minute} "
+                "requests per minute allowed."
+            )
+        return None
+
     def _extract_all_strings(self, data: typing.Any) -> typing.Iterator[str]:
         """Recursively extract all string values from a data structure."""
         if isinstance(data, str):
