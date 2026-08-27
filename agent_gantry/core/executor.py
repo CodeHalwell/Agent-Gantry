@@ -16,12 +16,13 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.schema.base import (
-    check_json_constraints as _check_constraints,
-)
-from agent_gantry.schema.base import (
+    RECONSTRUCTED_STRING_FORMATS,
     describe_path,
     json_identity_key,
     schema_declares_null,
+)
+from agent_gantry.schema.base import (
+    check_json_constraints as _check_constraints,
 )
 from agent_gantry.schema.execution import (
     BatchToolCall,
@@ -118,6 +119,47 @@ _EVALUABLE_LISTS = ("anyOf", "oneOf", "allOf", "prefixItems")
 _EVALUABLE_SINGLES = ("items", "additionalProperties", "not")
 
 
+def _applies_at_runtime(key: str, value: Any) -> bool:
+    """Whether a constraint keyword will actually bind, not merely be known.
+
+    Two of the keywords this validator implements decline to act on some
+    values, both fail-open by design: ``pattern`` skips a regex Python's
+    ``re`` cannot compile, because a legal ECMA-262 one like ``\\p{L}`` would
+    otherwise fail every call; and ``format`` is enforced only for the string
+    formats Gantry reconstructs, ``format`` being an annotation by default in
+    JSON Schema. Under ``not`` that silence reads as "matched", so
+    ``{"type": "string", "not": {"pattern": "\\p{L}"}}`` rejected ``"123"``
+    as well as ``"abc"`` (PR #386 review).
+
+    So evaluability asks whether the constraint *binds*, not whether the
+    keyword is spelled correctly. Third instance of the same inversion, after
+    ``$ref`` and the unevaluable ``oneOf`` branch, and the general form of it.
+    """
+    if key == "pattern":
+        # ``check_json_constraints`` skips a non-string or empty pattern too.
+        if not isinstance(value, str) or not value:
+            return False
+        try:
+            re.compile(value)
+        except re.error:
+            return False
+        return True
+    if key == "patternProperties":
+        if not isinstance(value, dict):
+            return False
+        for regex in value:
+            if not isinstance(regex, str):
+                return False
+            try:
+                re.compile(regex)
+            except re.error:
+                return False
+        return True
+    if key == "format":
+        return isinstance(value, str) and value in RECONSTRUCTED_STRING_FORMATS
+    return True
+
+
 def _fully_evaluable(schema: Any, _depth: int = 0) -> bool:
     """Whether every constraint in ``schema`` is one this validator applies.
 
@@ -149,6 +191,8 @@ def _fully_evaluable(schema: Any, _depth: int = 0) -> bool:
         if key in _INERT_KEYWORDS:
             continue
         if key not in _EVALUATED_KEYWORDS:
+            return False
+        if not _applies_at_runtime(key, value):
             return False
         if key in _EVALUABLE_MAPPINGS:
             if isinstance(value, dict) and not all(

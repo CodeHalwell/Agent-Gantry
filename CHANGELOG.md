@@ -48,6 +48,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   imported schema commonly uses had every argument object matching both
   branches and rejected for it, leaving the tool uncallable. Everything else
   in the schema still applies; only the combinator's own verdict is withheld.
+- **A constraint that does not bind cannot forbid anything under `not`.**
+  `pattern` skips a regex Python's `re` cannot compile (a legal ECMA-262 one
+  such as `\p{L}`) and `format` is enforced only for the string formats Gantry
+  reconstructs — both fail-open by design. Under `not` that silence read as
+  "matched", so `{"type": "string", "not": {"pattern": "\p{L}"}}` rejected
+  every value and the tool could not be called. Evaluability now asks whether
+  a constraint binds, not whether the keyword is known.
 - **The `not` keyword is evaluated.** It was parsed nowhere — the provider
   transforms walk into it, so it survived a round-trip through them and then
   constrained nothing, and a schema whose purpose is to forbid a shape

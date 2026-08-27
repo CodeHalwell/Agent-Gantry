@@ -3087,3 +3087,80 @@ async def test_a_combinator_with_unevaluable_branches_is_not_enforced(engine):
         }
     )
     assert await engine._validate_arguments(booleans, {"a": 1}) == (True, None)
+
+
+@pytest.mark.asyncio
+async def test_a_constraint_that_does_not_bind_cannot_forbid(engine):
+    """Evaluability has to mean the constraint *binds*, not that the keyword is
+    spelled correctly. Two of the implemented keywords decline to act on some
+    values, both fail-open by design: `pattern` skips a regex Python's `re`
+    cannot compile — a legal ECMA-262 one such as ``\\p{L}`` would otherwise
+    fail every call — and `format` is enforced only for the string formats
+    Gantry reconstructs, `format` being an annotation by default in JSON
+    Schema.
+
+    Under ``not`` that silence reads as "matched", so a branch declaring one
+    of them forbade *every* value and the tool could not be called
+    (PR #386 review). Third instance of the same inversion, after `$ref` and
+    the unevaluable `oneOf` branch, and the general form of it."""
+    from agent_gantry.core.executor import _fully_evaluable
+
+    ecma_only = r"\p{L}"
+
+    def tool_with(prop: dict) -> ToolDefinition:
+        return ToolDefinition(
+            name="constrained",
+            description="A not-branch whose constraint may not bind",
+            parameters_schema={"type": "object", "properties": {"s": prop}},
+        )
+
+    # A constraint that cannot bind forbids nothing.
+    for silent in ({"pattern": ecma_only}, {"format": "email"}):
+        tool = tool_with({"type": "string", "not": silent})
+        for value in ("123", "abc"):
+            assert await engine._validate_arguments(tool, {"s": value}) == (
+                True,
+                None,
+            ), (silent, value)
+
+    # One that does bind still forbids exactly what it names.
+    binding = tool_with({"type": "string", "not": {"pattern": "^a"}})
+    ok, err = await engine._validate_arguments(binding, {"s": "abc"})
+    assert ok is False and "required not to" in err
+    assert await engine._validate_arguments(binding, {"s": "xyz"}) == (True, None)
+
+    # ``format`` is enforced for the formats Gantry reconstructs, so a ``not``
+    # around one of those binds too.
+    formatted = tool_with({"type": "string", "not": {"format": "uuid"}})
+    ok, err = await engine._validate_arguments(
+        formatted, {"s": "00000000-0000-0000-0000-000000000001"}
+    )
+    assert ok is False and "required not to" in err
+    assert await engine._validate_arguments(formatted, {"s": "plain"}) == (True, None)
+
+    # Outside ``not`` the fail-open behaviour is untouched: an uncompilable
+    # pattern must not start rejecting values, which is what it was made
+    # fail-open to avoid.
+    unenforced = tool_with({"type": "string", "pattern": ecma_only})
+    assert await engine._validate_arguments(unenforced, {"s": "123"}) == (True, None)
+    enforced = tool_with({"type": "string", "pattern": "^a"})
+    ok, err = await engine._validate_arguments(enforced, {"s": "xyz"})
+    assert ok is False and "must match pattern" in err
+
+    # The predicate directly, including the shapes ``check_json_constraints``
+    # itself skips and a constraint buried one level down.
+    for binds in (
+        {"pattern": "^a"},
+        {"format": "date-time"},
+        {"patternProperties": {"^a": {"type": "integer"}}},
+    ):
+        assert _fully_evaluable(binds) is True, binds
+    for silent in (
+        {"pattern": ecma_only},
+        {"pattern": ""},
+        {"pattern": 5},
+        {"format": "email"},
+        {"patternProperties": {ecma_only: {"type": "integer"}}},
+        {"type": "object", "properties": {"x": {"pattern": ecma_only}}},
+    ):
+        assert _fully_evaluable(silent) is False, silent
