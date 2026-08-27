@@ -791,6 +791,14 @@ def _pattern_key_validator(
     def _check(value: Any) -> Any:
         if not isinstance(value, dict):
             return value
+        # A *new* mapping: the adapters' converted values are written back, so
+        # a pattern-keyed value behaves like a declared one. Discarding them
+        # left ``{"n_x": "1"}`` a string against ``{"type": "integer"}`` —
+        # accepted by the model, then forwarded unchanged by LlamaIndex's
+        # ``model_dump()`` and rejected by the executor. Declared properties
+        # have always coerced here; only pattern keys did not. Building a new
+        # dict rather than mutating the caller's.
+        rebuilt: dict[Any, Any] = {}
         for key, item in value.items():
             matched = False
             for matcher, adapter in compiled:
@@ -798,16 +806,21 @@ def _pattern_key_validator(
                     continue
                 matched = True
                 if adapter is not None:
-                    adapter.validate_python(item)
-            if matched or key in declared:
+                    item = adapter.validate_python(item)
+            if matched:
+                rebuilt[key] = item
+                continue
+            if key in declared:
+                rebuilt[key] = item
                 continue
             if closed:
                 raise ValueError(f"key {key!r} matches no patternProperties entry")
             if additional_adapter is not None:
                 # Matched no pattern, so this is exactly the set
                 # ``additionalProperties`` governs.
-                additional_adapter.validate_python(item)
-        return value
+                item = additional_adapter.validate_python(item)
+            rebuilt[key] = item
+        return rebuilt
 
     return _check
 

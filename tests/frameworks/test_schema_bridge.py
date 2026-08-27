@@ -1605,3 +1605,51 @@ def test_additional_properties_types_only_the_keys_no_pattern_matched():
         model(m={"other": "bad"})
     # Declared: typed by its own schema.
     assert model(m={"fixed": "ok"}) is not None
+
+
+def test_a_validated_pattern_value_is_written_back():
+    """A declared integer property has always coerced ``"1"`` to ``1``; a
+    pattern-matched key validated the same way but *discarded* the result, so
+    the model accepted ``{"n_x": "1"}`` while keeping the string. LlamaIndex's
+    ``model_dump()`` then forwarded it unchanged and the executor rejected it
+    against the integer schema (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "m": {
+                    "type": "object",
+                    "patternProperties": {"^n_": {"type": "integer"}},
+                    "additionalProperties": {"type": "integer"},
+                }
+            },
+            "required": ["m"],
+        },
+    )
+    assert model(m={"n_x": "1"}).model_dump()["m"] == {"n_x": 1}
+    assert model(m={"n_x": 1}).model_dump()["m"] == {"n_x": 1}
+    # The additionalProperties path writes back too, being the same question
+    # for the keys no pattern matched.
+    assert model(m={"other": "2"}).model_dump()["m"] == {"other": 2}
+    # A value no coercion can rescue is still rejected.
+    with pytest.raises(ValidationError):
+        model(m={"n_x": "bad"})
+
+
+def test_the_caller_mapping_is_not_mutated():
+    """The rewrite builds a new mapping — a validator that edited the caller's
+    dict in place would surprise anything else holding a reference to it."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "m": {"type": "object", "patternProperties": {"^n_": {"type": "integer"}}}
+            },
+            "required": ["m"],
+        },
+    )
+    original = {"n_x": "1"}
+    assert model(m=original).model_dump()["m"] == {"n_x": 1}
+    assert original == {"n_x": "1"}

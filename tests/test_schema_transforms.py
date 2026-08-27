@@ -823,3 +823,45 @@ class TestStrictNullableEnums:
         mode = out["properties"]["mode"]
         assert mode["type"] == "string"
         assert mode["enum"] == ["fast", "slow"]
+
+
+def test_pattern_keyed_objects_have_no_strict_mode_representation():
+    """Strict mode can only describe an object whose full key set is written
+    out in ``properties``. Keys typed by regex are by definition not — so the
+    object is open however ``additionalProperties`` is set, ``false``
+    included. Reading only ``additionalProperties`` called such a schema
+    strict-safe, and the transform then published it with the unsupported
+    ``patternProperties`` keyword still attached, which the provider rejects
+    (PR #381 review)."""
+    from agent_gantry.adapters.tool_spec.schema_utils import unsupported_strict_paths
+
+    closed = {
+        "type": "object",
+        "properties": {
+            "m": {
+                "type": "object",
+                "patternProperties": {"^n_": {"type": "integer"}},
+                "additionalProperties": False,
+            }
+        },
+        "required": ["m"],
+    }
+    assert unsupported_strict_paths(closed) == ["m"]
+
+    at_root = {
+        "type": "object",
+        "properties": {},
+        "patternProperties": {"^n_": {"type": "integer"}},
+        "additionalProperties": False,
+    }
+    assert unsupported_strict_paths(at_root) == ["<root>"]
+
+    # Schemas strict mode *can* express are unaffected.
+    plain = {
+        "type": "object",
+        "properties": {"a": {"type": "string"}},
+        "required": ["a"],
+        "additionalProperties": False,
+    }
+    assert unsupported_strict_paths(plain) == []
+    assert unsupported_strict_paths({"type": "object", "properties": {}, "required": []}) == []

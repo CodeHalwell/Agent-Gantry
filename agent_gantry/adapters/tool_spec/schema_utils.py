@@ -229,6 +229,16 @@ def _is_open_map(node: dict[str, Any]) -> bool:
     ``{"type": "object"}`` from an untyped ``dict`` parameter — is an open
     map with no strict-mode representation.
     """
+    patterns = node.get("patternProperties")
+    if isinstance(patterns, dict) and patterns:
+        # Keys typed by regex are, by definition, not enumerated in
+        # ``properties`` — so the object is open however ``additionalProperties``
+        # is set, ``false`` included. Reading only ``additionalProperties``
+        # called such a schema strict-safe, and the strict transform then
+        # published it with the ``patternProperties`` keyword still on it,
+        # which strict mode does not support and the provider rejects.
+        return True
+
     properties = node.get("properties")
     if isinstance(properties, dict) and properties:
         additional = node.get("additionalProperties")

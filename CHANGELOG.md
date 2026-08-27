@@ -826,6 +826,21 @@ adapters, and the provider dialects agree with it.
   `{"s_a": "ok"}` was checked against `additionalProperties: {"type":
   "integer"}` and rejected. Verified against the executor across all forty
   `properties` × `additionalProperties` × payload combinations.
+- **A pattern-keyed object was published under OpenAI strict mode.** Strict
+  mode can only describe an object whose full key set is written out in
+  `properties`, and keys typed by regex are by definition not — so such an
+  object is open however `additionalProperties` is set, `false` included.
+  `unsupported_strict_paths()` read only `additionalProperties` and called it
+  strict-safe, so the transform emitted it with the unsupported
+  `patternProperties` keyword still attached and the provider rejected the
+  tool declaration.
+- **A validated pattern-property value was discarded.** A declared integer
+  property has always coerced `"1"` to `1`; a pattern-matched key ran the same
+  adapter but threw the result away, so the model accepted `{"n_x": "1"}` while
+  keeping the string — which LlamaIndex's `model_dump()` then forwarded
+  unchanged for the executor to reject against the integer schema. The
+  converted value is written back now, into a new mapping rather than the
+  caller's.
 
 ### Performance
 
