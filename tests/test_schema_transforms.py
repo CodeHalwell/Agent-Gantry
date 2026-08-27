@@ -12,10 +12,16 @@ from __future__ import annotations
 import pytest
 
 from agent_gantry import AgentGantry
-from agent_gantry.adapters.tool_spec.providers import GeminiAdapter, OpenAIAdapter
+from agent_gantry.adapters.tool_spec.providers import (
+    AnthropicAdapter,
+    GeminiAdapter,
+    OpenAIAdapter,
+    OpenAIResponsesAdapter,
+)
 from agent_gantry.adapters.tool_spec.schema_utils import (
     sanitize_gemini_schema,
     strict_json_schema,
+    unsupported_strict_paths,
 )
 from agent_gantry.schema.tool import ToolDefinition
 
@@ -123,6 +129,445 @@ class TestStrictJsonSchema:
         out = strict_json_schema({})
         assert out["additionalProperties"] is False
         assert out["required"] == []
+
+
+class TestStrictNullableConst:
+    """``const`` is an independent constraint no ``type`` widening satisfies
+    (PR #381 review)."""
+
+    def test_optional_const_gains_a_null_branch(self) -> None:
+        out = strict_json_schema(
+            {
+                "type": "object",
+                "properties": {"mode": {"type": "string", "const": "fixed"}},
+                "required": [],
+            }
+        )
+        mode = out["properties"]["mode"]
+        # Widening ``type`` alone would leave ``const`` forbidding null, and
+        # strict mode makes the property required — so the model could not
+        # express omission at all.
+        assert mode["anyOf"] == [{"type": "string", "const": "fixed"}, {"type": "null"}]
+
+    def test_required_const_is_left_alone(self) -> None:
+        out = strict_json_schema(
+            {
+                "type": "object",
+                "properties": {"mode": {"type": "string", "const": "fixed"}},
+                "required": ["mode"],
+            }
+        )
+        assert out["properties"]["mode"] == {"type": "string", "const": "fixed"}
+
+
+class TestUnsupportedStrictPaths:
+    """Objects with arbitrary keys have no strict-mode representation, so
+    they must be detected rather than silently mangled (PR #381 review)."""
+
+    def test_typed_mapping_is_unsupported(self) -> None:
+        # dict[str, int] as build_parameters_schema emits it.
+        assert unsupported_strict_paths(
+            {
+                "type": "object",
+                "properties": {
+                    "counts": {
+                        "type": "object",
+                        "additionalProperties": {"type": "integer"},
+                    }
+                },
+                "required": ["counts"],
+            }
+        ) == ["counts"]
+
+    def test_untyped_dict_is_unsupported(self) -> None:
+        # dict[str, Any] → a bare {"type": "object"}; strict mode needs the
+        # key set enumerated, which this does not provide.
+        assert unsupported_strict_paths(
+            {
+                "type": "object",
+                "properties": {"meta": {"type": "object"}},
+                "required": ["meta"],
+            }
+        ) == ["meta"]
+
+    def test_fully_declared_schema_is_supported(self) -> None:
+        assert (
+            unsupported_strict_paths(
+                {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "addr": {
+                            "type": "object",
+                            "properties": {"street": {"type": "string"}},
+                            "required": ["street"],
+                        },
+                    },
+                    "required": ["name", "addr"],
+                }
+            )
+            == []
+        )
+
+    def test_no_argument_tool_is_supported(self) -> None:
+        # properties: {} is the "takes no arguments" shape strict_json_schema
+        # itself emits — not an open map.
+        assert unsupported_strict_paths({"type": "object", "properties": {}}) == []
+        assert unsupported_strict_paths({}) == []
+
+    def test_kwargs_style_additional_properties_is_supported(self) -> None:
+        # Real properties plus additionalProperties: true (a **kwargs
+        # handler). Strict mode narrows it by forcing false, which is a
+        # documented narrowing rather than an inexpressible shape.
+        assert (
+            unsupported_strict_paths(
+                {
+                    "type": "object",
+                    "properties": {"a": {"type": "string"}},
+                    "required": ["a"],
+                    "additionalProperties": True,
+                }
+            )
+            == []
+        )
+
+    def test_typed_additional_properties_alongside_declared_properties(self) -> None:
+        """Declared properties *and* a typed ``additionalProperties`` still
+        describes keys strict mode cannot express — forcing it to false there
+        silently drops the typed extras (PR #381 review)."""
+        assert unsupported_strict_paths(
+            {
+                "type": "object",
+                "properties": {
+                    "outer": {
+                        "type": "object",
+                        "properties": {"name": {"type": "string"}},
+                        "additionalProperties": {"type": "integer"},
+                    }
+                },
+                "required": ["outer"],
+            }
+        ) == ["outer"]
+
+    def test_empty_additional_properties_alongside_properties_is_supported(self) -> None:
+        # ``{}`` is spec-equivalent to ``true``, so it is the same **kwargs
+        # narrowing strict mode legitimately applies.
+        assert (
+            unsupported_strict_paths(
+                {
+                    "type": "object",
+                    "properties": {"a": {"type": "string"}},
+                    "required": ["a"],
+                    "additionalProperties": {},
+                }
+            )
+            == []
+        )
+
+    def test_nested_and_array_item_mappings_are_found(self) -> None:
+        found = unsupported_strict_paths(
+            {
+                "type": "object",
+                "properties": {
+                    "payload": {
+                        "type": "object",
+                        "properties": {
+                            "tags": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "additionalProperties": {"type": "string"},
+                                },
+                            }
+                        },
+                        "required": ["tags"],
+                    }
+                },
+                "required": ["payload"],
+            }
+        )
+        assert found == ["payload.tags.items"]
+
+    def test_strict_transform_leaves_open_maps_alone(self) -> None:
+        # Forcing additionalProperties: false here would produce an object
+        # accepting no keys at all, silently discarding the parameter.
+        out = strict_json_schema(
+            {
+                "type": "object",
+                "properties": {
+                    "counts": {
+                        "type": "object",
+                        "additionalProperties": {"type": "integer"},
+                    }
+                },
+                "required": ["counts"],
+            }
+        )
+        assert out["properties"]["counts"]["additionalProperties"] == {"type": "integer"}
+
+    def test_pre_widened_nullable_enum_still_admits_null(self) -> None:
+        """A schema that already lists ``null`` in its ``type`` is not
+        necessarily nullable: ``enum`` is an independent constraint, and some
+        emitters produce an optional ``Literal`` pre-widened. Returning early
+        there left strict mode making the property required with no value that
+        satisfies both constraints (PR #381 review)."""
+        out = strict_json_schema(
+            {
+                "type": "object",
+                "properties": {
+                    "speed": {"type": ["string", "null"], "enum": ["fast", "slow"]}
+                },
+                "required": [],
+            }
+        )
+        speed = out["properties"]["speed"]
+        assert speed["type"] == ["string", "null"]
+        assert None in speed["enum"]
+        # Strict mode requires every property, so the only way to express
+        # "not provided" is a value both constraints accept.
+        assert out["required"] == ["speed"]
+
+    def test_anyof_with_a_sibling_assertion_wraps_the_whole_schema(self) -> None:
+        """Appending a null branch only works when the combinator is the whole
+        schema. A sibling ``type`` applies independently, so a null added
+        *inside* the ``anyOf`` still fails it — and strict mode makes the
+        property required, leaving no satisfiable value (PR #381 review)."""
+        out = strict_json_schema(
+            {
+                "type": "object",
+                "properties": {
+                    "n": {"type": "integer", "anyOf": [{"minimum": 10}, {"maximum": 0}]}
+                },
+                "required": [],
+            }
+        )
+        n = out["properties"]["n"]
+        assert n == {
+            "anyOf": [
+                {"type": "integer", "anyOf": [{"minimum": 10}, {"maximum": 0}]},
+                {"type": "null"},
+            ]
+        }
+        assert out["required"] == ["n"]
+
+    def test_bare_anyof_still_gains_a_flat_null_branch(self) -> None:
+        """No sibling assertion means the combinator *is* the schema, so
+        appending is equivalent and keeps the emitted schema flat. A
+        ``description`` alongside it annotates rather than constrains."""
+        out = strict_json_schema(
+            {
+                "type": "object",
+                "properties": {
+                    "n": {"description": "d", "anyOf": [{"type": "integer"}]}
+                },
+                "required": [],
+            }
+        )
+        assert out["properties"]["n"] == {
+            "description": "d",
+            "anyOf": [{"type": "integer"}, {"type": "null"}],
+        }
+
+    def test_oneof_is_always_wrapped_rather_than_extended(self) -> None:
+        """``oneOf`` demands *exactly* one match, and null passes most
+        constraint-only branches vacuously — an appended null branch would
+        make null match several and fail."""
+        out = strict_json_schema(
+            {
+                "type": "object",
+                "properties": {"n": {"oneOf": [{"type": "integer"}, {"type": "string"}]}},
+                "required": [],
+            }
+        )
+        assert out["properties"]["n"] == {
+            "anyOf": [
+                {"oneOf": [{"type": "integer"}, {"type": "string"}]},
+                {"type": "null"},
+            ]
+        }
+
+    def test_allof_is_wrapped_rather_than_type_widened(self) -> None:
+        """``allOf`` intersects, so *every* branch must admit null. Widening
+        only the outer ``type`` left a const branch that still rejects it, and
+        strict mode makes the property required (PR #381 review)."""
+        out = strict_json_schema(
+            {
+                "type": "object",
+                "properties": {"m": {"type": "string", "allOf": [{"const": "fixed"}]}},
+                "required": [],
+            }
+        )
+        assert out["properties"]["m"] == {
+            "anyOf": [
+                {"type": "string", "allOf": [{"const": "fixed"}]},
+                {"type": "null"},
+            ]
+        }
+
+    def test_single_type_enum_widening_is_unchanged(self) -> None:
+        out = strict_json_schema(
+            {
+                "type": "object",
+                "properties": {"speed": {"type": "string", "enum": ["fast", "slow"]}},
+                "required": [],
+            }
+        )
+        assert out["properties"]["speed"]["type"] == ["string", "null"]
+        assert out["properties"]["speed"]["enum"] == ["fast", "slow", None]
+
+
+class TestStrictFallbackInAdapters:
+    """A tool strict mode cannot express is emitted without the flag rather
+    than with a schema OpenAI rejects outright."""
+
+    @staticmethod
+    def _mapping_tool() -> ToolDefinition:
+        return ToolDefinition(
+            name="tally",
+            description="Count things",
+            parameters_schema={
+                "type": "object",
+                "properties": {
+                    "counts": {
+                        "type": "object",
+                        "additionalProperties": {"type": "integer"},
+                    }
+                },
+                "required": ["counts"],
+            },
+        )
+
+    def test_openai_drops_strict_for_open_maps(self, caplog: pytest.LogCaptureFixture) -> None:
+        tool = self._mapping_tool()
+        with caplog.at_level("WARNING"):
+            out = OpenAIAdapter().to_provider_schema(tool, strict=True)
+
+        assert "strict" not in out["function"]
+        # The schema is passed through untouched, so the tool stays callable.
+        assert out["function"]["parameters"] == tool.parameters_schema
+        assert "tally" in caplog.text
+        assert "counts" in caplog.text
+
+    def test_openai_responses_drops_strict_for_open_maps(self) -> None:
+        out = OpenAIResponsesAdapter().to_provider_schema(self._mapping_tool(), strict=True)
+        assert "strict" not in out
+
+    def test_anthropic_drops_strict_for_open_maps(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Anthropic strict mode also requires ``additionalProperties: false``,
+        so setting it on a schema that needs arbitrary keys replaced a typed
+        mapping with an object accepting none — the same data loss the OpenAI
+        adapters gate against (PR #381 review)."""
+        tool = self._mapping_tool()
+        with caplog.at_level("WARNING"):
+            out = AnthropicAdapter().to_provider_schema(tool, strict=True)
+
+        assert "strict" not in out
+        assert out["input_schema"]["properties"]["counts"]["additionalProperties"] == {
+            "type": "integer"
+        }
+        assert "tally" in caplog.text
+
+    def test_anthropic_keeps_kwargs_handlers_callable(self) -> None:
+        """A ``**kwargs`` handler advertises an open root object. Forcing it
+        closed under strict mode left Claude unable to pass any argument at
+        all — strictly worse than emitting the tool unconstrained."""
+        tool = ToolDefinition(
+            name="passthrough",
+            description="Handler accepting arbitrary keyword arguments",
+            parameters_schema={
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": True,
+            },
+        )
+        out = AnthropicAdapter().to_provider_schema(tool, strict=True)
+        assert "strict" not in out
+        assert out["input_schema"]["additionalProperties"] is True
+
+    def test_anthropic_still_applies_strict_to_closed_schemas(self) -> None:
+        tool = ToolDefinition(
+            name="greet",
+            description="Greet someone by name",
+            parameters_schema={
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
+            },
+        )
+        out = AnthropicAdapter().to_provider_schema(tool, strict=True)
+        assert out["strict"] is True
+        assert out["input_schema"]["additionalProperties"] is False
+
+    def test_strict_still_applies_to_fully_declared_tools(self) -> None:
+        tool = ToolDefinition(
+            name="greet",
+            description="Greet someone",
+            parameters_schema={
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": [],
+            },
+        )
+        out = OpenAIAdapter().to_provider_schema(tool, strict=True)
+        assert out["function"]["strict"] is True
+        assert out["function"]["parameters"]["additionalProperties"] is False
+
+
+class TestEmittedSchemasAreCallerOwned:
+    """The registry holds one canonical ``parameters_schema`` per tool, so no
+    adapter may hand out a payload that aliases it — a caller augmenting the
+    payload would otherwise corrupt every later conversion of that tool and
+    the executor's own validation (PR #381 review)."""
+
+    @staticmethod
+    def _tool() -> ToolDefinition:
+        return ToolDefinition(
+            name="tally",
+            description="Count things carefully",
+            parameters_schema={
+                "type": "object",
+                "properties": {
+                    "counts": {
+                        "type": "object",
+                        "additionalProperties": {"type": "integer"},
+                    }
+                },
+                "required": ["counts"],
+            },
+        )
+
+    @pytest.mark.parametrize(
+        ("adapter_factory", "options", "extract"),
+        [
+            # strict=True on an open map takes the new fallback path.
+            (OpenAIAdapter, {"strict": True}, lambda o: o["function"]["parameters"]),
+            (OpenAIAdapter, {}, lambda o: o["function"]["parameters"]),
+            (OpenAIResponsesAdapter, {"strict": True}, lambda o: o["parameters"]),
+            (OpenAIResponsesAdapter, {}, lambda o: o["parameters"]),
+            (AnthropicAdapter, {"strict": True}, lambda o: o["input_schema"]),
+            (AnthropicAdapter, {}, lambda o: o["input_schema"]),
+            (GeminiAdapter, {"sanitize": False}, lambda o: o["parameters"]),
+            (GeminiAdapter, {}, lambda o: o["parameters"]),
+        ],
+    )
+    def test_mutating_the_payload_leaves_the_tool_untouched(
+        self, adapter_factory, options, extract
+    ) -> None:
+        tool = self._tool()
+        emitted = extract(adapter_factory().to_provider_schema(tool, **options))
+
+        emitted.setdefault("properties", {})["INJECTED"] = {"type": "string"}
+        # Nested too: a ``{**schema}`` spread would leave this dict shared.
+        if "counts" in tool.parameters_schema["properties"]:
+            nested = emitted.get("properties", {}).get("counts")
+            if isinstance(nested, dict):
+                nested["MUTATED"] = True
+
+        assert "INJECTED" not in tool.parameters_schema["properties"]
+        assert "MUTATED" not in tool.parameters_schema["properties"]["counts"]
 
 
 class TestSanitizeGeminiSchema:
@@ -347,3 +792,304 @@ class TestDialectOptionThreading:
 
         tools = await OpenAIRetrievalAdapter(gantry).tools("weather", strict=True)
         assert tools[0]["function"]["strict"] is True
+
+
+class TestStrictNullableEnums:
+    """Widening ``type`` to admit ``null`` is not enough on its own — ``enum``
+    is an independent constraint (PR #381 review)."""
+
+    def test_optional_enum_admits_null_after_widening(self) -> None:
+        out = strict_json_schema(
+            {
+                "type": "object",
+                "properties": {"mode": {"type": "string", "enum": ["fast", "slow"]}},
+                "required": [],
+            }
+        )
+        mode = out["properties"]["mode"]
+        assert mode["type"] == ["string", "null"]
+        # Without this the model cannot express "not provided": strict mode
+        # makes every property required, and the enum would forbid null.
+        assert mode["enum"] == ["fast", "slow", None]
+
+    def test_required_enum_is_left_alone(self) -> None:
+        out = strict_json_schema(
+            {
+                "type": "object",
+                "properties": {"mode": {"type": "string", "enum": ["fast", "slow"]}},
+                "required": ["mode"],
+            }
+        )
+        mode = out["properties"]["mode"]
+        assert mode["type"] == "string"
+        assert mode["enum"] == ["fast", "slow"]
+
+
+def test_pattern_keyed_objects_have_no_strict_mode_representation():
+    """Strict mode can only describe an object whose full key set is written
+    out in ``properties``. Keys typed by regex are by definition not — so the
+    object is open however ``additionalProperties`` is set, ``false``
+    included. Reading only ``additionalProperties`` called such a schema
+    strict-safe, and the transform then published it with the unsupported
+    ``patternProperties`` keyword still attached, which the provider rejects
+    (PR #381 review)."""
+    from agent_gantry.adapters.tool_spec.schema_utils import unsupported_strict_paths
+
+    closed = {
+        "type": "object",
+        "properties": {
+            "m": {
+                "type": "object",
+                "patternProperties": {"^n_": {"type": "integer"}},
+                "additionalProperties": False,
+            }
+        },
+        "required": ["m"],
+    }
+    assert unsupported_strict_paths(closed) == ["m"]
+
+    at_root = {
+        "type": "object",
+        "properties": {},
+        "patternProperties": {"^n_": {"type": "integer"}},
+        "additionalProperties": False,
+    }
+    assert unsupported_strict_paths(at_root) == ["<root>"]
+
+    # Schemas strict mode *can* express are unaffected.
+    plain = {
+        "type": "object",
+        "properties": {"a": {"type": "string"}},
+        "required": ["a"],
+        "additionalProperties": False,
+    }
+    assert unsupported_strict_paths(plain) == []
+    assert unsupported_strict_paths({"type": "object", "properties": {}, "required": []}) == []
+
+
+def test_a_property_forbidden_by_its_schema_has_no_strict_representation():
+    """Strict mode makes every property *required*, so a property whose schema
+    is ``false`` — satisfiable by no value — would be emitted as required and
+    unsatisfiable at once, a schema with no valid instance that turns an
+    otherwise callable tool into an uncallable one (PR #381 review)."""
+    from agent_gantry.adapters.tool_spec.schema_utils import unsupported_strict_paths
+
+    optional = {
+        "type": "object",
+        "properties": {"disabled": False, "name": {"type": "string"}},
+        "required": ["name"],
+    }
+    assert unsupported_strict_paths(optional) == ["disabled"]
+    # Required or optional, the property is equally unrepresentable.
+    assert unsupported_strict_paths(
+        {"type": "object", "properties": {"disabled": False}, "required": ["disabled"]}
+    ) == ["disabled"]
+    # Nested, and reported at its path.
+    assert unsupported_strict_paths(
+        {
+            "type": "object",
+            "properties": {"m": {"type": "object", "properties": {"d": False}}},
+            "required": ["m"],
+        }
+    ) == ["m.d"]
+
+    # ``true`` is satisfiable by everything, so it needs no fallback — and
+    # neither do the schemas strict mode already handles. Widening the
+    # unsupported set costs every one of them their strict guarantees.
+    assert unsupported_strict_paths(
+        {
+            "type": "object",
+            "properties": {"ok": True, "name": {"type": "string"}},
+            "required": ["name"],
+        }
+    ) == []
+    assert unsupported_strict_paths(
+        {
+            "type": "object",
+            "properties": {"a": {"type": "string"}},
+            "required": ["a"],
+            "additionalProperties": False,
+        }
+    ) == []
+
+
+def test_a_nullable_open_mapping_is_still_strict_unsupported():
+    """``type`` is a *list* whenever nullability is spelled into it — which
+    introspection emits for a required ``dict[str, int] | None`` — so matching
+    only the scalar string let a nullable open mapping past the check and into
+    strict mode, which cannot represent it. The provider then rejects the
+    whole tool request rather than that one parameter (PR #381 review)."""
+    from agent_gantry.adapters.tool_spec.schema_utils import unsupported_strict_paths
+    from agent_gantry.schema.introspection import build_parameters_schema
+
+    def nullable_map(m: dict[str, int] | None) -> None: ...
+
+    def plain_map(m: dict[str, int]) -> None: ...
+
+    emitted = build_parameters_schema(nullable_map)
+    assert emitted["properties"]["m"]["type"] == ["object", "null"]
+    assert unsupported_strict_paths(emitted) == ["m"]
+    # The non-nullable spelling was already correct and must stay so.
+    assert unsupported_strict_paths(build_parameters_schema(plain_map)) == ["m"]
+
+    # A nullable *closed* object is perfectly representable — widening the
+    # check must not sweep it up.
+    closed = {
+        "type": "object",
+        "properties": {
+            "p": {
+                "type": ["object", "null"],
+                "properties": {"a": {"type": "string"}},
+                "required": ["a"],
+                "additionalProperties": False,
+            }
+        },
+        "required": ["p"],
+    }
+    assert unsupported_strict_paths(closed) == []
+
+
+def test_a_pattern_only_object_is_strict_unsupported_without_a_type():
+    """JSON Schema applies an object's keywords whenever the instance *is* an
+    object, so a property carrying only ``patternProperties`` — no ``type``, no
+    ``properties`` — constrains objects just as much as one spelling the type
+    out. Gating the check on type-or-properties let that spelling past as
+    strict-safe while its typed twin was flagged (PR #381 review)."""
+    from agent_gantry.adapters.tool_spec.schema_utils import unsupported_strict_paths
+
+    untyped = {
+        "type": "object",
+        "properties": {
+            "m": {
+                "patternProperties": {"^n_": {"type": "integer"}},
+                "additionalProperties": False,
+            }
+        },
+        "required": ["m"],
+    }
+    typed = {
+        "type": "object",
+        "properties": {
+            "m": {
+                "type": "object",
+                "patternProperties": {"^n_": {"type": "integer"}},
+                "additionalProperties": False,
+            }
+        },
+        "required": ["m"],
+    }
+    assert unsupported_strict_paths(untyped) == ["m"]
+    assert unsupported_strict_paths(typed) == ["m"]
+
+    # Schemas strict mode genuinely handles must stay handled — this is the
+    # gate deciding whether a tool gets strict guarantees at all.
+    for supported in (
+        {
+            "type": "object",
+            "properties": {"a": {"type": "string"}},
+            "required": ["a"],
+            "additionalProperties": False,
+        },
+        {"type": "object", "properties": {}, "required": []},
+        {"type": "object", "properties": {"a": {"type": "string"}}, "required": ["a"]},
+    ):
+        assert unsupported_strict_paths(supported) == []
+
+
+def test_a_typeless_additional_properties_map_is_strict_unsupported():
+    """The sibling of the pattern-only fix, and reached only its own keyword:
+    ``{"additionalProperties": {"type": "integer"}}`` — an imported
+    ``dict[str, int]`` with no ``type`` — was reported strict-safe while its
+    typed twin was flagged, so the strict transform published the
+    schema-valued keyword strict mode cannot express and the provider rejected
+    the whole tool request (PR #381 review).
+
+    The invariant is that the two spellings agree, since JSON Schema applies
+    an object's keywords whenever the instance *is* an object and writing the
+    type out is optional rather than load-bearing."""
+
+    def wrap(prop: dict) -> dict:
+        return {"type": "object", "properties": {"m": prop}, "required": ["m"]}
+
+    for keyword, expected in (
+        ({"additionalProperties": {"type": "integer"}}, ["m"]),
+        ({"additionalProperties": True}, ["m"]),
+        ({"additionalProperties": {}}, ["m"]),
+        # Explicitly closed is the one that is genuinely representable, and it
+        # still passes through ``_is_open_map`` as safe rather than being
+        # excluded by the gate.
+        ({"additionalProperties": False}, []),
+    ):
+        untyped = unsupported_strict_paths(wrap(dict(keyword)))
+        typed = unsupported_strict_paths(wrap({"type": "object", **keyword}))
+        assert untyped == typed == expected, (keyword, untyped, typed)
+
+    # Only where the node declares no type: unlike properties and
+    # patternProperties, which nothing but an object schema carries, a stray
+    # additionalProperties beside a scalar type asserts nothing — and flagging
+    # it would cost that tool strict mode for no reason.
+    assert unsupported_strict_paths(
+        wrap({"type": "string", "additionalProperties": {"type": "integer"}})
+    ) == []
+
+    # Schemas strict mode genuinely handles must stay handled.
+    for supported in (
+        {
+            "type": "object",
+            "properties": {"a": {"type": "string"}},
+            "required": ["a"],
+            "additionalProperties": False,
+        },
+        {"type": "object", "properties": {}},
+        {"type": "object", "properties": {"a": {"type": "string"}}, "required": ["a"]},
+    ):
+        assert unsupported_strict_paths(supported) == []
+
+
+def test_a_nested_empty_properties_object_is_strict_unsupported():
+    """``properties: {}`` with no ``additionalProperties`` is the "tool takes
+    no arguments" shape strict mode itself emits — but only at the *root*,
+    where the executor agrees and rejects an unknown argument outright.
+    Nested, absent ``additionalProperties`` is a free-form mapping the
+    executor accepts any keys for, so calling it strict-safe let the transform
+    rewrite it closed and made a valid ``{"payload": {"key": 1}}``
+    ungeneratable (PR #381 review)."""
+
+    def wrap(prop: dict) -> dict:
+        return {
+            "type": "object",
+            "properties": {"payload": prop},
+            "required": ["payload"],
+        }
+
+    # The same object written two ways must get the same verdict; the bare
+    # spelling was flagged all along.
+    assert unsupported_strict_paths(wrap({"type": "object", "properties": {}})) == [
+        "payload"
+    ]
+    assert unsupported_strict_paths(wrap({"type": "object"})) == ["payload"]
+
+    # A nested object that really is closed stays representable.
+    assert (
+        unsupported_strict_paths(
+            wrap({"type": "object", "properties": {}, "additionalProperties": False})
+        )
+        == []
+    )
+    assert (
+        unsupported_strict_paths(
+            wrap(
+                {
+                    "type": "object",
+                    "properties": {"a": {"type": "string"}},
+                    "additionalProperties": False,
+                }
+            )
+        )
+        == []
+    )
+
+    # And the root exemption is untouched, which is the half this must not
+    # break: a no-argument tool is genuinely closed, and the executor says so.
+    assert unsupported_strict_paths({"type": "object", "properties": {}}) == []
+    assert unsupported_strict_paths({"type": "object", "properties": {}, "required": []}) == []

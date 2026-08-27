@@ -334,3 +334,96 @@ def test_missing_required_tool_error_import_paths_are_identical() -> None:
         is MissingRequiredToolError
     )
     assert issubclass(MissingRequiredToolError, LookupError)
+
+
+async def test_confirmation_gated_tool_raises_typed_error():
+    """A confirmation-gated tool surfaces ToolConfirmationRequiredError (a
+    ToolExecutionError subclass) with the executor's explanation — frameworks
+    can catch it to drive an approval flow instead of string-matching."""
+    from agent_gantry import AgentGantry
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from agent_gantry.integrations.frameworks import (
+        GantryToolset,
+        ToolConfirmationRequiredError,
+        ToolExecutionError,
+    )
+
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    # Name deliberately outside the default SecurityPolicy patterns
+    # (delete_*/payment_*/drop_*/refund_*) so this exercises the tool-flag
+    # path (`requires_confirmation=True`), whose result carries the
+    # re-issue hint. The policy-pattern path is covered separately below.
+    @gantry.register(tags=["danger"], requires_confirmation=True)
+    def wipe_target(target: str) -> str:
+        "Wipe a target permanently."
+        return f"wiped:{target}"
+
+    await gantry.sync()
+    specs = await GantryToolset(gantry).select("wipe a target permanently", limit=1)
+    assert specs and specs[0].requires_confirmation
+
+    with pytest.raises(ToolConfirmationRequiredError) as excinfo:
+        await specs[0].ainvoke(target="prod")
+    assert isinstance(excinfo.value, ToolExecutionError)
+    assert "confirmation" in str(excinfo.value).lower()
+    assert "require_confirmation=False" in str(excinfo.value)
+
+
+async def test_policy_pattern_confirmation_raises_typed_error():
+    """The default SecurityPolicy's confirmation patterns (delete_* etc.)
+    surface the same typed error, relaying the policy's own reason."""
+    from agent_gantry import AgentGantry
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from agent_gantry.integrations.frameworks import (
+        GantryToolset,
+        ToolConfirmationRequiredError,
+    )
+
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @gantry.register(tags=["danger"])
+    def delete_everything(target: str) -> str:
+        "Delete a target permanently."
+        return f"deleted:{target}"
+
+    await gantry.sync()
+    specs = await GantryToolset(gantry).select("delete a target permanently", limit=1)
+
+    with pytest.raises(ToolConfirmationRequiredError) as excinfo:
+        await specs[0].ainvoke(target="prod")
+    assert "delete_everything" in str(excinfo.value)
+    assert "approval" in str(excinfo.value).lower()
+
+
+async def test_policy_pattern_confirmation_approvable_via_require_confirmation_false():
+    """ToolCall(require_confirmation=False) — the documented approval signal —
+    now clears the SecurityPolicy pattern gate too, so both confirmation
+    gates share one approve/resume mechanism."""
+    from agent_gantry import AgentGantry, ToolCall
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from agent_gantry.schema.execution import ExecutionStatus
+
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @gantry.register(tags=["danger"])
+    def delete_everything(target: str) -> str:
+        "Delete a target permanently."
+        return f"deleted:{target}"
+
+    await gantry.sync()
+
+    gated = await gantry.execute(
+        ToolCall(tool_name="delete_everything", arguments={"target": "prod"})
+    )
+    assert gated.status == ExecutionStatus.PENDING_CONFIRMATION
+
+    approved = await gantry.execute(
+        ToolCall(
+            tool_name="delete_everything",
+            arguments={"target": "prod"},
+            require_confirmation=False,
+        )
+    )
+    assert approved.status == ExecutionStatus.SUCCESS
+    assert approved.result == "deleted:prod"

@@ -26,6 +26,8 @@ class MockEmbedder(EmbeddingAdapter):
         self._latency_ms = latency_ms
         self._dimension = dimension
         self.embed_count = 0  # Track number of embed calls
+        self.in_flight = 0  # Embeds currently awaiting
+        self.peak_in_flight = 0  # The most that ever overlapped
 
     @property
     def dimension(self) -> int:
@@ -38,7 +40,12 @@ class MockEmbedder(EmbeddingAdapter):
     async def embed_text(self, text: str) -> list[float]:
         """Simulate embedding with latency."""
         self.embed_count += 1
-        await asyncio.sleep(self._latency_ms / 1000)
+        self.in_flight += 1
+        self.peak_in_flight = max(self.peak_in_flight, self.in_flight)
+        try:
+            await asyncio.sleep(self._latency_ms / 1000)
+        finally:
+            self.in_flight -= 1
         # Generate deterministic embedding based on text hash
         import hashlib
 
@@ -107,11 +114,14 @@ async def test_concurrent_retrieval_throughput(gantry_with_tools):
         await gantry.retrieve_tools(f"query {i}", limit=5)
     sequential_duration = time.perf_counter() - start
 
-    # Test 2: Concurrent retrievals (should be much faster if non-blocking)
+    # Test 2: Concurrent retrievals (should overlap if non-blocking)
+    embedder = gantry._embedder
+    embedder.peak_in_flight = 0
     start = time.perf_counter()
     tasks = [gantry.retrieve_tools(f"query {i}", limit=5) for i in range(num_requests)]
     await asyncio.gather(*tasks)
     concurrent_duration = time.perf_counter() - start
+    peak_in_flight = embedder.peak_in_flight
 
     # Calculate speedup — guard against zero concurrent_duration on very fast runners.
     speedup = (
@@ -134,17 +144,22 @@ async def test_concurrent_retrieval_throughput(gantry_with_tools):
     print(f"Speedup: {speedup:.1f}x")
     print(f"{'=' * 60}\n")
 
-    # Verify that concurrent requests are faster than sequential.
-    # retrieve_tools has both an async IO component (embed_text sleep at 50ms)
-    # and a CPU-bound component (pure-Python cosine similarity over 50 tools).
-    # Under the GIL the CPU work serialises across concurrent tasks, so the
-    # theoretical speedup = sequential_time / (io_time + n * cpu_time).
-    # The 50ms IO floor ensures this ratio stays well above 1.2x even on the
-    # slowest macOS CI runners regardless of Python version.
-    assert speedup > 1.2, (
-        f"Concurrent requests only {speedup:.1f}x faster than sequential. "
-        f"Expected >1.2x speedup. This suggests event loop blocking."
+    # What this test is really asserting is that the embedder does not block
+    # the event loop, so concurrent retrievals genuinely overlap. It used to
+    # assert a wall-clock ratio (``speedup > 1.2``) as a proxy for that, and
+    # the proxy is what failed on a contended CI runner: the same code measured
+    # 18.9x locally and 0.97x on a runner taking 7m27s for a suite that runs in
+    # 90s. A ratio between two wall-clock spans measures the *runner*, not the
+    # code, once CPU is scarce.
+    #
+    # Overlap is the property itself, and it is immune to how slow the machine
+    # is: if ``embed_text`` blocked the loop, in-flight would never exceed one
+    # however long each call took.
+    assert peak_in_flight > 1, (
+        f"Embeds never overlapped (peak in flight: {peak_in_flight}). "
+        "Concurrent retrievals are blocking each other."
     )
+    print(f"Peak concurrent embeds: {peak_in_flight}")
 
 
 @pytest.mark.asyncio

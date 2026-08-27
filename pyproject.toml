@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-gantry"
-version = "0.11.0"
+version = "0.12.0"
 description = "Universal Tool Orchestration Platform - Intelligent, secure tool orchestration for LLM-based agent systems"
 readme = "README.md"
 license = "MIT"
@@ -51,15 +51,30 @@ dev = [
 ]
 agent-frameworks = [
     # Range: >=1.5.0,<2.0.0.
-    # AF 1.13.0 (released 2026-07-30) is the latest within range — the resolver
-    # already picks it; no floor change needed. Releases 1.9.0–1.13.0
-    # (2026-06-18 → 2026-07-30) verified 2026-08-03: breaking changes are
-    # confined to AF's own Skills API (1.11.0 caching restructure — Gantry uses
-    # its own SkillRegistry, unaffected), workflow TOOL_CALL event emission and
+    # IMPORTANT (2026-08-26): the universal uv.lock resolves this combined
+    # extra to agent-framework 1.5.0 — the FLOOR, not latest. Cause: newer
+    # AF's foundry subpackage (pulled in via agent-framework-core[all]) and
+    # semantic-kernel >=1.43.1 both require azure-ai-agents >=1.2.0b3, a
+    # PRE-RELEASE that [tool.uv] prerelease="if-necessary-or-explicit"
+    # refuses (azure-ai-agents has stable releases, and a transitive
+    # pre-release marker is neither "necessary" nor "explicit"), so the
+    # resolver backtracks AF to 1.5.0. The main CI matrix therefore tests
+    # 1.5.0; the weekly latest-frameworks workflow covers the newest 1.x
+    # standalone. To move the lock forward, add an explicit
+    # azure-ai-agents>=1.2.0b3 entry (making the pre-release "explicit") and
+    # regenerate — deliberately not done here to keep the change reviewable.
+    # Releases 1.9.0–1.15.0 (2026-06-18 → 2026-08) verified: 1.14.0/1.15.0
+    # re-verified 2026-08-26 — the full AF adapter/provider/orchestration
+    # suite passes on 1.15.0 standalone. Breaking changes remain confined to
+    # AF's own Skills API (1.11.0 caching restructure — Gantry uses its own
+    # SkillRegistry, unaffected), workflow TOOL_CALL event emission and
     # harness-agent graduation (1.12.0), and fully-replayable workflow
     # checkpoints (1.13.0). Nothing removes an API Gantry uses. The 1.6.0
     # concurrent-instrumentation ContextVar bug has NO documented fix through
-    # 1.13.0 — keep the disable_af_instrumentation shim (see below).
+    # 1.15.0 — keep the disable_af_instrumentation shim (see below; fixed
+    # 2026-08-26 to call agent_framework.observability.disable_instrumentation,
+    # the real switch — the previously-referenced agent_framework.telemetry
+    # module never existed, so the shim had been a silent no-op).
     # AF 1.8.0 (released 2026-06-04): adds McpSkillsSource for MCP-based
     # skills discovery, progressive tool exposure via FunctionInvocationContext,
     # background-agent harness support, and AgentFileStore / FileAccessProvider
@@ -130,11 +145,14 @@ agent-frameworks = [
     # (2.6.1 allows opentelemetry <=1.42.1) in the combined extra.
     # Behavior note for adapter tests: 1.15.9 surfaces tool failures instead
     # of reporting them as success.
-    # Source: https://pypi.org/pypi/crewai/json (verified 2026-08-03)
+    # Source: https://pypi.org/pypi/crewai/json (verified 2026-08-03;
+    # adapter re-verified against crewai 1.15.17 standalone 2026-08-26)
     "crewai>=1.15.0",
     # langchain 1.3.14 (released 2026-07-16) — patch releases only since 1.3.4
     # (1.3.5 was yanked); no API changes.
-    # Source: https://pypi.org/pypi/langchain/json (verified 2026-08-03)
+    # Source: https://pypi.org/pypi/langchain/json (verified 2026-08-03;
+    # adapter re-verified against langchain 1.3.17 / langchain-core 1.6.0
+    # standalone 2026-08-26)
     "langchain>=1.3.14",
     # langchain-openai 1.4.1 (released 2026-07-23). 1.4.0 adds reasoning_effort
     # as a standard chat-model param; no breaking changes. Requires
@@ -142,20 +160,30 @@ agent-frameworks = [
     # Source: https://pypi.org/pypi/langchain-openai/json (verified 2026-08-03)
     "langchain-openai>=1.4.1",
     # langgraph 1.2.10 (released 2026-07-28) — patch releases only; no API changes.
-    # Source: https://pypi.org/pypi/langgraph/json (verified 2026-08-03)
+    # Source: https://pypi.org/pypi/langgraph/json (verified 2026-08-03;
+    # adapter re-verified against langgraph 1.2.11 standalone 2026-08-26)
     "langgraph>=1.2.10",
     # llama-index-core 0.14.23 (2026-06-24), llama-index-llms-openai 0.7.10
-    # (2026-07-21) — patch releases; no API changes.
+    # (2026-07-21) — patch releases; no API changes. Adapter re-verified
+    # against llama-index-core 0.14.24 standalone 2026-08-26.
     "llama-index-core>=0.14.23",
     "llama-index-llms-openai>=0.7.10",
-    # semantic-kernel 1.44.0 (latest stable 2026-07-07). Floor MUST stay at
+    # semantic-kernel 1.44.1 (latest stable, 2026-08). Floor MUST stay at
     # 1.36.0 in this combined extra: a floor bump to >=1.43.1 was attempted on
-    # 2026-08-03 and `uv lock` proved it unsatisfiable — sk 1.43.1/1.44.0 pin
+    # 2026-08-03 and `uv lock` proved it unsatisfiable — sk 1.43.1/1.44.x pin
     # azure-ai-projects>=1.0.0b12,<1.1.dev0 while agent-framework-foundry
     # (pulled in via agent-framework-core[all]) requires azure-ai-projects
     # >=2.2.0. The previously documented opentelemetry clash is gone at
     # sk 1.43+ (now ~=1.24) but this azure-ai-projects conflict replaces it.
-    # To use sk 1.44.0, install standalone without agent-framework.
+    # Note (2026-08-26): sk 1.36.0's own pydantic<2.12 pin is also what holds
+    # the combined extra on pydantic 2.11.x — which in turn forces google-adk
+    # down to the 1.x line's <=1.14.x (adk >=1.36 requires pydantic>=2.12).
+    # To use sk 1.44.x, install standalone without agent-framework AND pass
+    # --prerelease=allow (sk >=1.43.1 depends on the pre-release
+    # azure-ai-agents>=1.2.0b3; without the flag the resolver quietly falls
+    # back to sk 1.36.0 — this silently defeated the "semantic-kernel
+    # (latest)" drift-check cell until 2026-08-26). Adapter re-verified
+    # against sk 1.44.1 standalone 2026-08-26.
     # Source: https://pypi.org/pypi/semantic-kernel/json (verified 2026-08-03)
     "semantic-kernel>=1.36.0",
     # google-adk 2.6.1 (latest 2.x, 2026-07-31); 1.x line latest is 1.37.0.
@@ -168,7 +196,12 @@ agent-frameworks = [
     # (3) opentelemetry: adk 1.37.0 caps <=1.41.1 (conflicts with
     #     crewai>=1.15's ~=1.42.0); adk 2.6.1 allows >=1.39,<=1.42.1 — so the
     #     resolver picks the 2.x line alongside crewai 1.15+.
-    # Floor stays at 1.14.1 (permissive); the universal lock resolves to 2.x.
+    # Floor stays at 1.14.1 (permissive). Correction (2026-08-26): the
+    # universal lock resolves to 1.14.1, NOT 2.x — semantic-kernel 1.36.0's
+    # pydantic<2.12 pin holds the combined extra on pydantic 2.11.x, and
+    # adk >=1.36 (both lines) requires pydantic>=2.12. The weekly
+    # latest-frameworks workflow covers adk 2.x standalone; adapter
+    # re-verified against google-adk 2.7.1 standalone 2026-08-26.
     # Source: https://pypi.org/pypi/google-adk/json (verified 2026-08-03)
     "google-adk>=1.14.1",
 ]

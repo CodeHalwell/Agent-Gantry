@@ -9,6 +9,8 @@ Tests:
 - ToolDefinition.to_searchable_text()
 """
 
+import json
+
 import pytest
 
 from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
@@ -296,3 +298,524 @@ class TestToolSearchableText:
 
         # Should be identical
         assert text1 == text2
+
+
+class TestSchemaFidelity:
+    """build_parameters_schema preserves declared intent (descriptions, enums,
+    containers, defaults) — what every provider dialect and framework adapter
+    ultimately advertises to the LLM."""
+
+    def test_docstring_descriptions_google_style(self):
+        def func(city: str, days: int = 3) -> str:
+            """Get a weather forecast.
+
+            Args:
+                city: Name of the city.
+                days: Forecast horizon in days.
+            """
+            return ""
+
+        schema = build_parameters_schema(func)
+        assert schema["properties"]["city"]["description"] == "Name of the city."
+        assert schema["properties"]["days"]["description"] == "Forecast horizon in days."
+        assert schema["properties"]["days"]["default"] == 3
+
+    def test_annotated_description_wins_over_docstring(self):
+        from typing import Annotated
+
+        def func(city: Annotated[str, "City name override"]) -> str:
+            """Get weather.
+
+            Args:
+                city: Ignored.
+            """
+            return ""
+
+        schema = build_parameters_schema(func)
+        assert schema["properties"]["city"]["description"] == "City name override"
+
+    def test_literal_and_enum_become_enum(self):
+        import enum
+        from typing import Literal
+
+        # Deliberately *not* a ``str`` mixin. A ``class Color(str, Enum)``
+        # compares and serializes equal to its value either way, so it would
+        # pass whether or not the default is actually unwrapped — the
+        # assertion below would not catch a regression (PR #381 review).
+        class Color(enum.Enum):
+            RED = "red"
+            BLUE = "blue"
+
+        def func(mode: Literal["fast", "slow"], color: Color = Color.RED) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        assert schema["properties"]["mode"] == {
+            "type": "string",
+            "enum": ["fast", "slow"],
+        }
+        assert schema["properties"]["color"]["enum"] == ["red", "blue"]
+        default = schema["properties"]["color"]["default"]
+        assert default == "red"
+        # The unwrapping is the point: a bare ``Enum`` member is not JSON
+        # serializable, so leaving it in place emits a schema no provider
+        # can parse.
+        assert type(default) is str
+        json.dumps(schema)
+
+    def test_dict_maps_to_object(self):
+        from typing import Any
+
+        def func(meta: dict[str, Any], counts: dict[str, int] | None = None) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        assert schema["properties"]["meta"] == {"type": "object"}
+        assert schema["properties"]["counts"]["type"] == "object"
+        assert schema["properties"]["counts"]["additionalProperties"] == {
+            "type": "integer"
+        }
+
+    def test_pep604_union_none_first(self):
+        def func(x: None | int = None) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        assert schema["properties"]["x"]["type"] == "integer"
+
+    def test_required_nullable_parameter_admits_null(self):
+        """``def f(x: int | None)`` has no default, so omission cannot express
+        ``None`` — the parameter was required *and* forbade the one extra
+        value its own annotation names, making it uncallable with ``None``
+        (PR #381 review)."""
+        def func(x: int | None) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        assert schema["properties"]["x"] == {"type": ["integer", "null"]}
+        assert schema["required"] == ["x"]
+
+    def test_nullable_with_a_non_none_default_admits_null(self):
+        """With ``x: int | None = 5`` an explicit null is a distinct choice,
+        not "not provided" — dropping it handed the handler ``5`` where the
+        caller asked for ``None``."""
+        def func(x: int | None = 5) -> None:
+            pass
+
+        prop = build_parameters_schema(func)["properties"]["x"]
+        assert prop["type"] == ["integer", "null"]
+        assert prop["default"] == 5
+
+    def test_nullable_defaulting_to_none_is_unchanged(self):
+        """The common case: "omitted" and "null" mean the same thing, so
+        ``required`` carries the optionality and the bare type is what
+        provider dialects handle best. Pinned so the fix above stays narrow."""
+        def func(x: int | None = None, y: list[int] | None = None) -> None:
+            pass
+
+        props = build_parameters_schema(func)["properties"]
+        assert props["x"] == {"type": "integer"}
+        assert props["y"] == {"type": "array", "items": {"type": "integer"}}
+
+    def test_required_nullable_literal_admits_null_in_its_enum(self):
+        """``enum`` is an independent constraint, so widening the type alone
+        would buy nothing."""
+        from typing import Literal
+
+        def func(mode: Literal["x", "y"] | None) -> None:
+            pass
+
+        assert build_parameters_schema(func)["properties"]["mode"] == {
+            "type": ["string", "null"],
+            "enum": ["x", "y", None],
+        }
+
+    def test_multi_member_union_keeps_only_the_first_member(self, caplog):
+        """A genuine ``int | str`` loses every member but the first — a real
+        fidelity loss, but a deliberate one: most provider dialects reject
+        union-typed parameters outright. Pinned so the behaviour is a decision
+        rather than an accident, and logged so a schema author has a signal
+        (PR #381 review)."""
+        def func(x: int | str) -> None:
+            pass
+
+        with caplog.at_level("DEBUG", logger="agent_gantry.schema.introspection"):
+            schema = build_parameters_schema(func)
+
+        assert schema["properties"]["x"] == {"type": "integer"}
+        assert "multi-member union" in caplog.text
+
+    def test_optional_union_is_not_logged_as_a_loss(self):
+        """``T | None`` loses nothing — requiredness carries the optionality —
+        so it must not warn."""
+        def func(x: int | None = None) -> None:
+            pass
+
+        import logging as _logging
+
+        records: list[_logging.LogRecord] = []
+
+        class _Capture(_logging.Handler):
+            def emit(self, record: _logging.LogRecord) -> None:
+                records.append(record)
+
+        log = _logging.getLogger("agent_gantry.schema.introspection")
+        handler = _Capture()
+        log.addHandler(handler)
+        previous = log.level
+        log.setLevel(_logging.DEBUG)
+        try:
+            schema = build_parameters_schema(func)
+        finally:
+            log.removeHandler(handler)
+            log.setLevel(previous)
+
+        assert schema["properties"]["x"] == {"type": "integer"}
+        assert not [r for r in records if "multi-member union" in r.getMessage()]
+
+    def test_non_finite_float_defaults_are_dropped(self):
+        """NaN/±inf are Python floats but not JSON values: ``json.dumps``
+        emits bare ``NaN``/``Infinity`` tokens, which a provider parsing
+        strict JSON rejects (PR #381 review)."""
+        import json
+
+        def func(
+            ratio: float = float("nan"),
+            cap: float = float("inf"),
+            ok: float = 1.5,
+        ) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        assert "default" not in schema["properties"]["ratio"]
+        assert "default" not in schema["properties"]["cap"]
+        assert schema["properties"]["ok"]["default"] == 1.5
+        # The emitted schema must survive strict JSON serialization.
+        json.dumps(schema, allow_nan=False)
+
+    def test_nested_non_finite_defaults_are_dropped(self):
+        def func(bounds: list[float] = [1.0, float("inf")]) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        assert "default" not in schema["properties"]["bounds"]
+
+    def test_collections_abc_container_origins(self):
+        """``typing.get_origin(Sequence[int])`` is ``collections.abc.Sequence``
+        — neither the ``typing`` alias nor a ``list`` subclass — so matching
+        only aliases and concrete containers advertised ``Sequence[int]`` as
+        ``{"type": "integer"}`` (PR #381 review)."""
+        # ``typing.Sequence[int]`` and ``collections.abc.Sequence[int]``
+        # normalize to the same origin, so these cover both spellings.
+        from collections.abc import Iterable, Mapping, Sequence, Set
+
+        def func(
+            a: Sequence[int],
+            b: Iterable[str],
+            c: Set[int],
+            d: Mapping[str, int],
+        ) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        props = schema["properties"]
+        assert props["a"] == {"type": "array", "items": {"type": "integer"}}
+        assert props["b"] == {"type": "array", "items": {"type": "string"}}
+        assert props["c"]["type"] == "array"
+        assert props["c"]["uniqueItems"] is True
+        # A Mapping is also a Collection/Iterable, so it must not be caught by
+        # the sequence branch.
+        assert props["d"] == {
+            "type": "object",
+            "additionalProperties": {"type": "integer"},
+        }
+
+    def test_typed_containers(self):
+        def func(tags: set[str], pair: tuple[int, ...] = ()) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        assert schema["properties"]["tags"]["type"] == "array"
+        assert schema["properties"]["tags"]["uniqueItems"] is True
+        assert schema["properties"]["tags"]["items"] == {"type": "string"}
+        assert schema["properties"]["pair"]["items"] == {"type": "integer"}
+
+    def test_dataclass_param_inlines_nested_schema(self):
+        import dataclasses
+
+        @dataclasses.dataclass
+        class Address:
+            street: str
+            city: str = "London"
+
+        def func(addr: Address) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        addr = schema["properties"]["addr"]
+        assert addr["type"] == "object"
+        assert addr["properties"]["street"]["type"] == "string"
+        assert "$ref" not in str(addr)
+
+    def test_sphinx_param_docs(self):
+        def func(x: int) -> None:
+            """Do a thing.
+
+            :param x: The x value.
+            """
+
+        schema = build_parameters_schema(func)
+        assert schema["properties"]["x"]["description"] == "The x value."
+
+    def test_numpy_style_docstring_descriptions(self):
+        def func(city: str, days: int = 3) -> str:
+            """Get a weather forecast.
+
+            Parameters
+            ----------
+            city : str
+                Name of the city.
+            days : int
+                Forecast horizon in days.
+            """
+            return ""
+
+        schema = build_parameters_schema(func)
+        assert schema["properties"]["city"]["description"] == "Name of the city."
+        assert schema["properties"]["days"]["description"] == "Forecast horizon in days."
+
+    def test_pydantic_basemodel_param_inlines_nested_schema(self):
+        from pydantic import BaseModel
+
+        class Address(BaseModel):
+            street: str
+            city: str = "London"
+
+        def func(addr: Address) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        addr = schema["properties"]["addr"]
+        assert addr["type"] == "object"
+        assert addr["properties"]["street"]["type"] == "string"
+        assert addr["properties"]["city"]["default"] == "London"
+        assert "$ref" not in str(addr)
+
+    def test_typeddict_param_inlines_nested_schema(self):
+        from typing import TypedDict
+
+        class Address(TypedDict):
+            street: str
+            city: str
+
+        def func(addr: Address) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        addr = schema["properties"]["addr"]
+        assert addr["type"] == "object"
+        assert addr["properties"]["street"]["type"] == "string"
+        assert addr["properties"]["city"]["type"] == "string"
+        assert set(addr.get("required", [])) == {"street", "city"}
+
+    def test_none_annotated_parameter_maps_to_null(self):
+        """``def f(x: None)`` resolves to ``NoneType``, which isn't in the
+        scalar map and fell through to the string fallback — advertising a
+        string for a parameter that admits only null (PR #381 review)."""
+
+        def func(x: None) -> None:
+            pass
+
+        assert build_parameters_schema(func)["properties"]["x"] == {"type": "null"}
+
+    def test_typeddict_inheritance_keeps_required_keys(self):
+        """``class Child(Base, total=False)`` still requires ``Base``'s keys.
+        Replaying one ``total=`` flag over the merged annotations made every
+        one of them optional (PR #381 review)."""
+        from typing import TypedDict
+
+        class Base(TypedDict):
+            a: str
+
+        class Child(Base, total=False):
+            b: int
+
+        def func(x: Child) -> None:
+            pass
+
+        schema = build_parameters_schema(func)["properties"]["x"]
+        assert set(schema["properties"]) == {"a", "b"}
+        assert schema["required"] == ["a"]
+
+    def test_self_referential_model_hits_ref_depth_limit(self):
+        from pydantic import BaseModel
+
+        class Node(BaseModel):
+            name: str
+            children: list["Node"] = []
+
+        Node.model_rebuild()
+
+        def func(root: Node) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        root = schema["properties"]["root"]
+        assert root["type"] == "object"
+        assert root["properties"]["name"]["type"] == "string"
+        # Self-reference is capped (_MAX_REF_DEPTH) rather than inlined
+        # forever or left as an unresolved $ref for consumers that don't
+        # follow JSON pointers (the executor's validator, several provider
+        # dialects).
+        assert "$ref" not in str(root)
+
+
+def test_non_json_literal_values_degrade_to_string_schema():
+    """Literal admits bytes (and Enum members can carry arbitrary objects) —
+    non-JSON values must not leak into an ``enum`` payload (PR #381 review)."""
+    from typing import Literal
+
+    def func(marker: Literal[b"a", b"b"]) -> None:
+        pass
+
+    schema = build_parameters_schema(func)
+    assert schema["properties"]["marker"] == {"type": "string"}
+    assert "enum" not in schema["properties"]["marker"]
+
+
+class TestCompositeEnumValues:
+    """A Python ``tuple`` is JSON-safe but serializes to an *array*, so
+    storing one verbatim left the canonical schema holding a value no provider
+    would ever send back (PR #381 review)."""
+
+    def test_composite_enum_members_are_stored_as_arrays(self):
+        import enum
+
+        class Point(enum.Enum):
+            ORIGIN = (0, 0)
+            UNIT = (1, 1)
+
+        def func(pt: Point = Point.ORIGIN) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        prop = schema["properties"]["pt"]
+        assert prop["enum"] == [[0, 0], [1, 1]]
+        assert prop["default"] == [0, 0]
+        # The stored schema is the same document the provider sees, so the
+        # executor compares like with like.
+        assert json.loads(json.dumps(schema)) == schema
+
+    def test_tuple_defaults_are_stored_as_arrays(self):
+        def func(box: tuple[int, int] = (1, 2)) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        assert schema["properties"]["box"]["default"] == [1, 2]
+        assert json.loads(json.dumps(schema)) == schema
+
+
+class TestStringFormats:
+    """``build_parameters_schema`` emits a JSON-Schema ``format`` for the
+    stdlib scalar types providers understand, so a model gets the shape of the
+    string it must produce rather than "any string" (PR #381 review noted this
+    was claimed in the changelog but untested)."""
+
+    def test_datetime_family_and_uuid_carry_a_format(self):
+        import uuid
+        from datetime import date, datetime, time
+
+        def func(
+            at: datetime,
+            on: date,
+            clock: time,
+            ident: uuid.UUID,
+        ) -> None:
+            pass
+
+        props = build_parameters_schema(func)["properties"]
+        assert props["at"] == {"type": "string", "format": "date-time"}
+        assert props["on"] == {"type": "string", "format": "date"}
+        assert props["clock"] == {"type": "string", "format": "time"}
+        assert props["ident"] == {"type": "string", "format": "uuid"}
+
+    def test_plain_strings_carry_no_format(self):
+        def func(name: str) -> None:
+            pass
+
+        assert build_parameters_schema(func)["properties"]["name"] == {"type": "string"}
+
+
+class TestRefInliningBounds:
+    """The ``$ref`` depth cap bounds *levels*, not nodes. A model recursing on
+    several fields per level doubles the expansion each time, so 16 levels is
+    ~2^16 expansions — a real spike for a plausible tree-shaped model, not a
+    pathological one (PR #381 review)."""
+
+    def test_tree_shaped_model_stays_bounded(self):
+        from pydantic import BaseModel
+
+        class Node(BaseModel):
+            value: int
+            left: "Node | None" = None
+            right: "Node | None" = None
+
+        Node.model_rebuild()
+
+        def func(tree: Node) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        # Without the node budget this exceeded 15 MB; the cap keeps it small
+        # enough to actually send to a provider.
+        assert len(json.dumps(schema)) < 200_000
+
+    def test_mutually_recursive_models_terminate(self):
+        """Only single-class cycles were covered; an ``A -> B -> A`` cycle
+        exercises a different path through the ``$defs`` map."""
+        from pydantic import BaseModel
+
+        class B(BaseModel):
+            a: "A | None" = None
+
+        class A(BaseModel):
+            b: B | None = None
+
+        A.model_rebuild()
+        B.model_rebuild()
+
+        def func(node: A) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        assert schema["properties"]["node"]["type"] == "object"
+        json.dumps(schema)  # terminates and stays serializable
+
+
+class TestEnumEdgeCases:
+    def test_empty_enum_is_not_emitted_as_a_constraint(self):
+        """An empty ``enum`` constrains nothing and would make a property
+        unsatisfiable if emitted; it must not reach the schema."""
+        from typing import Literal
+
+        def func(mode: Literal["a"]) -> None:
+            pass
+
+        # Sanity: a real Literal does emit its enum.
+        assert build_parameters_schema(func)["properties"]["mode"]["enum"] == ["a"]
+
+        # And an empty enum in an incoming schema is ignored by validation
+        # rather than rejecting every value.
+        from agent_gantry.integrations.frameworks.schema_bridge import (
+            pydantic_model_from_schema,
+        )
+
+        model = pydantic_model_from_schema(
+            "Args",
+            {
+                "type": "object",
+                "properties": {"v": {"type": "string", "enum": []}},
+                "required": ["v"],
+            },
+        )
+        assert model(v="anything").v == "anything"

@@ -144,3 +144,30 @@ async def test_smolagents_reselects_tools_per_call(gantry):
 
     email_tools = await agent_builder.select_tools(EMAIL_QUERY)
     assert "send_email" in _names(email_tools)
+
+
+async def test_agno_build_constructs_fresh_agent(gantry):
+    """``GantryLiveAgnoAgent.build`` against the real package — the drift class
+    the stubbed suites can't catch (cf. the haystack 3.0 ``ToolInvoker``
+    removal, which slipped past every stub test)."""
+    agno_agent = pytest.importorskip("agno.agent")
+
+    agent_builder = GantryLiveAgnoAgent(gantry, limit=1)
+    agent = await agent_builder.build(WEATHER_QUERY)
+
+    assert isinstance(agent, agno_agent.Agent)
+    assert "get_weather" in {t.name for t in agent.tools}
+
+
+async def test_smolagents_build_constructs_fresh_agent(gantry):
+    """``GantryLiveSmolAgent.build`` against the real package (see above)."""
+    smolagents = pytest.importorskip("smolagents")
+
+    class _Model:
+        model_id = "test-model-not-called"
+
+    agent_builder = GantryLiveSmolAgent(gantry, model=_Model(), limit=1)
+    agent = await agent_builder.build(WEATHER_QUERY)
+
+    assert isinstance(agent, smolagents.ToolCallingAgent)
+    assert "get_weather" in set(agent.tools)

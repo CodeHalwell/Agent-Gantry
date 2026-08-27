@@ -20,13 +20,67 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-__all__ = ["sanitize_gemini_schema", "strict_json_schema"]
+__all__ = [
+    "sanitize_gemini_schema",
+    "strict_json_schema",
+    "unsupported_strict_paths",
+]
 
 #: Keys that introduce a nested subschema whose value is itself a schema.
 _SUBSCHEMA_KEYS = ("items", "additionalItems", "contains", "not")
 
 #: Keys whose value is a list of subschemas.
 _SUBSCHEMA_LIST_KEYS = ("anyOf", "oneOf", "allOf", "prefixItems")
+
+
+def _admit_null_in_enum(subschema: dict[str, Any]) -> None:
+    """Let ``null`` through an ``enum`` alongside a widened ``type``.
+
+    ``enum`` is an independent constraint, so widening ``type`` to admit
+    ``null`` is not enough on its own: an optional ``Literal["fast",
+    "slow"] | None`` would advertise ``type: ["string", "null"]`` while its
+    enum still listed only the two strings. Strict mode makes every property
+    required, so the model could then not express "not provided" at all —
+    the constrained grammar would force it to invent ``"fast"`` or
+    ``"slow"`` rather than let the handler apply its ``None`` default.
+    """
+    enum_values = subschema.get("enum")
+    if isinstance(enum_values, list) and enum_values and None not in enum_values:
+        subschema["enum"] = [*enum_values, None]
+
+
+#: Keywords that annotate a schema without constraining what it accepts.
+#: Everything else is an assertion that keeps applying alongside a combinator.
+_ANNOTATION_KEYS = frozenset(
+    {
+        "description",
+        "title",
+        "default",
+        "examples",
+        "$comment",
+        "deprecated",
+        "readOnly",
+        "writeOnly",
+    }
+)
+
+
+def _wrap_in_nullable_anyof(subschema: dict[str, Any]) -> None:
+    """Replace ``subschema`` with ``anyOf: [<original>, {"type": "null"}]``.
+
+    The general way to make any schema nullable: null satisfies the added
+    branch, and the original is preserved untouched as the other. ``description``
+    is lifted out so the property keeps its documentation at the top level,
+    where every provider looks for it.
+    """
+    description = subschema.get("description")
+    remainder = {k: v for k, v in subschema.items() if k != "description"}
+    if not remainder:
+        return
+    subschema.clear()
+    subschema["anyOf"] = [remainder, {"type": "null"}]
+    if description is not None:
+        subschema["description"] = description
 
 
 def _make_nullable(subschema: dict[str, Any]) -> None:
@@ -36,28 +90,62 @@ def _make_nullable(subschema: dict[str, Any]) -> None:
     required — so a parameter that was optional has to accept ``null`` instead.
     """
     if "anyOf" in subschema and isinstance(subschema["anyOf"], list):
+        # Appending a null branch only works when the combinator is the *whole*
+        # schema. A sibling assertion applies independently of it, so
+        # ``{"type": "integer", "anyOf": [...]}`` with a null branch added
+        # inside still fails the untouched ``type: integer`` — and strict mode
+        # makes the property required, leaving no value that satisfies both.
+        if set(subschema) - {"anyOf"} - _ANNOTATION_KEYS:
+            _wrap_in_nullable_anyof(subschema)
+            return
         branches = subschema["anyOf"]
         if not any(isinstance(b, dict) and b.get("type") == "null" for b in branches):
             branches.append({"type": "null"})
+        return
+
+    for combinator in ("oneOf", "allOf"):
+        if combinator in subschema and isinstance(subschema[combinator], list):
+            # Neither is ever appended to or widened around. ``oneOf`` demands
+            # *exactly* one match, and null passes most constraint-only
+            # branches vacuously (``{"minimum": 10}`` says nothing about
+            # null), so an added null branch would make null match several and
+            # fail. ``allOf`` intersects, so *every* branch must admit null —
+            # widening only the outer ``type`` left ``{"type": "string",
+            # "allOf": [{"const": "fixed"}]}`` required with a const branch
+            # that still rejects it. Wrapping the whole schema is correct for
+            # both, and for the cases where widening would also have worked.
+            _wrap_in_nullable_anyof(subschema)
+            return
+
+    if "const" in subschema:
+        # ``const`` is an independent constraint that no ``type`` widening can
+        # satisfy — a single-value ``Literal`` (what Pydantic emits as
+        # ``{"type": "string", "const": "fixed"}``) would still forbid null,
+        # and strict mode makes the property required, so the model could not
+        # express omission at all. Wrapping keeps the constant intact while
+        # adding a null alternative beside it.
+        _wrap_in_nullable_anyof(subschema)
         return
 
     declared = subschema.get("type")
     if isinstance(declared, str):
         if declared != "null":
             subschema["type"] = [declared, "null"]
+        _admit_null_in_enum(subschema)
     elif isinstance(declared, list):
         if "null" not in declared:
             subschema["type"] = [*declared, "null"]
+        # Widened *unconditionally*, including when ``null`` was already in
+        # the list. A schema that arrives as ``{"type": ["string", "null"],
+        # "enum": ["fast", "slow"]}`` — an optional ``Literal`` some emitters
+        # produce pre-widened — looks nullable but is not: the enum still
+        # forbids null. Returning early there left strict mode making the
+        # property required with no value that satisfies both constraints.
+        _admit_null_in_enum(subschema)
     else:
         # No usable type to widen (e.g. an enum-only or unconstrained schema).
         # Wrapping it in anyOf keeps the original constraints intact.
-        remainder = {k: v for k, v in subschema.items() if k != "description"}
-        if remainder:
-            description = subschema.get("description")
-            subschema.clear()
-            subschema["anyOf"] = [remainder, {"type": "null"}]
-            if description is not None:
-                subschema["description"] = description
+        _wrap_in_nullable_anyof(subschema)
 
 
 def _strict_in_place(node: Any) -> None:
@@ -110,17 +198,188 @@ def strict_json_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
     Optional properties are preserved semantically by widening their type to
     admit ``null`` rather than by dropping them from ``required``.
 
+    An object with arbitrary keys (a ``dict[str, int]`` parameter, an
+    untyped ``dict``) has no strict-mode representation and is left
+    untouched rather than being forced to ``additionalProperties: false``,
+    which would turn it into an object accepting no keys at all and
+    silently discard the parameter's data. The result is then *not* safe to
+    publish with ``strict: true`` — call :func:`unsupported_strict_paths`
+    first and fall back to a non-strict request when it reports anything.
+
     Args:
         schema: The tool's JSON-Schema ``parameters`` object.
 
     Returns:
-        A new schema safe to publish alongside ``strict: true``.
+        A new schema safe to publish alongside ``strict: true``, provided
+        :func:`unsupported_strict_paths` reported nothing for it.
     """
     if not schema:
         return {"type": "object", "properties": {}, "required": [], "additionalProperties": False}
     transformed = copy.deepcopy(schema)
     _strict_in_place(transformed)
     return transformed
+
+
+def _is_open_map(node: dict[str, Any], at_root: bool = False) -> bool:
+    """Whether an object schema admits keys it does not enumerate.
+
+    Strict mode can only describe an object whose full key set is written
+    out in ``properties``. Anything else — a ``dict[str, int]`` parameter
+    (schema-valued ``additionalProperties``, no ``properties``), a bare
+    ``{"type": "object"}`` from an untyped ``dict`` parameter — is an open
+    map with no strict-mode representation.
+    """
+    patterns = node.get("patternProperties")
+    if isinstance(patterns, dict) and patterns:
+        # Keys typed by regex are, by definition, not enumerated in
+        # ``properties`` — so the object is open however ``additionalProperties``
+        # is set, ``false`` included. Reading only ``additionalProperties``
+        # called such a schema strict-safe, and the strict transform then
+        # published it with the ``patternProperties`` keyword still on it,
+        # which strict mode does not support and the provider rejects.
+        return True
+
+    properties = node.get("properties")
+    if isinstance(properties, dict) and properties:
+        additional = node.get("additionalProperties")
+        # ``additionalProperties: true`` alongside real properties (what a
+        # ``**kwargs`` handler emits) is a narrowing strict mode handles by
+        # forcing it to false — and so is the empty schema ``{}``, which is
+        # spec-equivalent to ``true``. A *typed* ``additionalProperties``
+        # still describes keys strict mode cannot express, though: forcing
+        # it to false there silently drops the typed extras, the same data
+        # loss this function exists to catch for a bare map.
+        return isinstance(additional, dict) and bool(additional)
+    if node.get("additionalProperties") is False:
+        return False  # explicitly closed: an object permitting no keys
+    if isinstance(properties, dict):
+        # ``properties: {}`` with no explicit ``additionalProperties`` is the
+        # "tool takes no arguments" shape ``strict_json_schema`` itself emits
+        # — but *only* at the root, where the executor agrees: it rejects an
+        # unknown argument outright. Nested, absent ``additionalProperties``
+        # is a free-form mapping the executor accepts any keys for, so calling
+        # it strict-safe let the transform rewrite it closed and made a valid
+        # ``{"payload": {"key": 1}}`` ungeneratable. Its bare ``{"type":
+        # "object"}`` twin was flagged all along; this is the same object
+        # written the other way.
+        if not at_root:
+            return True
+        additional = node.get("additionalProperties")
+        return additional is True or isinstance(additional, dict)
+    return True
+
+
+def _declares_object(declared: Any) -> bool:
+    """Whether a ``type`` names ``object``, as a scalar or in a list.
+
+    ``type`` is a *list* whenever nullability is spelled into it — which
+    introspection now emits for a required ``dict[str, int] | None`` — so
+    matching only the scalar string let a nullable open mapping past this
+    check and into strict mode, which cannot represent it. The provider then
+    rejects the whole tool request rather than that one parameter.
+    """
+    if isinstance(declared, str):
+        return declared == "object"
+    if isinstance(declared, list):
+        return "object" in declared
+    return False
+
+
+def _collect_open_maps(node: Any, path: str, out: list[str]) -> None:
+    if isinstance(node, list):
+        for index, item in enumerate(node):
+            _collect_open_maps(item, f"{path}[{index}]", out)
+        return
+    if not isinstance(node, dict):
+        return
+
+    properties = node.get("properties")
+    patterns = node.get("patternProperties")
+    # ``patternProperties`` counts on its own: JSON Schema applies an object's
+    # keywords whenever the instance *is* an object, so a property carrying
+    # only patterns — no ``type``, no ``properties`` — constrains objects just
+    # as much as one that spells the type out. Gating on type-or-properties
+    # let that spelling past as strict-safe while its typed twin was flagged.
+    # ``additionalProperties`` counts on its own for the same reason, and the
+    # pattern fix reached only its own keyword: ``{"additionalProperties":
+    # {"type": "integer"}}`` — an imported ``dict[str, int]`` with no ``type``
+    # — was reported strict-safe while its typed twin was flagged, and the
+    # strict transform then published the schema-valued keyword strict mode
+    # cannot express. Only where the node declares *no* type, though: unlike
+    # ``properties`` and ``patternProperties``, which nothing but an object
+    # schema carries, a stray ``additionalProperties`` beside ``type:
+    # "string"`` asserts nothing, and flagging it would cost that tool strict
+    # mode for no reason. ``_is_open_map`` still decides — an explicitly
+    # closed ``additionalProperties: false`` passes through it as safe.
+    if (
+        _declares_object(node.get("type"))
+        or isinstance(properties, dict)
+        or (isinstance(patterns, dict) and patterns)
+        or ("additionalProperties" in node and node.get("type") is None)
+    ):
+        if _is_open_map(node, at_root=not path):
+            out.append(path or "<root>")
+
+    if isinstance(properties, dict):
+        for name, subschema in properties.items():
+            if subschema is False:
+                # A property satisfiable by no value at all. Strict mode makes
+                # every property *required*, so the transform would emit a
+                # schema with no valid instance — the property must be present
+                # and nothing can satisfy it — turning an otherwise callable
+                # tool into an uncallable one. There is no strict spelling for
+                # it: widening to null-only would *permit* a null the schema
+                # forbids, trading an uncallable tool for one that accepts what
+                # the executor rejects. Non-strict handles it correctly, where
+                # the property is simply omitted.
+                out.append(f"{path}.{name}" if path else name)
+                continue
+            _collect_open_maps(subschema, f"{path}.{name}" if path else name, out)
+    additional = node.get("additionalProperties")
+    if isinstance(additional, dict):
+        _collect_open_maps(additional, f"{path}.<values>" if path else "<values>", out)
+    for key in _SUBSCHEMA_KEYS:
+        if key in node:
+            _collect_open_maps(node[key], f"{path}.{key}" if path else key, out)
+    for key in _SUBSCHEMA_LIST_KEYS:
+        if isinstance(node.get(key), list):
+            _collect_open_maps(node[key], f"{path}.{key}" if path else key, out)
+    for defs_key in ("$defs", "definitions"):
+        if isinstance(node.get(defs_key), dict):
+            for name, subschema in node[defs_key].items():
+                _collect_open_maps(subschema, f"{defs_key}.{name}", out)
+
+
+def unsupported_strict_paths(schema: dict[str, Any] | None) -> list[str]:
+    """Locations in ``schema`` that OpenAI strict mode cannot express.
+
+    Strict mode requires every object to enumerate its properties and set
+    ``additionalProperties: false``; it has no representation for an object
+    with arbitrary keys. A ``dict[str, int]`` parameter — which
+    ``build_parameters_schema`` emits as an object with a schema-valued
+    ``additionalProperties`` and no ``properties`` — therefore cannot be
+    published alongside ``strict: true``: OpenAI rejects the whole request
+    rather than ignoring the shape, so the tool becomes unusable instead of
+    merely unconstrained.
+
+    :func:`strict_json_schema` deliberately leaves such a node alone —
+    forcing ``additionalProperties: false`` on it would produce an object
+    accepting *no* keys, silently discarding the parameter's data. Callers
+    should check this first and fall back to a non-strict request for the
+    affected tool.
+
+    Args:
+        schema: The tool's JSON-Schema ``parameters`` object.
+
+    Returns:
+        Dotted paths (``"counts"``, ``"payload.tags"``) of the offending
+        object nodes; empty when the schema is expressible in strict mode.
+    """
+    if not schema:
+        return []
+    found: list[str] = []
+    _collect_open_maps(schema, "", found)
+    return found
 
 
 #: Keywords Gemini and Vertex AI reject whose removal cannot change which

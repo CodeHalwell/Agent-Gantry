@@ -23,11 +23,21 @@ class _FakeFunctionTool:
     adapter built the tool.
     """
 
-    def __init__(self, name=None, description=None, params_json_schema=None, on_invoke_tool=None):
+    def __init__(
+        self,
+        name=None,
+        description=None,
+        params_json_schema=None,
+        on_invoke_tool=None,
+        # Mirrors the real dataclass field, which defaults to True (verified
+        # against openai-agents 0.22.0).
+        strict_json_schema=True,
+    ):
         self.name = name
         self.description = description
         self.params_json_schema = params_json_schema
         self.on_invoke_tool = on_invoke_tool
+        self.strict_json_schema = strict_json_schema
 
 
 @pytest.fixture
@@ -164,3 +174,48 @@ async def test_structured_results_are_json_not_python_repr(fake_agents, gantry):
 
     assert json.loads(rendered) == {"name": "q3", "ok": True, "items": None}
     assert "'" not in rendered, f"Python repr leaked to the model: {rendered}"
+
+
+def test_strict_schema_declines_strict_for_open_maps():
+    """The SDK's ``FunctionTool.strict_json_schema`` defaults to True and it
+    then runs ``ensure_strict_json_schema``, which rejects an object with
+    arbitrary keys with ``UserError``. ``strict_json_schema()`` deliberately
+    leaves such a schema alone, so this adapter has to turn the flag off
+    rather than hand the SDK something it refuses (PR #381 review)."""
+    from agent_gantry.integrations.frameworks.openai_agents import _strict_schema
+
+    open_map = {
+        "type": "object",
+        "properties": {
+            "counts": {"type": "object", "additionalProperties": {"type": "integer"}}
+        },
+        "required": ["counts"],
+    }
+    params, use_strict = _strict_schema(open_map)
+    assert use_strict is False
+    assert params == open_map  # emitted unmodified …
+    params["properties"]["INJECTED"] = 1
+    assert "INJECTED" not in open_map  # … but as a copy
+
+    declared = {"type": "object", "properties": {"a": {"type": "string"}}, "required": []}
+    params, use_strict = _strict_schema(declared)
+    assert use_strict is True
+    assert params["additionalProperties"] is False
+
+
+async def test_open_map_tool_is_built_without_strict(fake_agents, gantry):
+    """End to end: a tool with a dict parameter reaches the SDK with the flag
+    off instead of raising UserError inside it."""
+    from agent_gantry.integrations.frameworks.base import GantryToolset
+    from agent_gantry.integrations.frameworks.openai_agents import OpenAIAgentsAdapter
+
+    @gantry.register(tags=["metrics"])
+    def tally(counts: dict[str, int]) -> int:
+        "Add up a mapping of named counts."
+        return sum(counts.values())
+
+    await gantry.sync()
+    specs = await GantryToolset(gantry).select("add up named counts", limit=5)
+    spec = next(s for s in specs if s.name == "tally")
+    tool = OpenAIAgentsAdapter.convert(spec)
+    assert tool.strict_json_schema is False

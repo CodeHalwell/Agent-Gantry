@@ -10,6 +10,7 @@ Implements zero-trust security controls including:
 from __future__ import annotations
 
 import fnmatch
+import functools
 import re
 import time
 import typing
@@ -57,6 +58,57 @@ class ValidationError(Exception):
     pass
 
 
+@functools.lru_cache(maxsize=256)
+def _declares_keyword(check: typing.Any, keyword: str) -> bool:
+    """Signature inspection for :func:`accepts_keyword`, cached per callable.
+
+    ``execute()`` asks this on *every* call, and ``inspect.signature`` is not
+    cheap. The answer is a property of the bound method, which is stable for
+    the life of the policy object, so caching it keeps a hot path off the
+    reflection machinery. Bound methods are hashable and the cache holds a
+    reference, so entries are bounded by ``maxsize`` rather than by policy
+    lifetime.
+    """
+    import inspect
+
+    try:
+        parameters = inspect.signature(check).parameters.values()
+    except (TypeError, ValueError):  # C callables / exotic doubles
+        return False
+    return any(
+        p.name == keyword or p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters
+    )
+
+
+def accepts_keyword(policy: typing.Any, keyword: str) -> bool:
+    """Whether ``policy.check_permission`` accepts ``keyword``.
+
+    Callers pass an optional keyword only when the policy's signature
+    declares it (or takes ``**kwargs``), so duck-typed policies predating
+    it keep working — they simply behave as they did before the keyword
+    existed. Inspecting the signature once is what decides; never
+    call-and-retry, which would re-run rate-limit accounting on a mismatch.
+    """
+    check = getattr(policy, "check_permission", None)
+    if not callable(check):
+        return False
+    try:
+        return _declares_keyword(check, keyword)
+    except TypeError:  # an unhashable callable — inspect it directly
+        return _declares_keyword.__wrapped__(check, keyword)
+
+
+def accepts_confirmation_approved(policy: typing.Any) -> bool:
+    """Whether ``policy.check_permission`` accepts ``confirmation_approved``.
+
+    Used by the callers that honour a human approval (the executor's
+    ``ToolCall(require_confirmation=False)`` path, the Agent Framework
+    approval middleware's replay path). A policy without the keyword keeps
+    its pattern gate un-approvable, exactly as before the keyword existed.
+    """
+    return accepts_keyword(policy, "confirmation_approved")
+
+
 class SecurityPolicy:
     """
     Rules of Engagement for tools.
@@ -88,7 +140,15 @@ class SecurityPolicy:
         self.max_requests_per_minute = max_requests_per_minute
         self._request_timestamps: list[float] = []
 
-    def check_permission(self, tool_name: str, arguments: dict[str, str]) -> None:
+    def check_permission(
+        self,
+        tool_name: str,
+        arguments: dict[str, typing.Any],
+        *,
+        confirmation_approved: bool = False,
+        pending_confirmation: bool = False,
+        arguments_valid: bool = True,
+    ) -> None:
         """
         Check if tool execution is permitted.
 
@@ -99,7 +159,45 @@ class SecurityPolicy:
         Args:
             tool_name: Name of the tool to execute
             arguments: Arguments for the tool
+            confirmation_approved: When ``True``, the caller vouches that a
+                human already approved this specific call, so the
+                ``require_confirmation`` pattern gate is skipped. Every
+                *denial* check (rate limit, allowed domains) still runs —
+                approval is not a policy bypass, and this flag is never
+                allowed to relax one: it reaches here from
+                ``ToolCall(require_confirmation=False)``, a caller-supplied
+                field, so anything it could switch off a client could switch
+                off at will. Set by the executor when a call carries
+                ``ToolCall(require_confirmation=False)``.
+            pending_confirmation: When ``True``, the caller knows this call
+                will stop at a confirmation gate *it* owns — the executor's
+                ``ToolDefinition.requires_confirmation`` flag, which this
+                policy cannot see — so nothing will execute. Every check
+                still runs (a probe that would be denied should say so
+                before a human is asked to approve it), but the call is not
+                recorded against the rate limit, for the same reason this
+                method defers recording past its own confirmation gate:
+                the approved replay that follows is the same logical call
+                and is counted then. Without this, a tool gated by the
+                *flag* rather than by a ``require_confirmation`` pattern
+                would have its probe counted and its replay denied.
+            arguments_valid: Whether the call's arguments passed the
+                executor's schema validation. ``False`` makes the call
+                terminal whatever this policy decides — it returns a
+                ``ValidationError``, never a pending prompt — so a match on
+                a ``require_confirmation`` pattern must still be charged
+                rather than deferred to a replay that will never arrive.
         """
+        # Rate limit. The window is *checked* here, before any more expensive
+        # work, so a flood is rejected cheaply — but the call is only
+        # *recorded* once it clears the confirmation gate below. A call that
+        # comes back pending confirmation never executed, and the approved
+        # replay that follows is the same logical call: counting both would
+        # charge one call twice and, at a small enough limit, leave
+        # confirmation-gated tools permanently unexecutable. Recording after
+        # the gate fixes that without trusting ``confirmation_approved``,
+        # which the caller controls.
+        now: float | None = None
         if self.max_requests_per_minute > 0:
             now = time.time()
             # ⚡ Bolt: Fast sliding window cleanup using index slice instead of O(N) comprehension
@@ -115,21 +213,70 @@ class SecurityPolicy:
                 raise PermissionDeniedError(
                     f"Rate limit exceeded: maximum {self.max_requests_per_minute} requests per minute allowed."
                 )
-            self._request_timestamps.append(now)
 
-        for pattern in self.require_confirmation:
-            if fnmatch.fnmatch(tool_name, pattern):
-                raise ConfirmationRequiredError(f"Tool {tool_name} requires human approval.")
+        if not confirmation_approved:
+            for pattern in self.require_confirmation:
+                if fnmatch.fnmatch(tool_name, pattern):
+                    if now is not None and not arguments_valid:
+                        # Deferring the charge to the approved replay is only
+                        # right when a replay can happen. A call whose
+                        # arguments already failed validation is terminal — the
+                        # executor discards this pending result and returns the
+                        # ValidationError — so nothing would ever be counted,
+                        # and malformed calls to a pattern-gated tool would be
+                        # unlimited. This is the same exemption abuse the
+                        # tool-flag gate was fixed for, reachable through the
+                        # pattern gate instead.
+                        self._request_timestamps.append(now)
+                    raise ConfirmationRequiredError(
+                        f"Tool {tool_name} requires human approval."
+                    )
 
-        # 2. Check allowed domains if they are configured
+        # 2. Check allowed domains if they are configured. Resolved before
+        # recording, because a denial changes whether this call counts: a
+        # denied call is terminal even when it would otherwise have stopped
+        # at the executor's confirmation gate, and skipping it there would
+        # leave a flood of rejected calls unbounded.
+        denial: str | None = None
         if self.allowed_domains:
             for str_val in self._extract_all_strings(arguments):
-                domains = self._extract_domains(str_val)
-                for domain in domains:
+                for domain in self._extract_domains(str_val):
                     if not self._is_domain_allowed(domain):
-                        raise PermissionDeniedError(
+                        denial = (
                             f"Execution denied: Domain '{domain}' is not in allowed_domains."
                         )
+                        break
+                if denial is not None:
+                    break
+
+        # Past the confirmation gate the outcome is terminal — this call either
+        # executes or is denied — so it counts exactly once.
+        # ``pending_confirmation`` marks the one non-terminal case: a gate the
+        # *executor* owns and this policy cannot see, whose approved replay is
+        # counted instead. A denial is terminal regardless.
+        if now is not None and (denial is not None or not pending_confirmation):
+            self._request_timestamps.append(now)
+
+        if denial is not None:
+            raise PermissionDeniedError(denial)
+
+    def would_exceed_rate_limit(self) -> str | None:
+        """Whether :meth:`check_permission` would refuse on rate limit alone.
+
+        Read-only: it neither records a call nor prunes the window, so it can
+        run *before* the work the limit is meant to protect.
+        ``check_permission`` remains the authority.
+        """
+        if self.max_requests_per_minute <= 0:
+            return None
+        now = time.time()
+        recent = sum(1 for stamp in self._request_timestamps if now - stamp < 60)
+        if recent >= self.max_requests_per_minute:
+            return (
+                f"Rate limit exceeded: maximum {self.max_requests_per_minute} "
+                "requests per minute allowed."
+            )
+        return None
 
     def _extract_all_strings(self, data: typing.Any) -> typing.Iterator[str]:
         """Recursively extract all string values from a data structure."""

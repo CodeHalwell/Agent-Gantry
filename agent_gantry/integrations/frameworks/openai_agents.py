@@ -14,10 +14,15 @@ Public entry point: :class:`OpenAIAgentsAdapter`.
 
 from __future__ import annotations
 
+import copy
 import json
+import logging
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.adapters.tool_spec.schema_utils import strict_json_schema
+from agent_gantry.adapters.tool_spec.schema_utils import (
+    strict_json_schema,
+    unsupported_strict_paths,
+)
 from agent_gantry.integrations.frameworks.base import (
     DEFAULT_TOOL_LIMIT,
     BaseFrameworkAdapter,
@@ -28,8 +33,10 @@ if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
     from agent_gantry.integrations.frameworks.base import ToolSpec
 
+_logger = logging.getLogger(__name__)
 
-def _strict_schema(params: dict[str, Any]) -> dict[str, Any]:
+
+def _strict_schema(params: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     """Return ``params`` reshaped for OpenAI Agents strict-mode function tools.
 
     ``FunctionTool.strict_json_schema`` defaults to ``True``, and the SDK then
@@ -43,8 +50,28 @@ def _strict_schema(params: dict[str, Any]) -> dict[str, Any]:
     Delegating to the shared transform applies the constraints recursively and
     keeps optionality by widening those properties to admit ``null``. It is
     idempotent, so the SDK's own pass over the result is a no-op.
+
+    Returns:
+        A tuple of the schema to publish and whether strict mode is usable.
+        An object with arbitrary keys (a ``dict[str, int]`` parameter, an
+        untyped ``dict``) has no strict-mode representation, and
+        ``strict_json_schema`` deliberately leaves it alone rather than
+        forcing it closed — so the caller must turn ``strict_json_schema``
+        *off* for that tool, or the SDK's own ``ensure_strict_json_schema``
+        rejects it with ``UserError``.
     """
-    return strict_json_schema(params)
+    unsupported = unsupported_strict_paths(params)
+    if unsupported:
+        _logger.warning(
+            "Tool cannot use OpenAI Agents strict mode: %s describes an object "
+            "with arbitrary keys, which strict mode cannot express. Emitting "
+            "the tool with strict_json_schema=False so the SDK still accepts "
+            "it — declare the object's properties explicitly to make it "
+            "strict-compatible.",
+            ", ".join(unsupported),
+        )
+        return copy.deepcopy(params), False
+    return strict_json_schema(params), True
 
 
 def _spec_to_openai_agents(spec: ToolSpec) -> Any:
@@ -69,10 +96,12 @@ def _spec_to_openai_agents(spec: ToolSpec) -> Any:
         # matching the Agent Framework bridge.
         return result if isinstance(result, str) else json.dumps(result, default=str)
 
+    params, use_strict = _strict_schema(spec.parameters)
     return FunctionTool(
         name=spec.name,
         description=spec.description,
-        params_json_schema=_strict_schema(spec.parameters),
+        params_json_schema=params,
+        strict_json_schema=use_strict,
         on_invoke_tool=_on_invoke_tool,
     )
 

@@ -284,6 +284,17 @@ the underlying error string; its message is
 stable and pattern-matchable (locked by
 `tests/frameworks/test_conformance.py::test_tool_execution_error_message_format`).
 
+Two subclasses distinguish the "never executed by design" outcomes so a
+caller can branch without string-matching the status —
+`ToolConfirmationRequiredError` (the tool is confirmation-gated: either its
+own `requires_confirmation=True` flag or a `SecurityPolicy`
+`require_confirmation` pattern matched; approve by re-issuing the call with
+`ToolCall(require_confirmation=False)`, which clears both gates while every
+denial check still runs) and `ToolPermissionDeniedError` (the security
+policy refused it outright). Both are re-exported from
+`agent_gantry.integrations.frameworks`; catching `ToolExecutionError` still
+catches every outcome.
+
 **Every one of the 14 native adapters lets this propagate uncaught** from the
 native tool object's own invocation entry point (`.func`, `._run`, `.forward`,
 `.entrypoint`, `.method`, `.on_invoke_tool`, …) — proven for all of them,

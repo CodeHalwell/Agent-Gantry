@@ -161,6 +161,75 @@ class RateLimiter:
             # Increment concurrent counter
             self._concurrent[key] += 1
 
+    def would_exceed(self, tool_name: str, namespace: str = "default") -> str | None:
+        """Whether an acquire would be refused right now, changing nothing.
+
+        Read-only by construction — it records no call, consumes no token and
+        prunes no history — so it can run *before* the work admission control
+        is meant to protect. ``acquire`` remains the authority; this only
+        short-circuits a call that is already over quota.
+
+        Returns the reason, or ``None`` when the call would be admitted.
+        """
+        if not self._config.enabled:
+            return None
+        key = self._get_key(tool_name, namespace)
+
+        if self._concurrent[key] >= self._config.max_concurrent:
+            return (
+                f"Concurrent execution limit ({self._config.max_concurrent}) exceeded for {key}"
+            )
+
+        if self._config.strategy == "sliding_window":
+            history = self._call_history[key]
+            now = time.time()
+            hour_ago = now - 3600
+            minute_ago = now - 60
+            # Counted rather than pruned: pruning is a mutation, and this must
+            # leave the limiter exactly as it found it.
+            in_hour = sum(1 for stamp in history if stamp >= hour_ago)
+            if in_hour >= self._config.max_calls_per_hour:
+                return (
+                    f"Rate limit exceeded: {in_hour}/"
+                    f"{self._config.max_calls_per_hour} calls per hour"
+                )
+            in_minute = sum(1 for stamp in history if stamp >= minute_ago)
+            if in_minute >= self._config.max_calls_per_minute:
+                return (
+                    f"Rate limit exceeded: {in_minute}/"
+                    f"{self._config.max_calls_per_minute} calls per minute"
+                )
+            return None
+
+        if self._config.strategy == "token_bucket":
+            now = time.time()
+            refill_rate = self._config.max_calls_per_minute / 60
+            max_tokens = self._config.burst_size or self._config.max_calls_per_minute
+            # The refill is *computed*, not stored: writing ``_tokens`` and
+            # ``_last_refill`` here would make a peek indistinguishable from
+            # an acquire for the next caller.
+            available = min(
+                max_tokens,
+                self._tokens[key] + (now - self._last_refill[key]) * refill_rate,
+            )
+            if available < 1:
+                return (
+                    f"Rate limit exceeded: no tokens available "
+                    f"(refills at {refill_rate:.2f}/s)"
+                )
+            return None
+
+        if self._config.strategy == "fixed_window":
+            now = time.time()
+            if now - self._window_start[key] >= 60:
+                return None  # the window is due to reset, so nothing is spent
+            if self._window_calls[key] >= self._config.max_calls_per_minute:
+                return (
+                    f"Rate limit exceeded: {self._window_calls[key]}/"
+                    f"{self._config.max_calls_per_minute} calls in window"
+                )
+        return None
+
     async def release(
         self,
         tool_name: str,

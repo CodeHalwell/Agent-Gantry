@@ -7,6 +7,7 @@ Gemini, Mistral, Groq, and Microsoft Agent Framework.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 from typing import TYPE_CHECKING, Any
@@ -15,6 +16,7 @@ from agent_gantry.adapters.tool_spec.base import ToolCallPayload
 from agent_gantry.adapters.tool_spec.schema_utils import (
     sanitize_gemini_schema,
     strict_json_schema,
+    unsupported_strict_paths,
 )
 from agent_gantry.schema.execution import ToolCall
 
@@ -22,6 +24,44 @@ if TYPE_CHECKING:
     from agent_gantry.schema.tool import ToolDefinition
 
 _logger = logging.getLogger(__name__)
+
+
+def _emitted_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """A caller-owned deep copy of a tool's parameter schema.
+
+    The registry holds one canonical ``ToolDefinition.parameters_schema``
+    per tool, so a payload that aliases it lets any caller that augments
+    the emitted schema corrupt every later conversion of that tool — and
+    the executor's own validation, which reads the same object.
+    :func:`strict_json_schema` and :func:`sanitize_gemini_schema` already
+    deep-copy their input; every pass-through path has to do it here.
+    """
+    return copy.deepcopy(schema)
+
+
+def _strict_parameters(tool: ToolDefinition, dialect: str) -> tuple[dict[str, Any], bool]:
+    """Strict-mode ``parameters`` for ``tool``, and whether strict is usable.
+
+    OpenAI rejects the whole request when a tool marked ``strict: true``
+    carries an object with arbitrary keys — a ``dict[str, int]`` parameter,
+    an untyped ``dict`` — because strict mode cannot express one. Publishing
+    the tool without the flag keeps it callable (merely unconstrained),
+    where honouring the caller's ``strict=True`` verbatim would take down
+    every request the tool appears in.
+    """
+    unsupported = unsupported_strict_paths(tool.parameters_schema)
+    if unsupported:
+        _logger.warning(
+            "Tool %r cannot use %s strict mode: %s describes an object with "
+            "arbitrary keys, which strict mode cannot express. Emitting the "
+            "tool without strict:true so the request still succeeds — declare "
+            "the object's properties explicitly to make it strict-compatible.",
+            tool.name,
+            dialect,
+            ", ".join(unsupported),
+        )
+        return _emitted_schema(tool.parameters_schema), False
+    return strict_json_schema(tool.parameters_schema), True
 
 
 class OpenAIAdapter:
@@ -64,15 +104,23 @@ class OpenAIAdapter:
                 admit ``null``. Setting the flag without that rewrite makes the
                 API reject any tool that has an optional parameter. The
                 ToolDefinition's own schema is never mutated. Defaults to False.
+                A tool whose schema contains an object with arbitrary keys (a
+                ``dict[str, int]`` parameter, an untyped ``dict``) has no
+                strict-mode representation; it is emitted unmodified and
+                *without* ``strict: true``, with a warning, since claiming
+                strict there makes OpenAI reject the entire request.
                 Source: https://platform.openai.com/docs/guides/function-calling
             **options: Additional provider-specific options
 
         Returns:
             OpenAI-compatible tool schema
         """
-        parameters = (
-            strict_json_schema(tool.parameters_schema) if strict else tool.parameters_schema
-        )
+        # ``_strict_parameters`` returns its own copy on both branches, so
+        # only the non-strict path needs one made here.
+        if strict:
+            parameters, use_strict = _strict_parameters(tool, self.dialect_name)
+        else:
+            parameters, use_strict = _emitted_schema(tool.parameters_schema), False
         schema: dict[str, Any] = {
             "type": "function",
             "function": {
@@ -81,7 +129,7 @@ class OpenAIAdapter:
                 "parameters": parameters,
             },
         }
-        if strict:
+        if use_strict:
             schema["function"]["strict"] = True
         return schema
 
@@ -215,22 +263,30 @@ class OpenAIResponsesAdapter:
                 ``required``, formerly-optional properties widened to admit
                 ``null``); the flag alone would make the API reject any tool
                 with an optional parameter. The ToolDefinition's own schema is
-                never mutated. Defaults to False.
+                never mutated. Defaults to False. A tool whose schema contains
+                an object with arbitrary keys (a ``dict[str, int]`` parameter,
+                an untyped ``dict``) has no strict-mode representation; it is
+                emitted unmodified and *without* ``strict: true``, with a
+                warning, since claiming strict there makes the API reject the
+                entire request.
             **options: Additional provider-specific options
 
         Returns:
             OpenAI Responses API compatible tool schema
         """
-        parameters = (
-            strict_json_schema(tool.parameters_schema) if strict else tool.parameters_schema
-        )
+        # ``_strict_parameters`` returns its own copy on both branches, so
+        # only the non-strict path needs one made here.
+        if strict:
+            parameters, use_strict = _strict_parameters(tool, self.dialect_name)
+        else:
+            parameters, use_strict = _emitted_schema(tool.parameters_schema), False
         schema: dict[str, Any] = {
             "type": "function",
             "name": tool.name,
             "description": tool.description,
             "parameters": parameters,
         }
-        if strict:
+        if use_strict:
             schema["strict"] = True
         return schema
 
@@ -356,23 +412,44 @@ class AnthropicAdapter:
         Returns:
             Anthropic-compatible tool schema
         """
-        # Use the raw schema for non-strict mode; for strict mode, shallow-copy
-        # and inject additionalProperties: false so the API constraint is met
-        # without mutating the shared ToolDefinition.parameters_schema.
+        # Always emit a deep copy: a ``{**schema}`` spread would leave every
+        # nested property dict aliasing the shared
+        # ToolDefinition.parameters_schema, so a caller adjusting one nested
+        # subschema on the payload would still corrupt the registered tool.
+        input_schema: dict[str, Any] = _emitted_schema(tool.parameters_schema)
+        use_strict = False
         if strict:
-            input_schema: dict[str, Any] = {
-                **tool.parameters_schema,
-                "additionalProperties": False,
-            }
-        else:
-            input_schema = tool.parameters_schema
+            # Same gate as the OpenAI adapters: strict mode requires
+            # ``additionalProperties: false``, so a schema that *needs*
+            # arbitrary keys cannot be strict. Setting the flag anyway would
+            # replace a typed mapping (``dict[str, int]``) or a ``**kwargs``
+            # handler's open object with one accepting no keys at all —
+            # silently discarding the parameter's data rather than merely
+            # leaving it unconstrained.
+            unsupported = unsupported_strict_paths(tool.parameters_schema)
+            if unsupported:
+                _logger.warning(
+                    "Tool %r cannot use %s strict mode: %s describes an "
+                    "object with arbitrary keys, which strict mode cannot "
+                    "express. Emitting the tool without strict:true so the "
+                    "keys stay usable — declare the object's properties "
+                    "explicitly to make it strict-compatible.",
+                    tool.name,
+                    self.dialect_name,
+                    ", ".join(unsupported),
+                )
+            else:
+                use_strict = True
+                # Anthropic requires additionalProperties: false for strict
+                # mode to take effect.
+                input_schema["additionalProperties"] = False
 
         schema: dict[str, Any] = {
             "name": tool.name,
             "description": tool.description,
             "input_schema": input_schema,
         }
-        if strict:
+        if use_strict:
             schema["strict"] = True
         return schema
 
@@ -492,7 +569,7 @@ class GeminiAdapter:
             "parameters": (
                 sanitize_gemini_schema(tool.parameters_schema)
                 if sanitize
-                else tool.parameters_schema
+                else _emitted_schema(tool.parameters_schema)
             ),
         }
 

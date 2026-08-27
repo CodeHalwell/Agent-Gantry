@@ -113,7 +113,11 @@ class TestOpenAIAdapter:
         # The formerly-optional property stays optional in meaning by
         # admitting null rather than by being dropped from ``required``.
         assert params["properties"]["unit"]["type"] == ["string", "null"]
-        assert params["properties"]["unit"]["enum"] == ["celsius", "fahrenheit"]
+        # ``enum`` is an independent constraint, so widening ``type`` alone
+        # would not actually let the model express "not provided" — the
+        # constrained grammar would force it to invent "celsius" or
+        # "fahrenheit". ``null`` has to join the enum too.
+        assert params["properties"]["unit"]["enum"] == ["celsius", "fahrenheit", None]
         # A genuinely required property is untouched.
         assert params["properties"]["city"]["type"] == "string"
 

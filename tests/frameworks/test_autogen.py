@@ -118,7 +118,61 @@ async def test_missing_autogen_raises_helpful_error(monkeypatch, gantry):
     # Ensure the lazy import fails even if a real package is somehow present.
     monkeypatch.setitem(sys.modules, "autogen", None)
 
-    with pytest.raises(ImportError, match="pip install pyautogen"):
+    with pytest.raises(ImportError, match=r"ag2\[openai\]<1"):
         await AutoGenAdapter(gantry).register(
             "send an email", caller=object(), executor=object()
         )
+
+
+async def test_register_with_real_ag2(gantry):
+    """``AutoGenAdapter.register`` against the real classic AG2 package.
+
+    Classic AG2 (module ``autogen``, ``pip install "ag2[openai]<1"``) is the
+    line that provides ``register_function``/``ConversableAgent``. AG2 1.x
+    renamed its import to ``ag2`` with a new agent API, and ``pyautogen`` >=
+    0.10 became a Microsoft autogen-agentchat shim — the hasattr guard skips
+    those. Verifies registration end-to-end: the executor's function map
+    routes through gantry, and the caller's advertised schema carries the
+    per-parameter descriptions from ``Annotated`` metadata.
+    """
+    import os
+
+    os.environ.setdefault("OPENAI_API_KEY", "sk-test-not-used")
+    autogen = pytest.importorskip("autogen", reason="classic AG2 not installed")
+    if not hasattr(autogen, "register_function"):
+        pytest.skip("installed 'autogen' module is not classic AG2")
+
+    from agent_gantry.integrations.frameworks.autogen import AutoGenAdapter
+
+    @gantry.register(tags=["invoice"])
+    def send_invoice(recipient: str) -> str:
+        """Send an invoice to a customer.
+
+        Args:
+            recipient: Invoice recipient address.
+        """
+        return f"invoiced:{recipient}"
+
+    await gantry.sync()
+
+    caller = autogen.ConversableAgent(
+        "caller",
+        llm_config={"config_list": [{"model": "gpt-4o", "api_key": "sk-test"}]},
+    )
+    executor = autogen.ConversableAgent("executor", human_input_mode="NEVER")
+
+    names = await AutoGenAdapter(gantry).register(
+        "send an invoice to a customer", caller=caller, executor=executor, limit=1
+    )
+    assert names == ["send_invoice"]
+
+    result = await executor.function_map["send_invoice"](recipient="boss@x.com")
+    assert "invoiced:boss@x.com" in str(result)
+
+    tools = caller.llm_config.get("tools", [])
+    assert tools and tools[0]["function"]["name"] == "send_invoice"
+    prop = tools[0]["function"]["parameters"]["properties"]["recipient"]
+    assert prop.get("description") == "Invoice recipient address.", (
+        "the Gantry schema's parameter description should reach AG2's schema "
+        "via Annotated metadata"
+    )

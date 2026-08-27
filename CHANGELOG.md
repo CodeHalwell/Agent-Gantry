@@ -7,6 +7,1132 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-08-26
+
+Tool schemas now carry what your functions actually declare. Everything a
+tool advertises — to every LLM provider dialect and all ~16 agent-framework
+adapters — is derived from one schema, and that schema previously threw away
+most of what the function said: no parameter descriptions ever, enums
+flattened to bare strings, `dict` parameters mislabelled (and then rejected
+by the executor), defaults dropped, nested models stringly typed. This
+release fixes that at the source and makes the executor, the framework
+adapters, and the provider dialects agree with it.
+
+### Added
+
+- **`@gantry.register` captures what the function declares.**
+  `build_parameters_schema` now reads docstring parameter sections (Google
+  `Args:`, NumPy `Parameters`, Sphinx `:param:`) and `Annotated[T, "…"]`
+  metadata into `description`; maps `Literal`/`Enum` to `enum` with an
+  inferred type; `dict`/`Mapping` to `object` (with typed
+  `additionalProperties` when parameterized); `set`/`frozenset`/`tuple` to
+  arrays (`uniqueItems` for sets, homogeneous tuple item types); Pydantic
+  models, dataclasses and `TypedDict`s to inlined nested object schemas via
+  Pydantic, with local `$ref`s resolved; records JSON-safe defaults (`Enum`
+  defaults unwrapped to their values); handles PEP 604 unions in either
+  order; and adds string `format`s for `datetime`/`date`/`time`/`UUID`.
+- **Signature-introspecting frameworks stop flattening that schema.** The
+  adapters whose framework re-derives its own LLM schema from the wrapped
+  callable now pass the Gantry schema through natively: LlamaIndex gets an
+  explicit `fn_schema` args model, Google ADK gets a declaration carrying
+  `parameters_json_schema` verbatim (fixing ADK 1.x advertising *every*
+  parameter as required; falls back to signature introspection on genai
+  builds without the field), and Semantic Kernel reads per-parameter
+  descriptions from `Annotated` metadata. CrewAI's args model is rebuilt on
+  a shared JSON-schema→Pydantic bridge (`Literal` enums, typed array items,
+  nested objects, defaults, descriptions, nullability), AG2 registration
+  carries `Annotated` descriptions, and the Microsoft Agent Framework bridge
+  passes the schema to `agent_framework.tool(schema=…)`.
+  `ToolSpec.python_signature` gains typed `list[T]` annotations,
+  schema-declared defaults, and opt-in `annotated_descriptions`.
+- **Typed non-success errors and a working approve/resume path.**
+  `ToolSpec.ainvoke` raises `ToolConfirmationRequiredError` /
+  `ToolPermissionDeniedError` (both subclasses of the existing
+  `ToolExecutionError`) for confirmation-gated and policy-denied calls, and
+  both executor confirmation paths populate `error` with the reason and the
+  re-issue hint — previously the tool-flag path surfaced as
+  `status=pending_confirmation): no detail`. That hint is now true for both
+  gates: `ToolCall(require_confirmation=False)` also clears the
+  `SecurityPolicy` `require_confirmation` pattern gate, via a new
+  `check_permission(confirmation_approved=…)` keyword. Previously a
+  pattern-gated tool had no per-call approval mechanism at all.
+- **`unsupported_strict_paths()`** (`adapters.tool_spec.schema_utils`)
+  reports the locations in a schema that OpenAI strict mode cannot express.
+
+### Changed
+
+- **Approval clears the confirmation gate and nothing else.** Every denial
+  check — rate limit, allowed domains — runs whether or not a call is
+  approved, on both the executor's `require_confirmation=False` path and the
+  Agent Framework middleware's native approval replay. A `SecurityPolicy`
+  replacement that predates the `confirmation_approved` keyword stays closed
+  on approval rather than being bypassed.
+- **A confirmation prompt no longer costs rate-limit budget.** A call that
+  comes back `PENDING_CONFIRMATION` never executed, and the approved replay
+  that follows is the same logical call, so only the replay is counted. Both
+  the `SecurityPolicy` window and the executor's `RateLimiter` previously
+  charged both, which at a limit of 1 left confirmation-gated tools
+  permanently unexecutable. Denied calls still consume quota.
+- **Framework args models reject undeclared arguments.** The generated
+  CrewAI/LlamaIndex model takes its `extra` configuration from the schema's
+  own `additionalProperties` instead of Pydantic's default `extra="ignore"`,
+  so a misspelled or hallucinated argument surfaces as an error rather than
+  being silently dropped inside the framework — matching what the executor
+  does with the same key. A *typed* `additionalProperties` also constrains
+  the extras' value type, so the framework won't accept a string where the
+  schema demands an integer.
+- **Asking for OpenAI strict mode on a schema it cannot express no longer
+  breaks the request.** Strict mode has no representation for an object with
+  arbitrary keys (a `dict[str, int]` parameter, an untyped `dict`), and
+  OpenAI rejects such a request outright rather than ignoring the shape.
+  Affected tools are now emitted unmodified and *without* `strict: true`,
+  with a warning naming the tool and parameter, so one tool stays
+  unconstrained instead of the whole request failing. Forcing
+  `additionalProperties: false` onto such an object is deliberately not done
+  — it would produce an object accepting no keys and silently discard the
+  parameter's data.
+
+### Fixed
+
+- **A non-finite float default produced a schema that isn't valid JSON.** A
+  parameter defaulting to `float("nan")` or `float("inf")` had that value
+  embedded in the schema's `default`, and `json.dumps` emits the bare tokens
+  `NaN`/`Infinity` for them — so a provider parsing strict JSON rejects the
+  request. Non-finite floats are no longer treated as JSON-safe, at the top
+  level and inside nested container defaults, so the default is simply
+  omitted.
+- **`const` was not enforced during argument validation.** Pydantic emits
+  `const` rather than `enum` for a single-value `Literal`, so it appears
+  throughout the nested model and `TypedDict` schemas introspection now
+  inlines — and validation checked only `type` and `enum`, letting any value
+  through. `const` equality is checked alongside `enum` membership now.
+- **A `None`-annotated parameter advertised a string.** `def f(x: None)`
+  resolves to `NoneType`, which isn't in the scalar map and fell through to
+  the string fallback, so the schema demanded a string for a parameter that
+  admits only `null`. Now maps to `{"type": "null"}`.
+- **An optional `const` couldn't express omission under strict mode.**
+  `const` is an independent constraint that no `type` widening satisfies —
+  a single-value `Literal` (`{"type": "string", "const": "fixed"}`) still
+  forbade `null` after widening, and strict mode makes every property
+  required, so the model had to send the constant rather than let the
+  handler's default apply. Such a property is now wrapped as
+  `anyOf: [<original>, {"type": "null"}]`, keeping the constant intact.
+- **`prefixItems` was never validated.** Pydantic emits it for a
+  heterogeneous `tuple[int, str]`, so it arrives inside the nested schemas
+  now inlined — but the array branch only looked at `items`, so
+  `["bad", 42]` passed validation. Each position is checked against its own
+  entry, with `items` covering the positions past the prefix.
+- **The framework bridge also skipped combinators when a `type` was
+  present**, the same gate as the executor below. A constraint-only branch
+  needs the parent's type pushed into it to mean anything, so
+  `{"type": "integer", "anyOf": [{"minimum": 10}, {"maximum": 0}]}` becomes
+  a union of two constrained ints rather than a bare `int`.
+- **Combinators were only enforced when the schema had no `type`.** JSON
+  Schema applies `anyOf`/`oneOf`/`allOf` independently of `type`, so
+  `{"type": "integer", "allOf": [{"minimum": 1}]}` — a shape merged and
+  imported schemas do produce — accepted `0`. They now run regardless.
+- **A `TypedDict` subclass lost its inherited required keys.** The
+  rebuild used for Python < 3.12 replayed a single `total=` flag over the
+  merged annotations, so `class Child(Base, total=False)` made *Base*'s
+  required keys optional too. Requiredness is now rebuilt per key from
+  `__required_keys__`.
+- **A malformed confirmation probe consumed no quota.** A call whose
+  arguments fail validation is terminal even on a confirmation-gated tool —
+  it returns a `ValidationError`, never a pending prompt — but it was
+  taking the probe's rate-limit exemption, so malformed calls were
+  unlimited. Arguments are now validated before that decision is made; the
+  result is still returned after the policy check, so a denial outranks a
+  validation error exactly as before.
+- **Constraints didn't reach recursive framework annotations.**
+  `list[Annotated[int, Field(gt=0)]]` carries `exclusiveMinimum` on the
+  *item* schema, but constraints were only applied to the outer property,
+  so array items, typed `additionalProperties` values, and combinator
+  branches were all unconstrained in the generated model.
+- **Strict-mode nulls were only normalized at the top level.** Widening
+  applies to *every* object in the schema, so an optional *nested* property
+  also comes back as an explicit `null` meaning "not provided" — but
+  normalization looked only at top-level arguments, so
+  `{"payload": {"nickname": null}}` survived and validation then rejected it
+  against the canonical non-null schema. Normalization now recurses through
+  nested objects and array items. A *required* nested `null` is still
+  preserved, so its error stays accurate.
+- **The framework bridge lagged the executor on four schema keywords.**
+  Every one of them is a rule the executor enforces at dispatch, so the
+  CrewAI/LlamaIndex args model advertised and accepted calls the engine then
+  refused: `prefixItems` yielded a bare `list` (each position is now checked
+  against its own entry, with `items` covering the tail, and the value stays
+  a `list` because the executor's validator requires a JSON array);
+  `uniqueItems` — which Gantry's own introspection emits for every `set` and
+  `frozenset` parameter — wasn't enforced at all; and a float `const`
+  (`{"type": "number", "const": 0.5}`) fell through to an unconstrained
+  `float`, though the adjacent `enum` path already admitted floats.
+- **Normalization stopped at a combinator node.** An optional nested model is
+  `{"anyOf": [{object…}, {"type": "null"}]}` — what Pydantic emits for
+  `Payload | None` — and normalization read only a node's own `properties`,
+  so every value beneath such a property kept its strict-mode nulls and
+  failed validation. It now resolves the branch that declares the shape, for
+  nested objects and array items alike, and leaves genuinely ambiguous unions
+  (two branches declaring `properties`, with no single `required` list to
+  decide against) untouched. Positions typed by `prefixItems` are
+  normalized too: strict mode widens the optional properties of a positional
+  *object* exactly as it does anywhere else, so a `tuple[Payload, int]`
+  parameter kept its nested nulls while only `items` was consulted.
+- **A meaningfully-nullable parameter forbade `null`.** `T | None` maps to
+  `T`'s schema, which is right when the default is `None` — "omitted" and
+  "null" mean the same thing there, and a bare type is what provider dialects
+  handle best. Two cases break that equivalence and now spell `null` out:
+  a parameter with *no* default (`def f(x: int | None)`) is required, so
+  omission cannot express `None` and the tool was uncallable with the value
+  its own annotation names; and one with a non-`None` default
+  (`x: int | None = 5`) treats an explicit null as a distinct choice, which
+  was being dropped as "not provided" and handing the handler `5`. An
+  optional `Literal` gains `None` in its `enum` too, since widening the type
+  alone would buy nothing. `x: int | None = None` — the common case — is
+  unchanged.
+- **`patternProperties` was never validated.** Pydantic emits it for a mapping
+  with constrained keys, and the object branch ignored it entirely: a matching
+  key's value went unchecked, and with `additionalProperties: false` *every*
+  key was rejected because none counted as declared. Matched keys are now
+  validated against their pattern's schema and treated as declared by both
+  paths. An uncompilable pattern fails open with a warning, as `pattern` does.
+- **A tuple-valued `Enum` reached its handler as a raw array.** Canonicalizing
+  those members to JSON arrays (so the schema matches what a provider sends)
+  left Pydantic unable to match `[0, 0]` back to the member value `(0, 0)`, so
+  reconstruction fell through and the handler got a `list`. Members are now
+  recovered by JSON identity — the same equality the executor's `enum` check
+  uses — applied to the whole annotation so it reaches `list[Point]` and
+  `Point | None` too. A value matching no member is still rejected.
+- **A sibling `type` didn't govern combinator nullability.** JSON Schema
+  applies a property's own `type` alongside its combinator, so
+  `{"type": "string", "anyOf": [{"type": "null"}, {}]}` does *not* admit null
+  — but the branches were read in isolation, so a strict-mode placeholder was
+  preserved for canonical validation to reject.
+- **A container of typed values still reached its handler as raw JSON.**
+  `list[Payload]` has origin `list` and isn't a bare class, so it fell through
+  every check in the reconstruction test and `def f(items: list[Payload])`
+  received a list of dicts — the same failure as below, one container level up.
+  Parameterized generics now recurse into their members.
+- **`pydantic_model_from_schema` could return something that isn't a model.**
+  A *top-level* schema declaring `patternProperties` — reachable from an
+  imported or hand-written `ToolDefinition` — returned an `Annotated` alias
+  rather than a `type[BaseModel]`, which CrewAI's `args_schema` field rejects
+  at tool construction instead of falling back. The pattern check is attached
+  as a model validator now, so a real class comes back either way.
+- **`$ref` inlining was bounded by depth but not by node count.** A model
+  recursing on more than one field per level doubles the expansion each time,
+  so the depth-16 cap permitted ~2^16 nodes: an ordinary binary-tree model
+  produced a **15.8 MB** schema in 3.4 s. A companion budget on total
+  expansions brings that to 62 KB in 61 ms.
+- **A typed parameter reached its handler as raw JSON.** Once the schema
+  advertises a nested Pydantic model, a dataclass, a `set`/`tuple` or a
+  `datetime`/`UUID`/`Enum`, a provider sends that type's JSON form — and the
+  executor forwarded it unchanged, so `def f(p: Payload): return p.x` failed
+  with `'dict' object has no attribute 'x'` on *every* schema-valid call, and
+  a `set[str]` parameter received a `list`. Arguments are now rebuilt into the
+  types the signature names, immediately before dispatch. Only parameters
+  whose declared type genuinely differs from its JSON form are touched —
+  scalars, `list`, `dict`, `TypedDict` and `Any` already arrive as themselves
+  and are passed through byte-for-byte — and a conversion failure passes the
+  original value through, since validation has already run against the
+  canonical schema. This was carried as a known limitation through most of
+  this release's development and is now closed.
+- **`schema_declares_null` ignored an `enum` that forbids null.** An optional
+  `Literal` that strict mode pre-widened arrives as
+  `{"type": ["string", "null"], "enum": ["fast", "slow"]}` — nullable by its
+  type list, but not by its enum. Both the executor's normalization and
+  `ToolSpec.ainvoke` therefore preserved a strict-mode placeholder the
+  canonical schema then rejected, instead of dropping it so the handler's
+  default applies. `const` is honoured the same way.
+- **`patternProperties` went unenforced beside declared `properties`.** That
+  shape merely allowed every extra, so a pattern key's value went unchecked
+  and a key matching no pattern passed a closed object — both of which the
+  executor rejects. The pattern validator is now attached to the generated
+  model too, with declared properties exempt from the "matches no pattern"
+  check.
+- **`ToolSpec.ainvoke` dropped a `null` the schema declares.** It strips
+  `None` for optional parameters because frameworks materialize every unset
+  optional field that way — but once `x: int | None = 5` advertises
+  `["integer", "null"]`, an explicit null is a distinct choice, and dropping it
+  handed the handler `5` where the caller asked for `None`. The executor's own
+  normalization already made that distinction; both paths now share one
+  `schema_declares_null` predicate so they cannot disagree.
+- **`patternProperties` was ignored in framework args models, in both
+  directions.** An open mapping became an unrestricted `dict` that accepted
+  values the executor rejects; worse, one with `additionalProperties: false`
+  built a model permitting *no* keys, so a valid matching key was rejected and
+  the call was impossible. Matching keys are now validated against their
+  pattern's schema, and a key matching none is rejected only when the object is
+  closed.
+- **A composite `enum` lost its constraint in framework args models.** A
+  tuple-valued `Enum` canonicalizes to `[[0, 0], [1, 1]]`; those aren't valid
+  `Literal` members and such an enum has no inferred `type`, so the annotation
+  fell through to an unconstrained `Any`. Membership is now checked directly,
+  by JSON identity, the same way the executor checks it.
+- **draft-04's boolean exclusivity was ignored.** Modern JSON Schema gives
+  `exclusiveMinimum` a *number*; draft-04 — which is what OpenAPI 3.0 emits,
+  and OpenAPI/MCP import is a supported way to register a tool — gives it a
+  *boolean* that promotes `minimum` to an exclusive bound. Only the modern
+  form was read, so `{"minimum": 5, "exclusiveMinimum": true}` accepted `5`.
+  Both dialects now resolve through one shared helper, so a bound is read the
+  same way at dispatch and in the framework args model.
+- **A parent `type` was dropped when its combinator branches declared their
+  own.** JSON Schema applies both, and the executor does — but the framework
+  args model inherited the parent type only into *typeless* branches, so
+  `{"type": "integer", "anyOf": [{"type": "number"}, {"type": "string"}]}`
+  became `float | str` and admitted values the engine rejects. The union is
+  now intersected with the parent type, which is a no-op for branches that
+  already inherited it. An integer still satisfies a `number` parent, and a
+  nullable parent still admits `null`.
+- **A nullable parent type didn't reach its combinator branches.** The
+  framework args model inherited a parent's type into typeless branches only
+  when it was a bare string, so `{"type": ["integer", "null"], "anyOf":
+  [{"minimum": 10}, {"maximum": 0}]}` — a shape imported schemas produce —
+  left both branches as an unconstrained `Any` and accepted values the
+  executor rejects. A genuine multi-type list still inherits nothing, since no
+  single type applies to every branch.
+- **One `execute()` call could emit two telemetry events.** The validation
+  result is computed before the security policy runs, so the rate-limit
+  exemption decision is accurate — but it does not always win: a denial
+  outranks it, and a pending confirmation is discarded in favour of it.
+  Recording where it was built therefore reported an outcome that was never
+  returned, inflating call counts and status metrics. Each result is now
+  recorded at the point it is returned, so exactly one event is emitted per
+  call.
+- **Malformed calls to a policy-gated tool consumed no quota.** Deferring the
+  rate-limit charge past the confirmation gate is right only when an approved
+  replay can follow. Since a call whose arguments fail validation is terminal,
+  a match on a `SecurityPolicy.require_confirmation` pattern meant nothing was
+  ever counted and such calls were unlimited — the same exemption abuse the
+  tool-flag gate was fixed for, reachable through the pattern gate instead.
+  The policy is now told whether the arguments validated. A genuinely pending,
+  valid probe keeps its exemption, so its approved replay still fits the
+  window.
+- **LlamaIndex forwarded the caller's raw values, not the validated ones.**
+  It checks a call against `fn_schema` but passes the original arguments on, so
+  a model answering `"1"` for an `integer` parameter passed the tool's own
+  validation and was then rejected by the executor, which holds the caller to
+  the advertised schema. CrewAI forwards the validated values and never had
+  this gap. The adapter now runs the same args model before dispatch, so what
+  the engine sees is what the framework approved. Pinned by a test against the
+  real package — the forwarding difference is the whole finding, and a fake
+  would only pin the assumption.
+- **A `None`-annotated parameter was advertised as a string in signatures.**
+  `python_signature`'s type mapping falls back to `str` for anything it doesn't
+  recognize, so `{"type": "null"}` — which introspection now emits — reached
+  Semantic Kernel, AG2 and Google ADK's fallback path as a string, and the
+  string the model produced was rejected by the executor. It maps to
+  `NoneType` now.
+- **`minProperties`/`maxProperties` were never enforced.** A Pydantic `dict`
+  field constrained with `Field(min_length=1)` emits them, so they arrive
+  inside the inlined mapping schemas — but the constraint check had branches
+  only for numbers, strings and arrays, so an empty or oversized mapping
+  reached the handler. Enforced in the executor and mirrored in the framework
+  args model.
+- **`enum` and `const` compared with Python equality.** `True == 1` in Python,
+  so a boolean satisfied a numeric `Literal[1, 1.5]` — which emits an `enum`
+  with no single `type`, leaving membership the only constraint — and reached
+  the handler. Both now compare by JSON identity, the same helper the
+  `uniqueItems` check uses, in the executor and the framework args model
+  alike. A boolean enum still accepts booleans; a string enum keeps a bare
+  `Literal` with no guard attached.
+- **A composite `Enum` value was stored as a Python tuple.** A member valued
+  `(0, 0)` is JSON-safe, but a tuple *serializes* to an array — so the
+  canonical schema held a value no provider would ever send back, and the
+  executor compared the returned `[0, 0]` against the stored `(0, 0)` and
+  rejected every valid call. Enum members and defaults are now canonicalized,
+  so the stored schema is byte-identical to the document the provider sees.
+- **`allOf` was silently ignored in framework args models.** An `allOf`-only
+  property became a bare `Any` that accepted values the executor rejects, and
+  a typed one kept only its bare type. There is no faithful Python annotation
+  for an intersection, so each branch is now checked against the caller's raw
+  value. A type declared by any branch is pushed into the branches that
+  declare none — `{"allOf": [{"type": "integer", "minimum": 1}, {"maximum":
+  3}]}` enforces both bounds rather than leaving the second unconstrained.
+- **An `allOf` beside a `type` didn't become nullable under strict mode.**
+  `allOf` intersects, so *every* branch must admit null; widening only the
+  outer `type` left `{"type": "string", "allOf": [{"const": "fixed"}]}`
+  required with a const branch that still rejects it. It is wrapped whole now,
+  as `oneOf` already was.
+- **A schema carrying both `anyOf` and `oneOf` lost the `oneOf`.** They are
+  independent assertions a value must satisfy together, but the framework
+  args-model translation returned on whichever it found first — so `oneOf`'s
+  exactly-one rule was never applied and the model accepted a value the
+  executor then rejected. Both are honoured now: the union comes from `anyOf`,
+  and `oneOf` contributes its exclusivity check on top.
+- **A malformed call to a policy-gated tool reported "pending confirmation".**
+  The invariant that a call whose arguments don't match the schema is terminal
+  held for the tool's own `requires_confirmation` flag but not for
+  `SecurityPolicy`'s `require_confirmation` *pattern* gate, whose result was
+  returned before the validation result was consulted — putting a schema
+  violation in front of a human to approve, and failing it anyway once
+  approved. Validation now wins over a *pending* policy result; a *denial*
+  still outranks validation, so nothing leaks about a tool the caller may not
+  invoke at all.
+- **`uniqueItems` conflated booleans with numbers.** Python says `True == 1`,
+  but JSON Schema compares types before values, so `[1, true]` is two distinct
+  items — it was being rejected as a duplicate at dispatch, and by the
+  framework args model too. Both now key items by JSON identity via one shared
+  `json_identity_key` helper, so they cannot drift; mathematically equal
+  numbers (`1` and `1.0`) stay a duplicate, as the spec requires, and the
+  keys being hashable makes the check linear rather than quadratic.
+- **A nullable `type` list was dropped below a model field.** The framework
+  args model recovered `null` for a top-level field via `_is_nullable`, but an
+  array item, an `additionalProperties` value and a combinator branch never
+  pass through there — so `{"type": "array", "items": {"type": ["string",
+  "null"]}}` became `list[str]` and rejected a schema-valid `[null]` before
+  Gantry could execute it. An `enum` that excludes `null` still wins, exactly
+  as at the top level.
+- **Signature-derived schemas lost every `enum`.** `python_signature` backs
+  the frameworks that rebuild their own LLM schema from the callable rather
+  than from `parameters_schema` — Semantic Kernel, AG2, and Google ADK's
+  fallback path — and its annotations read only `type`/`items`. A
+  `Literal["fast", "slow"]` parameter therefore reached the model as
+  unconstrained `str` on exactly those frameworks, undoing this release's own
+  fidelity work for them. `enum`/`const` now become `Literal`, array items are
+  annotated recursively (`list[Literal["a", "b"]]`), and a typed mapping keeps
+  its value type (`dict[str, int]`). An object with declared `properties` still
+  degrades to a bare `dict` — see "Known limitation".
+- **Anthropic strict mode had no safety gate.** `to_provider_schema(strict=True)`
+  set `additionalProperties: false` on the root unconditionally, so a schema
+  that *needs* arbitrary keys — a typed mapping, a `**kwargs` handler — was
+  silently closed to accepting none, discarding the parameter's data rather
+  than merely leaving it unconstrained. It now uses the same
+  `unsupported_strict_paths()` gate as the OpenAI adapters: such a tool is
+  emitted without `strict: true`, with a warning naming the offending path.
+- **Schema-depth truncation is no longer silent.** `$ref` inlining stops at
+  depth 16 and the args-model builder at depth 8 — necessary against
+  self-referential schemas, but a legitimately deep acyclic one lost fidelity
+  with no signal. Both now log at debug level, matching the multi-member union
+  collapse.
+- **`SecurityPolicy` signature inspection is cached.** `execute()` asks
+  whether a policy's `check_permission` accepts each optional keyword on every
+  call, and `inspect.signature` is not cheap. The answer is a property of the
+  bound method, so it is now memoized per callable.
+- **A multi-member union dropped its members silently.** A genuine `int | str`
+  keeps only the first member — deliberate, since most provider dialects reject
+  union-typed parameters — but nothing said so. It now logs at debug level, and
+  the behaviour is pinned by a test rather than left as an accident. `T | None`
+  loses nothing and stays silent.
+- **Strict-mode fallback warnings named the wrong dialect.** `MistralAdapter`
+  and `GroqAdapter` inherit the OpenAI path, which passed a hardcoded
+  `"OpenAI"`, so their warnings pointed at the wrong provider. Each adapter
+  now reports its own `dialect_name`.
+- **An uncompilable `pattern` was silently unenforced.** A schema declaring an
+  ECMA-262-only construct (`\p{L}`) fails Python's `re`, and validation
+  correctly fails open rather than rejecting every value — but gave the schema's
+  author no signal the constraint was dead. It now logs a warning.
+- **A null branch appended inside `anyOf`/`oneOf` didn't make the property
+  nullable.** A sibling assertion applies independently of a combinator, so
+  `{"type": "integer", "anyOf": [{"minimum": 10}, {"maximum": 0}]}` kept
+  failing its untouched `type: integer` on `null` — and strict mode makes the
+  property required, so no value satisfied both. Such a schema is now wrapped
+  whole as `anyOf: [<original>, {"type": "null"}]`. `oneOf` is wrapped
+  unconditionally: it demands *exactly* one match, and `null` passes most
+  constraint-only branches vacuously, so an appended branch would make it
+  match several. A bare `anyOf` still gains a flat null branch.
+- **An empty combinator branch was dropped from framework args models.**
+  `{}` is the always-valid JSON Schema, not an absent branch — so
+  `anyOf: [{}, {"type": "integer"}]`, which admits every value, generated a
+  model that rejected strings, and `oneOf: [{}, {"type": "integer"}]` accepted
+  an integer that in fact matches both branches. The validator already counted
+  the empty branch as always-matching; the bridge now does too.
+- **A pre-widened nullable enum still forbade `null` under strict mode.**
+  `_make_nullable` returned early when `null` was already in a property's
+  `type` list, so the enum was never widened alongside it: a schema arriving
+  as `{"type": ["string", "null"], "enum": ["fast", "slow"]}` looked nullable
+  but wasn't, and strict mode then made the property required with no value
+  satisfying both constraints.
+- **A typed `additionalProperties` alongside declared properties wasn't
+  detected as strict-incompatible.** `unsupported_strict_paths()` returned
+  early once an object declared any properties, so an object with both
+  declared properties and a schema-valued `additionalProperties` was passed
+  to strict mode, which forced `additionalProperties: false` and silently
+  dropped the typed extras. A `true`/`{}` value alongside properties is
+  still treated as the intentional `**kwargs` narrowing.
+- **Float enum members were dropped in framework args models.** A
+  float-valued `Enum`/`Literal` parameter — which introspection emits —
+  failed the `Literal` member guard, so the whole enum fell through to an
+  unconstrained `float` that accepted non-members.
+- **A fractional `multipleOf` rejected valid numbers.** The check used `%`,
+  and binary floats make `0.3 % 0.1` ≈ `0.0999…`, so a property declared
+  `multipleOf: 0.1` refused `0.3`. Compared as `Decimal`s via `str`, which
+  gives the value as it was written.
+- **`oneOf` accepted values matching *no* branch.** The generated model's
+  exclusivity check rejected only multiple matches, leaving zero-match values
+  to the union — whose coercion then accepted them (`"1"` matches neither a
+  strict `number` nor a strict `integer`, but coerces into one). It now
+  requires exactly one match in both directions.
+- **Constraint keywords never reached the generated framework fields.** The
+  executor enforces numeric bounds, string length/pattern and array length,
+  but the CrewAI/LlamaIndex args model advertised and accepted values
+  violating them — rejected only later at dispatch. They're now folded into
+  the generated annotation, on the inner type so a constrained field can
+  still be optional and carry its default.
+- **The OpenAI Agents adapter didn't use the strict-mode safety gate.**
+  `FunctionTool.strict_json_schema` defaults to `True`, and the SDK then runs
+  its own `ensure_strict_json_schema`, which raises `UserError` on an object
+  with arbitrary keys. `strict_json_schema()` deliberately leaves such a
+  schema alone, so exporting a tool with a `dict[str, int]` parameter through
+  `OpenAIAgentsAdapter` handed the SDK exactly what it refuses. The adapter
+  now consults `unsupported_strict_paths()` like the provider adapters do and
+  builds the tool with `strict_json_schema=False`, with a warning.
+- **An empty combinator branch was ignored.** `{}` validates every value, so
+  `{"anyOf": [{}, {"type": "integer"}]}` means "anything" — but the empty
+  branch was filtered out, turning it into an integer-only constraint that
+  rejected valid payloads.
+- **Two more schema-aliasing sites.** The Agent Framework bridge passed
+  `parameters_schema` straight into `agent_framework.tool(schema=...)`, and
+  the Google ADK declaration used a shallow `dict()` that left every nested
+  subschema shared. Both now deep-copy, matching the provider adapters.
+- **A broken `agent-framework` install could crash
+  `disable_af_instrumentation()`.** Its import guard caught only
+  `ImportError`, so a version mismatch raising anything else propagated to
+  the caller. Other exceptions now degrade to a warning — at warning level
+  rather than debug, since a silent broad `except` is what hid this helper's
+  original bug.
+- **Framework args models disagreed with the executor in three more shapes.**
+  A closed object with no `properties` key at all fell through to a bare
+  `dict`; a `type` list with several real members collapsed to the first,
+  rejecting values the executor accepts; and a nullable-typed property whose
+  `enum` omits `null` was widened to accept `None`, which the executor then
+  correctly rejected at dispatch.
+- **Constraint keywords were never enforced during argument validation.**
+  Numeric bounds (`minimum`/`maximum`/their exclusive variants,
+  `multipleOf`), string `minLength`/`maxLength`/`pattern`, and array
+  `minItems`/`maxItems`/`uniqueItems` were all ignored, so a value violating
+  them reached the handler. These arrive from any Pydantic-constrained field
+  (`Annotated[int, Field(gt=0)]` becomes `exclusiveMinimum: 0`) inside the
+  nested schemas now inlined — and `uniqueItems` is emitted by Gantry itself
+  for a `set` parameter. Booleans are exempt from numeric bounds, since
+  `bool` is an `int` subclass.
+- **An `allOf` was treated as nullable when only one branch admitted null.**
+  `allOf` intersects its branches, so the combined schema admits `null` only
+  when *every* branch does — `[{"type": ["string","null"]}, {"type":
+  "string"}]` does not. Treating it as nullable preserved a synthetic null
+  the schema forbids, so validation rejected the call instead of letting the
+  handler's default apply.
+- **An enum listing `null` was dropped entirely in framework args models.**
+  `{"enum": ["auto", null]}` is how a nullable choice is expressed, but the
+  bridge required every enum member to be a `str`/`int`/`bool`, so the whole
+  enum fell through to an unconstrained `Any`. `None` is a valid `Literal`
+  member and is now kept.
+- **`const` and `oneOf` exclusivity were lost in framework args models.**
+  The CrewAI/LlamaIndex bridge ignored `const`, advertising an
+  unconstrained scalar for a field the schema pins to one value; it now
+  becomes a single-value `Literal`, mirroring how `enum` is handled. And a
+  `oneOf` translated to a Python union carries *`anyOf`* semantics — `1`
+  satisfies both a `number` and an `integer` branch, which `oneOf` forbids
+  — so the union now also carries an "exactly one branch matches" check.
+  `anyOf` is unaffected.
+- **A null-only property widened to `Any` in framework args models.** A
+  property typed `{"type": "null"}` permits only `null`, but the
+  CrewAI/LlamaIndex bridge fell through to an unconstrained `Any` that
+  accepted strings and numbers the canonical schema forbids.
+- **A tool gated by `requires_confirmation=True` could be made unexecutable
+  by the rate limit.** That flag is enforced by the executor, not by
+  `SecurityPolicy`, so the policy had no way to know a call would stop at
+  it: with no matching `require_confirmation` *pattern*, the policy recorded
+  the probe against its window, and the approved replay was then denied for
+  the rest of the minute. The executor now tells the policy when a call will
+  stop at a gate it can't see, via a `pending_confirmation` keyword — every
+  check still runs (a probe that would be denied says so before a human is
+  asked), only the recording is deferred to the replay that actually
+  executes.
+- **`oneOf` was validated with `anyOf` semantics.** `oneOf` requires
+  *exactly* one matching branch, so a value matching several — `1` against
+  `[{"type": "number"}, {"type": "integer"}]` — violates the schema but was
+  accepted. Matching branches are counted now; `anyOf` is unaffected.
+- **`Sequence`/`Iterable`/`Set` parameters were advertised as scalars.**
+  `typing.get_origin(Sequence[int])` returns the `collections.abc` class —
+  neither the `typing` alias nor a `list` subclass — so the container branch
+  missed it and fell through to a "use the first type argument" fallback,
+  emitting `{"type": "integer"}` for a parameter that takes a list. The
+  executor then rejected every valid payload. All the `collections.abc`
+  container origins are matched now, with mappings checked first (a Mapping
+  is also a Collection, so the reverse order would classify `dict[str, int]`
+  as an array).
+- **An optional enum parameter could not express "not provided" in strict
+  mode.** Widening a property's `type` to admit `null` left its `enum`
+  untouched, and `enum` is an independent constraint — so a
+  `Literal["fast", "slow"] | None = None` parameter advertised
+  `type: ["string", "null"]` alongside `enum: ["fast", "slow"]`. Strict mode
+  makes every property required, so the model's constrained grammar could
+  not emit `null` and had to invent `"fast"` or `"slow"` rather than let the
+  handler apply its `None` default. Widening now adds `null` to the enum too.
+- **A combinator-typed field became `Any` in framework args models.**
+  `{"anyOf": [{"type": "integer"}, {"type": "null"}]}` — what Pydantic emits
+  for `int | None`, so it appears throughout the nested models now inlined —
+  has no top-level `type`, so the CrewAI/LlamaIndex bridge widened it to an
+  unconstrained `Any` that accepted values the executor rejects after
+  dispatch. Supported `anyOf`/`oneOf` branches are translated recursively
+  into a union instead.
+- **A confirmation-gated A2A tool executed remotely without ever being
+  gated.** The special-source dispatch branch returned before the
+  confirmation check ran, so `requires_confirmation=True` on an A2A tool was
+  silently ineffective — the remote agent was invoked and its side effects
+  happened before anyone was asked. The check now runs before dispatch by
+  any mechanism, making "pending confirmation means nothing ran" true for
+  every tool source (and closing a path by which a caller could set
+  `require_confirmation=True` to run A2A calls past both the per-minute and
+  concurrency limits).
+- **Argument validation understands the schemas Gantry itself emits.**
+  Explicit `None` for a declared optional parameter is treated as omitted
+  (models legitimately send `null` under the strict-mode widened schemas
+  Gantry advertises, and several frameworks materialize unset optionals as
+  `None`) — that workaround previously lived only in `ToolSpec.ainvoke`, so
+  the `execute_tool_calls` provider path rejected its own schema's output.
+  A property that explicitly declares `null` in its type keeps a
+  caller-supplied `None` as the meaningful value it is — whether it declares
+  `null` through its `type` or through an `anyOf`/`oneOf` branch, the shape
+  Pydantic and OpenAPI emit for `str | None`. Undeclared keys are
+  admitted when `additionalProperties` permits them (`true` or a subschema,
+  including the empty schema `{}`, which JSON Schema treats as `true`) and
+  refused when it is `false` or absent; a `dict[str, int]`-shaped schema
+  validates every value against its subschema instead of accepting anything;
+  a closed empty object (`{"properties": {}, "additionalProperties": false}`)
+  rejects any payload rather than being treated as free-form; list-typed
+  `type` (`["string", "null"]`) validates against any member; a schema that
+  constrains a value purely through `anyOf`/`oneOf`/`allOf` with no `type`
+  of its own — what Pydantic emits for `int | None`, including inside the
+  nested models now inlined — has its branches enforced rather than being
+  waved through; and `enum` membership is enforced as the independent
+  constraint JSON Schema says it is, including for a nullable property whose
+  enum does not itself list `null`.
+- **Emitted provider schemas no longer alias the registered tool.** Every
+  adapter pass-through path put `ToolDefinition.parameters_schema` itself
+  into the returned payload, so a caller that augmented the payload
+  corrupted the registered tool, every later conversion of it, and the
+  executor's validation, which reads the same object. The Anthropic strict
+  path's `{**schema}` spread left every nested property dict shared. All
+  paths now deep-copy.
+- **`disable_af_instrumentation()` never worked.** It imported
+  `agent_framework.telemetry` — a module that has never existed in any AF
+  release — and swallowed the `ImportError`, so the documented workaround
+  for AF ≥1.6.0's concurrent-`asyncio.gather` ContextVar crash was a silent
+  no-op in every install. It now calls the real switch,
+  `agent_framework.observability.disable_instrumentation()` (verified on AF
+  1.5.0 and 1.15.0), no longer requires the `agent-framework` *meta*-package
+  metadata to be present, and only downgrades to debug-logging when there is
+  genuinely nothing to disable.
+- **AF approval middleware no longer discards its own verdict.** On a
+  confirmation-gated tool it sets a `function_approval_request` Content on
+  the context before terminating — the shape AF's native approval flow
+  requires; a bare termination reached the model as a null function result
+  with the reason lost. Replays carrying the human's decision are honoured.
+  A policy *denial* returns an explicit "Permission denied by security
+  policy: …" result instead of raising — AF converts middleware exceptions
+  into an opaque `"Error: Function failed."`, which read as a tool crash and
+  hid the reason.
+- **AF bridge crash on out-of-order schemas.** `properties` order carries no
+  required-first guarantee (MCP servers, OpenAPI imports), and an optional
+  property listed before a required one made the synthesized
+  `inspect.Signature` raise `ValueError: non-default argument follows
+  default argument` — killing the whole run inside `before_run`. Parameters
+  are now ordered required-first.
+- **Qualified `required=[…]` pins resolve at request time.**
+  `GantryContextProvider` accepted `"namespace.name"` pins at construction
+  but resolved them per-round with bare-name lookups only, so a qualified
+  pin was warned-and-skipped on every round — inverting the guarantee.
+  Request-time lookup now mirrors the executor's namespace-aware resolution.
+- **`AutoGenAdapter.register`'s install hint pointed at the wrong package.**
+  `pip install pyautogen` now delivers a Microsoft autogen-agentchat shim
+  (≥0.10) with no `autogen.register_function`, and AG2 1.x renamed its
+  import to `ag2` with a new agent API. The hint and docs now name the
+  classic line that actually provides the API (`pip install "ag2[openai]<1"`,
+  verified end-to-end against AG2 0.14).
+- **`delete_tool` deletes everywhere.** It only removed the vector-store
+  entry, so a deleted tool kept appearing in `list_tools_sync()`, kept
+  resolving as a `required=` pin, and kept executing. It now also purges the
+  registry, the handler map, the facade's own `_tool_handlers` (which
+  `tool_count` reads), and any pending-sync entry.
+- **Non-JSON `Literal`/`Enum` values degrade instead of producing an invalid
+  schema.** `Literal` admits `bytes` and an `Enum` member can wrap an
+  arbitrary object; `_enum_schema` falls back to a plain string schema (no
+  `enum`) when any value isn't JSON-representable.
+- `SecurityPolicy.check_permission`'s `arguments` parameter is typed
+  `dict[str, Any]` (was `dict[str, str]`) to match what callers actually
+  pass — nested dicts/lists and non-string values, which
+  `_extract_all_strings` already handles.
+- **A heterogeneous tuple advertised an untyped array.** `tuple[int, str]`
+  has no single item type, so the emitted schema was a bare
+  `{"type": "array"}` — validation accepted `["bad", 1]`, reconstruction then
+  couldn't build the tuple, and the fallback handed the handler the raw list,
+  the exact failure reconstruction exists to prevent. It now emits
+  `prefixItems` plus `minItems`/`maxItems`, both of which the executor and
+  the framework bridge already enforce. A variadic `tuple[int, ...]` keeps
+  its homogeneous `items`.
+- **`oneOf` was read as `anyOf` when deciding nullability.** `oneOf` means
+  *exactly* one branch matches, so `{"oneOf": [{"type": "null"}, {}]}` makes
+  `null` match twice and is therefore invalid — but the shared any-branch
+  reading called it nullable and preserved a strict-mode placeholder that
+  validation immediately rejected. Branches admitting `null` are now counted,
+  and exactly one is required; `anyOf` is unchanged.
+- **A declared property escaped its matching `patternProperties` schema.**
+  JSON Schema requires a key to satisfy its `properties` schema *and* every
+  matching pattern schema, but the framework bridge skipped declared keys
+  outright, so `n_fixed: {"type": "integer"}` beside
+  `{"^n_": {"minimum": 5}}` dropped the minimum. Declared keys are now exempt
+  only from the closed-object "matches no pattern" check. Fixing it exposed
+  the underlying cause: a constraint-only schema with no `type` — what a
+  pattern branch looks like — lost its constraint entirely, because every
+  keyword-family gate reads `type` first. The executor's JSON-constraint
+  checker moved to `agent_gantry.schema.base` as `check_json_constraints` and
+  the bridge now applies it to such schemas, so the two agree by
+  construction rather than by parallel maintenance.
+- **A composite `const` advertised an unconstrained container.**
+  `{"type": "array", "const": [1, 2]}` can't be a `Literal` member, so it
+  fell through to a plain `list` that accepted anything while the executor
+  enforced the constant. It is now checked by JSON identity, exactly as a
+  composite `enum` already was.
+- **An optional member of a container lost its `null`.** The widening that
+  re-admits `null` for `T | None` ran only on a top-level parameter, where
+  omission already expresses "no value" — so `list[int | None]` was emitted as
+  `{"type": "array", "items": {"type": "integer"}}` and validation rejected
+  `[1, None, 2]` for a handler whose own annotation accepts it. An array item,
+  a mapping value and a tuple position have no "omitted", so nullability is
+  now threaded through the recursion. The top level is deliberately unchanged.
+- **Top-level `patternProperties` was never validated.** The construct was
+  handled inside a nested object but not at the top level of a tool schema, so
+  an identical declaration one level up both rejected a schema-valid matching
+  key as `Unknown parameter` and skipped the pattern's own constraint when the
+  schema was open. Both paths now share one implementation.
+- **A composite `enum` was advertised as a *string*.** A tuple-valued `Enum`
+  emits `{"enum": [[0, 0], [1, 1]]}` with no `type`, since its members share
+  no scalar kind — so with no `Literal` to build and no `type` to read, the
+  signature path fell through to its `str` fallback and told Semantic Kernel,
+  AG2 and ADK's fallback path that an array-valued parameter was a string. The
+  members now name the container type when the schema declares none; an
+  explicit `type` still outranks them.
+- **The framework bridge read an absent `additionalProperties` as open.** For
+  an object that declares properties, absent means closed — Gantry's own
+  documented default, and what the executor enforces — so the generated
+  CrewAI/LlamaIndex model accepted a key the engine rejects at dispatch. The
+  bridge now mirrors the executor's rule including its asymmetry: an object
+  declaring *no* properties stays free-form, that being the shape a plain
+  `dict` parameter emits.
+- **A homogeneous fixed tuple advertised an array of any length.** The arity
+  bounds rode along with `prefixItems`, which only a *heterogeneous* tuple
+  needs — so `tuple[int, int]`, having one shared item type, took the `items`
+  branch and lost them. `[1]` then validated, reconstruction failed, and the
+  fallback handed the handler a raw list. Every fixed-length tuple pins its
+  arity now; a variadic `tuple[int, ...]` still has none to pin.
+- **`const` was skipped when the value was `null`.** A `type` list naming
+  `null` returns early once the value is null, and that shortcut checked
+  `enum` but not `const` — so `{"type": ["string", "null"], "const": "fixed"}`
+  accepted `null`, which the constant independently forbids. Both keywords now
+  survive the shortcut.
+- **A constraint-only `oneOf` branch also matches `null`.** `{}` was not the
+  only way for null to match twice: `{"minimum": 5}` declares no type, and
+  numeric keywords assert nothing about null, so
+  `{"oneOf": [{"type": "null"}, {"minimum": 5}]}` is ambiguous and therefore
+  not nullable. Branches are counted with a new `null_validates_against`
+  — what *matches*, which is what exclusivity means — while `anyOf` keeps
+  asking what the author *declared*.
+- **A mapping keyed by anything but `str` reached the handler unconverted.**
+  JSON object keys are always strings, so `dict[int, str]` arrived as
+  `{"1": "value"}` and every lookup or arithmetic on those keys failed.
+  Reconstruction looked only at the *value* type; it now flags a non-string
+  key annotation too.
+- **A bare `set`/`frozenset`/`tuple`/`bytes` annotation was never rebuilt.**
+  `typing.get_origin` is `None` for an unparameterized container, so those
+  spellings missed the generic branch entirely — while introspection still
+  advertised them as JSON arrays, leaving the handler a `list` (and a `str`
+  for `bytes`). The parameterized forms were already covered.
+- **A malformed `date-time`/`date`/`time`/`uuid` string was passed through as
+  a string.** Validation read only the JSON *type*, so it accepted the value;
+  reconstruction then failed and the fallback handed the raw `str` to a
+  handler annotated `datetime` — reported as a **success**. Those four formats
+  are now enforced with the same parser reconstruction uses, so the two agree
+  by construction. Deliberately only those four: `format` is an annotation by
+  default in JSON Schema, and enforcing `email`/`uri` on an imported schema
+  that uses them loosely would reject calls that work.
+- **The same formats reached the framework adapters as a bare `str`.**
+  Semantic Kernel, AG2 and Google ADK's fallback path rebuild their provider
+  schema from `python_signature`, so a `datetime` parameter was advertised to
+  them as a free-form string and the model could answer with one the handler
+  can't take. The CrewAI/LlamaIndex bridge had the same gap. Both now read one
+  shared `RECONSTRUCTED_STRING_FORMATS` table.
+- **A required nullable parameter was advertised as non-nullable.** Required
+  means the value must be *present*, not that it must be non-null — but only
+  *optional* properties were unioned with `None`, so `def f(x: int | None)`
+  (now emitted as `{"type": ["integer", "null"]}` in `required`) reached
+  Semantic Kernel and AG2 as a bare `int` and the model could not produce the
+  null the executor accepts. Google ADK's fallback path is left alone, since
+  it rejects union annotations outright.
+- **A combinator-only property was advertised as a *string*.**
+  `{"anyOf": [{"type": "integer"}, {"type": "null"}]}` is what Pydantic and
+  OpenAPI emit for `int | None`, so it arrives from every imported schema and
+  inlined nested model — and with no `type` to read, the signature path fell
+  through to its `str` fallback. The non-null branch now supplies the type.
+- **The framework bridge widened a required `const` to `None`.** Its private
+  nullability check tested `enum` but not `const`, so
+  `{"type": ["string", "null"], "const": "fixed"}` in `required` accepted
+  `null` in the CrewAI/LlamaIndex model while the executor rejected it. That
+  check was a weaker duplicate of the shared `schema_declares_null` and has
+  been deleted in favour of it.
+- **The framework bridge checks a string `format` instead of applying it.**
+  Annotating a `date-time` field `datetime` made the generated model hand a
+  `datetime` *object* back — CrewAI forwards its validated kwargs and
+  LlamaIndex's `_coerced` dumps in Python mode — while the canonical schema
+  still types the property as a JSON string, so the executor rejected every
+  *valid* formatted call. The value now stays JSON-native across the dispatch
+  boundary and only its shape is asserted. `ToolSpec.ainvoke` serializes such
+  a value defensively too, for frameworks that parse the model's answer from
+  the `python_signature` annotation before handing it back.
+- **A failed argument reconstruction is terminal.** It used to pass the raw
+  value through, reasoning that validation had already run against the
+  canonical schema. That reasoning doesn't hold: the coercer exists precisely
+  *because* the handler declares a type the JSON form isn't, so the raw value
+  is the one thing it cannot take — a handler annotated `Payload` raised
+  `AttributeError` deep inside the tool, or misbehaved silently. Reachable for
+  invariants JSON Schema cannot express at all (a Pydantic `field_validator`,
+  a mapping key that doesn't parse), which is exactly where validation cannot
+  have ruled the value out first. Now a `ValidationError`, not retried.
+- **One rule now decides whether an explicit `null` is kept:** keep it iff the
+  executor would accept it. `schema_declares_null` had been asking a narrower
+  question — did the author *declare* null meaningful, where a schema that
+  merely failed to forbid it didn't count — and that reading needed a fresh
+  patch for each new spelling while still getting three cases wrong:
+  `{"enum": ["a", null]}` (what an optional `Literal["a", None]` emits, with
+  no `type` at all) dropped an explicitly supplied `None` and handed the
+  handler its default; `{"const": null}` and `{}` did the same; and a nullable
+  `anyOf` was read as nullable while a sibling `allOf` forbade null. It
+  delegates to `null_validates_against` now, which composes instead of
+  laddering. Two tests changed with it — one had pinned the old asymmetry, and
+  one had asserted that a generated model must accept a `null` its own
+  `anyOf` forbids, which the executor has always rejected.
+- **A rejected argument no longer degrades tool health.** An argument the
+  handler's own type refuses is caller-supplied input, not a sick tool, but it
+  was being recorded as a failure — so after five malformed calls the circuit
+  breaker opened and the next *valid* call came back `CIRCUIT_OPEN`, letting a
+  caller disable a healthy tool for everyone. The schema validation path has
+  always left health alone; this now matches it.
+- **`true` and `false` are schemas.** Draft-06 made a bare boolean a valid
+  schema — `true` matches every value, `false` none — but combinator branches
+  were filtered to dicts, so `{"anyOf": [true, {"type": "integer"}]}`
+  (semantically "anything") rejected a string, a `false` branch silently
+  stopped counting against `oneOf` exclusivity, and `allOf: [false]` permitted
+  everything instead of nothing.
+- **The `$ref` expansion budget bounded the wrong thing.** Its guard ran on
+  entry to every node rather than at an expansion, so once spent it replaced
+  *every* remaining value with `{}` — a `type` string, a `required` list — and
+  a model wide enough to exhaust it emitted malformed metadata a provider
+  rejects rather than merely unconstrained subschemas.
+- **`additionalProperties` typed the wrong keys beside `patternProperties`.**
+  JSON Schema applies it to exactly the keys matched by neither `properties`
+  nor a pattern. The framework bridge passed its pattern validator only a
+  boolean "is it closed" flag, leaving those keys typed by nothing, while
+  typing *every* extra from the additional schema — so a pattern-matched
+  `{"s_a": "ok"}` was checked against `additionalProperties: {"type":
+  "integer"}` and rejected. Verified against the executor across all forty
+  `properties` × `additionalProperties` × payload combinations.
+- **A pattern-keyed object was published under OpenAI strict mode.** Strict
+  mode can only describe an object whose full key set is written out in
+  `properties`, and keys typed by regex are by definition not — so such an
+  object is open however `additionalProperties` is set, `false` included.
+  `unsupported_strict_paths()` read only `additionalProperties` and called it
+  strict-safe, so the transform emitted it with the unsupported
+  `patternProperties` keyword still attached and the provider rejected the
+  tool declaration.
+- **A validated pattern-property value was discarded.** A declared integer
+  property has always coerced `"1"` to `1`; a pattern-matched key ran the same
+  adapter but threw the result away, so the model accepted `{"n_x": "1"}` while
+  keeping the string — which LlamaIndex's `model_dump()` then forwarded
+  unchanged for the executor to reject against the integer schema. The
+  converted value is written back now, into a new mapping rather than the
+  caller's.
+- **The framework bridge also treats `true`/`false` as schemas.** The executor
+  learned this a commit earlier; the bridge still dropped boolean branches, so
+  `{"anyOf": [true, {"type": "integer"}]}` was reduced to an integer field
+  that rejected the schema-valid strings the engine accepts, and `allOf:
+  [false]` was permissive where it should forbid everything. Both sides now
+  agree across all twelve boolean-branch cases.
+- **A bare collection ABC was advertised as a string.** `def f(m: Mapping)`
+  has `get_origin() is None` and matched no concrete-class check, so it fell
+  through to the string fallback — the tool asked for a string for a parameter
+  the handler needs a mapping for, and the executor then rejected the
+  correctly shaped object a caller sent. `Mapping`, `Sequence`, `Set` and
+  friends are now classified like their concrete kin (`Mapping` checked first,
+  since it is also a `Collection`), and a bare `Set` is rebuilt for the same
+  reason `set` is. A bare `set` consequently carries `uniqueItems` now, as
+  `set[str]` always has.
+- **A parameterized generic took a different branch on Python 3.10.** There a
+  parameterized builtin — `dict[str, int]` — *is* an instance of `type`, where
+  on 3.11+ it is not, so 3.10 entered the direct-type branch and reached the
+  abstract-base checks with a generic alias, where `issubclass` raises
+  `TypeError: arg 1 must be a class`. `get_origin` now gates that branch, so
+  every version routes a parameterized generic the same way.
+- **A boolean schema is honoured wherever a schema may appear.** Draft-06
+  booleans were handled only in combinator branches, but they are valid in
+  every schema position — so `properties: {"disabled": false}` let an
+  `AttributeError` escape `execute()` instead of returning a validation
+  failure, `patternProperties: {"^blocked_": false}` accepted the keys it
+  exists to forbid (and counted them declared, slipping them past a closed
+  object), and `items: false` beside `prefixItems` — the standard spelling of
+  a fixed-length tuple — accepted the extra elements. Both the executor's
+  validator and the framework bridge now read them at their own single
+  subschema funnel, so the two agree by construction.
+- **A `null` can itself be a value worth rebuilding.** Reconstruction
+  short-circuited on `None`, assuming a null is never worth converting — but
+  an `Enum` with a `None`-valued member (`class Mode(Enum): UNSET = None`)
+  emits `enum: [null]`, and a call supplying null reached the handler as raw
+  `None` rather than `Mode.UNSET`. The adapter answers this correctly without
+  a special case: an annotation admitting `None` returns it unchanged, and one
+  that doesn't was already a mismatch between the schema and the handler's own
+  type.
+- **A property forbidden by its schema has no strict-mode representation.**
+  Strict mode makes every property *required*, so a property whose schema is
+  `false` — satisfiable by no value — was emitted as required and
+  unsatisfiable at once: a schema with no valid instance, turning an otherwise
+  callable tool into an uncallable one. It is reported as strict-unsupported
+  now, so the tool falls back to non-strict where the property is simply
+  omitted. Widening it to a null-only placeholder was the alternative and is
+  worse: it would *permit* a null the schema forbids.
+- **A boolean `items` schema types a plain array too.** The positional path
+  routed booleans through the annotation builder, but a plain array with no
+  `prefixItems` fell through to a bare `list` in the framework bridge and
+  accepted the elements the executor rejects.
+- **A `TypedDict`'s members are rebuilt, though the container isn't.** A
+  `TypedDict` *is* a dict at runtime, so the container arrives as itself — but
+  a member annotated `datetime`, `Enum`, `set` or a dataclass does not, and
+  declining reconstruction for the whole thing installed no coercer at all, so
+  `payload["at"].year` failed on a schema-valid call. Pydantic recognizes only
+  `typing_extensions.TypedDict` before 3.12, so the coercer retries through
+  the same rebuild the schema path already used — otherwise the fix would have
+  been silently inert on exactly the versions that need it.
+- **A property Pydantic cannot make a field from is declined explicitly.**
+  `isidentifier()` accepts `_token`, but Pydantic reserves leading underscores
+  for private attributes. It raises today, which already produced the
+  documented fallback — but it *silently drops* such a name when one arrives
+  as a keyword rather than through the field mapping, so the bridge no longer
+  depends on which spelling Pydantic sees.
+- **An over-quota call is refused before it buys schema validation.**
+  Validating arguments ahead of the security policy (so the confirmation
+  probe's rate-limit exemption could be decided accurately) meant *every*
+  request ran the full recursive validator first — including one already over
+  quota. Since the validator runs `re.search` against schema-supplied
+  `pattern`/`patternProperties` on caller-controlled input, the limits stopped
+  protecting the work they exist to protect. A read-only admission peek now
+  runs first: it records no call, consumes no token and prunes no window, so
+  the accounting is unchanged and `acquire`/`check_permission` remain the
+  authority — it only short-circuits a call that is *certainly* over quota.
+  Each limiter's own result shape is preserved, so a `SecurityPolicy` refusal
+  still reports `PERMISSION_DENIED` rather than being relabelled.
+- **`required` holds in an object declaring no properties.** A `required` name
+  needs no matching `properties` entry, so
+  `{"type": "object", "properties": {}, "required": ["token"]}` is valid — but
+  the no-properties shortcut ran before the required loop and accepted `{}`
+  outright.
+- **Google ADK placeholders match the annotation they accompany.** Once a
+  formatted string became a `datetime` and an enum a `Literal`, the synthetic
+  default was still derived from the raw JSON type and stayed `""` —
+  recreating the annotation/default mismatch `type_matched_defaults` exists to
+  avoid, which ADK rejects during signature processing.
+- **A nullable open mapping is still strict-unsupported.** `type` is a *list*
+  whenever nullability is spelled into it — which introspection emits for a
+  required `dict[str, int] | None` — and the strict-mode check matched only
+  the scalar string `"object"`. A nullable open mapping therefore passed as
+  strict-safe, and the provider rejected the whole tool request rather than
+  that one parameter. A nullable *closed* object is unaffected: it remains
+  perfectly representable.
+- **A pattern-only object is strict-unsupported without a `type`.** JSON Schema
+  applies an object's keywords whenever the instance *is* an object, so a
+  property carrying only `patternProperties` — no `type`, no `properties` —
+  constrains objects just as much as one spelling the type out. Gating the
+  check on type-or-properties let that spelling past as strict-safe while its
+  typed twin was flagged.
+- **A required property forbidden by its schema is no longer widened to null.**
+  A boolean property schema is replaced with `{}` internally so the later
+  lookups work, and `{}` admits null under the unified nullability rule — so a
+  required `false` property was unioned with `None` and accepted an explicit
+  null the executor rejects outright. Nullability is now decided from the
+  original schema.
+- **LlamaIndex coercion no longer injects defaults into typed map values.**
+  `model_dump()` recursively materializes every omitted optional field,
+  including inside a typed map's values, where an optional child with no schema
+  default becomes `None`. Executor normalization walks named `properties` but
+  not schema-valued map entries, so that injected null survived to be rejected
+  — turning a call the caller made correctly into an error. The dump now
+  carries only what the caller supplied; the coercions that function exists for
+  are unaffected.
+- **A concrete sequence that isn't a `list` is rebuilt.** The reconstruction
+  rule named `set`/`frozenset`/`tuple` outright, so any other concrete
+  sequence fell through whenever its member type needed nothing itself:
+  `collections.deque[int]` was advertised as a JSON array and reported as
+  needing no rebuild, so the handler received a plain `list` and `popleft()`
+  raised on a schema-valid call. The rule is now the one the docstring always
+  claimed — rebuild whenever a JSON array is not already an instance of the
+  declared container — which leaves `list`, `Sequence` and `Iterable`
+  untouched as before.
+- **`tuple[()]` advertised an unrestricted array.** The empty tuple has no
+  type arguments, so the truthy check that gated the arity bounds skipped the
+  one tuple that permits *no* items at all. The call then validated and failed
+  at reconstruction, giving a dispatch error for a value the schema had said
+  was acceptable. Both bounds are now pinned at zero.
+- **Formatted values are restored to JSON at every depth.** The dispatch guard
+  read only the parent schema's `format`, so it covered a top-level `datetime`
+  parameter and nothing below it. `list[datetime]` and `dict[str, UUID]` are
+  advertised on the signature that framework adapters introspect, so a
+  framework hands back a *container* of real Python objects and every element
+  was then rejected against the canonical formatted-string schema. The guard
+  now recurses through `items`, `prefixItems`, `properties`,
+  `patternProperties`, `additionalProperties` and combinator branches, still
+  only where the schema declares one of those formats.
+- **Object and array keywords apply without a declared `type`.** JSON Schema
+  applies them whenever the *instance* is of that kind, but both the executor
+  and the framework bridge gated their checks on `type` alone — so a property
+  such as `{"properties": {"token": {"type": "string"}}, "required":
+  ["token"]}`, which an MCP or OpenAPI import produces, governed nothing at
+  all and `{}` was dispatched despite the missing key. Both now dispatch on
+  what the value is, which leaves a schema asserting nothing unconstrained and
+  still admits a string under object keywords that cannot apply to one.
+- **A concrete mapping that isn't a `dict` is rebuilt.** The mapping side of
+  the same rule: the branch asked about the key type and the value types, so
+  `collections.OrderedDict[str, int]` — ordinary on both counts — was
+  advertised as a JSON object and reported as needing nothing, and the handler
+  got a plain `dict` where `move_to_end()` raised. Both the parameterized and
+  the bare spellings are covered; `dict` and the `Mapping` ABCs are satisfied
+  by a `dict` and stay excluded.
+- **A typeless `additionalProperties` map is detected before strict mode.**
+  The sibling of the pattern-only fix, which reached only its own keyword:
+  `{"additionalProperties": {"type": "integer"}}` — an imported
+  `dict[str, int]` with no `type` — was reported strict-safe while its typed
+  twin was flagged, so the strict transform published a schema-valued keyword
+  strict mode cannot express and the provider rejected the whole tool request.
+  The two spellings now agree for every form of the keyword.
+- **Overlapping `patternProperties` are validated against one stable value.**
+  Each matching adapter in the framework bridge ran against the *previous*
+  adapter's output, so the value written back depended on the order the
+  patterns were declared in: with `{"^x": {"type": "integer"}, "x$": {"type":
+  "number"}}`, `"1"` became `1` and then `1.0`, which the model accepted and
+  the executor — which applies every matching schema to the value it receives
+  — rejected against the integer branch. Every adapter now runs against the
+  same original value, and the value written back is one that all of them
+  accept without coercing it. Patterns no single value can satisfy at once are
+  rejected rather than resolved to whichever ran last.
+- **A memberless `Enum` no longer emits an invalid schema.** `{"enum": []}` is
+  not valid JSON Schema — `enum` must hold at least one value — so a provider
+  validating the payload rejected the whole tool request rather than just that
+  parameter. It degrades to a plain string schema exactly as a
+  non-JSON-representable member set already did; the annotation is uninhabited
+  either way, so the call still fails, but at dispatch and with a message
+  naming the real problem.
+- **A bare concrete sequence subclass is rebuilt.** The bare spelling of the
+  same rule — `get_origin` is `None` for `collections.deque`, so it reaches
+  the direct-type branch, where the check was an exact-type membership naming
+  only `set`/`frozenset`/`tuple`. A bare `deque` was advertised as an array
+  and handed to the handler as a plain `list`.
+- **A declared `type` is enforced alongside `const` and `enum`.** JSON Schema
+  applies `type` beside every other assertion, but the framework bridge
+  early-returned the `Literal` and discarded it — so a valid but incompatible
+  imported schema such as `{"type": "integer", "const": "x"}` built
+  `Literal["x"]` and accepted a value the executor rejects at dispatch for the
+  type it still applies. Compatible schemas, which is everything Gantry emits
+  itself, are unaffected.
+- **Typed `additionalProperties` enforce their constraints in framework
+  models.** Every other schema-to-annotation site in the bridge routes through
+  the constraint folding; the top-level `additionalProperties` branch did not,
+  so `{"type": "integer", "minimum": 0}` typed the extras as integers and let
+  a negative one through while the executor rejected it.
+- **A confirmation-gated call is no longer refused by the admission peek.**
+  The read-only quota peek ran before the confirmation gate was settled, so it
+  consulted the rate limiter for a call that never reaches `acquire` — making
+  the early check stricter than the one it stands in for. A probe issued after
+  approved replays had saturated the tool's own key came back
+  `RateLimitExceeded` instead of `pending_confirmation`. The policy window is
+  still consulted, because `check_permission` runs its denial checks for a
+  pending call too and defers only the recording.
+- **A nested empty-`properties` object is no longer called strict-safe.**
+  `properties: {}` with no `additionalProperties` is the "tool takes no
+  arguments" shape strict mode itself emits — but only at the *root*, where
+  the executor agrees and rejects an unknown argument outright. Nested, absent
+  `additionalProperties` is a free-form mapping the executor accepts any keys
+  for, so calling it strict-safe let the transform rewrite it closed and made
+  a valid `{"payload": {"key": 1}}` ungeneratable. Its bare `{"type":
+  "object"}` twin was flagged all along.
+- **Fixed-length arrays keep their positions and arity in generated
+  signatures.** `tuple[int, str]` is introspected as `prefixItems` plus equal
+  `minItems`/`maxItems`, but the signature builder read only `items`, so the
+  frameworks that rebuild their LLM schema from the callable — Semantic
+  Kernel, AG2, Google ADK's fallback — published a bare `list` and the model
+  could answer with an array the executor rejects. Both spellings now
+  annotate as a `tuple`, and the dispatch boundary normalizes a materialized
+  one back to a JSON array, since the executor's validator accepts a `list`
+  and nothing else. A partly described array keeps the bare container.
+
+### Performance
+
+- **Generated framework models are memoized.** `pydantic_model_from_schema` is
+  a pure function of its name and schema, but the live CrewAI and LlamaIndex
+  adapters rebuild their tools on *every* retrieval — so the whole recursive
+  `create_model` (plus its `TypeAdapter` constructions and `re.compile` calls)
+  reran per query, per tool. Bounded and LRU.
+- **The handler-coercer cache evicts instead of stopping.** Its hard cap left
+  the first 512 handlers pinned for the life of the process and re-ran
+  signature inspection on every call for every handler after them. It is an
+  LRU now, keeping the targeted invalidation `functools.lru_cache` can't do.
+
+### Known limitation
+
+- A *multi-member* union parameter (`int | str`, as opposed to `T | None`)
+  keeps only its first member in the emitted schema. Most provider dialects
+  reject union-typed parameters outright, so a narrowed schema is more useful
+  than one they refuse; the collapse is logged at debug level and documented
+  on `build_parameters_schema`.
+- `python_signature` annotates an object parameter with declared
+  `properties` as a bare `dict` rather than rebuilding it as a nested model
+  (which CrewAI and LlamaIndex do get, via `pydantic_model_from_schema`). The
+  frameworks reading that signature — Semantic Kernel, AG2, Google ADK's
+  fallback path — therefore still see an untyped object for a nested Pydantic
+  or dataclass parameter. Changing it would alter what those frameworks
+  introspect in a way this suite can't exercise against their real schema
+  derivation, so it is left as a tracked gap rather than an untested change.
+
+### Tests
+
+- **A concurrency benchmark asserts overlap rather than a wall-clock ratio.**
+  `test_concurrent_retrieval_throughput` exists to prove the embedder does not
+  block the event loop, and used `speedup > 1.2x` as a proxy. The proxy is what
+  broke on a contended CI runner: identical code measured 18.9x locally and
+  0.97x on a runner taking 7m27s for a suite that runs in 90s, because a ratio
+  between two wall-clock spans measures the machine once CPU is scarce. The
+  mock embedder now records how many embeds are in flight, and the test asserts
+  they overlapped — the property itself, immune to how slow the runner is, and
+  still failing on a genuinely blocking embedder.
+
+### CI
+
+- **The weekly drift-check now tests what it claims.** The semantic-kernel
+  cell silently resolved back to 1.36.0 (sk ≥1.43.1 needs a pre-release
+  `azure-ai-agents`; `uv pip install` refuses pre-releases by default) — it
+  now passes `--prerelease=allow`. New cells cover langchain/langgraph/
+  llamaindex/autogen-core at latest and classic AG2 (the `register()` API,
+  previously never installed in any job). Single-framework cells also run
+  `test_real_packages.py` (the only suite that builds *and invokes* the
+  native tool object). New real-package guards: `GantryLiveAgnoAgent.build`
+  and `GantryLiveSmolAgent.build` (the exact gap class that let the haystack
+  3.0 `ToolInvoker` removal slip past the stubbed suites), AG2 registration,
+  and `disable_af_instrumentation`.
+- `pyproject.toml` audit comments corrected 2026-08-26: the universal lock
+  holds agent-framework at 1.5.0 and google-adk at 1.14.1 (pre-release
+  `azure-ai-agents` refusal and semantic-kernel 1.36.0's `pydantic<2.12`
+  pin, respectively) — the comments previously claimed the resolver picked
+  1.13.0 / 2.x. Adapters re-verified standalone against agent-framework
+  1.15.0, google-adk 2.7.1, semantic-kernel 1.44.1, crewai 1.15.17,
+  langchain 1.3.17, langgraph 1.2.11, llama-index-core 0.14.24, pydantic-ai
+  2.35.0, openai-agents 0.22.0, smolagents 1.26.0, haystack-ai 3.1.0, agno
+  3.0.1, strands-agents 1.53.0, and dspy 3.3.1.
+
+### Docs
+
+- `examples/agent_frameworks/semantic_kernel_example.py` rewritten to use
+  `SemanticKernelAdapter` (it previously hand-rolled a plugin and never used
+  the integration it exemplifies); `langchain_example.py` moved off
+  `langgraph.prebuilt.create_react_agent` (removed in LangGraph 2.0) to
+  `langchain.agents.create_agent`; the examples README gained the four
+  missing entries (strands, dspy, generic adapters, AF harness) and the AG2
+  install guidance.
+
 ## [0.11.0] - 2026-08-20
 
 ### Added (tool-use loop)
@@ -1969,7 +3095,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.8.0...v0.9.0

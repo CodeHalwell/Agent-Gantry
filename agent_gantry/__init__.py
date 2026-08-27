@@ -58,8 +58,9 @@ def disable_af_instrumentation() -> bool:
     importable in environments where AF is not installed.
 
     Returns ``True`` if instrumentation was disabled, ``False`` otherwise
-    (AF not installed, AF version is older than 1.6.0, or the telemetry
-    module does not expose ``disable_instrumentation``).
+    (AF not installed, or the installed AF predates 1.6.0's
+    ``agent_framework.observability.disable_instrumentation`` switch — in
+    which case there is no default instrumentation to disable).
     """
     from agent_gantry.integrations.agent_framework_bridge import (
         disable_af_instrumentation as _impl,
@@ -86,7 +87,7 @@ def __getattr__(name: str) -> "Any":
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"
 __all__ = [
     "AgentGantry",
     "StreamingToolCallAccumulator",

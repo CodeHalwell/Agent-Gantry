@@ -2,21 +2,95 @@
 Tool introspection utilities for Agent-Gantry.
 
 Provides schema building from Python function signatures and type hints.
+
+The schema is what every downstream consumer sees — LLM providers (OpenAI /
+Anthropic / Gemini dialects), the ~15 agent-framework adapters, MCP/A2A
+servers, and the executor's own argument validation — so fidelity here
+directly affects tool-call quality everywhere. ``build_parameters_schema``
+therefore preserves as much of the function's declared intent as JSON Schema
+can express:
+
+- **Descriptions** from ``Annotated[T, "..."]`` metadata (preferred) or the
+  function docstring's parameter section (Google ``Args:``, NumPy
+  ``Parameters``, or Sphinx ``:param name:`` styles).
+- **Enums** from ``Literal[...]`` and :class:`enum.Enum` subclasses.
+- **Defaults** for optional parameters (when JSON-serializable).
+- **Container types**: ``list[T]``/``set[T]``/``tuple`` → ``array`` (with
+  typed ``items``), ``dict``/``Mapping`` → ``object``.
+- **Nested models**: Pydantic models, dataclasses and ``TypedDict``s via
+  Pydantic's own schema generation, with local ``$ref``s inlined.
+- **Optionality**: ``Optional[T]`` / ``T | None`` map to ``T``'s schema
+  (requiredness is carried by the ``required`` list, matching what LLM
+  providers expect).
+- **String formats** for ``datetime``/``date``/``time``/``UUID``.
+
+Known limitation: a *multi-member* union (``int | str``, as opposed to
+``T | None``) keeps only its first member — most provider dialects reject
+union-typed parameters outright, so a narrowed schema is more useful than one
+they refuse. The collapse is logged at debug level; annotate the parameter
+with the type you actually want advertised to avoid the ambiguity.
 """
 
 from __future__ import annotations
 
+import collections.abc as _abc
+import copy
+import dataclasses
+import datetime
+import enum
+import functools
 import inspect
+import logging
+import math
+import operator
+import re
+import types
+import uuid
 from collections.abc import Callable
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+#: Generic origins that describe an ordered/unordered collection of items.
+#: ``typing.get_origin`` normalizes ``typing.Sequence[int]`` and
+#: ``collections.abc.Sequence[int]`` alike to the ``collections.abc`` class,
+#: so the ABCs — not the ``typing`` aliases — are what must be matched.
+#: Mappings are excluded by being handled first (a Mapping is a Collection).
+_SEQUENCE_ORIGINS: tuple[type, ...] = (
+    list,
+    tuple,
+    set,
+    frozenset,
+    _abc.Sequence,
+    _abc.Set,
+    _abc.Collection,
+    _abc.Iterable,
+)
+
+#: Of those, the ones whose items are unordered and distinct.
+_UNIQUE_ORIGINS: tuple[type, ...] = (set, frozenset, _abc.Set)
+
+#: Hard bound on ``$ref`` inlining recursion (self-referential models).
+_MAX_REF_DEPTH = 16
+
+#: Companion bound on the *total* number of ``$ref`` expansions, since depth
+#: alone permits exponential growth when a model recurses on several fields.
+_MAX_REF_NODES = 512
 
 
 def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
     """
     Build JSON Schema for function parameters from Python type hints.
 
-    Handles basic Python types (int, float, bool, str) with automatic
-    detection of required vs optional parameters based on defaults.
+    Handles scalar types, containers, enums/Literals, nested Pydantic models
+    and dataclasses, with automatic detection of required vs optional
+    parameters based on defaults. Per-parameter descriptions are taken from
+    ``Annotated`` metadata or the docstring's ``Args:``/``Parameters``/
+    ``:param:`` section; defaults are recorded in the schema when they are
+    JSON-serializable.
+
+    A multi-member union (``int | str``) keeps only its first member; see the
+    module docstring's known limitation.
 
     Args:
         func: The function to introspect
@@ -32,14 +106,18 @@ def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
         ['x']
         >>> schema["properties"]["y"]["type"]
         'string'
+        >>> schema["properties"]["y"]["default"]
+        'default'
     """
     import typing
 
     sig = inspect.signature(func)
 
-    # Use get_type_hints to resolve string annotations (from __future__ import annotations)
+    # Use get_type_hints to resolve string annotations (from __future__ import
+    # annotations). include_extras keeps Annotated metadata — the conventional
+    # home of per-parameter descriptions.
     try:
-        type_hints = typing.get_type_hints(func)
+        type_hints = typing.get_type_hints(func, include_extras=True)
     except (NameError, TypeError):
         # Fall back to raw annotations if get_type_hints fails
         # NameError: forward references that can't be resolved
@@ -48,6 +126,8 @@ def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
             type_hints = func.__annotations__
         except AttributeError:
             type_hints = {}
+
+    param_docs = _parse_param_docs(inspect.getdoc(func) or "")
 
     properties: dict[str, Any] = {}
     required: list[str] = []
@@ -71,12 +151,44 @@ def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
             continue
 
         param_type = type_hints.get(param_name, str)
+        param_type, annotated_desc = _split_annotated(param_type)
         param_schema = _type_to_json_schema(param_type)
-        properties[param_name] = param_schema
 
-        # Mark as required if no default value
+        description = annotated_desc or param_docs.get(param_name)
+        if description and "description" not in param_schema:
+            param_schema["description"] = description
+
+        # Mark as required if no default value; record JSON-safe defaults so
+        # the model (and humans reading the schema) can see them. A ``None``
+        # default only signals optionality — it is not a meaningful value.
+        # ``T | None`` normally maps to ``T``'s schema: for the overwhelmingly
+        # common ``x: int | None = None``, "omitted" and "null" mean the same
+        # thing, ``required`` already carries the optionality, and a bare type
+        # is what provider dialects handle best. Two cases break that
+        # equivalence and need ``null`` spelled out, or the schema forbids a
+        # value the handler explicitly accepts:
+        #
+        # - No default at all: the parameter is *required*, so omission cannot
+        #   express ``None`` and ``def f(x: int | None)`` was uncallable with
+        #   the value its own annotation names.
+        # - A non-``None`` default (``x: int | None = 5``): an explicit null is
+        #   a distinct, meaningful choice, and dropping it as "not provided"
+        #   handed the handler ``5`` where the caller asked for ``None``.
+        if _admits_none(param_type) and (
+            param.default is inspect.Parameter.empty or param.default is not None
+        ):
+            _admit_null(param_schema)
+
         if param.default is inspect.Parameter.empty:
             required.append(param_name)
+        elif param.default is not None and "default" not in param_schema:
+            default = (
+                param.default.value if isinstance(param.default, enum.Enum) else param.default
+            )
+            if _json_safe(default):
+                param_schema["default"] = _json_canonical(default)
+
+        properties[param_name] = param_schema
 
     schema: dict[str, Any] = {
         "type": "object",
@@ -88,51 +200,756 @@ def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
     return schema
 
 
-def _type_to_json_schema(param_type: Any) -> dict[str, Any]:
+def _needs_reconstruction(param_type: Any) -> bool:
+    """Whether a JSON value must be rebuilt into ``param_type`` before use.
+
+    True exactly for the annotations whose *JSON* form differs from their
+    Python form — a Pydantic model or dataclass arrives as a mapping, a
+    ``set``/``tuple`` as an array, a ``datetime``/``UUID``/``Enum`` as a
+    scalar. Scalars, ``list``, ``dict`` and ``TypedDict`` already arrive as
+    themselves and are deliberately excluded: coercing them would change what
+    every existing handler receives for no benefit.
     """
-    Map Python type to JSON Schema type.
+    import typing
+
+    param_type, _ = _split_annotated(param_type)
+    origin = typing.get_origin(param_type)
+    if origin is typing.Union or origin is types.UnionType:
+        return any(
+            a is not type(None) and _needs_reconstruction(a)
+            for a in typing.get_args(param_type)
+        )
+    if origin is not None:
+        args = typing.get_args(param_type)
+        # Mappings are tested *before* sequences for the same reason
+        # ``_type_to_json_schema`` orders them that way: a Mapping is also a
+        # Collection and an Iterable, so the sequence rule below would
+        # otherwise claim ``dict[str, int]`` — which arrives as itself.
+        if origin is dict or (isinstance(origin, type) and issubclass(origin, _abc.Mapping)):
+            # JSON object keys are *always* strings, so a mapping annotated
+            # with any other key type never arrives as itself however simple
+            # its values are: ``dict[int, str]`` reached the handler as
+            # ``{"1": "value"}``, and every lookup or arithmetic on those keys
+            # then failed. ``TypeAdapter`` converts them back.
+            if args and args[0] is not str and args[0] is not Any:
+                return True
+            # And the same rule the sequence branch below applies, on the
+            # mapping side: rebuild whenever a JSON object — which arrives as
+            # a ``dict`` — is not already an instance of the declared
+            # container. ``collections.OrderedDict[str, int]`` was advertised
+            # as an object but reported as needing nothing, because both its
+            # key and value types need nothing, so the handler got a plain
+            # ``dict`` and ``move_to_end()`` failed. ``dict`` and the
+            # ``Mapping`` ABCs are satisfied by one and stay excluded.
+            if not isinstance({}, origin):
+                return True
+        elif isinstance(origin, type) and issubclass(origin, _SEQUENCE_ORIGINS):
+            # The container itself needs rebuilding whenever a JSON array —
+            # which arrives as a ``list`` — is not already an instance of it.
+            # That covers ``set``/``frozenset``/``tuple`` as the spelled-out
+            # list did, and any other concrete sequence besides:
+            # ``collections.deque[int]`` was advertised as an array but
+            # reported as needing nothing, because its *member* type needed
+            # nothing, so the handler got a ``list`` and ``popleft()`` failed.
+            # ``Sequence``/``Iterable``/``list`` are satisfied by a list and
+            # stay excluded, which is what keeps this from rebuilding values
+            # that already arrive correctly.
+            if not isinstance([], origin):
+                return True
+        # Any other parameterized generic — ``list[Payload]``,
+        # ``dict[str, datetime]``, ``Sequence[Mode]``. The *container* arrives
+        # as itself, but its members may still need rebuilding, and a
+        # ``TypeAdapter`` over the whole annotation handles the nesting. Not
+        # recursing here left ``def f(items: list[Payload])`` handing the
+        # handler a list of raw dicts — the same failure this exists to fix,
+        # one container level up.
+        return any(_needs_reconstruction(arg) for arg in args)
+    if not isinstance(param_type, type):
+        return False
+    if param_type in (datetime.datetime, datetime.date, datetime.time, uuid.UUID):
+        return True
+    # A *bare* ``set``/``frozenset``/``tuple`` annotation reaches here rather
+    # than the parameterized branch above, because ``get_origin`` is ``None``
+    # for it — but introspection still advertises it as a JSON array, so the
+    # handler was receiving a ``list``. Same for bare ``bytes``, advertised as
+    # a string. The parameterized forms were already covered; only the
+    # unparameterized spellings slipped through.
+    if param_type in (set, frozenset, tuple, bytes):
+        return True
+    # ``Set``/``MutableSet`` for the same reason as the concrete ones above,
+    # now that a bare ABC gets an array schema: a JSON array arrives as a
+    # ``list``, which is not a ``Set``. ``Sequence`` and ``Mapping`` are
+    # deliberately absent — a list *is* a Sequence and a dict *is* a Mapping,
+    # so they already arrive as themselves. So is ``Iterable``, where
+    # rebuilding would hand the handler a one-shot ``ValidatorIterator`` in
+    # place of a perfectly good list.
+    if issubclass(param_type, _abc.Set):
+        return True
+    if issubclass(param_type, enum.Enum):
+        return True
+    # A ``TypedDict`` *is* a dict at runtime, so the container itself needs
+    # nothing — and it would otherwise be caught by the dataclass check below
+    # on some versions. Its *members* can still need rebuilding, though: a
+    # field annotated ``datetime``/``Enum``/``set``/a dataclass is advertised
+    # in its JSON form, and returning ``False`` unconditionally installed no
+    # coercer at all, so ``payload["at"].year`` failed on a schema-valid call.
+    if hasattr(param_type, "__required_keys__"):
+        try:
+            hints = typing.get_type_hints(param_type)
+        except Exception:  # noqa: BLE001 - unresolvable: coerce nothing
+            return False
+        return any(_needs_reconstruction(hint) for hint in hints.values())
+    # The bare spellings of the container rules above, which reach here
+    # because ``get_origin`` is ``None`` for them. Both ask the same question
+    # the parameterized branches do: is the JSON form — a ``dict`` for an
+    # object, a ``list`` for an array — already an instance of the declared
+    # container?
+    #
+    # Checked *after* the ``TypedDict`` block: a ``TypedDict`` class is a
+    # ``dict`` subclass at runtime, so it would match the mapping test — and
+    # ``isinstance`` against one raises outright rather than returning False.
+    #
+    # ``_SCALAR_MAP`` is excluded first because ``str`` and ``bytes`` are both
+    # ``Sequence``s, and both are advertised as JSON *strings*: without the
+    # guard the sequence test would claim every string parameter. ``bytes``
+    # keeps its own rule above, where it belongs.
+    if issubclass(param_type, _abc.Mapping):
+        # ``elif`` below, not a second ``if``: a Mapping is also a Collection
+        # and an Iterable, so ``dict`` itself would otherwise fall through to
+        # the sequence test and be rebuilt — the same ordering the
+        # parameterized branch and ``_type_to_json_schema`` both document.
+        if not isinstance({}, param_type):
+            return True
+    elif (
+        param_type not in _SCALAR_MAP
+        and issubclass(param_type, _SEQUENCE_ORIGINS)
+        and not isinstance([], param_type)
+    ):
+        # ``collections.deque`` and ``collections.UserList`` are advertised as
+        # arrays and were reported as needing nothing, because the exact-type
+        # check above names only ``set``/``frozenset``/``tuple``. The handler
+        # got a plain ``list`` and ``popleft()`` failed — the parameterized
+        # form of exactly this bug, one spelling over.
+        return True
+    if dataclasses.is_dataclass(param_type):
+        return True
+    try:
+        from pydantic import BaseModel
+    except ImportError:  # pragma: no cover - pydantic is a hard dependency
+        return False
+    return issubclass(param_type, BaseModel)
+
+
+def _enum_member_recovery(enum_cls: Any) -> Any:
+    """A ``BeforeValidator`` mapping an Enum's JSON form back to its member.
+
+    An ``Enum`` whose values are tuples advertises them as JSON *arrays* (the
+    canonical schema converts them, so the document matches what a provider
+    sends). Pydantic then can't match the array back: ``(0, 0)`` is the member
+    value and ``[0, 0]`` is what arrives. Matching on JSON identity — the same
+    equality the executor's ``enum`` check uses — closes that.
+
+    A value matching no member is returned untouched so Pydantic raises its
+    own error rather than this silently swallowing one.
+    """
+    from agent_gantry.schema.base import json_identity_key
+
+    by_key = {}
+    for member in enum_cls:
+        try:
+            by_key[json_identity_key(member.value)] = member
+        except TypeError:  # an unhashable member value
+            continue
+
+    def _recover(value: Any) -> Any:
+        if isinstance(value, enum_cls):
+            return value
+        try:
+            return by_key.get(json_identity_key(value), value)
+        except TypeError:
+            return value
+
+    return _recover
+
+
+def _with_enum_recovery(annotation: Any) -> Any:
+    """Rewrite composite-valued ``Enum``s in ``annotation`` so JSON matches.
+
+    Applied to the whole annotation rather than only a bare ``Enum`` parameter,
+    so it reaches one nested in a container: ``list[Point]`` and
+    ``Point | None`` get the same treatment.
+    """
+    import typing
+    from typing import Annotated
+
+    from pydantic import BeforeValidator
+
+    origin = typing.get_origin(annotation)
+    if origin is not None:
+        args = typing.get_args(annotation)
+        rebuilt = tuple(_with_enum_recovery(arg) for arg in args)
+        if rebuilt == args:
+            return annotation
+        try:
+            if origin is typing.Union or origin is types.UnionType:
+                # Built with ``|`` rather than ``Union[...]`` so the members
+                # stay whatever they already are (an ``Annotated`` alias
+                # included).
+                return functools.reduce(operator.or_, rebuilt)
+            return origin[rebuilt]
+        except TypeError:  # not re-subscriptable; leave it alone
+            return annotation
+
+    if not isinstance(annotation, type) or not issubclass(annotation, enum.Enum):
+        return annotation
+    # Only enums whose values aren't JSON scalars need it; a plain
+    # ``str``/``int`` enum already round-trips.
+    if all(
+        isinstance(member.value, (str, int, float, bool)) or member.value is None
+        for member in annotation
+    ):
+        return annotation
+    return Annotated[annotation, BeforeValidator(_enum_member_recovery(annotation))]
+
+
+def build_argument_coercers(func: Callable[..., Any]) -> dict[str, Any]:
+    """``{parameter: TypeAdapter}`` for the arguments ``func`` needs rebuilt.
+
+    The executor dispatches ``handler(**arguments)`` with JSON-decoded values.
+    Once the schema advertises a nested model, a ``set`` or a ``datetime``,
+    the provider sends the JSON form of that type and the handler received a
+    ``dict``/``list``/``str`` where its annotation promised the real thing —
+    ``def f(p: Payload): return p.x`` failed with "'dict' object has no
+    attribute 'x'" on every schema-valid call. Empty when nothing needs it,
+    which is the overwhelmingly common case.
+    """
+    import typing
+
+    from pydantic import TypeAdapter
+
+    try:
+        hints = typing.get_type_hints(func, include_extras=True)
+    except Exception:  # noqa: BLE001 - unresolvable annotations: coerce nothing
+        return {}
+
+    coercers: dict[str, Any] = {}
+    for name, annotation in hints.items():
+        if name == "return" or not _needs_reconstruction(annotation):
+            continue
+        try:
+            coercers[name] = TypeAdapter(_with_enum_recovery(annotation))
+            continue
+        except Exception:  # noqa: BLE001 - retried below, then given up on
+            pass
+        # Pydantic only recognizes ``typing_extensions.TypedDict`` on Python
+        # < 3.12, and raises for a standard-library one — so without this
+        # retry the members of a ``TypedDict`` parameter stayed unrebuilt on
+        # exactly the versions the schema path already works around.
+        if isinstance(annotation, type) and hasattr(annotation, "__required_keys__"):
+            rebuilt = _typeddict_via_typing_extensions(annotation)
+            if rebuilt is not None:
+                try:
+                    coercers[name] = TypeAdapter(_with_enum_recovery(rebuilt))
+                except Exception:  # noqa: BLE001 - not adaptable: leave it alone
+                    continue
+    return coercers
+
+
+def _split_annotated(param_type: Any) -> tuple[Any, str | None]:
+    """Unwrap ``Annotated[T, ...]``, returning ``(T, description)``.
+
+    The description is the first ``str`` metadata item, mirroring how
+    Pydantic AI / Semantic Kernel / AG2 read parameter descriptions from
+    ``Annotated``. Non-``Annotated`` types pass through unchanged.
+    """
+    import typing
+
+    if typing.get_origin(param_type) is not typing.Annotated:
+        return param_type, None
+    args = typing.get_args(param_type)
+    base = args[0] if args else param_type
+    description = next((a for a in args[1:] if isinstance(a, str)), None)
+    # Pydantic FieldInfo metadata also carries a description attribute.
+    if description is None:
+        description = next(
+            (
+                getattr(a, "description")
+                for a in args[1:]
+                if isinstance(getattr(a, "description", None), str)
+            ),
+            None,
+        )
+    return base, description
+
+
+def _fixed_tuple_args(args: tuple[Any, ...]) -> tuple[Any, ...] | None:
+    """The positional members of a fixed-length tuple, or ``None``.
+
+    ``None`` for a variadic ``tuple[int, ...]``, which has no fixed arity to
+    pin. ``tuple[()]`` is the empty *fixed* tuple and returns ``()`` — Python
+    spells its args either ``()`` or ``((),)`` depending on version, and both
+    mean "no members", so both must pin a length of zero rather than reading
+    as "unparameterized".
+    """
+    if Ellipsis in args:
+        return None
+    if not args or args == ((),):
+        return ()
+    return args
+
+
+def _admits_none(param_type: Any) -> bool:
+    """Whether the annotation itself lists ``None`` as a valid value."""
+    import typing
+
+    origin = typing.get_origin(param_type)
+    if origin is not typing.Union and origin is not types.UnionType:
+        return False
+    return type(None) in typing.get_args(param_type)
+
+
+def _admit_null(schema: dict[str, Any]) -> None:
+    """Widen ``schema`` in place so ``null`` is one of its allowed values."""
+    declared = schema.get("type")
+    if isinstance(declared, str):
+        if declared != "null":
+            schema["type"] = [declared, "null"]
+    elif isinstance(declared, list):
+        if "null" not in declared:
+            schema["type"] = [*declared, "null"]
+    # ``enum`` is an independent constraint, so an optional ``Literal`` needs
+    # ``None`` listed there too or the widened type buys nothing.
+    enum_values = schema.get("enum")
+    if isinstance(enum_values, list) and enum_values and None not in enum_values:
+        schema["enum"] = [*enum_values, None]
+
+
+def _json_safe(value: Any) -> bool:
+    """Whether ``value`` can be embedded in a JSON schema as a default."""
+    if isinstance(value, float) and not math.isfinite(value):
+        # NaN/±inf are Python floats but not JSON values: ``json.dumps``
+        # emits the bare tokens ``NaN``/``Infinity`` unless ``allow_nan`` is
+        # off, and a provider parsing strict JSON rejects the request.
+        return False
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return True
+    if isinstance(value, (list, tuple)):
+        return all(_json_safe(v) for v in value)
+    if isinstance(value, dict):
+        return all(isinstance(k, str) and _json_safe(v) for k, v in value.items())
+    return False
+
+
+def _json_canonical(value: Any) -> Any:
+    """Rewrite a JSON-safe value into the exact shape JSON round-trips to.
+
+    A Python ``tuple`` is JSON-safe but serializes to an *array*, so storing
+    one verbatim leaves the canonical schema holding a value no provider will
+    ever send back: an ``Enum`` member valued ``(0, 0)`` was advertised as
+    ``[0, 0]`` on the wire, and the executor then compared the returned list
+    against the stored tuple and rejected every valid call. Applied to
+    ``enum`` members and defaults alike so the stored schema is the same
+    document the provider sees.
+    """
+    if isinstance(value, (list, tuple)):
+        return [_json_canonical(item) for item in value]
+    if isinstance(value, dict):
+        return {k: _json_canonical(v) for k, v in value.items()}
+    return value
+
+
+# Scalar types with a direct JSON-Schema mapping. ``bool`` must be checked
+# before ``int`` at runtime (bool subclasses int), but dict lookup is exact so
+# ordering here is only cosmetic.
+_SCALAR_MAP: dict[Any, dict[str, Any]] = {
+    int: {"type": "integer"},
+    float: {"type": "number"},
+    bool: {"type": "boolean"},
+    str: {"type": "string"},
+    bytes: {"type": "string"},
+    datetime.datetime: {"type": "string", "format": "date-time"},
+    datetime.date: {"type": "string", "format": "date"},
+    datetime.time: {"type": "string", "format": "time"},
+    uuid.UUID: {"type": "string", "format": "uuid"},
+}
+
+
+def _enum_schema(values: tuple[Any, ...]) -> dict[str, Any]:
+    """Build an ``enum`` schema from literal values, inferring a shared type.
+
+    Only JSON-representable values can appear in a schema payload —
+    ``Literal`` admits ``bytes`` and Enum members can carry arbitrary
+    objects. Anything non-JSON degrades to a plain string schema (no
+    ``enum``) rather than emitting a payload providers would reject.
+
+    A *memberless* ``Enum`` degrades the same way, for the same reason: JSON
+    Schema requires ``enum`` to hold at least one value, so ``{"enum": []}``
+    is not a valid schema and a provider validating the payload rejects the
+    whole tool request rather than just this parameter. The annotation is
+    uninhabited either way — reconstruction into a memberless ``Enum`` cannot
+    succeed — so the call fails at dispatch with a message naming the real
+    problem instead of taking every other tool in the request down with it.
+    """
+    if not values or not all(_json_safe(v) for v in values):
+        return {"type": "string"}
+    schema: dict[str, Any] = {}
+    kinds = set()
+    for v in values:
+        if isinstance(v, bool):
+            kinds.add("boolean")
+        elif isinstance(v, int):
+            kinds.add("integer")
+        elif isinstance(v, float):
+            kinds.add("number")
+        elif isinstance(v, str):
+            kinds.add("string")
+        else:
+            kinds.add("other")
+    if len(kinds) == 1 and "other" not in kinds:
+        schema["type"] = next(iter(kinds))
+    schema["enum"] = [_json_canonical(v) for v in values]
+    return schema
+
+
+def _pydantic_object_schema(param_type: Any) -> dict[str, Any] | None:
+    """Schema for a Pydantic model / dataclass / TypedDict via Pydantic.
+
+    Returns ``None`` when Pydantic can't produce a schema (never raises).
+    Local ``$ref``s are inlined so downstream consumers that don't resolve
+    JSON pointers (the executor's validator, several provider dialects) see
+    the full nested structure.
+    """
+    try:
+        if isinstance(param_type, type) and hasattr(param_type, "model_json_schema"):
+            raw = param_type.model_json_schema()
+        else:
+            from pydantic import TypeAdapter
+
+            raw = TypeAdapter(param_type).json_schema()
+    except Exception:  # noqa: BLE001 - best-effort; fall back to generic mapping
+        import typing
+
+        if not typing.is_typeddict(param_type):
+            return None
+        raw = _typeddict_schema_via_typing_extensions(param_type)
+        if raw is None:
+            return None
+    return _inline_local_refs(raw)
+
+
+def _typeddict_schema_via_typing_extensions(param_type: type) -> dict[str, Any] | None:
+    """Retry TypedDict introspection via ``typing_extensions.TypedDict``.
+
+    On Python < 3.12, Pydantic's schema generator only recognizes TypedDict
+    classes built from ``typing_extensions.TypedDict`` — a class written
+    with the standard-library ``typing.TypedDict`` (the import most code
+    reaches for) raises ``PydanticUserError`` instead, which would
+    otherwise silently flatten the parameter to a bare ``{"type":
+    "object"}``. Rebuilding an equivalent class from the same field
+    annotations and retrying keeps the nested schema intact on those Python
+    versions too.
+
+    Requiredness is rebuilt per key from ``__required_keys__`` rather than by
+    replaying one ``total=`` flag: with inheritance the two disagree.
+    ``class Child(Base, total=False)`` still requires ``Base``'s keys, but
+    applying ``total=False`` to the merged annotations would make every one
+    of them optional, so the emitted schema would permit omitting a key the
+    handler relies on.
+    """
+    rebuilt = _typeddict_via_typing_extensions(param_type)
+    if rebuilt is None:
+        return None
+    try:
+        from pydantic import TypeAdapter
+
+        return TypeAdapter(rebuilt).json_schema()
+    except Exception:  # noqa: BLE001 - best-effort; fall back to generic mapping
+        return None
+
+
+def _typeddict_via_typing_extensions(param_type: type) -> Any:
+    """An equivalent ``typing_extensions.TypedDict``, or ``None``.
+
+    Pydantic only recognizes ``typing_extensions.TypedDict`` on Python < 3.12;
+    a class written with the standard-library ``typing.TypedDict`` — the
+    import most code reaches for — raises ``PydanticUserError`` instead.
+    Rebuilding an equivalent from the same annotations makes it usable, for
+    schema generation and for the argument coercer alike.
+
+    Requiredness is rebuilt per key from ``__required_keys__`` rather than by
+    replaying one ``total=`` flag: with inheritance the two disagree.
+    ``class Child(Base, total=False)`` still requires ``Base``'s keys, but
+    applying ``total=False`` to the merged annotations would make every one of
+    them optional, so the result would permit omitting a key the handler
+    relies on.
+    """
+    try:
+        import typing_extensions
+
+        required_keys = frozenset(getattr(param_type, "__required_keys__", ()) or ())
+        annotations = {
+            key: (
+                typing_extensions.Required[annotation]
+                if key in required_keys
+                else typing_extensions.NotRequired[annotation]
+            )
+            for key, annotation in param_type.__annotations__.items()
+        }
+        # Every key now states its own requiredness, so ``total`` is moot.
+        return typing_extensions.TypedDict(param_type.__name__, annotations)
+    except Exception:  # noqa: BLE001 - best-effort; the caller falls back
+        return None
+
+
+def _inline_local_refs(schema: dict[str, Any]) -> dict[str, Any]:
+    """Resolve local ``#/$defs/...`` pointers by inlining their targets."""
+    defs = schema.get("$defs") or schema.get("definitions") or {}
+
+    # A depth cap alone bounds *levels*, not nodes: a model with two
+    # recursive fields per level doubles the expansion each time, so 16 levels
+    # is ~2^16 nodes — a real CPU/memory spike for a plausible tree-shaped
+    # model, not just a pathological one. This budget bounds the total.
+    budget = [_MAX_REF_NODES]
+
+    def _resolve(node: Any, depth: int) -> Any:
+        if depth > _MAX_REF_DEPTH:
+            # A self-referential model would recurse forever, so the guard is
+            # necessary — but a legitimately deep (acyclic) schema is truncated
+            # to ``{}`` here, which is a silent fidelity loss. Logged for the
+            # same reason the multi-member union collapse is.
+            logger.debug(
+                "Stopped inlining $refs at depth %d; the remaining subschema is "
+                "emitted as {} and constrains nothing. A self-referential model "
+                "is the usual cause.",
+                _MAX_REF_DEPTH,
+            )
+            return {}
+        if isinstance(node, list):
+            return [_resolve(item, depth) for item in node]
+        if not isinstance(node, dict):
+            return node
+        ref = node.get("$ref")
+        if isinstance(ref, str) and ref.rsplit("/", 1)[0] in ("#/$defs", "#/definitions"):
+            if budget[0] <= 0:
+                # Checked here rather than on entry: the budget bounds *ref
+                # expansion*, and applying it to every visited node replaced
+                # ordinary values with ``{}`` once it ran out — a ``"type"``
+                # string, a ``"required"`` list — so a model wide enough to
+                # exhaust it emitted malformed metadata a provider rejects,
+                # rather than merely unconstrained remaining subschemas.
+                logger.debug(
+                    "Stopped inlining $refs after %d expansions; the remaining "
+                    "subschema is emitted as {} and constrains nothing. A model "
+                    "with several recursive fields per level is the usual cause.",
+                    _MAX_REF_NODES,
+                )
+                return {}
+            target = defs.get(ref.rsplit("/", 1)[1])
+            if isinstance(target, dict):
+                # One expansion. Counted here rather than per visited node so
+                # the budget measures the growth that actually matters.
+                budget[0] -= 1
+                # Drop $ref itself plus $defs/definitions: a top-level
+                # schema is commonly ``{"$defs": {...}, "$ref": "#/..."}``
+                # (a model's own schema referencing its $defs sibling), and
+                # that raw $defs blob must not survive the merge below —
+                # it's the *unresolved* source the ref points into, not an
+                # overriding sibling key, and re-attaching it would leak an
+                # un-inlined $ref straight back into the output.
+                merged = {
+                    k: v for k, v in node.items() if k not in ("$ref", "$defs", "definitions")
+                }
+                resolved = _resolve(copy.deepcopy(target), depth + 1)
+                # Keys alongside the $ref (e.g. an overriding description) win.
+                return {**resolved, **merged}
+        return {
+            key: _resolve(value, depth)
+            for key, value in node.items()
+            if key not in ("$defs", "definitions")
+        }
+
+    return _resolve(schema, 0)
+
+
+def _type_to_json_schema(param_type: Any, *, in_container: bool = False) -> dict[str, Any]:
+    """
+    Map Python type to JSON Schema.
 
     Args:
         param_type: Python type annotation
+        in_container: Whether this type sits *inside* a container — an array
+            item, a mapping value, a tuple position. A top-level parameter can
+            express ``None`` by being omitted, which is why
+            ``build_parameters_schema`` collapses ``int | None = None`` to a
+            bare ``integer``; a container member has no such escape hatch, so
+            ``list[int | None]`` must spell ``null`` out or the emitted schema
+            forbids a value the handler's own annotation accepts.
 
     Returns:
-        Dict with "type" field set to appropriate JSON Schema type
+        Dict describing the type as JSON Schema (always at least a ``type``
+        or ``enum`` field; ``{"type": "string"}`` for unknown types).
     """
-    # Map Python types to JSON Schema types
-    type_map = {
-        int: "integer",
-        float: "number",
-        bool: "boolean",
-        str: "string",
-    }
+    import typing
 
-    # Direct type match (most reliable)
-    if param_type in type_map:
-        return {"type": type_map[param_type]}
+    param_type, _ = _split_annotated(param_type)
 
-    # Try to get the origin type for generic types (e.g., Optional[int], list[float])
+    # Direct type match (most reliable). ``get_origin`` gates it because on
+    # Python 3.10 a parameterized builtin — ``dict[str, int]`` — *is* an
+    # instance of ``type``, where on 3.11+ it is not. Without this the two
+    # versions took different branches for the same annotation, and 3.10 then
+    # reached the abstract-base checks below with a generic alias, where
+    # ``issubclass`` raises ``TypeError: arg 1 must be a class``. (The
+    # concrete-class checks tolerated it, which is why this only surfaced once
+    # the ABCs were added.) Parameterized generics belong to the branch further
+    # down on every version.
+    if isinstance(param_type, type) and typing.get_origin(param_type) is None:
+        # ``def f(x: None)`` resolves to ``NoneType``, which is a real type
+        # but not in the scalar map — it would otherwise fall all the way
+        # through to the string fallback and advertise a string for a
+        # parameter that admits only null.
+        if param_type is type(None):
+            return {"type": "null"}
+        scalar_schema = _SCALAR_MAP.get(param_type)
+        if scalar_schema is not None:
+            return dict(scalar_schema)
+        # Enum classes → enum of their values.
+        if issubclass(param_type, enum.Enum):
+            return _enum_schema(tuple(member.value for member in param_type))
+        # Pydantic models / dataclasses / TypedDict-like classes: checked
+        # before the bare-container fallbacks below, because a TypedDict
+        # class *is* a `dict` subclass at runtime — matching `issubclass(
+        # param_type, dict)` first would silently flatten it to a bare
+        # {"type": "object"} and never reach the richer nested schema here.
+        if hasattr(param_type, "model_json_schema") or typing.is_typeddict(param_type):
+            nested = _pydantic_object_schema(param_type)
+            if nested is not None:
+                return nested
+        if dataclasses.is_dataclass(param_type):
+            nested = _pydantic_object_schema(param_type)
+            if nested is not None:
+                return nested
+        # Bare containers, concrete and abstract alike. ``Mapping`` is
+        # checked first because it is also a ``Collection`` and an
+        # ``Iterable``, so the sequence test would otherwise classify it as an
+        # array — the same ordering the parameterized branch below needs.
+        # Without the ABCs, ``def f(m: Mapping)`` had ``get_origin`` return
+        # ``None``, matched neither concrete check, and fell through to the
+        # string fallback: the tool advertised a string for a parameter the
+        # handler needs a mapping for, and the executor then rejected the
+        # correctly shaped object a caller sent.
+        if issubclass(param_type, (dict, _abc.Mapping)):
+            return {"type": "object"}
+        if issubclass(param_type, _SEQUENCE_ORIGINS):
+            if issubclass(param_type, _UNIQUE_ORIGINS):
+                return {"type": "array", "uniqueItems": True}
+            return {"type": "array"}
+
+    # Generic types (list[str], dict[str, int], Optional[T], Literal, ...)
     try:
-        import typing
-
         origin = typing.get_origin(param_type)
         args = typing.get_args(param_type)
 
         if origin is not None:
-            # Handle list/Sequence/Iterable
-            if origin in (list, typing.Sequence, typing.Iterable, list):
-                item_type = args[0] if args else str
-                return {"type": "array", "items": _type_to_json_schema(item_type)}
+            # Literal["a", "b"] → enum
+            if origin is typing.Literal:
+                return _enum_schema(args)
 
-            # For Optional[T] or Union[T, None], get T
-            if origin is typing.Union:
-                # Filter out NoneType
+            # Optional[T] / Union[T, None] / T | None → T's schema. Multi-type
+            # unions keep the first non-None member (requiredness is carried
+            # by the ``required`` list, and most provider dialects reject
+            # union-typed parameters).
+            if origin is typing.Union or origin is types.UnionType:
                 non_none_args = [a for a in args if a is not type(None)]
                 if non_none_args:
-                    return _type_to_json_schema(non_none_args[0])
+                    if len(non_none_args) > 1:
+                        # A genuine multi-type union (``int | str``) loses
+                        # every member but the first. Logged rather than
+                        # silent: the dropped members are a real fidelity
+                        # loss, and without a signal the schema's author has
+                        # no way to know the annotation didn't survive.
+                        logger.debug(
+                            "Parameter type %r is a multi-member union; only %r is "
+                            "advertised in the schema. Most provider dialects reject "
+                            "union-typed parameters, so the remaining members are "
+                            "dropped rather than emitted as anyOf.",
+                            param_type,
+                            non_none_args[0],
+                        )
+                    member = _type_to_json_schema(
+                        non_none_args[0], in_container=in_container
+                    )
+                    if in_container and type(None) in args:
+                        # Inside a container, ``None`` is a value the member
+                        # schema has to admit outright. The top-level path
+                        # deliberately doesn't widen (see ``in_container``),
+                        # but there is no "omitted" for an array element or a
+                        # mapping value, so collapsing the union here left the
+                        # schema rejecting ``[1, None, 2]`` for a handler
+                        # declaring ``list[int | None]``.
+                        _admit_null(member)
+                    return member
+                return {"type": "string"}
+
+            # Mappings → object (value schema recorded via additionalProperties).
+            # Checked *before* sequences: a Mapping is also a Collection and an
+            # Iterable, so the sequence test below would otherwise classify
+            # ``dict[str, int]`` as an array.
+            if origin is dict or (
+                isinstance(origin, type) and issubclass(origin, _abc.Mapping)
+            ):
+                schema = {"type": "object"}
+                if len(args) == 2 and args[1] is not Any:
+                    schema["additionalProperties"] = _type_to_json_schema(
+                        args[1], in_container=True
+                    )
+                return schema
+
+            # Sequences and sets → array (with typed items when parameterized).
+            # ``typing.get_origin(Sequence[int])`` returns the
+            # ``collections.abc`` class, not the ``typing`` alias and not a
+            # ``list`` subclass, so matching only aliases and concrete
+            # containers dropped ``Sequence``/``Iterable``/``Set`` parameters
+            # through to the first-type-argument fallback below — advertising
+            # ``Sequence[int]`` as ``{"type": "integer"}``, which the executor
+            # then rejected for every valid list payload.
+            if isinstance(origin, type) and issubclass(origin, _SEQUENCE_ORIGINS):
+                if issubclass(origin, _UNIQUE_ORIGINS):
+                    schema = {"type": "array", "uniqueItems": True}
+                else:
+                    schema = {"type": "array"}
+                item_type = _tuple_item_type(origin, args) if origin is tuple else (
+                    args[0] if args else None
+                )
+                if item_type is not None and item_type is not Any:
+                    schema["items"] = _type_to_json_schema(item_type, in_container=True)
+                elif origin is tuple and _fixed_tuple_args(args) is not None:
+                    # A *heterogeneous* fixed-length tuple — ``tuple[int, str]``
+                    # — has no single item type, so each position needs typing
+                    # separately. Emitting a bare ``{"type": "array"}`` let a
+                    # provider send ``["bad", 1]``: validation accepted it,
+                    # reconstruction then couldn't build the tuple, and the
+                    # fallback handed the handler the raw list.
+                    schema["prefixItems"] = [
+                        _type_to_json_schema(a, in_container=True) for a in args
+                    ]
+                fixed = _fixed_tuple_args(args) if origin is tuple else None
+                if fixed is not None:
+                    # The arity is pinned for *every* fixed-length tuple, not
+                    # only the ones that needed ``prefixItems``. A homogeneous
+                    # ``tuple[int, int]`` takes the ``items`` branch above and
+                    # would otherwise accept an array of any length, failing
+                    # reconstruction the same way. ``tuple[()]`` is the
+                    # degenerate case: it permits *no* items, and reading a
+                    # truthy ``args`` skipped it into an unrestricted array.
+                    # Both bounds are enforced by the executor and by the
+                    # framework bridge already.
+                    schema["minItems"] = len(fixed)
+                    schema["maxItems"] = len(fixed)
+                return schema
 
             # Fallback for other generics: use the first argument if available
             if args:
-                return _type_to_json_schema(args[0])
+                return _type_to_json_schema(args[0], in_container=in_container)
     except (AttributeError, ImportError):
         pass
 
@@ -150,3 +967,126 @@ def _type_to_json_schema(param_type: Any) -> dict[str, Any]:
 
     # Default to string for unknown types
     return {"type": "string"}
+
+
+def _tuple_item_type(origin: Any, args: tuple[Any, ...]) -> Any:
+    """Item type for a ``tuple[...]`` annotation (homogeneous forms only)."""
+    if not args:
+        return None
+    # tuple[T, ...] — homogeneous variable-length tuple.
+    if len(args) == 2 and args[1] is Ellipsis:
+        return args[0]
+    # tuple[T] or tuple[T, T, T] with one distinct member type.
+    distinct = {a for a in args if a is not Ellipsis}
+    if len(distinct) == 1:
+        return next(iter(distinct))
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# Docstring parameter descriptions
+# --------------------------------------------------------------------------- #
+
+#: Section headers that introduce a parameter block (Google style; NumPy uses
+#: an underlined ``Parameters`` heading handled separately).
+_GOOGLE_SECTION = re.compile(
+    r"^(Args|Arguments|Parameters|Keyword Args|Keyword Arguments)\s*:\s*$"
+)
+#: Any section header — used to know where a parameter block ends.
+_ANY_SECTION = re.compile(
+    r"^(Args|Arguments|Parameters|Keyword Args|Keyword Arguments|Returns?|Yields?|"
+    r"Raises?|Attributes|Examples?|Notes?|Warnings?|See Also|References)\s*:?\s*$"
+)
+#: ``name (type): description`` / ``name: description`` entry line.
+_GOOGLE_ENTRY = re.compile(r"^(\*{0,2}[\w]+)\s*(?:\(([^)]*)\))?\s*:\s*(.*)$")
+#: Sphinx ``:param name: description`` (with optional inline type).
+_SPHINX_PARAM = re.compile(r"^:param\s+(?:[\w\[\],\. ]+\s+)?(\w+)\s*:\s*(.*)$")
+
+
+def _parse_param_docs(doc: str) -> dict[str, str]:
+    """Extract ``{param_name: description}`` from a docstring.
+
+    Understands the three common conventions — Google (``Args:`` blocks, the
+    project's own style), NumPy (underlined ``Parameters`` heading), and
+    Sphinx (``:param name:`` fields). Multi-line descriptions are joined;
+    unknown formats simply yield an empty mapping. Best-effort by design:
+    never raises.
+    """
+    if not doc:
+        return {}
+    try:
+        return _parse_param_docs_inner(doc)
+    except Exception:  # noqa: BLE001 - docstrings are user input; never raise
+        return {}
+
+
+def _parse_param_docs_inner(doc: str) -> dict[str, str]:
+    lines = doc.splitlines()
+    out: dict[str, str] = {}
+
+    # Sphinx fields can appear anywhere.
+    current: str | None = None
+    for line in lines:
+        stripped = line.strip()
+        match = _SPHINX_PARAM.match(stripped)
+        if match:
+            current = match.group(1)
+            out.setdefault(current, match.group(2).strip())
+            continue
+        if current is not None:
+            if stripped.startswith(":") or not stripped:
+                current = None
+            else:
+                out[current] = f"{out[current]} {stripped}".strip()
+
+    # Google-style block (and NumPy's underlined "Parameters" heading).
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
+        is_google = bool(_GOOGLE_SECTION.match(stripped))
+        is_numpy = (
+            stripped in ("Parameters", "Other Parameters")
+            and i + 1 < len(lines)
+            and set(lines[i + 1].strip()) == {"-"}
+        )
+        if not (is_google or is_numpy):
+            i += 1
+            continue
+        i += 2 if is_numpy else 1
+        # The first non-blank line after the header fixes the block's entry
+        # indent; entries sit at that indent, continuations sit deeper, and a
+        # dedent below it (or a new section header) ends the block.
+        base_indent: int | None = None
+        name: str | None = None
+        while i < len(lines):
+            line = lines[i]
+            stripped = line.strip()
+            if not stripped:
+                # A blank line ends the current entry's description but not
+                # the block (Google style allows blank lines between entries).
+                name = None
+                i += 1
+                continue
+            if _ANY_SECTION.match(stripped):
+                break
+            indent = len(line) - len(line.lstrip())
+            if base_indent is None:
+                base_indent = indent
+            if indent < base_indent:
+                break
+            if is_numpy:
+                entry = re.match(r"^(\*{0,2}\w+)\s*(?::.*)?$", stripped)
+                if indent == base_indent and entry:
+                    name = entry.group(1).lstrip("*")
+                    out.setdefault(name, "")
+                elif name is not None:
+                    out[name] = f"{out[name]} {stripped}".strip()
+            else:
+                entry = _GOOGLE_ENTRY.match(stripped)
+                if indent == base_indent and entry:
+                    name = entry.group(1).lstrip("*")
+                    out[name] = entry.group(3).strip()
+                elif name is not None:
+                    out[name] = f"{out[name]} {stripped}".strip()
+            i += 1
+    return {k: v.strip() for k, v in out.items() if v and v.strip()}

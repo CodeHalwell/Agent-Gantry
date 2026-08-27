@@ -30,15 +30,19 @@ agent_gantry`` never requires LangChain et al. to be installed.
 from __future__ import annotations
 
 import asyncio
+import datetime
 import inspect
 import logging
 import os
+import re
 import threading
+import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
+from agent_gantry.schema.base import RECONSTRUCTED_STRING_FORMATS, schema_declares_null
 from agent_gantry.schema.execution import ExecutionStatus, ToolCall
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 
@@ -75,13 +79,29 @@ LiveTier = Literal["per-turn", "per-call"]
 
 
 class ToolExecutionError(RuntimeError):
-    """Raised when a Gantry-backed tool invocation does not succeed."""
+    """Raised when a Gantry-backed tool invocation does not succeed.
+
+    Two subclasses distinguish the "never executed by design" outcomes so a
+    framework caller can branch without string-matching the status:
+    :class:`ToolConfirmationRequiredError` (the tool is confirmation-gated and was
+    not run — approve by re-issuing with ``ToolCall(require_confirmation=
+    False)``) and :class:`ToolPermissionDeniedError` (the security policy refused
+    it). Catching :class:`ToolExecutionError` still catches every outcome.
+    """
 
     def __init__(self, tool_name: str, status: str, error: str | None) -> None:
         self.tool_name = tool_name
         self.status = status
         self.error = error
         super().__init__(f"Tool {tool_name!r} failed (status={status}): {error or 'no detail'}")
+
+
+class ToolConfirmationRequiredError(ToolExecutionError):
+    """The tool requires human confirmation and was deliberately not executed."""
+
+
+class ToolPermissionDeniedError(ToolExecutionError):
+    """The security policy denied the tool call; it was not executed."""
 
 
 @dataclass(frozen=True)
@@ -120,10 +140,28 @@ class ToolSpec:
         but the tool's JSON schema types those params (e.g. ``string``) and the
         executor rejects ``None``. Dropping them lets the tool's own default
         apply — ``None`` for a required param is kept so the error stays clear.
+
+        A ``None`` the schema *declares* is kept too, and for the same reason
+        the executor's own normalization keeps it: ``x: int | None = 5``
+        advertises ``["integer", "null"]``, so an explicit null is a distinct
+        choice rather than "not provided", and dropping it handed the handler
+        ``5`` where the caller asked for ``None``. Both paths share one
+        predicate so they cannot disagree about which nulls are meaningful.
         """
         arguments = _coerce_arguments(args, kwargs)
         required = set(self.parameters.get("required") or [])
-        arguments = {k: v for k, v in arguments.items() if v is not None or k in required}
+        properties = self.parameters.get("properties") or {}
+        arguments = {
+            k: v
+            for k, v in arguments.items()
+            if v is not None
+            or k in required
+            or schema_declares_null(properties.get(k))
+        }
+        arguments = {
+            key: _json_native(value, properties.get(key))
+            for key, value in arguments.items()
+        }
         # Pass the namespace: selection resolved this spec to one specific
         # tool, and a bare-name execute would prefer ``default.<name>`` if
         # another namespace registers the same name.
@@ -131,7 +169,12 @@ class ToolSpec:
             ToolCall(tool_name=self.name, namespace=self._namespace, arguments=arguments)
         )
         if result.status != ExecutionStatus.SUCCESS:
-            raise ToolExecutionError(
+            exc_cls = ToolExecutionError
+            if result.status == ExecutionStatus.PENDING_CONFIRMATION:
+                exc_cls = ToolConfirmationRequiredError
+            elif result.status == ExecutionStatus.PERMISSION_DENIED:
+                exc_cls = ToolPermissionDeniedError
+            raise exc_cls(
                 self.name, getattr(result.status, "value", str(result.status)), result.error
             )
         return result.result
@@ -149,7 +192,11 @@ class ToolSpec:
         return _run_coroutine_sync(self.ainvoke(*args, **kwargs))
 
     def callable_for_signature(
-        self, *, union_optional: bool = False, type_matched_defaults: bool = False
+        self,
+        *,
+        union_optional: bool = False,
+        type_matched_defaults: bool = False,
+        annotated_descriptions: bool = False,
     ) -> Callable[..., Any]:
         """Return a plain async function that calls this tool by keyword.
 
@@ -161,8 +208,10 @@ class ToolSpec:
         parameters instead of a bare ``**kwargs`` (which would surface as a
         no-argument tool).
 
-        ``union_optional`` (Semantic Kernel) and ``type_matched_defaults``
-        (Google ADK) are opt-in signature tweaks — see :meth:`python_signature`.
+        ``union_optional`` (Semantic Kernel), ``type_matched_defaults``
+        (Google ADK) and ``annotated_descriptions`` (frameworks that read
+        parameter descriptions from ``Annotated`` metadata — Semantic Kernel,
+        AG2) are opt-in signature tweaks — see :meth:`python_signature`.
         """
 
         async def _fn(**kwargs: Any) -> Any:
@@ -171,7 +220,9 @@ class ToolSpec:
         _fn.__name__ = self.name
         _fn.__doc__ = self.description
         _fn.__signature__ = self.python_signature(  # type: ignore[attr-defined]
-            union_optional=union_optional, type_matched_defaults=type_matched_defaults
+            union_optional=union_optional,
+            type_matched_defaults=type_matched_defaults,
+            annotated_descriptions=annotated_descriptions,
         )
         _fn.__annotations__ = {
             p.name: p.annotation
@@ -181,38 +232,81 @@ class ToolSpec:
         return _fn
 
     def python_signature(
-        self, *, union_optional: bool = False, type_matched_defaults: bool = False
+        self,
+        *,
+        union_optional: bool = False,
+        type_matched_defaults: bool = False,
+        annotated_descriptions: bool = False,
     ) -> inspect.Signature:
         """Build an :class:`inspect.Signature` from the JSON-Schema parameters.
 
         Each property becomes a keyword-only parameter; required properties have
-        no default. By default optional properties default to ``None``. Two
-        opt-in modes adapt the signature for stricter frameworks:
+        no default. Optional properties default to the schema's own ``default``
+        when it declares one, else ``None``. Array properties with a typed
+        ``items`` schema annotate as ``list[T]`` so signature-introspecting
+        frameworks surface the item type. Three opt-in modes adapt the
+        signature for stricter frameworks:
 
         - ``union_optional``: annotate optional params ``T | None`` (Semantic
           Kernel infers required-ness from the annotation, not the default).
-        - ``type_matched_defaults``: default optional params to a type-matched
-          empty value (``""`` / ``0`` / ``False`` / ``[]`` / ``{}``) instead of
-          ``None`` (Google ADK's automatic function calling rejects both union
-          types and a ``None`` default whose type mismatches the annotation).
+        - ``type_matched_defaults``: for optional params with no schema
+          ``default``, default to a type-matched empty value (``""`` / ``0`` /
+          ``False`` / ``[]`` / ``{}``) instead of ``None`` (Google ADK's
+          automatic function calling rejects both union types and a ``None``
+          default whose type mismatches the annotation).
+        - ``annotated_descriptions``: wrap each annotation in
+          ``Annotated[T, "<description>"]`` when the property carries a
+          ``description`` — the convention Semantic Kernel and AG2 read
+          parameter descriptions from.
         """
+        from typing import Annotated
+
         properties = self.parameters.get("properties") or {}
         required = set(self.parameters.get("required") or [])
         params: list[inspect.Parameter] = []
         for name, prop in properties.items():
-            json_type = prop.get("type") if isinstance(prop, dict) else None
-            annotation = _json_type_to_python(json_type)
+            prop = prop if isinstance(prop, dict) else {}
+            json_type = prop.get("type")
+            annotation = _annotation_for_prop(prop)
             if name in required:
                 default = inspect.Parameter.empty
-            elif union_optional:
-                # `T | None` — valid at runtime on the project's floor (3.10+,
-                # enforced by ruff UP) and the form SK uses to infer optionality.
-                annotation = annotation | None
-                default = None
-            elif type_matched_defaults:
-                default = _typed_default(json_type)
+                if not type_matched_defaults and schema_declares_null(prop):
+                    # Required means the value must be *present*, not that it
+                    # must be non-null. ``def f(x: int | None)`` emits
+                    # ``{"type": ["integer", "null"]}`` in ``required``, and
+                    # annotating it a bare ``int`` told Semantic Kernel and AG2
+                    # to advertise a non-nullable parameter — so the model
+                    # could not produce the null the executor accepts.
+                    # Skipped under ``type_matched_defaults``: Google ADK's
+                    # fallback path rejects union annotations outright, and a
+                    # rejected tool is worse than an under-specified one.
+                    annotation = annotation | None
             else:
-                default = None
+                if union_optional:
+                    # `T | None` — valid at runtime on the project's floor
+                    # (3.10+, enforced by ruff UP) and the form SK uses to
+                    # infer optionality.
+                    annotation = annotation | None
+                schema_default = prop.get("default")
+                if schema_default is not None and _matches_json_type(
+                    schema_default, json_type
+                ):
+                    # The schema's own default is the most faithful signal —
+                    # surface it instead of a synthetic placeholder.
+                    default = schema_default
+                elif type_matched_defaults:
+                    # Derived from the *final* annotation, not the raw JSON
+                    # type. Those diverged once a formatted string became a
+                    # ``datetime`` and an enum a ``Literal``: the placeholder
+                    # stayed ``""``, recreating the annotation/default mismatch
+                    # this mode exists to avoid, and ADK rejects such a tool
+                    # during signature processing.
+                    default = _default_for_annotation(annotation, json_type)
+                else:
+                    default = None
+            description = prop.get("description")
+            if annotated_descriptions and isinstance(description, str) and description:
+                annotation = Annotated[annotation, description]
             params.append(
                 inspect.Parameter(
                     name,
@@ -260,6 +354,383 @@ def _json_type_to_python(json_type: Any) -> Any:
     if isinstance(json_type, list):  # e.g. ["string", "null"]
         json_type = next((t for t in json_type if t != "null"), None)
     return _JSON_TO_PYTHON.get(json_type, str)
+
+
+def _literal_members(prop: dict[str, Any]) -> tuple[Any, ...] | None:
+    """The ``Literal`` members a schema's ``enum``/``const`` pins it to.
+
+    ``None`` when the schema constrains nothing, or names a value no
+    ``Literal`` can hold — there the caller keeps the plain type annotation
+    rather than inventing one.
+    """
+    if "const" in prop:
+        values: list[Any] = [prop["const"]]
+    else:
+        enum_values = prop.get("enum")
+        if not isinstance(enum_values, list) or not enum_values:
+            return None
+        values = enum_values
+    # Floats are admitted for the same reason the schema bridge admits them:
+    # PEP 586 disallows a float member statically, but ``typing`` and every
+    # framework validator downstream enforce it correctly at runtime, and the
+    # alternative is advertising no constraint at all.
+    if not all(isinstance(v, (str, int, bool, float)) or v is None for v in values):
+        return None
+    return tuple(values)
+
+
+def _default_for_annotation(annotation: Any, json_type: Any) -> Any:
+    """A placeholder value an annotation will actually accept.
+
+    Google ADK's fallback path rejects a default whose type mismatches the
+    annotation, so the two have to be derived together. A ``Literal`` takes
+    its own first member; a reconstructed string format takes a real value of
+    that type; everything else falls back to the type-matched empty value.
+    """
+    import typing
+
+    if typing.get_origin(annotation) is Literal:
+        members = typing.get_args(annotation)
+        if members:
+            return members[0]
+    if annotation is datetime.datetime:
+        return datetime.datetime(1970, 1, 1)
+    if annotation is datetime.date:
+        return datetime.date(1970, 1, 1)
+    if annotation is datetime.time:
+        return datetime.time(0, 0)
+    if annotation is uuid.UUID:
+        return uuid.UUID(int=0)
+    return _typed_default(json_type)
+
+
+#: Recursion bound for :func:`_json_native`. Argument values are small and
+#: their schemas are already ``$ref``-inlined, so this only exists so a
+#: pathologically self-referential imported schema cannot spin.
+_MAX_NATIVE_DEPTH = 16
+
+
+def _json_native(value: Any, prop: Any, _depth: int = 0) -> Any:
+    """Return ``value`` in the JSON form its schema declares.
+
+    The executor validates against the *canonical* schema, which types a
+    ``datetime``/``date``/``time``/``UUID`` parameter as a formatted string.
+    A framework that reads this spec's signature — where those properties are
+    annotated with the Python type, so the framework advertises the format —
+    may parse the model's answer before handing it back, and a real
+    ``datetime`` object then fails ``_matches_type`` against ``"string"``,
+    rejecting a *valid* call. Serializing here keeps the dispatch boundary
+    JSON-native whichever framework is in play.
+
+    Applied at every depth the annotation can carry a format to, not only at
+    the top: ``_annotation_for_prop`` advertises ``list[datetime]`` from
+    ``items`` and ``dict[str, datetime]`` from ``additionalProperties``, so a
+    framework hands back a *container* of real ``datetime`` objects and
+    inspecting only the parent schema's ``format`` left every one of them to
+    be rejected item by item.
+
+    Still only where the schema actually declares one of those formats, so a
+    parameter genuinely typed ``object`` or ``array`` — or a free-form
+    ``dict`` whose values happen to be temporal — is untouched. The container
+    branches return ``value`` *itself* when nothing changed, which is what
+    lets the combinator fallback below tell "no branch applied" from "a
+    branch applied and produced an equal value".
+    """
+    if not isinstance(prop, dict) or _depth > _MAX_NATIVE_DEPTH:
+        return value
+
+    if isinstance(value, (datetime.datetime, datetime.date, datetime.time, uuid.UUID)):
+        if prop.get("format") in RECONSTRUCTED_STRING_FORMATS:
+            if isinstance(value, uuid.UUID):
+                return str(value)
+            return value.isoformat()
+        return _json_native_via_branches(value, prop, _depth)
+
+    if isinstance(value, (list, tuple)):
+        prefix = prop.get("prefixItems")
+        items = prop.get("items")
+        restored: list[Any] = []
+        # A *tuple* is already a change: the canonical schema types these as
+        # JSON arrays and the executor's ``_matches_type`` accepts only a
+        # ``list``, so a framework that materialized the positional annotation
+        # below would otherwise have its correctly-shaped value refused.
+        changed = isinstance(value, tuple)
+        for index, item in enumerate(value):
+            sub: Any = None
+            if isinstance(prefix, list) and index < len(prefix):
+                sub = prefix[index]
+            elif isinstance(items, dict):
+                sub = items
+            new_item = _json_native(item, sub, _depth + 1) if isinstance(sub, dict) else item
+            changed = changed or new_item is not item
+            restored.append(new_item)
+        if changed:
+            return restored
+        return _json_native_via_branches(value, prop, _depth)
+
+    if isinstance(value, dict):
+        properties = prop.get("properties")
+        patterns = prop.get("patternProperties")
+        additional = prop.get("additionalProperties")
+        rebuilt: dict[Any, Any] = {}
+        changed = False
+        for key, item in value.items():
+            sub = None
+            if isinstance(properties, dict) and key in properties:
+                sub = properties[key]
+            elif isinstance(patterns, dict) and isinstance(key, str):
+                sub = _pattern_subschema(patterns, key)
+            if sub is None and isinstance(additional, dict):
+                sub = additional
+            new_item = _json_native(item, sub, _depth + 1) if isinstance(sub, dict) else item
+            changed = changed or new_item is not item
+            rebuilt[key] = new_item
+        if changed:
+            return rebuilt
+        return _json_native_via_branches(value, prop, _depth)
+
+    return value
+
+
+def _pattern_subschema(patterns: dict[str, Any], key: str) -> Any:
+    """The first ``patternProperties`` schema whose regex matches ``key``.
+
+    ``re.search`` and the fail-open on an uncompilable pattern both mirror the
+    executor's ``_check_pattern_properties``, so the two cannot disagree about
+    which keys a pattern covers.
+    """
+    for regex, subschema in patterns.items():
+        if not isinstance(regex, str):
+            continue
+        try:
+            if re.search(regex, key):
+                return subschema
+        except re.error:
+            continue
+    return None
+
+
+def _json_native_via_branches(value: Any, prop: dict[str, Any], depth: int) -> Any:
+    """Retry ``value`` against each combinator branch, keeping the first hit.
+
+    ``list[datetime] | None`` is spelled ``{"anyOf": [{"type": "array",
+    "items": {"format": "date-time", …}}, {"type": "null"}]}``, so the format
+    lives one level below the property the argument is keyed by. A branch that
+    does not apply returns the value unchanged, so the first *changed* result
+    is the branch that matched.
+    """
+    for key in ("anyOf", "oneOf", "allOf"):
+        branches = prop.get(key)
+        if not isinstance(branches, list):
+            continue
+        for branch in branches:
+            if not isinstance(branch, dict) or not branch:
+                continue
+            restored = _json_native(value, branch, depth + 1)
+            if restored is not value:
+                return restored
+    return value
+
+
+def _composite_choice_type(prop: dict[str, Any]) -> Any:
+    """The container type a non-scalar ``enum``/``const`` pins a value to.
+
+    ``None`` unless every member is a JSON array, or every member is a JSON
+    object. Only consulted when the schema declares no ``type`` of its own —
+    an explicit ``type`` is the author's statement and outranks whatever the
+    members suggest, even when the two disagree. Membership itself is not
+    enforced here: a Python signature can
+    carry the type but not the value set (that is what ``Literal`` is for,
+    and these members can't be ``Literal`` members), so the frameworks
+    reading this signature see the right *type* and the executor still
+    enforces the *values* at dispatch.
+    """
+    values = [prop["const"]] if "const" in prop else prop.get("enum")
+    if not isinstance(values, list) or not values:
+        return None
+    if all(isinstance(v, list) for v in values):
+        return list
+    if all(isinstance(v, dict) for v in values):
+        return dict
+    return None
+
+
+def _positional_annotation(prop: dict[str, Any]) -> Any:
+    """``tuple[...]`` for an array whose length *and* positions are pinned.
+
+    ``tuple[int, str]`` is introspected as ``prefixItems`` plus equal
+    ``minItems``/``maxItems``, but this builder read only ``items`` — so the
+    frameworks that rebuild their LLM schema from the signature (Semantic
+    Kernel, AG2, Google ADK's fallback) published a bare ``list``, dropping
+    both the positional types and the arity, and the model could answer with
+    an array the executor then rejects.
+
+    Returns ``None`` unless every position can actually be typed, so a partly
+    described array keeps the bare container rather than gaining an assertion
+    the schema never made. The bare-``str`` guard is the same one the ``items``
+    branch uses: it is the fallback for an untyped subschema, not a claim.
+
+    A ``tuple`` annotation is safe here only because ``_json_native``
+    normalizes one back to a JSON array at the dispatch boundary — the
+    executor's validator accepts a ``list`` and nothing else, so a framework
+    materializing this annotation would otherwise have its correct value
+    refused. The framework *bridge* declines the same conversion for exactly
+    that reason, having no such boundary of its own.
+    """
+    low, high = prop.get("minItems"), prop.get("maxItems")
+    if not (
+        isinstance(low, int)
+        and isinstance(high, int)
+        and not isinstance(low, bool)
+        and not isinstance(high, bool)
+        and low == high
+        and low >= 0
+    ):
+        return None
+    if low == 0:
+        return tuple[()]
+    prefix = prop.get("prefixItems")
+    items = prop.get("items")
+    members: list[Any] = []
+    for index in range(low):
+        if isinstance(prefix, list) and index < len(prefix):
+            sub = prefix[index]
+        else:
+            sub = items
+        if not isinstance(sub, dict) or not sub:
+            return None
+        member = _annotation_for_prop(sub)
+        if member is str and sub.get("type") != "string":
+            return None
+        members.append(member)
+    return tuple[tuple(members)]
+
+
+def _annotation_for_prop(prop: dict[str, Any]) -> Any:
+    """Python annotation for one property schema, recursively.
+
+    Frameworks that rebuild their LLM schema from the signature rather than
+    from ``parameters_schema`` — Semantic Kernel, AG2, Google ADK's fallback
+    path — see only what this returns, so anything it drops is invisible to
+    the model. ``{"type": "array", "items": {"type": "string"}}`` annotates
+    as ``list[str]`` rather than a bare ``list``; an ``enum``/``const``
+    becomes a ``Literal`` rather than a bare ``str``, which previously let
+    those frameworks advertise ``Literal["fast", "slow"]`` as unconstrained
+    text; and a typed mapping keeps its value type.
+
+    An object with declared ``properties`` still degrades to a bare ``dict``.
+    Rebuilding it as a nested model (what CrewAI and LlamaIndex get from
+    ``pydantic_model_from_schema``) would change what these frameworks
+    introspect in a way this codebase can't exercise against their real
+    schema derivation, so it stays a documented gap rather than an untested
+    behaviour change.
+    """
+    literal = _literal_members(prop)
+    if literal is not None:
+        return Literal[literal]
+
+    composite = _composite_choice_type(prop) if "type" not in prop else None
+    if composite is not None:
+        # A tuple-valued ``Enum`` emits ``{"enum": [[0, 0], [1, 1]]}`` — no
+        # ``type``, because its members share none of the scalar kinds. With
+        # no ``Literal`` to build and no ``type`` to read, this fell all the
+        # way to ``_json_type_to_python``'s ``str`` fallback and advertised a
+        # *string* for an array-valued parameter, so the string the model
+        # produced was rejected by the executor. The members themselves name
+        # the type even when they can't name a ``Literal``.
+        return composite
+
+    json_type = prop.get("type")
+    if json_type is None:
+        # ``{"anyOf": [{"type": "integer"}, {"type": "null"}]}`` is what
+        # Pydantic and OpenAPI emit for ``int | None``, so it arrives from
+        # every imported schema and every inlined nested model. With no
+        # ``type`` to read this fell through to ``_json_type_to_python``'s
+        # ``str`` fallback and advertised a *string* for an integer parameter.
+        # The non-null branch carries the real type; nullability is added
+        # separately by the caller, which is what ``schema_declares_null``
+        # decides.
+        for key in ("anyOf", "oneOf"):
+            branches = prop.get(key)
+            if not isinstance(branches, list):
+                continue
+            for branch in branches:
+                if not isinstance(branch, dict) or not branch:
+                    continue
+                if branch.get("type") == "null":
+                    continue
+                return _annotation_for_prop(branch)
+
+    if json_type == "null" or (isinstance(json_type, list) and set(json_type) == {"null"}):
+        # ``_json_type_to_python`` falls back to ``str`` for anything it
+        # doesn't recognize, so a parameter annotated ``None`` — which
+        # introspection now emits as ``{"type": "null"}`` — was advertised as
+        # a string, and the string the model dutifully produced was then
+        # rejected by the executor.
+        return type(None)
+
+    if json_type == "string":
+        # ``{"type": "string", "format": "date-time"}`` is what introspection
+        # emits for a ``datetime`` parameter. Reducing it to a bare ``str``
+        # dropped the format from the schema Semantic Kernel, AG2 and Google
+        # ADK's fallback path rebuild off this signature, so they advertised a
+        # free-form string and the model could answer with one the handler
+        # can't take. Only the formats Gantry emits and reconstructs are
+        # mapped; ``email``/``uri`` and friends stay ``str``.
+        formatted = RECONSTRUCTED_STRING_FORMATS.get(prop.get("format"))
+        if formatted is not None:
+            return formatted
+
+    annotation = _json_type_to_python(json_type)
+
+    if annotation is list:
+        positional = _positional_annotation(prop)
+        if positional is not None:
+            return positional
+        items = prop.get("items")
+        if isinstance(items, dict) and items:
+            item_annotation = _annotation_for_prop(items)
+            # A bare ``str`` here is the fallback for an untyped item schema,
+            # not a real annotation — keep the bare container instead of
+            # asserting an item type the schema never declared.
+            if item_annotation is not str or items.get("type") == "string":
+                return list[item_annotation]
+        return annotation
+
+    if annotation is dict:
+        additional = prop.get("additionalProperties")
+        properties = prop.get("properties")
+        if isinstance(additional, dict) and additional and not properties:
+            return dict[str, _annotation_for_prop(additional)]
+        return annotation
+
+    return annotation
+
+
+def _matches_json_type(value: Any, json_type: Any) -> bool:
+    """Whether a schema ``default`` is usable for its declared JSON type.
+
+    Guards against surfacing a mistyped default (e.g. ``default: "5"`` on an
+    ``integer`` property) as a Python signature default, where a strict
+    framework validator would then reject the tool outright.
+    """
+    if isinstance(json_type, list):
+        json_type = next((t for t in json_type if t != "null"), None)
+    if json_type is None:
+        return True
+    if json_type == "boolean":
+        return isinstance(value, bool)
+    if json_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if json_type == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if json_type == "string":
+        return isinstance(value, str)
+    if json_type == "array":
+        return isinstance(value, list)
+    if json_type == "object":
+        return isinstance(value, dict)
+    return True
 
 
 # Shared worker threads for running coroutines from sync framework callbacks

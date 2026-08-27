@@ -11,6 +11,7 @@ Public entry point: :class:`GoogleADKAdapter`.
 
 from __future__ import annotations
 
+import copy
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import (
@@ -27,11 +28,18 @@ if TYPE_CHECKING:
 def _spec_to_google_adk(spec: ToolSpec) -> Any:
     """Wrap a :class:`ToolSpec` as a Google ADK ``FunctionTool``.
 
-    ADK builds the LLM tool schema by introspecting the wrapped callable's
-    name, docstring and signature, so we hand it
-    :meth:`ToolSpec.callable_for_signature` — an async function that carries a
-    real ``__signature__`` derived from the tool's JSON schema (not a bare
-    ``**kwargs``) and routes through ``gantry.execute``.
+    The declaration the model sees comes from the Gantry tool's own JSON
+    schema whenever the installed ``google-genai`` supports
+    ``FunctionDeclaration.parameters_json_schema`` (genai 2.x, which both
+    current google-adk lines require): a ``FunctionTool`` subclass overrides
+    ``_get_declaration`` to pass the schema through verbatim, so per-parameter
+    descriptions, enums, typed array items, nested objects and true
+    required/optional split all survive. On older stacks it falls back to
+    ADK's signature introspection of :meth:`ToolSpec.callable_for_signature`
+    — an async function that carries a real ``__signature__`` derived from
+    the tool's JSON schema (not a bare ``**kwargs``). Execution routes
+    through ``gantry.execute`` either way, and argument handling still uses
+    the callable's signature (ADK filters model args to declared names).
 
     Raises:
         ImportError: If ``google-adk`` is not installed.
@@ -45,7 +53,56 @@ def _spec_to_google_adk(spec: ToolSpec) -> Any:
 
     # ADK's automatic function calling rejects `T | None` and `None`-typed
     # defaults, so opt into type-matched empty defaults for optional params.
-    return FunctionTool(func=spec.callable_for_signature(type_matched_defaults=True))
+    fn = spec.callable_for_signature(type_matched_defaults=True)
+
+    try:
+
+        class _GantryADKFunctionTool(FunctionTool):  # type: ignore[misc, valid-type]
+            def _get_declaration(self) -> Any:
+                declaration = _declaration_from_schema(spec)
+                if declaration is not None:
+                    return declaration
+                return super()._get_declaration()
+
+    except TypeError:
+        # ``FunctionTool`` isn't subclassable (test doubles, exotic shims) —
+        # fall back to the plain wrapper; ADK then derives the declaration
+        # from the callable's signature as before.
+        return FunctionTool(func=fn)
+    return _GantryADKFunctionTool(func=fn)
+
+
+def _declaration_from_schema(spec: ToolSpec) -> Any:
+    """Build a genai ``FunctionDeclaration`` carrying the schema verbatim.
+
+    Returns ``None`` (caller falls back to ADK's signature introspection)
+    when the installed ``google-genai`` predates ``parameters_json_schema``
+    or the declaration can't be constructed.
+    """
+    try:
+        from google.genai import types as genai_types
+    except ImportError:  # pragma: no cover - genai always ships with adk
+        return None
+    declaration_cls = getattr(genai_types, "FunctionDeclaration", None)
+    if declaration_cls is None or "parameters_json_schema" not in getattr(
+        declaration_cls, "model_fields", {}
+    ):
+        return None
+    # Deep, not shallow: a ``dict(...)`` leaves every nested ``properties`` /
+    # ``items`` subschema aliased to the registry's canonical
+    # ``ToolDefinition.parameters_schema``, so anything that adjusts the
+    # declaration corrupts the tool for every other consumer.
+    schema = copy.deepcopy(spec.parameters) if spec.parameters else {}
+    schema.setdefault("type", "object")
+    schema.setdefault("properties", {})
+    try:
+        return declaration_cls(
+            name=spec.name,
+            description=spec.description,
+            parameters_json_schema=schema,
+        )
+    except Exception:  # noqa: BLE001 - fall back to signature introspection
+        return None
 
 
 async def _for_google_adk(

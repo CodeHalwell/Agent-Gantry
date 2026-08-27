@@ -695,3 +695,35 @@ class TestSelectionsAndTrace:
         assert "dropped_tool" not in line          # dropped candidate excluded
         assert "+2 more" in line                    # 7 kept, capped at 5 -> +2
         assert line.count(":0.") <= 6               # 5 shown scores (+ guard)
+
+
+@pytest.mark.asyncio
+async def test_required_qualified_name_resolves_per_request(monkeypatch):
+    """A ``namespace.name``-qualified ``required`` pin must resolve at request
+    time, not only pass construction-time validation.
+
+    Regression guard: ``_lookup_tool_def`` previously only tried bare-name
+    lookups, so a qualified pin was validated OK at construction and then
+    warned-and-skipped on every round — inverting the whole point of
+    ``required``.
+    """
+    from agent_gantry import AgentGantry, GantryContextProvider
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @gantry.register(namespace="billing", tags=["billing"])
+    def refund(order_id: str) -> str:
+        "Refund an order."
+        return f"refunded:{order_id}"
+
+    @gantry.register(tags=["weather"])
+    def get_weather(city: str) -> str:
+        "Get the weather for a city."
+        return f"sunny:{city}"
+
+    await gantry.sync()
+
+    provider = GantryContextProvider(gantry, required=["billing.refund"])
+    tools = provider._wrap_named(["billing.refund"], set(), source="required")
+    assert len(tools) == 1, "qualified required pin must resolve to the tool"

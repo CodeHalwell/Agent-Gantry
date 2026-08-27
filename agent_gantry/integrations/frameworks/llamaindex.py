@@ -42,8 +42,61 @@ def _spec_to_llamaindex(spec: ToolSpec) -> Any:
 
     async_fn = spec.callable_for_signature()
 
+    # Prefer an explicit args model built from the Gantry JSON schema:
+    # LlamaIndex otherwise re-derives the schema from the wrapper's signature,
+    # which flattens per-parameter descriptions, enums, and typed array items.
+    from agent_gantry.integrations.frameworks.schema_bridge import (
+        pydantic_model_from_schema,
+    )
+
+    fn_schema = None
+    if spec.parameters.get("properties"):
+        fn_schema = pydantic_model_from_schema(f"{spec.name}_Args", spec.parameters)
+
+    def _coerced(kwargs: dict[str, Any]) -> dict[str, Any]:
+        """Re-run the args model over ``kwargs`` before dispatch.
+
+        LlamaIndex validates the call against ``fn_schema`` but forwards the
+        caller's *original* values, so a model answering ``"1"`` for an
+        ``integer`` parameter passed the tool's own validation and was then
+        rejected by the executor, which holds the caller to the advertised
+        schema. CrewAI forwards the validated values and never had this gap.
+        Running the same model here closes it: what the engine sees is what
+        the framework approved.
+
+        Only the keys the caller actually supplied are rewritten — dumping the
+        whole model would inject defaults for omitted parameters, and the
+        handler's own defaults are what should apply there. Failures fall back
+        to the original arguments rather than turning a call the framework
+        accepted into an error; the executor validates either way.
+        """
+        if fn_schema is None or not kwargs:
+            return kwargs
+        try:
+            # ``exclude_unset`` so the dump carries only what the caller
+            # actually supplied. A plain dump recursively materializes every
+            # omitted optional field — including inside a typed map's values,
+            # where an optional child with no schema default becomes ``None``.
+            # Executor normalization walks named ``properties`` but not
+            # schema-valued map entries, so that injected null survived to be
+            # rejected, turning a valid call into an error. Coercions on the
+            # fields that *were* set are unaffected, which is what this
+            # function exists for.
+            dumped = fn_schema(**kwargs).model_dump(exclude_unset=True)
+        except Exception:  # noqa: BLE001 - advisory; the executor still validates
+            return kwargs
+        return {key: dumped.get(key, value) for key, value in kwargs.items()}
+
     def _sync_fn(**kwargs: Any) -> Any:
-        return spec.invoke(**kwargs)
+        return spec.invoke(**_coerced(kwargs))
+
+    async def _async_fn(**kwargs: Any) -> Any:
+        return await spec.ainvoke(**_coerced(kwargs))
+
+    _async_fn.__name__ = spec.name
+    _async_fn.__doc__ = spec.description
+    _async_fn.__signature__ = async_fn.__signature__  # type: ignore[attr-defined]
+    _async_fn.__annotations__ = dict(getattr(async_fn, "__annotations__", {}))
 
     _sync_fn.__name__ = spec.name
     _sync_fn.__doc__ = spec.description
@@ -54,9 +107,10 @@ def _spec_to_llamaindex(spec: ToolSpec) -> Any:
 
     return FunctionTool.from_defaults(
         fn=_sync_fn,
-        async_fn=async_fn,
+        async_fn=_async_fn,
         name=spec.name,
         description=spec.description,
+        fn_schema=fn_schema,
     )
 
 

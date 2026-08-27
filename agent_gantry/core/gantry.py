@@ -2169,15 +2169,45 @@ class AgentGantry:
         """
         Delete a tool.
 
+        Removes the tool everywhere it lives: the vector store (so retrieval
+        stops returning it), the in-memory registry and its handler map (so
+        ``execute``, ``list_tools_sync`` and ``required=[...]`` pin resolution
+        stop seeing it), and any not-yet-synced pending entry.
+
         Args:
             name: Tool name
             namespace: Tool namespace
 
         Returns:
-            True if tool was deleted
+            True if the tool was deleted from any of those places
         """
         await self._ensure_initialized()
-        return await self._vector_store.delete(name, namespace)
+        deleted_from_store = await self._vector_store.delete(name, namespace)
+        deleted_from_registry = self._registry.delete_tool(name, namespace)
+        # The facade keeps its own handler map (``tool_count`` reads it), so
+        # purge the qualified key here too — the registry only clears its own.
+        removed_handler = self._tool_handlers.pop(f"{namespace}.{name}", None)
+        deleted_handler = removed_handler is not None
+        if removed_handler is not None:
+            # The executor memoizes per-handler argument coercers keyed by the
+            # callable itself, so a deleted tool's handler would stay reachable
+            # from that cache until eviction. Bounded, but there is no reason
+            # to hold it.
+            from agent_gantry.core.executor import forget_handler
+
+            forget_handler(removed_handler)
+        before = len(self._pending_tools)
+        self._pending_tools = [
+            t
+            for t in self._pending_tools
+            if not (t.name == name and t.namespace == namespace)
+        ]
+        return (
+            deleted_from_store
+            or deleted_from_registry
+            or deleted_handler
+            or len(self._pending_tools) < before
+        )
 
     async def health_check(self) -> dict[str, bool]:
         """

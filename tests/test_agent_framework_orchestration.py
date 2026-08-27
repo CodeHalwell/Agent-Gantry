@@ -24,6 +24,7 @@ CI environments that don't pull the optional extra still pass.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from types import SimpleNamespace
 from typing import Any, ClassVar
 
 import pytest
@@ -53,7 +54,7 @@ except ImportError as _af_import_err:
 
 from agent_gantry import AgentGantry  # noqa: E402
 from agent_gantry.core.security import (  # noqa: E402
-    PermissionDeniedError,
+    ConfirmationRequiredError,
     SecurityPolicy,
 )
 from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge  # noqa: E402
@@ -543,6 +544,56 @@ async def test_approval_middleware_blocks_destructive_tool(bridge: GantryToolBri
     with pytest.raises(MiddlewareTermination):
         await middleware.process(ctx, _never_called)
 
+    # AF only activates its native approval flow when the terminating
+    # middleware left a ``function_approval_request`` Content in
+    # ``context.result`` — a bare termination reaches the model as a null
+    # function result with the approval reason discarded.
+    from agent_framework import Content
+
+    assert isinstance(ctx.result, Content)
+    assert ctx.result.type == "function_approval_request"
+    assert ctx.result.function_call.name == "delete_user"
+
+
+@pytest.mark.asyncio
+async def test_approval_middleware_replays_honor_human_decision(
+    bridge: GantryToolBridge,
+) -> None:
+    """AF replays an approval-gated call with the human's decision in
+    ``metadata['approval_response']`` — an approved replay must execute, a
+    rejected one must report without executing (never re-request approval)."""
+    tools = await bridge.get_tools("delete user", limit=5, score_threshold=0.0)
+    delete_tool = next(t for t in tools if t.name == "delete_user")
+    policy = SecurityPolicy(require_confirmation=["delete_*"])
+    middleware = GantryApprovalMiddleware(policy)
+
+    class _Ctx:
+        def __init__(self, fn, args, approved):
+            self.function = fn
+            self.arguments = args
+            self.result = None
+            self.metadata: dict[str, Any] = {
+                "call_id": "call-1",
+                "approval_response": SimpleNamespace(approved=approved),
+            }
+
+    calls: list[str] = []
+
+    async def _call_next():
+        calls.append("ran")
+
+    approved_ctx = _Ctx(delete_tool, {"user_id": "abc"}, approved=True)
+    await middleware.process(approved_ctx, _call_next)
+    assert calls == ["ran"], "an approved replay must execute the tool"
+
+    async def _never_called():  # pragma: no cover - rejected replay
+        raise AssertionError("a rejected replay must not execute the tool")
+
+    rejected_ctx = _Ctx(delete_tool, {"user_id": "abc"}, approved=False)
+    await middleware.process(rejected_ctx, _never_called)
+    assert isinstance(rejected_ctx.result, str)
+    assert "rejected" in rejected_ctx.result
+
 
 @pytest.mark.asyncio
 async def test_approval_middleware_allows_safe_tool(bridge: GantryToolBridge) -> None:
@@ -572,8 +623,10 @@ async def test_approval_middleware_allows_safe_tool(bridge: GantryToolBridge) ->
 
 @pytest.mark.asyncio
 async def test_approval_middleware_denies_by_domain(bridge: GantryToolBridge) -> None:
-    """PermissionDeniedError propagates when policy denies on grounds other
-    than confirmation (here: disallowed domain in arguments)."""
+    """A policy denial (here: disallowed domain in arguments) never invokes
+    the tool and reports the reason as an explicit result — raising instead
+    would reach the model as AF's opaque ``"Error: Function failed."`` with
+    the denial reason discarded."""
     tools = await bridge.get_tools("weather", limit=5, score_threshold=0.0)
     tool = next(t for t in tools if t.name == "get_weather")
 
@@ -591,8 +644,10 @@ async def test_approval_middleware_denies_by_domain(bridge: GantryToolBridge) ->
         raise AssertionError("should not be called")
 
     ctx = _Ctx(tool, {"city": "see https://blocked.test/x"})
-    with pytest.raises(PermissionDeniedError):
-        await middleware.process(ctx, _never_called)
+    await middleware.process(ctx, _never_called)
+    assert isinstance(ctx.result, str)
+    assert "Permission denied by security policy" in ctx.result
+    assert "get_weather" in ctx.result
 
 
 # ---------------------------------------------------------------------------
@@ -1815,3 +1870,96 @@ async def test_context_provider_refresh_mutates_non_dict_options_in_place() -> N
     assert "load_skill" in tool_names, tool_names
     # Gantry's dynamic selection added.
     assert "get_weather" in tool_names, tool_names
+
+
+@pytest.mark.asyncio
+async def test_approved_replay_still_enforces_denial_checks(
+    bridge: GantryToolBridge,
+) -> None:
+    """A human's approval clears only the confirmation gate — never the
+    denial checks. SecurityPolicy raises its ConfirmationRequiredError
+    *before* the allowed_domains check runs, so swallowing that error on an
+    approved replay (instead of passing confirmation_approved=True through)
+    silently turned approval into a domain-allowlist bypass (PR #381
+    review)."""
+    tools = await bridge.get_tools("delete user", limit=5, score_threshold=0.0)
+    delete_tool = next(t for t in tools if t.name == "delete_user")
+    policy = SecurityPolicy(
+        require_confirmation=["delete_*"], allowed_domains=["example.com"]
+    )
+    middleware = GantryApprovalMiddleware(policy)
+
+    class _Ctx:
+        def __init__(self, fn, args):
+            self.function = fn
+            self.arguments = args
+            self.result = None
+            self.metadata: dict[str, Any] = {
+                "call_id": "call-1",
+                "approval_response": SimpleNamespace(approved=True),
+            }
+
+    calls: list[str] = []
+
+    async def _call_next():
+        calls.append("ran")
+
+    # Approved + clean arguments: executes (domain check ran and passed).
+    ok_ctx = _Ctx(delete_tool, {"user_id": "https://example.com/u/1"})
+    await middleware.process(ok_ctx, _call_next)
+    assert calls == ["ran"]
+
+    async def _never_called():  # pragma: no cover - denial must block
+        raise AssertionError("a denied call must not execute, approved or not")
+
+    # Approved + disallowed domain: the denial check still fires.
+    denied_ctx = _Ctx(delete_tool, {"user_id": "see https://evil.test/x"})
+    await middleware.process(denied_ctx, _never_called)
+    assert isinstance(denied_ctx.result, str)
+    assert "Permission denied by security policy" in denied_ctx.result
+
+
+@pytest.mark.asyncio
+async def test_approved_replay_with_legacy_policy_stays_blocked(
+    bridge: GantryToolBridge,
+) -> None:
+    """A duck-typed policy that predates the ``confirmation_approved``
+    keyword has no way to selectively skip just the confirmation gate while
+    still enforcing whatever denial logic its own ``check_permission`` runs
+    afterward — so it must stay closed on an approved replay, not be
+    auto-bypassed. Only a policy that accepts the keyword (and itself
+    chooses not to raise once told about the approval) can execute
+    (codex review, PR #381)."""
+    tools = await bridge.get_tools("delete user", limit=5, score_threshold=0.0)
+    delete_tool = next(t for t in tools if t.name == "delete_user")
+
+    class LegacyPolicy:
+        """No ``confirmation_approved`` keyword — predates the PR's feature."""
+
+        def check_permission(self, tool_name, arguments):
+            if tool_name.startswith("delete_"):
+                raise ConfirmationRequiredError(f"{tool_name} requires approval")
+
+    middleware = GantryApprovalMiddleware(LegacyPolicy())
+
+    class _Ctx:
+        def __init__(self, fn, args):
+            self.function = fn
+            self.arguments = args
+            self.result = None
+            self.metadata: dict[str, Any] = {
+                "call_id": "call-1",
+                "approval_response": SimpleNamespace(approved=True),
+            }
+
+    async def _never_called():  # pragma: no cover - must stay blocked
+        raise AssertionError(
+            "a legacy policy with no confirmation_approved support must stay "
+            "closed even on an approved replay"
+        )
+
+    ctx = _Ctx(delete_tool, {"user_id": "abc"})
+    with pytest.raises(MiddlewareTermination):
+        await middleware.process(ctx, _never_called)
+    assert isinstance(ctx.result, Content)
+    assert ctx.result.type == "function_approval_request"

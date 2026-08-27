@@ -34,12 +34,15 @@ def _spec_to_autogen(spec: ToolSpec) -> dict[str, Any]:
 
     Returns the metadata plus a fresh async callable (from
     :meth:`ToolSpec.callable_for_signature`) that executes through Gantry. No
-    framework import is needed to build this mapping.
+    framework import is needed to build this mapping. The callable carries
+    ``Annotated[T, "<description>"]`` parameter annotations — the convention
+    AG2's ``get_function_schema`` reads per-parameter descriptions from — so
+    registering it surfaces the Gantry schema's descriptions to the LLM.
     """
     return {
         "name": spec.name,
         "description": spec.description,
-        "callable": spec.callable_for_signature(),
+        "callable": spec.callable_for_signature(annotated_descriptions=True),
     }
 
 
@@ -73,20 +76,33 @@ async def _register_with_autogen(
     Returns the list of registered tool names.
 
     Raises:
-        ImportError: If ``autogen`` (pyautogen) is not installed.
+        ImportError: If the classic AG2 ``autogen`` module is not installed
+            (``pip install "ag2[openai]<1"``). Note that AG2 1.x renamed its
+            import to ``ag2`` with a new agent API, and ``pyautogen`` >= 0.10
+            became a Microsoft autogen-agentchat shim — neither provides
+            ``autogen.register_function``.
     """
     try:
         from autogen import register_function
     except ImportError as exc:  # pragma: no cover - exercised via fake module
         raise ImportError(
-            "AutoGen support requires `autogen`. Install it with `pip install pyautogen`."
+            "AutoGen caller/executor registration requires the classic AG2 "
+            "`autogen` module. Install it with `pip install \"ag2[openai]<1\"` "
+            "(AG2 1.x renamed its import to `ag2` with a new agent API, and "
+            "`pyautogen` >= 0.10 is a Microsoft autogen-agentchat shim — "
+            "neither provides `autogen.register_function`). For Microsoft "
+            "AutoGen (autogen-core / autogen-agentchat), use "
+            "`AutoGenAdapter.workbench()` instead."
         ) from exc
 
     specs = await GantryToolset(gantry).select(query, limit=limit, **select_kwargs)
     names: list[str] = []
     for spec in specs:
         register_function(
-            spec.callable_for_signature(),
+            # Annotated[T, "<description>"] annotations: AG2 builds the LLM
+            # tool schema from the signature and reads per-parameter
+            # descriptions from Annotated metadata.
+            spec.callable_for_signature(annotated_descriptions=True),
             caller=caller,
             executor=executor,
             name=spec.name,
