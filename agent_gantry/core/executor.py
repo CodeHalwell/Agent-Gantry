@@ -762,8 +762,12 @@ class ExecutionEngine:
             decide against, and dropping a key the other branch requires
             would be worse than leaving the value alone.
             """
-            own = prop.get(key)
-            if isinstance(own, dict) and own:
+            def _usable(value: Any) -> bool:
+                # ``properties``/``items`` hold a schema; ``prefixItems`` holds
+                # a list of them.
+                return isinstance(value, (dict, list)) and bool(value)
+
+            if _usable(prop.get(key)):
                 return prop
             found: list[dict[str, Any]] = []
             for combinator in ("anyOf", "oneOf", "allOf"):
@@ -771,10 +775,7 @@ class ExecutionEngine:
                 if not isinstance(branches, list):
                     continue
                 for branch in branches:
-                    if not isinstance(branch, dict):
-                        continue
-                    nested = branch.get(key)
-                    if isinstance(nested, dict) and nested:
+                    if isinstance(branch, dict) and _usable(branch.get(key)):
                         found.append(branch)
             return found[0] if len(found) == 1 else None
 
@@ -786,12 +787,30 @@ class ExecutionEngine:
                 target = _declaring_subschema(prop, "properties")
                 return _normalize_object(value, target) if target is not None else value
             if isinstance(value, list):
-                target = _declaring_subschema(prop, "items")
-                if target is not None:
-                    item_schema = target["items"]
-                    items = [_normalize_child(item, item_schema) for item in value]
-                    if any(new is not old for new, old in zip(items, value)):
-                        return items
+                # ``prefixItems`` types each position independently, and strict
+                # mode widens the optional properties of a positional *object*
+                # exactly as it does anywhere else — so looking only at
+                # ``items`` left ``[{"nickname": null}, 1]`` intact for a
+                # ``tuple[Payload, int]`` parameter. ``items`` covers the
+                # positions past the prefix, matching how validation applies
+                # the two.
+                prefix_source = _declaring_subschema(prop, "prefixItems")
+                prefix_items = prefix_source["prefixItems"] if prefix_source else []
+                tail_source = _declaring_subschema(prop, "items")
+                tail_schema = tail_source["items"] if tail_source else None
+                if not prefix_items and tail_schema is None:
+                    return value
+                items: list[Any] = []
+                changed = False
+                for index, item in enumerate(value):
+                    item_schema = (
+                        prefix_items[index] if index < len(prefix_items) else tail_schema
+                    )
+                    normalized_item = _normalize_child(item, item_schema)
+                    changed = changed or normalized_item is not item
+                    items.append(normalized_item)
+                if changed:
+                    return items
             return value
 
         def _normalize_object(value: dict[str, Any], obj_schema: dict[str, Any]) -> Any:

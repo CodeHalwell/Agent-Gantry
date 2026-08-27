@@ -173,7 +173,10 @@ adapters, and the provider dialects agree with it.
   failed validation. It now resolves the branch that declares the shape, for
   nested objects and array items alike, and leaves genuinely ambiguous unions
   (two branches declaring `properties`, with no single `required` list to
-  decide against) untouched.
+  decide against) untouched. Positions typed by `prefixItems` are
+  normalized too: strict mode widens the optional properties of a positional
+  *object* exactly as it does anywhere else, so a `tuple[Payload, int]`
+  parameter kept its nested nulls while only `items` was consulted.
 - **A pre-widened nullable enum still forbade `null` under strict mode.**
   `_make_nullable` returned early when `null` was already in a property's
   `type` list, so the enum was never widened alongside it: a schema arriving

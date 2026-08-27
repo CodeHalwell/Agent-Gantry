@@ -1212,3 +1212,65 @@ def test_normalize_leaves_ambiguous_combinators_alone():
     )
     arguments = {"payload": {"a": None}}
     assert ExecutionEngine._normalize_arguments(tool, arguments) is arguments
+
+
+def test_normalize_recurses_into_prefix_items():
+    """``prefixItems`` types each position independently, and strict mode
+    widens the optional properties of a positional *object* exactly as it does
+    anywhere else — so looking only at ``items`` left the nested null intact
+    for a ``tuple[Payload, int]`` parameter (PR #381 review)."""
+    tool = ToolDefinition(
+        name="tup",
+        description="Heterogeneous tuple parameter",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "row": {
+                    "type": "array",
+                    "prefixItems": [
+                        {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "nickname": {"type": "string"},
+                            },
+                            "required": ["name"],
+                        },
+                        {"type": "integer"},
+                    ],
+                }
+            },
+            "required": ["row"],
+        },
+    )
+    assert ExecutionEngine._normalize_arguments(
+        tool, {"row": [{"name": "a", "nickname": None}, 1]}
+    ) == {"row": [{"name": "a"}, 1]}
+
+    unchanged = {"row": [{"name": "a"}, 1]}
+    assert ExecutionEngine._normalize_arguments(tool, unchanged) is unchanged
+
+
+def test_normalize_uses_items_for_positions_past_the_prefix():
+    tool = ToolDefinition(
+        name="tail",
+        description="Labelled row with a homogeneous tail",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "row": {
+                    "type": "array",
+                    "prefixItems": [{"type": "string"}],
+                    "items": {
+                        "type": "object",
+                        "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}},
+                        "required": ["x"],
+                    },
+                }
+            },
+            "required": ["row"],
+        },
+    )
+    assert ExecutionEngine._normalize_arguments(
+        tool, {"row": ["label", {"x": 1, "y": None}]}
+    ) == {"row": ["label", {"x": 1}]}
