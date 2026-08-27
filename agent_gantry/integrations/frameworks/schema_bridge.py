@@ -474,6 +474,18 @@ def _with_constraints(annotation: Any, prop: dict[str, Any]) -> Any:
     return Annotated[tuple([annotation, *marks])]
 
 
+def _never_annotation() -> Any:
+    """An annotation nothing validates against — the schema ``false``."""
+    from typing import Annotated
+
+    from pydantic import AfterValidator
+
+    def _reject(value: Any) -> Any:
+        raise ValueError("schema `false` permits no value")
+
+    return Annotated[Any, AfterValidator(_reject)]
+
+
 def _combinator_parts(
     name: str, branches: list[Any], depth: int, inherited_type: Any
 ) -> tuple[list[Any], bool]:
@@ -481,6 +493,22 @@ def _combinator_parts(
     parts: list[Any] = []
     has_empty = False
     for index, branch in enumerate(branches):
+        if branch is True:
+            # ``true`` is the always-valid schema — the other spelling of
+            # ``{}``, and handled identically. The executor learned this a
+            # commit ago; without it here the bridge reduced ``{"anyOf":
+            # [true, {"type": "integer"}]}`` to an integer field and rejected
+            # the schema-valid strings the engine accepts.
+            has_empty = True
+            parts.append(Any)
+            continue
+        if branch is False:
+            # ``false`` validates nothing. As a union member it simply never
+            # matches, which is right for ``anyOf`` and for ``oneOf``'s count;
+            # as an ``allOf`` branch the intersection then forbids every value,
+            # which is also right.
+            parts.append(_never_annotation())
+            continue
         if not isinstance(branch, dict):
             continue
         if not branch:

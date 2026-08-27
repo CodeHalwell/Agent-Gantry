@@ -841,6 +841,21 @@ adapters, and the provider dialects agree with it.
   unchanged for the executor to reject against the integer schema. The
   converted value is written back now, into a new mapping rather than the
   caller's.
+- **The framework bridge also treats `true`/`false` as schemas.** The executor
+  learned this a commit earlier; the bridge still dropped boolean branches, so
+  `{"anyOf": [true, {"type": "integer"}]}` was reduced to an integer field
+  that rejected the schema-valid strings the engine accepts, and `allOf:
+  [false]` was permissive where it should forbid everything. Both sides now
+  agree across all twelve boolean-branch cases.
+- **A bare collection ABC was advertised as a string.** `def f(m: Mapping)`
+  has `get_origin() is None` and matched no concrete-class check, so it fell
+  through to the string fallback — the tool asked for a string for a parameter
+  the handler needs a mapping for, and the executor then rejected the
+  correctly shaped object a caller sent. `Mapping`, `Sequence`, `Set` and
+  friends are now classified like their concrete kin (`Mapping` checked first,
+  since it is also a `Collection`), and a bare `Set` is rebuilt for the same
+  reason `set` is. A bare `set` consequently carries `uniqueItems` now, as
+  `set[str]` always has.
 
 ### Performance
 

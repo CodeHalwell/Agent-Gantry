@@ -251,6 +251,15 @@ def _needs_reconstruction(param_type: Any) -> bool:
     # unparameterized spellings slipped through.
     if param_type in (set, frozenset, tuple, bytes):
         return True
+    # ``Set``/``MutableSet`` for the same reason as the concrete ones above,
+    # now that a bare ABC gets an array schema: a JSON array arrives as a
+    # ``list``, which is not a ``Set``. ``Sequence`` and ``Mapping`` are
+    # deliberately absent — a list *is* a Sequence and a dict *is* a Mapping,
+    # so they already arrive as themselves. So is ``Iterable``, where
+    # rebuilding would hand the handler a one-shot ``ValidatorIterator`` in
+    # place of a perfectly good list.
+    if issubclass(param_type, _abc.Set):
+        return True
     if issubclass(param_type, enum.Enum):
         return True
     # A ``TypedDict`` *is* a dict at runtime, so it needs nothing — and it
@@ -685,11 +694,21 @@ def _type_to_json_schema(param_type: Any, *, in_container: bool = False) -> dict
             nested = _pydantic_object_schema(param_type)
             if nested is not None:
                 return nested
-        # Bare containers.
-        if issubclass(param_type, (list, set, frozenset, tuple)):
-            return {"type": "array"}
-        if issubclass(param_type, dict):
+        # Bare containers, concrete and abstract alike. ``Mapping`` is
+        # checked first because it is also a ``Collection`` and an
+        # ``Iterable``, so the sequence test would otherwise classify it as an
+        # array — the same ordering the parameterized branch below needs.
+        # Without the ABCs, ``def f(m: Mapping)`` had ``get_origin`` return
+        # ``None``, matched neither concrete check, and fell through to the
+        # string fallback: the tool advertised a string for a parameter the
+        # handler needs a mapping for, and the executor then rejected the
+        # correctly shaped object a caller sent.
+        if issubclass(param_type, (dict, _abc.Mapping)):
             return {"type": "object"}
+        if issubclass(param_type, _SEQUENCE_ORIGINS):
+            if issubclass(param_type, _UNIQUE_ORIGINS):
+                return {"type": "array", "uniqueItems": True}
+            return {"type": "array"}
 
     # Generic types (list[str], dict[str, int], Optional[T], Literal, ...)
     try:

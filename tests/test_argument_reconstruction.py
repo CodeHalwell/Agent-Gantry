@@ -10,6 +10,7 @@ rebuilt, and the ones deliberately left alone.
 
 from __future__ import annotations
 
+import collections.abc as abc
 import dataclasses
 import datetime
 import enum
@@ -625,10 +626,20 @@ async def test_a_bare_set_annotation_reaches_the_handler_as_a_set():
 
     await g.sync()
     result = await g.execute(
-        ToolCall(tool_name="dedupe", arguments={"tags": ["a", "b", "a"]})
+        ToolCall(tool_name="dedupe", arguments={"tags": ["a", "b"]})
     )
     assert result.status.value == "success", result.error
     assert result.result == "set:2"
+
+    # A bare ``set`` now carries ``uniqueItems`` exactly as ``set[str]``
+    # always has, so duplicates are refused by the same rule for both.
+    tool = await g.get_tool("dedupe")
+    assert tool.parameters_schema["properties"]["tags"]["uniqueItems"] is True
+    duplicated = await g.execute(
+        ToolCall(tool_name="dedupe", arguments={"tags": ["a", "b", "a"]})
+    )
+    assert duplicated.status.value == "failure"
+    assert duplicated.error_type == "ValidationError"
 
 
 async def test_a_malformed_formatted_string_is_rejected_not_passed_through():
@@ -786,3 +797,62 @@ async def test_a_rejected_argument_does_not_degrade_tool_health():
     tool = await g.get_tool("use_positive")
     assert tool.health.consecutive_failures == 0
     assert tool.health.circuit_breaker_open is False
+
+
+def test_bare_collection_abcs_are_classified_like_their_concrete_kin():
+    """``def f(m: Mapping)`` has ``get_origin() is None`` and matches no
+    concrete-class check, so it fell through to the ``str`` fallback: the tool
+    advertised a *string* for a parameter needing a mapping, and the executor
+    then rejected the correctly shaped object a caller sent. The parameterized
+    forms were already handled (PR #381 review)."""
+    from agent_gantry.schema.introspection import (
+        _needs_reconstruction,
+        _type_to_json_schema,
+    )
+
+    assert _type_to_json_schema(abc.Mapping) == {"type": "object"}
+    assert _type_to_json_schema(abc.MutableMapping) == {"type": "object"}
+    assert _type_to_json_schema(abc.Sequence) == {"type": "array"}
+    assert _type_to_json_schema(abc.Iterable) == {"type": "array"}
+    # A Mapping is also a Collection and an Iterable, so ordering matters:
+    # the sequence test would otherwise call it an array.
+    assert _type_to_json_schema(abc.Set) == {"type": "array", "uniqueItems": True}
+    # Scalars are unaffected, which matters because ``str`` *is* a Sequence.
+    assert _type_to_json_schema(str) == {"type": "string"}
+    assert _type_to_json_schema(bytes) == {"type": "string"}
+
+    # Only the ones whose JSON form differs are rebuilt: a list is already a
+    # Sequence and a dict already a Mapping, but neither is a Set. Rebuilding
+    # an ``Iterable`` would hand the handler a one-shot iterator instead of a
+    # perfectly good list.
+    assert _needs_reconstruction(abc.Set) is True
+    assert _needs_reconstruction(abc.MutableSet) is True
+    assert _needs_reconstruction(abc.Sequence) is False
+    assert _needs_reconstruction(abc.Mapping) is False
+    assert _needs_reconstruction(abc.Iterable) is False
+
+
+async def test_a_bare_mapping_annotation_accepts_an_object():
+    """End-to-end: the handler needs a mapping, so the schema must ask for one.
+
+    ``abc`` is imported at module scope deliberately: this file uses
+    ``from __future__ import annotations``, so a function-local import leaves
+    ``get_type_hints`` unable to resolve the name and the parameter silently
+    falls back to a string schema — the test would then pass against the very
+    bug it exists to catch.
+    """
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @g.register(tags=["demo"])
+    def count_keys(m: abc.Mapping) -> str:
+        """Report how many keys a mapping parameter carries."""
+        return f"{len(m)}"
+
+    await g.sync()
+    tool = await g.get_tool("count_keys")
+    assert tool.parameters_schema["properties"]["m"] == {"type": "object"}
+    result = await g.execute(
+        ToolCall(tool_name="count_keys", arguments={"m": {"a": 1, "b": 2}})
+    )
+    assert result.status.value == "success", result.error
+    assert result.result == "2"

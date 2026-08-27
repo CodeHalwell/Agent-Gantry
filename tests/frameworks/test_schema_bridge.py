@@ -1653,3 +1653,35 @@ def test_the_caller_mapping_is_not_mutated():
     original = {"n_x": "1"}
     assert model(m=original).model_dump()["m"] == {"n_x": 1}
     assert original == {"n_x": "1"}
+
+
+def test_boolean_combinator_branches_reach_the_generated_model():
+    """The executor learned that ``true`` and ``false`` are schemas; the bridge
+    still dropped them, so ``{"anyOf": [true, {"type": "integer"}]}`` was
+    reduced to an integer field that rejected the schema-valid strings the
+    engine accepts (PR #381 review)."""
+    def model_for(prop):
+        return pydantic_model_from_schema(
+            "Args",
+            {"type": "object", "properties": {"v": prop}, "required": ["v"]},
+        )
+
+    def accepts(prop, value):
+        try:
+            model_for(prop)(v=value)
+            return True
+        except ValidationError:
+            return False
+
+    # ``true`` matches everything, so the union admits a string.
+    assert accepts({"anyOf": [True, {"type": "integer"}]}, "x") is True
+    assert accepts({"anyOf": [True, {"type": "integer"}]}, 1) is True
+    # ``false`` matches nothing: harmless in a union, fatal in an intersection.
+    assert accepts({"anyOf": [False, {"type": "integer"}]}, 1) is True
+    assert accepts({"anyOf": [False, {"type": "integer"}]}, "x") is False
+    assert accepts({"allOf": [False, {"type": "integer"}]}, 1) is False
+    assert accepts({"allOf": [True, {"type": "integer"}]}, 1) is True
+    assert accepts({"allOf": [True, {"type": "integer"}]}, "x") is False
+    # And boolean branches count for ``oneOf`` exclusivity: ``1`` matches both.
+    assert accepts({"oneOf": [True, {"type": "integer"}]}, 1) is False
+    assert accepts({"oneOf": [True, {"type": "integer"}]}, "x") is True
