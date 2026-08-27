@@ -701,8 +701,6 @@ class ExecutionEngine:
         if not arguments:
             return arguments
         schema = tool.parameters_schema or {}
-        properties = schema.get("properties") or {}
-        required = set(schema.get("required") or [])
 
         def _declares_null(prop: Any) -> bool:
             """Whether a property schema gives ``null`` a declared meaning.
@@ -733,16 +731,47 @@ class ExecutionEngine:
                     return True
             return False
 
-        def _should_drop(name: str, value: Any) -> bool:
-            if value is not None or name not in properties or name in required:
-                return False
-            return not _declares_null(properties[name])
+        def _normalize_child(value: Any, prop: Any) -> Any:
+            """Recurse into an object/array value against its own subschema."""
+            if not isinstance(prop, dict):
+                return value
+            if isinstance(value, dict):
+                return _normalize_object(value, prop)
+            if isinstance(value, list):
+                item_schema = prop.get("items")
+                if isinstance(item_schema, dict) and item_schema:
+                    items = [_normalize_child(item, item_schema) for item in value]
+                    if any(new is not old for new, old in zip(items, value)):
+                        return items
+            return value
 
-        if not any(_should_drop(name, value) for name, value in arguments.items()):
-            return arguments
-        return {
-            name: value for name, value in arguments.items() if not _should_drop(name, value)
-        }
+        def _normalize_object(value: dict[str, Any], obj_schema: dict[str, Any]) -> Any:
+            obj_properties = obj_schema.get("properties") or {}
+            obj_required = set(obj_schema.get("required") or [])
+            out: dict[str, Any] = {}
+            changed = False
+            for name, item in value.items():
+                prop = obj_properties.get(name)
+                if (
+                    item is None
+                    and name in obj_properties
+                    and name not in obj_required
+                    and not _declares_null(prop)
+                ):
+                    changed = True
+                    continue
+                normalized_item = _normalize_child(item, prop)
+                if normalized_item is not item:
+                    changed = True
+                out[name] = normalized_item
+            return out if changed else value
+
+        # Recursive, not just top-level: strict-mode widening applies to every
+        # object in the schema, so an optional *nested* property also comes
+        # back as an explicit null meaning "not provided". Normalizing only
+        # the top level left ``{"payload": {"nickname": null}}`` intact, and
+        # validation then rejected it against the canonical non-null schema.
+        return _normalize_object(arguments, schema)
 
     async def _validate_arguments(
         self, tool: ToolDefinition, arguments: dict[str, Any]

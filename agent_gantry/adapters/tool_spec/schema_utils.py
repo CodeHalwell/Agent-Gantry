@@ -165,10 +165,15 @@ def _is_open_map(node: dict[str, Any]) -> bool:
     """
     properties = node.get("properties")
     if isinstance(properties, dict) and properties:
-        # Enumerated. ``additionalProperties: true`` alongside real
-        # properties (what a ``**kwargs`` handler emits) is a narrowing
-        # strict mode handles by forcing it to false, not an open map.
-        return False
+        additional = node.get("additionalProperties")
+        # ``additionalProperties: true`` alongside real properties (what a
+        # ``**kwargs`` handler emits) is a narrowing strict mode handles by
+        # forcing it to false — and so is the empty schema ``{}``, which is
+        # spec-equivalent to ``true``. A *typed* ``additionalProperties``
+        # still describes keys strict mode cannot express, though: forcing
+        # it to false there silently drops the typed extras, the same data
+        # loss this function exists to catch for a bare map.
+        return isinstance(additional, dict) and bool(additional)
     if node.get("additionalProperties") is False:
         return False  # explicitly closed: an object permitting no keys
     if isinstance(properties, dict):

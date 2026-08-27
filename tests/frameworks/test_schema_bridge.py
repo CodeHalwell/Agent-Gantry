@@ -559,3 +559,20 @@ def test_constraints_on_an_optional_field_still_admit_none():
     assert model(opt=9).opt == 9
     with pytest.raises(ValidationError):
         model(opt=3)
+
+
+def test_float_enum_members_are_preserved():
+    """A float-valued ``Enum``/``Literal`` parameter is what introspection
+    emits; excluding floats dropped the enum to an unconstrained ``float``
+    that accepted non-members (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"v": {"type": "number", "enum": [0.5, 1.5]}},
+            "required": ["v"],
+        },
+    )
+    assert model(v=0.5).v == 0.5
+    with pytest.raises(ValidationError):
+        model(v=2.5)

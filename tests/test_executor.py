@@ -897,3 +897,67 @@ async def test_fractional_multiple_of_uses_decimal_arithmetic(engine):
 
     is_valid, _ = await engine._validate_arguments(tool, {"v": 0.25})
     assert is_valid is False
+
+
+def test_normalize_drops_synthetic_nulls_below_the_top_level():
+    """Strict-mode widening applies to *every* object in the schema, so an
+    optional nested property also comes back as an explicit null meaning
+    "not provided". Normalizing only the top level left it intact, and
+    validation then rejected it against the canonical non-null schema
+    (PR #381 review)."""
+    tool = ToolDefinition(
+        name="nested",
+        description="Object parameter carrying an optional nested field",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "payload": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "nickname": {"type": "string"},
+                    },
+                    "required": ["name"],
+                }
+            },
+            "required": ["payload"],
+        },
+    )
+    normalized = ExecutionEngine._normalize_arguments(
+        tool, {"payload": {"name": "a", "nickname": None}}
+    )
+    assert normalized == {"payload": {"name": "a"}}
+
+    # A *required* nested null is still preserved, so the validation error
+    # stays accurate rather than becoming "missing parameter".
+    assert ExecutionEngine._normalize_arguments(tool, {"payload": {"name": None}}) == {
+        "payload": {"name": None}
+    }
+
+    # Unchanged input keeps its identity (execute() checks `is not`).
+    unchanged = {"payload": {"name": "a"}}
+    assert ExecutionEngine._normalize_arguments(tool, unchanged) is unchanged
+
+
+def test_normalize_recurses_into_array_items():
+    tool = ToolDefinition(
+        name="rows",
+        description="Array of objects with an optional field",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}},
+                        "required": ["x"],
+                    },
+                }
+            },
+            "required": ["rows"],
+        },
+    )
+    assert ExecutionEngine._normalize_arguments(tool, {"rows": [{"x": 1, "y": None}]}) == {
+        "rows": [{"x": 1}]
+    }

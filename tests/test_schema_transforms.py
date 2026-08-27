@@ -202,6 +202,39 @@ class TestUnsupportedStrictPaths:
             == []
         )
 
+    def test_typed_additional_properties_alongside_declared_properties(self) -> None:
+        """Declared properties *and* a typed ``additionalProperties`` still
+        describes keys strict mode cannot express — forcing it to false there
+        silently drops the typed extras (PR #381 review)."""
+        assert unsupported_strict_paths(
+            {
+                "type": "object",
+                "properties": {
+                    "outer": {
+                        "type": "object",
+                        "properties": {"name": {"type": "string"}},
+                        "additionalProperties": {"type": "integer"},
+                    }
+                },
+                "required": ["outer"],
+            }
+        ) == ["outer"]
+
+    def test_empty_additional_properties_alongside_properties_is_supported(self) -> None:
+        # ``{}`` is spec-equivalent to ``true``, so it is the same **kwargs
+        # narrowing strict mode legitimately applies.
+        assert (
+            unsupported_strict_paths(
+                {
+                    "type": "object",
+                    "properties": {"a": {"type": "string"}},
+                    "required": ["a"],
+                    "additionalProperties": {},
+                }
+            )
+            == []
+        )
+
     def test_nested_and_array_item_mappings_are_found(self) -> None:
         found = unsupported_strict_paths(
             {

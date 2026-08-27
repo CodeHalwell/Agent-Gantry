@@ -106,6 +106,25 @@ adapters, and the provider dialects agree with it.
   throughout the nested model and `TypedDict` schemas introspection now
   inlines — and validation checked only `type` and `enum`, letting any value
   through. `const` equality is checked alongside `enum` membership now.
+- **Strict-mode nulls were only normalized at the top level.** Widening
+  applies to *every* object in the schema, so an optional *nested* property
+  also comes back as an explicit `null` meaning "not provided" — but
+  normalization looked only at top-level arguments, so
+  `{"payload": {"nickname": null}}` survived and validation then rejected it
+  against the canonical non-null schema. Normalization now recurses through
+  nested objects and array items. A *required* nested `null` is still
+  preserved, so its error stays accurate.
+- **A typed `additionalProperties` alongside declared properties wasn't
+  detected as strict-incompatible.** `unsupported_strict_paths()` returned
+  early once an object declared any properties, so an object with both
+  declared properties and a schema-valued `additionalProperties` was passed
+  to strict mode, which forced `additionalProperties: false` and silently
+  dropped the typed extras. A `true`/`{}` value alongside properties is
+  still treated as the intentional `**kwargs` narrowing.
+- **Float enum members were dropped in framework args models.** A
+  float-valued `Enum`/`Literal` parameter — which introspection emits —
+  failed the `Literal` member guard, so the whole enum fell through to an
+  unconstrained `float` that accepted non-members.
 - **A fractional `multipleOf` rejected valid numbers.** The check used `%`,
   and binary floats make `0.3 % 0.1` ≈ `0.0999…`, so a property declared
   `multipleOf: 0.1` refused `0.3`. Compared as `Decimal`s via `str`, which

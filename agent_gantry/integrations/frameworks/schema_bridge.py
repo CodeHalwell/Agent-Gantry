@@ -313,7 +313,13 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
         # ``None`` is a valid Literal member (``Literal["auto", None]``), and
         # an enum listing it is exactly how a nullable choice is expressed —
         # excluding it dropped the whole enum to the unconstrained fallback.
-        if all(isinstance(v, (str, int, bool)) or v is None for v in enum_values):
+        # Floats are admitted too: PEP 586 disallows them, but a float-valued
+        # ``Enum``/``Literal`` parameter is what introspection emits and both
+        # ``typing`` and Pydantic enforce it correctly at runtime, which is
+        # what matters here — the alternative is no constraint at all.
+        if all(
+            isinstance(v, (str, int, bool, float)) or v is None for v in enum_values
+        ):
             return Literal[tuple(enum_values)]
         # Enum of exotic values — fall back to the declared/base type.
 
