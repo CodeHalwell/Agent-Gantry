@@ -34,8 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The `not` keyword is evaluated.** It was parsed nowhere — the provider
   transforms walk into it, so it survived a round-trip through them and then
   constrained nothing, and a schema whose purpose is to forbid a shape
-  accepted it. A `not` that is not a schema is ignored rather than read as an
-  always-matching branch.
+  accepted it. A branch the validator cannot fully evaluate — a non-schema
+  value, or one using a keyword it skips such as `$ref`, at any depth — is
+  ignored rather than read as an always-matching branch, which would reject
+  every value and turn the tool into one no call could satisfy.
 - **Every matching `patternProperties` entry restores its own format**, and a
   key declared in `properties` still gets them. The framework dispatch
   boundary kept only the *first* regex that matched a key, and skipped

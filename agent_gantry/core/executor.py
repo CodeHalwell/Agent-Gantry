@@ -48,6 +48,123 @@ logger = logging.getLogger(__name__)
 #: schema of just these keys so ownership of the structural keywords stays
 #: with the walk. Keep this to keywords ``_validate_value`` actually
 #: implements: one it ignores would be listed as enforced without being so.
+#: Keywords this validator actually evaluates — ``_validate_value``'s own,
+#: plus the constraint family ``check_json_constraints`` implements.
+_EVALUATED_KEYWORDS = frozenset(
+    {
+        # structure
+        "type",
+        "properties",
+        "required",
+        "additionalProperties",
+        "patternProperties",
+        "items",
+        "prefixItems",
+        # combinators
+        "anyOf",
+        "oneOf",
+        "allOf",
+        "not",
+        # value equality
+        "enum",
+        "const",
+        # check_json_constraints
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+        "minLength",
+        "maxLength",
+        "pattern",
+        "format",
+        "minItems",
+        "maxItems",
+        "uniqueItems",
+        "minProperties",
+        "maxProperties",
+    }
+)
+
+#: Keywords that carry no constraint, so their presence says nothing about
+#: whether a schema can be evaluated. ``$defs``/``definitions`` belong here:
+#: they only hold subschemas for a ``$ref`` to name, and a ``$ref`` is itself
+#: unevaluated, so it is the reference that makes a schema indeterminate.
+_INERT_KEYWORDS = frozenset(
+    {
+        "$comment",
+        "$defs",
+        "$id",
+        "$schema",
+        "default",
+        "definitions",
+        "deprecated",
+        "description",
+        "examples",
+        "readOnly",
+        "title",
+        "writeOnly",
+    }
+)
+
+#: Recursion bound for :func:`_fully_evaluable`, so a self-referential
+#: imported schema cannot spin. Past it the schema is called indeterminate,
+#: which is the fail-open answer.
+_MAX_EVALUABLE_DEPTH = 16
+
+#: Where a subschema lives, by the shape of the value holding it.
+_EVALUABLE_MAPPINGS = ("properties", "patternProperties")
+_EVALUABLE_LISTS = ("anyOf", "oneOf", "allOf", "prefixItems")
+_EVALUABLE_SINGLES = ("items", "additionalProperties", "not")
+
+
+def _fully_evaluable(schema: Any, _depth: int = 0) -> bool:
+    """Whether every constraint in ``schema`` is one this validator applies.
+
+    ``_validate_value`` returns *valid* for anything it cannot interpret —
+    "don't reject what we don't understand", which is right everywhere it is
+    read as an assertion about the value. Under ``not`` that reading inverts:
+    a branch reported as matching forbids the value, so a schema the validator
+    merely fails to understand rejects **everything**. ``not: {"$ref":
+    "#/$defs/forbidden"}`` — legal, and reachable because imported (MCP,
+    OpenAPI) schemas are stored as given — turned its tool into one no call
+    could satisfy (PR #386 review).
+
+    So ``not`` asks this first and declines to forbid anything when the answer
+    is no. Conservative in the safe direction: an unevaluated ``not`` is the
+    behaviour that shipped before it was implemented at all, whereas a
+    wrongly-enforced one is a tool nobody can call.
+
+    Recursive, because a reference one level down does the same damage: the
+    outer structure evaluates, the nested ``$ref`` reports valid, and the
+    branch again matches more values than it should.
+    """
+    if isinstance(schema, bool):
+        return True
+    if not isinstance(schema, dict):
+        return False
+    if _depth > _MAX_EVALUABLE_DEPTH:
+        return False
+    for key, value in schema.items():
+        if key in _INERT_KEYWORDS:
+            continue
+        if key not in _EVALUATED_KEYWORDS:
+            return False
+        if key in _EVALUABLE_MAPPINGS:
+            if isinstance(value, dict) and not all(
+                _fully_evaluable(sub, _depth + 1) for sub in value.values()
+            ):
+                return False
+        elif key in _EVALUABLE_LISTS:
+            if isinstance(value, list) and not all(
+                _fully_evaluable(sub, _depth + 1) for sub in value
+            ):
+                return False
+        elif key in _EVALUABLE_SINGLES and not _fully_evaluable(value, _depth + 1):
+            return False
+    return True
+
+
 _ROOT_ASSERTIONS = (
     "allOf",
     "anyOf",
@@ -1310,11 +1427,21 @@ class ExecutionEngine:
             # it (PR #385 review).
             if "not" in val_schema:
                 forbidden = val_schema["not"]
-                # A non-schema value is ignored rather than treated as an
-                # always-matching branch: reading it as one would reject every
-                # value, turning a malformed schema into a tool nobody can
-                # call. Same fail-open reasoning as an uncompilable pattern.
-                if isinstance(forbidden, (dict, bool)) and _branch_matches(
+                # Anything this validator cannot fully evaluate is ignored
+                # rather than treated as an always-matching branch: reading it
+                # as one would reject every value, turning a schema that
+                # merely uses a keyword we skip — a non-schema value, or a
+                # ``$ref`` — into a tool nobody can call. Same fail-open
+                # reasoning as an uncompilable pattern, and see
+                # ``_fully_evaluable``.
+                if isinstance(forbidden, (dict, bool)) and not _fully_evaluable(forbidden):
+                    logger.warning(
+                        "%s declares a 'not' schema using keywords this "
+                        "validator does not evaluate (%r); it is not enforced.",
+                        describe_path(path),
+                        forbidden,
+                    )
+                elif isinstance(forbidden, (dict, bool)) and _branch_matches(
                     value, forbidden, path
                 ):
                     return (

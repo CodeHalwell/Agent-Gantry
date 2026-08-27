@@ -2753,3 +2753,105 @@ async def test_the_not_keyword_is_evaluated(engine):
         },
     )
     assert await engine._validate_arguments(malformed, {"n": 1}) == (True, None)
+
+
+@pytest.mark.asyncio
+async def test_an_unevaluable_not_branch_forbids_nothing(engine):
+    """`_validate_value` returns *valid* for anything it cannot interpret —
+    right everywhere the answer is an assertion about the value. Under ``not``
+    that reading inverts: a branch reported as matching forbids the value, so
+    a schema the validator merely fails to understand rejected
+    **everything**. `not: {"$ref": …}` is legal and reachable, since imported
+    (MCP, OpenAPI) schemas are stored as given, and it turned its tool into
+    one no call could satisfy (PR #386 review).
+
+    Fail-open is the safe direction here: an unenforced ``not`` is the
+    behaviour that shipped before the keyword was implemented at all, whereas
+    a wrongly-enforced one is a tool nobody can call."""
+
+    def tool_with(prop: dict) -> ToolDefinition:
+        return ToolDefinition(
+            name="referenced",
+            description="A not-branch reaching for a local definition",
+            parameters_schema={
+                "type": "object",
+                "$defs": {"forbidden": {"type": "string", "const": "nope"}},
+                "properties": {"n": prop},
+                "required": ["n"],
+            },
+        )
+
+    # Every keyword the validator skips, in the position that inverts.
+    for unevaluable in (
+        {"$ref": "#/$defs/forbidden"},
+        {"if": {"const": 1}, "then": {"const": 2}},
+        {"contains": {"const": 1}},
+        # One level down does the same damage: the outer structure evaluates,
+        # the nested reference reports valid, and the branch again matches
+        # more values than it should.
+        {"type": "object", "properties": {"a": {"$ref": "#/$defs/forbidden"}}},
+    ):
+        tool = tool_with({"type": "integer", "not": unevaluable})
+        for value in (1, 13, 42):
+            assert await engine._validate_arguments(tool, {"n": value}) == (
+                True,
+                None,
+            ), (unevaluable, value)
+
+    # A branch it *can* evaluate still binds, annotations and inert
+    # ``$defs`` included — those carry no constraint, so their presence must
+    # not make a schema indeterminate.
+    for evaluable in (
+        {"const": 13},
+        {"const": 13, "title": "unlucky", "$comment": "no thirteens"},
+        {"const": 13, "$defs": {"unused": {"$ref": "#/nowhere"}}},
+    ):
+        tool = tool_with({"type": "integer", "not": evaluable})
+        ok, err = await engine._validate_arguments(tool, {"n": 13})
+        assert ok is False and "required not to" in err, evaluable
+        assert await engine._validate_arguments(tool, {"n": 7}) == (True, None), evaluable
+
+
+def test_fully_evaluable_certifies_only_what_the_validator_applies():
+    """The predicate behind the ``not`` guard, checked directly: boolean
+    schemas and the empty schema are evaluable (they are exactly what they
+    say), a keyword the validator skips is not, and the check recurses through
+    every position a subschema can occupy."""
+    from agent_gantry.core.executor import _fully_evaluable
+
+    for evaluable in (
+        True,
+        False,
+        {},
+        {"const": 1},
+        {"type": "object", "properties": {"a": {"type": "string"}}},
+        {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        {"items": {"type": "integer"}, "minItems": 1},
+        {"additionalProperties": False},
+        # Inert: nothing names these without a ``$ref``, which is itself caught.
+        {"const": 1, "$defs": {"a": {"$ref": "#/x"}}},
+    ):
+        assert _fully_evaluable(evaluable) is True, evaluable
+
+    for indeterminate in (
+        {"$ref": "#/x"},
+        {"unevaluatedProperties": False},
+        {"propertyNames": {"pattern": "^a"}},
+        {"type": "object", "properties": {"a": {"$ref": "#/x"}}},
+        {"anyOf": [{"type": "string"}, {"$ref": "#/x"}]},
+        {"items": {"$ref": "#/x"}},
+        {"not": {"$ref": "#/x"}},
+        {"patternProperties": {"^a": {"$ref": "#/x"}}},
+        "not a schema at all",
+        None,
+    ):
+        assert _fully_evaluable(indeterminate) is False, indeterminate
+
+    # A self-referential structure terminates rather than spinning, and the
+    # depth cutoff answers "indeterminate", which is the fail-open side.
+    deep: dict = {"type": "object"}
+    node = deep
+    for _ in range(40):
+        node["not"] = {"type": "object"}
+        node = node["not"]
+    assert _fully_evaluable(deep) is False
