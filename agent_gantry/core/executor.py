@@ -165,6 +165,39 @@ def _fully_evaluable(schema: Any, _depth: int = 0) -> bool:
     return True
 
 
+
+def _branch_declared_names(node: Any, _depth: int = 0) -> set[str]:
+    """Property names a schema's combinator branches declare.
+
+    ``additionalProperties`` does not look inside ``allOf`` and friends — a
+    JSON Schema rule that bites here because Gantry closes an object whose
+    ``additionalProperties`` is absent, stricter than the spec's open default.
+    With the branches now evaluated, a schema whose root declares ``a`` and
+    whose ``allOf`` branch declares ``b`` checked ``b`` against that branch and
+    *then* reported it unknown, because only the root's own ``properties``
+    counted as declared. Validating a key and rejecting it as undeclared in the
+    same pass is incoherent whichever default is right (PR #386 review).
+
+    ``not`` is deliberately not walked: it names the shape a value must *not*
+    take, so its properties are the opposite of declared.
+    """
+    if not isinstance(node, dict) or _depth > _MAX_EVALUABLE_DEPTH:
+        return set()
+    names: set[str] = set()
+    for key in ("allOf", "anyOf", "oneOf"):
+        branches = node.get(key)
+        if not isinstance(branches, list):
+            continue
+        for branch in branches:
+            if not isinstance(branch, dict):
+                continue
+            props = branch.get("properties")
+            if isinstance(props, dict):
+                names.update(name for name in props if isinstance(name, str))
+            names |= _branch_declared_names(branch, _depth + 1)
+    return names
+
+
 _ROOT_ASSERTIONS = (
     "allOf",
     "anyOf",
@@ -1277,8 +1310,21 @@ class ExecutionEngine:
             # Unknown type keyword: don't reject what we don't understand.
             return True
 
+        def _child(path: str, name: str) -> str:
+            """The path of a property, unprefixed at the root.
+
+            The object branch validates the tool's own argument object as well
+            as nested ones now, and the root has no name to prefix with —
+            ``f"{path}.{name}"`` there reported ``'.token'``.
+            """
+            return f"{path}.{name}" if path else name
+
         def _check_pattern_properties(
-            value: dict[str, Any], val_schema: dict[str, Any], path: str
+            value: dict[str, Any],
+            val_schema: dict[str, Any],
+            path: str,
+            *,
+            partial: bool = False,
         ) -> tuple[bool, set[str], str | None]:
             """Validate ``patternProperties`` over a mapping's keys.
 
@@ -1308,10 +1354,10 @@ class ExecutionEngine:
                     # regex must not make every call fail, but the author
                     # needs to know it isn't enforced.
                     logger.warning(
-                        "Parameter '%s' declares patternProperties %r that "
+                        "%s declares patternProperties %r that "
                         "Python's re cannot compile (%s); those keys are "
                         "not validated.",
-                        path,
+                        describe_path(path),
                         regex,
                         exc,
                     )
@@ -1328,7 +1374,7 @@ class ExecutionEngine:
                         # counted them as declared, so a closed object let them
                         # through as well.
                         is_valid, err = _validate_value(
-                            prop_value, subschema, f"{path}.{prop_name}" if path else prop_name
+                            prop_value, subschema, _child(path, prop_name), partial=partial
                         )
                         if not is_valid:
                             return False, matched, err
@@ -1340,25 +1386,36 @@ class ExecutionEngine:
             Handles the boolean schemas draft-06 added — ``true`` validates
             every value, ``false`` none — alongside the empty schema ``{}``,
             which means the same as ``true``.
+
+            Always ``partial``: a branch constrains the value, it does not
+            describe it. See ``_validate_value``.
             """
             if branch is True or branch == {}:
                 return True
             if branch is False:
                 return False
-            return _validate_value(value, branch, path)[0]
-
-        def _child(path: str, name: str) -> str:
-            """The path of a property, unprefixed at the root.
-
-            The object branch validates the tool's own argument object as well
-            as nested ones now, and the root has no name to prefix with —
-            ``f"{path}.{name}"`` there reported ``'.token'``.
-            """
-            return f"{path}.{name}" if path else name
+            return _validate_value(value, branch, path, partial=True)[0]
 
         def _validate_value(
-            value: Any, val_schema: Any, path: str
+            value: Any, val_schema: Any, path: str, *, partial: bool = False
         ) -> tuple[bool, str | None]:
+            """Validate ``value`` against ``val_schema``.
+
+            ``partial`` marks a schema that *constrains* the value rather than
+            describing it — a combinator branch and everything beneath one.
+            Only the closed-object default turns on it: an absent
+            ``additionalProperties`` means "closed" for a tool schema (Gantry
+            emits its own that way, stricter than the spec's open default) and
+            that reading is a category error inside a branch, which asserts
+            only about the keys it names. Reading a root ``allOf`` branch
+            declaring ``b`` as a complete description rejected ``{"a": 1,
+            "b": 2}`` with ``Unknown parameter: a`` — ``a`` being declared by
+            the root schema, or by a sibling branch (PR #386 review).
+
+            An *explicit* ``additionalProperties: false`` is still honoured in
+            a branch: that is the schema saying so, not a default being
+            inferred for it.
+            """
             # A schema may be a bare boolean anywhere a schema is allowed, not
             # only in a combinator branch: ``properties: {"disabled": false}``,
             # ``patternProperties: {"^blocked_": false}``, ``items: false``.
@@ -1462,7 +1519,7 @@ class ExecutionEngine:
                         )
                     if not isinstance(branch, dict) or not branch:
                         continue
-                    is_valid, err = _validate_value(value, branch, path)
+                    is_valid, err = _validate_value(value, branch, path, partial=True)
                     if not is_valid:
                         return False, err
 
@@ -1560,7 +1617,9 @@ class ExecutionEngine:
                             not isinstance(entry, dict) or not entry
                         ):
                             continue
-                        is_valid, err = _validate_value(value[i], entry, f"{path}[{i}]")
+                        is_valid, err = _validate_value(
+                            value[i], entry, f"{path}[{i}]", partial=partial
+                        )
                         if not is_valid:
                             return False, err
                 item_schema = val_schema.get("items")
@@ -1574,7 +1633,9 @@ class ExecutionEngine:
                     for i, item in enumerate(value):
                         if i < prefix_len:
                             continue
-                        is_valid, err = _validate_value(item, item_schema, f"{path}[{i}]")
+                        is_valid, err = _validate_value(
+                            item, item_schema, f"{path}[{i}]", partial=partial
+                        )
                         if not is_valid:
                             return False, err
             elif expected_type == "object" or (
@@ -1584,7 +1645,7 @@ class ExecutionEngine:
                 obj_additional = val_schema.get("additionalProperties")
 
                 matched_ok, pattern_matched, pattern_err = _check_pattern_properties(
-                    value, val_schema, path
+                    value, val_schema, path, partial=partial
                 )
                 if not matched_ok:
                     return False, pattern_err
@@ -1621,7 +1682,10 @@ class ExecutionEngine:
                             if prop_name in pattern_matched:
                                 continue  # already checked against its pattern
                             is_valid, err = _validate_value(
-                                prop_value, obj_additional, _child(path, prop_name)
+                                prop_value,
+                                obj_additional,
+                                _child(path, prop_name),
+                                partial=partial,
                             )
                             if not is_valid:
                                 return False, err
@@ -1634,14 +1698,22 @@ class ExecutionEngine:
                     if req_prop not in value:
                         return False, f"Missing required parameter: {_child(path, req_prop)}"
 
+                branch_declared = _branch_declared_names(val_schema)
                 for prop_name, prop_value in value.items():
                     if prop_name not in obj_properties:
                         if prop_name in pattern_matched:
                             continue  # already checked against its pattern
-                        if _permits_additional(obj_additional):
+                        if prop_name in branch_declared:
+                            continue  # declared by a combinator branch
+                        if _permits_additional(obj_additional) or (
+                            partial and obj_additional is None
+                        ):
                             if isinstance(obj_additional, dict):
                                 is_valid, err = _validate_value(
-                                    prop_value, obj_additional, _child(path, prop_name)
+                                    prop_value,
+                                    obj_additional,
+                                    _child(path, prop_name),
+                                    partial=partial,
                                 )
                                 if not is_valid:
                                     return False, err
@@ -1649,7 +1721,10 @@ class ExecutionEngine:
                         return False, f"Unknown parameter: {_child(path, prop_name)}"
 
                     is_valid, err = _validate_value(
-                        prop_value, obj_properties[prop_name], _child(path, prop_name)
+                        prop_value,
+                        obj_properties[prop_name],
+                        _child(path, prop_name),
+                        partial=partial,
                     )
                     if not is_valid:
                         return False, err
@@ -1697,10 +1772,16 @@ class ExecutionEngine:
 
         # Check parameter types
         additional_schema = schema.get("additionalProperties")
+        # A key a root combinator branch declares is declared: the branches are
+        # evaluated above, so without this the same pass validated a key and
+        # then called it unknown.
+        top_branch_declared = _branch_declared_names(schema)
         for param_name, param_value in arguments.items():
             if param_name not in properties:
                 if param_name in top_pattern_matched:
                     continue  # already checked against its pattern
+                if param_name in top_branch_declared:
+                    continue  # declared by a combinator branch
                 if allow_additional:
                     if isinstance(additional_schema, dict):
                         is_valid, err = _validate_value(

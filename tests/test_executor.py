@@ -2855,3 +2855,153 @@ def test_fully_evaluable_certifies_only_what_the_validator_applies():
         node["not"] = {"type": "object"}
         node = node["not"]
     assert _fully_evaluable(deep) is False
+
+
+@pytest.mark.asyncio
+async def test_a_combinator_branch_constrains_without_closing(engine):
+    """A branch says what it says *about the keys it names* — it is not a
+    description of the whole object. Evaluating one through the same object
+    path as a tool schema applied Gantry's closed-by-default reading to it, so
+    a root ``allOf`` branch declaring ``b`` rejected ``{"a": 1, "b": 2}`` with
+    ``Unknown parameter: a``, ``a`` being the *root's* own property
+    (PR #386 review).
+
+    The mirror of it: with the branches now evaluated, a key only a branch
+    declares was checked against that branch and then reported unknown,
+    because only the root's own ``properties`` counted as declared. Validating
+    a key and rejecting it as undeclared in one pass is incoherent whichever
+    default is right."""
+
+    def tool_with(schema: dict) -> ToolDefinition:
+        return ToolDefinition(
+            name="composed", description="A composed schema", parameters_schema=schema
+        )
+
+    composed = tool_with(
+        {
+            "type": "object",
+            "properties": {"a": {"type": "integer"}},
+            "allOf": [{"properties": {"b": {"type": "integer"}}}],
+        }
+    )
+    assert await engine._validate_arguments(composed, {"a": 1, "b": 2}) == (True, None)
+    assert await engine._validate_arguments(composed, {"a": 1}) == (True, None)
+
+    # Declared by a branch still means *checked* against it.
+    ok, err = await engine._validate_arguments(composed, {"a": 1, "b": "x"})
+    assert ok is False and "Parameter 'b' must be an integer" in err
+
+    # And a key no branch declares is still refused, so this is not a hole in
+    # the tool schema's own closure.
+    ok, err = await engine._validate_arguments(composed, {"a": 1, "z": 9})
+    assert ok is False and "Unknown parameter: z" in err
+
+    # Sibling branches each contribute their names.
+    siblings = tool_with(
+        {
+            "type": "object",
+            "properties": {"a": {"type": "integer"}},
+            "anyOf": [
+                {"properties": {"b": {"type": "integer"}}},
+                {"properties": {"c": {"type": "integer"}}},
+            ],
+        }
+    )
+    assert await engine._validate_arguments(siblings, {"a": 1, "c": 3}) == (True, None)
+
+    # The same holds one level down, where a nested object carries its own
+    # combinator.
+    nested = tool_with(
+        {
+            "type": "object",
+            "properties": {
+                "p": {
+                    "type": "object",
+                    "properties": {"a": {"type": "integer"}},
+                    "allOf": [{"properties": {"b": {"type": "integer"}}}],
+                }
+            },
+        }
+    )
+    assert await engine._validate_arguments(nested, {"p": {"a": 1, "b": 2}}) == (True, None)
+    ok, err = await engine._validate_arguments(nested, {"p": {"a": 1, "z": 9}})
+    assert ok is False and "Unknown parameter: p.z" in err
+
+    # An *explicit* closure inside a branch is the schema saying so rather
+    # than a default being inferred, so it is still honoured: this branch
+    # permits nothing but ``b``, and ``allOf`` intersects.
+    explicit = tool_with(
+        {
+            "type": "object",
+            "properties": {"a": {"type": "integer"}},
+            "allOf": [
+                {"properties": {"b": {"type": "integer"}}, "additionalProperties": False}
+            ],
+        }
+    )
+    ok, err = await engine._validate_arguments(explicit, {"a": 1, "b": 2})
+    assert ok is False and "Unknown parameter: a" in err
+
+    # ``not`` names the shape a value must *not* take, so it declares nothing.
+    negated = tool_with(
+        {
+            "type": "object",
+            "properties": {"a": {"type": "integer"}},
+            "not": {"properties": {"b": {"type": "integer"}}},
+        }
+    )
+    ok, err = await engine._validate_arguments(negated, {"a": 1, "b": 2})
+    assert ok is False and "required not to" in err
+
+
+@pytest.mark.asyncio
+async def test_a_plain_tool_schema_is_still_closed(engine):
+    """The guard on the change above: Gantry closes an object whose
+    ``additionalProperties`` is absent, stricter than the spec's open default,
+    and that must survive for every schema that is not a combinator branch."""
+    plain = ToolDefinition(
+        name="plain",
+        description="An ordinary tool schema",
+        parameters_schema={"type": "object", "properties": {"a": {"type": "integer"}}},
+    )
+    ok, err = await engine._validate_arguments(plain, {"a": 1, "z": 9})
+    assert ok is False and "Unknown parameter: z" in err
+
+    nested = ToolDefinition(
+        name="nested",
+        description="A nested object with no combinator in sight",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "p": {"type": "object", "properties": {"a": {"type": "integer"}}}
+            },
+        },
+    )
+    ok, err = await engine._validate_arguments(nested, {"p": {"a": 1, "z": 9}})
+    assert ok is False and "Unknown parameter: p.z" in err
+
+    empty = ToolDefinition(
+        name="empty",
+        description="A tool that declares no parameters at all",
+        parameters_schema={"type": "object", "properties": {}},
+    )
+    ok, err = await engine._validate_arguments(empty, {"z": 1})
+    assert ok is False and "Unknown parameter: z" in err
+
+
+def test_root_assertions_are_all_keywords_the_validator_implements():
+    """`_ROOT_ASSERTIONS` is hand-maintained and has to stay in step with what
+    `_validate_value` actually applies — listing a keyword it ignores would
+    advertise an assertion as enforced without enforcing it. `_EVALUATED_KEYWORDS`
+    is the same claim from the other direction, so pinning one against the
+    other catches the drift a future keyword would introduce."""
+    from agent_gantry.core.executor import _EVALUATED_KEYWORDS, _ROOT_ASSERTIONS
+
+    assert set(_ROOT_ASSERTIONS) <= _EVALUATED_KEYWORDS
+    # The structural keywords stay with the top-level walk, which owns them.
+    assert not set(_ROOT_ASSERTIONS) & {
+        "properties",
+        "required",
+        "additionalProperties",
+        "patternProperties",
+    }

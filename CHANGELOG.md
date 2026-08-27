@@ -31,6 +31,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   off a tool's root schema, so a root `allOf`/`anyOf`/`oneOf`/`not`,
   `const`/`enum`, or `minProperties`/`maxProperties` bound nothing at all.
   Merged and imported schemas (MCP, OpenAPI) carry these routinely.
+- **A combinator branch constrains an object without closing it.** A branch
+  says what it says about the keys it names; it is not a description of the
+  whole object. Gantry closes an object whose `additionalProperties` is absent
+  — stricter than the spec's open default — and applying that to a branch made
+  an `allOf` branch declaring `b` reject `{"a": 1, "b": 2}` over `a`, the
+  root's own property. Conversely, a key only a branch declared was checked
+  against that branch and then reported unknown, since only the root's
+  `properties` counted as declared. Both directions are fixed; an *explicit*
+  `additionalProperties: false` inside a branch is still honoured, and `not`
+  declares nothing.
 - **The `not` keyword is evaluated.** It was parsed nowhere — the provider
   transforms walk into it, so it survived a round-trip through them and then
   constrained nothing, and a schema whose purpose is to forbid a shape
