@@ -18,7 +18,7 @@ import uuid
 from typing import Any, TypedDict
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from agent_gantry import AgentGantry
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
@@ -29,6 +29,19 @@ from agent_gantry.schema.tool import ToolDefinition
 
 class Payload(BaseModel):
     x: int
+
+
+class Positive(BaseModel):
+    """A model whose invariant no JSON Schema keyword can carry."""
+
+    x: int
+
+    @field_validator("x")
+    @classmethod
+    def _must_be_positive(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("x must be positive")
+        return value
 
 
 @dataclasses.dataclass
@@ -200,14 +213,23 @@ async def test_scalar_arguments_are_passed_through_untouched(gantry):
     assert result.result == "str/int"
 
 
-async def test_unconvertible_value_falls_back_to_the_raw_argument():
-    """Validation has already run against the canonical schema, so a handler
-    that was happy with the raw mapping must not start failing here.
+async def test_an_unconvertible_value_is_a_validation_error_not_a_fallback():
+    """Reconstruction failure is terminal.
 
-    Reaching the fallback needs a schema *looser* than the annotation — which
-    is exactly what an imported (MCP/OpenAPI) or hand-written schema can be.
-    Here the schema says "any object" while the handler says ``Payload``, so
-    ``{"y": 2}`` passes validation and then fails reconstruction.
+    Reaching it needs a schema *looser* than the annotation — which is exactly
+    what an imported (MCP/OpenAPI) or hand-written schema can be, and what a
+    Pydantic ``field_validator`` whose invariant JSON Schema can't express
+    produces even for a schema Gantry emitted itself. Here the schema says
+    "any object" while the handler says ``Payload``, so ``{"y": 2}`` passes
+    validation and then fails reconstruction.
+
+    This *used* to pass the raw mapping through, on the reasoning that
+    validation had already run and a handler happy with a dict shouldn't start
+    failing. That reasoning doesn't hold: the coercer is installed precisely
+    because the handler declares ``Payload``, so the raw mapping is the one
+    value it cannot take — ``p.x`` raises ``AttributeError`` deep inside the
+    tool, or the tool misbehaves silently. A clear rejection is the honest
+    outcome (PR #381 review).
     """
     g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
 
@@ -235,11 +257,12 @@ async def test_unconvertible_value_falls_back_to_the_raw_argument():
     assert good.status.value == "success", good.error
     assert good.result == "Payload"
 
-    # One the schema admits but ``Payload`` rejects falls back to the raw
-    # mapping rather than turning a valid call into an error.
-    fallback = await g.execute(ToolCall(tool_name="loose", arguments={"p": {"y": 2}}))
-    assert fallback.status.value == "success", fallback.error
-    assert fallback.result == "dict"
+    # One the schema admits but ``Payload`` rejects is refused here rather
+    # than dispatched as a ``dict`` to a handler annotated ``Payload``.
+    rejected = await g.execute(ToolCall(tool_name="loose", arguments={"p": {"y": 2}}))
+    assert rejected.status.value == "failure"
+    assert rejected.error_type == "ValidationError"
+    assert "p" in rejected.error
 
 
 async def test_every_reconstructed_kind_arrives_typed_end_to_end(gantry):
@@ -653,3 +676,50 @@ def test_only_the_formats_gantry_reconstructs_are_enforced():
     assert check_json_constraints("nope", {"type": "string", "format": "email"}, "v") is None
     # A non-string value is not a format's business.
     assert check_json_constraints(5, {"type": "string", "format": "date-time"}, "v") is None
+
+
+async def test_an_invariant_json_schema_cannot_express_is_still_terminal():
+    """The case that makes the fallback indefensible: a Pydantic
+    ``field_validator`` whose rule no JSON Schema keyword can carry. Schema
+    validation *cannot* have ruled the value out, so passing the raw mapping
+    through hands a ``dict`` to a handler annotated with the model
+    (PR #381 review)."""
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @g.register(tags=["demo"])
+    def use_positive(p: Positive) -> str:
+        """Read a field off a model with a custom validator."""
+        return f"{type(p).__name__}:{p.x}"
+
+    await g.sync()
+    ok = await g.execute(ToolCall(tool_name="use_positive", arguments={"p": {"x": 3}}))
+    assert ok.status.value == "success", ok.error
+    assert ok.result == "Positive:3"
+
+    # ``{"x": -1}`` satisfies the emitted schema — ``x`` is an integer — and
+    # only the model's own validator rejects it.
+    bad = await g.execute(ToolCall(tool_name="use_positive", arguments={"p": {"x": -1}}))
+    assert bad.status.value == "failure"
+    assert bad.error_type == "ValidationError"
+
+
+async def test_a_formatted_value_survives_the_framework_dispatch_boundary():
+    """A framework reading ``python_signature`` sees ``datetime`` and may hand
+    a real ``datetime`` back. The canonical schema types that property as a
+    JSON string, so it has to be serialized before dispatch or a *valid* call
+    is rejected (PR #381 review)."""
+    from agent_gantry.integrations.frameworks.base import _json_native
+
+    formatted = {"type": "string", "format": "date-time"}
+    assert _json_native(datetime.datetime(2026, 8, 27), formatted) == "2026-08-27T00:00:00"
+    assert _json_native("2026-08-27T00:00:00", formatted) == "2026-08-27T00:00:00"
+    assert _json_native(uuid.UUID(int=1), {"type": "string", "format": "uuid"}) == str(
+        uuid.UUID(int=1)
+    )
+    # Only where the schema declares one of those formats — a parameter
+    # genuinely typed object or array is untouched.
+    assert _json_native(datetime.datetime(2026, 8, 27), {"type": "string"}) == (
+        datetime.datetime(2026, 8, 27)
+    )
+    assert _json_native({"a": 1}, {"type": "object"}) == {"a": 1}
+    assert _json_native("x", None) == "x"

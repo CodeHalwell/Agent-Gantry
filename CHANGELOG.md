@@ -770,6 +770,24 @@ adapters, and the provider dialects agree with it.
   `null` in the CrewAI/LlamaIndex model while the executor rejected it. That
   check was a weaker duplicate of the shared `schema_declares_null` and has
   been deleted in favour of it.
+- **The framework bridge checks a string `format` instead of applying it.**
+  Annotating a `date-time` field `datetime` made the generated model hand a
+  `datetime` *object* back — CrewAI forwards its validated kwargs and
+  LlamaIndex's `_coerced` dumps in Python mode — while the canonical schema
+  still types the property as a JSON string, so the executor rejected every
+  *valid* formatted call. The value now stays JSON-native across the dispatch
+  boundary and only its shape is asserted. `ToolSpec.ainvoke` serializes such
+  a value defensively too, for frameworks that parse the model's answer from
+  the `python_signature` annotation before handing it back.
+- **A failed argument reconstruction is terminal.** It used to pass the raw
+  value through, reasoning that validation had already run against the
+  canonical schema. That reasoning doesn't hold: the coercer exists precisely
+  *because* the handler declares a type the JSON form isn't, so the raw value
+  is the one thing it cannot take — a handler annotated `Payload` raised
+  `AttributeError` deep inside the tool, or misbehaved silently. Reachable for
+  invariants JSON Schema cannot express at all (a Pydantic `field_validator`,
+  a mapping key that doesn't parse), which is exactly where validation cannot
+  have ruled the value out first. Now a `ValidationError`, not retried.
 
 ### Performance
 

@@ -40,6 +40,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+class ArgumentReconstructionError(ValueError):
+    """An argument could not be rebuilt into the type its handler declares.
+
+    Terminal rather than advisory. The coercer exists *because* the handler is
+    annotated with a type the JSON form isn't — so a handler annotated
+    ``Payload`` is not "happy with the raw mapping": handing it a ``dict``
+    trades a clear rejection for an ``AttributeError`` deep inside the tool, or
+    for silently wrong behaviour. Reachable for invariants JSON Schema cannot
+    express in the first place (a Pydantic ``field_validator``, a mapping key
+    that doesn't parse), which is exactly where schema validation cannot have
+    ruled the value out first.
+    """
+
+
 #: Memoized per-handler argument coercers (see ``_coercers_for``).
 #: An ``OrderedDict`` rather than a plain one so the bound below can *evict*
 #: rather than stop caching: a hard cap alone means that once N distinct
@@ -98,9 +112,12 @@ def _reconstructed(handler: Callable[..., Any], arguments: dict[str, Any]) -> di
     Only parameters whose declared type genuinely differs from its JSON form
     are touched (see :func:`build_argument_coercers`), so a handler taking
     scalars, lists or dicts receives byte-for-byte what it received before.
-    Conversion failures pass the original value through: validation has
-    already run against the canonical schema, and a handler that was happy
-    with the raw mapping must not start failing here.
+
+    A conversion failure raises :class:`ArgumentReconstructionError` rather
+    than passing the original value through. Falling back looked conservative
+    — validation had already run against the canonical schema — but the
+    coercer exists precisely because the handler declares a type the JSON form
+    isn't, so the raw value is the one thing the handler cannot take.
     """
     if not arguments:
         return arguments
@@ -116,14 +133,11 @@ def _reconstructed(handler: Callable[..., Any], arguments: dict[str, Any]) -> di
             continue
         try:
             rebuilt = adapter.validate_python(value)
-        except Exception:  # noqa: BLE001 - advisory; keep the caller's value
-            logger.debug(
-                "Could not rebuild argument %r into its declared type; passing "
-                "the raw value to the handler.",
-                name,
-            )
-            out[name] = value
-            continue
+        except Exception as exc:  # noqa: BLE001 - reported as a validation error
+            raise ArgumentReconstructionError(
+                f"Parameter '{name}' could not be rebuilt into the type its "
+                f"handler declares: {exc}"
+            ) from exc
         changed = changed or rebuilt is not value
         out[name] = rebuilt
     return out if changed else arguments
@@ -438,6 +452,28 @@ class ExecutionEngine:
                     tool_name=call.tool_name,
                     status=ExecutionStatus.SUCCESS,
                     result=result_value,
+                    queued_at=queued_at,
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    attempt_number=attempt,
+                    trace_id=trace_id,
+                    span_id=span_id,
+                )
+                if self._telemetry:
+                    await self._telemetry.record_execution(call, result)
+                return result
+            except ArgumentReconstructionError as e:
+                # Deterministic — retrying re-runs the same rejected parse —
+                # and reported as a validation failure because that is what it
+                # is: the value satisfied the JSON Schema but not the handler's
+                # own declared type, an invariant the schema could not express.
+                completed_at = datetime.now(timezone.utc)
+                await self._record_failure(tool)
+                result = ToolResult(
+                    tool_name=call.tool_name,
+                    status=ExecutionStatus.FAILURE,
+                    error=str(e),
+                    error_type="ValidationError",
                     queued_at=queued_at,
                     started_at=started_at,
                     completed_at=completed_at,

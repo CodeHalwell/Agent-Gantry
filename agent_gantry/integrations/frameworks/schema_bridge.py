@@ -381,6 +381,24 @@ def _with_constraints(annotation: Any, prop: dict[str, Any]) -> Any:
         if multiple is not None and multiple > 0:
             marks.append(at.MultipleOf(multiple))
     elif json_type == "string":
+        if prop.get("format") in RECONSTRUCTED_STRING_FORMATS:
+            # Checked, *not* converted. Annotating the field ``datetime`` made
+            # the model hand a ``datetime`` object back — CrewAI forwards its
+            # validated kwargs and LlamaIndex's ``_coerced`` dumps in Python
+            # mode — while the canonical schema still types the property as a
+            # JSON string, so the executor rejected every *valid* formatted
+            # call. The value stays JSON-native across the dispatch boundary;
+            # only its shape is asserted, by the same checker the executor
+            # runs.
+            from pydantic import AfterValidator
+
+            def _check_format(value: Any, _schema: dict[str, Any] = prop) -> Any:
+                error = check_json_constraints(value, _schema, "value")
+                if error is not None:
+                    raise ValueError(error)
+                return value
+
+            marks.append(AfterValidator(_check_format))
         low, high = _count("minLength"), _count("maxLength")
         if low is not None:
             marks.append(at.MinLen(low))
@@ -790,14 +808,6 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
         # through advertised an unconstrained ``Any``. Check membership
         # directly instead.
         return _enum_membership(enum_values)
-
-    if prop.get("type") == "string":
-        # The same mapping the signature path uses: a ``date-time`` property
-        # advertised as a bare ``str`` let the CrewAI/LlamaIndex model accept
-        # a string the executor now rejects for not parsing.
-        formatted = RECONSTRUCTED_STRING_FORMATS.get(prop.get("format"))
-        if formatted is not None:
-            return formatted
 
     json_type = prop.get("type")
     # A field can be typed purely through a combinator, with no ``type`` of

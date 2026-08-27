@@ -30,10 +30,12 @@ agent_gantry`` never requires LangChain et al. to be installed.
 from __future__ import annotations
 
 import asyncio
+import datetime
 import inspect
 import logging
 import os
 import threading
+import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
@@ -154,6 +156,10 @@ class ToolSpec:
             if v is not None
             or k in required
             or schema_declares_null(properties.get(k))
+        }
+        arguments = {
+            key: _json_native(value, properties.get(key))
+            for key, value in arguments.items()
         }
         # Pass the namespace: selection resolved this spec to one specific
         # tool, and a bare-name execute would prefer ``default.<name>`` if
@@ -364,6 +370,32 @@ def _literal_members(prop: dict[str, Any]) -> tuple[Any, ...] | None:
     if not all(isinstance(v, (str, int, bool, float)) or v is None for v in values):
         return None
     return tuple(values)
+
+
+def _json_native(value: Any, prop: Any) -> Any:
+    """Return ``value`` in the JSON form its schema declares.
+
+    The executor validates against the *canonical* schema, which types a
+    ``datetime``/``date``/``time``/``UUID`` parameter as a formatted string.
+    A framework that reads this spec's signature — where those properties are
+    annotated with the Python type, so the framework advertises the format —
+    may parse the model's answer before handing it back, and a real
+    ``datetime`` object then fails ``_matches_type`` against ``"string"``,
+    rejecting a *valid* call. Serializing here keeps the dispatch boundary
+    JSON-native whichever framework is in play.
+
+    Only applied where the schema actually declares one of those formats, so
+    a parameter genuinely typed ``object`` or ``array`` is untouched.
+    """
+    if not isinstance(prop, dict):
+        return value
+    if prop.get("format") not in RECONSTRUCTED_STRING_FORMATS:
+        return value
+    if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
+        return value.isoformat()
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    return value
 
 
 def _composite_choice_type(prop: dict[str, Any]) -> Any:

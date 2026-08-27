@@ -1469,12 +1469,13 @@ def test_the_model_cache_evicts_rather_than_growing():
         schema_bridge._MODEL_CACHE.update(original_cache)
 
 
-def test_the_bridge_types_reconstructed_formats_like_the_executor():
-    """A ``date-time`` property advertised as a bare ``str`` let the
-    CrewAI/LlamaIndex model accept a string the executor rejects for not
-    parsing. Both sides read one shared table now (PR #381 review)."""
-    import datetime
-
+def test_the_bridge_checks_a_format_without_converting_the_value():
+    """The format is *asserted*, not applied. Annotating the field
+    ``datetime`` made the model hand a ``datetime`` object back — CrewAI
+    forwards its validated kwargs, LlamaIndex's ``_coerced`` dumps in Python
+    mode — while the canonical schema still types the property as a JSON
+    string, so the executor rejected every *valid* formatted call
+    (PR #381 review)."""
     model = pydantic_model_from_schema(
         "Args",
         {
@@ -1483,7 +1484,11 @@ def test_the_bridge_types_reconstructed_formats_like_the_executor():
             "required": ["at"],
         },
     )
-    assert model(at="2026-08-27T00:00:00").at == datetime.datetime(2026, 8, 27)
+    # JSON-native across the dispatch boundary, which is what the executor
+    # validates against.
+    assert model(at="2026-08-27T00:00:00").at == "2026-08-27T00:00:00"
+    assert model(at="2026-08-27T00:00:00").model_dump() == {"at": "2026-08-27T00:00:00"}
+    # Still rejected for not parsing, which is the point of reading it at all.
     with pytest.raises(ValidationError):
         model(at="not-a-date")
 
