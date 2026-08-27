@@ -1,7 +1,7 @@
 """Tests for the signature annotations in ``base.py``.
 
 ``ToolSpec.python_signature`` is what frameworks that rebuild their own LLM
-schema from a callable — Semantic Kernel, AG2, Google ADK's fallback path —
+schema from a callable — Google ADK's fallback path, Pydantic AI —
 actually see. Anything the annotation drops is invisible to the model on those
 paths, however faithful ``parameters_schema`` itself is, so these tests pin the
 mapping directly rather than through any one framework.
@@ -15,7 +15,7 @@ from agent_gantry.integrations.frameworks.base import _annotation_for_prop
 
 
 def test_enum_becomes_a_literal():
-    """Previously a bare ``str``, so Semantic Kernel/AG2/ADK-fallback
+    """Previously a bare ``str``, so the signature-reading adapters
     advertised ``Literal["fast", "slow"]`` as unconstrained text even though
     ``parameters_schema`` carried the enum (PR #381 review)."""
     assert _annotation_for_prop({"type": "string", "enum": ["fast", "slow"]}) == Literal[
@@ -144,7 +144,7 @@ def test_a_composite_enum_is_annotated_as_its_container_not_a_string():
     ``type``, since its members share no scalar kind. With no ``Literal`` to
     build and no ``type`` to read, this fell through to the ``str`` fallback
     and advertised a *string* for an array-valued parameter to Semantic
-    Kernel, AG2 and ADK's fallback path, so the string the model produced was
+    ADK's fallback path, so the string the model produced was
     rejected by the executor (PR #381 review)."""
     assert _annotation_for_prop({"enum": [[0, 0], [1, 1]]}) is list
     assert _annotation_for_prop({"enum": [{"a": 1}, {"a": 2}]}) is dict
@@ -160,7 +160,7 @@ def test_a_declared_type_outranks_the_members_it_disagrees_with():
 
 
 def test_reconstructed_string_formats_survive_into_the_signature():
-    """Semantic Kernel, AG2 and Google ADK's fallback path rebuild their
+    """Google ADK's fallback path and Pydantic AI rebuild their
     provider schema from this signature, so flattening
     ``{"type": "string", "format": "date-time"}`` to ``str`` dropped the format
     the schema had just gained — and the model could then answer with a string
@@ -180,8 +180,8 @@ def test_reconstructed_string_formats_survive_into_the_signature():
 def test_a_required_nullable_keeps_null_in_its_annotation():
     """Required means the value must be *present*, not that it must be
     non-null. ``def f(x: int | None)`` emits ``{"type": ["integer", "null"]}``
-    in ``required``, and annotating it a bare ``int`` told Semantic Kernel and
-    AG2 to advertise a non-nullable parameter — so the model could not produce
+    in ``required``, and annotating it a bare ``int`` told a signature-reading
+    framework to advertise a non-nullable parameter — so the model could not produce
     the null the executor accepts (PR #381 review)."""
     from agent_gantry.integrations.frameworks.base import ToolSpec
 

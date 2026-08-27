@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-gantry"
-version = "0.12.0"
+version = "0.13.0"
 description = "Universal Tool Orchestration Platform - Intelligent, secure tool orchestration for LLM-based agent systems"
 readme = "README.md"
 license = "MIT"
@@ -53,8 +53,8 @@ agent-frameworks = [
     # Range: >=1.5.0,<2.0.0.
     # IMPORTANT (2026-08-26): the universal uv.lock resolves this combined
     # extra to agent-framework 1.5.0 — the FLOOR, not latest. Cause: newer
-    # AF's foundry subpackage (pulled in via agent-framework-core[all]) and
-    # semantic-kernel >=1.43.1 both require azure-ai-agents >=1.2.0b3, a
+    # AF's foundry subpackage (pulled in via agent-framework-core[all])
+    # requires azure-ai-agents >=1.2.0b3, a
     # PRE-RELEASE that [tool.uv] prerelease="if-necessary-or-explicit"
     # refuses (azure-ai-agents has stable releases, and a transitive
     # pre-release marker is neither "necessary" nor "explicit"), so the
@@ -130,8 +130,6 @@ agent-frameworks = [
     # Source: https://pypi.org/pypi/agent-framework/json
     #         https://github.com/microsoft/agent-framework/releases
     "agent-framework>=1.5.0,<2.0.0",
-    "autogen-agentchat>=0.7.5",
-    "autogen-ext[openai]>=0.7.5",
     # crewai 1.15.10 (latest stable, 2026-07-31). The long-standing
     # opentelemetry conflict with agent-framework is RESOLVED as of crewai
     # 1.15.0 (2026-06-25): the pin moved from opentelemetry-api~=1.34.0 to
@@ -168,24 +166,6 @@ agent-frameworks = [
     # against llama-index-core 0.14.24 standalone 2026-08-26.
     "llama-index-core>=0.14.23",
     "llama-index-llms-openai>=0.7.10",
-    # semantic-kernel 1.44.1 (latest stable, 2026-08). Floor MUST stay at
-    # 1.36.0 in this combined extra: a floor bump to >=1.43.1 was attempted on
-    # 2026-08-03 and `uv lock` proved it unsatisfiable — sk 1.43.1/1.44.x pin
-    # azure-ai-projects>=1.0.0b12,<1.1.dev0 while agent-framework-foundry
-    # (pulled in via agent-framework-core[all]) requires azure-ai-projects
-    # >=2.2.0. The previously documented opentelemetry clash is gone at
-    # sk 1.43+ (now ~=1.24) but this azure-ai-projects conflict replaces it.
-    # Note (2026-08-26): sk 1.36.0's own pydantic<2.12 pin is also what holds
-    # the combined extra on pydantic 2.11.x — which in turn forces google-adk
-    # down to the 1.x line's <=1.14.x (adk >=1.36 requires pydantic>=2.12).
-    # To use sk 1.44.x, install standalone without agent-framework AND pass
-    # --prerelease=allow (sk >=1.43.1 depends on the pre-release
-    # azure-ai-agents>=1.2.0b3; without the flag the resolver quietly falls
-    # back to sk 1.36.0 — this silently defeated the "semantic-kernel
-    # (latest)" drift-check cell until 2026-08-26). Adapter re-verified
-    # against sk 1.44.1 standalone 2026-08-26.
-    # Source: https://pypi.org/pypi/semantic-kernel/json (verified 2026-08-03)
-    "semantic-kernel>=1.36.0",
     # google-adk 2.6.1 (latest 2.x, 2026-07-31); 1.x line latest is 1.37.0.
     # Updated picture as of 2026-08-03:
     # (1) The langgraph<0.4.8 requirement STILL EXISTS in both lines but only
@@ -196,24 +176,31 @@ agent-frameworks = [
     # (3) opentelemetry: adk 1.37.0 caps <=1.41.1 (conflicts with
     #     crewai>=1.15's ~=1.42.0); adk 2.6.1 allows >=1.39,<=1.42.1 — so the
     #     resolver picks the 2.x line alongside crewai 1.15+.
-    # Floor stays at 1.14.1 (permissive). Correction (2026-08-26): the
-    # universal lock resolves to 1.14.1, NOT 2.x — semantic-kernel 1.36.0's
-    # pydantic<2.12 pin holds the combined extra on pydantic 2.11.x, and
-    # adk >=1.36 (both lines) requires pydantic>=2.12. The weekly
-    # latest-frameworks workflow covers adk 2.x standalone; adapter
-    # re-verified against google-adk 2.7.1 standalone 2026-08-26.
+    # Floor raised to 2.6.1 on 2026-08-27, when semantic-kernel left this
+    # extra. sk 1.36.0's pydantic<2.12 pin was what had held the combined
+    # extra on pydantic 2.11.x, and adk >=1.36 (both lines) requires
+    # pydantic>=2.12 — so the resolver had been pinned to the 1.x line's
+    # 1.14.1. Without sk the universal lock now resolves adk 2.8.0 on
+    # pydantic 2.12.5. Note the floor had to be raised explicitly: uv will
+    # not climb past a satisfied floor on its own, so removing sk alone left
+    # the lock unchanged at 1.14.1.
     # Source: https://pypi.org/pypi/google-adk/json (verified 2026-08-03)
-    "google-adk>=1.14.1",
+    "google-adk>=2.6.1",
 ]
 # NOTE: the native-tool-adapter frameworks (pydantic-ai, openai-agents,
-# smolagents, haystack-ai, agno, strands-agents, dspy) are intentionally NOT a project extra: several
+# haystack-ai, agno, strands-agents, dspy) are intentionally NOT a project extra: several
 # of them (e.g. openai-agents requires pydantic>=2.12.2) cannot co-resolve with
 # the `agent-frameworks` extra (pydantic<2.12 via crewai/agent-framework), and a
 # project extra must satisfy uv's *universal* lock alongside every other extra.
 # They are installed directly (in an isolated env) by the `framework-adapters`
 # CI job, which runs tests/frameworks/test_real_packages.py to guard each
 # adapter against real-API drift. langchain/langgraph/llamaindex/crewai/
-# semantic-kernel/google-adk are validated by the main matrix via `agent-frameworks`.
+# google-adk are validated by the main matrix via `agent-frameworks`.
+#
+# REMOVED in 0.13.0: the smolagents, AutoGen / AG2 and Semantic Kernel adapters,
+# along with their packages (smolagents, autogen-agentchat, autogen-ext,
+# semantic-kernel) and CI cells. Dropping semantic-kernel is what let the
+# google-adk floor move to the 2.x line — see its comment above.
 example-tools = [
     "beautifulsoup4>=4.12.0",
     "cryptography>=41.0.0",

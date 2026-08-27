@@ -25,7 +25,7 @@ agent_gantry/
 │   └── executors/        # Direct, Sandbox, MCP, HTTP, A2A
 ├── providers/            # Tool import from various sources
 ├── servers/              # MCP and A2A server implementations
-├── integrations/         # LangChain, AutoGen, LlamaIndex, CrewAI
+├── integrations/         # LangChain, LlamaIndex, CrewAI, Google ADK
 ├── observability/        # Telemetry, metrics, logging
 └── cli/                  # Command-line interface
 

@@ -3,7 +3,7 @@ name: Latest framework drift check
 # pyproject.toml intentionally floors several framework extras below their
 # latest upstream release because they don't co-resolve with each other in
 # the combined `agent-frameworks` extra (see the dated comments there for the
-# exact conflicts: google-adk vs langgraph, crewai/semantic-kernel vs
+# exact conflicts: google-adk vs langgraph, crewai vs
 # agent-framework on opentelemetry-api). The main `test` matrix therefore
 # only ever exercises the pinned floors, so drift on the *latest* release of
 # each conflicting framework is invisible until a user hits it.
@@ -53,33 +53,13 @@ jobs:
             install: '".[dev]" crewai'
             tests: tests/frameworks/test_crewai.py tests/frameworks/test_live_wrappers.py tests/frameworks/test_real_packages.py
 
-          # semantic-kernel's latest release has the same opentelemetry-api
-          # conflict with agent-framework, so install it standalone.
-          # --prerelease=allow: sk >=1.43.1 depends on a pre-release
-          # azure-ai-agents (>=1.2.0b3); without the flag uv quietly resolves
-          # sk back to 1.36.0 and this cell tests the floor while claiming to
-          # test latest (verified 2026-08-26 — 1.44.1 only installs with the
-          # flag; the adapter passes on it).
-          - name: semantic-kernel (latest)
-            install: '--prerelease=allow ".[dev]" semantic-kernel'
-            tests: tests/frameworks/test_semantic_kernel.py tests/frameworks/test_semantic_kernel_live.py tests/frameworks/test_real_packages.py
-
           # langchain/langgraph/llamaindex track fast-moving release lines and
           # previously had no latest-drift cell at all (only the lock-driven
-          # floors in the main matrix). autogen-core/agentchat ride along —
-          # all of these co-resolve without agent-framework in the venv.
-          - name: langchain + llamaindex + autogen (latest)
-            install: '".[dev]" langchain langgraph langchain-core llama-index-core autogen-core autogen-agentchat'
-            tests: tests/frameworks/test_langchain.py tests/frameworks/test_langgraph.py tests/frameworks/test_langgraph_live.py tests/frameworks/test_llamaindex.py tests/frameworks/test_llamaindex_live.py tests/frameworks/test_autogen.py tests/frameworks/test_autogen_live.py tests/frameworks/test_real_packages.py
-
-          # Classic AG2 (module `autogen`, the register_function API targeted
-          # by AutoGenAdapter.register) is frozen on the <1 line — AG2 1.x
-          # renamed its import to `ag2` with a new agent API, and pyautogen
-          # >=0.10 became a Microsoft autogen-agentchat shim. This cell guards
-          # the register() path, which no other job installs a package for.
-          - name: ag2 classic (0.x)
-            install: '".[dev]" "ag2[openai]<1"'
-            tests: tests/frameworks/test_autogen.py
+          # floors in the main matrix). All of these co-resolve without
+          # agent-framework in the venv.
+          - name: langchain + llamaindex (latest)
+            install: '".[dev]" langchain langgraph langchain-core llama-index-core'
+            tests: tests/frameworks/test_langchain.py tests/frameworks/test_langgraph.py tests/frameworks/test_langgraph_live.py tests/frameworks/test_llamaindex.py tests/frameworks/test_llamaindex_live.py tests/frameworks/test_real_packages.py
 
           # agent-framework itself is floored below latest (<2.0 stays on the
           # documented 1.x series); validate the newest 1.x release standalone.
@@ -92,7 +72,7 @@ jobs:
           # agent-frameworks set. Validate their latest releases together,
           # same as the `framework-adapters` CI job but unpinned.
           - name: native adapters (latest)
-            install: '".[dev]" pydantic-ai-slim openai-agents smolagents haystack-ai agno strands-agents dspy'
+            install: '".[dev]" pydantic-ai-slim openai-agents haystack-ai agno strands-agents dspy'
             tests: tests/frameworks/
     steps:
       - uses: actions/checkout@v4

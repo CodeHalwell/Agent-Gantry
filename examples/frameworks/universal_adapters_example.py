@@ -77,10 +77,8 @@ async def main() -> None:
         "crewai": F.CrewAIAdapter,
         "pydantic_ai": F.PydanticAIAdapter,
         "openai_agents": F.OpenAIAgentsAdapter,
-        "smolagents": F.SmolagentsAdapter,
         "haystack": F.HaystackAdapter,
         "agno": F.AgnoAdapter,
-        "autogen": F.AutoGenAdapter,
     }
 
     print("\nExport the selection to each framework's native tool object:")

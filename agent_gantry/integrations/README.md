@@ -133,7 +133,7 @@ def send_email(to: str, body: str) -> str:
 tools = await fetch_framework_tools(
     gantry,
     "send a follow-up email",
-    framework="langgraph",  # or "autogen", "crewai", etc.
+    framework="langgraph",  # or "crewai", "google_adk", etc.
     limit=2,
 )
 # Pass tools directly to your framework
@@ -154,25 +154,6 @@ async def chat_with_langchain(prompt: str, *, tools=None):
     llm = ChatOpenAI(model="gpt-5.5")
     # Convert to LangChain tools and use with your agent
     # See examples/agent_frameworks/langchain_example.py for details
-```
-
-### AutoGen Integration
-
-```python
-from autogen_agentchat import ConversableAgent
-from agent_gantry import AgentGantry
-
-gantry = AgentGantry()
-# Register tools...
-
-# Retrieve relevant tools
-tools = await gantry.retrieve_tools("task description", limit=3)
-
-# Pass to AutoGen agent
-agent = ConversableAgent(
-    name="assistant",
-    llm_config={"model": "gpt-5.5", "tools": tools}
-)
 ```
 
 ### CrewAI Integration
@@ -269,7 +250,7 @@ Runnable example: `examples/frameworks/importers_example.py`.
 
 - `importers.py`: Reverse-direction importers — `register_langchain_tools`, `register_crewai_tools`, `register_llamaindex_tools` (see above).
 - `semantic_tools.py`: Core `with_semantic_tools` decorator and `SemanticToolSelector` class for automatic tool injection
-- `framework_adapters.py`: Legacy helper (`fetch_framework_tools`) for converting tools to OpenAI-shape JSON schemas for a small set of frameworks (LangGraph, Semantic Kernel, CrewAI, Google ADK, Strands). Prefer the native `frameworks/strands.py` `StrandsAdapter` (see below) for Strands — it returns real `DecoratedFunctionTool` objects with execution wired through `gantry.execute`, and supports genuine per-turn re-selection via `BeforeModelCallEvent`.
+- `framework_adapters.py`: Legacy helper (`fetch_framework_tools`) for converting tools to OpenAI-shape JSON schemas for a small set of frameworks (LangGraph, CrewAI, Google ADK, Strands). Prefer the native `frameworks/strands.py` `StrandsAdapter` (see below) for Strands — it returns real `DecoratedFunctionTool` objects with execution wired through `gantry.execute`, and supports genuine per-turn re-selection via `BeforeModelCallEvent`.
 - `agent_framework_bridge.py`: Microsoft Agent Framework 1.0 GA bridge — `GantryToolBridge` wraps Gantry tools as AF `FunctionTool`s with `approval_mode` auto-derived from Gantry `ToolCapability`. Exposes three agent construction helpers:
   - `build_agent(client, query, ...)` — one-liner using `client.as_agent()`, fine for single-agent flows.
   - `as_agent(client, query, ...)` — direct `Agent(client, ...)` construction; preferred when the result feeds `WorkflowBuilder`.
@@ -406,7 +387,6 @@ See `examples/llm_integration/` for complete end-to-end examples:
 
 See `examples/agent_frameworks/` for framework-specific examples:
 - `langchain_example.py`: LangChain agent integration
-- `autogen_example.py`: AutoGen agent integration
 - `crewai_example.py`: CrewAI agent integration
 
 ## See Also

@@ -285,6 +285,44 @@ def _declares_object(declared: Any) -> bool:
     return False
 
 
+def _is_typeless_enum(node: dict[str, Any]) -> bool:
+    """Whether ``node`` is an ``enum`` no ``type`` can be declared for.
+
+    Inverts ``_enum_schema``'s own condition, which is what decides whether
+    introspection emits a ``type`` alongside the members: exactly one kind,
+    and not the catch-all one. Two shapes fail it — members spanning several
+    kinds (``Literal[1, "auto"]``, and ``Literal[1, 2.5]``, since JSON Schema
+    separates ``integer`` from ``number``) and composite members (a
+    tuple-valued ``Enum``, whose members are arrays no scalar type names).
+
+    ``bool`` is grouped before ``int`` because it subclasses it, and ``null``
+    is skipped: a nullable enum still names one real kind, and its
+    nullability is carried by the type list rather than by the members.
+    """
+    if node.get("type") is not None:
+        return False
+    members = node.get("enum")
+    if not isinstance(members, list) or not members:
+        return False
+    kinds = set()
+    for member in members:
+        if member is None:
+            continue
+        if isinstance(member, bool):
+            kinds.add("boolean")
+        elif isinstance(member, int):
+            kinds.add("integer")
+        elif isinstance(member, float):
+            kinds.add("number")
+        elif isinstance(member, str):
+            kinds.add("string")
+        else:
+            kinds.add("other")
+    if not kinds:
+        return False  # an enum of nothing but ``null``: ``type: "null"`` fits
+    return len(kinds) > 1 or "other" in kinds
+
+
 def _collect_open_maps(node: Any, path: str, out: list[str]) -> None:
     if isinstance(node, list):
         for index, item in enumerate(node):
@@ -319,6 +357,19 @@ def _collect_open_maps(node: Any, path: str, out: list[str]) -> None:
     ):
         if _is_open_map(node, at_root=not path):
             out.append(path or "<root>")
+
+    if _is_typeless_enum(node):
+        # An ``enum`` whose members span more than one JSON kind — or which
+        # are composite — has no single ``type`` to declare, because
+        # ``_enum_schema`` sets one only when the kinds agree and are scalar.
+        # So ``Literal[1, "auto"]`` publishes a *typeless* property.
+        # Strict mode requires every property to name its type, so the
+        # provider rejects the whole tool request rather than that one
+        # parameter. Reported rather than repaired: widening to a type *list*
+        # is not something strict mode accepts either, so the honest answer is
+        # that this schema has no strict spelling and the tool should go out
+        # non-strict.
+        out.append(path or "<root>")
 
     if isinstance(properties, dict):
         for name, subschema in properties.items():

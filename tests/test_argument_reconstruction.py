@@ -1334,3 +1334,37 @@ async def test_a_bare_deque_parameter_reaches_the_handler_as_a_deque():
     )
     assert result.status.value == "success", result.error
     assert result.result == "1:deque:2"
+
+
+def test_sphinx_docstrings_describe_varargs_too():
+    """The Google-style parser has always matched ``*args``/``**kwargs``; the
+    Sphinx pattern excluded the stars, so those descriptions were silently
+    dropped from a Sphinx-style docstring (PR #381 review)."""
+    from agent_gantry.schema.introspection import _SPHINX_PARAM
+
+    for line, expected in (
+        (":param *args: variadic positional", ("*args", "variadic positional")),
+        (":param **kwargs: variadic keyword", ("**kwargs", "variadic keyword")),
+        # The forms that already worked, so the widening did not cost them.
+        (":param name: ordinary", ("name", "ordinary")),
+        (":param int count: typed", ("count", "typed")),
+    ):
+        match = _SPHINX_PARAM.search(line)
+        assert match is not None, line
+        assert match.groups() == expected, line
+
+
+def test_the_empty_tuple_has_no_item_type():
+    """``_fixed_tuple_args`` reads both spellings Python uses for
+    ``tuple[()]``'s arguments; its sibling did not, so ``((),)`` read as one
+    distinct member type and returned ``()`` itself — which then fell through
+    ``_type_to_json_schema``'s string fallback and typed the items of an array
+    that permits none (PR #381 review)."""
+    from agent_gantry.schema.introspection import _tuple_item_type
+
+    assert _tuple_item_type(tuple, ()) is None
+    assert _tuple_item_type(tuple, ((),)) is None
+    # Unchanged: the homogeneous forms this exists to answer.
+    assert _tuple_item_type(tuple, (int, Ellipsis)) is int
+    assert _tuple_item_type(tuple, (int, int)) is int
+    assert _tuple_item_type(tuple, (int, str)) is None

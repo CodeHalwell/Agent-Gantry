@@ -139,10 +139,8 @@ async def check_adapters(gantry: AgentGantry) -> list[tuple[str, bool, str]]:
         ("crewai", F.CrewAIAdapter),
         ("pydantic_ai", F.PydanticAIAdapter),
         ("openai_agents", F.OpenAIAgentsAdapter),
-        ("smolagents", F.SmolagentsAdapter),
         ("haystack", F.HaystackAdapter),
         ("agno", F.AgnoAdapter),
-        ("autogen", F.AutoGenAdapter),
     ]
     rows: list[tuple[str, bool, str]] = []
     for name, adapter_cls in adapters:

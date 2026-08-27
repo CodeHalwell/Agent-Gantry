@@ -7,14 +7,13 @@ deep per-turn live re-selection. Imports of the third-party framework are lazy,
 so importing this package never requires those frameworks to be installed.
 
 Supported frameworks: LangChain, LangGraph, LlamaIndex, CrewAI, Pydantic AI,
-OpenAI Agents SDK, Smolagents, Haystack, Agno, AutoGen/AG2, Semantic Kernel,
+OpenAI Agents SDK, Haystack, Agno,
 Google ADK, Strands Agents, DSPy.
 """
 
 from __future__ import annotations
 
 from agent_gantry.integrations.frameworks.agno import AgnoAdapter
-from agent_gantry.integrations.frameworks.autogen import AutoGenAdapter
 from agent_gantry.integrations.frameworks.base import (
     GantryToolset,
     ToolConfirmationRequiredError,
@@ -33,8 +32,6 @@ from agent_gantry.integrations.frameworks.langgraph import LangGraphAdapter
 from agent_gantry.integrations.frameworks.llamaindex import LlamaIndexAdapter
 from agent_gantry.integrations.frameworks.openai_agents import OpenAIAgentsAdapter
 from agent_gantry.integrations.frameworks.pydantic_ai import PydanticAIAdapter
-from agent_gantry.integrations.frameworks.semantic_kernel import SemanticKernelAdapter
-from agent_gantry.integrations.frameworks.smolagents import SmolagentsAdapter
 from agent_gantry.integrations.frameworks.strands import StrandsAdapter
 
 __all__ = [
@@ -53,11 +50,8 @@ __all__ = [
     "CrewAIAdapter",
     "PydanticAIAdapter",
     "OpenAIAgentsAdapter",
-    "SmolagentsAdapter",
     "HaystackAdapter",
     "AgnoAdapter",
-    "AutoGenAdapter",
-    "SemanticKernelAdapter",
     "GoogleADKAdapter",
     "StrandsAdapter",
     "DSPyAdapter",

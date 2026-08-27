@@ -14,7 +14,7 @@ reads ``agent.tool_registry`` for the tool specs sent to the model *after*
 that hook runs (see
 :mod:`agent_gantry.integrations.frameworks.strands_live`). That is deeper than
 the per-top-level-call rebuild used for frameworks that fix their tool list at
-agent construction (CrewAI, Agno, Haystack, Smolagents) — it mirrors the depth
+agent construction (CrewAI, Agno, Haystack) — it mirrors the depth
 of Google ADK's ``before_model_callback``.
 """
 

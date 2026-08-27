@@ -148,7 +148,7 @@ async def test_empty_query_retracts_stale_tools(gantry):
     Regression test: an early return on an empty query used to leave the
     previous turn's tools registered in Strands' stateful tool_registry
     instead of retracting them — inconsistent with the other stateful live
-    providers (e.g. Semantic Kernel clears its plugin on a blank query).
+    providers (e.g. a plugin-refresh provider clears its plugin on a blank query).
     """
     hook = StrandsAdapter(gantry).tool_hook(limit=1)
     agent = _agent_with_user_text("weather forecast for the city")

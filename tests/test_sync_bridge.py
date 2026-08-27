@@ -1,7 +1,7 @@
 """The sync bridge must fan out, and must survive a nested invocation.
 
 ``ToolSpec.invoke`` runs a coroutine from synchronous framework code (CrewAI
-``_run``, Haystack ``function``, Agno ``entrypoint``, smolagents ``forward``,
+``_run``, Haystack ``function``, Agno ``entrypoint``,
 DSPy ``_fn``). When a loop is already running on the calling thread it hands
 the coroutine to a worker thread instead.
 

@@ -33,21 +33,17 @@ FrameworkName = Literal[
     "langgraph",
     "llamaindex",
     "crewai",
-    "autogen",
-    "semantic_kernel",
     "google_adk",
     "agno",
     "haystack",
     "pydantic_ai",
     "openai_agents",
-    "smolagents",
     "agent_framework",
     "strands",
     "dspy",
-    # Legacy spellings accepted for backwards compatibility (see #101) and
+    # Legacy spelling accepted for backwards compatibility (see #101) and
     # normalized internally to the canonical name above.
     "crew_ai",
-    "semantic-kernel",
 ]
 
 _SUPPORTED_FRAMEWORKS: frozenset[str] = frozenset(
@@ -56,14 +52,11 @@ _SUPPORTED_FRAMEWORKS: frozenset[str] = frozenset(
         "langgraph",
         "llamaindex",
         "crewai",
-        "autogen",
-        "semantic_kernel",
         "google_adk",
         "agno",
         "haystack",
         "pydantic_ai",
         "openai_agents",
-        "smolagents",
         "agent_framework",
         "strands",
         "dspy",
@@ -76,7 +69,6 @@ _SUPPORTED_FRAMEWORKS: frozenset[str] = frozenset(
 # with the native per-framework adapters' names.
 _LEGACY_ALIASES: dict[str, str] = {
     "crew_ai": "crewai",
-    "semantic-kernel": "semantic_kernel",
 }
 
 
@@ -103,11 +95,10 @@ async def fetch_framework_tools(
     for future per-framework tweaks.
 
     ``framework`` accepts any canonical native-adapter name (``langchain``,
-    ``langgraph``, ``llamaindex``, ``crewai``, ``autogen``, ``semantic_kernel``,
-    ``google_adk``, ``agno``, ``haystack``, ``pydantic_ai``, ``openai_agents``,
-    ``smolagents``, ``agent_framework``, ``strands``, ``dspy``) plus the legacy spellings
-    ``crew_ai`` and ``semantic-kernel``, which are normalized internally to
-    ``crewai`` and ``semantic_kernel`` respectively.
+    ``langgraph``, ``llamaindex``, ``crewai``, ``google_adk``, ``agno``,
+    ``haystack``, ``pydantic_ai``, ``openai_agents``, ``agent_framework``,
+    ``strands``, ``dspy``) plus the legacy spelling ``crew_ai``, which is
+    normalized internally to ``crewai``.
 
     For Microsoft Agent Framework, use the ``agent_framework`` dialect which
     produces OpenAI-compatible schemas that AF's tool infrastructure expects.

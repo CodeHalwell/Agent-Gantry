@@ -9,14 +9,9 @@ honor the same contract regardless of which third-party framework it targets:
    converted tool per selected tool — verified end-to-end, per framework,
    through a lightweight ``sys.modules`` stub (mirroring how the real package
    would be structured) so the check runs everywhere without needing every
-   framework installed. ``AutoGenAdapter.convert`` is the one exception: it
-   returns a plain ``{name, description, callable}`` mapping rather than an
-   opaque framework object (see ``AdapterCase.convert_kind`` below), so it
-   needs no stub at all.
+   framework installed.
 3. ``convert`` raises a clean ``ImportError`` carrying a ``pip install`` hint
-   when the framework is absent — not ``AttributeError`` / ``KeyError``. This
-   does not apply to ``AutoGenAdapter.convert`` (import-free by design; see
-   above) — its contract is asserted explicitly instead of being skipped.
+   when the framework is absent — not ``AttributeError`` / ``KeyError``.
 
 This locks the uniform surface so a new adapter can't silently drift.
 
@@ -149,47 +144,12 @@ def _stub_openai_agents_attrs() -> dict[str, object]:
     return {"FunctionTool": _echo}
 
 
-class _StubSmolagentsTool:
-    """Stand-in base for ``smolagents.Tool``.
-
-    ``_spec_to_smolagents`` builds a dynamic subclass via ``type(...)`` (class
-    attributes for ``name``/``description``/``inputs``/``output_type``/
-    ``forward``) and instantiates it with no arguments — a no-op ``__init__``
-    is enough to stand in for smolagents' real validation logic.
-    """
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        pass
-
-
-def _stub_smolagents_attrs() -> dict[str, object]:
-    return {"Tool": _StubSmolagentsTool}
-
-
 def _stub_haystack_attrs() -> dict[str, object]:
     return {"Tool": _echo}
 
 
 def _stub_agno_attrs() -> dict[str, object]:
     return {"Function": _echo}
-
-
-def _stub_semantic_kernel_attrs() -> dict[str, object]:
-    def _kernel_function(*, name: str | None = None, description: str | None = None):
-        def _decorator(fn: Any) -> Any:
-            return fn
-
-        return _decorator
-
-    def _kernel_function_from_method(*, method: Any, plugin_name: str) -> Any:
-        return types.SimpleNamespace(
-            method=method, plugin_name=plugin_name, name=getattr(method, "__name__", None)
-        )
-
-    return {
-        "KernelFunctionFromMethod": _kernel_function_from_method,
-        "kernel_function": _kernel_function,
-    }
 
 
 def _stub_google_adk_attrs() -> dict[str, object]:
@@ -242,13 +202,9 @@ class AdapterCase:
             a *bound alias* of ``select`` rather than delegating to a
             separate bespoke method — it is exercised by its own dedicated
             test, not the generic delegation-smoke test.
-        convert_kind: ``"native"`` (default) — ``convert`` requires the
-            framework and returns an opaque native tool object. ``"dict"`` —
-            ``convert`` is import-free and returns a plain registrable
-            mapping (currently only ``AutoGenAdapter``).
         stub_attrs: Zero-arg factory building the ``{attr: value}`` mapping
             installed on the leaf module in ``modules`` for the end-to-end
-            select→convert smoke. ``None`` for import-free adapters.
+            select→convert smoke.
         live_extra_kwargs: Zero-arg factory building the extra
             ``framework_kwargs`` a call to ``adapter.live()`` requires (e.g.
             ``{"model": ...}`` for LangGraph, whose native hook is bound to a
@@ -262,7 +218,7 @@ class AdapterCase:
             uncaught, matching the documented default contract (see
             "Error-handling policy" in ``integrations/frameworks/README.md``).
             The three deliberate "framework absorbs the error" deviations
-            (Microsoft Agent Framework's JSON error string, AutoGen's *live*
+            (Microsoft Agent Framework's JSON error string, the *live*
             ``Workbench.call_tool``, Strands' real ``Agent`` tool-execution
             loop) live one layer deeper than ``convert()``/``select()`` — see
             their own dedicated tests, not this matrix.
@@ -273,7 +229,7 @@ class AdapterCase:
             if that entry point is itself a coroutine function. Used by
             :func:`test_adapter_tool_failure_matches_documented_error_kind`
             to prove ``error_kind`` end-to-end for every adapter, including
-            the sync wrappers (CrewAI/Agno/Haystack/Smolagents/DSPy/
+            the sync wrappers (CrewAI/Agno/Haystack/DSPy/
             LangChain/LlamaIndex/Google ADK), which this exercises through
             the real ``_run_coroutine_sync`` worker-thread bridge since the
             test itself runs inside a running event loop.
@@ -285,7 +241,6 @@ class AdapterCase:
     live_tier: str
     live_delegate: str
     invoke_failure: Callable[[Any], Any]
-    convert_kind: str = "native"
     stub_attrs: Callable[[], dict[str, object]] | None = None
     live_extra_kwargs: Callable[[], dict[str, object]] | None = None
     error_kind: str = "raises"
@@ -298,9 +253,9 @@ class AdapterCase:
 # real invocation entry point — the same attribute a genuine LangChain
 # StructuredTool / CrewAI BaseTool / etc. would call. All are ``async`` so the
 # test can ``await`` uniformly regardless of whether the underlying call is
-# itself a coroutine function (openai_agents, pydantic_ai, semantic_kernel,
-# google_adk, autogen, strands) or a synchronous bridge through
-# ``ToolSpec.invoke`` (langchain, langgraph, llamaindex, crewai, smolagents,
+# itself a coroutine function (openai_agents, pydantic_ai, google_adk,
+# strands) or a synchronous bridge through
+# ``ToolSpec.invoke`` (langchain, langgraph, llamaindex, crewai,
 # haystack, agno, dspy) — the latter exercises the `_run_coroutine_sync`
 # worker-thread bridge since these tests run inside a running event loop.
 # --------------------------------------------------------------------------- #
@@ -326,9 +281,6 @@ async def _invoke_openai_agents_failure(native: Any) -> Any:
     return await native.on_invoke_tool(None, "{}")
 
 
-async def _invoke_smolagents_failure(native: Any) -> Any:
-    return native.forward()
-
 
 async def _invoke_haystack_failure(native: Any) -> Any:
     return native.function()
@@ -338,16 +290,10 @@ async def _invoke_agno_failure(native: Any) -> Any:
     return native.entrypoint()
 
 
-async def _invoke_semantic_kernel_failure(native: Any) -> Any:
-    return await native.method()
-
 
 async def _invoke_google_adk_failure(native: Any) -> Any:
     return await native.func()
 
-
-async def _invoke_autogen_failure(native: Any) -> Any:
-    return await native["callable"]()
 
 
 async def _invoke_strands_failure(native: Any) -> Any:
@@ -416,15 +362,6 @@ ADAPTERS: list[AdapterCase] = [
         invoke_failure=_invoke_openai_agents_failure,
     ),
     AdapterCase(
-        "smolagents",
-        F.SmolagentsAdapter,
-        ["smolagents"],
-        live_tier="per-call",
-        live_delegate="agent_builder",
-        stub_attrs=_stub_smolagents_attrs,
-        invoke_failure=_invoke_smolagents_failure,
-    ),
-    AdapterCase(
         "haystack",
         F.HaystackAdapter,
         ["haystack", "haystack.tools"],
@@ -443,16 +380,6 @@ ADAPTERS: list[AdapterCase] = [
         invoke_failure=_invoke_agno_failure,
     ),
     AdapterCase(
-        "semantic_kernel",
-        F.SemanticKernelAdapter,
-        ["semantic_kernel", "semantic_kernel.functions"],
-        live_tier="per-turn",
-        live_delegate="function_provider",
-        stub_attrs=_stub_semantic_kernel_attrs,
-        live_extra_kwargs=lambda: {"kernel": object()},
-        invoke_failure=_invoke_semantic_kernel_failure,
-    ),
-    AdapterCase(
         "google_adk",
         F.GoogleADKAdapter,
         ["google.adk", "google.adk.tools"],
@@ -460,15 +387,6 @@ ADAPTERS: list[AdapterCase] = [
         live_delegate="before_model_callback",
         stub_attrs=_stub_google_adk_attrs,
         invoke_failure=_invoke_google_adk_failure,
-    ),
-    AdapterCase(
-        "autogen",
-        F.AutoGenAdapter,
-        [],
-        live_tier="per-turn",
-        live_delegate="workbench",
-        convert_kind="dict",
-        invoke_failure=_invoke_autogen_failure,
     ),
     AdapterCase(
         "strands",
@@ -534,9 +452,9 @@ def test_adapter_live_tier_matches_capability_table(case: AdapterCase) -> None:
 
     Mirrors ``integrations/frameworks/README.md``'s uniform-tier table and the
     audit findings in the task brief: LangGraph, LlamaIndex, Pydantic AI,
-    OpenAI Agents SDK, Semantic Kernel, Google ADK, AutoGen, and Strands
+    OpenAI Agents SDK, Google ADK, and Strands
     genuinely re-select tools on every model turn (``"per-turn"``); LangChain,
-    CrewAI, Agno, Haystack, and Smolagents fix their tool list at agent
+    CrewAI, Agno, and Haystack fix their tool list at agent
     construction with no native mid-run hook, so the deepest Gantry can do is
     rebuild before each new top-level call (``"per-call"``).
     """
@@ -644,18 +562,6 @@ def test_missing_framework_raises_clean_importerror(case: AdapterCase, monkeypat
         _namespace="default",
     )
 
-    if case.convert_kind == "dict":
-        # Import-free adapters (currently only AutoGen) must NOT require the
-        # framework to build their registrable mapping — convert() succeeds
-        # even with the framework fully absent, and callers only hit an
-        # ImportError later, when they actually register the tool.
-        result = case.adapter_cls.convert(dummy)
-        assert isinstance(result, dict) and callable(result.get("callable")), (
-            f"{case.name}: expected an import-free {{name, description, callable}} "
-            f"mapping even without the framework installed, got {result!r}"
-        )
-        return
-
     with pytest.raises(ImportError):
         case.adapter_cls.convert(dummy)
 
@@ -676,8 +582,7 @@ async def test_for_each_framework_selects_and_converts(
 ) -> None:
     """Smoke every adapter's ``select`` end-to-end against a real gantry.
 
-    Import-free adapters (``convert_kind == "dict"``) need no stub at all —
-    everything else gets a lightweight ``sys.modules`` stub (see the factories
+    Each adapter gets a lightweight ``sys.modules`` stub (see the factories
     above) just structured enough for ``convert`` to build something, so this
     runs in any environment regardless of which frameworks are actually
     installed.
@@ -687,11 +592,6 @@ async def test_for_each_framework_selects_and_converts(
 
     tools = await case.adapter_cls(gantry).select("send an email to my boss", limit=2)
     assert tools, f"{case.name}: expected at least one converted tool"
-
-    if case.convert_kind == "dict":
-        assert all("callable" in t and callable(t["callable"]) for t in tools), (
-            f"{case.name}: expected registrable mappings with a callable"
-        )
 
 
 @pytest.mark.parametrize("case", ADAPTERS, ids=[c.name for c in ADAPTERS])
@@ -737,7 +637,7 @@ async def test_for_each_framework_select_with_required(
 #   Three deliberate deviations exist one layer *below* convert()/select()
 #   (i.e. not exercised by this matrix — see their own tests): MAF's
 #   `_build_tool_execute` returns a JSON `{"error": ...}` string to the model;
-#   AutoGen's *live* `GantryWorkbench.call_tool` returns an error
+#   The *live* workbench-style providers return an error
 #   `ToolResult(is_error=True)`; Strands' real `Agent` tool-execution loop
 #   (`DecoratedFunctionTool.stream`) converts any exception into an error
 #   `ToolResult` — that one is Strands' own native contract, not Gantry code.
@@ -747,7 +647,7 @@ async def test_for_each_framework_select_with_required(
 #   at all: it logs a WARNING and degrades gracefully, either to "no tools
 #   this turn" (stateless per-turn recomputation: Google ADK, LangGraph,
 #   LlamaIndex, Pydantic AI) or "leave the previous turn's tools in place"
-#   (stateful in-place mutation: AutoGen, OpenAI Agents SDK, Semantic Kernel,
+#   (stateful in-place mutation: OpenAI Agents SDK,
 #   Strands) — see the second block of tests below.
 # --------------------------------------------------------------------------- #
 
@@ -937,53 +837,6 @@ async def test_openai_agents_live_selection_failure_degrades_gracefully(
     # so both the return value and `agent.tools` keep the previous turn's tools.
     assert tools == ["existing_tool"]
     assert agent.tools == ["existing_tool"]
-    assert any("semantic retrieval failed" in r.message for r in caplog.records)
-
-
-async def test_semantic_kernel_live_selection_failure_degrades_gracefully(
-    gantry: AgentGantry, broken_selection, caplog
-) -> None:
-    from agent_gantry.integrations.frameworks.semantic_kernel_live import GantryFunctionProvider
-
-    kernel = types.SimpleNamespace(plugins={})
-    provider = GantryFunctionProvider(gantry, kernel, limit=3)
-    with caplog.at_level("WARNING"):
-        functions = await provider.refresh("weather forecast")
-
-    # stateful (`kernel.plugins` persists): nothing was ever registered, so
-    # degrading to "leave prior state" reads back as `{}`.
-    assert functions == {}
-    assert any("semantic retrieval failed" in r.message for r in caplog.records)
-
-
-async def test_autogen_live_selection_failure_degrades_gracefully(
-    gantry: AgentGantry, broken_selection, caplog, monkeypatch
-) -> None:
-    import agent_gantry.integrations.frameworks.autogen_live as autogen_live
-
-    class _FakeWorkbench:
-        pass
-
-    class _FakeResultContent:
-        def __init__(self, **kwargs: Any) -> None:
-            for k, v in kwargs.items():
-                setattr(self, k, v)
-
-    stub_tools = types.ModuleType("autogen_core.tools")
-    stub_tools.Workbench = _FakeWorkbench
-    stub_tools.ToolResult = _FakeResultContent
-    stub_tools.TextResultContent = _FakeResultContent
-    monkeypatch.setitem(sys.modules, "autogen_core", types.ModuleType("autogen_core"))
-    monkeypatch.setitem(sys.modules, "autogen_core.tools", stub_tools)
-    monkeypatch.setattr(autogen_live, "_GANTRY_WORKBENCH_CLASS", None)
-
-    wb = autogen_live._gantry_workbench(gantry, query="weather forecast", limit=3)
-    with caplog.at_level("WARNING"):
-        schemas = await wb.list_tools()
-
-    # stateful (`self._selected` persists across turns): nothing was ever
-    # selected successfully yet, so degrading to "leave prior state" is `[]`.
-    assert schemas == []
     assert any("semantic retrieval failed" in r.message for r in caplog.records)
 
 

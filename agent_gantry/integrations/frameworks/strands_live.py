@@ -14,7 +14,7 @@ request sent to the model). A hook callback that mutates the registry during
 ``BeforeModelCallEvent`` therefore changes what the model sees on that very
 call — genuine per-turn re-selection, matching the depth of Google ADK's
 ``before_model_callback`` (see ``google_adk_live``), and deeper than the
-per-top-level-call rebuild used for CrewAI/Agno/Haystack/Smolagents (see
+per-top-level-call rebuild used for CrewAI/Agno/Haystack (see
 ``live_wrappers``), which fix their tool list at agent construction.
 
 :class:`GantryStrandsToolHook` implements Strands' ``HookProvider`` protocol

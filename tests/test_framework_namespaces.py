@@ -27,14 +27,8 @@ FRAMEWORK_ADAPTERS = {
     "agent_gantry.crewai": ("CrewAIAdapter", ["crewai", "crewai.tools"]),
     "agent_gantry.pydantic_ai": ("PydanticAIAdapter", ["pydantic_ai", "pydantic_ai.tools"]),
     "agent_gantry.openai_agents": ("OpenAIAgentsAdapter", ["agents"]),
-    "agent_gantry.smolagents": ("SmolagentsAdapter", ["smolagents"]),
     "agent_gantry.haystack": ("HaystackAdapter", ["haystack", "haystack.tools"]),
     "agent_gantry.agno": ("AgnoAdapter", ["agno", "agno.tools", "agno.tools.function"]),
-    "agent_gantry.autogen": ("AutoGenAdapter", ["autogen", "autogen_core"]),
-    "agent_gantry.semantic_kernel": (
-        "SemanticKernelAdapter",
-        ["semantic_kernel", "semantic_kernel.functions"],
-    ),
     "agent_gantry.google_adk": ("GoogleADKAdapter", ["google.adk", "google.adk.tools"]),
     "agent_gantry.strands": ("StrandsAdapter", ["strands", "strands.hooks"]),
     "agent_gantry.dspy": (
@@ -126,8 +120,8 @@ def test_importing_agent_gantry_does_not_load_third_party_frameworks():
     third_party = [
         # agent frameworks
         "agent_framework", "langchain_core", "langgraph", "llama_index",
-        "crewai", "pydantic_ai", "agents", "smolagents", "haystack", "agno",
-        "semantic_kernel", "google.adk", "strands", "dspy",
+        "crewai", "pydantic_ai", "agents", "haystack", "agno",
+        "google.adk", "strands", "dspy",
         # LLM provider SDKs — the LLM adapters never import them (they only emit
         # schemas via gantry.retrieve_tools), so none should load on import.
         "openai", "anthropic", "groq", "mistralai", "google.generativeai",

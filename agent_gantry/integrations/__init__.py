@@ -2,8 +2,8 @@
 Framework integrations for Agent-Gantry.
 
 One ``<Framework>Adapter`` class per agent framework (LangChain, LangGraph,
-LlamaIndex, CrewAI, Pydantic AI, OpenAI Agents SDK, Smolagents, Haystack, Agno,
-AutoGen, Semantic Kernel, Google ADK), one ``<Provider>Adapter`` per LLM SDK
+LlamaIndex, CrewAI, Pydantic AI, OpenAI Agents SDK, Haystack, Agno, Google
+ADK), one ``<Provider>Adapter`` per LLM SDK
 (OpenAI, Anthropic, Gemini, Groq, Vertex AI, Mistral), the
 ``AgentFrameworkAdapter`` for Microsoft Agent Framework, plus the shared
 selection core and the framework-agnostic ``ToolRefresher`` / semantic-tools
@@ -37,7 +37,6 @@ from agent_gantry.integrations.agent_framework_provider import (
 from agent_gantry.integrations.framework_adapters import fetch_framework_tools
 from agent_gantry.integrations.frameworks import (
     AgnoAdapter,
-    AutoGenAdapter,
     CrewAIAdapter,
     GantryToolset,
     GoogleADKAdapter,
@@ -47,8 +46,6 @@ from agent_gantry.integrations.frameworks import (
     LlamaIndexAdapter,
     OpenAIAgentsAdapter,
     PydanticAIAdapter,
-    SemanticKernelAdapter,
-    SmolagentsAdapter,
     ToolExecutionError,
     ToolSpec,
 )
@@ -90,11 +87,8 @@ __all__: list[str] = [
     "CrewAIAdapter",
     "PydanticAIAdapter",
     "OpenAIAgentsAdapter",
-    "SmolagentsAdapter",
     "HaystackAdapter",
     "AgnoAdapter",
-    "AutoGenAdapter",
-    "SemanticKernelAdapter",
     "GoogleADKAdapter",
     # LLM SDK adapters
     "OpenAIAdapter",

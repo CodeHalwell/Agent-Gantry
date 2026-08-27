@@ -117,7 +117,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       # Isolated env: the native-adapter frameworks (pydantic-ai, openai-agents,
-      # smolagents, haystack, agno, strands-agents) don't co-resolve with the
+      # haystack, agno, strands-agents) don't co-resolve with the
       # combined agent-frameworks/nomic set, so they are NOT a project extra.
       # Install the project (dev) then add them directly with a one-off
       # resolution, and run the real-package adapter smoke tests. importorskip
@@ -139,7 +139,7 @@ jobs:
         run: |
           uv venv .venv-frameworks --python ${{ matrix.python-version }}
           uv pip install --python .venv-frameworks ".[dev]" \
-            pydantic-ai-slim openai-agents smolagents haystack-ai agno strands-agents dspy
+            pydantic-ai-slim openai-agents haystack-ai agno strands-agents dspy
           .venv-frameworks/bin/python -m pytest tests/frameworks/ -v
 
   docs:

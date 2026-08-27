@@ -2,8 +2,8 @@
 
 Agent-Gantry's job is to *select* a small, relevant slice of tools from a large
 registry. To hand those tools to a concrete agent framework (LangChain,
-LlamaIndex, CrewAI, Pydantic AI, OpenAI Agents SDK, Smolagents, Haystack, Agno,
-…) they must be wrapped as that framework's *native* tool object — a callable
+LlamaIndex, CrewAI, Pydantic AI, OpenAI Agents SDK, Haystack, Agno, …) they
+must be wrapped as that framework's *native* tool object — a callable
 that the framework can introspect (name, description, JSON-schema parameters)
 and invoke.
 
@@ -69,12 +69,12 @@ DEFAULT_TOOL_LIMIT = 5
 #: - ``"per-turn"`` — the framework calls back into Gantry (directly, or via a
 #:   Gantry-built hook/toolset/provider) on every model turn / reasoning step,
 #:   so the tool surface can change *mid-run* (LangGraph, LlamaIndex,
-#:   Pydantic AI, OpenAI Agents SDK, Semantic Kernel, Google ADK, AutoGen,
-#:   Strands, Microsoft Agent Framework).
+#:   Pydantic AI, OpenAI Agents SDK, Google ADK, Strands, Microsoft Agent
+#:   Framework).
 #: - ``"per-call"`` — the framework fixes its tool list at agent-construction
 #:   time with no native mid-run hook, so the deepest Gantry can do is rebuild
 #:   a fresh agent/tool list before each new top-level call (LangChain,
-#:   CrewAI, Agno, Haystack, Smolagents — see ``live_wrappers.py``).
+#:   CrewAI, Agno, Haystack — see ``live_wrappers.py``).
 LiveTier = Literal["per-turn", "per-call"]
 
 
@@ -183,8 +183,8 @@ class ToolSpec:
         """Synchronous wrapper around :meth:`ainvoke`.
 
         Safe to call from synchronous framework code (CrewAI ``_run``,
-        Smolagents ``forward``, Haystack/Agno function entrypoints, …) whether
-        or not an event loop is already running on the current thread. When a
+        Haystack/Agno function entrypoints, …) whether or not an event loop is
+        already running on the current thread. When a
         loop is running, the coroutine is executed on a dedicated worker thread
         and this call blocks for the result — mirroring how those frameworks
         invoke a synchronous tool. Prefer :meth:`ainvoke` directly in async code.
@@ -194,24 +194,20 @@ class ToolSpec:
     def callable_for_signature(
         self,
         *,
-        union_optional: bool = False,
         type_matched_defaults: bool = False,
-        annotated_descriptions: bool = False,
     ) -> Callable[..., Any]:
         """Return a plain async function that calls this tool by keyword.
 
-        Frameworks that build their own tool object from a function (Smolagents,
-        Agno, Pydantic AI, OpenAI Agents SDK, AutoGen) can wrap this. The
-        returned function carries ``__name__`` / ``__doc__`` **and a real
-        ``__signature__``** derived from :attr:`parameters`, so frameworks that
-        introspect the signature to build the LLM tool schema see the actual
-        parameters instead of a bare ``**kwargs`` (which would surface as a
-        no-argument tool).
+        Frameworks that build their own tool object from a function (Agno,
+        Pydantic AI, OpenAI Agents SDK) can wrap this. The returned function
+        carries ``__name__`` / ``__doc__`` **and a real ``__signature__``**
+        derived from :attr:`parameters`, so frameworks that introspect the
+        signature to build the LLM tool schema see the actual parameters
+        instead of a bare ``**kwargs`` (which would surface as a no-argument
+        tool).
 
-        ``union_optional`` (Semantic Kernel), ``type_matched_defaults``
-        (Google ADK) and ``annotated_descriptions`` (frameworks that read
-        parameter descriptions from ``Annotated`` metadata — Semantic Kernel,
-        AG2) are opt-in signature tweaks — see :meth:`python_signature`.
+        ``type_matched_defaults`` (Google ADK) is an opt-in signature tweak —
+        see :meth:`python_signature`.
         """
 
         async def _fn(**kwargs: Any) -> Any:
@@ -220,9 +216,7 @@ class ToolSpec:
         _fn.__name__ = self.name
         _fn.__doc__ = self.description
         _fn.__signature__ = self.python_signature(  # type: ignore[attr-defined]
-            union_optional=union_optional,
             type_matched_defaults=type_matched_defaults,
-            annotated_descriptions=annotated_descriptions,
         )
         _fn.__annotations__ = {
             p.name: p.annotation
@@ -234,9 +228,7 @@ class ToolSpec:
     def python_signature(
         self,
         *,
-        union_optional: bool = False,
         type_matched_defaults: bool = False,
-        annotated_descriptions: bool = False,
     ) -> inspect.Signature:
         """Build an :class:`inspect.Signature` from the JSON-Schema parameters.
 
@@ -244,23 +236,15 @@ class ToolSpec:
         no default. Optional properties default to the schema's own ``default``
         when it declares one, else ``None``. Array properties with a typed
         ``items`` schema annotate as ``list[T]`` so signature-introspecting
-        frameworks surface the item type. Three opt-in modes adapt the
-        signature for stricter frameworks:
+        frameworks surface the item type. One opt-in mode adapts the signature
+        for a stricter framework:
 
-        - ``union_optional``: annotate optional params ``T | None`` (Semantic
-          Kernel infers required-ness from the annotation, not the default).
         - ``type_matched_defaults``: for optional params with no schema
           ``default``, default to a type-matched empty value (``""`` / ``0`` /
           ``False`` / ``[]`` / ``{}``) instead of ``None`` (Google ADK's
           automatic function calling rejects both union types and a ``None``
           default whose type mismatches the annotation).
-        - ``annotated_descriptions``: wrap each annotation in
-          ``Annotated[T, "<description>"]`` when the property carries a
-          ``description`` — the convention Semantic Kernel and AG2 read
-          parameter descriptions from.
         """
-        from typing import Annotated
-
         properties = self.parameters.get("properties") or {}
         required = set(self.parameters.get("required") or [])
         params: list[inspect.Parameter] = []
@@ -274,19 +258,14 @@ class ToolSpec:
                     # Required means the value must be *present*, not that it
                     # must be non-null. ``def f(x: int | None)`` emits
                     # ``{"type": ["integer", "null"]}`` in ``required``, and
-                    # annotating it a bare ``int`` told Semantic Kernel and AG2
-                    # to advertise a non-nullable parameter — so the model
-                    # could not produce the null the executor accepts.
+                    # annotating it a bare ``int`` told a signature-reading
+                    # framework to advertise a non-nullable parameter — so the
+                    # model could not produce the null the executor accepts.
                     # Skipped under ``type_matched_defaults``: Google ADK's
                     # fallback path rejects union annotations outright, and a
                     # rejected tool is worse than an under-specified one.
                     annotation = annotation | None
             else:
-                if union_optional:
-                    # `T | None` — valid at runtime on the project's floor
-                    # (3.10+, enforced by ruff UP) and the form SK uses to
-                    # infer optionality.
-                    annotation = annotation | None
                 schema_default = prop.get("default")
                 if schema_default is not None and _matches_json_type(
                     schema_default, json_type
@@ -304,9 +283,6 @@ class ToolSpec:
                     default = _default_for_annotation(annotation, json_type)
                 else:
                     default = None
-            description = prop.get("description")
-            if annotated_descriptions and isinstance(description, str) and description:
-                annotation = Annotated[annotation, description]
             params.append(
                 inspect.Parameter(
                     name,
@@ -561,7 +537,7 @@ def _positional_annotation(prop: dict[str, Any]) -> Any:
     ``tuple[int, str]`` is introspected as ``prefixItems`` plus equal
     ``minItems``/``maxItems``, but this builder read only ``items`` — so the
     frameworks that rebuild their LLM schema from the signature (Semantic
-    Kernel, AG2, Google ADK's fallback) published a bare ``list``, dropping
+    Google ADK's fallback path) published a bare ``list``, dropping
     both the positional types and the arity, and the model could answer with
     an array the executor then rejects.
 
@@ -610,7 +586,7 @@ def _annotation_for_prop(prop: dict[str, Any]) -> Any:
     """Python annotation for one property schema, recursively.
 
     Frameworks that rebuild their LLM schema from the signature rather than
-    from ``parameters_schema`` — Semantic Kernel, AG2, Google ADK's fallback
+    from ``parameters_schema`` — Google ADK's fallback
     path — see only what this returns, so anything it drops is invisible to
     the model. ``{"type": "array", "items": {"type": "string"}}`` annotates
     as ``list[str]`` rather than a bare ``list``; an ``enum``/``const``
@@ -672,7 +648,7 @@ def _annotation_for_prop(prop: dict[str, Any]) -> Any:
     if json_type == "string":
         # ``{"type": "string", "format": "date-time"}`` is what introspection
         # emits for a ``datetime`` parameter. Reducing it to a bare ``str``
-        # dropped the format from the schema Semantic Kernel, AG2 and Google
+        # dropped the format from the schema Google
         # ADK's fallback path rebuild off this signature, so they advertised a
         # free-form string and the model could answer with one the handler
         # can't take. Only the formats Gantry emits and reconstructs are

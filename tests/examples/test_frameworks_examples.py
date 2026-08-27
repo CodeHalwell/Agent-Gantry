@@ -31,7 +31,7 @@ async def test_verify_all_core_checks_pass() -> None:
             checks[name] = True  # reported above, but not gating on macOS
     assert all(v is not False for v in checks.values()), f"core checks failed: {checks}"
     assert not summary["adapters_failed"], "a framework adapter raised an unexpected error"
-    # autogen needs no third-party framework, so at least one adapter always builds.
+    # At least one adapter must build in any environment.
     assert summary["adapters_built"] >= 1
 
 
