@@ -10,6 +10,7 @@ Implements zero-trust security controls including:
 from __future__ import annotations
 
 import fnmatch
+import functools
 import re
 import time
 import typing
@@ -57,6 +58,28 @@ class ValidationError(Exception):
     pass
 
 
+@functools.lru_cache(maxsize=256)
+def _declares_keyword(check: typing.Any, keyword: str) -> bool:
+    """Signature inspection for :func:`accepts_keyword`, cached per callable.
+
+    ``execute()`` asks this on *every* call, and ``inspect.signature`` is not
+    cheap. The answer is a property of the bound method, which is stable for
+    the life of the policy object, so caching it keeps a hot path off the
+    reflection machinery. Bound methods are hashable and the cache holds a
+    reference, so entries are bounded by ``maxsize`` rather than by policy
+    lifetime.
+    """
+    import inspect
+
+    try:
+        parameters = inspect.signature(check).parameters.values()
+    except (TypeError, ValueError):  # C callables / exotic doubles
+        return False
+    return any(
+        p.name == keyword or p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters
+    )
+
+
 def accepts_keyword(policy: typing.Any, keyword: str) -> bool:
     """Whether ``policy.check_permission`` accepts ``keyword``.
 
@@ -69,15 +92,10 @@ def accepts_keyword(policy: typing.Any, keyword: str) -> bool:
     check = getattr(policy, "check_permission", None)
     if not callable(check):
         return False
-    import inspect
-
     try:
-        parameters = inspect.signature(check).parameters.values()
-    except (TypeError, ValueError):  # C callables / exotic doubles
-        return False
-    return any(
-        p.name == keyword or p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters
-    )
+        return _declares_keyword(check, keyword)
+    except TypeError:  # an unhashable callable — inspect it directly
+        return _declares_keyword.__wrapped__(check, keyword)
 
 
 def accepts_confirmation_approved(policy: typing.Any) -> bool:
@@ -129,6 +147,7 @@ class SecurityPolicy:
         *,
         confirmation_approved: bool = False,
         pending_confirmation: bool = False,
+        arguments_valid: bool = True,
     ) -> None:
         """
         Check if tool execution is permitted.
@@ -162,6 +181,12 @@ class SecurityPolicy:
                 and is counted then. Without this, a tool gated by the
                 *flag* rather than by a ``require_confirmation`` pattern
                 would have its probe counted and its replay denied.
+            arguments_valid: Whether the call's arguments passed the
+                executor's schema validation. ``False`` makes the call
+                terminal whatever this policy decides — it returns a
+                ``ValidationError``, never a pending prompt — so a match on
+                a ``require_confirmation`` pattern must still be charged
+                rather than deferred to a replay that will never arrive.
         """
         # Rate limit. The window is *checked* here, before any more expensive
         # work, so a flood is rejected cheaply — but the call is only
@@ -192,6 +217,17 @@ class SecurityPolicy:
         if not confirmation_approved:
             for pattern in self.require_confirmation:
                 if fnmatch.fnmatch(tool_name, pattern):
+                    if now is not None and not arguments_valid:
+                        # Deferring the charge to the approved replay is only
+                        # right when a replay can happen. A call whose
+                        # arguments already failed validation is terminal — the
+                        # executor discards this pending result and returns the
+                        # ValidationError — so nothing would ever be counted,
+                        # and malformed calls to a pattern-gated tool would be
+                        # unlimited. This is the same exemption abuse the
+                        # tool-flag gate was fixed for, reachable through the
+                        # pattern gate instead.
+                        self._request_timestamps.append(now)
                     raise ConfirmationRequiredError(
                         f"Tool {tool_name} requires human approval."
                     )

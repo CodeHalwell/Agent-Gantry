@@ -177,6 +177,23 @@ adapters, and the provider dialects agree with it.
   normalized too: strict mode widens the optional properties of a positional
   *object* exactly as it does anywhere else, so a `tuple[Payload, int]`
   parameter kept its nested nulls while only `items` was consulted.
+- **One `execute()` call could emit two telemetry events.** The validation
+  result is computed before the security policy runs, so the rate-limit
+  exemption decision is accurate — but it does not always win: a denial
+  outranks it, and a pending confirmation is discarded in favour of it.
+  Recording where it was built therefore reported an outcome that was never
+  returned, inflating call counts and status metrics. Each result is now
+  recorded at the point it is returned, so exactly one event is emitted per
+  call.
+- **Malformed calls to a policy-gated tool consumed no quota.** Deferring the
+  rate-limit charge past the confirmation gate is right only when an approved
+  replay can follow. Since a call whose arguments fail validation is terminal,
+  a match on a `SecurityPolicy.require_confirmation` pattern meant nothing was
+  ever counted and such calls were unlimited — the same exemption abuse the
+  tool-flag gate was fixed for, reachable through the pattern gate instead.
+  The policy is now told whether the arguments validated. A genuinely pending,
+  valid probe keeps its exemption, so its approved replay still fits the
+  window.
 - **LlamaIndex forwarded the caller's raw values, not the validated ones.**
   It checks a call against `fn_schema` but passes the original arguments on, so
   a model answering `"1"` for an `integer` parameter passed the tool's own
@@ -269,6 +286,10 @@ adapters, and the provider dialects agree with it.
   than merely leaving it unconstrained. It now uses the same
   `unsupported_strict_paths()` gate as the OpenAI adapters: such a tool is
   emitted without `strict: true`, with a warning naming the offending path.
+- **`SecurityPolicy` signature inspection is cached.** `execute()` asks
+  whether a policy's `check_permission` accepts each optional keyword on every
+  call, and `inspect.signature` is not cheap. The answer is a property of the
+  bound method, so it is now memoized per callable.
 - **A multi-member union dropped its members silently.** A genuine `int | str`
   keeps only the first member — deliberate, since most provider dialects reject
   union-typed parameters — but nothing said so. It now logs at debug level, and
@@ -528,6 +549,11 @@ adapters, and the provider dialects agree with it.
   failed just as surely, only earlier and more opaquely). Fixing it properly
   needs the original Python type available at invocation time, which the
   schema/executor split doesn't currently carry.
+- A *multi-member* union parameter (`int | str`, as opposed to `T | None`)
+  keeps only its first member in the emitted schema. Most provider dialects
+  reject union-typed parameters outright, so a narrowed schema is more useful
+  than one they refuse; the collapse is logged at debug level and documented
+  on `build_parameters_schema`.
 - `python_signature` annotates an object parameter with declared
   `properties` as a bare `dict` rather than rebuilding it as a nested model
   (which CrewAI and LlamaIndex do get, via `pydantic_model_from_schema`). The

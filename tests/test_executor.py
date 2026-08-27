@@ -1462,3 +1462,129 @@ async def test_object_property_counts_are_enforced(engine):
     assert (
         await engine._validate_arguments(at_most_two, {"p": {"a": 1, "b": 2, "c": 3}})
     )[0] is False
+
+
+async def test_execute_records_exactly_one_telemetry_event():
+    """``val_result`` is computed before the security policy runs so the
+    rate-limit exemption decision is accurate, but it does not always win — a
+    denial outranks it and a pending result can be discarded in favour of it.
+    Recording where it was built produced two executions for one call, one of
+    them an outcome that was never returned (PR #381 review)."""
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.core.security import SecurityPolicy
+    from agent_gantry.schema.execution import ToolCall
+
+    class _Telemetry:
+        def __init__(self) -> None:
+            self.statuses: list[str] = []
+
+        async def record_execution(self, call, result):
+            self.statuses.append(result.status.value)
+
+        async def record_retrieval(self, *args, **kwargs):
+            pass
+
+    def _engine(policy, telemetry):
+        registry = ToolRegistry()
+        tool = ToolDefinition(
+            name="delete_thing",
+            description="Destructive tool behind a policy pattern",
+            parameters_schema={
+                "type": "object",
+                "properties": {"count": {"type": "integer"}},
+                "required": ["count"],
+            },
+        )
+        registry.register_tool(tool)
+        registry.register_handler("default.delete_thing", lambda count: f"deleted {count}")
+        return ExecutionEngine(
+            registry=registry, security_policy=policy, telemetry=telemetry
+        )
+
+    gated = SecurityPolicy(require_confirmation=["delete_*"])
+    for arguments in ({"count": "bad"}, {"count": 1}):
+        telemetry = _Telemetry()
+        engine = _engine(gated, telemetry)
+        result = await engine.execute(
+            ToolCall(tool_name="delete_thing", arguments=arguments)
+        )
+        assert telemetry.statuses == [result.status.value], (
+            arguments,
+            telemetry.statuses,
+        )
+
+
+async def test_malformed_pattern_gated_calls_consume_policy_quota():
+    """Deferring the charge to an approved replay is only right when a replay
+    can happen. A malformed call to a pattern-gated tool is terminal, so
+    nothing was ever counted and such calls were unlimited — the same exemption
+    abuse the tool-flag gate was fixed for, reachable through the pattern gate
+    (PR #381 review)."""
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.core.security import SecurityPolicy
+    from agent_gantry.schema.execution import ToolCall
+
+    registry = ToolRegistry()
+    tool = ToolDefinition(
+        name="delete_thing",
+        description="Destructive tool behind a policy pattern",
+        parameters_schema={
+            "type": "object",
+            "properties": {"count": {"type": "integer"}},
+            "required": ["count"],
+        },
+    )
+    registry.register_tool(tool)
+    registry.register_handler("default.delete_thing", lambda count: f"deleted {count}")
+    engine = ExecutionEngine(
+        registry=registry,
+        security_policy=SecurityPolicy(
+            require_confirmation=["delete_*"], max_requests_per_minute=2
+        ),
+    )
+
+    statuses = [
+        (
+            await engine.execute(
+                ToolCall(tool_name="delete_thing", arguments={"count": "bad"})
+            )
+        ).status.value
+        for _ in range(3)
+    ]
+    assert statuses == ["failure", "failure", "permission_denied"], statuses
+
+
+async def test_valid_pattern_gated_probe_keeps_its_exemption():
+    """The exemption exists so an approved replay isn't denied for the rest of
+    the window — that must survive the fix above."""
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.core.security import SecurityPolicy
+    from agent_gantry.schema.execution import ToolCall
+
+    registry = ToolRegistry()
+    tool = ToolDefinition(
+        name="delete_thing",
+        description="Destructive tool behind a policy pattern",
+        parameters_schema={
+            "type": "object",
+            "properties": {"count": {"type": "integer"}},
+            "required": ["count"],
+        },
+    )
+    registry.register_tool(tool)
+    registry.register_handler("default.delete_thing", lambda count: f"deleted {count}")
+    engine = ExecutionEngine(
+        registry=registry,
+        security_policy=SecurityPolicy(
+            require_confirmation=["delete_*"], max_requests_per_minute=1
+        ),
+    )
+
+    probe = await engine.execute(ToolCall(tool_name="delete_thing", arguments={"count": 1}))
+    assert probe.status.value == "pending_confirmation"
+
+    approved = await engine.execute(
+        ToolCall(tool_name="delete_thing", arguments={"count": 1}, require_confirmation=False)
+    )
+    assert approved.status.value == "success", approved.error
+    assert approved.result == "deleted 1"

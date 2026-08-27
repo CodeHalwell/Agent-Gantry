@@ -287,3 +287,51 @@ def test_clean_probes_remain_exempt_from_accounting():
     policy.check_permission("risky", {"url": "https://example.com/ok"})
     with pytest.raises(PermissionDeniedError, match="Rate limit exceeded"):
         policy.check_permission("risky", {"url": "https://example.com/ok"})
+
+
+def test_arguments_valid_false_charges_a_pattern_gated_call():
+    """The policy defers its charge past its own confirmation gate so an
+    approved replay isn't denied for the rest of the window. That is only
+    right when a replay can happen: a call whose arguments already failed
+    validation is terminal, so it must be charged where it stands
+    (PR #381 review)."""
+    import pytest
+
+    from agent_gantry.core.security import (
+        ConfirmationRequiredError,
+        PermissionDeniedError,
+        SecurityPolicy,
+    )
+
+    policy = SecurityPolicy(require_confirmation=["delete_*"], max_requests_per_minute=2)
+
+    for _ in range(2):
+        with pytest.raises(ConfirmationRequiredError):
+            policy.check_permission("delete_thing", {}, arguments_valid=False)
+
+    # The window is now full, so the third is denied rather than deferred.
+    with pytest.raises(PermissionDeniedError, match="Rate limit"):
+        policy.check_permission("delete_thing", {}, arguments_valid=False)
+
+
+def test_arguments_valid_defaults_to_true_and_keeps_the_exemption():
+    """Omitting the keyword must behave exactly as before it existed, so a
+    valid probe stays free and its approved replay still fits the window."""
+    import pytest
+
+    from agent_gantry.core.security import (
+        ConfirmationRequiredError,
+        PermissionDeniedError,
+        SecurityPolicy,
+    )
+
+    policy = SecurityPolicy(require_confirmation=["delete_*"], max_requests_per_minute=1)
+
+    for _ in range(3):
+        with pytest.raises(ConfirmationRequiredError):
+            policy.check_permission("delete_thing", {})
+
+    # None of those probes consumed the single slot, so the approval runs.
+    policy.check_permission("delete_thing", {}, confirmation_approved=True)
+    with pytest.raises(PermissionDeniedError, match="Rate limit"):
+        policy.check_permission("delete_thing", {}, confirmation_approved=True)

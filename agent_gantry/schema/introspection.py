@@ -23,6 +23,12 @@ can express:
   (requiredness is carried by the ``required`` list, matching what LLM
   providers expect).
 - **String formats** for ``datetime``/``date``/``time``/``UUID``.
+
+Known limitation: a *multi-member* union (``int | str``, as opposed to
+``T | None``) keeps only its first member — most provider dialects reject
+union-typed parameters outright, so a narrowed schema is more useful than one
+they refuse. The collapse is logged at debug level; annotate the parameter
+with the type you actually want advertised to avoid the ambiguity.
 """
 
 from __future__ import annotations
@@ -76,6 +82,9 @@ def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
     ``Annotated`` metadata or the docstring's ``Args:``/``Parameters``/
     ``:param:`` section; defaults are recorded in the schema when they are
     JSON-serializable.
+
+    A multi-member union (``int | str``) keeps only its first member; see the
+    module docstring's known limitation.
 
     Args:
         func: The function to introspect

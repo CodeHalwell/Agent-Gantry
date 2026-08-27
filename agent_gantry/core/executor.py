@@ -272,14 +272,15 @@ class ExecutionEngine:
         val_result = await self._validate_call_arguments(
             tool, call, queued_at, trace_id, span_id
         )
-        pending_confirmation = val_result is None and self._needs_confirmation(tool, call)
+        arguments_valid = val_result is None
+        pending_confirmation = arguments_valid and self._needs_confirmation(tool, call)
 
         # Security policy check
         sp_result = await self._check_security_policy(
-            tool, call, queued_at, trace_id, span_id, pending_confirmation
+            tool, call, queued_at, trace_id, span_id, pending_confirmation, arguments_valid
         )
         if sp_result is not None and not (
-            sp_result.status is ExecutionStatus.PENDING_CONFIRMATION and val_result is not None
+            sp_result.status is ExecutionStatus.PENDING_CONFIRMATION and not arguments_valid
         ):
             return sp_result
         # A *denial* still outranks a validation error — it must not leak
@@ -305,6 +306,11 @@ class ExecutionEngine:
         # counter leaks and eventually rejects all calls for this key.
         try:
             if val_result:
+                # Recorded here rather than where it was built: this is the
+                # first point at which it is known to be the outcome the
+                # caller sees.
+                if self._telemetry:
+                    await self._telemetry.record_execution(call, val_result)
                 return val_result
 
             # Check confirmation requirement *before* dispatching by any
@@ -550,6 +556,7 @@ class ExecutionEngine:
         trace_id: str,
         span_id: str,
         pending_confirmation: bool = False,
+        arguments_valid: bool = True,
     ) -> ToolResult | None:
         """Check security policy permissions.
 
@@ -594,6 +601,12 @@ class ExecutionEngine:
                     kwargs["confirmation_approved"] = call.require_confirmation is False
                 if accepts_keyword(self._security_policy, "pending_confirmation"):
                     kwargs["pending_confirmation"] = pending_confirmation
+                # ``arguments_valid`` lets the policy see that a call matching
+                # one of its ``require_confirmation`` patterns is nonetheless
+                # terminal, so it charges the quota rather than deferring to an
+                # approved replay that will never come.
+                if accepts_keyword(self._security_policy, "arguments_valid"):
+                    kwargs["arguments_valid"] = arguments_valid
                 self._security_policy.check_permission(tool.name, call.arguments, **kwargs)
             except ConfirmationRequiredError as e:
                 result = ToolResult(
@@ -614,7 +627,12 @@ class ExecutionEngine:
                     trace_id=trace_id,
                     span_id=span_id,
                 )
-                if self._telemetry:
+                # Only when this is the outcome the caller will see. When the
+                # arguments already failed validation, ``execute`` discards
+                # this pending result in favour of the ValidationError, and
+                # recording it would report a status that never happened and
+                # count one call twice.
+                if self._telemetry and arguments_valid:
                     await self._telemetry.record_execution(call, result)
                 return result
             except PermissionDeniedError as e:
@@ -690,8 +708,13 @@ class ExecutionEngine:
                 trace_id=trace_id,
                 span_id=span_id,
             )
-            if self._telemetry:
-                await self._telemetry.record_execution(call, result)
+            # Telemetry is *not* emitted here. This result is computed before
+            # the security policy runs (so the rate-limit exemption decision is
+            # accurate) but it does not always win: a denial outranks it, and a
+            # rate-limit rejection can be returned instead. Recording here
+            # produced two executions for one call, one of them an outcome that
+            # was never returned. ``execute`` records whichever result it
+            # actually returns.
             return result
         return None
 
