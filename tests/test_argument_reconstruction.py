@@ -1240,3 +1240,49 @@ async def test_an_ordered_mapping_reaches_the_handler_as_its_declared_type():
     )
     assert result.status.value == "success", result.error
     assert result.result == "OrderedDict:['b', 'a']"
+
+
+class MemberlessMode(enum.Enum):
+    """An ``Enum`` with no members.
+
+    Module scope is load-bearing: this file uses ``from __future__ import
+    annotations``, so a class defined inside the test function is unresolvable
+    by ``get_type_hints`` and the *whole* schema build degrades — which made
+    the assertion below pass for entirely the wrong reason.
+    """
+
+
+def test_a_memberless_enum_does_not_emit_an_invalid_enum():
+    """``{"enum": []}`` is not a valid JSON Schema — ``enum`` must hold at
+    least one value — so a provider validating the payload rejects the *whole*
+    tool request rather than just this parameter, taking every other tool in
+    the request down with it (PR #381 review).
+
+    It degrades exactly as a non-JSON-representable member set already does.
+    The annotation is uninhabited either way, so the call still fails, but at
+    dispatch and with a message naming the real problem."""
+    from agent_gantry.schema.introspection import (
+        _type_to_json_schema,
+        build_parameters_schema,
+    )
+
+    assert _type_to_json_schema(MemberlessMode) == {"type": "string"}
+    # ``Literal[()]`` reaches the same builder with the same empty member set.
+    assert _type_to_json_schema(typing.Literal[()]) == {"type": "string"}
+
+    def pick(mode: MemberlessMode, other: Mode) -> str:
+        """Take a memberless enum beside a populated one."""
+
+    properties = build_parameters_schema(pick)["properties"]
+    assert properties["mode"] == {"type": "string"}
+    # A populated enum is untouched, which is what the guard must not break.
+    assert properties["other"] == {"type": "string", "enum": ["fast"]}
+
+    def nullable(mode: MemberlessMode | None) -> str:
+        """Take a required-but-nullable memberless enum."""
+
+    # And the degraded schema now widens for null like any other, where the
+    # empty ``enum`` was falsy and silently skipped the widening.
+    assert build_parameters_schema(nullable)["properties"]["mode"] == {
+        "type": ["string", "null"]
+    }

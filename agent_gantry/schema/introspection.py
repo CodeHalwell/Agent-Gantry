@@ -556,8 +556,16 @@ def _enum_schema(values: tuple[Any, ...]) -> dict[str, Any]:
     ``Literal`` admits ``bytes`` and Enum members can carry arbitrary
     objects. Anything non-JSON degrades to a plain string schema (no
     ``enum``) rather than emitting a payload providers would reject.
+
+    A *memberless* ``Enum`` degrades the same way, for the same reason: JSON
+    Schema requires ``enum`` to hold at least one value, so ``{"enum": []}``
+    is not a valid schema and a provider validating the payload rejects the
+    whole tool request rather than just this parameter. The annotation is
+    uninhabited either way — reconstruction into a memberless ``Enum`` cannot
+    succeed — so the call fails at dispatch with a message naming the real
+    problem instead of taking every other tool in the request down with it.
     """
-    if not all(_json_safe(v) for v in values):
+    if not values or not all(_json_safe(v) for v in values):
         return {"type": "string"}
     schema: dict[str, Any] = {}
     kinds = set()

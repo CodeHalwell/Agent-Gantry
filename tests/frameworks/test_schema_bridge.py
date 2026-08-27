@@ -1881,3 +1881,62 @@ def test_a_property_asserting_nothing_still_accepts_everything():
     )
     for value in ({"anything": [1]}, [1, "two"], "scalar", 7, None):
         assert model(free=value).free == value
+
+
+def test_overlapping_patterns_are_validated_against_one_stable_value():
+    """Each matching adapter ran against the *previous* adapter's output, so
+    the written-back value depended on the order the patterns were declared
+    in: ``{"^x": {"type": "integer"}, "x$": {"type": "number"}}`` turned
+    ``"1"`` into ``1`` and then ``1.0``, which the model accepted and the
+    executor — which applies both schemas to the value it receives — rejected
+    against the integer branch (PR #381 review)."""
+
+    def wrap(patterns: dict) -> dict:
+        return {
+            "type": "object",
+            "properties": {"m": {"type": "object", "patternProperties": patterns}},
+            "required": ["m"],
+        }
+
+    integer = {"type": "integer"}
+    number = {"type": "number"}
+    # Both declaration orders must land on the same value, and it must be the
+    # one satisfying both schemas: an int is a valid JSON number, a float is
+    # not a valid JSON integer.
+    for patterns in (
+        {"^x": integer, "x$": number},
+        {"x$": number, "^x": integer},
+    ):
+        value = pydantic_model_from_schema("Args", wrap(patterns))(m={"x": "1"}).m
+        assert value == {"x": 1}, patterns
+        assert isinstance(value["x"], int) and not isinstance(value["x"], bool)
+
+    # A value already satisfying everything is not rewritten, and a single
+    # pattern still coerces — the write-back this builds on.
+    single = pydantic_model_from_schema("Args", wrap({"^n_": integer}))
+    assert single(m={"n_x": 7}).m == {"n_x": 7}
+    assert single(m={"n_x": "1"}).m == {"n_x": 1}
+
+    # Constraints from every matching pattern still apply, in both directions.
+    ranged = pydantic_model_from_schema(
+        "Args",
+        wrap(
+            {
+                "^n_": {"type": "integer", "minimum": 5},
+                "_x$": {"type": "integer", "maximum": 10},
+            }
+        ),
+    )
+    assert ranged(m={"n_x": "7"}).m == {"n_x": 7}
+    for out_of_range in ("3", "12"):
+        with pytest.raises(ValidationError):
+            ranged(m={"n_x": out_of_range})
+
+    # Patterns no single value can satisfy at once are rejected rather than
+    # resolved to whichever ran last — the executor rejects them too, so
+    # accepting here would forward a payload the engine refuses.
+    conflicting = pydantic_model_from_schema(
+        "Args", wrap({"^x": integer, "x$": {"type": "string"}})
+    )
+    with pytest.raises(ValidationError):
+        conflicting(m={"x": "1"})

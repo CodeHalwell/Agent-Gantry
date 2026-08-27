@@ -759,6 +759,56 @@ def _enum_membership(values: list[Any]) -> Any:
     return Annotated[Any, BeforeValidator(_is_member)]
 
 
+def _reconciled(item: Any, adapters: list[Any], key: Any) -> Any:
+    """One value satisfying *every* ``patternProperties`` schema a key matched.
+
+    Each adapter is run against the same original value rather than against
+    the previous adapter's output. Chaining them made the result
+    order-dependent: with ``{"^x": {"type": "integer"}, "x$": {"type":
+    "number"}}``, the value ``"1"`` became ``1`` and then ``1.0``, so the model
+    accepted it — while the executor applies both schemas to the value it
+    receives and rejects ``1.0`` against the integer branch.
+
+    A candidate is written back only if every matching adapter accepts it
+    under Pydantic's *strict* mode, which is what makes the choice agree with
+    the executor: the executor holds the value it receives to the type each
+    schema declares, and strict mode draws the same lines — ``1`` satisfies
+    both ``integer`` and ``number``, ``1.0`` satisfies only ``number``, and a
+    ``bool`` satisfies neither. A round-trip comparison could not express
+    that, because JSON identity deliberately calls ``1`` and ``1.0`` the same
+    number and the winner then depended on which pattern was listed first.
+
+    The original is tried before the converted values, so a value that already
+    satisfies everything is never rewritten. If no candidate survives, then no
+    single value satisfies all the matching schemas at once and the executor
+    would reject this key too — so rejecting here keeps the two in agreement
+    rather than forwarding something the engine refuses.
+    """
+    if not adapters:
+        return item
+    candidates = [item]
+    for adapter in adapters:
+        # Non-strict, and allowed to raise: that is the rejection for a value
+        # no matching schema admits at all, which this already relied on.
+        candidates.append(adapter.validate_python(item))
+
+    for candidate in candidates:
+        if all(_strictly_accepts(adapter, candidate) for adapter in adapters):
+            return candidate
+    raise ValueError(
+        f"key {key!r} matches patternProperties entries that no single value satisfies"
+    )
+
+
+def _strictly_accepts(adapter: Any, value: Any) -> bool:
+    """Whether ``adapter`` admits ``value`` as it stands, without coercing it."""
+    try:
+        adapter.validate_python(value, strict=True)
+    except Exception:  # noqa: BLE001 - any rejection means "not this candidate"
+        return False
+    return True
+
+
 def _with_pattern_properties(
     name: str,
     patterns: dict[str, Any],
@@ -855,15 +905,13 @@ def _pattern_key_validator(
         # dict rather than mutating the caller's.
         rebuilt: dict[Any, Any] = {}
         for key, item in value.items():
-            matched = False
-            for matcher, adapter in compiled:
-                if not matcher.search(str(key)):
-                    continue
-                matched = True
-                if adapter is not None:
-                    item = adapter.validate_python(item)
-            if matched:
-                rebuilt[key] = item
+            matching = [
+                adapter
+                for matcher, adapter in compiled
+                if matcher.search(str(key)) and adapter is not None
+            ]
+            if any(matcher.search(str(key)) for matcher, _ in compiled):
+                rebuilt[key] = _reconciled(item, matching, key)
                 continue
             if key in declared:
                 rebuilt[key] = item

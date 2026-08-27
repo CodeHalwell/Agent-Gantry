@@ -1000,6 +1000,23 @@ adapters, and the provider dialects agree with it.
   twin was flagged, so the strict transform published a schema-valued keyword
   strict mode cannot express and the provider rejected the whole tool request.
   The two spellings now agree for every form of the keyword.
+- **Overlapping `patternProperties` are validated against one stable value.**
+  Each matching adapter in the framework bridge ran against the *previous*
+  adapter's output, so the value written back depended on the order the
+  patterns were declared in: with `{"^x": {"type": "integer"}, "x$": {"type":
+  "number"}}`, `"1"` became `1` and then `1.0`, which the model accepted and
+  the executor — which applies every matching schema to the value it receives
+  — rejected against the integer branch. Every adapter now runs against the
+  same original value, and the value written back is one that all of them
+  accept without coercing it. Patterns no single value can satisfy at once are
+  rejected rather than resolved to whichever ran last.
+- **A memberless `Enum` no longer emits an invalid schema.** `{"enum": []}` is
+  not valid JSON Schema — `enum` must hold at least one value — so a provider
+  validating the payload rejected the whole tool request rather than just that
+  parameter. It degrades to a plain string schema exactly as a
+  non-JSON-representable member set already did; the annotation is uninhabited
+  either way, so the call still fails, but at dispatch and with a message
+  naming the real problem.
 
 ### Performance
 
