@@ -894,3 +894,51 @@ def test_a_parameterized_generic_never_takes_the_direct_type_branch():
     # And the bare forms still take the direct branch.
     assert _type_to_json_schema(dict) == {"type": "object"}
     assert _type_to_json_schema(module_abc.Mapping) == {"type": "object"}
+
+
+class NullableMode(enum.Enum):
+    """An ``Enum`` one of whose members *is* ``None``."""
+
+    UNSET = None
+    FAST = "fast"
+
+
+def test_a_null_can_itself_be_a_value_worth_rebuilding():
+    """``None`` used to short-circuit reconstruction, on the assumption that a
+    null is never worth rebuilding. An ``Enum`` with a ``None``-valued member
+    emits ``enum: [null]``, and a call supplying null reached the handler as
+    raw ``None`` rather than the member (PR #381 review)."""
+    from agent_gantry.core.executor import ArgumentReconstructionError, _reconstructed
+
+    def use_mode(mode: NullableMode) -> None: ...
+
+    assert _reconstructed(use_mode, {"mode": None}) == {"mode": NullableMode.UNSET}
+    assert _reconstructed(use_mode, {"mode": "fast"}) == {"mode": NullableMode.FAST}
+
+    # An annotation that admits ``None`` still gets it back unchanged, which
+    # is why the shortcut could go rather than needing a carve-out.
+    def optional_payload(p: typing.Optional[Payload]) -> None: ...  # noqa: UP045
+
+    assert _reconstructed(optional_payload, {"p": None}) == {"p": None}
+    assert _reconstructed(optional_payload, {"p": {"x": 1}}) == {"p": Payload(x=1)}
+
+    # And one that doesn't is a schema/annotation mismatch, reported as such
+    # rather than dispatched as a null the handler cannot take.
+    def strict_payload(p: Payload) -> None: ...
+
+    with pytest.raises(ArgumentReconstructionError):
+        _reconstructed(strict_payload, {"p": None})
+
+
+async def test_a_null_enum_member_reaches_the_handler_end_to_end():
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @g.register(tags=["demo"])
+    def read_mode(mode: NullableMode) -> str:
+        """Report the runtime type and member of a nullable-enum parameter."""
+        return f"{type(mode).__name__}.{mode.name}"
+
+    await g.sync()
+    result = await g.execute(ToolCall(tool_name="read_mode", arguments={"mode": None}))
+    assert result.status.value == "success", result.error
+    assert result.result == "NullableMode.UNSET"

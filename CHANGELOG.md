@@ -872,6 +872,14 @@ adapters, and the provider dialects agree with it.
   a fixed-length tuple — accepted the extra elements. Both the executor's
   validator and the framework bridge now read them at their own single
   subschema funnel, so the two agree by construction.
+- **A `null` can itself be a value worth rebuilding.** Reconstruction
+  short-circuited on `None`, assuming a null is never worth converting — but
+  an `Enum` with a `None`-valued member (`class Mode(Enum): UNSET = None`)
+  emits `enum: [null]`, and a call supplying null reached the handler as raw
+  `None` rather than `Mode.UNSET`. The adapter answers this correctly without
+  a special case: an annotation admitting `None` returns it unchanged, and one
+  that doesn't was already a mismatch between the schema and the handler's own
+  type.
 
 ### Performance
 

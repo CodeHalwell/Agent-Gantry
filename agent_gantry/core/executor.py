@@ -128,9 +128,17 @@ def _reconstructed(handler: Callable[..., Any], arguments: dict[str, Any]) -> di
     changed = False
     for name, value in arguments.items():
         adapter = coercers.get(name)
-        if adapter is None or value is None:
+        if adapter is None:
             out[name] = value
             continue
+        # ``None`` used to short-circuit here, on the assumption that a null
+        # is never a value worth rebuilding. It can be: an ``Enum`` with a
+        # ``None``-valued member (``class Mode(Enum): UNSET = None``) emits
+        # ``enum: [null]``, and a required call supplying null reached the
+        # handler as raw ``None`` rather than ``Mode.UNSET``. The adapter
+        # answers this correctly without a special case — an annotation that
+        # admits ``None`` returns it unchanged, and one that doesn't was
+        # already a mismatch between the schema and the handler's own type.
         try:
             rebuilt = adapter.validate_python(value)
         except Exception as exc:  # noqa: BLE001 - reported as a validation error
