@@ -1456,6 +1456,27 @@ class ExecutionEngine:
                 usable = [b for b in branches if isinstance(b, (dict, bool))]
                 if not usable:
                     continue
+                # A branch this validator cannot fully evaluate reports as
+                # *matching*, since ``_validate_value`` returns valid for what
+                # it cannot interpret. That inflates the count, and ``oneOf``
+                # reads the count: the ``oneOf: [{"$ref": …}, {"$ref": …}]``
+                # an imported schema commonly uses had every argument object
+                # matching both branches and rejected for it, so the tool
+                # could not be called at all (PR #386 review).
+                #
+                # The honest verdict for such a combinator is "unknown", so it
+                # is not enforced. Skipping only the unevaluable branches
+                # would be worse than leaving them in: it can drive the count
+                # to zero and reject a value one of them may well have
+                # accepted.
+                if not all(_fully_evaluable(b) for b in usable):
+                    logger.warning(
+                        "%s declares a '%s' with branches this validator does "
+                        "not evaluate; it is not enforced.",
+                        describe_path(path),
+                        key,
+                    )
+                    continue
                 # An empty schema ``{}`` validates every value too, so it is
                 # likewise a branch that always matches — excluding it turned
                 # ``{"anyOf": [{}, {"type": "integer"}]}`` into an

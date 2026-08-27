@@ -41,6 +41,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `properties` counted as declared. Both directions are fixed; an *explicit*
   `additionalProperties: false` inside a branch is still honoured, and `not`
   declares nothing.
+- **A combinator whose branches the validator cannot evaluate is not
+  enforced.** An unevaluable branch reports as *matching*, since
+  `_validate_value` returns valid for what it cannot interpret — and `oneOf`
+  reads the match count, so the `oneOf: [{"$ref": …}, {"$ref": …}]` an
+  imported schema commonly uses had every argument object matching both
+  branches and rejected for it, leaving the tool uncallable. Everything else
+  in the schema still applies; only the combinator's own verdict is withheld.
 - **The `not` keyword is evaluated.** It was parsed nowhere — the provider
   transforms walk into it, so it survived a round-trip through them and then
   constrained nothing, and a schema whose purpose is to forbid a shape

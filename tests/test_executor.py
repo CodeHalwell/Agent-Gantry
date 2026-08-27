@@ -3005,3 +3005,85 @@ def test_root_assertions_are_all_keywords_the_validator_implements():
         "additionalProperties",
         "patternProperties",
     }
+
+
+@pytest.mark.asyncio
+async def test_a_combinator_with_unevaluable_branches_is_not_enforced(engine):
+    """`_validate_value` returns *valid* for what it cannot interpret, so an
+    unevaluable branch reports as matching — and ``oneOf`` reads the count.
+    The `oneOf: [{"$ref": …}, {"$ref": …}]` an imported schema commonly uses
+    therefore had every argument object matching both branches and rejected
+    for it, leaving the tool uncallable (PR #386 review).
+
+    The honest verdict for such a combinator is "unknown", so it is not
+    enforced. Skipping only the unevaluable branches would be worse than
+    leaving them in — it can drive the count to zero and reject a value one of
+    them may well have accepted."""
+
+    def tool_with(schema: dict) -> ToolDefinition:
+        return ToolDefinition(
+            name="imported", description="An imported composed schema", parameters_schema=schema
+        )
+
+    refs = tool_with(
+        {
+            "type": "object",
+            "$defs": {"A": {"required": ["a"]}, "B": {"required": ["b"]}},
+            "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}},
+            "oneOf": [{"$ref": "#/$defs/A"}, {"$ref": "#/$defs/B"}],
+        }
+    )
+    assert await engine._validate_arguments(refs, {"a": 1}) == (True, None)
+    assert await engine._validate_arguments(refs, {"b": 2}) == (True, None)
+    # Everything the validator *can* apply still applies — only the
+    # combinator's own verdict is withheld.
+    ok, err = await engine._validate_arguments(refs, {"b": "x"})
+    assert ok is False and "Parameter 'b' must be an integer" in err
+
+    # Same one level down, where the combinator sits on a nested object.
+    nested = tool_with(
+        {
+            "type": "object",
+            "properties": {
+                "p": {
+                    "$defs": {"A": {"required": ["a"]}},
+                    "oneOf": [{"$ref": "#/$defs/A"}, {"$ref": "#/$defs/A"}],
+                }
+            },
+        }
+    )
+    assert await engine._validate_arguments(nested, {"p": {"a": 1}}) == (True, None)
+
+    # A combinator the validator can evaluate is untouched, in both
+    # directions — this must not become a way to opt out of ``oneOf``.
+    real = tool_with(
+        {
+            "type": "object",
+            "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}},
+            "oneOf": [{"required": ["a"]}, {"required": ["b"]}],
+        }
+    )
+    ok, err = await engine._validate_arguments(real, {"a": 1, "b": 2})
+    assert ok is False and "exactly one must match" in err
+    assert await engine._validate_arguments(real, {"a": 1}) == (True, None)
+
+    either = tool_with(
+        {
+            "type": "object",
+            "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}},
+            "anyOf": [{"required": ["a"]}, {"required": ["b"]}],
+        }
+    )
+    ok, err = await engine._validate_arguments(either, {})
+    assert ok is False and "does not match any permitted schema" in err
+
+    # Boolean and empty-schema branches are evaluable — they are exactly what
+    # they say — so they keep counting.
+    booleans = tool_with(
+        {
+            "type": "object",
+            "properties": {"a": {"type": "integer"}},
+            "anyOf": [True, {"type": "object"}],
+        }
+    )
+    assert await engine._validate_arguments(booleans, {"a": 1}) == (True, None)
