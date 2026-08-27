@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 
-def _strict_schema(params: dict[str, Any]) -> dict[str, Any]:
+def _strict_schema(params: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     """Return ``params`` reshaped for OpenAI Agents strict-mode function tools.
 
     ``FunctionTool.strict_json_schema`` defaults to ``True``, and the SDK then

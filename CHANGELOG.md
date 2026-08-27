@@ -177,6 +177,27 @@ adapters, and the provider dialects agree with it.
   normalized too: strict mode widens the optional properties of a positional
   *object* exactly as it does anywhere else, so a `tuple[Payload, int]`
   parameter kept its nested nulls while only `items` was consulted.
+- **Signature-derived schemas lost every `enum`.** `python_signature` backs
+  the frameworks that rebuild their own LLM schema from the callable rather
+  than from `parameters_schema` — Semantic Kernel, AG2, and Google ADK's
+  fallback path — and its annotations read only `type`/`items`. A
+  `Literal["fast", "slow"]` parameter therefore reached the model as
+  unconstrained `str` on exactly those frameworks, undoing this release's own
+  fidelity work for them. `enum`/`const` now become `Literal`, array items are
+  annotated recursively (`list[Literal["a", "b"]]`), and a typed mapping keeps
+  its value type (`dict[str, int]`). An object with declared `properties` still
+  degrades to a bare `dict` — see "Known limitation".
+- **Anthropic strict mode had no safety gate.** `to_provider_schema(strict=True)`
+  set `additionalProperties: false` on the root unconditionally, so a schema
+  that *needs* arbitrary keys — a typed mapping, a `**kwargs` handler — was
+  silently closed to accepting none, discarding the parameter's data rather
+  than merely leaving it unconstrained. It now uses the same
+  `unsupported_strict_paths()` gate as the OpenAI adapters: such a tool is
+  emitted without `strict: true`, with a warning naming the offending path.
+- **An uncompilable `pattern` was silently unenforced.** A schema declaring an
+  ECMA-262-only construct (`\p{L}`) fails Python's `re`, and validation
+  correctly fails open rather than rejecting every value — but gave the schema's
+  author no signal the constraint was dead. It now logs a warning.
 - **A null branch appended inside `anyOf`/`oneOf` didn't make the property
   nullable.** A sibling assertion applies independently of a combinator, so
   `{"type": "integer", "anyOf": [{"minimum": 10}, {"maximum": 0}]}` kept
@@ -423,6 +444,14 @@ adapters, and the provider dialects agree with it.
   failed just as surely, only earlier and more opaquely). Fixing it properly
   needs the original Python type available at invocation time, which the
   schema/executor split doesn't currently carry.
+- `python_signature` annotates an object parameter with declared
+  `properties` as a bare `dict` rather than rebuilding it as a nested model
+  (which CrewAI and LlamaIndex do get, via `pydantic_model_from_schema`). The
+  frameworks reading that signature — Semantic Kernel, AG2, Google ADK's
+  fallback path — therefore still see an untyped object for a nested Pydantic
+  or dataclass parameter. Changing it would alter what those frameworks
+  introspect in a way this suite can't exercise against their real schema
+  derivation, so it is left as a tracked gap rather than an untested change.
 
 ### CI
 

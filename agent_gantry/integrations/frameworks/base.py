@@ -317,26 +317,73 @@ def _json_type_to_python(json_type: Any) -> Any:
     return _JSON_TO_PYTHON.get(json_type, str)
 
 
-def _annotation_for_prop(prop: dict[str, Any]) -> Any:
-    """Python annotation for one property schema, item types included.
+def _literal_members(prop: dict[str, Any]) -> tuple[Any, ...] | None:
+    """The ``Literal`` members a schema's ``enum``/``const`` pins it to.
 
-    ``{"type": "array", "items": {"type": "string"}}`` annotates as
-    ``list[str]`` rather than bare ``list``, so frameworks that rebuild their
-    LLM schema from the signature (Semantic Kernel, Google ADK's fallback
-    path, AG2) advertise the item type instead of an untyped array. Untyped
-    or unrecognized item schemas keep the bare container annotation.
+    ``None`` when the schema constrains nothing, or names a value no
+    ``Literal`` can hold — there the caller keeps the plain type annotation
+    rather than inventing one.
     """
+    if "const" in prop:
+        values: list[Any] = [prop["const"]]
+    else:
+        enum_values = prop.get("enum")
+        if not isinstance(enum_values, list) or not enum_values:
+            return None
+        values = enum_values
+    # Floats are admitted for the same reason the schema bridge admits them:
+    # PEP 586 disallows a float member statically, but ``typing`` and every
+    # framework validator downstream enforce it correctly at runtime, and the
+    # alternative is advertising no constraint at all.
+    if not all(isinstance(v, (str, int, bool, float)) or v is None for v in values):
+        return None
+    return tuple(values)
+
+
+def _annotation_for_prop(prop: dict[str, Any]) -> Any:
+    """Python annotation for one property schema, recursively.
+
+    Frameworks that rebuild their LLM schema from the signature rather than
+    from ``parameters_schema`` — Semantic Kernel, AG2, Google ADK's fallback
+    path — see only what this returns, so anything it drops is invisible to
+    the model. ``{"type": "array", "items": {"type": "string"}}`` annotates
+    as ``list[str]`` rather than a bare ``list``; an ``enum``/``const``
+    becomes a ``Literal`` rather than a bare ``str``, which previously let
+    those frameworks advertise ``Literal["fast", "slow"]`` as unconstrained
+    text; and a typed mapping keeps its value type.
+
+    An object with declared ``properties`` still degrades to a bare ``dict``.
+    Rebuilding it as a nested model (what CrewAI and LlamaIndex get from
+    ``pydantic_model_from_schema``) would change what these frameworks
+    introspect in a way this codebase can't exercise against their real
+    schema derivation, so it stays a documented gap rather than an untested
+    behaviour change.
+    """
+    literal = _literal_members(prop)
+    if literal is not None:
+        return Literal[literal]
+
     json_type = prop.get("type")
     annotation = _json_type_to_python(json_type)
+
     if annotation is list:
         items = prop.get("items")
-        if isinstance(items, dict):
-            item_type = items.get("type")
-            if isinstance(item_type, list):
-                item_type = next((t for t in item_type if t != "null"), None)
-            item_annotation = _JSON_TO_PYTHON.get(item_type)
-            if item_annotation is not None:
+        if isinstance(items, dict) and items:
+            item_annotation = _annotation_for_prop(items)
+            # A bare ``str`` here is the fallback for an untyped item schema,
+            # not a real annotation — keep the bare container instead of
+            # asserting an item type the schema never declared.
+            if item_annotation is not str or items.get("type") == "string":
                 return list[item_annotation]
+        return annotation
+
+    if annotation is dict:
+        additional = prop.get("additionalProperties")
+        properties = prop.get("properties")
+        if isinstance(additional, dict) and additional and not properties:
+            return dict[str, _annotation_for_prop(additional)]
+        return annotation
+
     return annotation
 
 

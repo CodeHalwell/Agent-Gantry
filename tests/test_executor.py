@@ -1274,3 +1274,26 @@ def test_normalize_uses_items_for_positions_past_the_prefix():
     assert ExecutionEngine._normalize_arguments(
         tool, {"row": ["label", {"x": 1, "y": None}]}
     ) == {"row": ["label", {"x": 1}]}
+
+
+async def test_uncompilable_pattern_fails_open_but_warns(engine, caplog):
+    """A pattern Python's ``re`` can't compile is often a valid ECMA-262 one
+    (``\\p{L}``), so rejecting every value would break a tool whose schema is
+    fine everywhere else. Failing open is right, but silently leaves the
+    constraint unenforced — the author needs a signal (PR #381 review)."""
+    tool = ToolDefinition(
+        name="pat",
+        description="Parameter with an ECMA-only pattern",
+        parameters_schema={
+            "type": "object",
+            "properties": {"s": {"type": "string", "pattern": r"\p{L}+"}},
+            "required": ["s"],
+        },
+    )
+    with caplog.at_level("WARNING"):
+        is_valid, error = await engine._validate_arguments(tool, {"s": "anything"})
+
+    assert is_valid is True
+    assert error is None
+    assert "cannot compile" in caplog.text
+    assert "'s'" in caplog.text

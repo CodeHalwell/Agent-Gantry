@@ -417,17 +417,38 @@ class AnthropicAdapter:
         # ToolDefinition.parameters_schema, so a caller adjusting one nested
         # subschema on the payload would still corrupt the registered tool.
         input_schema: dict[str, Any] = _emitted_schema(tool.parameters_schema)
+        use_strict = False
         if strict:
-            # Anthropic requires additionalProperties: false for strict mode
-            # to take effect.
-            input_schema["additionalProperties"] = False
+            # Same gate as the OpenAI adapters: strict mode requires
+            # ``additionalProperties: false``, so a schema that *needs*
+            # arbitrary keys cannot be strict. Setting the flag anyway would
+            # replace a typed mapping (``dict[str, int]``) or a ``**kwargs``
+            # handler's open object with one accepting no keys at all —
+            # silently discarding the parameter's data rather than merely
+            # leaving it unconstrained.
+            unsupported = unsupported_strict_paths(tool.parameters_schema)
+            if unsupported:
+                _logger.warning(
+                    "Tool %r cannot use Anthropic strict mode: %s describes an "
+                    "object with arbitrary keys, which strict mode cannot "
+                    "express. Emitting the tool without strict:true so the "
+                    "keys stay usable — declare the object's properties "
+                    "explicitly to make it strict-compatible.",
+                    tool.name,
+                    ", ".join(unsupported),
+                )
+            else:
+                use_strict = True
+                # Anthropic requires additionalProperties: false for strict
+                # mode to take effect.
+                input_schema["additionalProperties"] = False
 
         schema: dict[str, Any] = {
             "name": tool.name,
             "description": tool.description,
             "input_schema": input_schema,
         }
-        if strict:
+        if use_strict:
             schema["strict"] = True
         return schema
 

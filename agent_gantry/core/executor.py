@@ -81,8 +81,20 @@ def _check_constraints(value: Any, schema: dict[str, Any], path: str) -> str | N
         if isinstance(pattern, str) and pattern:
             try:
                 matches = re.search(pattern, value) is not None
-            except re.error:
-                matches = True  # unusable pattern: don't reject on our own bug
+            except re.error as exc:
+                # Fail open: a pattern Python's ``re`` can't compile is often
+                # a valid ECMA-262 one (``\p{L}``), and rejecting every value
+                # would break a tool whose schema is fine everywhere else.
+                # Logged because the constraint is then silently unenforced —
+                # without this the schema's author gets no signal at all.
+                logger.warning(
+                    "Parameter '%s' declares a pattern %r that Python's re "
+                    "cannot compile (%s); the constraint is not enforced.",
+                    path,
+                    pattern,
+                    exc,
+                )
+                matches = True
             if not matches:
                 return f"Parameter '{path}' must match pattern {pattern!r}"
 

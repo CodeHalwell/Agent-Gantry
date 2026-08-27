@@ -434,6 +434,55 @@ class TestStrictFallbackInAdapters:
         out = OpenAIResponsesAdapter().to_provider_schema(self._mapping_tool(), strict=True)
         assert "strict" not in out
 
+    def test_anthropic_drops_strict_for_open_maps(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Anthropic strict mode also requires ``additionalProperties: false``,
+        so setting it on a schema that needs arbitrary keys replaced a typed
+        mapping with an object accepting none — the same data loss the OpenAI
+        adapters gate against (PR #381 review)."""
+        tool = self._mapping_tool()
+        with caplog.at_level("WARNING"):
+            out = AnthropicAdapter().to_provider_schema(tool, strict=True)
+
+        assert "strict" not in out
+        assert out["input_schema"]["properties"]["counts"]["additionalProperties"] == {
+            "type": "integer"
+        }
+        assert "tally" in caplog.text
+
+    def test_anthropic_keeps_kwargs_handlers_callable(self) -> None:
+        """A ``**kwargs`` handler advertises an open root object. Forcing it
+        closed under strict mode left Claude unable to pass any argument at
+        all — strictly worse than emitting the tool unconstrained."""
+        tool = ToolDefinition(
+            name="passthrough",
+            description="Handler accepting arbitrary keyword arguments",
+            parameters_schema={
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": True,
+            },
+        )
+        out = AnthropicAdapter().to_provider_schema(tool, strict=True)
+        assert "strict" not in out
+        assert out["input_schema"]["additionalProperties"] is True
+
+    def test_anthropic_still_applies_strict_to_closed_schemas(self) -> None:
+        tool = ToolDefinition(
+            name="greet",
+            description="Greet someone by name",
+            parameters_schema={
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
+            },
+        )
+        out = AnthropicAdapter().to_provider_schema(tool, strict=True)
+        assert out["strict"] is True
+        assert out["input_schema"]["additionalProperties"] is False
+
     def test_strict_still_applies_to_fully_declared_tools(self) -> None:
         tool = ToolDefinition(
             name="greet",
