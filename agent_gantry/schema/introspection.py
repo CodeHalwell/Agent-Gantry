@@ -667,8 +667,16 @@ def _type_to_json_schema(param_type: Any, *, in_container: bool = False) -> dict
 
     param_type, _ = _split_annotated(param_type)
 
-    # Direct type match (most reliable)
-    if isinstance(param_type, type):
+    # Direct type match (most reliable). ``get_origin`` gates it because on
+    # Python 3.10 a parameterized builtin — ``dict[str, int]`` — *is* an
+    # instance of ``type``, where on 3.11+ it is not. Without this the two
+    # versions took different branches for the same annotation, and 3.10 then
+    # reached the abstract-base checks below with a generic alias, where
+    # ``issubclass`` raises ``TypeError: arg 1 must be a class``. (The
+    # concrete-class checks tolerated it, which is why this only surfaced once
+    # the ABCs were added.) Parameterized generics belong to the branch further
+    # down on every version.
+    if isinstance(param_type, type) and typing.get_origin(param_type) is None:
         # ``def f(x: None)`` resolves to ``NoneType``, which is a real type
         # but not in the scalar map — it would otherwise fall all the way
         # through to the string fallback and advertise a string for a

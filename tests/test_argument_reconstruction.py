@@ -856,3 +856,41 @@ async def test_a_bare_mapping_annotation_accepts_an_object():
     )
     assert result.status.value == "success", result.error
     assert result.result == "2"
+
+
+def test_a_parameterized_generic_never_takes_the_direct_type_branch():
+    """On Python 3.10 a parameterized builtin *is* an instance of ``type``,
+    where on 3.11+ it is not — so the two versions took different branches for
+    the same annotation, and 3.10 reached the abstract-base checks with a
+    generic alias, where ``issubclass`` raises ``TypeError: arg 1 must be a
+    class``. It surfaced only once the ABCs were added, the concrete-class
+    checks having tolerated it (PR #381 review).
+
+    Asserted through the emitted schema rather than the branch taken, so it
+    holds on every version: a parameterized generic must keep its parameters,
+    which only the generic branch supplies.
+    """
+    import collections.abc as module_abc
+
+    from agent_gantry.schema.introspection import _type_to_json_schema
+
+    assert _type_to_json_schema(dict[str, int]) == {
+        "type": "object",
+        "additionalProperties": {"type": "integer"},
+    }
+    assert _type_to_json_schema(module_abc.Mapping[str, int]) == {
+        "type": "object",
+        "additionalProperties": {"type": "integer"},
+    }
+    assert _type_to_json_schema(list[int]) == {
+        "type": "array",
+        "items": {"type": "integer"},
+    }
+    assert _type_to_json_schema(set[str]) == {
+        "type": "array",
+        "uniqueItems": True,
+        "items": {"type": "string"},
+    }
+    # And the bare forms still take the direct branch.
+    assert _type_to_json_schema(dict) == {"type": "object"}
+    assert _type_to_json_schema(module_abc.Mapping) == {"type": "object"}

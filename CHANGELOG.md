@@ -856,6 +856,12 @@ adapters, and the provider dialects agree with it.
   since it is also a `Collection`), and a bare `Set` is rebuilt for the same
   reason `set` is. A bare `set` consequently carries `uniqueItems` now, as
   `set[str]` always has.
+- **A parameterized generic took a different branch on Python 3.10.** There a
+  parameterized builtin — `dict[str, int]` — *is* an instance of `type`, where
+  on 3.11+ it is not, so 3.10 entered the direct-type branch and reached the
+  abstract-base checks with a generic alias, where `issubclass` raises
+  `TypeError: arg 1 must be a class`. `get_origin` now gates that branch, so
+  every version routes a parameterized generic the same way.
 
 ### Performance
 
