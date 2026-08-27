@@ -150,7 +150,7 @@ class GoogleADKAdapter(BaseFrameworkAdapter):
         (see
         :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select`).
         No other ``framework_kwargs`` are required (unlike LangGraph/OpenAI
-        Agents/Semantic Kernel, this hook is agent-agnostic).
+        Agents, this hook is agent-agnostic).
         """
         return self.before_model_callback(
             limit=limit,

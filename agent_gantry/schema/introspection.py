@@ -459,7 +459,7 @@ def _split_annotated(param_type: Any) -> tuple[Any, str | None]:
     """Unwrap ``Annotated[T, ...]``, returning ``(T, description)``.
 
     The description is the first ``str`` metadata item, mirroring how
-    Pydantic AI / Semantic Kernel / AG2 read parameter descriptions from
+    Pydantic AI and Google ADK's fallback path read parameter descriptions from
     ``Annotated``. Non-``Annotated`` types pass through unchanged.
     """
     import typing

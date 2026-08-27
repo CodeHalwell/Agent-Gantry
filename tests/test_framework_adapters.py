@@ -64,7 +64,7 @@ async def test_fetch_framework_tools_covers_every_native_framework_name(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "legacy,canonical",
-    [("crew_ai", "crewai"), ("semantic-kernel", "semantic_kernel")],
+    [("crew_ai", "crewai")],
 )
 async def test_fetch_framework_tools_normalizes_legacy_names(gantry_with_tool, legacy, canonical):
     """Legacy spellings are accepted and behave identically to the canonical name."""

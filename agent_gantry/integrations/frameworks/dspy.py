@@ -29,7 +29,7 @@ than raising loudly. Since ``react(question=...)`` (not
 ``await react.acall(...)``) is the call convention most users reach for
 first, this adapter instead wraps every tool with a **synchronous** function
 backed by :meth:`ToolSpec.invoke` (the loop-safe sync bridge in ``base.py``,
-already used this way for CrewAI/Agno/Haystack/Smolagents). A sync wrapper
+already used this way for CrewAI/Agno/Haystack). A sync wrapper
 returns a plain value either way, so it works correctly under both
 ``dspy.Tool.__call__`` (``react(...)``) and ``dspy.Tool.acall`` (``await
 react.acall(...)`` — a non-coroutine result is simply returned, no await
@@ -61,7 +61,7 @@ tool-selection step (see ``strands_live.py`` / ``google_adk_live.py``). DSPy
 ships no equivalent, so there is no genuine per-turn re-selection hook here.
 :meth:`DSPyAdapter.agent_builder` therefore follows the same
 *per-top-level-call* tier as ``CrewAIAdapter.agent_builder`` /
-``AgnoAdapter.agent_builder`` / ``SmolagentsAdapter.agent_builder`` (see
+``AgnoAdapter.agent_builder`` (see
 ``live_wrappers.py``): it rebuilds a fresh ``dspy.ReAct`` for each call,
 re-selecting tools for that call's query. Between calls the tool surface
 tracks the new query; *within* a single ``ReAct`` run (i.e. across its
@@ -296,7 +296,7 @@ class DSPyAdapter(BaseFrameworkAdapter):
         """Return a builder that rebuilds a fresh ``dspy.ReAct`` per call with re-selected tools.
 
         Named ``agent_builder`` for consistency with ``CrewAIAdapter``/
-        ``AgnoAdapter``/``SmolagentsAdapter`` — the same "tools fixed at
+        ``AgnoAdapter`` — the same "tools fixed at
         construction, rebuild per call" tier (see the module docstring); not
         ``react(...)``, since the returned object's ``.build(query)`` method
         is what actually produces the ``dspy.ReAct`` instance.

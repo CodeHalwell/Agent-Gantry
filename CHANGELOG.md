@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-08-27
+
+### Removed
+
+- **The Smolagents, AutoGen / AG2 and Semantic Kernel integrations.** These are
+  no longer part of the supported framework set. Deleted outright rather than
+  deprecated — `agent_gantry.smolagents`, `agent_gantry.autogen` and
+  `agent_gantry.semantic_kernel` are gone, as are `SmolagentsAdapter`,
+  `AutoGenAdapter` and `SemanticKernelAdapter` (from both
+  `agent_gantry.integrations` and `agent_gantry.integrations.frameworks`),
+  `GantryLiveSmolAgent`, `GantryWorkbench`, `GantryFunctionProvider`, and the
+  `"smolagents"` / `"autogen"` / `"semantic_kernel"` names accepted by
+  `fetch_framework_tools` — along with the `"semantic-kernel"` legacy alias.
+  Twelve frameworks remain: Microsoft Agent Framework, LangChain, LangGraph,
+  LlamaIndex, CrewAI, Pydantic AI, OpenAI Agents SDK, Haystack, Agno, Google
+  ADK, Strands Agents and DSPy.
+- **`ToolSpec.python_signature` / `callable_for_signature` lose the
+  `union_optional` and `annotated_descriptions` keyword arguments.** Both
+  existed solely for Semantic Kernel and AG2, and had no other caller.
+  `type_matched_defaults` is unaffected — Google ADK still needs it.
+- **The `smolagents`, `autogen-agentchat`, `autogen-ext` and `semantic-kernel`
+  packages** are no longer installed by any extra or CI job.
+
+### Changed
+
+- **`google-adk` moves to the 2.x line** (floor `>=2.6.1`, universal lock
+  resolves 2.8.0), and with it **pydantic to 2.12.x**. `semantic-kernel`
+  1.36.0's `pydantic<2.12` pin was what had held the combined
+  `agent-frameworks` extra on pydantic 2.11.x, which in turn capped
+  `google-adk` at the 1.x line's 1.14.1 — removing it released both. The floor
+  had to be raised explicitly: uv does not climb past a satisfied floor on its
+  own, so dropping the package alone left the lock unchanged.
+
 ## [0.12.0] - 2026-08-26
 
 Tool schemas now carry what your functions actually declare. Everything a

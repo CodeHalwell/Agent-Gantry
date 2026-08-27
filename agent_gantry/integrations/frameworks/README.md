@@ -16,11 +16,8 @@ timeouts, circuit breakers, security policy all apply).
 | CrewAI | `CrewAIAdapter` | `crewai.tools.BaseTool` subclass |
 | Pydantic AI | `PydanticAIAdapter` | `pydantic_ai.tools.Tool` |
 | OpenAI Agents SDK | `OpenAIAgentsAdapter` | `agents.FunctionTool` |
-| Smolagents | `SmolagentsAdapter` | `smolagents.Tool` subclass |
 | Haystack | `HaystackAdapter` | `haystack.tools.Tool` |
 | Agno | `AgnoAdapter` | `agno.tools.function.Function` |
-| AutoGen / AG2 | `AutoGenAdapter` (`.select`, `.register`) | callables + `register_function` |
-| Semantic Kernel | `SemanticKernelAdapter` (`.select`, `.plugin`) | `KernelFunction` (`@kernel_function`) |
 | Google ADK | `GoogleADKAdapter` | `google.adk.tools.FunctionTool` |
 | Strands Agents | `StrandsAdapter` | `strands.tools.decorator.DecoratedFunctionTool` |
 | DSPy | `DSPyAdapter` | `dspy.Tool` |
@@ -45,9 +42,8 @@ tools = await LangChainAdapter(gantry).select("email the quarterly report to fin
 
 Each framework has a top-level namespace — `from agent_gantry.<framework> import …`
 (`agent_gantry.langchain`, `agent_gantry.crewai`, `agent_gantry.llamaindex`,
-`agent_gantry.pydantic_ai`, `agent_gantry.openai_agents`, `agent_gantry.smolagents`,
-`agent_gantry.haystack`, `agent_gantry.agno`, `agent_gantry.autogen`,
-`agent_gantry.semantic_kernel`, `agent_gantry.google_adk`, `agent_gantry.langgraph`,
+`agent_gantry.pydantic_ai`, `agent_gantry.openai_agents`,
+`agent_gantry.haystack`, `agent_gantry.agno`, `agent_gantry.google_adk`, `agent_gantry.langgraph`,
 `agent_gantry.strands`, `agent_gantry.dspy`, `agent_gantry.agent_framework`) re-exporting that framework's `<Framework>Adapter`
 class (which carries both the static `.select`/`.convert` and the deep live
 methods). Importing `agent_gantry` never pulls these in.
@@ -178,11 +174,8 @@ documented, framework-idiomatic path; `live()` just delegates to one of them):
 | CrewAI | per-call | `agent_builder` | `GantryLiveCrewAgent` builder | `await builder.build(query)` per task |
 | Pydantic AI | per-turn | `toolset` | `GantryToolset` (`AbstractToolset`) | `Agent(model, toolsets=[<result>])` |
 | OpenAI Agents SDK | per-turn | `session` (requires `agent=`) | `GantryAgentSession` | `await session.run(run_input)` per turn |
-| Smolagents | per-call | `agent_builder` | `GantryLiveSmolAgent` builder | `await builder.build(query)` per run |
 | Haystack | per-call | `tool_invoker_builder` | `GantryLiveHaystackToolInvoker` builder (ToolInvoker on haystack 2.x, Agent on >=3.0) | `await builder.build(query)` per call |
 | Agno | per-call | `agent_builder` | `GantryLiveAgnoAgent` builder | `await builder.build(query)` per run |
-| AutoGen / AG2 | per-turn | `workbench` | `GantryWorkbench` (`autogen_core.tools.Workbench`) | agent consuming a `Workbench` (e.g. `AssistantAgent`) |
-| Semantic Kernel | per-turn | `function_provider` (requires `kernel=`) | `GantryFunctionProvider` | `await provider.refresh(history)` before each call |
 | Google ADK | per-turn | `before_model_callback` | async `(callback_context, llm_request) -> None` | `Agent(tools=[], before_model_callback=<result>)` |
 | Strands Agents | per-turn | `tool_hook` | `GantryStrandsToolHook` (`HookProvider`) | `Agent(tools=[], hooks=[<result>])` |
 | Microsoft Agent Framework* | per-turn | `context_provider` (`query_strategy="per_call"`) | `GantryContextProvider` | `Agent(context_providers=[<result>])` + `<result>.as_chat_middleware()`, or `<result>.attach_to(agent)` |
@@ -212,11 +205,9 @@ these — the framework is only required when you use its provider).
 |---|---|---|
 | LlamaIndex | `LlamaIndexAdapter(gantry).tool_retriever()` / `.function_agent(llm)` | `FunctionAgent(tool_retriever=…)` (`ObjectRetriever`) |
 | Pydantic AI | `PydanticAIAdapter(gantry).toolset()` | `AbstractToolset.get_tools()` |
-| AutoGen | `AutoGenAdapter(gantry).workbench()` | `autogen_core.tools.Workbench.list_tools()` |
 | Google ADK | `GoogleADKAdapter(gantry).before_model_callback()` / `.agent()` | `Agent(before_model_callback=…)` |
 | Strands Agents | `StrandsAdapter(gantry).tool_hook()` / `.agent()` | `Agent(hooks=[…])` — `BeforeModelCallEvent` |
 | LangGraph | `LangGraphAdapter(gantry).react_agent(model)` / `.areact_agent(model)` / `.select_for_state(state)` | dynamic `model` callable (re-binds tools per turn) |
-| Semantic Kernel | `SemanticKernelAdapter(gantry).function_provider(kernel)` / `.refresh(kernel, query)` | per-invocation plugin refresh |
 | OpenAI Agents SDK | `OpenAIAgentsAdapter(gantry).run(agent, run_input)` / `.session(agent)` / `.run_hooks(agent)` | `RunHooks.on_llm_start` + per-run refresh |
 
 ```python
@@ -225,9 +216,9 @@ agent = LlamaIndexAdapter(gantry).function_agent(llm)   # LlamaIndex agent that 
 ```
 
 Frameworks whose tool list is **fixed at agent construction** (CrewAI, Agno,
-Haystack, Smolagents, DSPy) can't re-advertise tools mid-run; their "live" wrappers —
+Haystack, DSPy) can't re-advertise tools mid-run; their "live" wrappers —
 obtained via `CrewAIAdapter(gantry).agent_builder(...)`,
-`AgnoAdapter(gantry).agent_builder(...)`, `SmolagentsAdapter(gantry).agent_builder(...)`,
+`AgnoAdapter(gantry).agent_builder(...)`,
 `DSPyAdapter(gantry).agent_builder(signature, ...)`,
 and `HaystackAdapter(gantry).tool_invoker_builder(...)` (or `HaystackAdapter(gantry).live_tools(query)`
 for tools alone) — re-select and rebuild the agent on each top-level call —
@@ -317,13 +308,7 @@ own downstream consumption of it:
    failed."` string when `include_detailed_errors` is off (the AF default),
    destroying the root cause — returning it as tool output lets the LLM see
    and react to the real error.
-2. **AutoGen / AG2's *live* `Workbench`** (`autogen_live.py`,
-   `GantryWorkbench.call_tool`) catches the exception and returns an error
-   `autogen_core.tools.ToolResult(is_error=True)` instead of raising.
-   Deliberate: this matches `Workbench.call_tool`'s own documented contract
-   (report failure *as* a result, not an exception) — the *static*
-   `AutoGenAdapter.select`/`.register` path (a plain callable) still raises.
-3. **AWS Strands Agents' real `Agent` tool-execution loop**
+2. **AWS Strands Agents' real `Agent` tool-execution loop**
    (`strands.tools.decorator.DecoratedFunctionTool.stream`, Strands' own code,
    not this adapter's) catches any exception and converts it into an error
    `ToolResult` (`status="error"`). This is Strands' native contract for
@@ -359,10 +344,10 @@ surface is stateless-per-turn or persists across turns:
 - **Stateful in-place mutation** (the framework's tool registry/plugin/list
   persists across turns) → degrade to **leave the previous turn's tools in
   place**, so a transient retrieval blip doesn't strip a working agent of
-  tools it already has: AutoGen, OpenAI Agents SDK, Semantic Kernel, Strands.
+  tools it already has: OpenAI Agents SDK, Strands.
 
 This does not apply to the five `per-call` adapters (LangChain, CrewAI, Agno,
-Haystack, Smolagents) or DSPy's per-call builder: their "live" surface is a
+Haystack) or DSPy's per-call builder: their "live" surface is a
 builder whose `.build(query)` the *caller* awaits directly before each new
 top-level call — an ordinary Python call the caller can wrap in `try`/`except`
 itself, not a framework-internal hook invoked deep inside someone else's loop.
@@ -381,13 +366,9 @@ asserting no exception + a `WARNING` log record).
 | CrewAI | Raises `ToolExecutionError` | *(per-call — see above)* |
 | Pydantic AI | Raises `ToolExecutionError` | Degrades to previous run's tools (stateful cache) + `WARNING` |
 | OpenAI Agents SDK | Raises `ToolExecutionError` | Degrades to previous turn's `agent.tools` (stateful) + `WARNING` |
-| Smolagents | Raises `ToolExecutionError` | *(per-call — see above)* |
 | Haystack | Raises `ToolExecutionError` | *(per-call — see above)* |
 | Agno | Raises `ToolExecutionError` | *(per-call — see above)* |
-| Semantic Kernel | Raises `ToolExecutionError` | Degrades to previous turn's plugin functions (stateful) + `WARNING` |
 | Google ADK | Raises `ToolExecutionError` | Degrades to no tools this turn (stateless) + `WARNING` — the original precedent |
-| AutoGen / AG2 (static `select`/`register`) | Raises `ToolExecutionError` | — |
-| AutoGen / AG2 (live `workbench`) | **Deviation:** error `ToolResult(is_error=True)`, not raised | Degrades to previous turn's tools (stateful cache) + `WARNING` |
 | Strands Agents (`__call__`/`.acall`) | Raises `ToolExecutionError` | — |
 | Strands Agents (real agent loop, `.stream()`) | **Deviation:** error `ToolResult(status="error")`, not raised (Strands' own contract) | Degrades to previous turn's registered tools (stateful) + `WARNING` — the other precedent |
 | DSPy (`dspy.Tool.__call__`/`.acall`) | Raises `ToolExecutionError` | *(per-call — see above)* |

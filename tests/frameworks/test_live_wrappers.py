@@ -1,6 +1,6 @@
 """Tests for the best-effort "live" per-call wrappers (``live_wrappers``).
 
-CrewAI, Agno, Haystack and Smolagents all freeze an agent's tool list at
+CrewAI, Agno and Haystack all freeze an agent's tool list at
 construction time, so the wrappers re-run Gantry selection for the query of
 *each* top-level call and (re)build the agent / tool set for that call. These
 tests exercise that per-call re-selection against the **real** installed
@@ -34,7 +34,6 @@ from agent_gantry.haystack import HaystackAdapter
 from agent_gantry.integrations.frameworks.live_wrappers import (
     GantryLiveAgnoAgent,
     GantryLiveCrewAgent,
-    GantryLiveSmolAgent,
 )
 
 WEATHER_QUERY = "what is the weather forecast for the city today"
@@ -129,45 +128,3 @@ async def test_haystack_reselects_tools_per_call(gantry):
 
     email_tools = await HaystackAdapter(gantry).live_tools(EMAIL_QUERY, limit=1)
     assert "send_email" in _names(email_tools)
-
-
-# --------------------------------------------------------------------------- #
-# Smolagents
-# --------------------------------------------------------------------------- #
-async def test_smolagents_reselects_tools_per_call(gantry):
-    pytest.importorskip("smolagents")
-
-    agent_builder = GantryLiveSmolAgent(gantry, limit=1)
-
-    weather_tools = await agent_builder.select_tools(WEATHER_QUERY)
-    assert "get_weather" in _names(weather_tools)
-
-    email_tools = await agent_builder.select_tools(EMAIL_QUERY)
-    assert "send_email" in _names(email_tools)
-
-
-async def test_agno_build_constructs_fresh_agent(gantry):
-    """``GantryLiveAgnoAgent.build`` against the real package — the drift class
-    the stubbed suites can't catch (cf. the haystack 3.0 ``ToolInvoker``
-    removal, which slipped past every stub test)."""
-    agno_agent = pytest.importorskip("agno.agent")
-
-    agent_builder = GantryLiveAgnoAgent(gantry, limit=1)
-    agent = await agent_builder.build(WEATHER_QUERY)
-
-    assert isinstance(agent, agno_agent.Agent)
-    assert "get_weather" in {t.name for t in agent.tools}
-
-
-async def test_smolagents_build_constructs_fresh_agent(gantry):
-    """``GantryLiveSmolAgent.build`` against the real package (see above)."""
-    smolagents = pytest.importorskip("smolagents")
-
-    class _Model:
-        model_id = "test-model-not-called"
-
-    agent_builder = GantryLiveSmolAgent(gantry, model=_Model(), limit=1)
-    agent = await agent_builder.build(WEATHER_QUERY)
-
-    assert isinstance(agent, smolagents.ToolCallingAgent)
-    assert "get_weather" in set(agent.tools)

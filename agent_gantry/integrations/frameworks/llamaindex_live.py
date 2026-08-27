@@ -91,7 +91,7 @@ def _build_retriever_class() -> type:
     Deferred so importing this module never requires ``llama-index`` — the
     subclass (which needs ``ObjectRetriever`` as a real base) is only
     constructed when a retriever/agent is actually built. Mirrors the lazy
-    class-build used by the AutoGen / Pydantic AI live providers.
+    class-build used by the Pydantic AI live provider.
     """
     global _RETRIEVER_CLS
     if _RETRIEVER_CLS is not None:

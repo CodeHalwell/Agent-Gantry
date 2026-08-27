@@ -14,7 +14,7 @@ throughout the examples and tests.
 - `cli/`: Entrypoint and helpers for the `agent-gantry` command-line tool.
 - `core/`: The orchestration layer (facade, registry, router, executor, and security policy).
 - `integrations/`: Helpers for plugging Agent-Gantry into higher-level agent frameworks (LangChain,
-  AutoGen, LlamaIndex, CrewAI). The decorator helper in this folder powers the semantic tool
+  LlamaIndex, CrewAI). The decorator helper in this folder powers the semantic tool
   injection demos.
 - `observability/`: Telemetry adapters (console, OpenTelemetry, Prometheus) and tracing hooks.
 - `providers/`: Clients that pull external tools/skills into the registry (e.g., A2A agents).

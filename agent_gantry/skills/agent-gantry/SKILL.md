@@ -1,6 +1,6 @@
 ---
 name: agent-gantry
-description: Use this skill when the user is writing or debugging code that uses the `agent-gantry` Python library (semantic tool routing for LLM agents). Triggers on `import agent_gantry`, mentions of `AgentGantry`, `GantryContextProvider`, `GantryToolBridge`, `gantry.register`, `with_semantic_tools`, `LangChainAdapter`/`CrewAIAdapter`/`StrandsAdapter`/`DSPyAdapter`/other `<Framework>Adapter` classes (or the per-SDK `OpenAIAdapter`/`AnthropicAdapter`/`GeminiAdapter`/`GroqAdapter`/`VertexAIAdapter`/`MistralAdapter`), `ToolRefresher`, or tool retrieval / surfacing problems with Microsoft Agent Framework, LangChain, LangGraph, AutoGen, CrewAI, LlamaIndex, Pydantic AI, OpenAI Agents SDK, Smolagents, Haystack, Agno, Strands Agents, DSPy, Semantic Kernel, Google ADK, A2A, or MCP. Use proactively when the code imports `agent_gantry` even if the user did not explicitly invoke the skill.
+description: Use this skill when the user is writing or debugging code that uses the `agent-gantry` Python library (semantic tool routing for LLM agents). Triggers on `import agent_gantry`, mentions of `AgentGantry`, `GantryContextProvider`, `GantryToolBridge`, `gantry.register`, `with_semantic_tools`, `LangChainAdapter`/`CrewAIAdapter`/`StrandsAdapter`/`DSPyAdapter`/other `<Framework>Adapter` classes (or the per-SDK `OpenAIAdapter`/`AnthropicAdapter`/`GeminiAdapter`/`GroqAdapter`/`VertexAIAdapter`/`MistralAdapter`), `ToolRefresher`, or tool retrieval / surfacing problems with Microsoft Agent Framework, LangChain, LangGraph, CrewAI, LlamaIndex, Pydantic AI, OpenAI Agents SDK, Haystack, Agno, Strands Agents, DSPy, Google ADK, A2A, or MCP. Use proactively when the code imports `agent_gantry` even if the user did not explicitly invoke the skill.
 ---
 
 # Agent-Gantry
@@ -20,13 +20,10 @@ This skill is the canonical reference for using the library. Read the section th
 | CrewAI | `CrewAIAdapter(gantry).select(...)` | [Native framework adapters](#native-framework-adapters) |
 | Pydantic AI | `PydanticAIAdapter(gantry).select(...)` (static) or `.toolset()` (live) | [Native framework adapters](#native-framework-adapters) |
 | OpenAI Agents SDK | `OpenAIAgentsAdapter(gantry).select(...)` (static) or `.run(agent, run_input)` (live) | [Native framework adapters](#native-framework-adapters) |
-| Smolagents | `SmolagentsAdapter(gantry).select(...)` | [Native framework adapters](#native-framework-adapters) |
 | Haystack | `HaystackAdapter(gantry).select(...)` | [Native framework adapters](#native-framework-adapters) |
 | Agno | `AgnoAdapter(gantry).select(...)` | [Native framework adapters](#native-framework-adapters) |
 | Strands Agents | `StrandsAdapter(gantry).select(...)` (static) or `.agent(...)` / `.tool_hook(...)` (live, per-turn) | [Native framework adapters](#native-framework-adapters) |
 | DSPy | `DSPyAdapter(gantry).select(...)` (static) or `.agent_builder(signature, ...)` (per-call) | [Native framework adapters](#native-framework-adapters) |
-| AutoGen / AG2 | `AutoGenAdapter(gantry).select(...)` / `.register(...)` (static) or `.workbench()` (live) | [Native framework adapters](#native-framework-adapters) |
-| Semantic Kernel | `SemanticKernelAdapter(gantry).select(...)` / `.plugin(query)` | [Native framework adapters](#native-framework-adapters) |
 | Google ADK | `GoogleADKAdapter(gantry).select(...)` (static) or `.agent(model=, name=)` (live) | [Native framework adapters](#native-framework-adapters) |
 | Any framework, re-select every turn | `ToolRefresher(gantry).refresh(messages)` | [Multi-turn re-selection](#multi-turn-re-selection-toolrefresher) |
 | Plain OpenAI / Anthropic / Gemini SDK | `OpenAIAdapter(gantry).tools(query)` (or `@with_semantic_tools(dialect=...)`) | [LLM-SDK direct](#llm-sdk-direct) |
@@ -68,7 +65,7 @@ This project uses **uv** as its package manager; `pip` works as a fallback. Insi
 uv add agent-gantry                     # core (in a uv project)
 uv add "agent-gantry[nomic]"            # local embeddings (recommended)
 uv add "agent-gantry[openai]"           # OpenAI/Azure embeddings + custom OpenAI-compatible base_url
-uv add "agent-gantry[agent-frameworks]" # Microsoft AF, LangChain, AutoGen, CrewAI, LlamaIndex, Semantic Kernel, Google ADK
+uv add "agent-gantry[agent-frameworks]" # Microsoft AF, LangChain, LangGraph, CrewAI, LlamaIndex, Google ADK
 uv add "agent-gantry[lancedb]"          # disk-persistent vector store
 uv add "agent-gantry[mcp]"              # MCP client/server
 uv add "agent-gantry[a2a]"              # A2A agent
@@ -239,7 +236,7 @@ agent = Agent(
 
 ## Native framework adapters
 
-For LangChain, LangGraph, LlamaIndex, CrewAI, Pydantic AI, OpenAI Agents SDK, Smolagents, Haystack, Agno, Strands Agents, DSPy, AutoGen/AG2, Semantic Kernel, and Google ADK, use the native `<Framework>Adapter` class. Its `.select(query, limit=...)` method selects the top-K relevant tools and returns the framework's **native tool objects**, with every call still routed through `gantry.execute`.
+For LangChain, LangGraph, LlamaIndex, CrewAI, Pydantic AI, OpenAI Agents SDK, Haystack, Agno, Strands Agents, DSPy, and Google ADK, use the native `<Framework>Adapter` class. Its `.select(query, limit=...)` method selects the top-K relevant tools and returns the framework's **native tool objects**, with every call still routed through `gantry.execute`.
 
 ```python
 from agent_gantry import AgentGantry
@@ -262,16 +259,13 @@ Every adapter shares the identical signature `<Framework>Adapter(gantry).select(
 | CrewAI | `CrewAIAdapter` | `crewai.tools.BaseTool` | `from agent_gantry.crewai import CrewAIAdapter` |
 | Pydantic AI | `PydanticAIAdapter` | `pydantic_ai.tools.Tool` | `from agent_gantry.pydantic_ai import PydanticAIAdapter` |
 | OpenAI Agents SDK | `OpenAIAgentsAdapter` | `agents.FunctionTool` | `from agent_gantry.openai_agents import OpenAIAgentsAdapter` |
-| Smolagents | `SmolagentsAdapter` | `smolagents.Tool` | `from agent_gantry.smolagents import SmolagentsAdapter` |
 | Haystack | `HaystackAdapter` | `haystack.tools.Tool` | `from agent_gantry.haystack import HaystackAdapter` |
 | Agno | `AgnoAdapter` | `agno.tools.function.Function` | `from agent_gantry.agno import AgnoAdapter` |
 | Strands Agents | `StrandsAdapter` | `strands.tools.decorator.DecoratedFunctionTool` | `from agent_gantry.strands import StrandsAdapter` |
 | DSPy | `DSPyAdapter` | `dspy.Tool` | `from agent_gantry.dspy import DSPyAdapter` |
-| AutoGen / AG2 | `AutoGenAdapter` (`.select` / `.register`) | callables + `register_function` | `from agent_gantry.autogen import AutoGenAdapter` |
-| Semantic Kernel | `SemanticKernelAdapter` (`.select` / `.plugin`) | `@kernel_function` `KernelFunction` | `from agent_gantry.semantic_kernel import SemanticKernelAdapter` |
 | Google ADK | `GoogleADKAdapter` | `google.adk.tools.FunctionTool` | `from agent_gantry.google_adk import GoogleADKAdapter` |
 
-Adapters with secondary methods (`AutoGenAdapter.register`, `SemanticKernelAdapter.plugin`) expose them on the same class — there is nothing extra to import.
+Adapters with secondary methods expose them on the same class — there is nothing extra to import.
 
 Need one conversion at a time (you already hold the selected specs)? Use `<Adapter>.convert(spec)` (a staticmethod) with specs from `GantryToolset(gantry).select(query, limit=...)`.
 
@@ -296,16 +290,14 @@ agent = LlamaIndexAdapter(gantry).function_agent(llm)   # re-selects tools each 
 |---|---|---|
 | LlamaIndex | `LlamaIndexAdapter(gantry).tool_retriever()` / `.function_agent(llm)` | `FunctionAgent(tool_retriever=…)` |
 | Pydantic AI | `PydanticAIAdapter(gantry).toolset()` | `AbstractToolset.get_tools()` |
-| AutoGen | `AutoGenAdapter(gantry).workbench()` | `Workbench.list_tools()` |
 | Google ADK | `GoogleADKAdapter(gantry).before_model_callback()` / `.agent(model=, name=)` | `Agent(before_model_callback=…)` |
 | Strands Agents | `StrandsAdapter(gantry).tool_hook()` / `.agent(...)` | `Agent(hooks=[…])` — `BeforeModelCallEvent` |
 | LangGraph | `LangGraphAdapter(gantry).react_agent(model)` / `.areact_agent(model)` | dynamic `model` callable (re-binds tools per turn) |
-| Semantic Kernel | `SemanticKernelAdapter(gantry).function_provider(kernel)` / `.refresh(kernel, query)` | per-invocation plugin refresh |
 | OpenAI Agents SDK | `OpenAIAgentsAdapter(gantry).run(agent, run_input)` / `.session(agent)` / `.run_hooks(agent)` | `RunHooks.on_llm_start` + per-run refresh |
 
 The returned live objects keep their classes (`GantryToolRetriever`, live `GantryToolset`, `GantryWorkbench`, `GantryFunctionProvider`, `GantryAgentSession`) — still importable from each framework's `*_live` module for `isinstance` checks.
 
-Frameworks whose tool list is **fixed at agent construction** (CrewAI, Agno, Haystack, Smolagents, DSPy) can't re-advertise tools mid-run. Build a self-rebuilding agent with `<Adapter>(gantry).agent_builder(...)` (Haystack: `HaystackAdapter(gantry).tool_invoker_builder(...)`; DSPy: `DSPyAdapter(gantry).agent_builder(signature, ...)`, since `dspy.ReAct` needs a task signature); it re-selects and rebuilds on each top-level call. For a one-shot fresh slice of native tools, call `<Adapter>(gantry).live_tools(query)` (async, not available on DSPy — use `.select(query)` instead).
+Frameworks whose tool list is **fixed at agent construction** (CrewAI, Agno, Haystack, DSPy) can't re-advertise tools mid-run. Build a self-rebuilding agent with `<Adapter>(gantry).agent_builder(...)` (Haystack: `HaystackAdapter(gantry).tool_invoker_builder(...)`; DSPy: `DSPyAdapter(gantry).agent_builder(signature, ...)`, since `dspy.ReAct` needs a task signature); it re-selects and rebuilds on each top-level call. For a one-shot fresh slice of native tools, call `<Adapter>(gantry).live_tools(query)` (async, not available on DSPy — use `.select(query)` instead).
 
 ## Multi-turn re-selection (ToolRefresher)
 
@@ -331,7 +323,7 @@ Force one behaviour with `query_generator=last_user_text` or `last_tool_result`.
 
 ## Schema-only adapter (`fetch_framework_tools`)
 
-The legacy adapter returns OpenAI-shape JSON schemas (not native objects) and supports a smaller, hyphen/underscore-sensitive name set: `"langgraph"`, `"semantic-kernel"`, `"crew_ai"`, `"google_adk"`, `"strands"`, `"agent_framework"`. Prefer the `<Framework>Adapter` classes for the frameworks listed above; reach for this only when you want raw schemas (e.g. a framework that just wants OpenAI tool dicts).
+The legacy adapter returns OpenAI-shape JSON schemas (not native objects) and supports a smaller, hyphen/underscore-sensitive name set: `"langgraph"`, `"crew_ai"`, `"google_adk"`, `"strands"`, `"agent_framework"`. Prefer the `<Framework>Adapter` classes for the frameworks listed above; reach for this only when you want raw schemas (e.g. a framework that just wants OpenAI tool dicts).
 
 ```python
 from agent_gantry.integrations import fetch_framework_tools
@@ -695,13 +687,10 @@ from agent_gantry.llamaindex import LlamaIndexAdapter
 from agent_gantry.crewai import CrewAIAdapter
 from agent_gantry.pydantic_ai import PydanticAIAdapter
 from agent_gantry.openai_agents import OpenAIAgentsAdapter
-from agent_gantry.smolagents import SmolagentsAdapter
 from agent_gantry.haystack import HaystackAdapter
 from agent_gantry.agno import AgnoAdapter
 from agent_gantry.strands import StrandsAdapter
 from agent_gantry.dspy import DSPyAdapter
-from agent_gantry.autogen import AutoGenAdapter
-from agent_gantry.semantic_kernel import SemanticKernelAdapter
 from agent_gantry.google_adk import GoogleADKAdapter
 from agent_gantry.agent_framework import AgentFrameworkAdapter   # Microsoft Agent Framework
 # Per-SDK LLM adapters (dialect baked in): .tools(query, limit=...)

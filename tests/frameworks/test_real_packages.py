@@ -2,7 +2,7 @@
 
 The per-framework unit tests stub the third-party framework so they run
 everywhere. Those stubs *cannot* catch real-API drift — e.g. CrewAI's
-``BaseTool`` being a Pydantic v2 model, or smolagents validating ``forward``'s
+``BaseTool`` being a Pydantic v2 model, or a framework validating a wrapper's
 signature against the declared inputs. This module builds **and invokes** each
 adapter against the *actual* installed package, skipping any framework that
 isn't present (``pytest.importorskip``). In CI (where the ``agent-frameworks``
@@ -61,10 +61,6 @@ def _invoke_crewai(tool):
     return tool.run(to="boss@x.com")
 
 
-def _invoke_smolagents(tool):
-    return tool.forward(to="boss@x.com")
-
-
 def _invoke_haystack(tool):
     return tool.function(to="boss@x.com")
 
@@ -79,12 +75,6 @@ async def _invoke_openai_agents(tool):
 
 async def _invoke_google_adk(tool):
     return await tool.run_async(args={"to": "boss@x.com"}, tool_context=None)
-
-
-async def _invoke_semantic_kernel(tool):
-    from semantic_kernel import Kernel
-
-    return await tool.invoke(Kernel(), to="boss@x.com")
 
 
 def _invoke_dspy(tool):
@@ -117,12 +107,10 @@ REAL_ADAPTERS = [
     ("llamaindex", "llama_index.core", F.LlamaIndexAdapter, _invoke_llamaindex),
     ("crewai", "crewai", F.CrewAIAdapter, _invoke_crewai),
     ("pydantic_ai", "pydantic_ai", F.PydanticAIAdapter, _invoke_pydantic_ai),
-    ("smolagents", "smolagents", F.SmolagentsAdapter, _invoke_smolagents),
     ("haystack", "haystack", F.HaystackAdapter, _invoke_haystack),
     ("agno", "agno", F.AgnoAdapter, _invoke_agno),
     ("openai_agents", "agents", F.OpenAIAgentsAdapter, _invoke_openai_agents),
     ("google_adk", "google.adk", F.GoogleADKAdapter, _invoke_google_adk),
-    ("semantic_kernel", "semantic_kernel", F.SemanticKernelAdapter, _invoke_semantic_kernel),
     ("strands", "strands", F.StrandsAdapter, _invoke_strands),
     ("dspy", "dspy", F.DSPyAdapter, _invoke_dspy),
 ]
@@ -141,15 +129,6 @@ async def test_real_adapter_builds_and_invokes(name, module, adapter_cls, invoke
     if inspect.isawaitable(result):
         result = await result
     assert "sent:boss@x.com" in str(result), f"{name}: invocation did not route through gantry"
-
-
-async def test_autogen_builds_and_invokes(gantry):
-    """AutoGenAdapter.select returns plain {name, description, callable} entries
-    (no third-party framework needed); verify the callable routes through gantry."""
-    entries = await F.AutoGenAdapter(gantry).select("send an email to my boss", limit=1)
-    assert entries and entries[0]["name"] == "send_email"
-    result = await entries[0]["callable"](to="boss@x.com")
-    assert "sent:boss@x.com" in str(result)
 
 
 async def test_agent_framework_builds_and_invokes(gantry):

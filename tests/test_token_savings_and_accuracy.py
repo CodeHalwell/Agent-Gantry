@@ -110,7 +110,6 @@ async def test_framework_adapter_returns_top_k(sample_tools) -> None:
 
     for framework in [
         "langgraph",
-        "semantic-kernel",
         "crew_ai",
         "google_adk",
         "strands",

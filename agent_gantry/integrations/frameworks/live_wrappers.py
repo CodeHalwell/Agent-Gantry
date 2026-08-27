@@ -1,31 +1,30 @@
 """Best-effort "live" tool wrappers for fixed-tool-set frameworks.
 
-CrewAI, Agno, Haystack and Smolagents all fix an agent's tool list **at agent
-construction time**: none of them exposes a native per-turn / per-reasoning-step
-hook to re-advertise tools mid-run (the way LlamaIndex's ``tool_retriever`` or
-AutoGen's ``Workbench`` do — see ``llamaindex_live`` / ``autogen_live`` for those
-genuinely per-turn integrations). Once you hand one of these frameworks a list of
-tools and build the agent, that list is frozen for the whole run.
+CrewAI, Agno and Haystack all fix an agent's tool list **at agent construction
+time**: none of them exposes a native per-turn / per-reasoning-step hook to
+re-advertise tools mid-run (the way LlamaIndex's ``tool_retriever`` does — see
+``llamaindex_live`` for a genuinely per-turn integration). Once you hand one of
+these frameworks a list of tools and build the agent, that list is frozen for
+the whole run.
 
 So "as deep as the framework allows" here is **per top-level call**, not
 per-intra-run turn. The builders below re-run Gantry selection for the query of
-*each* new call (each CrewAI task, each Agno run, each Haystack invocation, each
-Smolagents run), convert the freshly selected tools to the framework's native
-objects, and (re)build the agent / tool set for that call. Between calls the tool
-surface tracks the new query; *within* a single agent run it stays fixed — that
-is the deepest these frameworks permit.
+*each* new call (each CrewAI task, each Agno run, each Haystack invocation),
+convert the freshly selected tools to the framework's native objects, and
+(re)build the agent / tool set for that call. Between calls the tool surface
+tracks the new query; *within* a single agent run it stays fixed — that is the
+deepest these frameworks permit.
 
 These builders are returned by the per-call ``agent_builder`` /
 ``tool_invoker_builder`` methods on the framework adapters
 (:class:`~agent_gantry.crewai.CrewAIAdapter`,
 :class:`~agent_gantry.agno.AgnoAdapter`,
-:class:`~agent_gantry.haystack.HaystackAdapter`,
-:class:`~agent_gantry.smolagents.SmolagentsAdapter`). All selection and
+:class:`~agent_gantry.haystack.HaystackAdapter`). All selection and
 native-tool conversion is delegated to the existing ``_for_crewai`` / ``_for_agno``
-/ ``_for_haystack`` / ``_for_smolagents`` adapters; nothing here re-implements
-either. Each framework import is lazy (performed inside the helper/class), so
-``import agent_gantry`` never requires any of these frameworks to be installed; a
-missing one raises ``ImportError`` with the right ``pip install`` hint.
+/ ``_for_haystack`` adapters; nothing here re-implements either. Each framework
+import is lazy (performed inside the helper/class), so ``import agent_gantry``
+never requires any of these frameworks to be installed; a missing one raises
+``ImportError`` with the right ``pip install`` hint.
 """
 
 from __future__ import annotations
@@ -36,7 +35,6 @@ from agent_gantry.integrations.frameworks.agno import _for_agno
 from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT
 from agent_gantry.integrations.frameworks.crewai import _for_crewai
 from agent_gantry.integrations.frameworks.haystack import _for_haystack
-from agent_gantry.integrations.frameworks.smolagents import _for_smolagents
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
@@ -313,90 +311,8 @@ class GantryLiveHaystackToolInvoker:
         return Agent(tools=tools, **self._invoker_kwargs)
 
 
-# --------------------------------------------------------------------------- #
-# Smolagents
-# --------------------------------------------------------------------------- #
-class GantryLiveSmolAgent:
-    """Rebuild a fresh smolagents agent per call, tools re-selected by Gantry.
-
-    Smolagents fixes an agent's tools at construction, so this builder constructs
-    a new agent (``ToolCallingAgent`` by default) for every call via
-    :meth:`build`, each time wiring in the tools Gantry selects for that call's
-    query. The model (and any extra agent kwargs) are configured once on the
-    constructor.
-
-    Obtain one via ``SmolagentsAdapter(gantry).agent_builder(...)``.
-
-    Args:
-        gantry: The :class:`~agent_gantry.core.gantry.AgentGantry` to select from.
-        model: The smolagents model passed straight to the agent.
-        agent_cls: The smolagents agent class to build. Defaults to
-            ``smolagents.ToolCallingAgent``.
-        limit: Max tools to surface per call. Defaults to ``5``.
-        score_threshold: Minimum semantic relevance score. Defaults to ``0.0``.
-        **agent_kwargs: Extra kwargs forwarded to the agent class.
-    """
-
-    def __init__(
-        self,
-        gantry: AgentGantry,
-        *,
-        model: Any | None = None,
-        agent_cls: Any | None = None,
-        limit: int = DEFAULT_TOOL_LIMIT,
-        score_threshold: float = 0.0,
-        namespaces: list[str] | None = None,
-        required: list[str] | None = None,
-        always_include: list[str] | None = None,
-        **agent_kwargs: Any,
-    ) -> None:
-        self._gantry = gantry
-        self._model = model
-        self._agent_cls = agent_cls
-        self._limit = limit
-        self._score_threshold = score_threshold
-        self._namespaces = namespaces
-        self._required = required
-        self._always_include = always_include
-        self._agent_kwargs = agent_kwargs
-
-    async def select_tools(self, query: str) -> list[Any]:
-        """Re-select this call's smolagents ``Tool`` objects for ``query``."""
-        return await _for_smolagents(
-            self._gantry,
-            query,
-            limit=self._limit,
-            score_threshold=self._score_threshold,
-            namespaces=self._namespaces,
-            required=self._required,
-            always_include=self._always_include,
-        )
-
-    async def build(self, query: str) -> Any:
-        """Build a fresh smolagents agent whose tools are selected for ``query``.
-
-        Raises:
-            ImportError: If ``smolagents`` is not installed.
-        """
-        try:
-            from smolagents import ToolCallingAgent
-        except ImportError as exc:  # pragma: no cover - exercised via importorskip
-            raise ImportError(
-                "Smolagents support requires `smolagents`. "
-                "Install it with `pip install smolagents`."
-            ) from exc
-
-        agent_cls = self._agent_cls or ToolCallingAgent
-        tools = await self.select_tools(query)
-        kwargs: dict[str, Any] = {"tools": tools, **self._agent_kwargs}
-        if self._model is not None:
-            kwargs["model"] = self._model
-        return agent_cls(**kwargs)
-
-
 __all__ = [
     "GantryLiveCrewAgent",
     "GantryLiveAgnoAgent",
     "GantryLiveHaystackToolInvoker",
-    "GantryLiveSmolAgent",
 ]

@@ -33,7 +33,7 @@ installed) and falls back to the offline `SimpleEmbedder`. Install a framework
   routes through `gantry.execute`.
 - **Export** → `LangChainAdapter(gantry).select(query, limit=3)` (and
   `LlamaIndexAdapter` / `CrewAIAdapter` / `PydanticAIAdapter` / `OpenAIAgentsAdapter` /
-  `SmolagentsAdapter` / `HaystackAdapter` / `AgnoAdapter` / `AutoGenAdapter` /
+  `HaystackAdapter` / `AgnoAdapter` /
   `LangGraphAdapter`) build that framework's native tool objects; use
   `<Adapter>.convert(spec)` for a single `ToolSpec`.
 - **Multi-turn** → `ToolRefresher(gantry).refresh(messages)` re-selects fresh
