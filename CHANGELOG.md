@@ -1042,6 +1042,23 @@ adapters, and the provider dialects agree with it.
   `RateLimitExceeded` instead of `pending_confirmation`. The policy window is
   still consulted, because `check_permission` runs its denial checks for a
   pending call too and defers only the recording.
+- **A nested empty-`properties` object is no longer called strict-safe.**
+  `properties: {}` with no `additionalProperties` is the "tool takes no
+  arguments" shape strict mode itself emits — but only at the *root*, where
+  the executor agrees and rejects an unknown argument outright. Nested, absent
+  `additionalProperties` is a free-form mapping the executor accepts any keys
+  for, so calling it strict-safe let the transform rewrite it closed and made
+  a valid `{"payload": {"key": 1}}` ungeneratable. Its bare `{"type":
+  "object"}` twin was flagged all along.
+- **Fixed-length arrays keep their positions and arity in generated
+  signatures.** `tuple[int, str]` is introspected as `prefixItems` plus equal
+  `minItems`/`maxItems`, but the signature builder read only `items`, so the
+  frameworks that rebuild their LLM schema from the callable — Semantic
+  Kernel, AG2, Google ADK's fallback — published a bare `list` and the model
+  could answer with an array the executor rejects. Both spellings now
+  annotate as a `tuple`, and the dispatch boundary normalizes a materialized
+  one back to a JSON array, since the executor's validator accepts a `list`
+  and nothing else. A partly described array keeps the bare container.
 
 ### Performance
 

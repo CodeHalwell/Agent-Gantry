@@ -1044,3 +1044,52 @@ def test_a_typeless_additional_properties_map_is_strict_unsupported():
         {"type": "object", "properties": {"a": {"type": "string"}}, "required": ["a"]},
     ):
         assert unsupported_strict_paths(supported) == []
+
+
+def test_a_nested_empty_properties_object_is_strict_unsupported():
+    """``properties: {}`` with no ``additionalProperties`` is the "tool takes
+    no arguments" shape strict mode itself emits — but only at the *root*,
+    where the executor agrees and rejects an unknown argument outright.
+    Nested, absent ``additionalProperties`` is a free-form mapping the
+    executor accepts any keys for, so calling it strict-safe let the transform
+    rewrite it closed and made a valid ``{"payload": {"key": 1}}``
+    ungeneratable (PR #381 review)."""
+
+    def wrap(prop: dict) -> dict:
+        return {
+            "type": "object",
+            "properties": {"payload": prop},
+            "required": ["payload"],
+        }
+
+    # The same object written two ways must get the same verdict; the bare
+    # spelling was flagged all along.
+    assert unsupported_strict_paths(wrap({"type": "object", "properties": {}})) == [
+        "payload"
+    ]
+    assert unsupported_strict_paths(wrap({"type": "object"})) == ["payload"]
+
+    # A nested object that really is closed stays representable.
+    assert (
+        unsupported_strict_paths(
+            wrap({"type": "object", "properties": {}, "additionalProperties": False})
+        )
+        == []
+    )
+    assert (
+        unsupported_strict_paths(
+            wrap(
+                {
+                    "type": "object",
+                    "properties": {"a": {"type": "string"}},
+                    "additionalProperties": False,
+                }
+            )
+        )
+        == []
+    )
+
+    # And the root exemption is untouched, which is the half this must not
+    # break: a no-argument tool is genuinely closed, and the executor says so.
+    assert unsupported_strict_paths({"type": "object", "properties": {}}) == []
+    assert unsupported_strict_paths({"type": "object", "properties": {}, "required": []}) == []

@@ -220,7 +220,7 @@ def strict_json_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
     return transformed
 
 
-def _is_open_map(node: dict[str, Any]) -> bool:
+def _is_open_map(node: dict[str, Any], at_root: bool = False) -> bool:
     """Whether an object schema admits keys it does not enumerate.
 
     Strict mode can only describe an object whose full key set is written
@@ -254,7 +254,16 @@ def _is_open_map(node: dict[str, Any]) -> bool:
         return False  # explicitly closed: an object permitting no keys
     if isinstance(properties, dict):
         # ``properties: {}`` with no explicit ``additionalProperties`` is the
-        # "tool takes no arguments" shape ``strict_json_schema`` itself emits.
+        # "tool takes no arguments" shape ``strict_json_schema`` itself emits
+        # — but *only* at the root, where the executor agrees: it rejects an
+        # unknown argument outright. Nested, absent ``additionalProperties``
+        # is a free-form mapping the executor accepts any keys for, so calling
+        # it strict-safe let the transform rewrite it closed and made a valid
+        # ``{"payload": {"key": 1}}`` ungeneratable. Its bare ``{"type":
+        # "object"}`` twin was flagged all along; this is the same object
+        # written the other way.
+        if not at_root:
+            return True
         additional = node.get("additionalProperties")
         return additional is True or isinstance(additional, dict)
     return True
@@ -308,7 +317,7 @@ def _collect_open_maps(node: Any, path: str, out: list[str]) -> None:
         or (isinstance(patterns, dict) and patterns)
         or ("additionalProperties" in node and node.get("type") is None)
     ):
-        if _is_open_map(node):
+        if _is_open_map(node, at_root=not path):
             out.append(path or "<root>")
 
     if isinstance(properties, dict):

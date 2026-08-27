@@ -255,3 +255,65 @@ def test_adk_placeholders_match_the_annotation_they_accompany():
     # The plain cases keep the type-matched empty values they always had.
     assert params["name"].default == ""
     assert params["n"].default == 0
+
+
+def test_a_fixed_length_array_keeps_its_positions_and_arity():
+    """``tuple[int, str]`` is introspected as ``prefixItems`` plus equal
+    ``minItems``/``maxItems``, but this builder read only ``items`` — so the
+    signature published a bare ``list``, dropping both the positional types
+    and the arity, and the model could answer with an array the executor then
+    rejects (PR #381 review)."""
+    positional = {
+        "type": "array",
+        "prefixItems": [{"type": "integer"}, {"type": "string"}],
+        "minItems": 2,
+        "maxItems": 2,
+    }
+    assert _annotation_for_prop(positional) == tuple[int, str]
+
+    # A *homogeneous* fixed tuple takes the ``items`` branch and has no
+    # ``prefixItems`` to read, so its arity was lost the same way.
+    assert (
+        _annotation_for_prop(
+            {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}
+        )
+        == tuple[int, int]
+    )
+    assert _annotation_for_prop(
+        {"type": "array", "prefixItems": [], "minItems": 0, "maxItems": 0}
+    ) == tuple[()]
+
+    # A variadic array has no fixed arity to express and keeps its list.
+    assert _annotation_for_prop({"type": "array", "items": {"type": "integer"}}) == list[int]
+
+    # A partly described array keeps the bare container rather than gaining an
+    # assertion the schema never made — same reasoning as the ``items``
+    # branch's bare-``str`` guard.
+    for underspecified in (
+        {"type": "array", "minItems": 2, "maxItems": 2},
+        {"type": "array", "prefixItems": [{"type": "integer"}], "minItems": 2, "maxItems": 2},
+        {"type": "array", "items": {}, "minItems": 2, "maxItems": 2},
+    ):
+        assert _annotation_for_prop(underspecified) is list, underspecified
+
+
+def test_a_materialized_tuple_is_normalized_back_to_a_json_array():
+    """The annotation above is only safe because the dispatch boundary undoes
+    it: the executor's validator accepts a ``list`` and nothing else, so a
+    framework that materialized ``tuple[int, str]`` would have had its
+    correctly-shaped value refused. (The framework *bridge* declines the same
+    conversion for exactly this reason, having no such boundary.)"""
+    from agent_gantry.integrations.frameworks.base import _json_native
+
+    positional = {
+        "type": "array",
+        "prefixItems": [{"type": "integer"}, {"type": "string"}],
+        "minItems": 2,
+        "maxItems": 2,
+    }
+    restored = _json_native((1, "a"), positional)
+    assert restored == [1, "a"] and isinstance(restored, list)
+    # A list is still returned unchanged, by identity — which is what the
+    # combinator fallback relies on to tell "no branch applied" apart.
+    already = [1, "a"]
+    assert _json_native(already, positional) is already

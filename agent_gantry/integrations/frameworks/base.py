@@ -446,11 +446,15 @@ def _json_native(value: Any, prop: Any, _depth: int = 0) -> Any:
             return value.isoformat()
         return _json_native_via_branches(value, prop, _depth)
 
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         prefix = prop.get("prefixItems")
         items = prop.get("items")
         restored: list[Any] = []
-        changed = False
+        # A *tuple* is already a change: the canonical schema types these as
+        # JSON arrays and the executor's ``_matches_type`` accepts only a
+        # ``list``, so a framework that materialized the positional annotation
+        # below would otherwise have its correctly-shaped value refused.
+        changed = isinstance(value, tuple)
         for index, item in enumerate(value):
             sub: Any = None
             if isinstance(prefix, list) and index < len(prefix):
@@ -551,6 +555,57 @@ def _composite_choice_type(prop: dict[str, Any]) -> Any:
     return None
 
 
+def _positional_annotation(prop: dict[str, Any]) -> Any:
+    """``tuple[...]`` for an array whose length *and* positions are pinned.
+
+    ``tuple[int, str]`` is introspected as ``prefixItems`` plus equal
+    ``minItems``/``maxItems``, but this builder read only ``items`` — so the
+    frameworks that rebuild their LLM schema from the signature (Semantic
+    Kernel, AG2, Google ADK's fallback) published a bare ``list``, dropping
+    both the positional types and the arity, and the model could answer with
+    an array the executor then rejects.
+
+    Returns ``None`` unless every position can actually be typed, so a partly
+    described array keeps the bare container rather than gaining an assertion
+    the schema never made. The bare-``str`` guard is the same one the ``items``
+    branch uses: it is the fallback for an untyped subschema, not a claim.
+
+    A ``tuple`` annotation is safe here only because ``_json_native``
+    normalizes one back to a JSON array at the dispatch boundary — the
+    executor's validator accepts a ``list`` and nothing else, so a framework
+    materializing this annotation would otherwise have its correct value
+    refused. The framework *bridge* declines the same conversion for exactly
+    that reason, having no such boundary of its own.
+    """
+    low, high = prop.get("minItems"), prop.get("maxItems")
+    if not (
+        isinstance(low, int)
+        and isinstance(high, int)
+        and not isinstance(low, bool)
+        and not isinstance(high, bool)
+        and low == high
+        and low >= 0
+    ):
+        return None
+    if low == 0:
+        return tuple[()]
+    prefix = prop.get("prefixItems")
+    items = prop.get("items")
+    members: list[Any] = []
+    for index in range(low):
+        if isinstance(prefix, list) and index < len(prefix):
+            sub = prefix[index]
+        else:
+            sub = items
+        if not isinstance(sub, dict) or not sub:
+            return None
+        member = _annotation_for_prop(sub)
+        if member is str and sub.get("type") != "string":
+            return None
+        members.append(member)
+    return tuple[tuple(members)]
+
+
 def _annotation_for_prop(prop: dict[str, Any]) -> Any:
     """Python annotation for one property schema, recursively.
 
@@ -629,6 +684,9 @@ def _annotation_for_prop(prop: dict[str, Any]) -> Any:
     annotation = _json_type_to_python(json_type)
 
     if annotation is list:
+        positional = _positional_annotation(prop)
+        if positional is not None:
+            return positional
         items = prop.get("items")
         if isinstance(items, dict) and items:
             item_annotation = _annotation_for_prop(items)
