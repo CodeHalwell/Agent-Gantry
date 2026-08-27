@@ -71,6 +71,10 @@ _UNIQUE_ORIGINS: tuple[type, ...] = (set, frozenset, _abc.Set)
 #: Hard bound on ``$ref`` inlining recursion (self-referential models).
 _MAX_REF_DEPTH = 16
 
+#: Companion bound on the *total* number of ``$ref`` expansions, since depth
+#: alone permits exponential growth when a model recurses on several fields.
+_MAX_REF_NODES = 512
+
 
 def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
     """
@@ -215,6 +219,15 @@ def _needs_reconstruction(param_type: Any) -> bool:
         )
     if origin in (set, frozenset, tuple, _abc.Set):
         return True
+    if origin is not None:
+        # Any other parameterized generic — ``list[Payload]``,
+        # ``dict[str, datetime]``, ``Sequence[Mode]``. The *container* arrives
+        # as itself, but its members may still need rebuilding, and a
+        # ``TypeAdapter`` over the whole annotation handles the nesting. Not
+        # recursing here left ``def f(items: list[Payload])`` handing the
+        # handler a list of raw dicts — the same failure this exists to fix,
+        # one container level up.
+        return any(_needs_reconstruction(arg) for arg in typing.get_args(param_type))
     if not isinstance(param_type, type):
         return False
     if param_type in (datetime.datetime, datetime.date, datetime.time, uuid.UUID):
@@ -466,7 +479,21 @@ def _inline_local_refs(schema: dict[str, Any]) -> dict[str, Any]:
     """Resolve local ``#/$defs/...`` pointers by inlining their targets."""
     defs = schema.get("$defs") or schema.get("definitions") or {}
 
+    # A depth cap alone bounds *levels*, not nodes: a model with two
+    # recursive fields per level doubles the expansion each time, so 16 levels
+    # is ~2^16 nodes — a real CPU/memory spike for a plausible tree-shaped
+    # model, not just a pathological one. This budget bounds the total.
+    budget = [_MAX_REF_NODES]
+
     def _resolve(node: Any, depth: int) -> Any:
+        if budget[0] <= 0:
+            logger.debug(
+                "Stopped inlining $refs after %d expansions; the remaining "
+                "subschema is emitted as {} and constrains nothing. A model "
+                "with several recursive fields per level is the usual cause.",
+                _MAX_REF_NODES,
+            )
+            return {}
         if depth > _MAX_REF_DEPTH:
             # A self-referential model would recurse forever, so the guard is
             # necessary — but a legitimately deep (acyclic) schema is truncated
@@ -487,6 +514,9 @@ def _inline_local_refs(schema: dict[str, Any]) -> dict[str, Any]:
         if isinstance(ref, str) and ref.rsplit("/", 1)[0] in ("#/$defs", "#/definitions"):
             target = defs.get(ref.rsplit("/", 1)[1])
             if isinstance(target, dict):
+                # One expansion. Counted here rather than per visited node so
+                # the budget measures the growth that actually matters.
+                budget[0] -= 1
                 # Drop $ref itself plus $defs/definitions: a top-level
                 # schema is commonly ``{"$defs": {...}, "$ref": "#/..."}``
                 # (a model's own schema referencing its $defs sibling), and

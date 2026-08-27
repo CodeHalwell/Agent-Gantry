@@ -195,6 +195,22 @@ adapters, and the provider dialects agree with it.
   key was rejected because none counted as declared. Matched keys are now
   validated against their pattern's schema and treated as declared by both
   paths. An uncompilable pattern fails open with a warning, as `pattern` does.
+- **A container of typed values still reached its handler as raw JSON.**
+  `list[Payload]` has origin `list` and isn't a bare class, so it fell through
+  every check in the reconstruction test and `def f(items: list[Payload])`
+  received a list of dicts — the same failure as below, one container level up.
+  Parameterized generics now recurse into their members.
+- **`pydantic_model_from_schema` could return something that isn't a model.**
+  A *top-level* schema declaring `patternProperties` — reachable from an
+  imported or hand-written `ToolDefinition` — returned an `Annotated` alias
+  rather than a `type[BaseModel]`, which CrewAI's `args_schema` field rejects
+  at tool construction instead of falling back. The pattern check is attached
+  as a model validator now, so a real class comes back either way.
+- **`$ref` inlining was bounded by depth but not by node count.** A model
+  recursing on more than one field per level doubles the expansion each time,
+  so the depth-16 cap permitted ~2^16 nodes: an ordinary binary-tree model
+  produced a **15.8 MB** schema in 3.4 s. A companion budget on total
+  expansions brings that to 62 KB in 61 ms.
 - **A typed parameter reached its handler as raw JSON.** Once the schema
   advertises a nested Pydantic model, a dataclass, a `set`/`tuple` or a
   `datetime`/`UUID`/`Enum`, a provider sends that type's JSON form — and the

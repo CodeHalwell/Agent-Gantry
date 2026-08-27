@@ -169,6 +169,14 @@ def _coercers_for(handler: Callable[..., Any]) -> dict[str, Any]:
     return coercers
 
 
+def forget_handler(handler: Callable[..., Any]) -> None:
+    """Drop a handler's memoized coercers (called when its tool is deleted)."""
+    try:
+        _COERCER_CACHE.pop(handler, None)
+    except TypeError:  # unhashable handler was never cached
+        pass
+
+
 def _reconstructed(handler: Callable[..., Any], arguments: dict[str, Any]) -> dict[str, Any]:
     """Rebuild JSON values into the Python types the handler's signature names.
 

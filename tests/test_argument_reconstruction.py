@@ -24,6 +24,7 @@ from agent_gantry import AgentGantry
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 from agent_gantry.schema.execution import ToolCall
 from agent_gantry.schema.introspection import build_argument_coercers
+from agent_gantry.schema.tool import ToolDefinition
 
 
 class Payload(BaseModel):
@@ -96,6 +97,26 @@ def test_handler_with_no_such_parameters_gets_no_coercers():
     assert build_argument_coercers(handler) == {}
 
 
+def test_container_generics_recurse_into_their_members():
+    """``list[Payload]`` has origin ``list`` and isn't a bare class, so it fell
+    through every check and the handler got a list of raw dicts — the same
+    failure reconstruction exists to fix, one container level up
+    (PR #381 review)."""
+    from agent_gantry.schema.introspection import _needs_reconstruction
+
+    for needs in (
+        list[Payload],
+        list[datetime.datetime],
+        list[Mode],
+        dict[str, Payload],
+        list[list[Payload]],
+    ):
+        assert _needs_reconstruction(needs) is True, needs
+
+    for plain in (list[int], list[str], dict[str, int], dict[str, list[str]]):
+        assert _needs_reconstruction(plain) is False, plain
+
+
 @pytest.fixture
 async def gantry() -> AgentGantry:
     g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
@@ -119,6 +140,27 @@ async def gantry() -> AgentGantry:
     def use_scalars(name: str, count: int) -> str:
         """Report the runtime types of plain scalar parameters."""
         return f"{type(name).__name__}/{type(count).__name__}"
+
+    @g.register(tags=["demo"])
+    def use_many(
+        pair: tuple[int, str],
+        at: datetime.datetime,
+        ident: uuid.UUID,
+        mode: Mode,
+        frozen: frozenset[str],
+        payloads: list[Payload],
+    ) -> str:
+        """Report the runtime type of every reconstructed parameter kind."""
+        return "|".join(
+            [
+                type(pair).__name__,
+                type(at).__name__,
+                type(ident).__name__,
+                type(mode).__name__,
+                type(frozen).__name__,
+                type(payloads[0]).__name__,
+            ]
+        )
 
     await g.sync()
     return g
@@ -160,16 +202,62 @@ async def test_scalar_arguments_are_passed_through_untouched(gantry):
 
 async def test_unconvertible_value_falls_back_to_the_raw_argument():
     """Validation has already run against the canonical schema, so a handler
-    that was happy with the raw mapping must not start failing here."""
+    that was happy with the raw mapping must not start failing here.
+
+    Reaching the fallback needs a schema *looser* than the annotation — which
+    is exactly what an imported (MCP/OpenAPI) or hand-written schema can be.
+    Here the schema says "any object" while the handler says ``Payload``, so
+    ``{"y": 2}`` passes validation and then fails reconstruction.
+    """
     g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
 
-    @g.register(tags=["demo"])
     def loose(p: Payload) -> str:
-        """Accept a payload without relying on its declared type."""
-        return f"{type(p).__name__}"
+        """Report what the handler actually received."""
+        return type(p).__name__
 
+    await g.add_tool(
+        ToolDefinition(
+            name="loose",
+            description="Accepts a free-form object despite a typed handler.",
+            parameters_schema={
+                "type": "object",
+                "properties": {"p": {"type": "object"}},
+                "required": ["p"],
+            },
+            tags=["demo"],
+        ),
+        handler=loose,
+    )
     await g.sync()
-    # ``{"x": "not-an-int"}`` can't build a Payload; the schema's own
-    # validation is what rejects it, not the reconstruction step.
-    result = await g.execute(ToolCall(tool_name="loose", arguments={"p": {"x": 1}}))
-    assert result.result == "Payload"
+
+    # A well-formed Payload is still rebuilt.
+    good = await g.execute(ToolCall(tool_name="loose", arguments={"p": {"x": 1}}))
+    assert good.status.value == "success", good.error
+    assert good.result == "Payload"
+
+    # One the schema admits but ``Payload`` rejects falls back to the raw
+    # mapping rather than turning a valid call into an error.
+    fallback = await g.execute(ToolCall(tool_name="loose", arguments={"p": {"y": 2}}))
+    assert fallback.status.value == "success", fallback.error
+    assert fallback.result == "dict"
+
+
+async def test_every_reconstructed_kind_arrives_typed_end_to_end(gantry):
+    """The unit test above only checks *which* parameters get a coercer. This
+    checks dispatch actually produces the declared types — the gap that let a
+    broken fallback test go unnoticed (PR #381 review)."""
+    result = await gantry.execute(
+        ToolCall(
+            tool_name="use_many",
+            arguments={
+                "pair": [1, "a"],
+                "at": "2026-08-27T00:00:00",
+                "ident": "urn:uuid:12345678-1234-5678-1234-567812345678",
+                "mode": "fast",
+                "frozen": ["a", "b"],
+                "payloads": [{"x": 1}],
+            },
+        )
+    )
+    assert result.status.value == "success", result.error
+    assert result.result == "tuple|datetime|UUID|Mode|frozenset|Payload"

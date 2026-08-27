@@ -2186,7 +2186,16 @@ class AgentGantry:
         deleted_from_registry = self._registry.delete_tool(name, namespace)
         # The facade keeps its own handler map (``tool_count`` reads it), so
         # purge the qualified key here too — the registry only clears its own.
-        deleted_handler = self._tool_handlers.pop(f"{namespace}.{name}", None) is not None
+        removed_handler = self._tool_handlers.pop(f"{namespace}.{name}", None)
+        deleted_handler = removed_handler is not None
+        if removed_handler is not None:
+            # The executor memoizes per-handler argument coercers keyed by the
+            # callable itself, so a deleted tool's handler would stay reachable
+            # from that cache until eviction. Bounded, but there is no reason
+            # to hold it.
+            from agent_gantry.core.executor import forget_handler
+
+            forget_handler(removed_handler)
         before = len(self._pending_tools)
         self._pending_tools = [
             t

@@ -108,9 +108,7 @@ def _build_model(name: str, schema: dict[str, Any], depth: int) -> Any:
             name,
         )
         raise ValueError("schema nesting too deep")
-    from typing import Annotated
-
-    from pydantic import BeforeValidator, ConfigDict, Field, create_model
+    from pydantic import ConfigDict, Field, create_model, model_validator
 
     properties = schema.get("properties")
     if not isinstance(properties, dict):
@@ -162,20 +160,30 @@ def _build_model(name: str, schema: dict[str, Any], depth: int) -> Any:
     if extra_annotation is not None:
         fields["__pydantic_extra__"] = (dict[str, extra_annotation], Field(init=False))
 
-    model = create_model(name, __config__=model_config, **fields)
-
     patterns = schema.get("patternProperties")
+    validators: dict[str, Any] = {}
     if isinstance(patterns, dict) and patterns:
         # Declared ``properties`` *and* ``patternProperties`` together: the
-        # model above types the named fields, and this types the rest. Without
-        # it the model merely allowed every extra (so a pattern key's value
-        # went unchecked, and a key matching no pattern slipped through a
-        # closed object) — both of which the executor rejects.
+        # model types the named fields, and this types the rest. Without it the
+        # model merely allowed every extra (so a pattern key's value went
+        # unchecked, and a key matching no pattern slipped through a closed
+        # object) — both of which the executor rejects.
+        #
+        # Attached as a *model validator* rather than by wrapping the class in
+        # ``Annotated``: this function's contract is to return a
+        # ``type[BaseModel]``, and CrewAI's ``args_schema`` field is typed that
+        # way, so an ``Annotated`` alias raised a ValidationError at tool
+        # construction instead of degrading to the documented fallback.
         check = _pattern_key_validator(
             name, patterns, schema.get("additionalProperties") is False, depth, set(properties)
         )
-        return Annotated[model, BeforeValidator(check)]
-    return model
+        validators["_check_pattern_properties"] = model_validator(mode="before")(
+            classmethod(lambda cls, value, _check=check: _check(value))
+        )
+
+    return create_model(
+        name, __config__=model_config, __validators__=validators or None, **fields
+    )
 
 
 def _effective_type(prop: dict[str, Any]) -> Any:

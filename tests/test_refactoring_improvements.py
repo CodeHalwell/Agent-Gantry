@@ -744,3 +744,78 @@ class TestStringFormats:
             pass
 
         assert build_parameters_schema(func)["properties"]["name"] == {"type": "string"}
+
+
+class TestRefInliningBounds:
+    """The ``$ref`` depth cap bounds *levels*, not nodes. A model recursing on
+    several fields per level doubles the expansion each time, so 16 levels is
+    ~2^16 expansions — a real spike for a plausible tree-shaped model, not a
+    pathological one (PR #381 review)."""
+
+    def test_tree_shaped_model_stays_bounded(self):
+        from pydantic import BaseModel
+
+        class Node(BaseModel):
+            value: int
+            left: "Node | None" = None
+            right: "Node | None" = None
+
+        Node.model_rebuild()
+
+        def func(tree: Node) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        # Without the node budget this exceeded 15 MB; the cap keeps it small
+        # enough to actually send to a provider.
+        assert len(json.dumps(schema)) < 200_000
+
+    def test_mutually_recursive_models_terminate(self):
+        """Only single-class cycles were covered; an ``A -> B -> A`` cycle
+        exercises a different path through the ``$defs`` map."""
+        from pydantic import BaseModel
+
+        class B(BaseModel):
+            a: "A | None" = None
+
+        class A(BaseModel):
+            b: B | None = None
+
+        A.model_rebuild()
+        B.model_rebuild()
+
+        def func(node: A) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        assert schema["properties"]["node"]["type"] == "object"
+        json.dumps(schema)  # terminates and stays serializable
+
+
+class TestEnumEdgeCases:
+    def test_empty_enum_is_not_emitted_as_a_constraint(self):
+        """An empty ``enum`` constrains nothing and would make a property
+        unsatisfiable if emitted; it must not reach the schema."""
+        from typing import Literal
+
+        def func(mode: Literal["a"]) -> None:
+            pass
+
+        # Sanity: a real Literal does emit its enum.
+        assert build_parameters_schema(func)["properties"]["mode"]["enum"] == ["a"]
+
+        # And an empty enum in an incoming schema is ignored by validation
+        # rather than rejecting every value.
+        from agent_gantry.integrations.frameworks.schema_bridge import (
+            pydantic_model_from_schema,
+        )
+
+        model = pydantic_model_from_schema(
+            "Args",
+            {
+                "type": "object",
+                "properties": {"v": {"type": "string", "enum": []}},
+                "required": ["v"],
+            },
+        )
+        assert model(v="anything").v == "anything"
