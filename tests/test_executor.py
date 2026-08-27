@@ -1835,3 +1835,84 @@ async def test_top_level_pattern_properties_coexist_with_declared_ones(engine):
     assert ok is False
     ok, _ = await engine._validate_arguments(tool, {"name": 1, "n_a": 1})
     assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_const_is_enforced_on_the_null_member_path(engine):
+    """A type list naming ``null`` returns early once the value *is* null —
+    and that early return checked ``enum`` but not ``const``, so a property
+    pinned to a constant accepted null anyway. Both are independent of
+    ``type`` and both must survive the shortcut (PR #381 review)."""
+    pinned = ToolDefinition(
+        name="pinned",
+        description="A widened type list pinned by an independent const",
+        parameters_schema={
+            "type": "object",
+            "properties": {"v": {"type": ["string", "null"], "const": "fixed"}},
+            "required": ["v"],
+        },
+    )
+    ok, err = await engine._validate_arguments(pinned, {"v": None})
+    assert ok is False and "fixed" in err
+    assert await engine._validate_arguments(pinned, {"v": "fixed"}) == (True, None)
+    ok, _ = await engine._validate_arguments(pinned, {"v": "other"})
+    assert ok is False
+
+    # A const of ``None`` is the one that *does* admit null.
+    nullable = ToolDefinition(
+        name="null_const",
+        description="A widened type list whose constant is null itself",
+        parameters_schema={
+            "type": "object",
+            "properties": {"v": {"type": ["string", "null"], "const": None}},
+            "required": ["v"],
+        },
+    )
+    assert await engine._validate_arguments(nullable, {"v": None}) == (True, None)
+    ok, _ = await engine._validate_arguments(nullable, {"v": "x"})
+    assert ok is False
+
+
+def test_a_constraint_only_oneof_branch_also_matches_null():
+    """``{}`` is not the only branch null matches twice through. A
+    constraint-only ``{"minimum": 5}`` declares no type, and numeric keywords
+    assert nothing about null — so null matches it as well, making
+    ``{"oneOf": [{"type": "null"}, {"minimum": 5}]}`` ambiguous and therefore
+    not nullable. Counting *declared* nulls saw one branch (PR #381 review)."""
+    from agent_gantry.schema.base import null_validates_against, schema_declares_null
+
+    assert schema_declares_null({"oneOf": [{"type": "null"}, {"minimum": 5}]}) is False
+    assert schema_declares_null({"oneOf": [{"type": "null"}, {"maxLength": 3}]}) is False
+    # A branch whose type excludes null leaves exactly one match, as before.
+    assert (
+        schema_declares_null({"oneOf": [{"type": "null"}, {"type": "integer", "minimum": 5}]})
+        is True
+    )
+    assert schema_declares_null({"oneOf": [{"type": "null"}, {"type": "string"}]}) is True
+
+    # The matching predicate itself: a schema that merely fails to forbid null
+    # admits it, which is what makes the count above right.
+    assert null_validates_against({}) is True
+    assert null_validates_against({"minimum": 5}) is True
+    assert null_validates_against({"type": "null"}) is True
+    assert null_validates_against({"type": ["string", "null"]}) is True
+    assert null_validates_against({"const": None}) is True
+    assert null_validates_against({"type": "string"}) is False
+    assert null_validates_against({"enum": ["a"]}) is False
+    assert null_validates_against({"const": "x"}) is False
+    assert null_validates_against(False) is False
+    assert null_validates_against(True) is True
+    # Nested combinators are resolved, not assumed to admit null.
+    assert null_validates_against({"allOf": [{"type": "null"}, {"type": "string"}]}) is False
+    assert null_validates_against({"anyOf": [{"type": "string"}, {"minimum": 5}]}) is True
+
+
+def test_the_declaring_question_is_still_asked_of_anyof():
+    """``anyOf`` deliberately keeps the stricter reading: there the question is
+    whether the author gave null a meaning worth preserving, and a branch that
+    merely fails to forbid it hasn't. Only ``oneOf``'s exclusivity count turns
+    on matching."""
+    from agent_gantry.schema.base import schema_declares_null
+
+    assert schema_declares_null({"anyOf": [{"type": "string"}, {"minimum": 5}]}) is False
+    assert schema_declares_null({"anyOf": [{"type": "string"}, {"type": "null"}]}) is True

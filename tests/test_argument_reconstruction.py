@@ -486,3 +486,91 @@ def test_the_coercer_cache_evicts_rather_than_stopping():
         executor_module._COERCER_CACHE_MAX = original_max
         executor_module._COERCER_CACHE.clear()
         executor_module._COERCER_CACHE.update(original_cache)
+
+
+def test_every_fixed_length_tuple_pins_its_arity():
+    """``prefixItems`` was what carried the length bounds, so a *homogeneous*
+    fixed tuple — which takes the ``items`` branch instead, having a single
+    shared item type — advertised an array of any length. ``[1]`` for
+    ``tuple[int, int]`` then validated, reconstruction failed, and the
+    fallback handed the handler a raw list (PR #381 review)."""
+    from agent_gantry.schema.introspection import _type_to_json_schema
+
+    assert _type_to_json_schema(tuple[int, int]) == {
+        "type": "array",
+        "items": {"type": "integer"},
+        "minItems": 2,
+        "maxItems": 2,
+    }
+    assert _type_to_json_schema(tuple[int]) == {
+        "type": "array",
+        "items": {"type": "integer"},
+        "minItems": 1,
+        "maxItems": 1,
+    }
+    # Heterogeneous keeps prefixItems and gains nothing it didn't have.
+    heterogeneous = _type_to_json_schema(tuple[int, str])
+    assert heterogeneous["minItems"] == heterogeneous["maxItems"] == 2
+    assert "prefixItems" in heterogeneous
+    # A variadic tuple has no fixed arity to pin.
+    variadic = _type_to_json_schema(tuple[int, ...])
+    assert "minItems" not in variadic and "maxItems" not in variadic
+
+
+async def test_a_short_homogeneous_tuple_is_rejected_not_reconstructed():
+    """End-to-end consequence of the bounds above, on the branch that lacked
+    them: ``tuple[int, int]`` shares one item type, so it never had
+    ``prefixItems`` to carry the arity."""
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @g.register(tags=["demo"])
+    def span(bounds: tuple[int, int]) -> str:
+        """Report the width between a pair of integer bounds."""
+        return f"{bounds[1] - bounds[0]}:{type(bounds).__name__}"
+
+    await g.sync()
+    ok = await g.execute(ToolCall(tool_name="span", arguments={"bounds": [2, 5]}))
+    assert ok.status.value == "success", ok.error
+    assert ok.result == "3:tuple"
+
+    for wrong_arity in ([1], [1, 2, 3]):
+        result = await g.execute(
+            ToolCall(tool_name="span", arguments={"bounds": wrong_arity})
+        )
+        assert result.status.value == "failure", wrong_arity
+        assert result.error_type == "ValidationError"
+
+
+def test_a_mapping_keyed_by_anything_but_str_needs_rebuilding():
+    """JSON object keys are always strings, so a mapping annotated otherwise
+    never arrives as itself — however simple its *values* are, which is all
+    this predicate used to look at (PR #381 review)."""
+    from agent_gantry.schema.introspection import _needs_reconstruction
+
+    assert _needs_reconstruction(dict[int, str]) is True
+    assert _needs_reconstruction(dict[uuid.UUID, str]) is True
+    assert _needs_reconstruction(typing.Mapping[int, str]) is True
+    # A string-keyed mapping still arrives as itself.
+    assert _needs_reconstruction(dict[str, int]) is False
+    assert _needs_reconstruction(dict[str, str]) is False
+    assert _needs_reconstruction(dict) is False
+    # ``Any`` names no conversion to perform.
+    assert _needs_reconstruction(dict[Any, str]) is False
+
+
+async def test_integer_mapping_keys_reach_the_handler_as_integers():
+    """``{"1": "a"}`` is the only thing a provider can send for
+    ``dict[int, str]``, and the handler must still get ``{1: "a"}``."""
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @g.register(tags=["demo"])
+    def sum_keys(counts: dict[int, str]) -> str:
+        """Sum the integer keys of a mapping."""
+        return f"{sum(counts)}:{type(next(iter(counts))).__name__}"
+
+    await g.sync()
+    result = await g.execute(
+        ToolCall(tool_name="sum_keys", arguments={"counts": {"1": "a", "2": "b"}})
+    )
+    assert result.status.value == "success", result.error
+    assert result.result == "3:int"

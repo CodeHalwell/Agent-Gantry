@@ -222,6 +222,15 @@ def _needs_reconstruction(param_type: Any) -> bool:
     if origin in (set, frozenset, tuple, _abc.Set):
         return True
     if origin is not None:
+        args = typing.get_args(param_type)
+        if origin is dict or (isinstance(origin, type) and issubclass(origin, _abc.Mapping)):
+            # JSON object keys are *always* strings, so a mapping annotated
+            # with any other key type never arrives as itself however simple
+            # its values are: ``dict[int, str]`` reached the handler as
+            # ``{"1": "value"}``, and every lookup or arithmetic on those keys
+            # then failed. ``TypeAdapter`` converts them back.
+            if args and args[0] is not str and args[0] is not Any:
+                return True
         # Any other parameterized generic — ``list[Payload]``,
         # ``dict[str, datetime]``, ``Sequence[Mode]``. The *container* arrives
         # as itself, but its members may still need rebuilding, and a
@@ -229,7 +238,7 @@ def _needs_reconstruction(param_type: Any) -> bool:
         # recursing here left ``def f(items: list[Payload])`` handing the
         # handler a list of raw dicts — the same failure this exists to fix,
         # one container level up.
-        return any(_needs_reconstruction(arg) for arg in typing.get_args(param_type))
+        return any(_needs_reconstruction(arg) for arg in args)
     if not isinstance(param_type, type):
         return False
     if param_type in (datetime.datetime, datetime.date, datetime.time, uuid.UUID):
@@ -748,16 +757,21 @@ def _type_to_json_schema(param_type: Any, *, in_container: bool = False) -> dict
                     schema["items"] = _type_to_json_schema(item_type, in_container=True)
                 elif origin is tuple and args and Ellipsis not in args:
                     # A *heterogeneous* fixed-length tuple — ``tuple[int, str]``
-                    # — has no single item type, and emitting a bare
-                    # ``{"type": "array"}`` let a provider send ``["bad", 1]``:
-                    # validation accepted it, reconstruction then couldn't
-                    # build the tuple, and the fallback handed the handler the
-                    # raw list. ``prefixItems`` types each position, and the
-                    # length bounds pin the arity, which the executor and the
-                    # framework bridge both already enforce.
+                    # — has no single item type, so each position needs typing
+                    # separately. Emitting a bare ``{"type": "array"}`` let a
+                    # provider send ``["bad", 1]``: validation accepted it,
+                    # reconstruction then couldn't build the tuple, and the
+                    # fallback handed the handler the raw list.
                     schema["prefixItems"] = [
                         _type_to_json_schema(a, in_container=True) for a in args
                     ]
+                if origin is tuple and args and Ellipsis not in args:
+                    # The arity is pinned for *every* fixed-length tuple, not
+                    # only the ones that needed ``prefixItems``. A homogeneous
+                    # ``tuple[int, int]`` takes the ``items`` branch above and
+                    # would otherwise accept an array of any length, failing
+                    # reconstruction the same way. Both bounds are enforced by
+                    # the executor and by the framework bridge already.
                     schema["minItems"] = len(args)
                     schema["maxItems"] = len(args)
                 return schema

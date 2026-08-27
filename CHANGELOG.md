@@ -710,6 +710,29 @@ adapters, and the provider dialects agree with it.
   bridge now mirrors the executor's rule including its asymmetry: an object
   declaring *no* properties stays free-form, that being the shape a plain
   `dict` parameter emits.
+- **A homogeneous fixed tuple advertised an array of any length.** The arity
+  bounds rode along with `prefixItems`, which only a *heterogeneous* tuple
+  needs — so `tuple[int, int]`, having one shared item type, took the `items`
+  branch and lost them. `[1]` then validated, reconstruction failed, and the
+  fallback handed the handler a raw list. Every fixed-length tuple pins its
+  arity now; a variadic `tuple[int, ...]` still has none to pin.
+- **`const` was skipped when the value was `null`.** A `type` list naming
+  `null` returns early once the value is null, and that shortcut checked
+  `enum` but not `const` — so `{"type": ["string", "null"], "const": "fixed"}`
+  accepted `null`, which the constant independently forbids. Both keywords now
+  survive the shortcut.
+- **A constraint-only `oneOf` branch also matches `null`.** `{}` was not the
+  only way for null to match twice: `{"minimum": 5}` declares no type, and
+  numeric keywords assert nothing about null, so
+  `{"oneOf": [{"type": "null"}, {"minimum": 5}]}` is ambiguous and therefore
+  not nullable. Branches are counted with a new `null_validates_against`
+  — what *matches*, which is what exclusivity means — while `anyOf` keeps
+  asking what the author *declared*.
+- **A mapping keyed by anything but `str` reached the handler unconverted.**
+  JSON object keys are always strings, so `dict[int, str]` arrived as
+  `{"1": "value"}` and every lookup or arithmetic on those keys failed.
+  Reconstruction looked only at the *value* type; it now flags a non-string
+  key annotation too.
 
 ### Performance
 

@@ -142,6 +142,56 @@ def check_json_constraints(value: Any, schema: dict[str, Any], path: str) -> str
     return None
 
 
+def null_validates_against(schema: Any) -> bool:
+    """Whether ``null`` satisfies ``schema`` — a matching question, not a
+    declaring one.
+
+    Distinct from :func:`schema_declares_null`, which asks whether an author
+    gave ``null`` a meaning worth preserving. Here a schema that simply never
+    forbids null admits it: ``{}`` validates everything, and a constraint-only
+    ``{"minimum": 5}`` names no type at all — numeric keywords apply only to
+    numbers, so they assert nothing about ``null``.
+
+    Used to count ``oneOf`` branches, where the spec's "exactly one" is
+    decided by what matches rather than by what is declared.
+    """
+    if schema is True:
+        return True
+    if not isinstance(schema, dict):
+        # ``False`` (validates nothing) and any non-schema value.
+        return False
+    if not schema:
+        return True
+    # ``const``/``enum`` pin the value outright, whatever the type says.
+    if "const" in schema:
+        return schema["const"] is None
+    enum_values = schema.get("enum")
+    if isinstance(enum_values, list) and enum_values:
+        return None in enum_values
+    declared = schema.get("type")
+    if isinstance(declared, str):
+        if declared != "null":
+            return False
+    elif isinstance(declared, list) and "null" not in declared:
+        return False
+    # Either no ``type`` or one naming null. Every remaining keyword family
+    # is typed — numeric bounds, string lengths, array and object shape — so
+    # none of them can reject a null. Combinators still can.
+    any_of = schema.get("anyOf")
+    if isinstance(any_of, list) and any_of:
+        if not any(null_validates_against(branch) for branch in any_of):
+            return False
+    one_of = schema.get("oneOf")
+    if isinstance(one_of, list) and one_of:
+        if sum(1 for branch in one_of if null_validates_against(branch)) != 1:
+            return False
+    all_of = schema.get("allOf")
+    if isinstance(all_of, list) and all_of:
+        if not all(null_validates_against(branch) for branch in all_of):
+            return False
+    return True
+
+
 def schema_declares_null(prop: Any) -> bool:
     """Whether a property schema gives ``null`` a declared, meaningful value.
 
@@ -195,11 +245,16 @@ def schema_declares_null(prop: Any) -> bool:
         # they differ: an empty schema ``{}`` matches every value, null
         # included, so ``{"oneOf": [{"type": "null"}, {}]}`` makes null match
         # twice and is therefore *not* nullable.
-        admitting = sum(
-            1
-            for branch in one_of
-            if isinstance(branch, dict) and (not branch or schema_declares_null(branch))
-        )
+        #
+        # Counted with ``null_validates_against`` rather than this function:
+        # exclusivity turns on whether null *matches* a branch, not on whether
+        # the branch declares it. ``{"minimum": 5}`` names no type and numeric
+        # keywords don't apply to null, so null matches it too — the same
+        # double match as ``{}``, one keyword less obvious. The distinction is
+        # deliberate and does not extend to ``anyOf`` above: there the
+        # question is whether the author gave null a meaning worth preserving,
+        # and a branch that merely fails to forbid null hasn't.
+        admitting = sum(1 for branch in one_of if null_validates_against(branch))
         if admitting == 1:
             return True
     all_of = prop.get("allOf")
