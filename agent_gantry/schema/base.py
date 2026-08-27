@@ -56,6 +56,13 @@ def schema_declares_null(prop: Any) -> bool:
     prop_type = prop.get("type")
     if prop_type == "null" or (isinstance(prop_type, list) and "null" in prop_type):
         return True
+    if prop_type is not None:
+        # A sibling ``type`` that excludes null governs the whole schema: JSON
+        # Schema applies it *alongside* any combinator, so no branch can admit
+        # a value the type forbids. Reading the branches in isolation called
+        # ``{"type": "string", "anyOf": [{"type": "null"}, {}]}`` nullable and
+        # preserved a placeholder canonical validation then rejected.
+        return False
     for key in ("anyOf", "oneOf"):
         branches = prop.get(key)
         if isinstance(branches, list) and any(schema_declares_null(b) for b in branches):

@@ -38,9 +38,11 @@ import copy
 import dataclasses
 import datetime
 import enum
+import functools
 import inspect
 import logging
 import math
+import operator
 import re
 import types
 import uuid
@@ -247,6 +249,78 @@ def _needs_reconstruction(param_type: Any) -> bool:
     return issubclass(param_type, BaseModel)
 
 
+def _enum_member_recovery(enum_cls: Any) -> Any:
+    """A ``BeforeValidator`` mapping an Enum's JSON form back to its member.
+
+    An ``Enum`` whose values are tuples advertises them as JSON *arrays* (the
+    canonical schema converts them, so the document matches what a provider
+    sends). Pydantic then can't match the array back: ``(0, 0)`` is the member
+    value and ``[0, 0]`` is what arrives. Matching on JSON identity — the same
+    equality the executor's ``enum`` check uses — closes that.
+
+    A value matching no member is returned untouched so Pydantic raises its
+    own error rather than this silently swallowing one.
+    """
+    from agent_gantry.schema.base import json_identity_key
+
+    by_key = {}
+    for member in enum_cls:
+        try:
+            by_key[json_identity_key(member.value)] = member
+        except TypeError:  # an unhashable member value
+            continue
+
+    def _recover(value: Any) -> Any:
+        if isinstance(value, enum_cls):
+            return value
+        try:
+            return by_key.get(json_identity_key(value), value)
+        except TypeError:
+            return value
+
+    return _recover
+
+
+def _with_enum_recovery(annotation: Any) -> Any:
+    """Rewrite composite-valued ``Enum``s in ``annotation`` so JSON matches.
+
+    Applied to the whole annotation rather than only a bare ``Enum`` parameter,
+    so it reaches one nested in a container: ``list[Point]`` and
+    ``Point | None`` get the same treatment.
+    """
+    import typing
+    from typing import Annotated
+
+    from pydantic import BeforeValidator
+
+    origin = typing.get_origin(annotation)
+    if origin is not None:
+        args = typing.get_args(annotation)
+        rebuilt = tuple(_with_enum_recovery(arg) for arg in args)
+        if rebuilt == args:
+            return annotation
+        try:
+            if origin is typing.Union or origin is types.UnionType:
+                # Built with ``|`` rather than ``Union[...]`` so the members
+                # stay whatever they already are (an ``Annotated`` alias
+                # included).
+                return functools.reduce(operator.or_, rebuilt)
+            return origin[rebuilt]
+        except TypeError:  # not re-subscriptable; leave it alone
+            return annotation
+
+    if not isinstance(annotation, type) or not issubclass(annotation, enum.Enum):
+        return annotation
+    # Only enums whose values aren't JSON scalars need it; a plain
+    # ``str``/``int`` enum already round-trips.
+    if all(
+        isinstance(member.value, (str, int, float, bool)) or member.value is None
+        for member in annotation
+    ):
+        return annotation
+    return Annotated[annotation, BeforeValidator(_enum_member_recovery(annotation))]
+
+
 def build_argument_coercers(func: Callable[..., Any]) -> dict[str, Any]:
     """``{parameter: TypeAdapter}`` for the arguments ``func`` needs rebuilt.
 
@@ -272,7 +346,7 @@ def build_argument_coercers(func: Callable[..., Any]) -> dict[str, Any]:
         if name == "return" or not _needs_reconstruction(annotation):
             continue
         try:
-            coercers[name] = TypeAdapter(annotation)
+            coercers[name] = TypeAdapter(_with_enum_recovery(annotation))
         except Exception:  # noqa: BLE001 - not adaptable: leave the value alone
             continue
     return coercers

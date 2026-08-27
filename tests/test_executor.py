@@ -1717,3 +1717,19 @@ def test_pre_widened_enum_null_is_dropped_not_preserved():
         },
     )
     assert ExecutionEngine._normalize_arguments(tool, {"mode": None}) == {}
+
+
+def test_a_sibling_type_governs_combinator_nullability():
+    """JSON Schema applies a property's own ``type`` alongside its combinator,
+    so a branch cannot admit a value the type forbids. Reading branches in
+    isolation called ``{"type": "string", "anyOf": [{"type": "null"}, {}]}``
+    nullable and preserved a placeholder validation then rejected
+    (PR #381 review)."""
+    from agent_gantry.schema.base import schema_declares_null
+
+    assert schema_declares_null({"type": "string", "anyOf": [{"type": "null"}, {}]}) is False
+    assert schema_declares_null({"anyOf": [{"type": "null"}, {"type": "string"}]}) is True
+    assert (
+        schema_declares_null({"type": ["string", "null"], "anyOf": [{"type": "null"}]})
+        is True
+    )

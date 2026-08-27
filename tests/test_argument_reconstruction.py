@@ -261,3 +261,72 @@ async def test_every_reconstructed_kind_arrives_typed_end_to_end(gantry):
     )
     assert result.status.value == "success", result.error
     assert result.result == "tuple|datetime|UUID|Mode|frozenset|Payload"
+
+
+class Point(enum.Enum):
+    """An ``Enum`` whose values are tuples, so its JSON form is an array."""
+
+    ORIGIN = (0, 0)
+    UNIT = (1, 1)
+
+
+async def test_composite_enum_member_is_recovered_from_its_json_array():
+    """The canonical schema advertises tuple-valued members as JSON *arrays*,
+    so a provider sends ``[0, 0]`` — which Pydantic can't match back to the
+    member value ``(0, 0)``. The handler received the raw list instead of the
+    member (PR #381 review)."""
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @g.register(tags=["demo"])
+    def use_point(pt: Point) -> str:
+        """Use a point enum whose values are tuples."""
+        return f"{type(pt).__name__}:{pt.name}"
+
+    await g.sync()
+    result = await g.execute(ToolCall(tool_name="use_point", arguments={"pt": [0, 0]}))
+    assert result.status.value == "success", result.error
+    assert result.result == "Point:ORIGIN"
+
+
+async def test_composite_enum_recovery_reaches_nested_positions():
+    """Applied to the whole annotation, not just a bare ``Enum`` parameter, so
+    a container or optional carries it too."""
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @g.register(tags=["demo"])
+    def nested(points: list[Point], maybe: Point | None = None) -> str:
+        """Handle composite enums nested inside containers."""
+        kinds = [type(p).__name__ for p in points]
+        return f"{kinds}|{type(maybe).__name__}"
+
+    await g.sync()
+    result = await g.execute(
+        ToolCall(tool_name="nested", arguments={"points": [[0, 0], [1, 1]], "maybe": [1, 1]})
+    )
+    assert result.status.value == "success", result.error
+    assert result.result == "['Point', 'Point']|Point"
+
+
+async def test_a_value_matching_no_member_is_still_rejected():
+    """Recovery must not become a way to smuggle a non-member through."""
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @g.register(tags=["demo"])
+    def use_point(pt: Point) -> str:
+        """Use a point enum whose values are tuples."""
+        return pt.name
+
+    await g.sync()
+    result = await g.execute(ToolCall(tool_name="use_point", arguments={"pt": [9, 9]}))
+    assert result.status.value == "failure"
+    assert "must be one of" in (result.error or "")
+
+
+def test_plain_scalar_enums_need_no_recovery():
+    """A ``str``/``int`` enum already round-trips, so its annotation is left
+    exactly as declared rather than being wrapped."""
+    from agent_gantry.schema.introspection import _with_enum_recovery
+
+    assert _with_enum_recovery(Mode) is Mode
+    assert _with_enum_recovery(list[Mode]) == list[Mode]
+    assert _with_enum_recovery(Point) is not Point

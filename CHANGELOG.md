@@ -195,6 +195,18 @@ adapters, and the provider dialects agree with it.
   key was rejected because none counted as declared. Matched keys are now
   validated against their pattern's schema and treated as declared by both
   paths. An uncompilable pattern fails open with a warning, as `pattern` does.
+- **A tuple-valued `Enum` reached its handler as a raw array.** Canonicalizing
+  those members to JSON arrays (so the schema matches what a provider sends)
+  left Pydantic unable to match `[0, 0]` back to the member value `(0, 0)`, so
+  reconstruction fell through and the handler got a `list`. Members are now
+  recovered by JSON identity — the same equality the executor's `enum` check
+  uses — applied to the whole annotation so it reaches `list[Point]` and
+  `Point | None` too. A value matching no member is still rejected.
+- **A sibling `type` didn't govern combinator nullability.** JSON Schema
+  applies a property's own `type` alongside its combinator, so
+  `{"type": "string", "anyOf": [{"type": "null"}, {}]}` does *not* admit null
+  — but the branches were read in isolation, so a strict-mode placeholder was
+  preserved for canonical validation to reject.
 - **A container of typed values still reached its handler as raw JSON.**
   `list[Payload]` has origin `list` and isn't a bare class, so it fell through
   every check in the reconstruction test and `def f(items: list[Payload])`
