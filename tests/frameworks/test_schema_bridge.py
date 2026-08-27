@@ -1015,3 +1015,20 @@ def test_string_enum_keeps_a_bare_literal():
     assert model(v="a").v == "a"
     with pytest.raises(ValidationError):
         model(v="c")
+
+
+def test_object_property_counts_reach_the_generated_field():
+    """Mirrors the executor's object branch, so the args model doesn't accept a
+    mapping the engine rejects at dispatch (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"m": {"type": "object", "minProperties": 1, "maxProperties": 2}},
+            "required": ["m"],
+        },
+    )
+    assert model(m={"a": 1}).m == {"a": 1}
+    for bad in ({}, {"a": 1, "b": 2, "c": 3}):
+        with pytest.raises(ValidationError):
+            model(m=bad)

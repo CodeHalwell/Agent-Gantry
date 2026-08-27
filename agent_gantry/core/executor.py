@@ -126,6 +126,20 @@ def _check_constraints(value: Any, schema: dict[str, Any], path: str) -> str | N
                         return f"Parameter '{path}' must not contain duplicate items"
                     unhashable.append(key)
 
+    if isinstance(value, dict):
+        # A Pydantic ``dict`` field constrained with ``Field(min_length=1)``
+        # emits these, so they arrive inside the inlined mapping schemas —
+        # and checking only numbers, strings and arrays let an empty or
+        # oversized mapping through to the handler.
+        min_properties = schema.get("minProperties")
+        if isinstance(min_properties, int) and not isinstance(min_properties, bool):
+            if len(value) < min_properties:
+                return f"Parameter '{path}' must have at least {min_properties} properties"
+        max_properties = schema.get("maxProperties")
+        if isinstance(max_properties, int) and not isinstance(max_properties, bool):
+            if len(value) > max_properties:
+                return f"Parameter '{path}' must have at most {max_properties} properties"
+
     return None
 
 

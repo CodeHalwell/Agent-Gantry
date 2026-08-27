@@ -177,6 +177,27 @@ adapters, and the provider dialects agree with it.
   normalized too: strict mode widens the optional properties of a positional
   *object* exactly as it does anywhere else, so a `tuple[Payload, int]`
   parameter kept its nested nulls while only `items` was consulted.
+- **LlamaIndex forwarded the caller's raw values, not the validated ones.**
+  It checks a call against `fn_schema` but passes the original arguments on, so
+  a model answering `"1"` for an `integer` parameter passed the tool's own
+  validation and was then rejected by the executor, which holds the caller to
+  the advertised schema. CrewAI forwards the validated values and never had
+  this gap. The adapter now runs the same args model before dispatch, so what
+  the engine sees is what the framework approved. Pinned by a test against the
+  real package — the forwarding difference is the whole finding, and a fake
+  would only pin the assumption.
+- **A `None`-annotated parameter was advertised as a string in signatures.**
+  `python_signature`'s type mapping falls back to `str` for anything it doesn't
+  recognize, so `{"type": "null"}` — which introspection now emits — reached
+  Semantic Kernel, AG2 and Google ADK's fallback path as a string, and the
+  string the model produced was rejected by the executor. It maps to
+  `NoneType` now.
+- **`minProperties`/`maxProperties` were never enforced.** A Pydantic `dict`
+  field constrained with `Field(min_length=1)` emits them, so they arrive
+  inside the inlined mapping schemas — but the constraint check had branches
+  only for numbers, strings and arrays, so an empty or oversized mapping
+  reached the handler. Enforced in the executor and mirrored in the framework
+  args model.
 - **`enum` and `const` compared with Python equality.** `True == 1` in Python,
   so a boolean satisfied a numeric `Literal[1, 1.5]` — which emits an `enum`
   with no single `type`, leaving membership the only constraint — and reached
@@ -248,6 +269,11 @@ adapters, and the provider dialects agree with it.
   than merely leaving it unconstrained. It now uses the same
   `unsupported_strict_paths()` gate as the OpenAI adapters: such a tool is
   emitted without `strict: true`, with a warning naming the offending path.
+- **A multi-member union dropped its members silently.** A genuine `int | str`
+  keeps only the first member — deliberate, since most provider dialects reject
+  union-typed parameters — but nothing said so. It now logs at debug level, and
+  the behaviour is pinned by a test rather than left as an accident. `T | None`
+  loses nothing and stays silent.
 - **Strict-mode fallback warnings named the wrong dialect.** `MistralAdapter`
   and `GroqAdapter` inherit the OpenAI path, which passed a hardcoded
   `"OpenAI"`, so their warnings pointed at the wrong provider. Each adapter

@@ -308,6 +308,22 @@ agent = await bridge.build_agent(
 response = await agent.run("What's the weather in London?")
 ```
 
+> **`require_confirmation=False` is an approval, not a hint.**
+> Setting it on a `ToolCall` is the caller's assertion that *a human has
+> approved this specific call*. It clears both confirmation gates — the tool's
+> own `requires_confirmation` flag and any `SecurityPolicy.require_confirmation`
+> pattern the tool matches. It cannot relax anything else: `allowed_domains`,
+> rate limits, capabilities and argument validation all still run, and a denial
+> still wins.
+>
+> Because it is caller-supplied, it must only ever be set by a trusted approval
+> layer — a human clicking approve, or your own server-side workflow after one
+> did. **Never derive it from model output**, and never let a value an LLM
+> produced reach that field: a model that can set it can approve its own
+> destructive calls. This is the same trust boundary that has always applied to
+> `ToolDefinition.requires_confirmation`, but it now also governs
+> admin-configured policy patterns, so it is worth stating explicitly.
+
 For multi-agent workflows use `bridge.as_agent()` to build first-class `Agent` objects and wire them with `WorkflowBuilder`:
 
 ```python

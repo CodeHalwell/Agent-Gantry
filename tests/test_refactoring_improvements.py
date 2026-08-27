@@ -383,6 +383,49 @@ class TestSchemaFidelity:
         schema = build_parameters_schema(func)
         assert schema["properties"]["x"]["type"] == "integer"
 
+    def test_multi_member_union_keeps_only_the_first_member(self, caplog):
+        """A genuine ``int | str`` loses every member but the first — a real
+        fidelity loss, but a deliberate one: most provider dialects reject
+        union-typed parameters outright. Pinned so the behaviour is a decision
+        rather than an accident, and logged so a schema author has a signal
+        (PR #381 review)."""
+        def func(x: int | str) -> None:
+            pass
+
+        with caplog.at_level("DEBUG", logger="agent_gantry.schema.introspection"):
+            schema = build_parameters_schema(func)
+
+        assert schema["properties"]["x"] == {"type": "integer"}
+        assert "multi-member union" in caplog.text
+
+    def test_optional_union_is_not_logged_as_a_loss(self):
+        """``T | None`` loses nothing — requiredness carries the optionality —
+        so it must not warn."""
+        def func(x: int | None = None) -> None:
+            pass
+
+        import logging as _logging
+
+        records: list[_logging.LogRecord] = []
+
+        class _Capture(_logging.Handler):
+            def emit(self, record: _logging.LogRecord) -> None:
+                records.append(record)
+
+        log = _logging.getLogger("agent_gantry.schema.introspection")
+        handler = _Capture()
+        log.addHandler(handler)
+        previous = log.level
+        log.setLevel(_logging.DEBUG)
+        try:
+            schema = build_parameters_schema(func)
+        finally:
+            log.removeHandler(handler)
+            log.setLevel(previous)
+
+        assert schema["properties"]["x"] == {"type": "integer"}
+        assert not [r for r in records if "multi-member union" in r.getMessage()]
+
     def test_non_finite_float_defaults_are_dropped(self):
         """NaN/±inf are Python floats but not JSON values: ``json.dumps``
         emits bare ``NaN``/``Infinity`` tokens, which a provider parsing

@@ -101,3 +101,37 @@ async def test_sync_retrieve_matches_async(gantry: AgentGantry) -> None:
     tools = retriever.retrieve("convert 100 USD to EUR")
     names = {t.metadata.name for t in tools}
     assert "convert_currency" in names, names
+
+
+async def test_scalar_coercion_matches_what_the_executor_accepts(
+    gantry: AgentGantry,
+) -> None:
+    """LlamaIndex validates against ``fn_schema`` but forwards the caller's
+    *original* values, so a model answering ``"100"`` for a ``number``
+    parameter passed the tool's own validation and was then rejected by the
+    executor, which holds the caller to the advertised schema. CrewAI forwards
+    the validated values and never had this gap (PR #381 review).
+
+    Exercised against the real package because that forwarding behaviour is
+    the whole finding — a fake would just pin our assumption about it.
+    """
+    tools = await LlamaIndexAdapter(gantry).select("convert 100 USD to EUR", limit=1)
+    by_name = {t.metadata.name: t for t in tools}
+    assert "convert_currency" in by_name, list(by_name)
+    tool = by_name["convert_currency"]
+
+    out = tool.call(amount="100", to_code="EUR")
+    result = getattr(out, "raw_output", out)
+    assert result == "converted:100.0:EUR", result
+
+    out_async = await tool.acall(amount="100", to_code="EUR")
+    assert getattr(out_async, "raw_output", out_async) == "converted:100.0:EUR"
+
+
+async def test_well_typed_values_are_passed_through_unchanged(
+    gantry: AgentGantry,
+) -> None:
+    tools = await LlamaIndexAdapter(gantry).select("convert 100 USD to EUR", limit=1)
+    tool = {t.metadata.name: t for t in tools}["convert_currency"]
+    out = tool.call(amount=100.0, to_code="EUR")
+    assert getattr(out, "raw_output", out) == "converted:100.0:EUR"

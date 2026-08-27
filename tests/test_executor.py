@@ -1435,3 +1435,30 @@ async def test_enum_and_const_compare_by_json_identity(engine):
     composite = tool_with({"enum": [[0, 0], [1, 1]]})
     assert (await engine._validate_arguments(composite, {"p": [0, 0]}))[0] is True
     assert (await engine._validate_arguments(composite, {"p": [2, 2]}))[0] is False
+
+
+async def test_object_property_counts_are_enforced(engine):
+    """A Pydantic ``dict`` field constrained with ``Field(min_length=1)`` emits
+    ``minProperties``/``maxProperties``, so they arrive inside the inlined
+    mapping schemas — and the constraint check had no object branch, letting an
+    empty or oversized mapping reach the handler (PR #381 review)."""
+    def tool_with(prop):
+        return ToolDefinition(
+            name="t",
+            description="Mapping parameter with a property-count bound",
+            parameters_schema={
+                "type": "object",
+                "properties": {"p": prop},
+                "required": ["p"],
+            },
+        )
+
+    at_least_one = tool_with({"type": "object", "minProperties": 1})
+    assert (await engine._validate_arguments(at_least_one, {"p": {}}))[0] is False
+    assert (await engine._validate_arguments(at_least_one, {"p": {"a": 1}}))[0] is True
+
+    at_most_two = tool_with({"type": "object", "maxProperties": 2})
+    assert (await engine._validate_arguments(at_most_two, {"p": {"a": 1}}))[0] is True
+    assert (
+        await engine._validate_arguments(at_most_two, {"p": {"a": 1, "b": 2, "c": 3}})
+    )[0] is False

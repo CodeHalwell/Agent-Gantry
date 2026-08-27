@@ -33,12 +33,15 @@ import dataclasses
 import datetime
 import enum
 import inspect
+import logging
 import math
 import re
 import types
 import uuid
 from collections.abc import Callable
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 #: Generic origins that describe an ordered/unordered collection of items.
 #: ``typing.get_origin`` normalizes ``typing.Sequence[int]`` and
@@ -437,6 +440,20 @@ def _type_to_json_schema(param_type: Any) -> dict[str, Any]:
             if origin is typing.Union or origin is types.UnionType:
                 non_none_args = [a for a in args if a is not type(None)]
                 if non_none_args:
+                    if len(non_none_args) > 1:
+                        # A genuine multi-type union (``int | str``) loses
+                        # every member but the first. Logged rather than
+                        # silent: the dropped members are a real fidelity
+                        # loss, and without a signal the schema's author has
+                        # no way to know the annotation didn't survive.
+                        logger.debug(
+                            "Parameter type %r is a multi-member union; only %r is "
+                            "advertised in the schema. Most provider dialects reject "
+                            "union-typed parameters, so the remaining members are "
+                            "dropped rather than emitted as anyOf.",
+                            param_type,
+                            non_none_args[0],
+                        )
                     return _type_to_json_schema(non_none_args[0])
                 return {"type": "string"}
 

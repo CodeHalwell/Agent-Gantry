@@ -364,6 +364,14 @@ def _annotation_for_prop(prop: dict[str, Any]) -> Any:
         return Literal[literal]
 
     json_type = prop.get("type")
+    if json_type == "null" or (isinstance(json_type, list) and set(json_type) == {"null"}):
+        # ``_json_type_to_python`` falls back to ``str`` for anything it
+        # doesn't recognize, so a parameter annotated ``None`` — which
+        # introspection now emits as ``{"type": "null"}`` — was advertised as
+        # a string, and the string the model dutifully produced was then
+        # rejected by the executor.
+        return type(None)
+
     annotation = _json_type_to_python(json_type)
 
     if annotation is list:

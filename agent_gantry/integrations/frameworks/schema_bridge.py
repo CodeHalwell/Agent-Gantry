@@ -283,12 +283,20 @@ def _with_constraints(annotation: Any, prop: dict[str, Any]) -> Any:
             # Gantry's own introspection emits this for every ``set`` and
             # ``frozenset`` parameter, and the executor rejects duplicates at
             # dispatch — so without it the framework happily accepts a list
-            # the engine then refuses. Equality scan rather than a ``set``:
-            # array items may be dicts or lists, which are unhashable, and
-            # the executor compares the same way.
+            # the engine then refuses. Keyed by JSON identity via the same
+            # helper the executor uses, so the two cannot disagree.
             from pydantic import AfterValidator
 
             marks.append(AfterValidator(_reject_duplicates))
+    elif json_type == "object":
+        # Mirrors the executor's own object branch, which a Pydantic ``dict``
+        # field constrained with ``Field(min_length=1)`` reaches. ``MinLen``
+        # and ``MaxLen`` apply to a mapping's key count.
+        low, high = _count("minProperties"), _count("maxProperties")
+        if low is not None:
+            marks.append(at.MinLen(low))
+        if high is not None:
+            marks.append(at.MaxLen(high))
 
     if not marks:
         return annotation

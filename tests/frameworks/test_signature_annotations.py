@@ -83,3 +83,18 @@ def test_object_with_declared_properties_stays_a_dict():
 def test_plain_scalars_are_unchanged():
     assert _annotation_for_prop({"type": "string"}) is str
     assert _annotation_for_prop({"type": "integer"}) is int
+
+
+def test_null_only_schema_maps_to_nonetype():
+    """``_json_type_to_python`` falls back to ``str`` for anything it doesn't
+    recognize, so a parameter annotated ``None`` — which introspection emits
+    as ``{"type": "null"}`` — was advertised as a string, and the string the
+    model produced was then rejected by the executor (PR #381 review)."""
+    assert _annotation_for_prop({"type": "null"}) is type(None)
+    assert _annotation_for_prop({"type": ["null"]}) is type(None)
+
+
+def test_nullable_scalar_keeps_its_real_type():
+    """``["string", "null"]`` still annotates as the non-null member — the
+    signature's optionality is carried by its default, not the annotation."""
+    assert _annotation_for_prop({"type": ["string", "null"]}) is str
