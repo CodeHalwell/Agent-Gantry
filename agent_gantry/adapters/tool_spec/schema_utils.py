@@ -61,6 +61,21 @@ def _make_nullable(subschema: dict[str, Any]) -> None:
             branches.append({"type": "null"})
         return
 
+    if "const" in subschema:
+        # ``const`` is an independent constraint that no ``type`` widening can
+        # satisfy — a single-value ``Literal`` (what Pydantic emits as
+        # ``{"type": "string", "const": "fixed"}``) would still forbid null,
+        # and strict mode makes the property required, so the model could not
+        # express omission at all. Wrapping keeps the constant intact while
+        # adding a null alternative beside it.
+        description = subschema.get("description")
+        remainder = {k: v for k, v in subschema.items() if k != "description"}
+        subschema.clear()
+        subschema["anyOf"] = [remainder, {"type": "null"}]
+        if description is not None:
+            subschema["description"] = description
+        return
+
     declared = subschema.get("type")
     if isinstance(declared, str):
         if declared != "null":

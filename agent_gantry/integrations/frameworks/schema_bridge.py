@@ -218,8 +218,18 @@ def _is_nullable(prop: dict[str, Any]) -> bool:
     return True
 
 
-def _union_annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
+def _union_annotation(
+    name: str, prop: dict[str, Any], depth: int, inherited_type: Any = None
+) -> Any:
     """Annotation for an ``anyOf``/``oneOf`` schema, or ``None`` if absent.
+
+    ``inherited_type`` is the parent's own ``type``, pushed into any branch
+    that doesn't declare one. A schema may carry both — ``{"type":
+    "integer", "anyOf": [{"minimum": 10}, {"maximum": 0}]}`` means the value
+    must be an integer *and* satisfy one of the branches — and a
+    constraint-only branch would otherwise translate to a bare ``Any`` that
+    enforces nothing. Merging the type down turns each branch into a real
+    constrained annotation, so the union expresses the intersection.
 
     Each branch is translated recursively and the results unioned, so
     ``{"anyOf": [{"type": "integer"}, {"type": "null"}]}`` becomes
@@ -237,12 +247,12 @@ def _union_annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
                 continue
             if branch.get("type") == "null":
                 parts.append(type(None))
-            else:
-                parts.append(
-                    _with_constraints(
-                        _annotation(f"{name}_{index}", branch, depth + 1), branch
-                    )
-                )
+                continue
+            if inherited_type is not None and "type" not in branch:
+                branch = {**branch, "type": inherited_type}
+            parts.append(
+                _with_constraints(_annotation(f"{name}_{index}", branch, depth + 1), branch)
+            )
         if not parts:
             continue
         annotation = parts[0]
@@ -328,16 +338,19 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
         # Enum of exotic values — fall back to the declared/base type.
 
     json_type = prop.get("type")
-    if json_type is None:
-        # A field can be typed purely through a combinator, with no ``type``
-        # of its own — ``{"anyOf": [{"type": "integer"}, {"type": "null"}]}``
-        # is what Pydantic emits for ``int | None``, so it appears in every
-        # nested model this bridge inlines. Falling through to ``Any`` would
-        # advertise an unconstrained field that accepts values the executor
-        # rejects after dispatch.
-        union = _union_annotation(name, prop, depth)
-        if union is not None:
-            return union
+    # A field can be typed purely through a combinator, with no ``type`` of
+    # its own — ``{"anyOf": [{"type": "integer"}, {"type": "null"}]}`` is
+    # what Pydantic emits for ``int | None``, so it appears in every nested
+    # model this bridge inlines. Falling through to ``Any`` would advertise
+    # an unconstrained field that accepts values the executor rejects after
+    # dispatch. Checked even when a ``type`` *is* present: JSON Schema
+    # applies both, so gating on a missing type let ``{"type": "integer",
+    # "anyOf": [...]}`` through as a bare ``int``.
+    union = _union_annotation(
+        name, prop, depth, inherited_type=json_type if isinstance(json_type, str) else None
+    )
+    if union is not None:
+        return union
 
     if json_type == "null":
         # A property permitting *only* null. Falling through to ``Any`` would

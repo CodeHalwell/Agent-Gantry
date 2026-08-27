@@ -614,3 +614,42 @@ def test_constraints_apply_to_typed_additional_properties():
     assert model(scores={"a": 1}).scores == {"a": 1}
     with pytest.raises(ValidationError):
         model(scores={"a": -1})
+
+
+def test_combinators_apply_alongside_an_explicit_type():
+    """A schema may carry both — ``{"type": "integer", "anyOf": [...]}`` means
+    the value must be an integer *and* satisfy a branch. Gating the combinator
+    on a missing ``type`` let this through as a bare ``int``, and a
+    constraint-only branch needs the parent's type pushed into it to mean
+    anything (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "n": {"type": "integer", "anyOf": [{"minimum": 10}, {"maximum": 0}]}
+            },
+            "required": ["n"],
+        },
+    )
+    assert model(n=15).n == 15
+    assert model(n=-3).n == -3
+    for bad in (5, "x"):
+        with pytest.raises(ValidationError):
+            model(n=bad)
+
+
+def test_plain_combinator_without_a_type_is_unaffected():
+    """The common Pydantic ``int | None`` shape must still resolve normally."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"v": {"anyOf": [{"type": "integer"}, {"type": "null"}]}},
+            "required": ["v"],
+        },
+    )
+    assert model(v=3).v == 3
+    assert model(v=None).v is None
+    with pytest.raises(ValidationError):
+        model(v="bad")

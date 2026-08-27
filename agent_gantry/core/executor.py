@@ -953,9 +953,26 @@ class ExecutionEngine:
                 return False, constraint_error
 
             if expected_type == "array":
+                # ``prefixItems`` types each position independently — what
+                # Pydantic emits for a heterogeneous ``tuple[int, str]``, so
+                # it arrives inside the nested models introspection now
+                # inlines. ``items`` (if also present) covers the positions
+                # past the prefix.
+                prefix_items = val_schema.get("prefixItems")
+                prefix_len = 0
+                if isinstance(prefix_items, list) and prefix_items:
+                    prefix_len = len(prefix_items)
+                    for i, entry in enumerate(prefix_items):
+                        if i >= len(value) or not isinstance(entry, dict) or not entry:
+                            continue
+                        is_valid, err = _validate_value(value[i], entry, f"{path}[{i}]")
+                        if not is_valid:
+                            return False, err
                 item_schema = val_schema.get("items")
                 if isinstance(item_schema, dict) and item_schema:
                     for i, item in enumerate(value):
+                        if i < prefix_len:
+                            continue
                         is_valid, err = _validate_value(item, item_schema, f"{path}[{i}]")
                         if not is_valid:
                             return False, err

@@ -371,6 +371,12 @@ def _type_to_json_schema(param_type: Any) -> dict[str, Any]:
 
     # Direct type match (most reliable)
     if isinstance(param_type, type):
+        # ``def f(x: None)`` resolves to ``NoneType``, which is a real type
+        # but not in the scalar map — it would otherwise fall all the way
+        # through to the string fallback and advertise a string for a
+        # parameter that admits only null.
+        if param_type is type(None):
+            return {"type": "null"}
         scalar_schema = _SCALAR_MAP.get(param_type)
         if scalar_schema is not None:
             return dict(scalar_schema)

@@ -516,6 +516,16 @@ class TestSchemaFidelity:
         assert addr["properties"]["city"]["type"] == "string"
         assert set(addr.get("required", [])) == {"street", "city"}
 
+    def test_none_annotated_parameter_maps_to_null(self):
+        """``def f(x: None)`` resolves to ``NoneType``, which isn't in the
+        scalar map and fell through to the string fallback — advertising a
+        string for a parameter that admits only null (PR #381 review)."""
+
+        def func(x: None) -> None:
+            pass
+
+        assert build_parameters_schema(func)["properties"]["x"] == {"type": "null"}
+
     def test_typeddict_inheritance_keeps_required_keys(self):
         """``class Child(Base, total=False)`` still requires ``Base``'s keys.
         Replaying one ``total=`` flag over the merged annotations made every

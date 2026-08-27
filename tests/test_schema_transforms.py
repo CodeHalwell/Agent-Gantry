@@ -131,6 +131,35 @@ class TestStrictJsonSchema:
         assert out["required"] == []
 
 
+class TestStrictNullableConst:
+    """``const`` is an independent constraint no ``type`` widening satisfies
+    (PR #381 review)."""
+
+    def test_optional_const_gains_a_null_branch(self) -> None:
+        out = strict_json_schema(
+            {
+                "type": "object",
+                "properties": {"mode": {"type": "string", "const": "fixed"}},
+                "required": [],
+            }
+        )
+        mode = out["properties"]["mode"]
+        # Widening ``type`` alone would leave ``const`` forbidding null, and
+        # strict mode makes the property required — so the model could not
+        # express omission at all.
+        assert mode["anyOf"] == [{"type": "string", "const": "fixed"}, {"type": "null"}]
+
+    def test_required_const_is_left_alone(self) -> None:
+        out = strict_json_schema(
+            {
+                "type": "object",
+                "properties": {"mode": {"type": "string", "const": "fixed"}},
+                "required": ["mode"],
+            }
+        )
+        assert out["properties"]["mode"] == {"type": "string", "const": "fixed"}
+
+
 class TestUnsupportedStrictPaths:
     """Objects with arbitrary keys have no strict-mode representation, so
     they must be detected rather than silently mangled (PR #381 review)."""

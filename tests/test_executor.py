@@ -1053,3 +1053,59 @@ async def test_valid_confirmation_probe_is_still_exempt():
         ToolCall(tool_name="risky", arguments={"n": 1}, require_confirmation=False)
     )
     assert approved.status.value == "success", approved.error
+
+
+@pytest.mark.asyncio
+async def test_validate_positional_prefix_items(engine):
+    """``prefixItems`` types each position independently — what Pydantic
+    emits for a heterogeneous ``tuple[int, str]``, so it arrives inside the
+    nested models introspection now inlines (PR #381 review)."""
+    tool = ToolDefinition(
+        name="pairs",
+        description="Heterogeneous fixed tuple parameter",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "pair": {
+                    "type": "array",
+                    "prefixItems": [{"type": "integer"}, {"type": "string"}],
+                }
+            },
+            "required": ["pair"],
+        },
+    )
+    is_valid, error = await engine._validate_arguments(tool, {"pair": [1, "a"]})
+    assert is_valid is True, error
+
+    is_valid, error = await engine._validate_arguments(tool, {"pair": ["bad", 42]})
+    assert is_valid is False
+    assert "pair[0]" in error
+
+    is_valid, error = await engine._validate_arguments(tool, {"pair": [1, 2]})
+    assert is_valid is False
+    assert "pair[1]" in error
+
+
+@pytest.mark.asyncio
+async def test_prefix_items_and_items_cover_different_positions(engine):
+    """``items`` alongside ``prefixItems`` covers the positions past it."""
+    tool = ToolDefinition(
+        name="tail",
+        description="Prefixed tuple with a homogeneous tail",
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "row": {
+                    "type": "array",
+                    "prefixItems": [{"type": "string"}],
+                    "items": {"type": "integer"},
+                }
+            },
+            "required": ["row"],
+        },
+    )
+    is_valid, error = await engine._validate_arguments(tool, {"row": ["a", 1, 2]})
+    assert is_valid is True, error
+
+    is_valid, _ = await engine._validate_arguments(tool, {"row": ["a", 1, "b"]})
+    assert is_valid is False

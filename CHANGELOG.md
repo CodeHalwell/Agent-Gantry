@@ -106,6 +106,27 @@ adapters, and the provider dialects agree with it.
   throughout the nested model and `TypedDict` schemas introspection now
   inlines — and validation checked only `type` and `enum`, letting any value
   through. `const` equality is checked alongside `enum` membership now.
+- **A `None`-annotated parameter advertised a string.** `def f(x: None)`
+  resolves to `NoneType`, which isn't in the scalar map and fell through to
+  the string fallback, so the schema demanded a string for a parameter that
+  admits only `null`. Now maps to `{"type": "null"}`.
+- **An optional `const` couldn't express omission under strict mode.**
+  `const` is an independent constraint that no `type` widening satisfies —
+  a single-value `Literal` (`{"type": "string", "const": "fixed"}`) still
+  forbade `null` after widening, and strict mode makes every property
+  required, so the model had to send the constant rather than let the
+  handler's default apply. Such a property is now wrapped as
+  `anyOf: [<original>, {"type": "null"}]`, keeping the constant intact.
+- **`prefixItems` was never validated.** Pydantic emits it for a
+  heterogeneous `tuple[int, str]`, so it arrives inside the nested schemas
+  now inlined — but the array branch only looked at `items`, so
+  `["bad", 42]` passed validation. Each position is checked against its own
+  entry, with `items` covering the positions past the prefix.
+- **The framework bridge also skipped combinators when a `type` was
+  present**, the same gate as the executor below. A constraint-only branch
+  needs the parent's type pushed into it to mean anything, so
+  `{"type": "integer", "anyOf": [{"minimum": 10}, {"maximum": 0}]}` becomes
+  a union of two constrained ints rather than a bare `int`.
 - **Combinators were only enforced when the schema had no `type`.** JSON
   Schema applies `anyOf`/`oneOf`/`allOf` independently of `type`, so
   `{"type": "integer", "allOf": [{"minimum": 1}]}` — a shape merged and
