@@ -287,7 +287,27 @@ class ExecutionEngine:
         # token and prunes no window, so the accounting below is untouched and
         # ``acquire``/``check_permission`` remain the authority. It only
         # short-circuits a call that is over quota *before* validation runs.
-        admission_denial = self._admission_denial(tool)
+        #
+        # ``_needs_confirmation`` is settled first so the peek can predict the
+        # right authority. A call stopping at the tool's own confirmation gate
+        # never reaches ``acquire`` at all (see ``if not pending_confirmation``
+        # below), so charging it against the ``RateLimiter`` here refused a
+        # probe that should have returned ``PENDING_CONFIRMATION`` — the
+        # earlier check being *stricter* than the one it stands in for. The
+        # policy window is deliberately still consulted: ``check_permission``
+        # runs every denial check for a pending call too, deferring only the
+        # *recording*, so a probe that would be denied says so before a human
+        # is asked to approve it.
+        #
+        # Only the *gate* is settled here, not ``pending_confirmation``, which
+        # also needs ``arguments_valid`` and so cannot be known before
+        # validation. A malformed call to a gated tool is therefore not
+        # short-circuited early — the real limiter below still charges it,
+        # which is the conservative direction.
+        confirmation_gated = self._needs_confirmation(tool, call)
+        admission_denial = self._admission_denial(
+            tool, skip_rate_limiter=confirmation_gated
+        )
         if admission_denial is not None:
             denial_reason, denial_status, denial_type = admission_denial
             result = ToolResult(
@@ -752,7 +772,7 @@ class ExecutionEngine:
         return None
 
     def _admission_denial(
-        self, tool: ToolDefinition
+        self, tool: ToolDefinition, *, skip_rate_limiter: bool = False
     ) -> tuple[str, ExecutionStatus, str] | None:
         """The reason this call is already over quota, or ``None``.
 
@@ -766,6 +786,12 @@ class ExecutionEngine:
         Deliberately conservative: it reports only what is *certainly* refused
         now, so a call it admits still goes through the real, recording checks
         unchanged.
+
+        ``skip_rate_limiter`` omits the ``RateLimiter`` half for a call that
+        will stop at the tool's own confirmation gate, because the real path
+        skips ``acquire`` entirely for one. The policy window is still
+        consulted: ``check_permission`` runs its denial checks for a pending
+        call too, and only defers the recording.
         """
         policy = self._security_policy
         if policy is not None:
@@ -782,7 +808,7 @@ class ExecutionEngine:
                         "PermissionDeniedError",
                     )
         limiter = self._rate_limiter
-        if limiter is not None:
+        if limiter is not None and not skip_rate_limiter:
             check = getattr(limiter, "would_exceed", None)
             if callable(check):
                 reason = check(tool.name, tool.namespace)

@@ -2280,3 +2280,64 @@ async def test_a_schema_asserting_nothing_still_admits_everything(engine):
     )
     for value in ({"anything": [1, {"x": None}]}, [1, "two", None], "scalar", 7, None):
         assert await engine._validate_arguments(tool, {"free": value}) == (True, None), value
+
+
+async def test_a_gated_probe_is_not_refused_by_the_admission_peek():
+    """The read-only admission peek ran before the confirmation gate was
+    settled, so it consulted the ``RateLimiter`` for a call that never reaches
+    ``acquire`` — the earlier check being *stricter* than the one it stands in
+    for. Approved replays of the tool saturate its own key, and the next probe
+    came back ``RateLimitExceeded`` instead of ``PENDING_CONFIRMATION``
+    (PR #381 review)."""
+    from agent_gantry.core.rate_limiter import RateLimiter
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.schema.config import RateLimitConfig
+    from agent_gantry.schema.execution import ToolCall
+
+    registry = ToolRegistry()
+    gated = ToolDefinition(
+        name="delete_thing",
+        description="Destructive, and gated behind human confirmation",
+        parameters_schema={"type": "object", "properties": {}},
+        requires_confirmation=True,
+    )
+    plain = ToolDefinition(
+        name="read_thing",
+        description="An ordinary tool with no confirmation gate",
+        parameters_schema={"type": "object", "properties": {}},
+    )
+    for tool in (gated, plain):
+        registry.register_tool(tool)
+        registry.register_handler(f"default.{tool.name}", lambda: "ok")
+
+    engine = ExecutionEngine(
+        registry=registry,
+        rate_limiter=RateLimiter(
+            RateLimitConfig(
+                enabled=True,
+                max_calls_per_minute=2,
+                max_calls_per_hour=100,
+                strategy="sliding_window",
+            )
+        ),
+    )
+
+    # Approved replays *do* record, which is what saturates the gated tool's
+    # own key — the limiter is per-tool by default.
+    for _ in range(2):
+        approved = await engine.execute(
+            ToolCall(tool_name="delete_thing", arguments={}, require_confirmation=False)
+        )
+        assert approved.status.value == "success", approved.error
+        assert (
+            await engine.execute(ToolCall(tool_name="read_thing", arguments={}))
+        ).status.value == "success"
+
+    probe = await engine.execute(ToolCall(tool_name="delete_thing", arguments={}))
+    assert probe.status.value == "pending_confirmation", probe.error
+
+    # The exemption is the gate's, not a hole in the limiter: an ungated tool
+    # at the same saturation is still refused.
+    refused = await engine.execute(ToolCall(tool_name="read_thing", arguments={}))
+    assert refused.status.value == "failure"
+    assert refused.error_type == "RateLimitExceeded"

@@ -299,12 +299,37 @@ def _needs_reconstruction(param_type: Any) -> bool:
         except Exception:  # noqa: BLE001 - unresolvable: coerce nothing
             return False
         return any(_needs_reconstruction(hint) for hint in hints.values())
-    # The bare spellings of the mapping rule above, which reach here because
-    # ``get_origin`` is ``None`` for them. Checked *after* the ``TypedDict``
-    # block: a ``TypedDict`` class is a ``dict`` subclass at runtime, so it
-    # would match ``issubclass(..., Mapping)`` — and ``isinstance`` against one
-    # raises outright.
-    if issubclass(param_type, _abc.Mapping) and not isinstance({}, param_type):
+    # The bare spellings of the container rules above, which reach here
+    # because ``get_origin`` is ``None`` for them. Both ask the same question
+    # the parameterized branches do: is the JSON form — a ``dict`` for an
+    # object, a ``list`` for an array — already an instance of the declared
+    # container?
+    #
+    # Checked *after* the ``TypedDict`` block: a ``TypedDict`` class is a
+    # ``dict`` subclass at runtime, so it would match the mapping test — and
+    # ``isinstance`` against one raises outright rather than returning False.
+    #
+    # ``_SCALAR_MAP`` is excluded first because ``str`` and ``bytes`` are both
+    # ``Sequence``s, and both are advertised as JSON *strings*: without the
+    # guard the sequence test would claim every string parameter. ``bytes``
+    # keeps its own rule above, where it belongs.
+    if issubclass(param_type, _abc.Mapping):
+        # ``elif`` below, not a second ``if``: a Mapping is also a Collection
+        # and an Iterable, so ``dict`` itself would otherwise fall through to
+        # the sequence test and be rebuilt — the same ordering the
+        # parameterized branch and ``_type_to_json_schema`` both document.
+        if not isinstance({}, param_type):
+            return True
+    elif (
+        param_type not in _SCALAR_MAP
+        and issubclass(param_type, _SEQUENCE_ORIGINS)
+        and not isinstance([], param_type)
+    ):
+        # ``collections.deque`` and ``collections.UserList`` are advertised as
+        # arrays and were reported as needing nothing, because the exact-type
+        # check above names only ``set``/``frozenset``/``tuple``. The handler
+        # got a plain ``list`` and ``popleft()`` failed — the parameterized
+        # form of exactly this bug, one spelling over.
         return True
     if dataclasses.is_dataclass(param_type):
         return True

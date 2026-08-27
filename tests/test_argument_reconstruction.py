@@ -1286,3 +1286,51 @@ def test_a_memberless_enum_does_not_emit_an_invalid_enum():
     assert build_parameters_schema(nullable)["properties"]["mode"] == {
         "type": ["string", "null"]
     }
+
+
+def test_a_bare_concrete_sequence_subclass_is_rebuilt():
+    """The bare spelling of the concrete-sequence rule. ``get_origin`` is
+    ``None`` for ``collections.deque``, so it reaches the direct-type branch,
+    where the check was an exact-type membership naming only
+    ``set``/``frozenset``/``tuple`` — a bare ``deque`` was advertised as an
+    array and rebuilt into nothing (PR #381 review)."""
+    from agent_gantry.schema.introspection import (
+        _needs_reconstruction,
+        _type_to_json_schema,
+    )
+
+    assert _type_to_json_schema(collections.deque) == {"type": "array"}
+    for rebuilt in (collections.deque, collections.UserList, bytearray):
+        assert _needs_reconstruction(rebuilt) is True, rebuilt
+    # The kinds the exact-type check already named are unaffected.
+    for named in (set, frozenset, tuple, bytes):
+        assert _needs_reconstruction(named) is True, named
+
+    # ``str`` and ``bytes`` are both ``Sequence``s and both advertise a JSON
+    # *string*, so the scalar guard is what keeps the sequence rule from
+    # claiming every string parameter.
+    for scalar in (str, int, float, bool):
+        assert _needs_reconstruction(scalar) is False, scalar
+    # And a ``dict`` is a ``Collection`` and an ``Iterable``, so it would fall
+    # through to the sequence test without the mapping branch taking it first.
+    for mapping in (dict, abc.Mapping, abc.MutableMapping):
+        assert _needs_reconstruction(mapping) is False, mapping
+    for unchanged in (list, abc.Sequence, abc.Iterable):
+        assert _needs_reconstruction(unchanged) is False, unchanged
+
+
+async def test_a_bare_deque_parameter_reaches_the_handler_as_a_deque():
+    """End-to-end, on the spelling that has no type arguments to inspect."""
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @g.register(tags=["demo"])
+    def drain_bare(items: collections.deque) -> str:
+        """Report the head of an untyped queue and the container's type."""
+        return f"{items.popleft()}:{type(items).__name__}:{len(items)}"
+
+    await g.sync()
+    result = await g.execute(
+        ToolCall(tool_name="drain_bare", arguments={"items": [1, 2, 3]})
+    )
+    assert result.status.value == "success", result.error
+    assert result.result == "1:deque:2"

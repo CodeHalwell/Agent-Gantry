@@ -1940,3 +1940,64 @@ def test_overlapping_patterns_are_validated_against_one_stable_value():
     )
     with pytest.raises(ValidationError):
         conflicting(m={"x": "1"})
+
+
+def test_a_declared_type_is_enforced_alongside_const_and_enum():
+    """JSON Schema applies ``type`` alongside every other assertion, so a
+    sibling ``type`` is not made redundant by a ``const`` or an ``enum``. Both
+    branches early-returned the ``Literal`` and discarded it, so a valid but
+    incompatible imported schema — ``{"type": "integer", "const": "x"}`` —
+    built ``Literal["x"]`` and accepted a value the executor rejects at
+    dispatch for the type it still applies (PR #381 review)."""
+
+    def model(prop: dict):
+        return pydantic_model_from_schema(
+            "Args", {"type": "object", "properties": {"m": prop}, "required": ["m"]}
+        )
+
+    # Incompatible: nothing satisfies both assertions, in either spelling.
+    for incompatible in (
+        {"type": "integer", "const": "x"},
+        {"type": "integer", "enum": ["x", "y"]},
+    ):
+        built = model(incompatible)
+        for value in ("x", 1):
+            with pytest.raises(ValidationError):
+                built(m=value)
+
+    # Compatible schemas — the overwhelmingly common case, including the ones
+    # Gantry emits itself — are unaffected.
+    compatible = model({"type": "string", "enum": ["x", "y"]})
+    assert compatible(m="x").m == "x"
+    with pytest.raises(ValidationError):
+        compatible(m=1)
+
+    # A nullable choice keeps its null: the declared type admits it, so the
+    # intersection has to as well or it would reject what the type list allows.
+    nullable = model({"type": ["string", "null"], "enum": ["x", None]})
+    assert nullable(m="x").m == "x"
+    assert nullable(m=None).m is None
+    with pytest.raises(ValidationError):
+        nullable(m=1)
+
+
+def test_typed_additional_properties_enforce_their_constraints():
+    """Every other schema-to-annotation site in the bridge routes through
+    ``_with_constraints``; the top-level ``additionalProperties`` branch called
+    a bare ``_annotation``, so ``__pydantic_extra__`` carried the *type* but
+    not ``minimum`` — and a negative extra the executor rejects was accepted
+    here (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"a": {"type": "string"}},
+            "additionalProperties": {"type": "integer", "minimum": 0},
+        },
+    )
+    assert model(a="x", extra=5).extra == 5
+    with pytest.raises(ValidationError):
+        model(a="x", extra=-1)
+    # The type check the branch already had is unaffected.
+    with pytest.raises(ValidationError):
+        model(a="x", extra="nope")

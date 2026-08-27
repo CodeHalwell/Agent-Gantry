@@ -1017,6 +1017,31 @@ adapters, and the provider dialects agree with it.
   non-JSON-representable member set already did; the annotation is uninhabited
   either way, so the call still fails, but at dispatch and with a message
   naming the real problem.
+- **A bare concrete sequence subclass is rebuilt.** The bare spelling of the
+  same rule — `get_origin` is `None` for `collections.deque`, so it reaches
+  the direct-type branch, where the check was an exact-type membership naming
+  only `set`/`frozenset`/`tuple`. A bare `deque` was advertised as an array
+  and handed to the handler as a plain `list`.
+- **A declared `type` is enforced alongside `const` and `enum`.** JSON Schema
+  applies `type` beside every other assertion, but the framework bridge
+  early-returned the `Literal` and discarded it — so a valid but incompatible
+  imported schema such as `{"type": "integer", "const": "x"}` built
+  `Literal["x"]` and accepted a value the executor rejects at dispatch for the
+  type it still applies. Compatible schemas, which is everything Gantry emits
+  itself, are unaffected.
+- **Typed `additionalProperties` enforce their constraints in framework
+  models.** Every other schema-to-annotation site in the bridge routes through
+  the constraint folding; the top-level `additionalProperties` branch did not,
+  so `{"type": "integer", "minimum": 0}` typed the extras as integers and let
+  a negative one through while the executor rejected it.
+- **A confirmation-gated call is no longer refused by the admission peek.**
+  The read-only quota peek ran before the confirmation gate was settled, so it
+  consulted the rate limiter for a call that never reaches `acquire` — making
+  the early check stricter than the one it stands in for. A probe issued after
+  approved replays had saturated the tool's own key came back
+  `RateLimitExceeded` instead of `pending_confirmation`. The policy window is
+  still consulted, because `check_permission` runs its denial checks for a
+  pending call too and defers only the recording.
 
 ### Performance
 

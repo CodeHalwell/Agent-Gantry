@@ -201,7 +201,14 @@ def _build_model(name: str, schema: dict[str, Any], depth: int) -> Any:
         # additional schema instead of its own, and a valid ``{"s_a": "ok"}``
         # beside ``additionalProperties: {"type": "integer"}`` was rejected.
         # The pattern validator below applies both, to the right key sets.
-        extra_annotation = _annotation(f"{name}_extra", additional, depth + 1)
+        # Through ``_with_constraints`` like every other schema-to-annotation
+        # site here: a bare ``_annotation`` carried only the *type*, so
+        # ``{"type": "integer", "minimum": 0}`` typed the extras as ints and
+        # let a negative one through, while the executor applies
+        # ``check_json_constraints`` to the same schema and rejects it.
+        extra_annotation = _with_constraints(
+            _annotation(f"{name}_extra", additional, depth + 1), additional
+        )
 
     fields: dict[str, Any] = {}
     for prop_name, prop in properties.items():
@@ -283,6 +290,31 @@ def _build_model(name: str, schema: dict[str, Any], depth: int) -> Any:
     return create_model(
         name, __config__=model_config, __validators__=validators or None, **fields
     )
+
+
+def _intersect_declared_type(annotation: Any, prop: dict[str, Any], declared: Any = None) -> Any:
+    """Intersect ``annotation`` with the JSON type ``prop`` declares, if any.
+
+    JSON Schema applies ``type`` alongside every other assertion, so a sibling
+    ``type`` is not made redundant by an ``enum``, a ``const`` or a
+    combinator. Dropping it let a valid-but-incompatible imported schema —
+    ``{"type": "integer", "const": "x"}`` — build ``Literal["x"]``, so the
+    model accepted a value the executor rejects at dispatch for the type it
+    still applies.
+
+    A no-op for the overwhelmingly common case where the two agree, and for a
+    schema declaring no single type.
+    """
+    if declared is None:
+        declared = _effective_type(prop)
+    base = _PARENT_KINDS.get(declared) if isinstance(declared, str) else None
+    if base is None:
+        return annotation
+    if schema_declares_null(prop):
+        # The declared type admits null, so the intersection must too, or it
+        # would reject the very value the type list allows.
+        base = base | None
+    return _with_intersection(annotation, [base])
 
 
 def _effective_type(prop: dict[str, Any]) -> Any:
@@ -956,12 +988,12 @@ def _annotation(name: str, prop: Any, depth: int) -> Any:
         # ``Literal`` emits. Excluding it dropped the constraint entirely and
         # advertised an unconstrained ``float``.
         if isinstance(const_value, (str, int, bool, float)) or const_value is None:
-            return _literal_annotation([const_value])
+            return _intersect_declared_type(_literal_annotation([const_value]), prop)
         # A composite constant (``{"type": "array", "const": [1, 2]}``) can't
         # be a ``Literal`` member, and falling through advertised a plain
         # ``list`` that accepted anything while the executor enforced the
         # constant. Checked by JSON identity, exactly as a composite enum is.
-        return _enum_membership([const_value])
+        return _intersect_declared_type(_enum_membership([const_value]), prop)
 
     enum_values = prop.get("enum")
     if isinstance(enum_values, list) and enum_values:
@@ -975,12 +1007,12 @@ def _annotation(name: str, prop: Any, depth: int) -> Any:
         if all(
             isinstance(v, (str, int, bool, float)) or v is None for v in enum_values
         ):
-            return _literal_annotation(enum_values)
+            return _intersect_declared_type(_literal_annotation(enum_values), prop)
         # Composite members (a tuple-valued ``Enum``) can't be ``Literal``
         # members, and such an enum has no inferred ``type`` — so falling
         # through advertised an unconstrained ``Any``. Check membership
         # directly instead.
-        return _enum_membership(enum_values)
+        return _intersect_declared_type(_enum_membership(enum_values), prop)
 
     json_type = prop.get("type")
     # A field can be typed purely through a combinator, with no ``type`` of
@@ -1006,13 +1038,7 @@ def _annotation(name: str, prop: Any, depth: int) -> Any:
         # "string"}]}`` became ``float | str`` while the executor applies both
         # and rejects each. Intersecting the union with the parent type
         # restores it, and is a no-op for branches that already inherited it.
-        base = _PARENT_KINDS.get(parent_type) if isinstance(parent_type, str) else None
-        if base is not None:
-            if schema_declares_null(prop):
-                # The parent admits null, so the intersection must too, or it
-                # would reject the very value the type list declares.
-                base = base | None
-            union = _with_intersection(union, [base])
+        union = _intersect_declared_type(union, prop, declared=parent_type)
         return union
 
     if json_type == "null":
