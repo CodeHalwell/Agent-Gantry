@@ -12,7 +12,51 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-__all__ = ["HealthMetrics", "json_identity_key", "reject_newlines"]
+__all__ = [
+    "HealthMetrics",
+    "json_identity_key",
+    "reject_newlines",
+    "resolve_numeric_bounds",
+]
+
+
+def _numeric(value: Any) -> float | int | None:
+    """``value`` when it is a JSON number, else ``None`` (booleans excluded)."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value
+    return None
+
+
+def resolve_numeric_bounds(schema: dict[str, Any]) -> tuple[Any, Any, Any, Any]:
+    """A schema's bounds as ``(min, max, exclusiveMin, exclusiveMax)``.
+
+    Two JSON Schema dialects spell exclusivity differently and both reach this
+    library. Modern drafts give ``exclusiveMinimum`` a *number*; draft-04 —
+    which is what OpenAPI 3.0 emits, and OpenAPI/MCP import is a supported way
+    to register a tool — gives it a *boolean* that promotes ``minimum`` to an
+    exclusive bound. Reading only the modern form left the boolean ignored and
+    the bound applied inclusively, so ``{"minimum": 5, "exclusiveMinimum":
+    true}`` accepted ``5``.
+
+    Lives here, beside :func:`json_identity_key`, for the same reason: the
+    executor's validator and the framework args-model bridge must read a bound
+    identically, or a framework accepts what the engine rejects.
+    """
+    lower = _numeric(schema.get("minimum"))
+    upper = _numeric(schema.get("maximum"))
+    excl_lower = schema.get("exclusiveMinimum")
+    excl_upper = schema.get("exclusiveMaximum")
+
+    if isinstance(excl_lower, bool):
+        excl_lower, lower = (lower, None) if excl_lower else (None, lower)
+    else:
+        excl_lower = _numeric(excl_lower)
+    if isinstance(excl_upper, bool):
+        excl_upper, upper = (upper, None) if excl_upper else (None, upper)
+    else:
+        excl_upper = _numeric(excl_upper)
+
+    return lower, upper, excl_lower, excl_upper
 
 
 def json_identity_key(value: Any) -> Any:

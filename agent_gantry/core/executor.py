@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.schema.base import json_identity_key
+from agent_gantry.schema.base import json_identity_key, resolve_numeric_bounds
 from agent_gantry.schema.execution import (
     BatchToolCall,
     BatchToolResult,
@@ -47,16 +47,15 @@ def _check_constraints(value: Any, schema: dict[str, Any], path: str) -> str | N
         return None  # bool is an int subclass; numeric bounds don't apply
 
     if isinstance(value, (int, float)):
-        for keyword, ok, describe in (
-            ("minimum", lambda v, b: v >= b, "at least"),
-            ("maximum", lambda v, b: v <= b, "at most"),
-            ("exclusiveMinimum", lambda v, b: v > b, "greater than"),
-            ("exclusiveMaximum", lambda v, b: v < b, "less than"),
+        lower, upper, excl_lower, excl_upper = resolve_numeric_bounds(schema)
+        for bound, ok, describe in (
+            (lower, lambda v, b: v >= b, "at least"),
+            (upper, lambda v, b: v <= b, "at most"),
+            (excl_lower, lambda v, b: v > b, "greater than"),
+            (excl_upper, lambda v, b: v < b, "less than"),
         ):
-            bound = schema.get(keyword)
-            if isinstance(bound, (int, float)) and not isinstance(bound, bool):
-                if not ok(value, bound):
-                    return f"Parameter '{path}' must be {describe} {bound}"
+            if bound is not None and not ok(value, bound):
+                return f"Parameter '{path}' must be {describe} {bound}"
         multiple = schema.get("multipleOf")
         if isinstance(multiple, (int, float)) and not isinstance(multiple, bool) and multiple > 0:
             # Decimal, not ``%``: binary floats make ``0.3 % 0.1`` ≈ 0.1, so a

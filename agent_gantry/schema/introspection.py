@@ -397,6 +397,16 @@ def _inline_local_refs(schema: dict[str, Any]) -> dict[str, Any]:
 
     def _resolve(node: Any, depth: int) -> Any:
         if depth > _MAX_REF_DEPTH:
+            # A self-referential model would recurse forever, so the guard is
+            # necessary — but a legitimately deep (acyclic) schema is truncated
+            # to ``{}`` here, which is a silent fidelity loss. Logged for the
+            # same reason the multi-member union collapse is.
+            logger.debug(
+                "Stopped inlining $refs at depth %d; the remaining subschema is "
+                "emitted as {} and constrains nothing. A self-referential model "
+                "is the usual cause.",
+                _MAX_REF_DEPTH,
+            )
             return {}
         if isinstance(node, list):
             return [_resolve(item, depth) for item in node]

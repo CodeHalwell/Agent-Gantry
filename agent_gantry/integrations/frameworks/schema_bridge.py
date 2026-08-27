@@ -16,9 +16,12 @@ previous behaviour — the tool still works, sans the richer schema.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Literal
 
-from agent_gantry.schema.base import json_identity_key
+from agent_gantry.schema.base import json_identity_key, resolve_numeric_bounds
+
+_logger = logging.getLogger(__name__)
 
 #: Hard bound on nested-object recursion (self-referential schemas).
 _MAX_DEPTH = 8
@@ -86,6 +89,16 @@ def _permits_additional(schema: dict[str, Any]) -> bool:
 
 def _build_model(name: str, schema: dict[str, Any], depth: int) -> Any:
     if depth > _MAX_DEPTH:
+        # Raising aborts the whole model, so the caller falls back to its
+        # signature path rather than publishing a half-built one. Logged
+        # because that fallback is otherwise invisible: a legitimately deep
+        # acyclic schema silently loses its args model.
+        _logger.debug(
+            "Schema nesting exceeded depth %d while building %r; no args model "
+            "will be generated and the caller falls back to its own path.",
+            _MAX_DEPTH,
+            name,
+        )
         raise ValueError("schema nesting too deep")
     from pydantic import ConfigDict, Field, create_model
 
@@ -261,13 +274,13 @@ def _with_constraints(annotation: Any, prop: dict[str, Any]) -> Any:
         return None
 
     if json_type in ("integer", "number"):
-        for key, mark in (
-            ("minimum", at.Ge),
-            ("maximum", at.Le),
-            ("exclusiveMinimum", at.Gt),
-            ("exclusiveMaximum", at.Lt),
-        ):
-            bound = _number(key)
+        # Shares the executor's bound resolution so the two dialects of
+        # exclusivity — modern numeric, and draft-04's boolean modifier on
+        # ``minimum``/``maximum`` (what OpenAPI 3.0 emits) — are read the same
+        # way here as at dispatch. Reading only the modern form left an
+        # imported draft-04 bound applied inclusively in the model while the
+        # executor now applies it exclusively.
+        for bound, mark in zip(resolve_numeric_bounds(prop), (at.Ge, at.Le, at.Gt, at.Lt)):
             if bound is not None:
                 marks.append(mark(bound))
         multiple = _number("multipleOf")

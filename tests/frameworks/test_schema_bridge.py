@@ -1154,3 +1154,36 @@ def test_combinator_without_a_parent_type_is_unconstrained_by_one():
     assert model(v="x").v == "x"
     with pytest.raises(ValidationError):
         model(v=1.5)
+
+
+def test_draft04_boolean_exclusivity_reaches_the_generated_field():
+    """Shares the executor's bound resolution, so an imported draft-04 schema
+    is read the same way in the args model as at dispatch (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "n": {"type": "integer", "minimum": 5, "exclusiveMinimum": True}
+            },
+            "required": ["n"],
+        },
+    )
+    assert model(n=6).n == 6
+    for bad in (5, 4):
+        with pytest.raises(ValidationError):
+            model(n=bad)
+
+
+def test_modern_numeric_exclusivity_is_unchanged():
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"n": {"type": "integer", "exclusiveMinimum": 5}},
+            "required": ["n"],
+        },
+    )
+    assert model(n=6).n == 6
+    with pytest.raises(ValidationError):
+        model(n=5)

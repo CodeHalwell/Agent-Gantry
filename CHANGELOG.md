@@ -195,6 +195,13 @@ adapters, and the provider dialects agree with it.
   key was rejected because none counted as declared. Matched keys are now
   validated against their pattern's schema and treated as declared by both
   paths. An uncompilable pattern fails open with a warning, as `pattern` does.
+- **draft-04's boolean exclusivity was ignored.** Modern JSON Schema gives
+  `exclusiveMinimum` a *number*; draft-04 — which is what OpenAPI 3.0 emits,
+  and OpenAPI/MCP import is a supported way to register a tool — gives it a
+  *boolean* that promotes `minimum` to an exclusive bound. Only the modern
+  form was read, so `{"minimum": 5, "exclusiveMinimum": true}` accepted `5`.
+  Both dialects now resolve through one shared helper, so a bound is read the
+  same way at dispatch and in the framework args model.
 - **A parent `type` was dropped when its combinator branches declared their
   own.** JSON Schema applies both, and the executor does — but the framework
   args model inherited the parent type only into *typeless* branches, so
@@ -319,6 +326,11 @@ adapters, and the provider dialects agree with it.
   than merely leaving it unconstrained. It now uses the same
   `unsupported_strict_paths()` gate as the OpenAI adapters: such a tool is
   emitted without `strict: true`, with a warning naming the offending path.
+- **Schema-depth truncation is no longer silent.** `$ref` inlining stops at
+  depth 16 and the args-model builder at depth 8 — necessary against
+  self-referential schemas, but a legitimately deep acyclic one lost fidelity
+  with no signal. Both now log at debug level, matching the multi-member union
+  collapse.
 - **`SecurityPolicy` signature inspection is cached.** `execute()` asks
   whether a policy's `check_permission` accepts each optional keyword on every
   call, and `inspect.signature` is not cheap. The answer is a property of the

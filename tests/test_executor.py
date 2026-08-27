@@ -1653,3 +1653,38 @@ async def test_pattern_properties_are_validated(engine):
     # A pattern-matched key *is* declared, so it survives the closure.
     assert (await engine._validate_arguments(closed, {"p": {"n_abc": 1}}))[0] is True
     assert (await engine._validate_arguments(closed, {"p": {"zzz": 1}}))[0] is False
+
+
+async def test_draft04_boolean_exclusivity_is_honoured(engine):
+    """OpenAPI 3.0 emits draft-04's *boolean* ``exclusiveMinimum``, a modifier
+    on ``minimum`` rather than a bound of its own — and OpenAPI/MCP import is a
+    supported way to register a tool. Reading only the modern numeric form left
+    the boolean ignored and the bound applied inclusively (PR #381 review)."""
+    def tool_with(prop):
+        return ToolDefinition(
+            name="t",
+            description="Numeric parameter with an exclusive bound",
+            parameters_schema={
+                "type": "object",
+                "properties": {"p": prop},
+                "required": ["p"],
+            },
+        )
+
+    draft04 = tool_with({"type": "integer", "minimum": 5, "exclusiveMinimum": True})
+    assert (await engine._validate_arguments(draft04, {"p": 5}))[0] is False
+    assert (await engine._validate_arguments(draft04, {"p": 6}))[0] is True
+    assert (await engine._validate_arguments(draft04, {"p": 4}))[0] is False
+
+    # ``exclusiveMinimum: false`` leaves ``minimum`` inclusive.
+    inclusive = tool_with({"type": "integer", "minimum": 5, "exclusiveMinimum": False})
+    assert (await engine._validate_arguments(inclusive, {"p": 5}))[0] is True
+
+    # The modern numeric form is unchanged.
+    modern = tool_with({"type": "integer", "exclusiveMinimum": 5})
+    assert (await engine._validate_arguments(modern, {"p": 5}))[0] is False
+    assert (await engine._validate_arguments(modern, {"p": 6}))[0] is True
+
+    upper = tool_with({"type": "integer", "maximum": 5, "exclusiveMaximum": True})
+    assert (await engine._validate_arguments(upper, {"p": 5}))[0] is False
+    assert (await engine._validate_arguments(upper, {"p": 4}))[0] is True
