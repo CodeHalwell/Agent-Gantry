@@ -36,10 +36,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   constrained nothing, and a schema whose purpose is to forbid a shape
   accepted it. A `not` that is not a schema is ignored rather than read as an
   always-matching branch.
-- **Every matching `patternProperties` entry restores its own format.** The
-  framework dispatch boundary kept only the *first* regex that matched a key,
-  so a `format` declared on a later matching pattern was never applied and the
-  value reached the executor as a live `datetime` for `type: string` to reject.
+- **Every matching `patternProperties` entry restores its own format**, and a
+  key declared in `properties` still gets them. The framework dispatch
+  boundary kept only the *first* regex that matched a key, and skipped
+  patterns entirely for a key `properties` also declared — so a `format`
+  declared on a later or overlapping pattern was never applied and the value
+  reached the executor as a live `datetime` for `type: string` to reject. Both
+  keywords apply now, as JSON Schema requires and as the executor's own
+  validation already did.
 
 ### Changed
 

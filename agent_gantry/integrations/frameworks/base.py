@@ -454,7 +454,16 @@ def _json_native(value: Any, prop: Any, _depth: int = 0) -> Any:
             subs: list[Any] = []
             if isinstance(properties, dict) and key in properties:
                 subs.append(properties[key])
-            elif isinstance(patterns, dict) and isinstance(key, str):
+            # Not ``elif``: JSON Schema applies ``properties`` and
+            # ``patternProperties`` *both*, and so does the executor —
+            # ``_check_pattern_properties`` runs every pattern over every key
+            # and the object branch then checks the declared ones against
+            # ``properties`` as well. Treating them as alternatives here left
+            # a ``format`` that lives only on a matching pattern unapplied
+            # whenever the key was also declared, which is the same
+            # unserialized-datetime-against-``type: string`` rejection one
+            # level along (PR #386 review).
+            if isinstance(patterns, dict) and isinstance(key, str):
                 subs.extend(_pattern_subschemas(patterns, key))
             if not subs and isinstance(additional, dict):
                 # ``additionalProperties`` governs only the keys neither
@@ -485,9 +494,10 @@ def _pattern_subschemas(patterns: dict[str, Any], key: str) -> list[Any]:
     (PR #385 review).
 
     Folding is safe because ``_json_native`` converts only a temporal or UUID
-    value under a matching ``format``; once one pattern has turned it into a
-    string the rest pass it through untouched, so order does not matter and no
-    pattern can undo another's work.
+    value under a matching ``format``; once one pattern — or the key's own
+    ``properties`` entry, which the caller folds alongside these — has turned
+    it into a string, the rest pass it through untouched. So order does not
+    matter and no schema can undo another's work.
 
     ``re.search`` and the fail-open on an uncompilable pattern both mirror the
     executor's ``_check_pattern_properties``, so the two cannot disagree about
