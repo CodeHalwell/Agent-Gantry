@@ -42,6 +42,17 @@ def schema_declares_null(prop: Any) -> bool:
     """
     if not isinstance(prop, dict):
         return False
+    # ``enum``/``const`` apply independently of ``type``, so a schema can name
+    # null in its type list and still forbid it: an optional ``Literal`` that
+    # strict mode pre-widened arrives as ``{"type": ["string", "null"],
+    # "enum": ["fast", "slow"]}``. Treating that as nullable preserved a
+    # strict-mode placeholder the canonical schema then rejected, instead of
+    # dropping it so the handler's default applies.
+    enum_values = prop.get("enum")
+    if isinstance(enum_values, list) and enum_values and None not in enum_values:
+        return False
+    if "const" in prop and prop["const"] is not None:
+        return False
     prop_type = prop.get("type")
     if prop_type == "null" or (isinstance(prop_type, list) and "null" in prop_type):
         return True

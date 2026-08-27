@@ -27,6 +27,7 @@ from agent_gantry.schema.execution import (
     ToolCall,
     ToolResult,
 )
+from agent_gantry.schema.introspection import build_argument_coercers
 
 if TYPE_CHECKING:
     from agent_gantry.core.rate_limiter import RateLimiter
@@ -36,6 +37,9 @@ if TYPE_CHECKING:
     from agent_gantry.schema.tool import ToolDefinition
 
 logger = logging.getLogger(__name__)
+
+#: Memoized per-handler argument coercers (see ``_coercers_for``).
+_COERCER_CACHE: dict[Any, dict[str, Any]] = {}
 
 
 def _check_constraints(value: Any, schema: dict[str, Any], path: str) -> str | None:
@@ -144,6 +148,69 @@ def _check_constraints(value: Any, schema: dict[str, Any], path: str) -> str | N
                 return f"Parameter '{path}' must have at most {max_properties} properties"
 
     return None
+
+
+def _coercers_for(handler: Callable[..., Any]) -> dict[str, Any]:
+    """Cached ``build_argument_coercers`` for one handler.
+
+    Signature inspection is not cheap and the answer is fixed for the life of
+    the callable, so it is memoized. Unhashable handlers fall back to building
+    it per call rather than failing.
+    """
+    try:
+        return _COERCER_CACHE[handler]
+    except TypeError:  # unhashable handler
+        return build_argument_coercers(handler)
+    except KeyError:
+        pass
+    coercers = build_argument_coercers(handler)
+    if len(_COERCER_CACHE) < 512:
+        _COERCER_CACHE[handler] = coercers
+    return coercers
+
+
+def _reconstructed(handler: Callable[..., Any], arguments: dict[str, Any]) -> dict[str, Any]:
+    """Rebuild JSON values into the Python types the handler's signature names.
+
+    Arguments arrive JSON-decoded: a mapping for a Pydantic-model or dataclass
+    parameter, an array for a ``set``/``tuple``, a string for a
+    ``datetime``/``UUID``/``Enum``. The schema now *advertises* those types, so
+    a provider sends exactly that shape — and dispatching it unchanged handed
+    ``def f(p: Payload): return p.x`` a ``dict``, failing with "'dict' object
+    has no attribute 'x'" on every schema-valid call.
+
+    Only parameters whose declared type genuinely differs from its JSON form
+    are touched (see :func:`build_argument_coercers`), so a handler taking
+    scalars, lists or dicts receives byte-for-byte what it received before.
+    Conversion failures pass the original value through: validation has
+    already run against the canonical schema, and a handler that was happy
+    with the raw mapping must not start failing here.
+    """
+    if not arguments:
+        return arguments
+    coercers = _coercers_for(handler)
+    if not coercers:
+        return arguments
+    out: dict[str, Any] = {}
+    changed = False
+    for name, value in arguments.items():
+        adapter = coercers.get(name)
+        if adapter is None or value is None:
+            out[name] = value
+            continue
+        try:
+            rebuilt = adapter.validate_python(value)
+        except Exception:  # noqa: BLE001 - advisory; keep the caller's value
+            logger.debug(
+                "Could not rebuild argument %r into its declared type; passing "
+                "the raw value to the handler.",
+                name,
+            )
+            out[name] = value
+            continue
+        changed = changed or rebuilt is not value
+        out[name] = rebuilt
+    return out if changed else arguments
 
 
 class ExecutionEngine:
@@ -416,6 +483,7 @@ class ExecutionEngine:
         than the one the gantry was constructed on.
         """
         timeout_s = timeout_ms / 1000
+        arguments = _reconstructed(handler, arguments)
 
         if asyncio.iscoroutinefunction(handler):
             return await asyncio.wait_for(handler(**arguments), timeout=timeout_s)

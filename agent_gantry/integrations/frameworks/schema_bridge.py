@@ -86,10 +86,10 @@ def _permits_additional(schema: dict[str, Any]) -> bool:
     patterns = schema.get("patternProperties")
     if isinstance(patterns, dict) and patterns:
         # A key a pattern matches *is* declared — the executor treats it that
-        # way — so extras must be admitted or every valid pattern key would be
-        # rejected. The values then go unchecked in this shape (declared
-        # properties *and* patterns together), which the executor still
-        # catches; rejecting valid calls would be the worse trade.
+        # way — so extras have to reach the model rather than being refused by
+        # ``extra="forbid"``. The pattern validator attached in
+        # ``_build_model`` is what then enforces them, including rejecting a
+        # key no pattern matches when the object is closed.
         return True
     additional = schema.get("additionalProperties")
     return additional is True or isinstance(additional, dict)
@@ -108,7 +108,9 @@ def _build_model(name: str, schema: dict[str, Any], depth: int) -> Any:
             name,
         )
         raise ValueError("schema nesting too deep")
-    from pydantic import ConfigDict, Field, create_model
+    from typing import Annotated
+
+    from pydantic import BeforeValidator, ConfigDict, Field, create_model
 
     properties = schema.get("properties")
     if not isinstance(properties, dict):
@@ -160,7 +162,20 @@ def _build_model(name: str, schema: dict[str, Any], depth: int) -> Any:
     if extra_annotation is not None:
         fields["__pydantic_extra__"] = (dict[str, extra_annotation], Field(init=False))
 
-    return create_model(name, __config__=model_config, **fields)
+    model = create_model(name, __config__=model_config, **fields)
+
+    patterns = schema.get("patternProperties")
+    if isinstance(patterns, dict) and patterns:
+        # Declared ``properties`` *and* ``patternProperties`` together: the
+        # model above types the named fields, and this types the rest. Without
+        # it the model merely allowed every extra (so a pattern key's value
+        # went unchecked, and a key matching no pattern slipped through a
+        # closed object) — both of which the executor rejects.
+        check = _pattern_key_validator(
+            name, patterns, schema.get("additionalProperties") is False, depth, set(properties)
+        )
+        return Annotated[model, BeforeValidator(check)]
+    return model
 
 
 def _effective_type(prop: dict[str, Any]) -> Any:
@@ -597,10 +612,30 @@ def _with_pattern_properties(
     the valid matching keys the executor accepts. The second is the worse
     error, since it makes a correct call impossible.
     """
-    import re
     from typing import Annotated
 
-    from pydantic import BeforeValidator, TypeAdapter
+    from pydantic import BeforeValidator
+
+    check = _pattern_key_validator(name, patterns, closed, depth, frozenset())
+    return Annotated[dict, BeforeValidator(check)]
+
+
+def _pattern_key_validator(
+    name: str,
+    patterns: dict[str, Any],
+    closed: bool,
+    depth: int,
+    declared: Any,
+) -> Any:
+    """A callable enforcing ``patternProperties`` over a mapping's keys.
+
+    ``declared`` names the keys the surrounding model already types, so they
+    are neither re-checked here nor treated as unmatched when the object is
+    closed.
+    """
+    import re
+
+    from pydantic import TypeAdapter
 
     compiled: list[tuple[Any, Any]] = []
     for index, (regex, subschema) in enumerate(patterns.items()):
@@ -624,6 +659,8 @@ def _with_pattern_properties(
         if not isinstance(value, dict):
             return value
         for key, item in value.items():
+            if key in declared:
+                continue
             matched = False
             for matcher, adapter in compiled:
                 if not matcher.search(str(key)):
@@ -635,7 +672,7 @@ def _with_pattern_properties(
                 raise ValueError(f"key {key!r} matches no patternProperties entry")
         return value
 
-    return Annotated[dict, BeforeValidator(_check)]
+    return _check
 
 
 def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:

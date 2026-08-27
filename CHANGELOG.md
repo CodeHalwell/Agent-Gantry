@@ -195,6 +195,32 @@ adapters, and the provider dialects agree with it.
   key was rejected because none counted as declared. Matched keys are now
   validated against their pattern's schema and treated as declared by both
   paths. An uncompilable pattern fails open with a warning, as `pattern` does.
+- **A typed parameter reached its handler as raw JSON.** Once the schema
+  advertises a nested Pydantic model, a dataclass, a `set`/`tuple` or a
+  `datetime`/`UUID`/`Enum`, a provider sends that type's JSON form — and the
+  executor forwarded it unchanged, so `def f(p: Payload): return p.x` failed
+  with `'dict' object has no attribute 'x'` on *every* schema-valid call, and
+  a `set[str]` parameter received a `list`. Arguments are now rebuilt into the
+  types the signature names, immediately before dispatch. Only parameters
+  whose declared type genuinely differs from its JSON form are touched —
+  scalars, `list`, `dict`, `TypedDict` and `Any` already arrive as themselves
+  and are passed through byte-for-byte — and a conversion failure passes the
+  original value through, since validation has already run against the
+  canonical schema. This closes the "Known limitation" recorded earlier in
+  this release.
+- **`schema_declares_null` ignored an `enum` that forbids null.** An optional
+  `Literal` that strict mode pre-widened arrives as
+  `{"type": ["string", "null"], "enum": ["fast", "slow"]}` — nullable by its
+  type list, but not by its enum. Both the executor's normalization and
+  `ToolSpec.ainvoke` therefore preserved a strict-mode placeholder the
+  canonical schema then rejected, instead of dropping it so the handler's
+  default applies. `const` is honoured the same way.
+- **`patternProperties` went unenforced beside declared `properties`.** That
+  shape merely allowed every extra, so a pattern key's value went unchecked
+  and a key matching no pattern passed a closed object — both of which the
+  executor rejects. The pattern validator is now attached to the generated
+  model too, with declared properties exempt from the "matches no pattern"
+  check.
 - **`ToolSpec.ainvoke` dropped a `null` the schema declares.** It strips
   `None` for optional parameters because frameworks materialize every unset
   optional field that way — but once `x: int | None = 5` advertises
@@ -602,17 +628,6 @@ adapters, and the provider dialects agree with it.
 
 ### Known limitation
 
-- A registered function typed with a dataclass/Pydantic-model/`set`/`tuple`
-  parameter now advertises the correct nested/typed schema, but the executor
-  still invokes the handler via `handler(**arguments)` with the JSON-decoded
-  value (a plain `dict` for a dataclass, a `list` for a `set`/`tuple`)
-  rather than reconstructing the original Python type — a handler that
-  accesses typed attributes (`addr.street`) will still fail. This is not a
-  regression: such handlers were never functionally invocable through Gantry
-  (the schema previously mistyped the parameter as a bare string, which
-  failed just as surely, only earlier and more opaquely). Fixing it properly
-  needs the original Python type available at invocation time, which the
-  schema/executor split doesn't currently carry.
 - A *multi-member* union parameter (`int | str`, as opposed to `T | None`)
   keeps only its first member in the emitted schema. Most provider dialects
   reject union-typed parameters outright, so a narrowed schema is more useful

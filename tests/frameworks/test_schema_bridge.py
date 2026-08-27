@@ -1254,3 +1254,49 @@ def test_closed_pattern_properties_still_accept_matching_keys():
     for bad in ({"zzz": 1}, {"n_x": "bad"}):
         with pytest.raises(ValidationError):
             model(m=bad)
+
+
+def test_pattern_properties_apply_alongside_named_properties():
+    """An object with both ``properties`` and ``patternProperties``: the model
+    types the named fields and the pattern validator types the rest. Merely
+    allowing extras left a pattern key's value unchecked and let a key matching
+    no pattern through a closed object (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "m": {
+                    "type": "object",
+                    "properties": {"fixed": {"type": "string"}},
+                    "patternProperties": {"^n_": {"type": "integer"}},
+                    "additionalProperties": False,
+                }
+            },
+            "required": ["m"],
+        },
+    )
+    assert model(m={"fixed": "ok", "n_x": 1}) is not None
+    for bad in ({"fixed": "ok", "n_x": "bad"}, {"fixed": "ok", "other": 1}):
+        with pytest.raises(ValidationError):
+            model(m=bad)
+
+
+def test_named_properties_are_not_treated_as_unmatched_keys():
+    """A declared property must not be rejected for matching no pattern."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "m": {
+                    "type": "object",
+                    "properties": {"fixed": {"type": "string"}},
+                    "patternProperties": {"^n_": {"type": "integer"}},
+                    "additionalProperties": False,
+                }
+            },
+            "required": ["m"],
+        },
+    )
+    assert model(m={"fixed": "ok"}) is not None

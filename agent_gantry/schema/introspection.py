@@ -194,6 +194,77 @@ def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
     return schema
 
 
+def _needs_reconstruction(param_type: Any) -> bool:
+    """Whether a JSON value must be rebuilt into ``param_type`` before use.
+
+    True exactly for the annotations whose *JSON* form differs from their
+    Python form — a Pydantic model or dataclass arrives as a mapping, a
+    ``set``/``tuple`` as an array, a ``datetime``/``UUID``/``Enum`` as a
+    scalar. Scalars, ``list``, ``dict`` and ``TypedDict`` already arrive as
+    themselves and are deliberately excluded: coercing them would change what
+    every existing handler receives for no benefit.
+    """
+    import typing
+
+    param_type, _ = _split_annotated(param_type)
+    origin = typing.get_origin(param_type)
+    if origin is typing.Union or origin is types.UnionType:
+        return any(
+            a is not type(None) and _needs_reconstruction(a)
+            for a in typing.get_args(param_type)
+        )
+    if origin in (set, frozenset, tuple, _abc.Set):
+        return True
+    if not isinstance(param_type, type):
+        return False
+    if param_type in (datetime.datetime, datetime.date, datetime.time, uuid.UUID):
+        return True
+    if issubclass(param_type, enum.Enum):
+        return True
+    # A ``TypedDict`` *is* a dict at runtime, so it needs nothing — and it
+    # would otherwise be caught by the dataclass check below on some versions.
+    if hasattr(param_type, "__required_keys__"):
+        return False
+    if dataclasses.is_dataclass(param_type):
+        return True
+    try:
+        from pydantic import BaseModel
+    except ImportError:  # pragma: no cover - pydantic is a hard dependency
+        return False
+    return issubclass(param_type, BaseModel)
+
+
+def build_argument_coercers(func: Callable[..., Any]) -> dict[str, Any]:
+    """``{parameter: TypeAdapter}`` for the arguments ``func`` needs rebuilt.
+
+    The executor dispatches ``handler(**arguments)`` with JSON-decoded values.
+    Once the schema advertises a nested model, a ``set`` or a ``datetime``,
+    the provider sends the JSON form of that type and the handler received a
+    ``dict``/``list``/``str`` where its annotation promised the real thing —
+    ``def f(p: Payload): return p.x`` failed with "'dict' object has no
+    attribute 'x'" on every schema-valid call. Empty when nothing needs it,
+    which is the overwhelmingly common case.
+    """
+    import typing
+
+    from pydantic import TypeAdapter
+
+    try:
+        hints = typing.get_type_hints(func, include_extras=True)
+    except Exception:  # noqa: BLE001 - unresolvable annotations: coerce nothing
+        return {}
+
+    coercers: dict[str, Any] = {}
+    for name, annotation in hints.items():
+        if name == "return" or not _needs_reconstruction(annotation):
+            continue
+        try:
+            coercers[name] = TypeAdapter(annotation)
+        except Exception:  # noqa: BLE001 - not adaptable: leave the value alone
+            continue
+    return coercers
+
+
 def _split_annotated(param_type: Any) -> tuple[Any, str | None]:
     """Unwrap ``Annotated[T, ...]``, returning ``(T, description)``.
 

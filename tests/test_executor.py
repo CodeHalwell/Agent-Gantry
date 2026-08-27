@@ -1688,3 +1688,32 @@ async def test_draft04_boolean_exclusivity_is_honoured(engine):
     upper = tool_with({"type": "integer", "maximum": 5, "exclusiveMaximum": True})
     assert (await engine._validate_arguments(upper, {"p": 5}))[0] is False
     assert (await engine._validate_arguments(upper, {"p": 4}))[0] is True
+
+
+def test_declared_null_respects_an_enum_that_forbids_it():
+    """An optional ``Literal`` that strict mode pre-widened arrives as
+    ``{"type": ["string", "null"], "enum": [...]}`` — nullable by its type list
+    but not by its enum. Treating it as nullable preserved a strict-mode
+    placeholder the canonical schema then rejected (PR #381 review)."""
+    from agent_gantry.schema.base import schema_declares_null
+
+    assert schema_declares_null({"type": ["string", "null"], "enum": ["fast", "slow"]}) is False
+    assert schema_declares_null({"type": ["string", "null"], "enum": ["fast", None]}) is True
+    assert schema_declares_null({"type": ["string", "null"]}) is True
+    assert schema_declares_null({"type": "string", "const": "fixed"}) is False
+    assert schema_declares_null({"anyOf": [{"type": "string"}, {"type": "null"}]}) is True
+
+
+def test_pre_widened_enum_null_is_dropped_not_preserved():
+    """End-to-end consequence: the placeholder is dropped so the handler's own
+    default applies, rather than surviving to fail validation."""
+    tool = ToolDefinition(
+        name="speed",
+        description="Optional literal choice widened by strict mode",
+        parameters_schema={
+            "type": "object",
+            "properties": {"mode": {"type": ["string", "null"], "enum": ["fast", "slow"]}},
+            "required": [],
+        },
+    )
+    assert ExecutionEngine._normalize_arguments(tool, {"mode": None}) == {}
