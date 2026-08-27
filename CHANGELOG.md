@@ -935,6 +935,26 @@ adapters, and the provider dialects agree with it.
   strict-safe, and the provider rejected the whole tool request rather than
   that one parameter. A nullable *closed* object is unaffected: it remains
   perfectly representable.
+- **A pattern-only object is strict-unsupported without a `type`.** JSON Schema
+  applies an object's keywords whenever the instance *is* an object, so a
+  property carrying only `patternProperties` — no `type`, no `properties` —
+  constrains objects just as much as one spelling the type out. Gating the
+  check on type-or-properties let that spelling past as strict-safe while its
+  typed twin was flagged.
+- **A required property forbidden by its schema is no longer widened to null.**
+  A boolean property schema is replaced with `{}` internally so the later
+  lookups work, and `{}` admits null under the unified nullability rule — so a
+  required `false` property was unioned with `None` and accepted an explicit
+  null the executor rejects outright. Nullability is now decided from the
+  original schema.
+- **LlamaIndex coercion no longer injects defaults into typed map values.**
+  `model_dump()` recursively materializes every omitted optional field,
+  including inside a typed map's values, where an optional child with no schema
+  default becomes `None`. Executor normalization walks named `properties` but
+  not schema-valued map entries, so that injected null survived to be rejected
+  — turning a call the caller made correctly into an error. The dump now
+  carries only what the caller supplied; the coercions that function exists for
+  are unaffected.
 
 ### Performance
 
