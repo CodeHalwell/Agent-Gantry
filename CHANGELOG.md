@@ -788,6 +788,19 @@ adapters, and the provider dialects agree with it.
   invariants JSON Schema cannot express at all (a Pydantic `field_validator`,
   a mapping key that doesn't parse), which is exactly where validation cannot
   have ruled the value out first. Now a `ValidationError`, not retried.
+- **One rule now decides whether an explicit `null` is kept:** keep it iff the
+  executor would accept it. `schema_declares_null` had been asking a narrower
+  question — did the author *declare* null meaningful, where a schema that
+  merely failed to forbid it didn't count — and that reading needed a fresh
+  patch for each new spelling while still getting three cases wrong:
+  `{"enum": ["a", null]}` (what an optional `Literal["a", None]` emits, with
+  no `type` at all) dropped an explicitly supplied `None` and handed the
+  handler its default; `{"const": null}` and `{}` did the same; and a nullable
+  `anyOf` was read as nullable while a sibling `allOf` forbade null. It
+  delegates to `null_validates_against` now, which composes instead of
+  laddering. Two tests changed with it — one had pinned the old asymmetry, and
+  one had asserted that a generated model must accept a `null` its own
+  `anyOf` forbids, which the executor has always rejected.
 
 ### Performance
 

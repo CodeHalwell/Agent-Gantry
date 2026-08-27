@@ -1907,12 +1907,76 @@ def test_a_constraint_only_oneof_branch_also_matches_null():
     assert null_validates_against({"anyOf": [{"type": "string"}, {"minimum": 5}]}) is True
 
 
-def test_the_declaring_question_is_still_asked_of_anyof():
-    """``anyOf`` deliberately keeps the stricter reading: there the question is
-    whether the author gave null a meaning worth preserving, and a branch that
-    merely fails to forbid it hasn't. Only ``oneOf``'s exclusivity count turns
-    on matching."""
+def test_one_question_decides_whether_a_null_is_kept():
+    """This previously pinned an asymmetry — ``oneOf`` counted what *matches*
+    while ``anyOf`` asked what the author *declared*, so a branch that merely
+    failed to forbid null didn't count. The distinction cost more than it
+    bought: it needed a fresh patch per spelling and still got Gantry's own
+    emission wrong (an optional ``Literal["a", None]`` emits
+    ``{"enum": ["a", null]}`` with no ``type``, and the declaring reading
+    dropped an explicitly supplied ``None``). One rule replaces it — keep a
+    null iff the executor would accept it (PR #381 review)."""
     from agent_gantry.schema.base import schema_declares_null
 
-    assert schema_declares_null({"anyOf": [{"type": "string"}, {"minimum": 5}]}) is False
+    # The reversed case: null validates against a constraint-only branch, so
+    # an explicit one is the caller's value, not a placeholder.
+    assert schema_declares_null({"anyOf": [{"type": "string"}, {"minimum": 5}]}) is True
     assert schema_declares_null({"anyOf": [{"type": "string"}, {"type": "null"}]}) is True
+    # Everything the narrower reading got right, it still gets right.
+    assert schema_declares_null({"anyOf": [{"type": "string"}, {"type": "integer"}]}) is False
+    assert schema_declares_null({"type": "string", "anyOf": [{"type": "null"}, {}]}) is False
+
+
+def test_a_sibling_assertion_can_forbid_the_null_a_branch_admits():
+    """``anyOf`` naming null did not stop a sibling ``allOf`` forbidding it —
+    the early return fired first. Every sibling assertion is resolved now
+    (PR #381 review)."""
+    from agent_gantry.schema.base import schema_declares_null
+
+    assert (
+        schema_declares_null(
+            {"anyOf": [{"type": "string"}, {"type": "null"}], "allOf": [{"type": "string"}]}
+        )
+        is False
+    )
+    # The same shape with a sibling that permits null stays nullable.
+    assert (
+        schema_declares_null(
+            {
+                "anyOf": [{"type": "string"}, {"type": "null"}],
+                "allOf": [{"type": ["string", "null"]}],
+            }
+        )
+        is True
+    )
+
+
+def test_an_enum_or_const_naming_null_declares_it():
+    """``x: Literal["a", None] = "a"`` is emitted as ``{"enum": ["a", null]}``
+    with no ``type`` — its members share no scalar kind. The predicate used
+    ``enum`` only to *reject* null, so an explicitly supplied ``None`` was
+    dropped and the handler got its default instead of the value its own
+    annotation permits (PR #381 review)."""
+    from agent_gantry.schema.base import schema_declares_null
+
+    assert schema_declares_null({"enum": ["a", None]}) is True
+    assert schema_declares_null({"const": None}) is True
+    assert schema_declares_null({}) is True
+    # And the rejecting direction is unchanged.
+    assert schema_declares_null({"enum": ["a", "b"]}) is False
+    assert schema_declares_null({"const": "fixed"}) is False
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_null_for_a_nullable_literal_reaches_the_handler():
+    """End-to-end consequence of the enum case above."""
+    tool = ToolDefinition(
+        name="nullable_literal",
+        description="An optional Literal that lists None among its members",
+        parameters_schema={
+            "type": "object",
+            "properties": {"x": {"enum": ["a", None], "default": "a"}},
+            "required": [],
+        },
+    )
+    assert ExecutionEngine._normalize_arguments(tool, {"x": None}) == {"x": None}

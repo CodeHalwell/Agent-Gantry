@@ -1121,9 +1121,14 @@ def test_parent_number_still_admits_an_integer():
         model(n="x")
 
 
-def test_nullable_parent_intersection_still_admits_null():
-    """The parent's type list declares null, so intersecting on the non-null
-    member must not reject the very value the schema allows."""
+def test_a_combinator_can_forbid_the_null_its_parent_type_names():
+    """This asserted the opposite — that the parent's type list declaring null
+    meant the field had to accept it. It doesn't: JSON Schema applies the
+    ``anyOf`` *alongside* the type, and neither ``number`` nor ``string``
+    admits null, so the schema forbids it. The executor has always agreed
+    (``"does not match any permitted schema"``); only the generated model
+    accepted it, which is exactly the model/executor disagreement this review
+    has been closing (PR #381 review)."""
     model = pydantic_model_from_schema(
         "Args",
         {
@@ -1138,7 +1143,25 @@ def test_nullable_parent_intersection_still_admits_null():
         },
     )
     assert model(n=1).n == 1
-    assert model(n=None).n is None
+    with pytest.raises(ValidationError):
+        model(n=None)
+
+    # A combinator that *does* admit null leaves it accepted, so this narrows
+    # only the contradictory case.
+    permissive = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "n": {
+                    "type": ["integer", "null"],
+                    "anyOf": [{"type": "integer"}, {"type": "null"}],
+                }
+            },
+            "required": ["n"],
+        },
+    )
+    assert permissive(n=None).n is None
     for bad in (1.5, "x"):
         with pytest.raises(ValidationError):
             model(n=bad)

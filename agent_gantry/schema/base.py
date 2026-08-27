@@ -243,76 +243,30 @@ def null_validates_against(schema: Any) -> bool:
 
 
 def schema_declares_null(prop: Any) -> bool:
-    """Whether a property schema gives ``null`` a declared, meaningful value.
+    """Whether an explicit ``null`` for this property is a value to keep.
 
-    ``null`` reaches a schema two ways: a ``type`` that names it (``"null"``
-    or a list containing it) and a combinator branch —
-    ``{"anyOf": [{"type": "string"}, {"type": "null"}]}``, which is what
-    Pydantic and OpenAPI emit for ``str | None``. Checking only ``type`` would
-    miss the far more common of the two.
+    Callers — the executor's argument normalization and the framework
+    ``ToolSpec`` path — are deciding between passing a caller-supplied
+    ``None`` through and dropping it as strict mode's "not provided"
+    placeholder so the handler's own default applies. The right rule turns
+    out to be exactly one question: **keep it iff the executor would accept
+    it**, which is :func:`null_validates_against`. Keep a null the schema
+    admits and the call is the one the caller asked for; drop one it forbids
+    and the default applies instead of a validation error.
 
-    ``allOf`` intersects its branches, so the combined schema admits null only
-    when *every* branch does; ``any()`` there would call
-    ``[{"type": ["string", "null"]}, {"type": "string"}]`` nullable and
-    preserve a null the schema actually forbids.
-
-    Shared between the executor's argument normalization and the framework
-    ``ToolSpec`` path: both decide whether an explicit ``null`` is a value the
-    caller meant or strict mode's "not provided" placeholder, and they must
-    decide it identically.
+    This began as a separate, narrower reading — "did the author *declare*
+    null meaningful", where a schema that merely failed to forbid null didn't
+    count. That distinction cost more than it bought. It needed a fresh patch
+    for each new spelling and still got Gantry's own emission wrong: an
+    optional ``Literal["a", None]`` emits ``{"enum": ["a", null]}`` with no
+    ``type`` at all, and the declaring reading dropped an explicitly supplied
+    ``None``, handing the handler its default instead. It also read a nullable
+    ``anyOf`` as nullable while a sibling ``allOf`` forbade null. The matching
+    question answers both structurally, because it composes instead of
+    laddering. Kept as a distinct name because it is what the *callers* are
+    asking (PR #381 review).
     """
-    if not isinstance(prop, dict):
-        return False
-    # ``enum``/``const`` apply independently of ``type``, so a schema can name
-    # null in its type list and still forbid it: an optional ``Literal`` that
-    # strict mode pre-widened arrives as ``{"type": ["string", "null"],
-    # "enum": ["fast", "slow"]}``. Treating that as nullable preserved a
-    # strict-mode placeholder the canonical schema then rejected, instead of
-    # dropping it so the handler's default applies.
-    enum_values = prop.get("enum")
-    if isinstance(enum_values, list) and enum_values and None not in enum_values:
-        return False
-    if "const" in prop and prop["const"] is not None:
-        return False
-    prop_type = prop.get("type")
-    if prop_type == "null" or (isinstance(prop_type, list) and "null" in prop_type):
-        return True
-    if prop_type is not None:
-        # A sibling ``type`` that excludes null governs the whole schema: JSON
-        # Schema applies it *alongside* any combinator, so no branch can admit
-        # a value the type forbids. Reading the branches in isolation called
-        # ``{"type": "string", "anyOf": [{"type": "null"}, {}]}`` nullable and
-        # preserved a placeholder canonical validation then rejected.
-        return False
-    any_of = prop.get("anyOf")
-    if isinstance(any_of, list) and any(schema_declares_null(b) for b in any_of):
-        return True
-
-    one_of = prop.get("oneOf")
-    if isinstance(one_of, list) and one_of:
-        # ``oneOf`` demands *exactly* one match, so counting any match — as the
-        # shared ``anyOf`` path used to — gets it wrong in the one case where
-        # they differ: an empty schema ``{}`` matches every value, null
-        # included, so ``{"oneOf": [{"type": "null"}, {}]}`` makes null match
-        # twice and is therefore *not* nullable.
-        #
-        # Counted with ``null_validates_against`` rather than this function:
-        # exclusivity turns on whether null *matches* a branch, not on whether
-        # the branch declares it. ``{"minimum": 5}`` names no type and numeric
-        # keywords don't apply to null, so null matches it too — the same
-        # double match as ``{}``, one keyword less obvious. The distinction is
-        # deliberate and does not extend to ``anyOf`` above: there the
-        # question is whether the author gave null a meaning worth preserving,
-        # and a branch that merely fails to forbid null hasn't.
-        admitting = sum(1 for branch in one_of if null_validates_against(branch))
-        if admitting == 1:
-            return True
-    all_of = prop.get("allOf")
-    if isinstance(all_of, list):
-        usable = [b for b in all_of if isinstance(b, dict) and b]
-        if usable and all(schema_declares_null(b) for b in usable):
-            return True
-    return False
+    return null_validates_against(prop)
 
 
 def _numeric(value: Any) -> float | int | None:
