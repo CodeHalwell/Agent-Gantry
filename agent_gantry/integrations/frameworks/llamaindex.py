@@ -73,7 +73,16 @@ def _spec_to_llamaindex(spec: ToolSpec) -> Any:
         if fn_schema is None or not kwargs:
             return kwargs
         try:
-            dumped = fn_schema(**kwargs).model_dump()
+            # ``exclude_unset`` so the dump carries only what the caller
+            # actually supplied. A plain dump recursively materializes every
+            # omitted optional field — including inside a typed map's values,
+            # where an optional child with no schema default becomes ``None``.
+            # Executor normalization walks named ``properties`` but not
+            # schema-valued map entries, so that injected null survived to be
+            # rejected, turning a valid call into an error. Coercions on the
+            # fields that *were* set are unaffected, which is what this
+            # function exists for.
+            dumped = fn_schema(**kwargs).model_dump(exclude_unset=True)
         except Exception:  # noqa: BLE001 - advisory; the executor still validates
             return kwargs
         return {key: dumped.get(key, value) for key, value in kwargs.items()}

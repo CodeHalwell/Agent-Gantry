@@ -21,6 +21,7 @@ from agent_gantry.integrations.frameworks.llamaindex_live import (  # noqa: E402
     GantryToolRetriever,
 )
 from agent_gantry.llamaindex import LlamaIndexAdapter  # noqa: E402
+from agent_gantry.schema.tool import ToolDefinition  # noqa: E402
 
 
 @pytest.fixture
@@ -135,3 +136,70 @@ async def test_well_typed_values_are_passed_through_unchanged(
     tool = {t.metadata.name: t for t in tools}["convert_currency"]
     out = tool.call(amount=100.0, to_code="EUR")
     assert getattr(out, "raw_output", out) == "converted:100.0:EUR"
+
+
+async def test_coercion_does_not_inject_defaults_into_typed_map_values() -> None:
+    """``model_dump()`` recursively materializes every omitted optional field,
+    including inside a typed map's values, where an optional child with no
+    schema default becomes ``None``. Executor normalization walks named
+    ``properties`` but not schema-valued map entries, so that injected null
+    survived to be rejected — turning a call the caller made correctly into an
+    error (PR #381 review).
+
+    Exercised through the real adapter for the same reason its sibling above
+    is: the dump happens inside ``_coerced``, and asserting on ``model_dump``
+    directly would pin the mechanism rather than the path that uses it.
+
+    The schema is written out rather than derived from a Pydantic model,
+    because the shape that breaks needs an optional child that is *not*
+    nullable. A Python ``b: str | None = None`` emits ``anyOf: [string,
+    null]``, which makes the injected null legal and the bug invisible —
+    an imported or hand-authored schema is where a non-nullable optional
+    field actually occurs.
+    """
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    def record_entries(entries: dict) -> str:
+        return ",".join(
+            f"{k}:{v.get('a')}:{v.get('b')}" for k, v in sorted(entries.items())
+        )
+
+    await g.add_tool(
+        ToolDefinition(
+            name="record_entries",
+            description="Record a mapping of named ledger entries.",
+            parameters_schema={
+                "type": "object",
+                "properties": {
+                    "entries": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                                "a": {"type": "string"},
+                                "b": {"type": "string"},
+                            },
+                            "required": ["a"],
+                        },
+                    }
+                },
+                "required": ["entries"],
+            },
+            tags=["ledger"],
+        ),
+        handler=record_entries,
+    )
+    await g.sync()
+
+    tools = await LlamaIndexAdapter(g).select("record ledger entries", limit=1)
+    tool = {t.metadata.name: t for t in tools}["record_entries"]
+
+    # ``b`` is omitted by the caller and must stay omitted rather than being
+    # materialized as a null the executor then refuses.
+    out = tool.call(entries={"k": {"a": "x"}})
+    assert getattr(out, "raw_output", out) == "k:x:None"
+
+    # Supplying it explicitly still works, so the exclusion did not start
+    # dropping real values.
+    out_both = tool.call(entries={"k": {"a": "x", "b": "y"}})
+    assert getattr(out_both, "raw_output", out_both) == "k:x:y"

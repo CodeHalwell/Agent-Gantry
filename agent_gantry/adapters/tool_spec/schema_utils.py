@@ -285,7 +285,17 @@ def _collect_open_maps(node: Any, path: str, out: list[str]) -> None:
         return
 
     properties = node.get("properties")
-    if _declares_object(node.get("type")) or isinstance(properties, dict):
+    patterns = node.get("patternProperties")
+    # ``patternProperties`` counts on its own: JSON Schema applies an object's
+    # keywords whenever the instance *is* an object, so a property carrying
+    # only patterns — no ``type``, no ``properties`` — constrains objects just
+    # as much as one that spells the type out. Gating on type-or-properties
+    # let that spelling past as strict-safe while its typed twin was flagged.
+    if (
+        _declares_object(node.get("type"))
+        or isinstance(properties, dict)
+        or (isinstance(patterns, dict) and patterns)
+    ):
         if _is_open_map(node):
             out.append(path or "<root>")
 

@@ -947,3 +947,50 @@ def test_a_nullable_open_mapping_is_still_strict_unsupported():
         "required": ["p"],
     }
     assert unsupported_strict_paths(closed) == []
+
+
+def test_a_pattern_only_object_is_strict_unsupported_without_a_type():
+    """JSON Schema applies an object's keywords whenever the instance *is* an
+    object, so a property carrying only ``patternProperties`` — no ``type``, no
+    ``properties`` — constrains objects just as much as one spelling the type
+    out. Gating the check on type-or-properties let that spelling past as
+    strict-safe while its typed twin was flagged (PR #381 review)."""
+    from agent_gantry.adapters.tool_spec.schema_utils import unsupported_strict_paths
+
+    untyped = {
+        "type": "object",
+        "properties": {
+            "m": {
+                "patternProperties": {"^n_": {"type": "integer"}},
+                "additionalProperties": False,
+            }
+        },
+        "required": ["m"],
+    }
+    typed = {
+        "type": "object",
+        "properties": {
+            "m": {
+                "type": "object",
+                "patternProperties": {"^n_": {"type": "integer"}},
+                "additionalProperties": False,
+            }
+        },
+        "required": ["m"],
+    }
+    assert unsupported_strict_paths(untyped) == ["m"]
+    assert unsupported_strict_paths(typed) == ["m"]
+
+    # Schemas strict mode genuinely handles must stay handled — this is the
+    # gate deciding whether a tool gets strict guarantees at all.
+    for supported in (
+        {
+            "type": "object",
+            "properties": {"a": {"type": "string"}},
+            "required": ["a"],
+            "additionalProperties": False,
+        },
+        {"type": "object", "properties": {}, "required": []},
+        {"type": "object", "properties": {"a": {"type": "string"}}, "required": ["a"]},
+    ):
+        assert unsupported_strict_paths(supported) == []

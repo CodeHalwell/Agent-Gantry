@@ -1792,3 +1792,41 @@ def test_a_property_pydantic_cannot_field_falls_back():
     )
     assert ordinary is not None
     assert list(ordinary.model_fields) == ["name"]
+
+
+def test_a_required_false_property_is_not_widened_to_null():
+    """Two of this review's own changes met here: a boolean property schema is
+    replaced with ``{}`` so the later ``.get`` calls work, and ``{}`` admits
+    null under the unified nullability rule — so a required ``false`` property
+    was widened with ``None`` and accepted ``{"disabled": null}`` while the
+    executor rejects every value for it (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"disabled": False, "name": {"type": "string"}},
+            "required": ["disabled", "name"],
+        },
+    )
+    # ``null`` is the case that regressed; the others confirm the annotation
+    # forbids everything rather than merely forbidding null.
+    for forbidden in (None, 1, "x"):
+        with pytest.raises(ValidationError):
+            model(disabled=forbidden, name="n")
+
+    # ``true`` is the mirror: it admits every value, null included. Tested on
+    # its own model, since a required ``false`` property makes any call fail.
+    permissive = pydantic_model_from_schema(
+        "Args",
+        {"type": "object", "properties": {"ok": True}, "required": ["ok"]},
+    )
+    assert permissive(ok=None).ok is None
+    assert permissive(ok=1).ok == 1
+
+    # And a genuinely nullable required property still widens, which is the
+    # behaviour this must not have broken.
+    nullable = pydantic_model_from_schema(
+        "Args",
+        {"type": "object", "properties": {"v": {"type": ["string", "null"]}}, "required": ["v"]},
+    )
+    assert nullable(v=None).v is None

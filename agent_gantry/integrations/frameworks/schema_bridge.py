@@ -217,20 +217,24 @@ def _build_model(name: str, schema: dict[str, Any], depth: int) -> Any:
             # required canonical property, and reject an explicitly supplied
             # one as an extra when the object is closed.
             raise ValueError(f"property {prop_name!r} cannot be a model field")
+        declared_schema = prop  # the original, which may be a bare boolean
         annotation = _annotation(f"{name}_{prop_name}", prop, depth)
         if isinstance(prop, dict):
             annotation = _with_constraints(annotation, prop)
         else:
             # A boolean property schema carries no constraint keywords, and
             # coercing it to ``{}`` first made ``false`` — which forbids every
-            # value — indistinguishable from "unconstrained".
+            # value — indistinguishable from "unconstrained". ``prop`` is
+            # replaced only so the ``.get`` calls below work; nullability is
+            # decided from ``declared_schema``, because ``{}`` admits null and
+            # ``false`` admits nothing at all.
             prop = {}
         description = prop.get("description")
         field_kwargs: dict[str, Any] = {}
         if isinstance(description, str) and description:
             field_kwargs["description"] = description
         if prop_name in required:
-            if schema_declares_null(prop):
+            if schema_declares_null(declared_schema):
                 # Required-but-nullable (``type: ["string", "null"]`` in
                 # ``required``): the field must still be supplied, but a
                 # schema-valid ``None`` must not be rejected by Pydantic.
