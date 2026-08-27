@@ -1032,3 +1032,46 @@ def test_object_property_counts_reach_the_generated_field():
     for bad in ({}, {"a": 1, "b": 2, "c": 3}):
         with pytest.raises(ValidationError):
             model(m=bad)
+
+
+def test_nullable_parent_type_reaches_combinator_branches():
+    """A nullable parent (``{"type": ["integer", "null"], "anyOf": [...]}``,
+    which imported schemas produce) still names one real member type. Not
+    inheriting it left both constraint-only branches as a bare ``Any`` that
+    matched everything, so the model accepted a value the executor rejects
+    (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "n": {
+                    "type": ["integer", "null"],
+                    "anyOf": [{"minimum": 10}, {"maximum": 0}],
+                }
+            },
+            "required": ["n"],
+        },
+    )
+    assert model(n=15).n == 15
+    assert model(n=-3).n == -3
+    assert model(n=None).n is None
+    for bad in (5, "x"):
+        with pytest.raises(ValidationError):
+            model(n=bad)
+
+
+def test_genuine_multi_type_parent_is_not_pushed_down():
+    """No single type applies to every branch there, so inheriting one would
+    invent a constraint the schema never declared."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "v": {"type": ["integer", "string"], "anyOf": [{"minimum": 10}]}
+            },
+            "required": ["v"],
+        },
+    )
+    assert model(v="anything").v == "anything"

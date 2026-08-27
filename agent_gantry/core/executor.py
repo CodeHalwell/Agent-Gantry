@@ -1116,6 +1116,46 @@ class ExecutionEngine:
             elif expected_type == "object":
                 obj_properties = val_schema.get("properties")
                 obj_additional = val_schema.get("additionalProperties")
+
+                # ``patternProperties`` types keys by regex rather than by
+                # name, which Pydantic emits for a mapping with constrained
+                # keys. Ignoring it meant a matching key's value was never
+                # checked — and, with ``additionalProperties: false``, that
+                # every key was rejected because none counted as declared.
+                # Matched keys are validated here and then treated as declared
+                # by both paths below.
+                obj_patterns = val_schema.get("patternProperties")
+                pattern_matched: set[str] = set()
+                if isinstance(obj_patterns, dict) and obj_patterns:
+                    for regex, subschema in obj_patterns.items():
+                        if not isinstance(regex, str):
+                            continue
+                        try:
+                            compiled = re.compile(regex)
+                        except re.error as exc:
+                            # Same fail-open reasoning as ``pattern``: an
+                            # ECMA-only regex must not make every call fail,
+                            # but the author needs to know it isn't enforced.
+                            logger.warning(
+                                "Parameter '%s' declares patternProperties %r that "
+                                "Python's re cannot compile (%s); those keys are "
+                                "not validated.",
+                                path,
+                                regex,
+                                exc,
+                            )
+                            continue
+                        for prop_name, prop_value in value.items():
+                            if not compiled.search(prop_name):
+                                continue
+                            pattern_matched.add(prop_name)
+                            if isinstance(subschema, dict) and subschema:
+                                is_valid, err = _validate_value(
+                                    prop_value, subschema, f"{path}.{prop_name}"
+                                )
+                                if not is_valid:
+                                    return False, err
+
                 if not isinstance(obj_properties, dict) or not obj_properties:
                     # No declared properties. Three distinct schema intents
                     # share this shape and must not be conflated:
@@ -1123,8 +1163,10 @@ class ExecutionEngine:
                         # Explicitly closed (``additionalProperties: false``
                         # with no declared properties) → no keys at all are
                         # permitted — a "no-argument object" schema, not a
-                        # free-form one.
-                        if value:
+                        # free-form one. A key a ``patternProperties`` entry
+                        # matched *is* declared, so it survives the closure.
+                        undeclared = [k for k in value if k not in pattern_matched]
+                        if undeclared:
                             return False, f"Parameter '{path}' does not permit any properties"
                     elif isinstance(obj_additional, dict):
                         # A schema-valued additionalProperties (e.g. the
@@ -1132,6 +1174,8 @@ class ExecutionEngine:
                         # constrains every value; an empty schema ``{}`` is a
                         # harmless no-op here (see ``_permits_additional``).
                         for prop_name, prop_value in value.items():
+                            if prop_name in pattern_matched:
+                                continue  # already checked against its pattern
                             is_valid, err = _validate_value(
                                 prop_value, obj_additional, f"{path}.{prop_name}"
                             )
@@ -1148,6 +1192,8 @@ class ExecutionEngine:
 
                 for prop_name, prop_value in value.items():
                     if prop_name not in obj_properties:
+                        if prop_name in pattern_matched:
+                            continue  # already checked against its pattern
                         if _permits_additional(obj_additional):
                             if isinstance(obj_additional, dict):
                                 is_valid, err = _validate_value(

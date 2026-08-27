@@ -383,6 +383,53 @@ class TestSchemaFidelity:
         schema = build_parameters_schema(func)
         assert schema["properties"]["x"]["type"] == "integer"
 
+    def test_required_nullable_parameter_admits_null(self):
+        """``def f(x: int | None)`` has no default, so omission cannot express
+        ``None`` — the parameter was required *and* forbade the one extra
+        value its own annotation names, making it uncallable with ``None``
+        (PR #381 review)."""
+        def func(x: int | None) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        assert schema["properties"]["x"] == {"type": ["integer", "null"]}
+        assert schema["required"] == ["x"]
+
+    def test_nullable_with_a_non_none_default_admits_null(self):
+        """With ``x: int | None = 5`` an explicit null is a distinct choice,
+        not "not provided" — dropping it handed the handler ``5`` where the
+        caller asked for ``None``."""
+        def func(x: int | None = 5) -> None:
+            pass
+
+        prop = build_parameters_schema(func)["properties"]["x"]
+        assert prop["type"] == ["integer", "null"]
+        assert prop["default"] == 5
+
+    def test_nullable_defaulting_to_none_is_unchanged(self):
+        """The common case: "omitted" and "null" mean the same thing, so
+        ``required`` carries the optionality and the bare type is what
+        provider dialects handle best. Pinned so the fix above stays narrow."""
+        def func(x: int | None = None, y: list[int] | None = None) -> None:
+            pass
+
+        props = build_parameters_schema(func)["properties"]
+        assert props["x"] == {"type": "integer"}
+        assert props["y"] == {"type": "array", "items": {"type": "integer"}}
+
+    def test_required_nullable_literal_admits_null_in_its_enum(self):
+        """``enum`` is an independent constraint, so widening the type alone
+        would buy nothing."""
+        from typing import Literal
+
+        def func(mode: Literal["x", "y"] | None) -> None:
+            pass
+
+        assert build_parameters_schema(func)["properties"]["mode"] == {
+            "type": ["string", "null"],
+            "enum": ["x", "y", None],
+        }
+
     def test_multi_member_union_keeps_only_the_first_member(self, caplog):
         """A genuine ``int | str`` loses every member but the first — a real
         fidelity loss, but a deliberate one: most provider dialects reject

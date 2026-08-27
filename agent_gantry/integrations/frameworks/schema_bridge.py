@@ -570,9 +570,13 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
     # dispatch. Checked even when a ``type`` *is* present: JSON Schema
     # applies both, so gating on a missing type let ``{"type": "integer",
     # "anyOf": [...]}`` through as a bare ``int``.
-    union = _union_annotation(
-        name, prop, depth, inherited_type=json_type if isinstance(json_type, str) else None
-    )
+    # ``_effective_type`` rather than a bare ``isinstance(json_type, str)``:
+    # a *nullable* parent (``{"type": ["integer", "null"], "anyOf": [...]}``,
+    # which imported schemas produce) still names one real member type, and
+    # not inheriting it left both constraint-only branches as a bare ``Any``
+    # that matched everything. It returns ``None`` for a genuine multi-type
+    # list, where no single type applies to every branch.
+    union = _union_annotation(name, prop, depth, inherited_type=_effective_type(prop))
     if union is not None:
         return union
 

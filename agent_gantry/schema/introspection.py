@@ -155,6 +155,24 @@ def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
         # Mark as required if no default value; record JSON-safe defaults so
         # the model (and humans reading the schema) can see them. A ``None``
         # default only signals optionality — it is not a meaningful value.
+        # ``T | None`` normally maps to ``T``'s schema: for the overwhelmingly
+        # common ``x: int | None = None``, "omitted" and "null" mean the same
+        # thing, ``required`` already carries the optionality, and a bare type
+        # is what provider dialects handle best. Two cases break that
+        # equivalence and need ``null`` spelled out, or the schema forbids a
+        # value the handler explicitly accepts:
+        #
+        # - No default at all: the parameter is *required*, so omission cannot
+        #   express ``None`` and ``def f(x: int | None)`` was uncallable with
+        #   the value its own annotation names.
+        # - A non-``None`` default (``x: int | None = 5``): an explicit null is
+        #   a distinct, meaningful choice, and dropping it as "not provided"
+        #   handed the handler ``5`` where the caller asked for ``None``.
+        if _admits_none(param_type) and (
+            param.default is inspect.Parameter.empty or param.default is not None
+        ):
+            _admit_null(param_schema)
+
         if param.default is inspect.Parameter.empty:
             required.append(param_name)
         elif param.default is not None and "default" not in param_schema:
@@ -201,6 +219,32 @@ def _split_annotated(param_type: Any) -> tuple[Any, str | None]:
             None,
         )
     return base, description
+
+
+def _admits_none(param_type: Any) -> bool:
+    """Whether the annotation itself lists ``None`` as a valid value."""
+    import typing
+
+    origin = typing.get_origin(param_type)
+    if origin is not typing.Union and origin is not types.UnionType:
+        return False
+    return type(None) in typing.get_args(param_type)
+
+
+def _admit_null(schema: dict[str, Any]) -> None:
+    """Widen ``schema`` in place so ``null`` is one of its allowed values."""
+    declared = schema.get("type")
+    if isinstance(declared, str):
+        if declared != "null":
+            schema["type"] = [declared, "null"]
+    elif isinstance(declared, list):
+        if "null" not in declared:
+            schema["type"] = [*declared, "null"]
+    # ``enum`` is an independent constraint, so an optional ``Literal`` needs
+    # ``None`` listed there too or the widened type buys nothing.
+    enum_values = schema.get("enum")
+    if isinstance(enum_values, list) and enum_values and None not in enum_values:
+        schema["enum"] = [*enum_values, None]
 
 
 def _json_safe(value: Any) -> bool:

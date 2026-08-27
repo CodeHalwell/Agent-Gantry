@@ -1588,3 +1588,68 @@ async def test_valid_pattern_gated_probe_keeps_its_exemption():
     )
     assert approved.status.value == "success", approved.error
     assert approved.result == "deleted 1"
+
+
+async def test_required_nullable_parameter_accepts_null_end_to_end(engine):
+    """The schema fix is only worth anything if validation agrees with it."""
+    from agent_gantry.schema.introspection import build_parameters_schema
+
+    def handler(x: int | None) -> str:
+        return "none" if x is None else str(x)
+
+    tool = ToolDefinition(
+        name="nullable",
+        description="Required parameter whose annotation admits null",
+        parameters_schema=build_parameters_schema(handler),
+    )
+    assert (await engine._validate_arguments(tool, {"x": None}))[0] is True
+    assert (await engine._validate_arguments(tool, {"x": 1}))[0] is True
+    assert (await engine._validate_arguments(tool, {"x": "bad"}))[0] is False
+
+
+def test_explicit_null_survives_a_non_none_default():
+    """``x: int | None = 5`` — an explicit null is a distinct choice, so
+    normalization must not drop it as "not provided" and hand the handler
+    ``5`` (PR #381 review)."""
+    from agent_gantry.schema.introspection import build_parameters_schema
+
+    def handler(x: int | None = 5) -> str:
+        return "none" if x is None else str(x)
+
+    tool = ToolDefinition(
+        name="defaulted",
+        description="Optional nullable parameter with a non-None default",
+        parameters_schema=build_parameters_schema(handler),
+    )
+    assert ExecutionEngine._normalize_arguments(tool, {"x": None}) == {"x": None}
+
+
+async def test_pattern_properties_are_validated(engine):
+    """``patternProperties`` types keys by regex, which Pydantic emits for a
+    mapping with constrained keys. Ignoring it meant a matching key's value was
+    never checked — and with ``additionalProperties: false`` that every key was
+    rejected, because none counted as declared (PR #381 review)."""
+    def tool_with(prop):
+        return ToolDefinition(
+            name="t",
+            description="Mapping parameter with pattern-typed keys",
+            parameters_schema={
+                "type": "object",
+                "properties": {"p": prop},
+                "required": ["p"],
+            },
+        )
+
+    patterns = {"^n_[a-z]+$": {"type": "integer"}}
+    open_map = tool_with({"type": "object", "patternProperties": patterns})
+    assert (await engine._validate_arguments(open_map, {"p": {"n_abc": 1}}))[0] is True
+    assert (await engine._validate_arguments(open_map, {"p": {"n_abc": "x"}}))[0] is False
+    # A key no pattern matches is still free-form here — nothing forbids it.
+    assert (await engine._validate_arguments(open_map, {"p": {"other": "x"}}))[0] is True
+
+    closed = tool_with(
+        {"type": "object", "patternProperties": patterns, "additionalProperties": False}
+    )
+    # A pattern-matched key *is* declared, so it survives the closure.
+    assert (await engine._validate_arguments(closed, {"p": {"n_abc": 1}}))[0] is True
+    assert (await engine._validate_arguments(closed, {"p": {"zzz": 1}}))[0] is False

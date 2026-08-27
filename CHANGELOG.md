@@ -177,6 +177,31 @@ adapters, and the provider dialects agree with it.
   normalized too: strict mode widens the optional properties of a positional
   *object* exactly as it does anywhere else, so a `tuple[Payload, int]`
   parameter kept its nested nulls while only `items` was consulted.
+- **A meaningfully-nullable parameter forbade `null`.** `T | None` maps to
+  `T`'s schema, which is right when the default is `None` — "omitted" and
+  "null" mean the same thing there, and a bare type is what provider dialects
+  handle best. Two cases break that equivalence and now spell `null` out:
+  a parameter with *no* default (`def f(x: int | None)`) is required, so
+  omission cannot express `None` and the tool was uncallable with the value
+  its own annotation names; and one with a non-`None` default
+  (`x: int | None = 5`) treats an explicit null as a distinct choice, which
+  was being dropped as "not provided" and handing the handler `5`. An
+  optional `Literal` gains `None` in its `enum` too, since widening the type
+  alone would buy nothing. `x: int | None = None` — the common case — is
+  unchanged.
+- **`patternProperties` was never validated.** Pydantic emits it for a mapping
+  with constrained keys, and the object branch ignored it entirely: a matching
+  key's value went unchecked, and with `additionalProperties: false` *every*
+  key was rejected because none counted as declared. Matched keys are now
+  validated against their pattern's schema and treated as declared by both
+  paths. An uncompilable pattern fails open with a warning, as `pattern` does.
+- **A nullable parent type didn't reach its combinator branches.** The
+  framework args model inherited a parent's type into typeless branches only
+  when it was a bare string, so `{"type": ["integer", "null"], "anyOf":
+  [{"minimum": 10}, {"maximum": 0}]}` — a shape imported schemas produce —
+  left both branches as an unconstrained `Any` and accepted values the
+  executor rejects. A genuine multi-type list still inherits nothing, since no
+  single type applies to every branch.
 - **One `execute()` call could emit two telemetry events.** The validation
   result is computed before the security policy runs, so the rate-limit
   exemption decision is accurate — but it does not always win: a denial
