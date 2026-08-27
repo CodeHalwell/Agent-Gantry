@@ -792,3 +792,95 @@ def test_empty_oneof_branch_makes_other_branches_ambiguous():
     assert model(v="str").v == "str"
     with pytest.raises(ValidationError):
         model(v=1)
+
+
+def test_nullable_type_list_survives_below_a_field():
+    """A top-level field gets ``None`` back from ``_is_nullable`` in
+    ``_build_model``, but an array item never passes through there — so
+    ``{"type": "array", "items": {"type": ["string", "null"]}}`` became
+    ``list[str]`` and rejected a schema-valid ``[null]`` (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"tags": {"type": "array", "items": {"type": ["string", "null"]}}},
+            "required": ["tags"],
+        },
+    )
+    assert model(tags=["a", None]).tags == ["a", None]
+    with pytest.raises(ValidationError):
+        model(tags=[1])
+
+
+def test_nullable_type_list_survives_in_additional_properties():
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "counts": {
+                    "type": "object",
+                    "additionalProperties": {"type": ["integer", "null"]},
+                }
+            },
+            "required": ["counts"],
+        },
+    )
+    assert model(counts={"a": None}).counts == {"a": None}
+    with pytest.raises(ValidationError):
+        model(counts={"a": "x"})
+
+
+def test_multi_member_nullable_type_list_keeps_null():
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "v": {"type": "array", "items": {"type": ["string", "integer", "null"]}}
+            },
+            "required": ["v"],
+        },
+    )
+    assert model(v=["a", 1, None]).v == ["a", 1, None]
+
+
+def test_enum_excluding_null_still_wins_over_the_type_list():
+    """``{"type": ["string", "null"], "enum": ["a", "b"]}`` does *not* admit
+    null — the enum is an independent constraint, and the executor enforces
+    it. The recursive path must respect that as the top level does."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "v": {
+                    "type": "array",
+                    "items": {"type": ["string", "null"], "enum": ["a", "b"]},
+                }
+            },
+            "required": ["v"],
+        },
+    )
+    assert model(v=["a"]).v == ["a"]
+    with pytest.raises(ValidationError):
+        model(v=["a", None])
+
+
+def test_unique_items_separates_booleans_from_numbers():
+    """Python says ``True == 1``; JSON Schema compares types before values, so
+    ``[1, true]`` is two distinct items (PR #381 review). Shares the identity
+    helper with the executor so the two cannot drift."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"v": {"type": "array", "uniqueItems": True}},
+            "required": ["v"],
+        },
+    )
+    assert model(v=[1, True]).v == [1, True]
+    assert model(v=[[1], [True]]).v == [[1], [True]]
+    # Numbers stay equal when mathematically equal, as JSON Schema requires.
+    with pytest.raises(ValidationError):
+        model(v=[1, 1.0])

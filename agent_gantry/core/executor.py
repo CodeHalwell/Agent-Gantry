@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from agent_gantry.schema.base import json_identity_key
 from agent_gantry.schema.execution import (
     BatchToolCall,
     BatchToolResult,
@@ -108,11 +109,22 @@ def _check_constraints(value: Any, schema: dict[str, Any], path: str) -> str | N
             if len(value) > max_items:
                 return f"Parameter '{path}' must have at most {max_items} items"
         if schema.get("uniqueItems") is True:
-            seen: list[Any] = []
+            # Keyed by JSON identity, not Python equality: ``True == 1`` in
+            # Python, but JSON Schema compares types before values, so
+            # ``[1, true]`` is two distinct items rather than a duplicate.
+            # The keys are hashable, so this is a set rather than a scan.
+            seen: set[Any] = set()
+            unhashable: list[Any] = []
             for item in value:
-                if item in seen:
-                    return f"Parameter '{path}' must not contain duplicate items"
-                seen.append(item)
+                key = json_identity_key(item)
+                try:
+                    if key in seen:
+                        return f"Parameter '{path}' must not contain duplicate items"
+                    seen.add(key)
+                except TypeError:  # a non-JSON value that isn't hashable
+                    if key in unhashable:
+                        return f"Parameter '{path}' must not contain duplicate items"
+                    unhashable.append(key)
 
     return None
 

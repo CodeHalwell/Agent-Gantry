@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from agent_gantry.schema.base import json_identity_key
+
 #: Hard bound on nested-object recursion (self-referential schemas).
 _MAX_DEPTH = 8
 
@@ -139,13 +141,25 @@ def _effective_type(prop: dict[str, Any]) -> Any:
 
 
 def _reject_duplicates(value: Any) -> Any:
-    """Enforce ``uniqueItems`` on a parsed array value."""
+    """Enforce ``uniqueItems`` on a parsed array value.
+
+    Shares :func:`json_identity_key` with the executor's validator so the two
+    agree on what counts as a duplicate — otherwise this model would accept a
+    payload the engine rejects at dispatch, or vice versa.
+    """
     if isinstance(value, (list, tuple)):
-        seen: list[Any] = []
+        seen: set[Any] = set()
+        unhashable: list[Any] = []
         for item in value:
-            if item in seen:
-                raise ValueError("must not contain duplicate items")
-            seen.append(item)
+            key = json_identity_key(item)
+            try:
+                if key in seen:
+                    raise ValueError("must not contain duplicate items")
+                seen.add(key)
+            except TypeError:  # a non-JSON value that isn't hashable
+                if key in unhashable:
+                    raise ValueError("must not contain duplicate items")
+                unhashable.append(key)
     return value
 
 
@@ -450,6 +464,18 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
         non_null = [t for t in json_type if t != "null"]
         if not non_null:  # e.g. ["null"]
             return type(None)
+        # ``null`` in the list has to be carried on the annotation itself. A
+        # *top-level* field gets it back from ``_is_nullable`` in
+        # ``_build_model``, but an array item, an ``additionalProperties``
+        # value and a combinator branch never pass through there — so
+        # ``{"type": "array", "items": {"type": ["string", "null"]}}`` became
+        # ``list[str]`` and rejected a schema-valid ``[null]``.
+        # ``_is_nullable`` rather than a bare membership test, so an enum that
+        # excludes null still wins, exactly as it does at the top level.
+        admits_null = _is_nullable(prop)
+        if len(non_null) == 1 and admits_null:
+            # Re-entered with a scalar ``type``, so this cannot recurse here.
+            return _annotation(f"{name}_0", {**prop, "type": non_null[0]}, depth + 1) | None
         if len(non_null) > 1:
             # Several real member types. Collapsing to the first would reject
             # values the executor accepts (it validates against *any* listed
@@ -460,7 +486,7 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
                 annotation = annotation | _annotation(
                     f"{name}_{index}", {**prop, "type": member}, depth + 1
                 )
-            return annotation
+            return annotation | None if admits_null else annotation
         json_type = non_null[0]
 
     if json_type in _SCALARS:

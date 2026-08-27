@@ -1297,3 +1297,33 @@ async def test_uncompilable_pattern_fails_open_but_warns(engine, caplog):
     assert error is None
     assert "cannot compile" in caplog.text
     assert "'s'" in caplog.text
+
+
+def test_unique_items_separates_booleans_from_numbers():
+    """Python's ``True == 1`` made ``[1, true]`` look like a duplicate, but
+    JSON Schema compares types before values and calls them distinct
+    (PR #381 review)."""
+    tool = ToolDefinition(
+        name="uniq",
+        description="Array parameter requiring unique items",
+        parameters_schema={
+            "type": "object",
+            "properties": {"v": {"type": "array", "uniqueItems": True}},
+            "required": ["v"],
+        },
+    )
+    engine = ExecutionEngine(registry=MockToolRegistry())
+
+    async def valid(value):
+        ok, _ = await engine._validate_arguments(tool, {"v": value})
+        return ok
+
+    import asyncio
+
+    assert asyncio.run(valid([1, True])) is True
+    assert asyncio.run(valid([[1], [True]])) is True
+    assert asyncio.run(valid([{"a": 1}, {"a": True}])) is True
+    # Mathematically equal numbers are still one value, as JSON Schema says.
+    assert asyncio.run(valid([1, 1.0])) is False
+    assert asyncio.run(valid([True, True])) is False
+    assert asyncio.run(valid([{"a": 1}, {"a": 1}])) is False

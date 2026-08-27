@@ -177,6 +177,20 @@ adapters, and the provider dialects agree with it.
   normalized too: strict mode widens the optional properties of a positional
   *object* exactly as it does anywhere else, so a `tuple[Payload, int]`
   parameter kept its nested nulls while only `items` was consulted.
+- **`uniqueItems` conflated booleans with numbers.** Python says `True == 1`,
+  but JSON Schema compares types before values, so `[1, true]` is two distinct
+  items — it was being rejected as a duplicate at dispatch, and by the
+  framework args model too. Both now key items by JSON identity via one shared
+  `json_identity_key` helper, so they cannot drift; mathematically equal
+  numbers (`1` and `1.0`) stay a duplicate, as the spec requires, and the
+  keys being hashable makes the check linear rather than quadratic.
+- **A nullable `type` list was dropped below a model field.** The framework
+  args model recovered `null` for a top-level field via `_is_nullable`, but an
+  array item, an `additionalProperties` value and a combinator branch never
+  pass through there — so `{"type": "array", "items": {"type": ["string",
+  "null"]}}` became `list[str]` and rejected a schema-valid `[null]` before
+  Gantry could execute it. An `enum` that excludes `null` still wins, exactly
+  as at the top level.
 - **Signature-derived schemas lost every `enum`.** `python_signature` backs
   the frameworks that rebuild their own LLM schema from the callable rather
   than from `parameters_schema` — Semantic Kernel, AG2, and Google ADK's
