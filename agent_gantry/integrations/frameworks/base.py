@@ -263,6 +263,17 @@ class ToolSpec:
             annotation = _annotation_for_prop(prop)
             if name in required:
                 default = inspect.Parameter.empty
+                if not type_matched_defaults and schema_declares_null(prop):
+                    # Required means the value must be *present*, not that it
+                    # must be non-null. ``def f(x: int | None)`` emits
+                    # ``{"type": ["integer", "null"]}`` in ``required``, and
+                    # annotating it a bare ``int`` told Semantic Kernel and AG2
+                    # to advertise a non-nullable parameter — so the model
+                    # could not produce the null the executor accepts.
+                    # Skipped under ``type_matched_defaults``: Google ADK's
+                    # fallback path rejects union annotations outright, and a
+                    # rejected tool is worse than an under-specified one.
+                    annotation = annotation | None
             else:
                 if union_optional:
                     # `T | None` — valid at runtime on the project's floor
@@ -413,6 +424,26 @@ def _annotation_for_prop(prop: dict[str, Any]) -> Any:
         return composite
 
     json_type = prop.get("type")
+    if json_type is None:
+        # ``{"anyOf": [{"type": "integer"}, {"type": "null"}]}`` is what
+        # Pydantic and OpenAPI emit for ``int | None``, so it arrives from
+        # every imported schema and every inlined nested model. With no
+        # ``type`` to read this fell through to ``_json_type_to_python``'s
+        # ``str`` fallback and advertised a *string* for an integer parameter.
+        # The non-null branch carries the real type; nullability is added
+        # separately by the caller, which is what ``schema_declares_null``
+        # decides.
+        for key in ("anyOf", "oneOf"):
+            branches = prop.get(key)
+            if not isinstance(branches, list):
+                continue
+            for branch in branches:
+                if not isinstance(branch, dict) or not branch:
+                    continue
+                if branch.get("type") == "null":
+                    continue
+                return _annotation_for_prop(branch)
+
     if json_type == "null" or (isinstance(json_type, list) and set(json_type) == {"null"}):
         # ``_json_type_to_python`` falls back to ``str`` for anything it
         # doesn't recognize, so a parameter annotated ``None`` — which

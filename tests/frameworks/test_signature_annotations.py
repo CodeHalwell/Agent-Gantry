@@ -175,3 +175,51 @@ def test_reconstructed_string_formats_survive_into_the_signature():
     # Formats Gantry neither emits nor reconstructs stay plain strings.
     assert _annotation_for_prop({"type": "string", "format": "email"}) is str
     assert _annotation_for_prop({"type": "string"}) is str
+
+
+def test_a_required_nullable_keeps_null_in_its_annotation():
+    """Required means the value must be *present*, not that it must be
+    non-null. ``def f(x: int | None)`` emits ``{"type": ["integer", "null"]}``
+    in ``required``, and annotating it a bare ``int`` told Semantic Kernel and
+    AG2 to advertise a non-nullable parameter — so the model could not produce
+    the null the executor accepts (PR #381 review)."""
+    from agent_gantry.integrations.frameworks.base import ToolSpec
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "x": {"type": ["integer", "null"]},
+            "y": {"type": "string"},
+            "z": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+        },
+        "required": ["x", "y", "z"],
+    }
+    spec = ToolSpec.__new__(ToolSpec)
+    object.__setattr__(spec, "parameters", schema)
+
+    params = ToolSpec.python_signature(spec).parameters
+    assert params["x"].annotation == (int | None)
+    assert params["z"].annotation == (int | None)
+    # A required *non*-nullable is untouched.
+    assert params["y"].annotation is str
+
+    # Google ADK's fallback path rejects union annotations outright, so it
+    # stays under-specified rather than being handed a tool it refuses.
+    adk = ToolSpec.python_signature(spec, type_matched_defaults=True).parameters
+    assert adk["x"].annotation is int
+
+
+def test_a_combinator_only_property_resolves_to_its_real_type():
+    """``{"anyOf": [{"type": "integer"}, {"type": "null"}]}`` is what Pydantic
+    and OpenAPI emit for ``int | None``. With no ``type`` to read it fell
+    through to the ``str`` fallback and advertised a *string* for an integer
+    parameter — the same wrong-type failure as the composite enum."""
+    assert _annotation_for_prop({"anyOf": [{"type": "integer"}, {"type": "null"}]}) is int
+    assert _annotation_for_prop({"anyOf": [{"type": "null"}, {"type": "string"}]}) is str
+    assert _annotation_for_prop({"oneOf": [{"type": "integer"}, {"type": "null"}]}) is int
+    # The branch's own shape is resolved, not just its scalar type.
+    assert _annotation_for_prop(
+        {"anyOf": [{"type": "array", "items": {"type": "integer"}}, {"type": "null"}]}
+    ) == list[int]
+    # A schema constraining nothing still has nothing to say.
+    assert _annotation_for_prop({}) is str

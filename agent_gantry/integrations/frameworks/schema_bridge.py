@@ -26,6 +26,7 @@ from agent_gantry.schema.base import (
     check_json_constraints,
     json_identity_key,
     resolve_numeric_bounds,
+    schema_declares_null,
 )
 
 _logger = logging.getLogger(__name__)
@@ -202,7 +203,7 @@ def _build_model(name: str, schema: dict[str, Any], depth: int) -> Any:
         if isinstance(description, str) and description:
             field_kwargs["description"] = description
         if prop_name in required:
-            if _is_nullable(prop):
+            if schema_declares_null(prop):
                 # Required-but-nullable (``type: ["string", "null"]`` in
                 # ``required``): the field must still be supplied, but a
                 # schema-valid ``None`` must not be rejected by Pydantic.
@@ -437,22 +438,6 @@ def _with_constraints(annotation: Any, prop: dict[str, Any]) -> Any:
     if not marks:
         return annotation
     return Annotated[tuple([annotation, *marks])]
-
-
-def _is_nullable(prop: dict[str, Any]) -> bool:
-    """Whether a property schema actually admits ``null``."""
-    json_type = prop.get("type")
-    declared = json_type == "null" or (isinstance(json_type, list) and "null" in json_type)
-    if not declared:
-        return False
-    # ``enum`` is an independent constraint: ``{"type": ["string", "null"],
-    # "enum": ["a", "b"]}`` does *not* admit null, and the executor enforces
-    # that. Widening the field to accept ``None`` here would let a call pass
-    # the framework's own validation only to be rejected at dispatch.
-    enum_values = prop.get("enum")
-    if isinstance(enum_values, list) and enum_values and None not in enum_values:
-        return False
-    return True
 
 
 def _combinator_parts(
@@ -840,7 +825,7 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
         # restores it, and is a no-op for branches that already inherited it.
         base = _PARENT_KINDS.get(parent_type) if isinstance(parent_type, str) else None
         if base is not None:
-            if _is_nullable(prop):
+            if schema_declares_null(prop):
                 # The parent admits null, so the intersection must too, or it
                 # would reject the very value the type list declares.
                 base = base | None
@@ -858,14 +843,15 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
         if not non_null:  # e.g. ["null"]
             return type(None)
         # ``null`` in the list has to be carried on the annotation itself. A
-        # *top-level* field gets it back from ``_is_nullable`` in
+        # *top-level* field gets it back from ``schema_declares_null`` in
         # ``_build_model``, but an array item, an ``additionalProperties``
         # value and a combinator branch never pass through there — so
         # ``{"type": "array", "items": {"type": ["string", "null"]}}`` became
         # ``list[str]`` and rejected a schema-valid ``[null]``.
-        # ``_is_nullable`` rather than a bare membership test, so an enum that
-        # excludes null still wins, exactly as it does at the top level.
-        admits_null = _is_nullable(prop)
+        # ``schema_declares_null`` rather than a bare membership test, so an
+        # enum or const that excludes null still wins, exactly as it does
+        # at the top level.
+        admits_null = schema_declares_null(prop)
         if len(non_null) == 1 and admits_null:
             # Re-entered with a scalar ``type``, so this cannot recurse here.
             return _annotation(f"{name}_0", {**prop, "type": non_null[0]}, depth + 1) | None

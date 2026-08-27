@@ -752,6 +752,24 @@ adapters, and the provider dialects agree with it.
   them as a free-form string and the model could answer with one the handler
   can't take. The CrewAI/LlamaIndex bridge had the same gap. Both now read one
   shared `RECONSTRUCTED_STRING_FORMATS` table.
+- **A required nullable parameter was advertised as non-nullable.** Required
+  means the value must be *present*, not that it must be non-null — but only
+  *optional* properties were unioned with `None`, so `def f(x: int | None)`
+  (now emitted as `{"type": ["integer", "null"]}` in `required`) reached
+  Semantic Kernel and AG2 as a bare `int` and the model could not produce the
+  null the executor accepts. Google ADK's fallback path is left alone, since
+  it rejects union annotations outright.
+- **A combinator-only property was advertised as a *string*.**
+  `{"anyOf": [{"type": "integer"}, {"type": "null"}]}` is what Pydantic and
+  OpenAPI emit for `int | None`, so it arrives from every imported schema and
+  inlined nested model — and with no `type` to read, the signature path fell
+  through to its `str` fallback. The non-null branch now supplies the type.
+- **The framework bridge widened a required `const` to `None`.** Its private
+  nullability check tested `enum` but not `const`, so
+  `{"type": ["string", "null"], "const": "fixed"}` in `required` accepted
+  `null` in the CrewAI/LlamaIndex model while the executor rejected it. That
+  check was a weaker duplicate of the shared `schema_declares_null` and has
+  been deleted in favour of it.
 
 ### Performance
 

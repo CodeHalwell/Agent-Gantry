@@ -1497,3 +1497,51 @@ def test_the_bridge_types_reconstructed_formats_like_the_executor():
         },
     )
     assert loose(who="not-an-email").who == "not-an-email"
+
+
+def test_a_required_nullable_const_is_not_widened_to_none():
+    """``_is_nullable`` checked ``enum`` but not ``const``, so a required
+    ``{"type": ["string", "null"], "const": "fixed"}`` was unioned with
+    ``None`` — accepted by the CrewAI/LlamaIndex model, rejected by the
+    executor, which applies the constant independently of the type
+    (PR #381 review). It now asks the same shared `schema_declares_null` the
+    executor asks."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"v": {"type": ["string", "null"], "const": "fixed"}},
+            "required": ["v"],
+        },
+    )
+    assert model(v="fixed") is not None
+    for bad in (None, "other"):
+        with pytest.raises(ValidationError):
+            model(v=bad)
+
+
+def test_a_genuinely_nullable_required_field_still_takes_none():
+    """The other direction, so the fix above can't quietly close a field the
+    schema means to leave open."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"v": {"type": ["string", "null"]}},
+            "required": ["v"],
+        },
+    )
+    assert model(v=None).v is None
+    assert model(v="x").v == "x"
+
+    # And an enum excluding null still wins, as it did before.
+    enum_model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"v": {"type": ["string", "null"], "enum": ["a", "b"]}},
+            "required": ["v"],
+        },
+    )
+    with pytest.raises(ValidationError):
+        enum_model(v=None)
