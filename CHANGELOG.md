@@ -964,6 +964,18 @@ adapters, and the provider dialects agree with it.
   introspect in a way this suite can't exercise against their real schema
   derivation, so it is left as a tracked gap rather than an untested change.
 
+### Tests
+
+- **A concurrency benchmark asserts overlap rather than a wall-clock ratio.**
+  `test_concurrent_retrieval_throughput` exists to prove the embedder does not
+  block the event loop, and used `speedup > 1.2x` as a proxy. The proxy is what
+  broke on a contended CI runner: identical code measured 18.9x locally and
+  0.97x on a runner taking 7m27s for a suite that runs in 90s, because a ratio
+  between two wall-clock spans measures the machine once CPU is scarce. The
+  mock embedder now records how many embeds are in flight, and the test asserts
+  they overlapped — the property itself, immune to how slow the runner is, and
+  still failing on a genuinely blocking embedder.
+
 ### CI
 
 - **The weekly drift-check now tests what it claims.** The semantic-kernel
