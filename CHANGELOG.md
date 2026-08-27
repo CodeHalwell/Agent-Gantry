@@ -206,8 +206,8 @@ adapters, and the provider dialects agree with it.
   scalars, `list`, `dict`, `TypedDict` and `Any` already arrive as themselves
   and are passed through byte-for-byte — and a conversion failure passes the
   original value through, since validation has already run against the
-  canonical schema. This closes the "Known limitation" recorded earlier in
-  this release.
+  canonical schema. This was carried as a known limitation through most of
+  this release's development and is now closed.
 - **`schema_declares_null` ignored an `enum` that forbids null.** An optional
   `Literal` that strict mode pre-widened arrives as
   `{"type": ["string", "null"], "enum": ["fast", "slow"]}` — nullable by its
