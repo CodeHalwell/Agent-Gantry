@@ -1400,3 +1400,38 @@ async def test_denial_still_outranks_a_validation_error():
         )
     )
     assert result.status.value == "permission_denied", result.status
+
+
+async def test_enum_and_const_compare_by_json_identity(engine):
+    """``True == 1`` in Python, so a boolean satisfied a numeric
+    ``Literal[1, 1.5]`` — which emits an ``enum`` with no single ``type``,
+    leaving membership the only constraint. A tuple-valued member likewise
+    never matched the array a provider actually returns (PR #381 review)."""
+    def tool_with(prop):
+        return ToolDefinition(
+            name="t",
+            description="Parameter constrained by enum or const",
+            parameters_schema={
+                "type": "object",
+                "properties": {"p": prop},
+                "required": ["p"],
+            },
+        )
+
+    numeric = tool_with({"enum": [1, 1.5]})
+    assert (await engine._validate_arguments(numeric, {"p": 1}))[0] is True
+    assert (await engine._validate_arguments(numeric, {"p": True}))[0] is False
+
+    const = tool_with({"const": 1})
+    assert (await engine._validate_arguments(const, {"p": 1}))[0] is True
+    assert (await engine._validate_arguments(const, {"p": True}))[0] is False
+
+    # A boolean enum still accepts booleans.
+    boolean = tool_with({"enum": [True, False]})
+    assert (await engine._validate_arguments(boolean, {"p": True}))[0] is True
+    assert (await engine._validate_arguments(boolean, {"p": 1}))[0] is False
+
+    # A composite member matches the array a provider sends back.
+    composite = tool_with({"enum": [[0, 0], [1, 1]]})
+    assert (await engine._validate_arguments(composite, {"p": [0, 0]}))[0] is True
+    assert (await engine._validate_arguments(composite, {"p": [2, 2]}))[0] is False

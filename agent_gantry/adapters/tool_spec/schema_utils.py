@@ -103,13 +103,19 @@ def _make_nullable(subschema: dict[str, Any]) -> None:
             branches.append({"type": "null"})
         return
 
-    if "oneOf" in subschema and isinstance(subschema["oneOf"], list):
-        # Never appended to, sibling assertions or not: ``oneOf`` demands
-        # *exactly* one match, and null passes most constraint-only branches
-        # vacuously (``{"minimum": 10}`` says nothing about null), so an added
-        # null branch would make null match several and fail.
-        _wrap_in_nullable_anyof(subschema)
-        return
+    for combinator in ("oneOf", "allOf"):
+        if combinator in subschema and isinstance(subschema[combinator], list):
+            # Neither is ever appended to or widened around. ``oneOf`` demands
+            # *exactly* one match, and null passes most constraint-only
+            # branches vacuously (``{"minimum": 10}`` says nothing about
+            # null), so an added null branch would make null match several and
+            # fail. ``allOf`` intersects, so *every* branch must admit null —
+            # widening only the outer ``type`` left ``{"type": "string",
+            # "allOf": [{"const": "fixed"}]}`` required with a const branch
+            # that still rejects it. Wrapping the whole schema is correct for
+            # both, and for the cases where widening would also have worked.
+            _wrap_in_nullable_anyof(subschema)
+            return
 
     if "const" in subschema:
         # ``const`` is an independent constraint that no ``type`` widening can

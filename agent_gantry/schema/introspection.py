@@ -150,7 +150,7 @@ def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
                 param.default.value if isinstance(param.default, enum.Enum) else param.default
             )
             if _json_safe(default):
-                param_schema["default"] = default
+                param_schema["default"] = _json_canonical(default)
 
         properties[param_name] = param_schema
 
@@ -207,6 +207,24 @@ def _json_safe(value: Any) -> bool:
     return False
 
 
+def _json_canonical(value: Any) -> Any:
+    """Rewrite a JSON-safe value into the exact shape JSON round-trips to.
+
+    A Python ``tuple`` is JSON-safe but serializes to an *array*, so storing
+    one verbatim leaves the canonical schema holding a value no provider will
+    ever send back: an ``Enum`` member valued ``(0, 0)`` was advertised as
+    ``[0, 0]`` on the wire, and the executor then compared the returned list
+    against the stored tuple and rejected every valid call. Applied to
+    ``enum`` members and defaults alike so the stored schema is the same
+    document the provider sees.
+    """
+    if isinstance(value, (list, tuple)):
+        return [_json_canonical(item) for item in value]
+    if isinstance(value, dict):
+        return {k: _json_canonical(v) for k, v in value.items()}
+    return value
+
+
 # Scalar types with a direct JSON-Schema mapping. ``bool`` must be checked
 # before ``int`` at runtime (bool subclasses int), but dict lookup is exact so
 # ordering here is only cosmetic.
@@ -248,7 +266,7 @@ def _enum_schema(values: tuple[Any, ...]) -> dict[str, Any]:
             kinds.add("other")
     if len(kinds) == 1 and "other" not in kinds:
         schema["type"] = next(iter(kinds))
-    schema["enum"] = list(values)
+    schema["enum"] = [_json_canonical(v) for v in values]
     return schema
 
 

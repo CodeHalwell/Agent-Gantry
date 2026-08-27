@@ -925,3 +925,93 @@ def test_anyof_alone_is_unaffected_by_the_oneof_pass():
     assert model(v=None).v is None
     with pytest.raises(ValidationError):
         model(v="x")
+
+
+def test_allof_branches_are_all_enforced():
+    """``allOf`` was silently ignored, so an ``allOf``-only property became a
+    bare ``Any`` that accepted values the executor rejects. There's no faithful
+    Python annotation for an intersection, so each branch is checked against
+    the caller's raw value instead (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "n": {"allOf": [{"type": "integer", "minimum": 1}, {"maximum": 3}]}
+            },
+            "required": ["n"],
+        },
+    )
+    assert model(n=2).n == 2
+    for bad in (0, 99, "x"):
+        with pytest.raises(ValidationError):
+            model(n=bad)
+
+
+def test_allof_pushes_a_sibling_branch_type_into_typeless_branches():
+    """``allOf`` intersects, so a type declared by *any* branch applies to the
+    value as a whole. Without that, ``{"maximum": 3}`` stayed a bare ``Any``
+    and the upper bound went unenforced. Union combinators can't do this —
+    there each branch stands alone."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"n": {"type": "integer", "allOf": [{"minimum": 10}]}},
+            "required": ["n"],
+        },
+    )
+    assert model(n=10).n == 10
+    with pytest.raises(ValidationError):
+        model(n=5)
+
+
+def test_allof_carries_const_branches():
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"m": {"allOf": [{"type": "string"}, {"const": "fixed"}]}},
+            "required": ["m"],
+        },
+    )
+    assert model(m="fixed").m == "fixed"
+    with pytest.raises(ValidationError):
+        model(m="other")
+
+
+def test_numeric_literal_rejects_a_boolean():
+    """Pydantic matches ``True`` against ``Literal[1, 1.5]`` because Python
+    says ``True == 1``, but JSON Schema compares types before values and the
+    executor's ``enum`` check agrees with the spec (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"v": {"enum": [1, 1.5]}},
+            "required": ["v"],
+        },
+    )
+    assert model(v=1).v == 1
+    with pytest.raises(ValidationError):
+        model(v=True)
+
+
+def test_boolean_enum_still_accepts_booleans():
+    model = pydantic_model_from_schema(
+        "Args",
+        {"type": "object", "properties": {"v": {"enum": [True, False]}}, "required": ["v"]},
+    )
+    assert model(v=True).v is True
+
+
+def test_string_enum_keeps_a_bare_literal():
+    """The identity guard is attached only where bool/number confusion is
+    possible, so a plain string enum pays nothing for it."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {"type": "object", "properties": {"v": {"enum": ["a", "b"]}}, "required": ["v"]},
+    )
+    assert model(v="a").v == "a"
+    with pytest.raises(ValidationError):
+        model(v="c")

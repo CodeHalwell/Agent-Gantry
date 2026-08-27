@@ -1021,15 +1021,25 @@ class ExecutionEngine:
                 article = "an" if expected_type[0] in "aoiue" else "a"
                 return False, f"Parameter '{path}' must be {article} {expected_type}"
 
+            # Membership and equality both go through JSON identity rather
+            # than Python's ``==``. ``True == 1`` in Python, so a boolean
+            # satisfied a numeric ``Literal[1, 1.5]`` — which emits an ``enum``
+            # with no single ``type``, leaving this the only constraint — and
+            # a tuple-valued member never matched the array a provider
+            # actually returns.
             enum_values = val_schema.get("enum")
-            if isinstance(enum_values, list) and enum_values and value not in enum_values:
-                return False, f"Parameter '{path}' must be one of {enum_values}"
+            if isinstance(enum_values, list) and enum_values:
+                value_key = json_identity_key(value)
+                if all(value_key != json_identity_key(v) for v in enum_values):
+                    return False, f"Parameter '{path}' must be one of {enum_values}"
 
             # ``const`` is a one-value ``enum``. Pydantic emits it for a
             # single-value ``Literal``, so it appears inside the nested
             # model/TypedDict schemas introspection now inlines — checking
             # only ``enum`` let those values through unvalidated.
-            if "const" in val_schema and value != val_schema["const"]:
+            if "const" in val_schema and json_identity_key(value) != json_identity_key(
+                val_schema["const"]
+            ):
                 return False, f"Parameter '{path}' must be {val_schema['const']!r}"
 
             # Constraint keywords. Pydantic emits these for any constrained

@@ -593,6 +593,38 @@ def test_non_json_literal_values_degrade_to_string_schema():
     assert "enum" not in schema["properties"]["marker"]
 
 
+class TestCompositeEnumValues:
+    """A Python ``tuple`` is JSON-safe but serializes to an *array*, so
+    storing one verbatim left the canonical schema holding a value no provider
+    would ever send back (PR #381 review)."""
+
+    def test_composite_enum_members_are_stored_as_arrays(self):
+        import enum
+
+        class Point(enum.Enum):
+            ORIGIN = (0, 0)
+            UNIT = (1, 1)
+
+        def func(pt: Point = Point.ORIGIN) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        prop = schema["properties"]["pt"]
+        assert prop["enum"] == [[0, 0], [1, 1]]
+        assert prop["default"] == [0, 0]
+        # The stored schema is the same document the provider sees, so the
+        # executor compares like with like.
+        assert json.loads(json.dumps(schema)) == schema
+
+    def test_tuple_defaults_are_stored_as_arrays(self):
+        def func(box: tuple[int, int] = (1, 2)) -> None:
+            pass
+
+        schema = build_parameters_schema(func)
+        assert schema["properties"]["box"]["default"] == [1, 2]
+        assert json.loads(json.dumps(schema)) == schema
+
+
 class TestStringFormats:
     """``build_parameters_schema`` emits a JSON-Schema ``format`` for the
     stdlib scalar types providers understand, so a model gets the shape of the

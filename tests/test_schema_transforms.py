@@ -386,6 +386,24 @@ class TestUnsupportedStrictPaths:
             ]
         }
 
+    def test_allof_is_wrapped_rather_than_type_widened(self) -> None:
+        """``allOf`` intersects, so *every* branch must admit null. Widening
+        only the outer ``type`` left a const branch that still rejects it, and
+        strict mode makes the property required (PR #381 review)."""
+        out = strict_json_schema(
+            {
+                "type": "object",
+                "properties": {"m": {"type": "string", "allOf": [{"const": "fixed"}]}},
+                "required": [],
+            }
+        )
+        assert out["properties"]["m"] == {
+            "anyOf": [
+                {"type": "string", "allOf": [{"const": "fixed"}]},
+                {"type": "null"},
+            ]
+        }
+
     def test_single_type_enum_widening_is_unchanged(self) -> None:
         out = strict_json_schema(
             {

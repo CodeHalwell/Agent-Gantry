@@ -163,6 +163,64 @@ def _reject_duplicates(value: Any) -> Any:
     return value
 
 
+def _literal_annotation(values: list[Any]) -> Any:
+    """A ``Literal`` over ``values``, guarded by JSON identity where needed.
+
+    Pydantic matches ``True`` against a ``Literal[1, 1.5]`` member because
+    Python says ``True == 1``, but JSON Schema compares types before values
+    and the executor's ``enum`` check now agrees with the spec. The guard is
+    attached only when the members are numeric or boolean — the only place
+    the two can be confused — so a plain string enum keeps a bare ``Literal``.
+    """
+    from typing import Annotated
+
+    from pydantic import BeforeValidator
+
+    literal = Literal[tuple(values)]
+    if not any(isinstance(v, (bool, int, float)) for v in values):
+        return literal
+    member_keys = [json_identity_key(v) for v in values]
+
+    def _by_identity(value: Any) -> Any:
+        if json_identity_key(value) not in member_keys:
+            raise ValueError(f"is not one of {values}")
+        return value
+
+    return Annotated[literal, BeforeValidator(_by_identity)]
+
+
+def _with_intersection(annotation: Any, parts: list[Any]) -> Any:
+    """Attach an "every branch matches" check for ``allOf``.
+
+    ``allOf`` has no faithful Python annotation — intersecting constraints
+    isn't expressible — but silently ignoring it left an ``allOf``-only
+    property as a bare ``Any`` that accepted values the executor rejects.
+    Checking each branch against the caller's raw value gets the semantics
+    exactly, whatever the annotation underneath can express.
+    """
+    from typing import Annotated
+
+    from pydantic import BaseModel, BeforeValidator, TypeAdapter
+
+    # Strict for scalars, lax for model branches — same reasoning as
+    # ``_with_exclusivity``: a JSON object arrives as a mapping, and strict
+    # mode would reject every dict.
+    checks = [
+        (TypeAdapter(part), not (isinstance(part, type) and issubclass(part, BaseModel)))
+        for part in parts
+    ]
+
+    def _all_match(value: Any) -> Any:
+        for index, (adapter, strict) in enumerate(checks):
+            try:
+                adapter.validate_python(value, strict=strict)
+            except Exception as exc:  # noqa: BLE001 - reported as a branch miss
+                raise ValueError(f"fails allOf branch {index}: {exc}") from None
+        return value
+
+    return Annotated[annotation, BeforeValidator(_all_match)]
+
+
 def _with_constraints(annotation: Any, prop: dict[str, Any]) -> Any:
     """Fold the schema's constraint keywords into ``annotation``.
 
@@ -305,26 +363,54 @@ def _union_annotation(
     rejected. The union comes from ``anyOf`` (the narrower annotation) and
     ``oneOf`` contributes its exactly-one check on top.
 
-    ``allOf`` is deliberately not handled: intersecting constraints has no
-    faithful Python annotation, and a wrong one is worse than the
-    unconstrained fallback.
+    ``allOf`` has no faithful Python annotation either — intersecting
+    constraints isn't expressible — but ignoring it left an ``allOf``-only
+    property as a bare ``Any`` that accepted values the executor rejects. Its
+    branches are checked individually instead, against the caller's raw value.
     """
     annotation: Any = None
     oneof_parts: list[Any] | None = None
-    for key in ("anyOf", "oneOf"):
+    allof_parts: list[Any] | None = None
+    for key in ("anyOf", "oneOf", "allOf"):
         branches = prop.get(key)
         if not isinstance(branches, list) or not branches:
             continue
+        branch_type = inherited_type
+        if key == "allOf" and branch_type is None:
+            # ``allOf`` intersects, so a type declared by *any* branch applies
+            # to the value as a whole — and therefore to the branches that
+            # declare none. Without this, ``{"allOf": [{"type": "integer",
+            # "minimum": 1}, {"maximum": 3}]}`` left the second branch as a
+            # bare ``Any`` that matched everything, so the upper bound went
+            # unenforced. (Union combinators can't do this: there each branch
+            # stands alone.)
+            branch_type = next(
+                (
+                    b["type"]
+                    for b in branches
+                    if isinstance(b, dict) and isinstance(b.get("type"), str)
+                ),
+                None,
+            )
         parts, has_empty = _combinator_parts(
-            f"{name}_{key}" if "oneOf" in prop and "anyOf" in prop else name,
+            f"{name}_{key}" if sum(k in prop for k in ("anyOf", "oneOf", "allOf")) > 1 else name,
             branches,
             depth,
-            inherited_type,
+            branch_type,
         )
         if not parts:
             continue
         if key == "oneOf":
             oneof_parts = parts
+        if key == "allOf":
+            allof_parts = parts
+            # An intersection is not a union: the branches must all hold, so
+            # they never contribute a union member. The base annotation is the
+            # first branch that expresses a real type (the others ride on the
+            # check below), and ``Any`` when none does.
+            if annotation is None:
+                annotation = next((p for p in parts if p is not Any), Any)
+            continue
         if has_empty:
             # One branch matches everything, so the union constrains nothing.
             # For ``oneOf`` that is not the end of it: the exclusivity check
@@ -339,6 +425,8 @@ def _union_annotation(
 
     if annotation is None:
         return None
+    if allof_parts:
+        annotation = _with_intersection(annotation, allof_parts)
     if oneof_parts is not None and len(oneof_parts) > 1:
         # A Python union is ``anyOf``: it accepts a value matching several
         # branches, which ``oneOf`` forbids (``1`` satisfies both ``number``
@@ -447,7 +535,7 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
         # ``Literal`` emits. Excluding it dropped the constraint entirely and
         # advertised an unconstrained ``float``.
         if isinstance(const_value, (str, int, bool, float)) or const_value is None:
-            return Literal[const_value]
+            return _literal_annotation([const_value])
         # Exotic const value — fall back to the declared/base type.
 
     enum_values = prop.get("enum")
@@ -462,7 +550,7 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
         if all(
             isinstance(v, (str, int, bool, float)) or v is None for v in enum_values
         ):
-            return Literal[tuple(enum_values)]
+            return _literal_annotation(enum_values)
         # Enum of exotic values — fall back to the declared/base type.
 
     json_type = prop.get("type")

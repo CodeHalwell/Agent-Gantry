@@ -177,6 +177,31 @@ adapters, and the provider dialects agree with it.
   normalized too: strict mode widens the optional properties of a positional
   *object* exactly as it does anywhere else, so a `tuple[Payload, int]`
   parameter kept its nested nulls while only `items` was consulted.
+- **`enum` and `const` compared with Python equality.** `True == 1` in Python,
+  so a boolean satisfied a numeric `Literal[1, 1.5]` — which emits an `enum`
+  with no single `type`, leaving membership the only constraint — and reached
+  the handler. Both now compare by JSON identity, the same helper the
+  `uniqueItems` check uses, in the executor and the framework args model
+  alike. A boolean enum still accepts booleans; a string enum keeps a bare
+  `Literal` with no guard attached.
+- **A composite `Enum` value was stored as a Python tuple.** A member valued
+  `(0, 0)` is JSON-safe, but a tuple *serializes* to an array — so the
+  canonical schema held a value no provider would ever send back, and the
+  executor compared the returned `[0, 0]` against the stored `(0, 0)` and
+  rejected every valid call. Enum members and defaults are now canonicalized,
+  so the stored schema is byte-identical to the document the provider sees.
+- **`allOf` was silently ignored in framework args models.** An `allOf`-only
+  property became a bare `Any` that accepted values the executor rejects, and
+  a typed one kept only its bare type. There is no faithful Python annotation
+  for an intersection, so each branch is now checked against the caller's raw
+  value. A type declared by any branch is pushed into the branches that
+  declare none — `{"allOf": [{"type": "integer", "minimum": 1}, {"maximum":
+  3}]}` enforces both bounds rather than leaving the second unconstrained.
+- **An `allOf` beside a `type` didn't become nullable under strict mode.**
+  `allOf` intersects, so *every* branch must admit null; widening only the
+  outer `type` left `{"type": "string", "allOf": [{"const": "fixed"}]}`
+  required with a const branch that still rejects it. It is wrapped whole now,
+  as `oneOf` already was.
 - **A schema carrying both `anyOf` and `oneOf` lost the `oneOf`.** They are
   independent assertions a value must satisfy together, but the framework
   args-model translation returned on whichever it found first — so `oneOf`'s
