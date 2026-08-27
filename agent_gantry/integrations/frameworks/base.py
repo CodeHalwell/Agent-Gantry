@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
+from agent_gantry.schema.base import schema_declares_null
 from agent_gantry.schema.execution import ExecutionStatus, ToolCall
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 
@@ -136,10 +137,24 @@ class ToolSpec:
         but the tool's JSON schema types those params (e.g. ``string``) and the
         executor rejects ``None``. Dropping them lets the tool's own default
         apply — ``None`` for a required param is kept so the error stays clear.
+
+        A ``None`` the schema *declares* is kept too, and for the same reason
+        the executor's own normalization keeps it: ``x: int | None = 5``
+        advertises ``["integer", "null"]``, so an explicit null is a distinct
+        choice rather than "not provided", and dropping it handed the handler
+        ``5`` where the caller asked for ``None``. Both paths share one
+        predicate so they cannot disagree about which nulls are meaningful.
         """
         arguments = _coerce_arguments(args, kwargs)
         required = set(self.parameters.get("required") or [])
-        arguments = {k: v for k, v in arguments.items() if v is not None or k in required}
+        properties = self.parameters.get("properties") or {}
+        arguments = {
+            k: v
+            for k, v in arguments.items()
+            if v is not None
+            or k in required
+            or schema_declares_null(properties.get(k))
+        }
         # Pass the namespace: selection resolved this spec to one specific
         # tool, and a bare-name execute would prefer ``default.<name>`` if
         # another namespace registers the same name.

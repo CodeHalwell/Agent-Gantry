@@ -17,7 +17,44 @@ __all__ = [
     "json_identity_key",
     "reject_newlines",
     "resolve_numeric_bounds",
+    "schema_declares_null",
 ]
+
+
+def schema_declares_null(prop: Any) -> bool:
+    """Whether a property schema gives ``null`` a declared, meaningful value.
+
+    ``null`` reaches a schema two ways: a ``type`` that names it (``"null"``
+    or a list containing it) and a combinator branch —
+    ``{"anyOf": [{"type": "string"}, {"type": "null"}]}``, which is what
+    Pydantic and OpenAPI emit for ``str | None``. Checking only ``type`` would
+    miss the far more common of the two.
+
+    ``allOf`` intersects its branches, so the combined schema admits null only
+    when *every* branch does; ``any()`` there would call
+    ``[{"type": ["string", "null"]}, {"type": "string"}]`` nullable and
+    preserve a null the schema actually forbids.
+
+    Shared between the executor's argument normalization and the framework
+    ``ToolSpec`` path: both decide whether an explicit ``null`` is a value the
+    caller meant or strict mode's "not provided" placeholder, and they must
+    decide it identically.
+    """
+    if not isinstance(prop, dict):
+        return False
+    prop_type = prop.get("type")
+    if prop_type == "null" or (isinstance(prop_type, list) and "null" in prop_type):
+        return True
+    for key in ("anyOf", "oneOf"):
+        branches = prop.get(key)
+        if isinstance(branches, list) and any(schema_declares_null(b) for b in branches):
+            return True
+    all_of = prop.get("allOf")
+    if isinstance(all_of, list):
+        usable = [b for b in all_of if isinstance(b, dict) and b]
+        if usable and all(schema_declares_null(b) for b in usable):
+            return True
+    return False
 
 
 def _numeric(value: Any) -> float | int | None:

@@ -195,6 +195,25 @@ adapters, and the provider dialects agree with it.
   key was rejected because none counted as declared. Matched keys are now
   validated against their pattern's schema and treated as declared by both
   paths. An uncompilable pattern fails open with a warning, as `pattern` does.
+- **`ToolSpec.ainvoke` dropped a `null` the schema declares.** It strips
+  `None` for optional parameters because frameworks materialize every unset
+  optional field that way — but once `x: int | None = 5` advertises
+  `["integer", "null"]`, an explicit null is a distinct choice, and dropping it
+  handed the handler `5` where the caller asked for `None`. The executor's own
+  normalization already made that distinction; both paths now share one
+  `schema_declares_null` predicate so they cannot disagree.
+- **`patternProperties` was ignored in framework args models, in both
+  directions.** An open mapping became an unrestricted `dict` that accepted
+  values the executor rejects; worse, one with `additionalProperties: false`
+  built a model permitting *no* keys, so a valid matching key was rejected and
+  the call was impossible. Matching keys are now validated against their
+  pattern's schema, and a key matching none is rejected only when the object is
+  closed.
+- **A composite `enum` lost its constraint in framework args models.** A
+  tuple-valued `Enum` canonicalizes to `[[0, 0], [1, 1]]`; those aren't valid
+  `Literal` members and such an enum has no inferred `type`, so the annotation
+  fell through to an unconstrained `Any`. Membership is now checked directly,
+  by JSON identity, the same way the executor checks it.
 - **draft-04's boolean exclusivity was ignored.** Modern JSON Schema gives
   `exclusiveMinimum` a *number*; draft-04 — which is what OpenAPI 3.0 emits,
   and OpenAPI/MCP import is a supported way to register a tool — gives it a

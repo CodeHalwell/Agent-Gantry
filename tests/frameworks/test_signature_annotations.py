@@ -98,3 +98,42 @@ def test_nullable_scalar_keeps_its_real_type():
     """``["string", "null"]`` still annotates as the non-null member — the
     signature's optionality is carried by its default, not the annotation."""
     assert _annotation_for_prop({"type": ["string", "null"]}) is str
+
+
+async def test_ainvoke_keeps_a_null_the_schema_declares():
+    """``ToolSpec.ainvoke`` drops ``None`` for optional parameters because
+    frameworks materialize unset fields that way — but ``x: int | None = 5``
+    advertises ``["integer", "null"]``, so an explicit null is a distinct
+    choice. Dropping it handed the handler ``5`` where the caller asked for
+    ``None`` (PR #381 review)."""
+    from agent_gantry import AgentGantry
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from agent_gantry.integrations.frameworks.base import GantryToolset
+
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @gantry.register(tags=["demo"])
+    def set_value(x: int | None = 5) -> str:
+        """Set a configured value to the given number."""
+        return "none" if x is None else f"got {x}"
+
+    @gantry.register(tags=["demo"])
+    def label_it(note: str = "hi") -> str:
+        """Attach a textual label to the current item."""
+        return f"label:{note}"
+
+    await gantry.sync()
+    specs = await GantryToolset(gantry).select("set a configured value", limit=2)
+    by_name = {s.name: s for s in specs}
+    assert "set_value" in by_name, list(by_name)
+
+    spec = by_name["set_value"]
+    assert spec.parameters["properties"]["x"]["type"] == ["integer", "null"]
+    # The explicit null survives; omission still lets the default apply.
+    assert await spec.ainvoke(x=None) == "none"
+    assert await spec.ainvoke() == "got 5"
+
+    # A parameter whose schema does *not* declare null still has it dropped,
+    # which is what stops frameworks' synthetic Nones failing validation.
+    if "label_it" in by_name:
+        assert await by_name["label_it"].ainvoke(note=None) == "label:hi"

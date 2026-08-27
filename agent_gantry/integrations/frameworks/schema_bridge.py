@@ -83,6 +83,14 @@ def _permits_additional(schema: dict[str, Any]) -> bool:
     Absent being strict is Gantry's own deliberate default, stricter than
     the JSON Schema default.
     """
+    patterns = schema.get("patternProperties")
+    if isinstance(patterns, dict) and patterns:
+        # A key a pattern matches *is* declared — the executor treats it that
+        # way — so extras must be admitted or every valid pattern key would be
+        # rejected. The values then go unchecked in this shape (declared
+        # properties *and* patterns together), which the executor still
+        # catches; rejecting valid calls would be the worse trade.
+        return True
     additional = schema.get("additionalProperties")
     return additional is True or isinstance(additional, dict)
 
@@ -552,6 +560,84 @@ def _positional_array(name: str, prefix_items: list[Any], items: Any, depth: int
     return Annotated[list, BeforeValidator(_by_position)]
 
 
+def _enum_membership(values: list[Any]) -> Any:
+    """Membership check for an enum whose members can't be ``Literal`` members.
+
+    A tuple-valued ``Enum`` canonicalizes to ``[[0, 0], [1, 1]]``, and a list
+    is not a valid ``Literal`` member. Such an enum also has no inferred
+    ``type``, so falling through advertised an unconstrained ``Any`` while the
+    executor enforces membership — the framework accepted anything the model
+    invented. Keyed by JSON identity, the same helper the executor's ``enum``
+    check uses, so the two agree on what counts as a member.
+    """
+    from typing import Annotated
+
+    from pydantic import BeforeValidator
+
+    member_keys = [json_identity_key(v) for v in values]
+
+    def _is_member(value: Any) -> Any:
+        if json_identity_key(value) not in member_keys:
+            raise ValueError(f"is not one of {values}")
+        return value
+
+    return Annotated[Any, BeforeValidator(_is_member)]
+
+
+def _with_pattern_properties(
+    name: str, patterns: dict[str, Any], closed: bool, depth: int
+) -> Any:
+    """Annotation for a mapping whose keys are typed by regex.
+
+    Pydantic emits ``patternProperties`` for a mapping with constrained keys,
+    and there is no Python annotation for "keys matching this regex have this
+    value type" — but ignoring it was wrong in *both* directions: an open
+    mapping accepted values the executor rejects, and one with
+    ``additionalProperties: false`` built an empty closed model that rejected
+    the valid matching keys the executor accepts. The second is the worse
+    error, since it makes a correct call impossible.
+    """
+    import re
+    from typing import Annotated
+
+    from pydantic import BeforeValidator, TypeAdapter
+
+    compiled: list[tuple[Any, Any]] = []
+    for index, (regex, subschema) in enumerate(patterns.items()):
+        if not isinstance(regex, str):
+            continue
+        try:
+            matcher = re.compile(regex)
+        except re.error:
+            # Fail open, as the executor does for an ECMA-only pattern.
+            continue
+        adapter = None
+        if isinstance(subschema, dict) and subschema:
+            adapter = TypeAdapter(
+                _with_constraints(
+                    _annotation(f"{name}_pattern{index}", subschema, depth + 1), subschema
+                )
+            )
+        compiled.append((matcher, adapter))
+
+    def _check(value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        for key, item in value.items():
+            matched = False
+            for matcher, adapter in compiled:
+                if not matcher.search(str(key)):
+                    continue
+                matched = True
+                if adapter is not None:
+                    adapter.validate_python(item)
+            if closed and not matched:
+                raise ValueError(f"key {key!r} matches no patternProperties entry")
+        return value
+
+    return Annotated[dict, BeforeValidator(_check)]
+
+
 def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
     """Python annotation for one property schema (recursive)."""
     # ``const`` is a one-value ``enum`` — the shape Pydantic emits for a
@@ -583,7 +669,11 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
             isinstance(v, (str, int, bool, float)) or v is None for v in enum_values
         ):
             return _literal_annotation(enum_values)
-        # Enum of exotic values — fall back to the declared/base type.
+        # Composite members (a tuple-valued ``Enum``) can't be ``Literal``
+        # members, and such an enum has no inferred ``type`` — so falling
+        # through advertised an unconstrained ``Any``. Check membership
+        # directly instead.
+        return _enum_membership(enum_values)
 
     json_type = prop.get("type")
     # A field can be typed purely through a combinator, with no ``type`` of
@@ -672,6 +762,14 @@ def _annotation(name: str, prop: dict[str, Any], depth: int) -> Any:
         properties = prop.get("properties")
         if isinstance(properties, dict) and properties:
             return _build_model(f"{name}_obj", prop, depth + 1)
+        patterns = prop.get("patternProperties")
+        if isinstance(patterns, dict) and patterns:
+            # Checked before the closed-object branch below: that one would
+            # build a model permitting *no* keys, rejecting the very keys the
+            # patterns declare.
+            return _with_pattern_properties(
+                name, patterns, prop.get("additionalProperties") is False, depth
+            )
         if prop.get("additionalProperties") is False:
             # An object that permits no keys at all, which the executor
             # enforces — whether or not it spells out an empty ``properties``.

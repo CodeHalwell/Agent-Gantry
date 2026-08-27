@@ -15,7 +15,11 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.schema.base import json_identity_key, resolve_numeric_bounds
+from agent_gantry.schema.base import (
+    json_identity_key,
+    resolve_numeric_bounds,
+    schema_declares_null,
+)
 from agent_gantry.schema.execution import (
     BatchToolCall,
     BatchToolResult,
@@ -790,34 +794,7 @@ class ExecutionEngine:
             return arguments
         schema = tool.parameters_schema or {}
 
-        def _declares_null(prop: Any) -> bool:
-            """Whether a property schema gives ``null`` a declared meaning.
-
-            ``null`` reaches a schema two ways: a ``type`` that names it
-            (``"null"`` or a list containing it) and a combinator branch —
-            ``{"anyOf": [{"type": "string"}, {"type": "null"}]}``, which is
-            what Pydantic and OpenAPI emit for ``str | None``. Checking only
-            ``type`` would miss the far more common of the two.
-            """
-            if not isinstance(prop, dict):
-                return False
-            prop_type = prop.get("type")
-            if prop_type == "null" or (isinstance(prop_type, list) and "null" in prop_type):
-                return True
-            for key in ("anyOf", "oneOf"):
-                branches = prop.get(key)
-                if isinstance(branches, list) and any(_declares_null(b) for b in branches):
-                    return True
-            # ``allOf`` intersects its branches, so the combined schema admits
-            # null only when *every* branch does. ``any()`` here would call
-            # ``[{"type": ["string", "null"]}, {"type": "string"}]`` nullable
-            # and preserve a synthetic null the schema actually forbids.
-            all_of = prop.get("allOf")
-            if isinstance(all_of, list):
-                usable = [b for b in all_of if isinstance(b, dict) and b]
-                if usable and all(_declares_null(b) for b in usable):
-                    return True
-            return False
+        _declares_null = schema_declares_null
 
         def _declaring_subschema(prop: dict[str, Any], key: str) -> dict[str, Any] | None:
             """The subschema that actually carries ``key``, through combinators.

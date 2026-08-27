@@ -79,10 +79,12 @@ def test_enum_becomes_literal():
         model(color="purple")
 
 
-def test_enum_of_exotic_values_falls_back_to_base_type():
-    # A JSON-Schema enum could (unusually) contain a null or a nested
-    # object; Literal[...] can't express that, so the bridge falls back to
-    # the property's declared/base type instead of raising.
+def test_enum_of_exotic_values_still_enforces_membership():
+    """A JSON-Schema enum could (unusually) contain a nested object, which
+    ``Literal`` can't express. The bridge used to fall back to the property's
+    base type, which advertised *no* enum constraint at all and accepted values
+    the executor rejects — membership is checked directly now (PR #381 review).
+    """
     schema = {
         "type": "object",
         "properties": {"value": {"type": "string", "enum": [{"nested": True}, "plain"]}},
@@ -90,7 +92,9 @@ def test_enum_of_exotic_values_falls_back_to_base_type():
     }
     model = pydantic_model_from_schema("Args", schema)
     assert model is not None
-    assert model(value="anything").value == "anything"
+    assert model(value="plain").value == "plain"
+    with pytest.raises(ValidationError):
+        model(value="anything")
 
 
 def test_typed_array_items():
@@ -1187,3 +1191,66 @@ def test_modern_numeric_exclusivity_is_unchanged():
     assert model(n=6).n == 6
     with pytest.raises(ValidationError):
         model(n=5)
+
+
+def test_composite_enum_members_are_enforced():
+    """A tuple-valued ``Enum`` canonicalizes to ``[[0, 0], [1, 1]]``. Those
+    aren't valid ``Literal`` members and the enum has no inferred ``type``, so
+    the annotation fell through to an unconstrained ``Any`` while the executor
+    enforced membership (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"pt": {"enum": [[0, 0], [1, 1]]}},
+            "required": ["pt"],
+        },
+    )
+    assert model(pt=[0, 0]).pt == [0, 0]
+    for bad in ([9, 9], "anything", 0):
+        with pytest.raises(ValidationError):
+            model(pt=bad)
+
+
+def test_pattern_properties_validate_matching_keys():
+    """Ignoring ``patternProperties`` left an open mapping accepting values the
+    executor rejects (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "m": {"type": "object", "patternProperties": {"^n_": {"type": "integer"}}}
+            },
+            "required": ["m"],
+        },
+    )
+    assert model(m={"n_x": 1}).m == {"n_x": 1}
+    # A key no pattern matches is free-form here, as in the executor.
+    assert model(m={"other": "x"}).m == {"other": "x"}
+    with pytest.raises(ValidationError):
+        model(m={"n_x": "bad"})
+
+
+def test_closed_pattern_properties_still_accept_matching_keys():
+    """The worse half of the same finding: with ``additionalProperties: false``
+    the bridge built a model permitting *no* keys, so a valid matching key was
+    rejected and the call was impossible — not merely under-validated."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {
+                "m": {
+                    "type": "object",
+                    "patternProperties": {"^n_": {"type": "integer"}},
+                    "additionalProperties": False,
+                }
+            },
+            "required": ["m"],
+        },
+    )
+    assert model(m={"n_x": 1}).m == {"n_x": 1}
+    for bad in ({"zzz": 1}, {"n_x": "bad"}):
+        with pytest.raises(ValidationError):
+            model(m=bad)
