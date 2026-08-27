@@ -1733,3 +1733,30 @@ def test_boolean_subschemas_reach_the_generated_model_everywhere():
         "required": ["v"],
     }
     assert accepts(open_tail, {"v": [1, "anything"]}) is True
+
+
+def test_a_boolean_items_schema_types_a_plain_array_too():
+    """The positional path routed boolean ``items`` through ``_annotation``;
+    a plain array with no ``prefixItems`` fell through to a bare ``list`` and
+    accepted the elements the executor rejects (PR #381 review)."""
+    def accepts(items_schema, payload):
+        model = pydantic_model_from_schema(
+            "Args",
+            {
+                "type": "object",
+                "properties": {"v": {"type": "array", "items": items_schema}},
+                "required": ["v"],
+            },
+        )
+        try:
+            model(v=payload)
+            return True
+        except ValidationError:
+            return False
+
+    # ``items: false`` permits only the empty array.
+    assert accepts(False, []) is True
+    assert accepts(False, [1]) is False
+    # ``items: true`` permits any.
+    assert accepts(True, [1, "x"]) is True
+    assert accepts(True, []) is True

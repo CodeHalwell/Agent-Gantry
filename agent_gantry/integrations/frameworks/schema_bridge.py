@@ -996,6 +996,13 @@ def _annotation(name: str, prop: Any, depth: int) -> Any:
         prefix_items = prop.get("prefixItems")
         if isinstance(prefix_items, list) and prefix_items:
             return _positional_array(name, prefix_items, items, depth)
+        if isinstance(items, bool):
+            # ``{"type": "array", "items": false}`` permits only the empty
+            # array; ``true`` permits any. The positional path already routed
+            # booleans through ``_annotation``; this branch — a plain array
+            # with no ``prefixItems`` — fell through to a bare ``list`` and
+            # accepted the elements the executor rejects.
+            return list[_annotation(f"{name}_item", items, depth + 1)]
         if isinstance(items, dict) and items:
             # Constraints ride along on the *item* schema too
             # (``list[Annotated[int, Field(gt=0)]]`` puts them there), so

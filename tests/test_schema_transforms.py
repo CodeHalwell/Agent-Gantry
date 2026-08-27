@@ -865,3 +865,49 @@ def test_pattern_keyed_objects_have_no_strict_mode_representation():
     }
     assert unsupported_strict_paths(plain) == []
     assert unsupported_strict_paths({"type": "object", "properties": {}, "required": []}) == []
+
+
+def test_a_property_forbidden_by_its_schema_has_no_strict_representation():
+    """Strict mode makes every property *required*, so a property whose schema
+    is ``false`` — satisfiable by no value — would be emitted as required and
+    unsatisfiable at once, a schema with no valid instance that turns an
+    otherwise callable tool into an uncallable one (PR #381 review)."""
+    from agent_gantry.adapters.tool_spec.schema_utils import unsupported_strict_paths
+
+    optional = {
+        "type": "object",
+        "properties": {"disabled": False, "name": {"type": "string"}},
+        "required": ["name"],
+    }
+    assert unsupported_strict_paths(optional) == ["disabled"]
+    # Required or optional, the property is equally unrepresentable.
+    assert unsupported_strict_paths(
+        {"type": "object", "properties": {"disabled": False}, "required": ["disabled"]}
+    ) == ["disabled"]
+    # Nested, and reported at its path.
+    assert unsupported_strict_paths(
+        {
+            "type": "object",
+            "properties": {"m": {"type": "object", "properties": {"d": False}}},
+            "required": ["m"],
+        }
+    ) == ["m.d"]
+
+    # ``true`` is satisfiable by everything, so it needs no fallback — and
+    # neither do the schemas strict mode already handles. Widening the
+    # unsupported set costs every one of them their strict guarantees.
+    assert unsupported_strict_paths(
+        {
+            "type": "object",
+            "properties": {"ok": True, "name": {"type": "string"}},
+            "required": ["name"],
+        }
+    ) == []
+    assert unsupported_strict_paths(
+        {
+            "type": "object",
+            "properties": {"a": {"type": "string"}},
+            "required": ["a"],
+            "additionalProperties": False,
+        }
+    ) == []

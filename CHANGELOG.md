@@ -880,6 +880,18 @@ adapters, and the provider dialects agree with it.
   a special case: an annotation admitting `None` returns it unchanged, and one
   that doesn't was already a mismatch between the schema and the handler's own
   type.
+- **A property forbidden by its schema has no strict-mode representation.**
+  Strict mode makes every property *required*, so a property whose schema is
+  `false` — satisfiable by no value — was emitted as required and
+  unsatisfiable at once: a schema with no valid instance, turning an otherwise
+  callable tool into an uncallable one. It is reported as strict-unsupported
+  now, so the tool falls back to non-strict where the property is simply
+  omitted. Widening it to a null-only placeholder was the alternative and is
+  worse: it would *permit* a null the schema forbids.
+- **A boolean `items` schema types a plain array too.** The positional path
+  routed booleans through the annotation builder, but a plain array with no
+  `prefixItems` fell through to a bare `list` in the framework bridge and
+  accepted the elements the executor rejects.
 
 ### Performance
 

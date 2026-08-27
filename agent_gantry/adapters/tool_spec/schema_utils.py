@@ -275,6 +275,18 @@ def _collect_open_maps(node: Any, path: str, out: list[str]) -> None:
 
     if isinstance(properties, dict):
         for name, subschema in properties.items():
+            if subschema is False:
+                # A property satisfiable by no value at all. Strict mode makes
+                # every property *required*, so the transform would emit a
+                # schema with no valid instance — the property must be present
+                # and nothing can satisfy it — turning an otherwise callable
+                # tool into an uncallable one. There is no strict spelling for
+                # it: widening to null-only would *permit* a null the schema
+                # forbids, trading an uncallable tool for one that accepts what
+                # the executor rejects. Non-strict handles it correctly, where
+                # the property is simply omitted.
+                out.append(f"{path}.{name}" if path else name)
+                continue
             _collect_open_maps(subschema, f"{path}.{name}" if path else name, out)
     additional = node.get("additionalProperties")
     if isinstance(additional, dict):
