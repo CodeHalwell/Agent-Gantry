@@ -875,3 +875,25 @@ async def test_validate_treats_empty_combinator_branch_as_wildcard(engine):
     for value in ("a string", 5, None, [1, 2]):
         is_valid, error = await engine._validate_arguments(tool, {"v": value})
         assert is_valid is True, f"{value!r}: {error}"
+
+
+@pytest.mark.asyncio
+async def test_fractional_multiple_of_uses_decimal_arithmetic(engine):
+    """``0.3 % 0.1`` is ~0.0999 in binary floats, so a schema-valid JSON
+    number was rejected. Decimal comparison via ``str`` gives the value as
+    written (PR #381 review)."""
+    tool = ToolDefinition(
+        name="stepped",
+        description="Number constrained to a fractional multiple",
+        parameters_schema={
+            "type": "object",
+            "properties": {"v": {"type": "number", "multipleOf": 0.1}},
+            "required": ["v"],
+        },
+    )
+    for good in (0.3, 1.0, 0.7):
+        is_valid, error = await engine._validate_arguments(tool, {"v": good})
+        assert is_valid is True, f"{good}: {error}"
+
+    is_valid, _ = await engine._validate_arguments(tool, {"v": 0.25})
+    assert is_valid is False

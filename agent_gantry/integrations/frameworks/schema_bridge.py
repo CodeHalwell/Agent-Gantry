@@ -100,7 +100,7 @@ def _build_model(name: str, schema: dict[str, Any], depth: int) -> Any:
         if not prop_name.isidentifier():
             raise ValueError(f"property {prop_name!r} is not a valid identifier")
         prop = prop if isinstance(prop, dict) else {}
-        annotation = _annotation(f"{name}_{prop_name}", prop, depth)
+        annotation = _with_constraints(_annotation(f"{name}_{prop_name}", prop, depth), prop)
         description = prop.get("description")
         field_kwargs: dict[str, Any] = {}
         if isinstance(description, str) and description:
@@ -127,6 +127,79 @@ def _build_model(name: str, schema: dict[str, Any], depth: int) -> Any:
         fields["__pydantic_extra__"] = (dict[str, extra_annotation], Field(init=False))
 
     return create_model(name, __config__=model_config, **fields)
+
+
+def _effective_type(prop: dict[str, Any]) -> Any:
+    """The property's single JSON type, or ``None`` when it has no one type."""
+    json_type = prop.get("type")
+    if isinstance(json_type, list):
+        non_null = [t for t in json_type if t != "null"]
+        return non_null[0] if len(non_null) == 1 else None
+    return json_type
+
+
+def _with_constraints(annotation: Any, prop: dict[str, Any]) -> Any:
+    """Fold the schema's constraint keywords into ``annotation``.
+
+    The executor enforces these, so leaving them off the generated model
+    means the framework advertises and accepts values the engine rejects at
+    dispatch. Applied via ``annotated_types``/``StringConstraints`` on the
+    *inner* annotation, so the field stays free to be unioned with ``None``
+    and to carry its own default.
+    """
+    from typing import Annotated
+
+    import annotated_types as at
+
+    json_type = _effective_type(prop)
+    marks: list[Any] = []
+
+    def _number(key: str) -> Any:
+        candidate = prop.get(key)
+        if isinstance(candidate, (int, float)) and not isinstance(candidate, bool):
+            return candidate
+        return None
+
+    def _count(key: str) -> Any:
+        candidate = prop.get(key)
+        if isinstance(candidate, int) and not isinstance(candidate, bool) and candidate >= 0:
+            return candidate
+        return None
+
+    if json_type in ("integer", "number"):
+        for key, mark in (
+            ("minimum", at.Ge),
+            ("maximum", at.Le),
+            ("exclusiveMinimum", at.Gt),
+            ("exclusiveMaximum", at.Lt),
+        ):
+            bound = _number(key)
+            if bound is not None:
+                marks.append(mark(bound))
+        multiple = _number("multipleOf")
+        if multiple is not None and multiple > 0:
+            marks.append(at.MultipleOf(multiple))
+    elif json_type == "string":
+        low, high = _count("minLength"), _count("maxLength")
+        if low is not None:
+            marks.append(at.MinLen(low))
+        if high is not None:
+            marks.append(at.MaxLen(high))
+        pattern = prop.get("pattern")
+        if isinstance(pattern, str) and pattern:
+            from pydantic import StringConstraints
+
+            marks.append(StringConstraints(pattern=pattern))
+    elif json_type == "array":
+        low, high = _count("minItems"), _count("maxItems")
+        if low is not None:
+            marks.append(at.MinLen(low))
+        if high is not None:
+            marks.append(at.MaxLen(high))
+
+    if not marks:
+        return annotation
+    return Annotated[tuple([annotation, *marks])]
 
 
 def _is_nullable(prop: dict[str, Any]) -> bool:
@@ -212,7 +285,11 @@ def _with_exclusivity(annotation: Any, parts: list[Any]) -> Any:
             except Exception:  # noqa: BLE001 - a branch simply not matching
                 continue
             matched += 1
-        if matched > 1:
+        # Exactly one, in both directions. Rejecting only ``> 1`` left the
+        # zero-match case to the union below, whose coercion would then
+        # accept a value no branch actually admits — ``"1"`` matches neither
+        # a strict ``number`` nor a strict ``integer``, but coerces into one.
+        if matched != 1:
             raise ValueError(f"matches {matched} oneOf branches; exactly one must match")
         return value
 

@@ -106,6 +106,21 @@ adapters, and the provider dialects agree with it.
   throughout the nested model and `TypedDict` schemas introspection now
   inlines — and validation checked only `type` and `enum`, letting any value
   through. `const` equality is checked alongside `enum` membership now.
+- **A fractional `multipleOf` rejected valid numbers.** The check used `%`,
+  and binary floats make `0.3 % 0.1` ≈ `0.0999…`, so a property declared
+  `multipleOf: 0.1` refused `0.3`. Compared as `Decimal`s via `str`, which
+  gives the value as it was written.
+- **`oneOf` accepted values matching *no* branch.** The generated model's
+  exclusivity check rejected only multiple matches, leaving zero-match values
+  to the union — whose coercion then accepted them (`"1"` matches neither a
+  strict `number` nor a strict `integer`, but coerces into one). It now
+  requires exactly one match in both directions.
+- **Constraint keywords never reached the generated framework fields.** The
+  executor enforces numeric bounds, string length/pattern and array length,
+  but the CrewAI/LlamaIndex args model advertised and accepted values
+  violating them — rejected only later at dispatch. They're now folded into
+  the generated annotation, on the inner type so a constrained field can
+  still be optional and carry its default.
 - **The OpenAI Agents adapter didn't use the strict-mode safety gate.**
   `FunctionTool.strict_json_schema` defaults to `True`, and the SDK then runs
   its own `ensure_strict_json_schema`, which raises `UserError` on an object

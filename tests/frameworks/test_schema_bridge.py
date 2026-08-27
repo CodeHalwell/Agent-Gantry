@@ -500,3 +500,62 @@ def test_nullable_enum_field_matches_executor_semantics():
         },
     )
     assert permissive(mode=None).mode is None
+
+
+def test_oneof_rejects_values_matching_no_branch():
+    """Rejecting only ``> 1`` left the zero-match case to the union, whose
+    coercion accepts a value no branch admits — ``"1"`` matches neither a
+    strict ``number`` nor a strict ``integer`` (PR #381 review)."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"v": {"oneOf": [{"type": "number"}, {"type": "integer"}]}},
+            "required": ["v"],
+        },
+    )
+    with pytest.raises(ValidationError):
+        model(v="1")
+    assert model(v=1.5).v == 1.5
+
+
+def test_constraint_keywords_reach_the_generated_field():
+    """The executor enforces these, so omitting them let the framework
+    advertise and accept values the engine rejects at dispatch
+    (PR #381 review)."""
+    schema = {
+        "type": "object",
+        "properties": {
+            "n": {"type": "integer", "exclusiveMinimum": 0},
+            "s": {"type": "string", "minLength": 3, "pattern": "^a"},
+            "arr": {"type": "array", "items": {"type": "integer"}, "minItems": 2},
+        },
+        "required": ["n", "s", "arr"],
+    }
+    model = pydantic_model_from_schema("Args", schema)
+    assert model(n=1, s="abc", arr=[1, 2]) is not None
+    for bad in (
+        {"n": -1, "s": "abc", "arr": [1, 2]},
+        {"n": 1, "s": "ab", "arr": [1, 2]},
+        {"n": 1, "s": "bcd", "arr": [1, 2]},
+        {"n": 1, "s": "abc", "arr": [1]},
+    ):
+        with pytest.raises(ValidationError):
+            model(**bad)
+
+
+def test_constraints_on_an_optional_field_still_admit_none():
+    """Constraints are folded into the inner annotation, so the field stays
+    free to be unioned with ``None`` and carry its own default."""
+    model = pydantic_model_from_schema(
+        "Args",
+        {
+            "type": "object",
+            "properties": {"opt": {"type": "integer", "minimum": 5}},
+            "required": [],
+        },
+    )
+    assert model(opt=None).opt is None
+    assert model(opt=9).opt == 9
+    with pytest.raises(ValidationError):
+        model(opt=3)

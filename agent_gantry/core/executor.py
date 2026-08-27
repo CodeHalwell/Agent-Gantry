@@ -12,6 +12,7 @@ import re
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.schema.execution import (
@@ -56,13 +57,16 @@ def _check_constraints(value: Any, schema: dict[str, Any], path: str) -> str | N
                 if not ok(value, bound):
                     return f"Parameter '{path}' must be {describe} {bound}"
         multiple = schema.get("multipleOf")
-        if (
-            isinstance(multiple, (int, float))
-            and not isinstance(multiple, bool)
-            and multiple > 0
-            and value % multiple != 0
-        ):
-            return f"Parameter '{path}' must be a multiple of {multiple}"
+        if isinstance(multiple, (int, float)) and not isinstance(multiple, bool) and multiple > 0:
+            # Decimal, not ``%``: binary floats make ``0.3 % 0.1`` ≈ 0.1, so a
+            # schema-valid JSON number would be rejected. Going through
+            # ``str`` gives the decimal the value was written as.
+            try:
+                divisible = Decimal(str(value)) % Decimal(str(multiple)) == 0
+            except (ArithmeticError, ValueError):  # inf/nan and friends
+                divisible = True
+            if not divisible:
+                return f"Parameter '{path}' must be a multiple of {multiple}"
 
     if isinstance(value, str):
         min_length = schema.get("minLength")
