@@ -737,6 +737,95 @@ async def test_a_formatted_value_survives_the_framework_dispatch_boundary():
     assert _json_native("x", None) == "x"
 
 
+def test_every_matching_pattern_property_restores_its_own_format():
+    """``patternProperties`` intersect — a key matching two regexes is governed
+    by both — but the restoration walk kept only the *first* hit, so a
+    ``format`` declared on a later matching pattern was never applied and the
+    value reached the executor as a live ``datetime`` for ``type: string`` to
+    reject (PR #385 review)."""
+    from agent_gantry.integrations.frameworks.base import _json_native
+
+    # ``a_created_at`` matches both; only the second names the format.
+    schema = {
+        "type": "object",
+        "patternProperties": {
+            "^a": {"type": "string"},
+            "_at$": {"type": "string", "format": "date-time"},
+        },
+    }
+    stamped = datetime.datetime(2026, 8, 27, 9, 30)
+    assert _json_native({"a_created_at": stamped}, schema) == {
+        "a_created_at": "2026-08-27T09:30:00"
+    }
+
+    # Order-independent: the same two patterns the other way round.
+    reversed_schema = {
+        "type": "object",
+        "patternProperties": {
+            "_at$": {"type": "string", "format": "date-time"},
+            "^a": {"type": "string"},
+        },
+    }
+    assert _json_native({"a_created_at": stamped}, reversed_schema) == {
+        "a_created_at": "2026-08-27T09:30:00"
+    }
+
+    # A key only the formatless pattern covers is still left alone, so the
+    # fold cannot invent a conversion no pattern asked for.
+    assert _json_native({"alpha": stamped}, schema) == {"alpha": stamped}
+
+    # ``additionalProperties`` still governs only what no pattern claimed.
+    with_additional = {
+        "type": "object",
+        "patternProperties": {"^a": {"type": "string"}},
+        "additionalProperties": {"type": "string", "format": "date-time"},
+    }
+    assert _json_native({"a_x": stamped, "b_x": stamped}, with_additional) == {
+        "a_x": stamped,
+        "b_x": "2026-08-27T09:30:00",
+    }
+
+
+def test_a_declared_key_still_gets_its_pattern_properties_format():
+    """``properties`` and ``patternProperties`` both apply to a key listed in
+    one and matched by the other — the executor already treats them that way,
+    running every pattern over every key and *then* checking the declared ones
+    against ``properties``. The restoration walk took them as alternatives, so
+    a ``format`` living only on the matching pattern was skipped whenever the
+    key was also declared, and the executor rejected the live ``datetime``
+    against the property's own ``type: string`` (PR #386 review)."""
+    from agent_gantry.integrations.frameworks.base import _json_native
+
+    stamped = datetime.datetime(2026, 8, 27, 22, 30)
+    mixed = {
+        "type": "object",
+        "properties": {"created_at": {"type": "string"}},
+        "patternProperties": {"_at$": {"type": "string", "format": "date-time"}},
+    }
+    assert _json_native({"created_at": stamped}, mixed) == {
+        "created_at": "2026-08-27T22:30:00"
+    }
+
+    # The property's own schema still wins where it is the one carrying the
+    # format, and folding both cannot double-convert: once a value is a
+    # string, neither schema touches it again.
+    property_side = {
+        "type": "object",
+        "properties": {"created_at": {"type": "string", "format": "date-time"}},
+        "patternProperties": {"_at$": {"type": "string"}},
+    }
+    assert _json_native({"created_at": stamped}, property_side) == {
+        "created_at": "2026-08-27T22:30:00"
+    }
+
+    # And a declared key matching no pattern is still left alone.
+    assert _json_native({"created_at": stamped}, {
+        "type": "object",
+        "properties": {"created_at": {"type": "string"}},
+        "patternProperties": {"^other": {"type": "string", "format": "date-time"}},
+    }) == {"created_at": stamped}
+
+
 def test_the_ref_budget_bounds_expansion_not_every_visited_node():
     """The guard ran on entry, so once the budget was spent *every* value was
     replaced with ``{}`` — a ``type`` string, a ``required`` list — and a model

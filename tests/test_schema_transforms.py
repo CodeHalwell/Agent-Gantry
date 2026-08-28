@@ -1131,7 +1131,61 @@ def test_a_typeless_enum_is_strict_unsupported():
         {"type": "string", "enum": ["a", "b"]},
         {"type": "integer", "enum": [1, 2]},
         {"type": ["string", "null"], "enum": ["a", None]},
-        # An enum of nothing but null: ``{"type": "null"}`` fits it.
-        {"enum": [None]},
     ):
         assert unsupported_strict_paths(wrap(supported)) == [], supported
+
+
+def test_a_nullable_typeless_enum_is_strict_unsupported():
+    """``None`` is a member like any other, and ``_enum_schema`` puts it in the
+    catch-all branch, so a ``Literal`` carrying one publishes typeless too
+    (PR #385 review).
+
+    The guard used to skip ``None`` before deciding, on the grounds that a
+    nullable enum still names one real kind and carries its nullability in the
+    ``type`` list. But a node that *has* a ``type`` list already left at the
+    first line, so the skip only ever ran where its own justification did not
+    hold: ``Literal["a", None]`` reduced to a lone ``string`` kind and went out
+    ``strict: true`` with no ``type`` for the provider to read."""
+
+    def wrap(prop: dict) -> dict:
+        return {"type": "object", "properties": {"mode": prop}, "required": ["mode"]}
+
+    import typing
+
+    from agent_gantry.schema.introspection import _type_to_json_schema
+
+    # Nothing repairs these on the way out: ``strict_json_schema`` widens and
+    # wraps the types it finds and never invents one, so what the guard sees
+    # is what the provider gets.
+    assert _type_to_json_schema(typing.Literal["a", None]) == {"enum": ["a", None]}
+    assert _type_to_json_schema(typing.Literal[None]) == {"enum": [None]}
+    for typeless in ({"enum": ["a", None]}, {"enum": [None]}):
+        assert unsupported_strict_paths(wrap(typeless)) == ["mode"], typeless
+        assert "type" not in strict_json_schema(wrap(typeless))["properties"]["mode"]
+
+    # An ``Optional[Literal[...]]`` that keeps a real type is still fine: the
+    # union collapses to one scalar kind and introspection names it.
+    assert _type_to_json_schema(typing.Literal["a"] | None) == {
+        "type": "string",
+        "enum": ["a"],
+    }
+    assert unsupported_strict_paths(wrap({"type": "string", "enum": ["a"]})) == []
+
+
+def test_a_typeless_enum_from_an_external_schema_is_unsupported():
+    """The guard tests for a ``type``, not for what one *could* be derived
+    from the members, so a hand-written or MCP-supplied ``{"enum": [...]}``
+    reports too. Deriving ``string`` here would name a type the published
+    schema does not carry, which is the whole failure mode."""
+    wrapped = {
+        "type": "object",
+        "properties": {"mode": {"enum": ["a", "b"]}},
+        "required": ["mode"],
+    }
+    assert unsupported_strict_paths(wrapped) == ["mode"]
+
+    # An empty ``enum`` is not a schema a provider accepts at all, and
+    # ``_enum_schema`` degrades it to a plain string rather than emitting one,
+    # so there is no typeless property here to report.
+    empty = {"type": "object", "properties": {"mode": {"enum": []}}, "required": ["mode"]}
+    assert unsupported_strict_paths(empty) == []

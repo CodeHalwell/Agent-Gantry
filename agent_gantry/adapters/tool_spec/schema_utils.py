@@ -286,41 +286,33 @@ def _declares_object(declared: Any) -> bool:
 
 
 def _is_typeless_enum(node: dict[str, Any]) -> bool:
-    """Whether ``node`` is an ``enum`` no ``type`` can be declared for.
+    """Whether ``node`` is an ``enum`` carrying no ``type``.
 
-    Inverts ``_enum_schema``'s own condition, which is what decides whether
-    introspection emits a ``type`` alongside the members: exactly one kind,
-    and not the catch-all one. Two shapes fail it — members spanning several
-    kinds (``Literal[1, "auto"]``, and ``Literal[1, 2.5]``, since JSON Schema
-    separates ``integer`` from ``number``) and composite members (a
-    tuple-valued ``Enum``, whose members are arrays no scalar type names).
+    ``_enum_schema`` declares a ``type`` beside the members only when they
+    share exactly one *scalar* JSON kind, so several shapes publish typeless:
+    members spanning several kinds (``Literal[1, "auto"]``, and ``Literal[1,
+    2.5]``, since JSON Schema separates ``integer`` from ``number``),
+    composite members (a tuple-valued ``Enum``, whose members are arrays no
+    scalar type names), and any ``None`` member — ``Literal["a", None]`` and
+    ``Literal[None]`` both land in that same catch-all branch.
 
-    ``bool`` is grouped before ``int`` because it subclasses it, and ``null``
-    is skipped: a nullable enum still names one real kind, and its
-    nullability is carried by the type list rather than by the members.
+    Which is why this asks only whether a ``type`` is present, rather than
+    re-deriving one from the members: nothing downstream supplies a missing
+    one. :func:`strict_json_schema` widens and wraps the types it finds but
+    never invents one, so a member-kind test that concluded ``string`` (or
+    ``null``) would be naming a type the published schema does not carry.
+    That is what let an optional ``Literal["a", None]`` through the guard:
+    skipping ``None`` left a lone ``string`` kind, and the tool went out
+    ``strict: true`` with a typeless property for the provider to reject.
+
+    Reported rather than repaired: a type *list* is not something strict mode
+    accepts either, so the honest answer is that the schema has no strict
+    spelling and the tool should go out non-strict.
     """
     if node.get("type") is not None:
         return False
     members = node.get("enum")
-    if not isinstance(members, list) or not members:
-        return False
-    kinds = set()
-    for member in members:
-        if member is None:
-            continue
-        if isinstance(member, bool):
-            kinds.add("boolean")
-        elif isinstance(member, int):
-            kinds.add("integer")
-        elif isinstance(member, float):
-            kinds.add("number")
-        elif isinstance(member, str):
-            kinds.add("string")
-        else:
-            kinds.add("other")
-    if not kinds:
-        return False  # an enum of nothing but ``null``: ``type: "null"`` fits
-    return len(kinds) > 1 or "other" in kinds
+    return isinstance(members, list) and bool(members)
 
 
 def _collect_open_maps(node: Any, path: str, out: list[str]) -> None:

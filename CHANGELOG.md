@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Nullable typeless enums no longer claim strict-mode support.**
+  `Literal["a", None]` publishes as `{"enum": ["a", null]}` with no `type`,
+  because `None` lands in `_enum_schema`'s catch-all branch — but the
+  strict-mode guard skipped `None` before deciding, so the property reduced to
+  a lone `string` kind and the tool went out to OpenAI with `strict: true` and
+  a typeless property, which the provider rejects for the *whole* request.
+  `Literal[None]` was missed the same way. The guard now asks only whether a
+  `type` is present, since nothing downstream supplies a missing one.
+- **A policy denial is no longer downgraded to a confirmation prompt.** When
+  the standalone `RateLimiter` was exhausted and the call was
+  confirmation-gated, the executor answered from its read-only admission peek
+  — which consults `would_exceed_rate_limit` and nothing else. A call that
+  also violated `SecurityPolicy.allowed_domains` (or any check a replacement
+  policy adds) came back `pending_confirmation` instead of
+  `permission_denied`, asking a human to approve something policy would refuse
+  on replay. The policy now runs first; the caller-controlled argument
+  validation the quota exists to protect is still skipped.
+- **Root-level schema assertions are enforced.** `_validate_arguments` read
+  only `required`, `properties`, `patternProperties` and `additionalProperties`
+  off a tool's root schema, so a root `allOf`/`anyOf`/`oneOf`/`not`,
+  `const`/`enum`, or `minProperties`/`maxProperties` bound nothing at all.
+  Merged and imported schemas (MCP, OpenAPI) carry these routinely.
+- **A combinator branch constrains an object without closing it.** A branch
+  says what it says about the keys it names; it is not a description of the
+  whole object. Gantry closes an object whose `additionalProperties` is absent
+  — stricter than the spec's open default — and applying that to a branch made
+  an `allOf` branch declaring `b` reject `{"a": 1, "b": 2}` over `a`, the
+  root's own property. Conversely, a key only a branch declared was checked
+  against that branch and then reported unknown, since only the root's
+  `properties` counted as declared. Both directions are fixed; an *explicit*
+  `additionalProperties: false` inside a branch is still honoured, and `not`
+  declares nothing.
+- **A combinator whose branches the validator cannot evaluate is not
+  enforced.** An unevaluable branch reports as *matching*, since
+  `_validate_value` returns valid for what it cannot interpret — and `oneOf`
+  reads the match count, so the `oneOf: [{"$ref": …}, {"$ref": …}]` an
+  imported schema commonly uses had every argument object matching both
+  branches and rejected for it, leaving the tool uncallable. Everything else
+  in the schema still applies; only the combinator's own verdict is withheld.
+- **A constraint that does not bind cannot forbid anything under `not`.**
+  `pattern` skips a regex Python's `re` cannot compile (a legal ECMA-262 one
+  such as `\p{L}`) and `format` is enforced only for the string formats Gantry
+  reconstructs — both fail-open by design. Under `not` that silence read as
+  "matched", so `{"type": "string", "not": {"pattern": "\p{L}"}}` rejected
+  every value and the tool could not be called. Evaluability now asks whether
+  a constraint binds, not whether the keyword is known.
+- **The `not` keyword is evaluated.** It was parsed nowhere — the provider
+  transforms walk into it, so it survived a round-trip through them and then
+  constrained nothing, and a schema whose purpose is to forbid a shape
+  accepted it. A branch the validator cannot fully evaluate — a non-schema
+  value, or one using a keyword it skips such as `$ref`, at any depth — is
+  ignored rather than read as an always-matching branch, which would reject
+  every value and turn the tool into one no call could satisfy.
+- **Every matching `patternProperties` entry restores its own format**, and a
+  key declared in `properties` still gets them. The framework dispatch
+  boundary kept only the *first* regex that matched a key, and skipped
+  patterns entirely for a key `properties` also declared — so a `format`
+  declared on a later or overlapping pattern was never applied and the value
+  reached the executor as a live `datetime` for `type: string` to reject. Both
+  keywords apply now, as JSON Schema requires and as the executor's own
+  validation already did.
+
+### Changed
+
+- Validation messages about the argument object as a whole now read `The
+  arguments object …` rather than `Parameter '' …`. Per-parameter messages are
+  unchanged.
+- The `pyproject.toml` note on why the native-tool-adapter frameworks
+  (pydantic-ai, openai-agents, haystack-ai, agno, strands-agents, dspy) are
+  not a project extra no longer cites a `pydantic<2.12` conflict — that pin
+  left with semantic-kernel in 0.13.0. Retested: all six now co-resolve with
+  the `agent-frameworks` extra. The split is documented as the deliberate
+  CI-shape choice it now is.
+
 ## [0.13.0] - 2026-08-27
 
 ### Removed

@@ -21,11 +21,22 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "HealthMetrics",
     "check_json_constraints",
+    "describe_path",
     "json_identity_key",
     "reject_newlines",
     "resolve_numeric_bounds",
     "schema_declares_null",
 ]
+
+
+def describe_path(path: str) -> str:
+    """Name the thing a validation message is about.
+
+    Every path here is a parameter's, save one: the executor validates the
+    argument object *itself* against its root schema's assertions, and that
+    path is empty. ``Parameter ''`` names nothing a caller can act on.
+    """
+    return f"Parameter '{path}'" if path else "The arguments object"
 
 
 #: The string ``format``s Gantry emits itself, mapped to the Python type each
@@ -97,7 +108,7 @@ def check_json_constraints(value: Any, schema: dict[str, Any], path: str) -> str
             (excl_upper, lambda v, b: v < b, "less than"),
         ):
             if bound is not None and not ok(value, bound):
-                return f"Parameter '{path}' must be {describe} {bound}"
+                return f"{describe_path(path)} must be {describe} {bound}"
         multiple = schema.get("multipleOf")
         if isinstance(multiple, (int, float)) and not isinstance(multiple, bool) and multiple > 0:
             # Decimal, not ``%``: binary floats make ``0.3 % 0.1`` ≈ 0.1, so a
@@ -108,17 +119,17 @@ def check_json_constraints(value: Any, schema: dict[str, Any], path: str) -> str
             except (ArithmeticError, ValueError):  # inf/nan and friends
                 divisible = True
             if not divisible:
-                return f"Parameter '{path}' must be a multiple of {multiple}"
+                return f"{describe_path(path)} must be a multiple of {multiple}"
 
     if isinstance(value, str):
         min_length = schema.get("minLength")
         if isinstance(min_length, int) and not isinstance(min_length, bool):
             if len(value) < min_length:
-                return f"Parameter '{path}' must be at least {min_length} characters"
+                return f"{describe_path(path)} must be at least {min_length} characters"
         max_length = schema.get("maxLength")
         if isinstance(max_length, int) and not isinstance(max_length, bool):
             if len(value) > max_length:
-                return f"Parameter '{path}' must be at most {max_length} characters"
+                return f"{describe_path(path)} must be at most {max_length} characters"
         pattern = schema.get("pattern")
         if isinstance(pattern, str) and pattern:
             try:
@@ -138,7 +149,7 @@ def check_json_constraints(value: Any, schema: dict[str, Any], path: str) -> str
                 )
                 matches = True
             if not matches:
-                return f"Parameter '{path}' must match pattern {pattern!r}"
+                return f"{describe_path(path)} must match pattern {pattern!r}"
         fmt = schema.get("format")
         if isinstance(fmt, str) and fmt in RECONSTRUCTED_STRING_FORMATS:
             adapter = _format_adapter(fmt)
@@ -146,17 +157,17 @@ def check_json_constraints(value: Any, schema: dict[str, Any], path: str) -> str
                 try:
                     adapter.validate_python(value)
                 except Exception:  # noqa: BLE001 - any parse failure is a reject
-                    return f"Parameter '{path}' must be a valid {fmt} string"
+                    return f"{describe_path(path)} must be a valid {fmt} string"
 
     if isinstance(value, list):
         min_items = schema.get("minItems")
         if isinstance(min_items, int) and not isinstance(min_items, bool):
             if len(value) < min_items:
-                return f"Parameter '{path}' must have at least {min_items} items"
+                return f"{describe_path(path)} must have at least {min_items} items"
         max_items = schema.get("maxItems")
         if isinstance(max_items, int) and not isinstance(max_items, bool):
             if len(value) > max_items:
-                return f"Parameter '{path}' must have at most {max_items} items"
+                return f"{describe_path(path)} must have at most {max_items} items"
         if schema.get("uniqueItems") is True:
             # Keyed by JSON identity, not Python equality: ``True == 1`` in
             # Python, but JSON Schema compares types before values, so
@@ -168,11 +179,11 @@ def check_json_constraints(value: Any, schema: dict[str, Any], path: str) -> str
                 key = json_identity_key(item)
                 try:
                     if key in seen:
-                        return f"Parameter '{path}' must not contain duplicate items"
+                        return f"{describe_path(path)} must not contain duplicate items"
                     seen.add(key)
                 except TypeError:  # a non-JSON value that isn't hashable
                     if key in unhashable:
-                        return f"Parameter '{path}' must not contain duplicate items"
+                        return f"{describe_path(path)} must not contain duplicate items"
                     unhashable.append(key)
 
     if isinstance(value, dict):
@@ -183,11 +194,11 @@ def check_json_constraints(value: Any, schema: dict[str, Any], path: str) -> str
         min_properties = schema.get("minProperties")
         if isinstance(min_properties, int) and not isinstance(min_properties, bool):
             if len(value) < min_properties:
-                return f"Parameter '{path}' must have at least {min_properties} properties"
+                return f"{describe_path(path)} must have at least {min_properties} properties"
         max_properties = schema.get("maxProperties")
         if isinstance(max_properties, int) and not isinstance(max_properties, bool):
             if len(value) > max_properties:
-                return f"Parameter '{path}' must have at most {max_properties} properties"
+                return f"{describe_path(path)} must have at most {max_properties} properties"
 
     return None
 
