@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-08-28
+
+Validation and schema-emission fixes, all found by review of 0.13.0. Several
+close cases where a *valid* call was rejected — a tool made uncallable by a
+schema the executor could not fully interpret — and one where an OpenAI
+request was rejected wholesale for a typeless property published under
+`strict: true`. No API changes.
+
+Note that two of these make validation *stricter*: root-level assertions and
+`not` now bind where they previously bound nothing. A call relying on either
+going unenforced will now be rejected — correctly, but visibly.
+
 ### Fixed
 
 - **Nullable typeless enums no longer claim strict-mode support.**
