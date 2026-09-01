@@ -40,6 +40,12 @@ def _blocks_text(value: Any) -> str:
                 t = _tool_result_text(item.get("content"))
                 if t:
                     parts.append(t)
+        elif getattr(item, "type", None) == "tool_result":
+            # Anthropic SDK object form of a ``tool_result`` block (as
+            # opposed to the dict form the API/dict-based callers use).
+            t = _tool_result_text(getattr(item, "content", None))
+            if t:
+                parts.append(t)
         else:
             t = getattr(item, "text", None)
             if isinstance(t, str) and t.strip():
@@ -67,9 +73,14 @@ def _is_tool_result_message(msg: Any) -> bool:
         content = msg.get("content")
     if not isinstance(content, (list, tuple)) or not content:
         return False
-    return all(
-        isinstance(block, dict) and block.get("type") == "tool_result" for block in content
-    )
+    return all(_block_type(block) == "tool_result" for block in content)
+
+
+def _block_type(block: Any) -> Any:
+    """A content block's ``type``, whether it is a dict or an SDK object."""
+    if isinstance(block, dict):
+        return block.get("type")
+    return getattr(block, "type", None)
 
 
 def _msg_text(msg: Any) -> str:
@@ -103,10 +114,14 @@ def _msg_text(msg: Any) -> str:
             if isinstance(value, str) and value.strip():
                 return value
 
-    if isinstance(msg, dict) and msg.get("type") == "function_call_output":
+    kind = msg.get("type") if isinstance(msg, dict) else getattr(msg, "type", None)
+    if kind == "function_call_output":
         # OpenAI Responses API / Agents SDK: a tool's output is a top-level
-        # input item carrying ``output`` rather than ``content``.
-        output = msg.get("output")
+        # input item carrying ``output`` rather than ``content`` — a plain
+        # dict from a caller building input by hand, or an SDK response
+        # object (e.g. ``ResponseFunctionToolCallOutputItem``) exposing the
+        # same field as an attribute.
+        output = msg.get("output") if isinstance(msg, dict) else getattr(msg, "output", None)
         if isinstance(output, str) and output.strip():
             return output
         block_text = _blocks_text(output)

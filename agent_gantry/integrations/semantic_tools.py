@@ -255,6 +255,59 @@ class SemanticToolSelector:
 
         return None
 
+    def _tools_param_kind(self, sig: inspect.Signature) -> inspect.Parameter | None:
+        """The wrapped function's ``tools_param`` parameter, if it declares one.
+
+        ``None`` means it is reachable only through a ``**kwargs`` catch-all
+        (or not accepted at all) — there, it can never arrive positionally,
+        so a plain ``kwargs`` dict check is exact.
+        """
+        param = sig.parameters.get(self._tools_param)
+        if param is None or param.kind is inspect.Parameter.VAR_KEYWORD:
+            return None
+        return param
+
+    def _tools_already_provided(
+        self,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        sig: inspect.Signature,
+    ) -> bool:
+        """Whether the caller already supplied a non-``None`` ``tools_param``.
+
+        Binds ``args``/``kwargs`` against ``sig`` when ``tools_param`` has a
+        real positional-or-keyword slot, so a value passed *positionally*
+        (including an explicit ``None``) is recognised too — a raw
+        ``self._tools_param not in kwargs`` check misses that case entirely,
+        which is what let injection collide with it below.
+        """
+        if self._tools_param_kind(sig) is None:
+            return kwargs.get(self._tools_param) is not None
+        bound = sig.bind_partial(*args, **kwargs)
+        return bound.arguments.get(self._tools_param) is not None
+
+    def _inject_tools(
+        self,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        sig: inspect.Signature,
+        tools: list[dict[str, Any]],
+    ) -> tuple[tuple[Any, ...], dict[str, Any]]:
+        """Return ``(args, kwargs)`` with ``tools`` bound to ``tools_param``.
+
+        When ``tools_param`` has a real slot in ``sig``, rewrites it via the
+        signature's own :class:`~inspect.BoundArguments` rather than adding a
+        second keyword on top of an existing positional argument — the
+        latter is what raised ``TypeError: got multiple values for
+        argument`` when a caller passed ``tools`` (or its own default,
+        ``None``) positionally to a function where it isn't keyword-only.
+        """
+        if self._tools_param_kind(sig) is None:
+            return args, {**kwargs, self._tools_param: tools}
+        bound = sig.bind_partial(*args, **kwargs)
+        bound.arguments[self._tools_param] = tools
+        return bound.args, bound.kwargs
+
     def _record_usage_sync(self, response: Any) -> None:
         """Report usage from a synchronously-returned response, best effort.
 
@@ -347,14 +400,13 @@ class SemanticToolSelector:
         """
         Wrap an async function with semantic tool selection.
 
-        Note: This wrapper mutates the kwargs dictionary by adding tools
-        to it when they are successfully retrieved. The original kwargs
-        dictionary passed by the caller may be modified.
-
         Tools are injected when the caller passed no ``tools`` argument *or*
         passed ``tools=None`` — the wrapped function's own default, which a
         caller forwarding its arguments sends explicitly. Pass ``tools=[]``
-        to call the model with no tools at all.
+        to call the model with no tools at all. Injection is bound through
+        the function's own signature (:meth:`_inject_tools`), so a ``tools``
+        value the caller passed *positionally* is replaced in place rather
+        than duplicated as a second keyword argument.
 
         Args:
             func: The async function to wrap.
@@ -368,11 +420,11 @@ class SemanticToolSelector:
         async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
             prompt = self._extract_prompt(args, kwargs, sig)
 
-            if prompt and kwargs.get(self._tools_param) is None:
+            if prompt and not self._tools_already_provided(args, kwargs, sig):
                 try:
                     tools = await self._retrieve_tools(prompt)
                     if tools:
-                        kwargs[self._tools_param] = tools
+                        args, kwargs = self._inject_tools(args, kwargs, sig, tools)
                 except Exception as e:
                     # If tool retrieval fails, call function without tools
                     _logger.warning("Tool retrieval failed, proceeding without tools: %s", e)
@@ -391,9 +443,9 @@ class SemanticToolSelector:
         or when an event loop is already running, this may cause issues.
         For best compatibility, prefer using async functions.
 
-        This wrapper mutates the kwargs dictionary by adding tools
-        to it when they are successfully retrieved. The original kwargs
-        dictionary passed by the caller may be modified.
+        Tools are injected the same way as :meth:`wrap_async` — see its
+        docstring for the ``tools=None`` vs ``tools=[]`` distinction and how
+        a positionally-passed ``tools`` argument is handled.
 
         Args:
             func: The sync function to wrap.
@@ -409,7 +461,7 @@ class SemanticToolSelector:
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
             prompt = self._extract_prompt(args, kwargs, sig)
 
-            if prompt and kwargs.get(self._tools_param) is None:
+            if prompt and not self._tools_already_provided(args, kwargs, sig):
                 # Run async retrieval in sync context using asyncio.run()
                 # This creates a new event loop which is safer than reusing existing ones
                 try:
@@ -435,7 +487,7 @@ class SemanticToolSelector:
                         tools = asyncio.run(self._retrieve_tools(prompt))
 
                     if tools:
-                        kwargs[self._tools_param] = tools
+                        args, kwargs = self._inject_tools(args, kwargs, sig, tools)
                 except Exception as e:
                     # If tool retrieval fails, call function without tools
                     _logger.warning("Tool retrieval failed, proceeding without tools: %s", e)

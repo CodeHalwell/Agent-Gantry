@@ -883,3 +883,61 @@ def test_tool_names_used_with_nothing_called() -> None:
     assert tool_names_used(None) == []
     assert tool_names_used([]) == []
     assert tool_names_used([{"role": "user", "content": "hi"}]) == []
+
+
+# ---------------------------------------------------------------------------
+# Object-shaped (non-dict) SDK messages. The real Anthropic and OpenAI SDKs
+# return pydantic-style objects, not dicts — a dict-only content-block reader
+# silently drops their text.
+# ---------------------------------------------------------------------------
+
+
+class _Block:
+    """Stand-in for an SDK content-block object (has attributes, not keys)."""
+
+    def __init__(self, type: str, **kw: object) -> None:
+        self.type = type
+        for k, v in kw.items():
+            setattr(self, k, v)
+
+
+class _ObjMsg:
+    def __init__(self, role: str, content: object) -> None:
+        self.role = role
+        self.content = content
+
+
+def test_anthropic_object_shaped_tool_result_is_read() -> None:
+    """A real Anthropic SDK response uses objects, not dicts, for blocks."""
+    from agent_gantry.query import latest_activity, tool_names_used
+
+    msgs = [
+        _ObjMsg("user", "weather in Paris"),
+        _ObjMsg("assistant", [_Block("tool_use", id="t1", name="get_weather", input={})]),
+        _ObjMsg("user", [_Block("tool_result", tool_use_id="t1", content="sunny, 21C")]),
+    ]
+    assert latest_activity(msgs) == "sunny, 21C"
+    assert last_tool_result(msgs) == "tool result: sunny, 21C"
+    assert tool_names_used(msgs) == ["get_weather"]
+
+
+class _RespItem:
+    """Stand-in for an OpenAI Responses SDK item object (attrs, no role)."""
+
+    def __init__(self, type: str, **kw: object) -> None:
+        self.type = type
+        for k, v in kw.items():
+            setattr(self, k, v)
+
+
+def test_responses_object_shaped_function_call_output_is_read() -> None:
+    """The Responses SDK returns items as objects, not the dicts a caller builds."""
+    from agent_gantry.query import latest_activity, tool_names_used
+
+    msgs = [
+        _ObjMsg("user", "weather in Paris"),
+        _RespItem("function_call", call_id="c1", name="get_weather", arguments="{}"),
+        _RespItem("function_call_output", call_id="c1", output="sunny, 21C"),
+    ]
+    assert latest_activity(msgs) == "sunny, 21C"
+    assert tool_names_used(msgs) == ["get_weather"]
