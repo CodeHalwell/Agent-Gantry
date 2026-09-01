@@ -270,3 +270,33 @@ async def test_reasoning_model_request_shape():
     assert "max_tokens" in captured
     assert "temperature" in captured
     assert "max_completion_tokens" not in captured
+
+
+@pytest.mark.asyncio
+async def test_keywords_match_at_token_start_only():
+    """A keyword inside another word is not a mention of it.
+
+    Substring matching counted ``budget``/``target`` as ``get``, ``thread``
+    as ``read`` and ``admin`` as ``dm``, and at 0.15 of the final score a
+    spurious intent match outweighs the semantic gap between neighbouring
+    tools.
+    """
+    assert await classify_intent("what is the budget target for this thread") == TaskIntent.UNKNOWN
+    assert await classify_intent("open the admin dashboard") == TaskIntent.ADMIN
+    # Inflections and snake_case names still count: the keyword starts the token.
+    assert await classify_intent("uploading the exported files") == TaskIntent.FILE_OPERATIONS
+    assert await classify_intent("created a new record") == TaskIntent.DATA_MUTATION
+    assert await classify_intent("run send_email for the team") == TaskIntent.COMMUNICATION
+
+
+def test_tool_text_patterns_share_the_token_start_rule():
+    """The per-tool intent boost uses the same keyword rule as classification."""
+    from agent_gantry.core.router import INTENT_TAG_PATTERNS
+
+    communication = INTENT_TAG_PATTERNS[TaskIntent.COMMUNICATION]
+    assert communication.search("admin_panel manage the administrators") is None
+    assert communication.search("send_dm send a direct message") is not None
+
+    data_query = INTENT_TAG_PATTERNS[TaskIntent.DATA_QUERY]
+    assert data_query.search("set_budget_target") is None
+    assert data_query.search("get_budget retrieve budget figures") is not None

@@ -161,3 +161,54 @@ async def test_refresh_specs_returns_toolspecs(gantry):
 
     # last_selection mirrors the most recent specs.
     assert {s.name for s in refresher.last_selection} == {s.name for s in specs}
+
+
+async def test_tools_used_reads_openai_tool_calls(gantry):
+    """OpenAI tool messages carry only ``tool_call_id``; the name is on the assistant call.
+
+    Reading tool-role messages alone left ``tools_used`` empty for every
+    Chat Completions history, so the already-used penalty never applied.
+    """
+    refresher = ToolRefresher(gantry, limit=3, dialect="openai")
+    messages = [
+        {"role": "user", "content": "What is the weather in Paris?"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "get_weather", "arguments": '{"city": "Paris"}'},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "sunny, 21C"},
+        {"role": "user", "content": "Now send an email message to my boss."},
+    ]
+    turn = await refresher.refresh(messages)
+    assert refresher.tools_used == ["get_weather"]
+    assert "send_email" in _names(turn)
+
+
+async def test_tools_used_reads_anthropic_tool_use_blocks(gantry):
+    """Anthropic keeps the name in a ``tool_use`` block; the result is a user turn."""
+    refresher = ToolRefresher(gantry, limit=3, dialect="anthropic")
+    messages = [
+        {"role": "user", "content": "What is the weather in Paris?"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "toolu_1", "name": "get_weather", "input": {}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "sunny, 21C"}],
+        },
+    ]
+    specs = await refresher.refresh_specs(messages)
+    assert refresher.tools_used == ["get_weather"]
+    # The tool result is the newest activity and has text, so the turn is
+    # selected on it rather than coming back blank.
+    assert specs

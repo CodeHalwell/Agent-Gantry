@@ -151,6 +151,36 @@ class TestSemanticToolSelector:
         assert captured_tools == provided_tools
 
     @pytest.mark.asyncio
+    async def test_explicit_none_counts_as_no_tools_provided(
+        self, mock_gantry: AgentGantry
+    ) -> None:
+        """``tools=None`` is the wrapped function's own default, forwarded.
+
+        A caller passing its arguments through sends ``tools=None``
+        explicitly; that must not silently switch tool selection off.
+        An empty list is a deliberate opt-out and is left alone.
+        """
+
+        @mock_gantry.register
+        def get_weather(city: str) -> str:
+            """Get the current weather for a specified city location."""
+            return f"Weather in {city}"
+
+        selector = SemanticToolSelector(mock_gantry, score_threshold=0.0)
+        captured: dict[str, Any] = {}
+
+        @selector
+        async def generate(prompt: str, *, tools: list[dict[str, Any]] | None = None) -> str:
+            captured["tools"] = tools
+            return prompt
+
+        await generate("What's the weather in Paris?", tools=None)
+        assert captured["tools"]
+
+        await generate("What's the weather in Paris?", tools=[])
+        assert captured["tools"] == []
+
+    @pytest.mark.asyncio
     async def test_prompt_extraction_from_messages(self, mock_gantry: AgentGantry) -> None:
         """Test prompt extraction from OpenAI-style messages."""
 

@@ -35,9 +35,11 @@ lifecycle instead of you calling ``refresh()`` by hand between turns). Both
 sit on the same underlying selection primitive
 (:class:`~agent_gantry.integrations.frameworks.base.GantryToolset`, plus its
 :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select_or_empty`
-guard against selecting on an empty query), so behaviour — score thresholds,
-namespace filtering, already-used-tool penalties — is consistent whichever
-path you use.
+guard against selecting on an empty query), so score thresholds, namespace
+filtering and pinned tools behave the same whichever path you use. The
+already-used penalty below is ``ToolRefresher``'s own addition: it is the
+path that hands the router ``tools_already_used``; the framework hooks
+select on the turn's query alone.
 
 Two behaviours make this genuinely multi-turn / direction-changing:
 
@@ -50,7 +52,10 @@ Two behaviours make this genuinely multi-turn / direction-changing:
   two are not exclusive — a tool chain *inside* a conversational turn is driven
   by its results, then the next user message takes over.
 - **Used tools nudge the agent forward.** When ``track_used`` is on, every
-  tool/function-role message seen in the history accumulates into a
+  tool call the history shows — read with
+  :func:`~agent_gantry.query.tool_names_used`, so an OpenAI ``tool_calls``
+  entry, an Anthropic ``tool_use`` block, a LangChain ``ToolMessage`` and a
+  plain ``{"role": "tool", "name": ...}`` dict all count — accumulates into a
   ``tools_already_used`` set. The router applies its ``already_used_penalty``
   to those names, gently steering each turn toward *new* tools instead of
   re-suggesting ones the agent already invoked.
@@ -76,8 +81,8 @@ from agent_gantry.integrations.frameworks.base import (
     GantryToolset,
     ToolSpec,
 )
-from agent_gantry.query import latest_activity
-from agent_gantry.query.strategies import _msg_role, _msg_text
+from agent_gantry.query import latest_activity, tool_names_used
+from agent_gantry.query.strategies import _msg_text
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 
 if TYPE_CHECKING:
@@ -103,24 +108,11 @@ def _default_query_generator() -> Callable[[Iterable[Any] | None], str]:
     return latest_activity
 
 
-# ``_msg_text``/``_msg_role`` live in agent_gantry.query.strategies; this module
-# reuses them instead of keeping a second copy that drifts (the canonical pair
-# also understands Responses-API ``input_text`` parts, Agent Framework
-# ``contents``/``function_result`` blocks, and LangChain's ``.type`` role).
-
-
-def _msg_tool_name(msg: Any) -> str:
-    """Best-effort tool/function name for a tool-role message."""
-    for attr in ("name", "tool_name", "author_name"):
-        value = getattr(msg, attr, None)
-        if isinstance(value, str) and value:
-            return value
-    if isinstance(msg, dict):
-        for key in ("name", "tool_name", "author_name"):
-            value = msg.get(key)
-            if isinstance(value, str) and value:
-                return value
-    return ""
+# ``_msg_text`` and ``tool_names_used`` live in agent_gantry.query.strategies;
+# this module reuses them instead of keeping a second copy that drifts (the
+# canonical versions also understand Responses-API items, Anthropic
+# ``tool_result``/``tool_use`` blocks, Agent Framework ``contents`` blocks and
+# LangChain's ``.type`` role).
 
 
 async def _maybe_await(value: Any) -> Any:
@@ -165,9 +157,12 @@ class ToolRefresher:
             ``last_user_text`` / ``last_tool_result`` / ``fallback_chain(...)``
             to force a specific behaviour. See :mod:`agent_gantry.query`.
         track_used: When ``True`` (default), scan the messages on every refresh
-            for tool/function-role entries and accumulate their tool names into
-            the ``tools_already_used`` set passed to selection. The router's
-            ``already_used_penalty`` then nudges each turn toward *new* tools.
+            for tool calls — via :func:`~agent_gantry.query.tool_names_used`,
+            which reads OpenAI ``tool_calls``, Anthropic ``tool_use`` blocks,
+            LangChain and Agent Framework messages as well as plain
+            tool-role dicts — and pass their names as ``tools_already_used``
+            to selection. The router's ``already_used_penalty`` then nudges
+            each turn toward *new* tools.
     """
 
     def __init__(
@@ -198,11 +193,14 @@ class ToolRefresher:
 
     @property
     def tools_used(self) -> list[str]:
-        """Tool names seen in the most recent refresh's message history.
+        """Tool names the most recent refresh's message history shows being called.
 
         Recomputed fresh on every refresh (no cross-conversation leakage).
         Returns an empty list when ``track_used`` is disabled or before the
-        first refresh. Order is first-seen; each name appears once.
+        first refresh. Order is first-seen; each name appears once. The
+        name is taken from wherever the format keeps it — the assistant's
+        ``tool_calls`` / ``tool_use`` entry for the OpenAI and Anthropic
+        SDKs, whose tool-result messages carry no name of their own.
         """
         return list(self._tools_used)
 
@@ -316,15 +314,7 @@ class ToolRefresher:
         the messages passed to *this* call, never leaking state from a prior
         run. Order is first-seen; each name appears once.
         """
-        used: list[str] = []
-        seen: set[str] = set()
-        for msg in messages:
-            if _msg_role(msg) in ("tool", "function"):
-                name = _msg_tool_name(msg)
-                if name and name not in seen:
-                    seen.add(name)
-                    used.append(name)
-        self._tools_used = used
+        self._tools_used = tool_names_used(messages)
 
 
 __all__ = ["ToolRefresher"]

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import threading
 from typing import TYPE_CHECKING, Any
 
@@ -16,6 +17,31 @@ if TYPE_CHECKING:
     from agent_gantry.schema.tool import ToolDefinition
 
 logger = logging.getLogger(__name__)
+
+
+def _sigmoid(value: float) -> float:
+    """Logistic function, written to avoid ``exp`` overflow on large negatives."""
+    if value >= 0.0:
+        return 1.0 / (1.0 + math.exp(-value))
+    exp_value = math.exp(value)
+    return exp_value / (1.0 + exp_value)
+
+
+def _bounded_scores(scores: list[float]) -> list[float]:
+    """Return ``scores`` within ``[0, 1]``, squashing raw logits if needed.
+
+    sentence-transformers applies a sigmoid for single-label rerankers, but a
+    model configured with an identity activation, or one with several labels,
+    hands back raw logits — and :class:`~agent_gantry.schema.query.ScoredTool`
+    bounds its score to ``[0, 1]``, so one out-of-range value failed
+    validation and took the whole retrieval down with it. Squash only when a
+    value is out of range, so a model that already reports probabilities is
+    left untouched; the sigmoid is monotonic, so the ranking is the same
+    either way.
+    """
+    if any(score < 0.0 or score > 1.0 for score in scores):
+        return [_sigmoid(score) for score in scores]
+    return scores
 
 
 class CrossEncoderReranker:
@@ -128,9 +154,11 @@ class CrossEncoderReranker:
             pairs,
         )
 
+        scores = _bounded_scores([float(score) for score in scores])
+
         # Combine tools with their new scores
         scored_tools = [
-            (tool, float(score))
+            (tool, score)
             for (tool, _), score in zip(tools, scores)
         ]
 

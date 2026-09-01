@@ -351,6 +351,11 @@ class SemanticToolSelector:
         to it when they are successfully retrieved. The original kwargs
         dictionary passed by the caller may be modified.
 
+        Tools are injected when the caller passed no ``tools`` argument *or*
+        passed ``tools=None`` — the wrapped function's own default, which a
+        caller forwarding its arguments sends explicitly. Pass ``tools=[]``
+        to call the model with no tools at all.
+
         Args:
             func: The async function to wrap.
 
@@ -363,7 +368,7 @@ class SemanticToolSelector:
         async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
             prompt = self._extract_prompt(args, kwargs, sig)
 
-            if prompt and self._tools_param not in kwargs:
+            if prompt and kwargs.get(self._tools_param) is None:
                 try:
                     tools = await self._retrieve_tools(prompt)
                     if tools:
@@ -404,7 +409,7 @@ class SemanticToolSelector:
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
             prompt = self._extract_prompt(args, kwargs, sig)
 
-            if prompt and self._tools_param not in kwargs:
+            if prompt and kwargs.get(self._tools_param) is None:
                 # Run async retrieval in sync context using asyncio.run()
                 # This creates a new event loop which is safer than reusing existing ones
                 try:
@@ -563,7 +568,8 @@ def with_semantic_tools(
 
     Architectural Notes:
         - The decorator preserves the original function signature
-        - Tools are only injected if not already provided
+        - Tools are only injected if not already provided (an explicit
+          ``tools=None`` counts as not provided; ``tools=[]`` disables them)
         - Works with both sync and async functions
         - Supports OpenAI messages format for prompt extraction
         - Context is cached per request, not globally

@@ -674,3 +674,212 @@ def test_latest_activity_caps_langchain_tool_result():
         _LangChainMessage("tool", "y" * 2000, name="lookup"),
     ]
     assert len(latest_activity(messages, max_chars=100)) == 100
+
+
+# ---------------------------------------------------------------------------
+# SDK message shapes. Every strategy has to read tool output — and
+# ``tool_names_used`` the tool's name — from wherever each SDK keeps them:
+# an OpenAI Chat Completions ``tool`` message carries only ``tool_call_id``,
+# the Anthropic Messages API returns tool output as a *user* turn of
+# ``tool_result`` blocks, and Responses API items have a ``type`` and no role.
+# ---------------------------------------------------------------------------
+
+
+def _openai_chat_history() -> list[dict]:
+    return [
+        {"role": "user", "content": "what's the weather in Paris?"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "get_weather", "arguments": '{"city": "Paris"}'},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "sunny, 21C"},
+    ]
+
+
+def _anthropic_history() -> list[dict]:
+    return [
+        {"role": "user", "content": "what's the weather in Paris?"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "Let me check."},
+                {"type": "tool_use", "id": "toolu_1", "name": "get_weather", "input": {}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "sunny, 21C"}],
+        },
+    ]
+
+
+def _responses_history() -> list[dict]:
+    return [
+        {
+            "role": "user",
+            "content": [{"type": "input_text", "text": "what's the weather in Paris?"}],
+        },
+        {"type": "function_call", "call_id": "c1", "name": "get_weather", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "c1", "output": "sunny, 21C"},
+    ]
+
+
+_SDK_HISTORIES = [
+    pytest.param(_openai_chat_history(), id="openai-chat-completions"),
+    pytest.param(_anthropic_history(), id="anthropic-messages"),
+    pytest.param(_responses_history(), id="openai-responses"),
+]
+
+
+@pytest.mark.parametrize("history", _SDK_HISTORIES)
+def test_latest_activity_reads_sdk_tool_output(history: list[dict]) -> None:
+    """With no newer user message, the tool's output drives the next selection."""
+    from agent_gantry.query import latest_activity
+
+    assert latest_activity(history) == "sunny, 21C"
+
+
+@pytest.mark.parametrize("history", _SDK_HISTORIES)
+def test_role_strategies_agree_on_sdk_tool_messages(history: list[dict]) -> None:
+    """Tool output is a tool message to every strategy, however the SDK spells it."""
+    assert last_tool_result(history) == "tool result: sunny, 21C"
+    assert last_user_text(history) == "what's the weather in Paris?"
+
+
+@pytest.mark.parametrize("history", _SDK_HISTORIES)
+def test_tool_names_used_reads_the_assistant_call(history: list[dict]) -> None:
+    """The name lives on the assistant's call, not on the result message."""
+    from agent_gantry.query import tool_names_used
+
+    assert tool_names_used(history) == ["get_weather"]
+
+
+def test_anthropic_tool_result_content_may_be_a_block_list() -> None:
+    from agent_gantry.query import latest_activity
+
+    msg = {
+        "role": "user",
+        "content": [
+            {
+                "type": "tool_result",
+                "tool_use_id": "t",
+                "content": [{"type": "text", "text": "sunny"}, {"type": "text", "text": "21C"}],
+            }
+        ],
+    }
+    assert latest_activity([msg]) == "sunny 21C"
+
+
+def test_anthropic_user_turn_mixing_results_and_text_stays_a_user_turn() -> None:
+    """A fresh instruction alongside the tool results is the user speaking."""
+    msgs = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "t", "content": "sunny"},
+                {"type": "text", "text": "now email it to Sam"},
+            ],
+        }
+    ]
+    assert "now email it to Sam" in last_user_text(msgs)
+    assert last_tool_result(msgs) == ""
+
+
+def test_tool_names_used_across_object_shaped_messages() -> None:
+    """SDK objects (not dicts) from OpenAI, LangChain, Anthropic, AF, Pydantic AI, Strands."""
+    from agent_gantry.query import tool_names_used
+
+    class _Fn:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    class _Call:
+        def __init__(self, name: str) -> None:
+            self.function = _Fn(name)
+
+    class _OpenAIAssistant:
+        role = "assistant"
+        content = None
+
+        def __init__(self, *names: str) -> None:
+            self.tool_calls = [_Call(n) for n in names]
+
+    class _LangChainAI:
+        type = "ai"
+        content = ""
+
+        def __init__(self, *names: str) -> None:
+            self.tool_calls = [{"name": n, "args": {}, "id": "x"} for n in names]
+
+    class _ToolUseBlock:
+        type = "tool_use"
+
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    class _AnthropicAssistant:
+        role = "assistant"
+
+        def __init__(self, *names: str) -> None:
+            self.content = [_ToolUseBlock(n) for n in names]
+
+    class _AFFunctionCall:
+        type = "function_call"
+
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    class _AFMessage:
+        role = "assistant"
+        text = ""
+
+        def __init__(self, *names: str) -> None:
+            self.contents = [_AFFunctionCall(n) for n in names]
+
+    class _ToolCallPart:
+        part_kind = "tool-call"
+
+        def __init__(self, name: str) -> None:
+            self.tool_name = name
+
+    class _PydanticAIResponse:
+        def __init__(self, *names: str) -> None:
+            self.parts = [_ToolCallPart(n) for n in names]
+
+    strands = {
+        "role": "assistant",
+        "content": [{"toolUse": {"toolUseId": "1", "name": "strands_tool", "input": {}}}],
+    }
+    messages = [
+        _OpenAIAssistant("openai_tool"),
+        _LangChainAI("langchain_tool"),
+        _AnthropicAssistant("anthropic_tool"),
+        _AFMessage("af_tool"),
+        _PydanticAIResponse("pydantic_ai_tool"),
+        strands,
+        # A repeat (plain tool-role dict) is listed once, in first-seen order.
+        {"role": "tool", "name": "openai_tool", "content": "again"},
+    ]
+    assert tool_names_used(messages) == [
+        "openai_tool",
+        "langchain_tool",
+        "anthropic_tool",
+        "af_tool",
+        "pydantic_ai_tool",
+        "strands_tool",
+    ]
+
+
+def test_tool_names_used_with_nothing_called() -> None:
+    from agent_gantry.query import tool_names_used
+
+    assert tool_names_used(None) == []
+    assert tool_names_used([]) == []
+    assert tool_names_used([{"role": "user", "content": "hi"}]) == []

@@ -147,13 +147,14 @@ Use when the agent reasons in multiple steps and needs different tools at differ
 
 ```python
 from agent_gantry.agent_framework import AgentFrameworkAdapter
-from agent_gantry.query import fallback_chain, last_tool_result, last_user_text
 
 provider = AgentFrameworkAdapter(gantry).context_provider(
     top_k=3,
     query_strategy="per_call",
-    # Default for per_call is already fallback_chain(last_tool_result, last_user_text).
-    # Pass query_generator=... only if you want a different rotation.
+    # Default for per_call is latest_activity: the newest user message or the
+    # newest tool result, whichever came last. Pass query_generator=... only
+    # for a different rotation (e.g. last_tool_result to always follow the
+    # previous tool's output in a pipeline that takes no user turns).
 )
 
 agent = Agent(
@@ -313,6 +314,8 @@ refresher = ToolRefresher(gantry, limit=3, dialect="openai")
 tools = await refresher.refresh(messages)        # dialect schemas
 specs = await refresher.refresh_specs(messages)  # ToolSpec objects
 ```
+
+Used-tool tracking reads the name from wherever the SDK keeps it — an OpenAI `tool_calls` entry, an Anthropic `tool_use` block, a LangChain `ToolMessage` or a `{"role": "tool", "name": ...}` dict (`agent_gantry.query.tool_names_used`).
 
 The default query generator (`agent_gantry.query.latest_activity`) is **recency-aware**, so one refresher serves both styles with no config:
 
@@ -602,7 +605,8 @@ This catches the headline mistakes: a tool description that names another tool (
 |---|---|---|
 | Empty tool surface | `score_threshold` too aggressive for query length | Lower to `0.0` or use `"relative:0.8"` |
 | `per_call` not adapting | `as_chat_middleware()` not attached | Use `provider.attach_to(agent)` or add to `middleware=[...]` |
-| `per_call` set but identical surface each round | Default `query_generator=last_user_text` doesn't change | The new default is `fallback_chain(last_tool_result, last_user_text)`; if you overrode it, switch back |
+| `per_call` set but identical surface each round | An explicit `query_generator=last_user_text` returns the same text every round | The default is `latest_activity` (newest user message *or* tool result); drop the override |
+| `per_call` ignores the user's new message once a tool has run | `fallback_chain(last_tool_result, last_user_text)` prefers a tool result anywhere in the session | Use the `latest_activity` default; keep the chain only for a pipeline with no user turns mid-run |
 | Wrong tools selected | Description names another tool ("unrelated to factorial…") | Run `agent-gantry lint`; remove cross-references |
 | `top_k=6` but I see 8 tools | Skills / `always_include` / `static_tools` add on top of dynamic top_k | Expected; subtract those |
 | Cold-start re-embeds every time | Default `InMemoryVectorStore` is ephemeral | Wrap embedder in `CachedEmbedder` or use `[lancedb]` |
@@ -638,9 +642,12 @@ Cache is keyed by `(embedder_id, sha256(text))` — different models / dimension
 | `fallback_chain(*gens)` | Try each in order until one returns non-empty |
 | `keyword_focused` | Long instructional queries dilute the signal |
 | `truncated(gen, max_chars=200)` | Cap the query length, defaults to keeping the tail |
-| `latest_activity` (default for `ToolRefresher`) | Recency-aware: picks user text *or* last tool result, whichever is newest |
+| `latest_activity` (default for `per_call` and `ToolRefresher`) | Recency-aware: picks user text *or* last tool result, whichever is newest |
+| `tool_names_used` | Not a query generator: lists every tool the history shows being called, for `tools_already_used` |
 
-Default for `query_strategy="per_call"` is `fallback_chain(last_tool_result, last_user_text)` — it adapts as the agent reasons. `ToolRefresher` defaults to `latest_activity`, which serves autonomous and conversational agents alike.
+Both `query_strategy="per_call"` and `ToolRefresher` default to `latest_activity`, which serves autonomous and conversational agents alike: a new user message pivots the surface, and while the agent chains tools the previous result drives the next selection. `fallback_chain(last_tool_result, last_user_text)` — the former `per_call` default — prefers a tool result anywhere in the history, so a session that carries an earlier run's result stops following new user requests; use it only for a fixed pipeline with no user turns in between.
+
+Every generator reads the common SDK shapes: role/content dicts, OpenAI Chat Completions `tool` messages, OpenAI Responses items (`function_call` / `function_call_output`), Anthropic `tool_result` turns (a `user`-role message of result blocks), LangChain messages and Agent Framework `contents`.
 
 ## API reference quick-card
 

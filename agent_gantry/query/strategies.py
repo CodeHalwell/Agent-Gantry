@@ -33,11 +33,43 @@ def _blocks_text(value: Any) -> str:
             t = item.get("text") or item.get("input_text")
             if isinstance(t, str) and t.strip():
                 parts.append(t.strip())
+            elif item.get("type") == "tool_result":
+                # Anthropic Messages API: a tool's output lives in a
+                # ``tool_result`` block's ``content`` (a string or a list of
+                # text blocks), never under a ``text`` key.
+                t = _tool_result_text(item.get("content"))
+                if t:
+                    parts.append(t)
         else:
             t = getattr(item, "text", None)
             if isinstance(t, str) and t.strip():
                 parts.append(t.strip())
     return " ".join(parts)
+
+
+def _tool_result_text(content: Any) -> str:
+    """Text of an Anthropic ``tool_result`` block's ``content``."""
+    if isinstance(content, str):
+        return content.strip()
+    return _blocks_text(content)
+
+
+def _is_tool_result_message(msg: Any) -> bool:
+    """Whether ``msg`` is an Anthropic-style user turn made only of tool results.
+
+    The Messages API returns tool output to the model as a ``user``-role
+    message whose content is a list of ``tool_result`` blocks. For routing
+    that is a tool message: it carries no new request from the user, and its
+    text is what the agent just learned.
+    """
+    content = getattr(msg, "content", None)
+    if content is None and isinstance(msg, dict):
+        content = msg.get("content")
+    if not isinstance(content, (list, tuple)) or not content:
+        return False
+    return all(
+        isinstance(block, dict) and block.get("type") == "tool_result" for block in content
+    )
 
 
 def _msg_text(msg: Any) -> str:
@@ -70,6 +102,16 @@ def _msg_text(msg: Any) -> str:
             value = msg.get(key)
             if isinstance(value, str) and value.strip():
                 return value
+
+    if isinstance(msg, dict) and msg.get("type") == "function_call_output":
+        # OpenAI Responses API / Agents SDK: a tool's output is a top-level
+        # input item carrying ``output`` rather than ``content``.
+        output = msg.get("output")
+        if isinstance(output, str) and output.strip():
+            return output
+        block_text = _blocks_text(output)
+        if block_text:
+            return block_text
 
     # ``content`` as a list of structured blocks (OpenAI Responses input parts,
     # multimodal messages) — pull the text parts.
@@ -130,19 +172,34 @@ _LANGCHAIN_ROLES = {
 
 
 def _msg_role(msg: Any) -> str:
-    """Get the role of a message as a lowercase string."""
+    """Get the role of a message as a lowercase string.
+
+    Tool output is reported as ``"tool"`` whichever way the format spells it:
+    a ``tool``/``function`` role, an Anthropic user turn made only of
+    ``tool_result`` blocks, or an OpenAI Responses ``function_call_output``
+    item (which has no role at all).
+    """
     role = getattr(msg, "role", None)
     if role is None and isinstance(msg, dict):
         role = msg.get("role")
     if role is not None:
-        return str(role).lower()
+        role = str(role).lower()
+        if role == "user" and _is_tool_result_message(msg):
+            return "tool"
+        return role
 
-    # LangChain ``BaseMessage`` and its dict form carry the role in ``type``.
     kind = getattr(msg, "type", None)
     if kind is None and isinstance(msg, dict):
         kind = msg.get("type")
     if isinstance(kind, str):
-        return _LANGCHAIN_ROLES.get(kind.lower(), "")
+        kind = kind.lower()
+        # OpenAI Responses API input items carry a ``type`` and no role.
+        if kind == "function_call_output":
+            return "tool"
+        if kind == "function_call":
+            return "assistant"
+        # LangChain ``BaseMessage`` and its dict form carry the role in ``type``.
+        return _LANGCHAIN_ROLES.get(kind, "")
 
     return ""
 
@@ -159,6 +216,113 @@ def _msg_name(msg: Any) -> str:
             if isinstance(value, str) and value:
                 return value
     return ""
+
+
+def _called_tool_names(msg: Any) -> list[str]:
+    """Names of the tools ``msg`` *calls*, in the shapes agent SDKs emit."""
+    found: list[Any] = []
+
+    # OpenAI Chat Completions assistant ``tool_calls`` (dicts or SDK objects
+    # with ``.function.name``) and LangChain ``AIMessage.tool_calls``
+    # (``{"name": ..., "args": ...}`` dicts).
+    tool_calls = getattr(msg, "tool_calls", None)
+    if tool_calls is None and isinstance(msg, dict):
+        tool_calls = msg.get("tool_calls")
+    if isinstance(tool_calls, (list, tuple)):
+        for call in tool_calls:
+            function = (
+                call.get("function") if isinstance(call, dict) else getattr(call, "function", None)
+            )
+            name = None
+            if function is not None:
+                name = (
+                    function.get("name")
+                    if isinstance(function, dict)
+                    else getattr(function, "name", None)
+                )
+            if name is None:
+                name = call.get("name") if isinstance(call, dict) else getattr(call, "name", None)
+            found.append(name)
+
+    # OpenAI Responses API / Agents SDK ``function_call`` item.
+    kind = getattr(msg, "type", None)
+    if kind is None and isinstance(msg, dict):
+        kind = msg.get("type")
+    if kind == "function_call":
+        found.append(msg.get("name") if isinstance(msg, dict) else getattr(msg, "name", None))
+
+    # Anthropic ``tool_use`` blocks and Strands ``toolUse`` blocks in a content list.
+    content = getattr(msg, "content", None)
+    if content is None and isinstance(msg, dict):
+        content = msg.get("content")
+    if isinstance(content, (list, tuple)):
+        for block in content:
+            if isinstance(block, dict):
+                if block.get("type") == "tool_use":
+                    found.append(block.get("name"))
+                tool_use = block.get("toolUse")
+                if isinstance(tool_use, dict):
+                    found.append(tool_use.get("name"))
+            elif getattr(block, "type", None) == "tool_use":
+                found.append(getattr(block, "name", None))
+
+    # Microsoft Agent Framework ``function_call`` contents.
+    contents = getattr(msg, "contents", None)
+    if contents is None and isinstance(msg, dict):
+        contents = msg.get("contents")
+    if isinstance(contents, (list, tuple)):
+        for c in contents:
+            if getattr(c, "type", None) == "function_call":
+                found.append(getattr(c, "name", None))
+
+    # Pydantic AI ``ModelMessage`` parts.
+    parts = getattr(msg, "parts", None)
+    if isinstance(parts, (list, tuple)):
+        for part in parts:
+            if getattr(part, "part_kind", None) in ("tool-call", "tool-return"):
+                found.append(getattr(part, "tool_name", None))
+
+    return [name for name in found if isinstance(name, str) and name]
+
+
+def tool_names_used(messages: Iterable[Any] | None) -> list[str]:
+    """Return the name of every tool invoked so far, first-seen order, once each.
+
+    Feed the result to ``ConversationContext.tools_already_used`` (or the
+    ``tools_already_used=`` keyword of ``GantryToolset.select``) so the
+    router's already-used penalty nudges the next selection toward tools the
+    agent has not tried yet. :class:`~agent_gantry.integrations.refresh.ToolRefresher`
+    does this on every refresh.
+
+    A call is recorded wherever the message format keeps it. Most formats put
+    the name on the *assistant's call*, not on the result — an OpenAI ``tool``
+    message carries only ``tool_call_id`` — so reading tool-role messages
+    alone misses every tool the agent used:
+
+    - ``tool``/``function``-role messages carrying ``name``/``tool_name``
+      (LangChain ``ToolMessage``, the plain dict form).
+    - OpenAI Chat Completions ``tool_calls`` on an assistant message.
+    - OpenAI Responses API / Agents SDK ``function_call`` items.
+    - Anthropic ``tool_use`` content blocks.
+    - LangChain ``AIMessage.tool_calls``.
+    - Microsoft Agent Framework ``function_call`` contents.
+    - Pydantic AI ``tool-call`` / ``tool-return`` parts.
+    - Strands ``toolUse`` content blocks.
+    """
+    names: list[str] = []
+    seen: set[str] = set()
+
+    def _add(name: str) -> None:
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+
+    for msg in messages or ():
+        if _msg_role(msg) in ("tool", "function"):
+            _add(_msg_name(msg))
+        for name in _called_tool_names(msg):
+            _add(name)
+    return names
 
 
 def last_user_text(messages: Iterable[Any] | None) -> str:

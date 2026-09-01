@@ -160,10 +160,10 @@ async def check_multi_turn(gantry: AgentGantry) -> tuple[bool, str]:
     """ToolRefresher must re-select a different tool as the task pivots.
 
     This is a *user-driven* pivot scenario (each turn the user asks for a new
-    thing), which is exactly what the refresher's default query generator —
-    ``fallback_chain(last_user_text, last_tool_result)`` — handles. For an
-    autonomous tool *pipeline* (previous output drives the next tool) you would
-    instead pass ``query_generator=fallback_chain(last_tool_result, ...)``.
+    thing). The refresher's default query generator, ``latest_activity``, is
+    recency-aware, so each new user message drives that turn's selection; the
+    autonomous counterpart below shows the same default following tool results
+    when no newer user message exists.
     """
     refresher = ToolRefresher(gantry, limit=3)
     turns = [
