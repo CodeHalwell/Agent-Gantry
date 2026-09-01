@@ -464,7 +464,7 @@ wheels = [
 
 [[package]]
 name = "agent-gantry"
-version = "0.12.0"
+version = "0.13.1"
 source = { editable = "." }
 dependencies = [
     { name = "jsonschema" },
