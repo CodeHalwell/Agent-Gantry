@@ -281,13 +281,19 @@ def _called_tool_names(msg: Any) -> list[str]:
             elif getattr(block, "type", None) == "tool_use":
                 found.append(getattr(block, "name", None))
 
-    # Microsoft Agent Framework ``function_call`` contents.
+    # Microsoft Agent Framework ``function_call`` contents. A serialized/
+    # dict-shaped history (round-tripped through ``.to_dict()`` or built by
+    # hand for a test) carries each content as a plain dict, not the native
+    # Content object, so this has to read both shapes like the blocks above.
     contents = getattr(msg, "contents", None)
     if contents is None and isinstance(msg, dict):
         contents = msg.get("contents")
     if isinstance(contents, (list, tuple)):
         for c in contents:
-            if getattr(c, "type", None) == "function_call":
+            if isinstance(c, dict):
+                if c.get("type") == "function_call":
+                    found.append(c.get("name"))
+            elif getattr(c, "type", None) == "function_call":
                 found.append(getattr(c, "name", None))
 
     # Pydantic AI ``ModelMessage`` parts.

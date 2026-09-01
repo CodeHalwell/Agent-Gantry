@@ -941,3 +941,21 @@ def test_responses_object_shaped_function_call_output_is_read() -> None:
     ]
     assert latest_activity(msgs) == "sunny, 21C"
     assert tool_names_used(msgs) == ["get_weather"]
+
+
+def test_dict_shaped_agent_framework_function_call_contents_is_read() -> None:
+    """A serialized/dict-shaped Agent Framework history uses plain dicts for
+    each ``contents`` entry, not the native ``Content`` object.
+
+    ``getattr(c, "type", None)`` on a dict always returns ``None`` (dicts
+    have no ``.type`` attribute), so a dict-shaped ``function_call`` content
+    was silently skipped and the tool it called never made it into
+    ``tools_already_used`` — the router kept resurfacing it.
+    """
+    from agent_gantry.query import tool_names_used
+
+    msg = {
+        "role": "assistant",
+        "contents": [{"type": "function_call", "call_id": "c1", "name": "lookup"}],
+    }
+    assert tool_names_used([msg]) == ["lookup"]
