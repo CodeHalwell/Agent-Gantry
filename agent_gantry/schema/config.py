@@ -135,7 +135,10 @@ class MCPServerConfig(BaseModel):
 
     model_config = ConfigDict(validate_assignment=True)
 
-    _reject_newline_identifiers = field_validator("name", "namespace")(reject_newlines)
+    @field_validator("name", "namespace")
+    @classmethod
+    def _reject_newline_identifiers(cls, value: str | None) -> str | None:
+        return reject_newlines(value)
 
 
 class MCPConfig(BaseModel):
@@ -155,7 +158,10 @@ class A2AAgentConfig(BaseModel):
 
     model_config = ConfigDict(validate_assignment=True)
 
-    _reject_newline_identifiers = field_validator("name", "namespace")(reject_newlines)
+    @field_validator("name", "namespace")
+    @classmethod
+    def _reject_newline_identifiers(cls, value: str | None) -> str | None:
+        return reject_newlines(value)
 
 
 class A2AConfig(BaseModel):
