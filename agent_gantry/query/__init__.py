@@ -19,7 +19,12 @@ tail handled by the caller). The signature is:
 
 Built-in strategies:
 
-- :func:`last_user_text` — most recent user-role message (default).
+- :func:`latest_activity` — whichever is newer of the latest user message and
+  the latest tool result (the ``per_call`` and ``ToolRefresher`` default).
+  Serves conversational agents, whose user pivots each turn, and autonomous
+  agents, whose next tool follows the previous tool's output.
+- :func:`last_user_text` — most recent user-role message (the ``per_run``
+  default).
 - :func:`last_assistant_text` — most recent assistant-role message
   (the model's latest planning).
 - :func:`last_tool_result` — most recent tool/function-role message
@@ -29,7 +34,17 @@ Built-in strategies:
 - :func:`fallback_chain` — try each generator in order until one returns
   non-empty text. Useful for "tool-result then assistant then user".
 
-Example:
+:func:`tool_names_used` is the companion for the router's already-used
+penalty: it lists every tool the history shows being called, in the shapes
+the OpenAI, Anthropic, LangChain, Agent Framework and Pydantic AI SDKs emit.
+
+Every strategy understands the common message shapes: role/content dicts,
+OpenAI Chat Completions tool messages, OpenAI Responses input items
+(``function_call`` / ``function_call_output``), Anthropic ``tool_result``
+turns, LangChain messages (role in ``.type``) and Microsoft Agent Framework
+messages (``contents`` blocks).
+
+Example — always follow the last tool's output, even after a new user message:
 
 .. code-block:: python
 
@@ -52,6 +67,7 @@ from agent_gantry.query.strategies import (
     last_tool_result,
     last_user_text,
     latest_activity,
+    tool_names_used,
     truncated,
 )
 
@@ -63,5 +79,6 @@ __all__ = [
     "last_tool_result",
     "last_user_text",
     "latest_activity",
+    "tool_names_used",
     "truncated",
 ]

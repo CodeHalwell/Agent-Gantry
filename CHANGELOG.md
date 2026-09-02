@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Multi-turn tool selection: what drives each turn's retrieval, and what the
+router learns from the history, now come from wherever the agent SDK keeps
+them. Found by tracing a conversation through every per-turn path with the
+message shapes the OpenAI and Anthropic SDKs actually produce.
+
+### Fixed
+
+- **Used-tool tracking sees OpenAI and Anthropic histories.** `ToolRefresher`
+  read the tool name off tool-role messages only, but an OpenAI Chat
+  Completions `tool` message carries just `tool_call_id` and Anthropic keeps
+  the name in the assistant's `tool_use` block — so for both SDKs
+  `tools_used` stayed empty and the router's already-used penalty never
+  applied. The new `agent_gantry.query.tool_names_used` reads OpenAI
+  `tool_calls`, Responses `function_call` items, Anthropic `tool_use` blocks,
+  LangChain `AIMessage.tool_calls`, Agent Framework `function_call` contents,
+  Pydantic AI `tool-call` parts and Strands `toolUse` blocks; the refresher
+  uses it.
+- **Anthropic tool results drive the next selection.** The Messages API
+  returns tool output as a `user`-role message of `tool_result` blocks; every
+  query strategy read that as a user turn with no text and fell back to the
+  user's earlier request, so an agent chaining tools re-selected on the
+  original prompt each round. Those turns are now tool messages to
+  `latest_activity`, `last_tool_result` and `last_user_text` alike, with the
+  result's text. OpenAI Responses `function_call_output` items (a `type`, no
+  role) are read the same way, which the OpenAI Agents SDK live hook feeds in.
+- **Intent keywords match at the start of a token, not anywhere in one.**
+  `budget` and `target` counted as `get`, `thread` as `read`, `admin` as `dm`;
+  at 0.15 of the final score a spurious intent match is larger than the
+  semantic gap between neighbouring tools, so mismatched tools filled top-k
+  slots (`export_report` surfacing for "convert 100 dollars to euros"). The
+  rule is shared by query classification and the per-tool boost; inflections
+  and snake_case names (`sending`, `send_email`) still match.
+- **`@with_semantic_tools` injects tools when the caller passes `tools=None`.**
+  The check was for the keyword's presence, so a caller forwarding the
+  wrapped function's own default switched selection off silently. `tools=[]`
+  remains the explicit opt-out.
+- **`CrossEncoderReranker` scores fit `ScoredTool`.** A model whose
+  activation is the identity returns raw logits; `ScoredTool` bounds its
+  score to `[0, 1]`, so one such value failed validation and took the whole
+  retrieval down. Out-of-range scores are squashed through a sigmoid (ranking
+  unchanged); probabilities pass through untouched.
+
+### Changed
+
+- **`GantryContextProvider(query_strategy="per_call")` defaults to
+  `latest_activity`.** The previous default,
+  `fallback_chain(last_tool_result, last_user_text)`, preferred a tool result
+  anywhere in the session, so once a history provider carried an earlier
+  run's result the user's next message never drove selection and the surface
+  stayed on the previous task; it also prefixed the query with the used
+  tool's own name. Within a run the two behave the same (the newest tool
+  result drives each round). Pass the chain explicitly for a fixed pipeline
+  with no user turns mid-run.
+
 ## [0.13.1] - 2026-08-28
 
 Validation and schema-emission fixes, all found by review of 0.13.0. Several

@@ -134,6 +134,13 @@ To force one behaviour, pass `query_generator=` explicitly — `last_user_text`
 `fallback_chain(...)`. See `examples/frameworks/multi_turn_refresher_example.py`
 for both modes side by side.
 
+The message list can be in any of the common SDK shapes — plain role/content
+dicts, OpenAI Chat Completions (tool messages carry only `tool_call_id`),
+OpenAI Responses items, Anthropic (tool output arrives as a `user` turn of
+`tool_result` blocks), LangChain or Agent Framework messages. Used-tool
+tracking reads the tool's name from the assistant's call where the result
+message has none (`agent_gantry.query.tool_names_used`).
+
 ## Uniform `live_tier` / `live()` entry point
 
 The `<Adapter>.select` methods above are *static*: select once, hand over a fixed

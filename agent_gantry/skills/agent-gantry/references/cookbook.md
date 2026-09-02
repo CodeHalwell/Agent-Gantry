@@ -20,7 +20,10 @@ provider = GantryContextProvider(
     gantry,
     top_k=3,
     query_strategy="per_call",
-    # Default for per_call already adapts to tool output; spelled out for clarity:
+    # The per_call default (latest_activity) already follows each tool's
+    # output. Pinning last_tool_result first is right for this pipeline only
+    # because no user turn arrives mid-run — with one, the chain would keep
+    # following the earlier result instead of the new request.
     query_generator=fallback_chain(last_tool_result, last_user_text),
     score_threshold="relative:0.8",
 )

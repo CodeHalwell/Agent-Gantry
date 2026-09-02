@@ -151,6 +151,36 @@ class TestSemanticToolSelector:
         assert captured_tools == provided_tools
 
     @pytest.mark.asyncio
+    async def test_explicit_none_counts_as_no_tools_provided(
+        self, mock_gantry: AgentGantry
+    ) -> None:
+        """``tools=None`` is the wrapped function's own default, forwarded.
+
+        A caller passing its arguments through sends ``tools=None``
+        explicitly; that must not silently switch tool selection off.
+        An empty list is a deliberate opt-out and is left alone.
+        """
+
+        @mock_gantry.register
+        def get_weather(city: str) -> str:
+            """Get the current weather for a specified city location."""
+            return f"Weather in {city}"
+
+        selector = SemanticToolSelector(mock_gantry, score_threshold=0.0)
+        captured: dict[str, Any] = {}
+
+        @selector
+        async def generate(prompt: str, *, tools: list[dict[str, Any]] | None = None) -> str:
+            captured["tools"] = tools
+            return prompt
+
+        await generate("What's the weather in Paris?", tools=None)
+        assert captured["tools"]
+
+        await generate("What's the weather in Paris?", tools=[])
+        assert captured["tools"] == []
+
+    @pytest.mark.asyncio
     async def test_prompt_extraction_from_messages(self, mock_gantry: AgentGantry) -> None:
         """Test prompt extraction from OpenAI-style messages."""
 
@@ -567,3 +597,65 @@ class TestErrorScenarios:
         # Function should still execute despite retrieval failure
         assert function_called
         assert result == "Sync result: test sync prompt"
+
+
+class TestPositionalToolsArgument:
+    """A caller may pass ``tools`` positionally, not just by keyword.
+
+    ``kwargs.get(self._tools_param) is None`` missed a value bound
+    positionally (it was never in ``kwargs`` at all), so the wrapper then
+    added ``tools`` a second time as a keyword and the call raised
+    ``TypeError: got multiple values for argument 'tools'``.
+    """
+
+    @pytest.fixture
+    def gantry(self) -> AgentGantry:
+        gantry = AgentGantry()
+
+        @gantry.register
+        def get_weather(city: str) -> str:
+            """Get the current weather for a specified city location."""
+            return f"Weather in {city}"
+
+        return gantry
+
+    @pytest.mark.asyncio
+    async def test_positional_none_is_replaced_not_duplicated(
+        self, gantry: AgentGantry
+    ) -> None:
+        selector = SemanticToolSelector(gantry, score_threshold=0.0)
+        captured: dict[str, Any] = {}
+
+        @selector
+        async def generate(prompt: str, tools: list[dict[str, Any]] | None = None) -> str:
+            captured["tools"] = tools
+            return prompt
+
+        await generate("What's the weather in Paris?", None)
+        assert captured["tools"]
+
+    @pytest.mark.asyncio
+    async def test_positional_explicit_tools_is_left_alone(self, gantry: AgentGantry) -> None:
+        selector = SemanticToolSelector(gantry, score_threshold=0.0)
+        captured: dict[str, Any] = {}
+
+        @selector
+        async def generate(prompt: str, tools: list[dict[str, Any]] | None = None) -> str:
+            captured["tools"] = tools
+            return prompt
+
+        sentinel = [{"type": "function", "function": {"name": "custom_tool"}}]
+        await generate("What's the weather in Paris?", sentinel)
+        assert captured["tools"] == sentinel
+
+    def test_positional_none_is_replaced_not_duplicated_sync(self, gantry: AgentGantry) -> None:
+        selector = SemanticToolSelector(gantry, score_threshold=0.0)
+        captured: dict[str, Any] = {}
+
+        @selector
+        def generate(prompt: str, tools: list[dict[str, Any]] | None = None) -> str:
+            captured["tools"] = tools
+            return prompt
+
+        generate("What's the weather in Paris?", None)
+        assert captured["tools"]

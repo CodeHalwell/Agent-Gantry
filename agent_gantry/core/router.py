@@ -68,11 +68,34 @@ INTENT_TAG_MAPPING: dict[TaskIntent, list[str]] = {
 }
 
 
-# Pre-compile regex for intent matching to optimize routing inner loop
-# Benchmark: ~40% faster than generator expression (any(kw in text))
-# Note: we omit word boundaries to exactly preserve original substring matching behavior
+# An intent keyword matches at the start of a token — ``send`` matches
+# ``send``, ``sending`` and ``send_email`` — but never inside one. Plain
+# substring matching counted ``budget`` and ``target`` as ``get``, ``thread``
+# and ``spread`` as ``read`` and ``admin`` as ``dm``, and at 0.15 of the final
+# score a spurious intent match is larger than the semantic gap between
+# neighbouring tools, so mismatched tools filled top-k slots. An underscore is
+# a token separator here (tool names are snake_case), which is why this is not
+# the regex ``\b``. One pattern builder serves both query classification and
+# tool-text matching so the two cannot disagree about what a keyword is.
+_TOKEN_START = r"(?<![A-Za-z0-9])"
+
+
+def _keyword_pattern(keywords: list[str]) -> re.Pattern[str]:
+    """Compile a pattern matching any of ``keywords`` at the start of a token."""
+    alternatives = "|".join(re.escape(kw) for kw in keywords)
+    return re.compile(rf"{_TOKEN_START}(?:{alternatives})")
+
+
+# Pre-compiled per intent for the routing inner loop: one ``search`` per tool
+# rather than a Python-level scan over every keyword.
 INTENT_TAG_PATTERNS: dict[TaskIntent, re.Pattern[str]] = {
-    intent: re.compile("|".join(re.escape(kw) for kw in keywords))
+    intent: _keyword_pattern(keywords) for intent, keywords in INTENT_TAG_MAPPING.items()
+}
+
+# Per-keyword patterns for classification, which counts how many of an
+# intent's keywords a query mentions rather than whether it mentions any.
+_INTENT_KEYWORD_PATTERNS: dict[TaskIntent, list[re.Pattern[str]]] = {
+    intent: [_keyword_pattern([kw]) for kw in keywords]
     for intent, keywords in INTENT_TAG_MAPPING.items()
 }
 
@@ -176,11 +199,8 @@ async def classify_intent(
     best_intent = None
     best_score = 0
 
-    for intent, keywords in INTENT_TAG_MAPPING.items():
-        count = 0
-        for kw in keywords:
-            if kw in enriched_query:
-                count += 1
+    for intent, patterns in _INTENT_KEYWORD_PATTERNS.items():
+        count = sum(1 for pattern in patterns if pattern.search(enriched_query))
 
         if count > best_score:
             best_score = count

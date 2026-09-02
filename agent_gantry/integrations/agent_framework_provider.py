@@ -45,14 +45,10 @@ Both APIs coexist intentionally:
     provider = GantryContextProvider(gantry, top_k=5)
     agent = Agent(client, "...", context_providers=[provider])
 
-    # Dynamic per-call — top-k re-selected every chat round:
-    from agent_gantry.query import last_tool_result, fallback_chain, last_user_text
-    provider = GantryContextProvider(
-        gantry,
-        top_k=3,
-        query_strategy="per_call",
-        query_generator=fallback_chain(last_tool_result, last_user_text),
-    )
+    # Dynamic per-call — top-k re-selected every chat round from whatever
+    # happened most recently: the user's new message, or the last tool's
+    # result while the agent is chaining tools (``latest_activity``):
+    provider = GantryContextProvider(gantry, top_k=3, query_strategy="per_call")
     agent = Agent(
         client,
         "...",
@@ -80,11 +76,7 @@ from agent_gantry.integrations.agent_framework_bridge import (
     RetrievalDecision,
 )
 from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
-from agent_gantry.query import (
-    fallback_chain,
-    last_tool_result,
-    last_user_text,
-)
+from agent_gantry.query import last_user_text, latest_activity
 from agent_gantry.utils.render import render_result
 
 # Rolling cap on retained per-round retrieval decisions (see `selections`).
@@ -97,12 +89,18 @@ _DEFAULT_PER_RUN_QUERY = last_user_text
 
 
 def _default_per_call_query() -> Any:
-    """Recommended ``per_call`` default — tool result, then user text.
+    """Recommended ``per_call`` default — :func:`~agent_gantry.query.latest_activity`.
 
-    Built lazily so the composed callable is fresh each time
-    (``fallback_chain`` is cheap; the indirection just avoids a global).
+    Recency-aware: whichever is newer of the latest user message and the
+    latest tool result drives the round's retrieval, the same generator every
+    other per-turn provider and ``ToolRefresher`` use. The previous default,
+    ``fallback_chain(last_tool_result, last_user_text)``, preferred a tool
+    result wherever one existed in the history — so once a session carried an
+    earlier run's tool result, a fresh user request never drove selection and
+    the surface stayed on the previous task. It also prefixed the query with
+    the tool's own name, pulling retrieval back toward the tool just used.
     """
-    return fallback_chain(last_tool_result, last_user_text)
+    return latest_activity
 
 
 if TYPE_CHECKING:
@@ -1048,8 +1046,9 @@ class GantryContextProvider:
         query_generator: Callable used to derive the retrieval query string
             from the conversation messages. When ``None`` the default
             depends on ``query_strategy``: ``last_user_text`` for
-            ``per_run`` (back-compat), and ``fallback_chain(last_tool_result,
-            last_user_text)`` for ``per_call`` — the latter is what makes
+            ``per_run`` (back-compat), and ``latest_activity`` for
+            ``per_call`` — recency-aware, so a new user message *or* the
+            latest tool result drives each round, which is what makes
             ``per_call`` actually adapt across rounds. Sync or async are
             both accepted. See :mod:`agent_gantry.query` for the built-in
             alternatives.
@@ -1193,7 +1192,7 @@ class GantryContextProvider:
                 "GantryContextProvider: query_strategy='per_call' was set "
                 "but query_generator=last_user_text returns the same string "
                 "every round, defeating per-call adaptation. Consider "
-                "fallback_chain(last_tool_result, last_user_text) instead."
+                "latest_activity (the default) instead."
             )
 
         if required:

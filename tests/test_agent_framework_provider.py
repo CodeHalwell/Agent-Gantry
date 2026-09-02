@@ -363,19 +363,65 @@ class TestGantryContextProvider:
         assert "af_native_tool" in names
 
     @pytest.mark.asyncio
-    async def test_per_call_default_generator_is_fallback_chain(
+    async def test_per_call_default_generator_is_latest_activity(
         self, gantry_with_tools: AgentGantry
     ) -> None:
         """per_call mode must pick a generator that actually adapts each
         round; the per_run default (last_user_text) would silently
         disable the very thing per_call enables."""
-        from agent_gantry.query import last_user_text
+        from agent_gantry.query import last_user_text, latest_activity
 
         provider = GantryContextProvider(
             gantry_with_tools, top_k=1, query_strategy="per_call"
         )
         # The selected generator is *not* the bare last_user_text default.
         assert provider._query_generator is not last_user_text  # type: ignore[attr-defined]
+        assert provider._query_generator is latest_activity  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_per_call_new_user_message_outranks_stale_tool_result(
+        self, gantry_with_tools: AgentGantry
+    ) -> None:
+        """A session carrying an earlier tool result still follows a new request.
+
+        The former default, ``fallback_chain(last_tool_result, last_user_text)``,
+        preferred a tool result anywhere in the history, so once a session
+        held one the user's next message never drove selection and the
+        surface stayed on the previous task.
+        """
+        provider = GantryContextProvider(
+            gantry_with_tools, top_k=1, query_strategy="per_call"
+        )
+
+        class _ChatCtx:
+            def __init__(self, messages: list) -> None:
+                self.options: dict = {"tools": []}
+                self.messages = messages
+
+        history = [
+            _user_msg("weather in Paris"),
+            af.Message(
+                role="tool",
+                contents=[af.Content.from_function_result(call_id="c1", result="Paris: sunny")],
+            ),
+            _user_msg("book a flight to Tokyo"),
+        ]
+        await provider._refresh_tools_on_chat_context(_ChatCtx(history))
+
+        assert provider.last_selection is not None
+        assert provider.last_selection.query == "book a flight to Tokyo"
+
+        # And while the agent is chaining tools, the newest result drives it.
+        history.append(
+            af.Message(
+                role="tool",
+                contents=[
+                    af.Content.from_function_result(call_id="c2", result="flight booked")
+                ],
+            )
+        )
+        await provider._refresh_tools_on_chat_context(_ChatCtx(history))
+        assert provider.last_selection.query == "flight booked"
 
     @pytest.mark.asyncio
     async def test_per_call_with_last_user_text_warns(
