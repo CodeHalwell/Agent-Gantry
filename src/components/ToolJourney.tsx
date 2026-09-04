@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 
 type Stage = { title: string; detail: string; codeHtml: string };
 
@@ -8,17 +8,38 @@ export default function ToolJourney({ stages }: Props) {
   const [active, setActive] = useState(0);
   const stage = useMemo(() => stages[active], [active, stages]);
 
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  const handleKeyDown = (e: React.KeyboardEvent, index: number) => {
+    let newIndex = index;
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      newIndex = (index + 1) % stages.length;
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      newIndex = (index - 1 + stages.length) % stages.length;
+    }
+
+    if (newIndex !== index) {
+      setActive(newIndex);
+      tabRefs.current[newIndex]?.focus();
+    }
+  };
+
   return (
     <div className="card">
       <div className="grid" role="tablist" aria-label="Implementation stages">
         {stages.map((s, i) => (
           <button
             key={s.title}
+            ref={(el) => { tabRefs.current[i] = el; }}
             role="tab"
             aria-selected={i === active}
             aria-controls="journey-tabpanel"
             id={`journey-tab-${i}`}
+            tabIndex={i === active ? 0 : -1}
             onClick={() => setActive(i)}
+            onKeyDown={(e) => handleKeyDown(e, i)}
             style={{
               padding: '1rem',
               borderRadius: '1rem',
