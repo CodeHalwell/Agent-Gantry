@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-05
+
 Multi-turn tool selection: what drives each turn's retrieval, and what the
 router learns from the history, now come from wherever the agent SDK keeps
 them. Found by tracing a conversation through every per-turn path with the
