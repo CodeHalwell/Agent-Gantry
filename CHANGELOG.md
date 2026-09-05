@@ -3302,7 +3302,10 @@ adapters, and the provider dialects agree with it.
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.13.1...v0.14.0
+[0.13.1]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.13.0...v0.13.1
+[0.13.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.9.0...v0.10.0
