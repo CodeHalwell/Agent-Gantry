@@ -94,3 +94,8 @@
 **Vulnerability:** Execution and event models lack newline validation on identifier fields.
 **Learning:** Identifier sanitization needs to be universally applied to all schema models to avoid CRLF injection.
 **Prevention:** Implement reject_newlines field_validator and validate_assignment=True on all schemas.
+
+## 2026-09-16 - [HIGH] Fix Pydantic Validator TypeError on Optional Fields
+**Vulnerability:** Execution and event models used `reject_newlines` directly via function reference without handling optional fields properly or handling Pydantic V2 classmethods properly, which causes issues such as TypeErrors on None values.
+**Learning:** When using Pydantic V2, the `@field_validator` decorator must be placed above `@classmethod` for shared validation functions, and it must properly handle optional `None` values to avoid TypeErrors.
+**Prevention:** Implement `reject_newlines` field_validator (with proper `str | None` handling) and `validate_assignment=True` on all schemas.
