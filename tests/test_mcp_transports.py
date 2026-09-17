@@ -27,7 +27,12 @@ from agent_gantry.schema.config import MCPServerConfig
 from agent_gantry.schema.execution import ExecutionStatus, ToolCall
 from agent_gantry.schema.mcp import MCPServerDefinition
 from agent_gantry.schema.tool import ToolDefinition
-from agent_gantry.servers.mcp_server import MCPServer, _render_tool_output, create_mcp_server
+from agent_gantry.servers.mcp_server import (
+    MCPServer,
+    _render_tool_output,
+    _StreamableHTTPApp,
+    create_mcp_server,
+)
 
 
 def _free_port() -> int:
@@ -681,6 +686,80 @@ async def test_static_mode_can_serve_a_tool_named_after_a_meta_tool() -> None:
     for name in ("execute_tool", "find_relevant_tools"):
         assert "the real tool" in _text(await server._call_tool(name, {"a": 1})), name
     await gantry.close()
+
+
+@pytest.mark.asyncio
+async def test_a_generated_alias_is_callable_without_a_prior_list() -> None:
+    """``_exposed`` is built by ``_list_tools``, so a client calling a tool it
+    cached from an earlier process found nothing there. A bare name might
+    still resolve through the registry fallback, but a generated alias is not
+    a registry name and failed as an unknown tool."""
+    gantry = AgentGantry()
+
+    async def handler(**kwargs: Any) -> dict[str, Any]:
+        return {"ran": "real", **kwargs}
+
+    for namespace in ("alpha", "beta"):
+        await gantry.add_tool(
+            ToolDefinition(
+                name="add_numbers",
+                namespace=namespace,
+                description=f"Adds numbers, the {namespace} implementation",
+                parameters_schema={"type": "object", "properties": {"a": {"type": "integer"}}},
+            ),
+            handler=handler,
+        )
+
+    # a server that has never served tools/list
+    server = create_mcp_server(gantry, mode="static")
+    assert server._exposed == {}
+    assert "ran" in _text(await server._call_tool("alpha_add_numbers", {"a": 1}))
+    await gantry.close()
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_startup_does_not_leave_the_manager_running() -> None:
+    """A client that disconnects during the first mounted request cancels the
+    wait in ``start()``. The runner would go on into ``manager.run()`` and sit
+    there while ``_task`` stayed ``None``, so the manager was both leaked and
+    re-entered by the next request — which a one-shot manager refuses."""
+
+    class _SlowManager:
+        """Takes a while to enter, then holds, like the real one."""
+
+        def __init__(self) -> None:
+            self.entered = 0
+
+        def run(self) -> Any:
+            self.entered += 1
+            outer = self
+
+            class _Ctx:
+                async def __aenter__(self) -> Any:
+                    await asyncio.sleep(0.3)
+                    return outer
+
+                async def __aexit__(self, *exc: Any) -> None:
+                    return None
+
+            return _Ctx()
+
+    manager = _SlowManager()
+    app = _StreamableHTTPApp(manager)
+
+    starting = asyncio.create_task(app.start())
+    await asyncio.sleep(0.05)
+    starting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await starting
+    await asyncio.sleep(0.4)  # well past the manager's startup
+
+    assert not [task for task in asyncio.all_tasks() if "runner" in repr(task)]
+    # the manager was spent by that attempt, so the next request is told so
+    # plainly rather than meeting the SDK's own one-shot error
+    with pytest.raises(RuntimeError, match="cannot serve again"):
+        await app.start()
+    assert manager.entered == 1
 
 
 @pytest.mark.asyncio

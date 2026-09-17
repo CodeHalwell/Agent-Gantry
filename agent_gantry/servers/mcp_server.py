@@ -211,8 +211,13 @@ class _StreamableHTTPApp:
             ready = asyncio.Event()
             close = asyncio.Event()
             failure: list[BaseException] = []
+            consumed: list[bool] = []
 
             async def runner() -> None:
+                # ``run()`` is one-shot, so record that it has been spent
+                # before entering: a cancellation part-way through still
+                # leaves the manager unusable.
+                consumed.append(True)
                 try:
                     async with self._manager.run():
                         ready.set()
@@ -222,7 +227,26 @@ class _StreamableHTTPApp:
                     ready.set()
 
             task = asyncio.create_task(runner())
-            await ready.wait()
+            try:
+                await ready.wait()
+            except BaseException:
+                # Cancelled while the manager was starting — a client that
+                # disconnects during the first mounted request does this. The
+                # runner would otherwise go on into ``manager.run()`` and sit
+                # there un-awaited while ``_task`` stayed ``None``, so the next
+                # request would try to enter the same one-shot manager and fail
+                # for the life of the process. Tear it down on the way out.
+                task.cancel()
+                with contextlib.suppress(BaseException):
+                    await task
+                # If the runner got as far as calling ``run()``, the manager is
+                # spent whether or not it finished starting, so this app can
+                # never serve. Mark it stopped, and the next request gets the
+                # "build a new one" message instead of the SDK's own error
+                # arriving as a mysterious startup failure.
+                if consumed:
+                    self._closed = True
+                raise
             if failure:
                 raise RuntimeError(
                     f"MCP Streamable HTTP session manager failed to start: {failure[0]}"
@@ -432,6 +456,16 @@ class MCPServer:
             if name == "execute_tool":
                 return await self._handle_execute_tool(arguments)
         exposed = self._exposed.get(name)
+        if exposed is None and self.mode != "dynamic" and not self._exposed:
+            # ``_exposed`` is built by ``_list_tools``, so a client calling a
+            # tool it cached from an earlier process found nothing here: a bare
+            # name might still resolve through the fallback below, but a
+            # generated alias (``alpha_add_numbers``, ``default_execute_tool``)
+            # is not a registry name and failed as unknown. Build the mapping
+            # on demand. Only once — it is non-empty afterwards — and not in
+            # dynamic mode, which has no direct tools to map.
+            await self._list_tools()
+            exposed = self._exposed.get(name)
         if exposed is not None:
             # Direct execution of a listed tool; pin the namespace so a
             # same-named tool elsewhere is never run instead.

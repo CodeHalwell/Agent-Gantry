@@ -249,6 +249,20 @@ Three behaviour changes to know about before upgrading:
   hybrid still renames a pinned tool that claims a meta name.
 - **`find_relevant_tools` clamps an explicit `limit` of 0** instead of
   reading it as absent and substituting the configured default.
+- **A generated wire alias is callable without a prior `tools/list`.** The
+  dispatch map is built while listing, so a client calling a tool it cached
+  from an earlier process found it empty: a bare name could still resolve
+  through the registry fallback, but an alias such as `alpha_add_numbers` is
+  not a registry name and failed as unknown. The mapping is now built on
+  demand, once.
+- **A cancelled session-manager startup no longer leaks it.** If the first
+  request to a *mounted* app was cancelled while the manager was starting —
+  a client disconnecting — the runner went on into `run()` and sat there
+  while the app still believed nothing had started, so the next request
+  tried to enter the same one-shot manager. The runner is cancelled and
+  drained on that path, and because `run()` is spent either way, the app
+  reports that it cannot serve again rather than surfacing the SDK's error
+  as a mysterious startup failure.
 
 #### Stores and embedders
 
