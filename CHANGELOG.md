@@ -109,6 +109,24 @@ Three behaviour changes to know about before upgrading:
   from the OpenAI-family ones.
 - **`extract_tool_calls(..., dialect="auto")`** works, matching
   `get_adapter` and `retrieve_tools`.
+- **A Gemini tool with a non-string enum is callable.** `Literal[1, 2]`
+  publishes `{"type": "integer", "enum": [1, 2]}`, which the SDK rejects
+  because `Schema.enum` is string-typed — but re-spelling the members as
+  strings only moved the failure: the model then answered `"1"`, which the
+  executor validated against the canonical *integer* schema and rejected, so
+  every call failed. The enum Gemini cannot carry is dropped, the canonical
+  type is kept so the model returns the right JSON kind, and the permitted
+  values move into the description. The enum is still enforced on the way
+  back in, where it always was.
+
+#### Sync durability
+
+- **A failed sync no longer loses a late registration.** `sync()` drained the
+  pending buffer before doing the work behind it, so a transient embedder or
+  store failure left the buffer empty while `_synced` stayed `True` from the
+  previous run — `ensure_synced()` then saw nothing to do and the tool stayed
+  invisible even after the backend recovered. The buffer is drained only on
+  success, and a failure clears `_synced` so the next retrieval retries.
 
 #### Stores and embedders
 
@@ -196,12 +214,17 @@ Three behaviour changes to know about before upgrading:
   path=)` runs the Streamable HTTP transport and `serve_mcp("sse", ...)` the
   legacy SSE one (`run_sse` previously raised `NotImplementedError`);
   `MCPServer.streamable_http_app()` / `.sse_app()` return Starlette apps for
-  mounting into an existing service. `allowed_hosts` / `allowed_origins`
-  switch on the SDK's DNS-rebinding protection.
+  mounting into an existing service — and they work when mounted, which
+  needed the session manager to start on the first request as well as from
+  the app's own lifespan, since a parent Starlette or FastAPI app does not
+  run a mounted sub-application's lifespan. `allowed_hosts` /
+  `allowed_origins` switch on the SDK's DNS-rebinding protection.
 - **`serve_mcp(mode="hybrid", expose=[...])`** lists the named tools
   directly next to the meta-tools (it previously behaved exactly like
   `dynamic`). Static and hybrid listings qualify same-named tools from
-  different namespaces so both stay callable.
+  different namespaces so both stay callable, and a qualified name never
+  takes another tool's real name (`a.x` and `b.x` become `a_x`/`b_x` while a
+  genuine `default.a_x` keeps `a_x`).
 - **Agent Skills loader.** `gantry.add_skills_from_directory(path)` and
   `agent_gantry.skills.load_skills_from_directory` / `load_skill` /
   `skill_from_markdown` read Claude Code's `SKILL.md` directory format

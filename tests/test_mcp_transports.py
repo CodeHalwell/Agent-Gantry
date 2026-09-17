@@ -378,6 +378,91 @@ async def test_hybrid_lists_pinned_tools_and_static_qualifies_collisions() -> No
     await gantry.close()
 
 
+@pytest.mark.asyncio
+async def test_the_app_serves_when_mounted_into_another_service() -> None:
+    """A parent Starlette/FastAPI app does not run a *mounted* sub-app's
+    lifespan, so an app that only started the SDK session manager there
+    reached an uninitialised manager on the first request — precisely the
+    "mount it into your service" flow the method documents."""
+    starlette = pytest.importorskip("starlette")
+    from starlette.applications import Starlette
+    from starlette.responses import PlainTextResponse
+    from starlette.routing import Mount, Route
+
+    del starlette
+    gantry = await _served_gantry()
+    mounted = create_mcp_server(gantry, name="mounted").streamable_http_app("/mcp")
+    host = Starlette(
+        routes=[
+            Route("/health", lambda request: PlainTextResponse("ok")),
+            Mount("/tools", app=mounted),
+        ]
+    )
+
+    port = _free_port()
+    server = uvicorn.Server(
+        uvicorn.Config(host, host="127.0.0.1", port=port, log_level="warning")
+    )
+    task = asyncio.create_task(server.serve())
+    try:
+        for _ in range(200):
+            if server.started:
+                break
+            await asyncio.sleep(0.05)
+        assert server.started
+
+        client = MCPClient(
+            MCPServerConfig(name="mounted", url=f"http://127.0.0.1:{port}/tools/mcp")
+        )
+        try:
+            tools = await asyncio.wait_for(client.list_tools(), 30)
+            assert sorted(t.name for t in tools) == ["execute_tool", "find_relevant_tools"]
+            result = await client.call_tool(
+                "execute_tool", {"tool_name": "add_numbers", "arguments": {"a": 2, "b": 3}}
+            )
+            assert _text(result) == "5"
+        finally:
+            await client.close()
+    finally:
+        server.should_exit = True
+        await asyncio.wait_for(task, 15)
+        await gantry.close()
+
+
+@pytest.mark.asyncio
+async def test_a_qualified_wire_name_never_takes_another_tools_name() -> None:
+    """``a.x`` and ``b.x`` qualify to ``a_x``/``b_x``, which can collide with a
+    real ``default.a_x``. The later one used to overwrite the earlier in the
+    dispatch map, so calling one tool ran the other."""
+    gantry = AgentGantry()
+
+    async def handler(**kwargs: Any) -> dict[str, Any]:
+        return kwargs
+
+    for namespace, name in (("a", "x"), ("b", "x"), ("default", "a_x")):
+        await gantry.add_tool(
+            ToolDefinition(
+                name=name,
+                namespace=namespace,
+                description=f"Tool {namespace}.{name} for the collision test",
+                parameters_schema={"type": "object", "properties": {}},
+            ),
+            handler=handler,
+        )
+
+    server = create_mcp_server(gantry, mode="static")
+    wire_names = [tool.name for tool in await server._list_tools()]
+    assert len(wire_names) == len(set(wire_names)), wire_names
+    # the genuine tool keeps its own name; the qualified one yields
+    assert server._exposed["a_x"].namespace == "default"
+    assert {name: (t.namespace, t.name) for name, t in server._exposed.items()} == {
+        "a_x": ("default", "a_x"),
+        "a_x_2": ("a", "x"),
+        "b_x": ("b", "x"),
+    }
+    await gantry.close()
+
+
 def test_render_tool_output_prefers_json_for_structured_results() -> None:
     assert _render_tool_output({"a": 1, "b": [1, 2]}) == '{"a": 1, "b": [1, 2]}'
     assert _render_tool_output("plain") == "plain"

@@ -626,13 +626,23 @@ class AgentGantry:
 
         logger.info(f"Syncing {len(tools_to_sync)}/{len(all_tools)} tools to vector store...")
 
-        # Clear pending tools since we're processing them
+        # The pending buffer is drained only once the work behind it has
+        # succeeded. Clearing it first lost a late registration outright: on a
+        # transient embedder or store failure the buffer was already empty and
+        # ``_synced`` still True from the previous successful sync, so
+        # ``ensure_synced`` saw nothing to do and the tool stayed invisible
+        # even after the backend recovered. ``_synced`` is likewise cleared on
+        # the way out, so a first-ever sync that fails is retried too.
+        try:
+            total_synced = await self._sync_batches(tools_to_sync, batch_size)
+
+            # Update sync metadata (if supported)
+            await self._sync_manager.update_metadata()
+        except BaseException:
+            self._synced = False
+            raise
+
         self._pending_tools = []
-
-        total_synced = await self._sync_batches(tools_to_sync, batch_size)
-
-        # Update sync metadata (if supported)
-        await self._sync_manager.update_metadata()
 
         # Ensure all tools are registered (even those not synced). Compare by
         # qualified name — `tool in tools_to_sync` would deep-compare Pydantic

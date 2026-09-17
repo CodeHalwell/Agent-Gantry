@@ -585,11 +585,13 @@ def _gemini_enum_in_place(node: dict[str, Any]) -> None:
 
     ``Literal[1, 2]`` publishes ``{"type": "integer", "enum": [1, 2]}``, and
     the ``const`` conversion above can produce a non-string member the same
-    way; the SDK rejects both. Gemini's enum contract is string-typed, so the
-    members are stringified (in their JSON spelling, so ``True`` reads
-    ``"true"``), the type becomes ``string`` and the original kind is noted
-    in the description. A ``null`` member is not a string either; it becomes
-    ``nullable: true`` rather than the literal ``"null"``.
+    way; the SDK rejects both. Gemini's enum contract is string-typed, and a
+    non-string member cannot be re-spelled as a string without breaking the
+    round trip (the model would answer with a string the executor then
+    rejects against the canonical schema), so such an enum is dropped and its
+    permitted values are named in the description instead. A ``null`` member
+    is not a string either; it becomes ``nullable: true`` rather than the
+    literal ``"null"``.
     """
     members = node.get("enum")
     if not isinstance(members, list) or not members:
@@ -604,11 +606,18 @@ def _gemini_enum_in_place(node: dict[str, Any]) -> None:
     if all(isinstance(m, str) for m in kept):
         node["enum"] = kept
         return
-    original = node.get("type")
-    node["enum"] = [m if isinstance(m, str) else json.dumps(m) for m in kept]
-    node["type"] = "string"
-    kind = f"JSON {original}" if isinstance(original, str) else "JSON"
-    hint = f"Allowed values are {kind} literals, spelled here as strings."
+    # A non-string member cannot be carried: Gemini's ``enum`` is string-typed.
+    # Stringifying the members made the *emission* valid and the round trip
+    # broken — the model then answers a ``Literal[1, 2]`` with ``"1"``, which
+    # the executor validates against the canonical *integer* schema and
+    # rejects, so every call to the tool failed with "must be an integer".
+    # Drop the constraint the provider cannot express, keep the canonical
+    # type so the model returns the right JSON kind, and name the permitted
+    # values in the description. The enum is still enforced on the way back
+    # in, against the canonical schema, where it always was.
+    del node["enum"]
+    allowed = ", ".join(json.dumps(member) for member in kept)
+    hint = f"Allowed values: {allowed}."
     description = node.get("description")
     node["description"] = f"{description} {hint}" if description else hint
 

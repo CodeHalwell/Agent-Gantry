@@ -200,10 +200,17 @@ class TestGeminiTypeLists:
 
 
 class TestGeminiEnums:
-    def test_integer_literal_members_are_spelled_as_strings(self) -> None:
+    def test_non_string_members_keep_their_type_and_lose_the_enum(self) -> None:
         """``Literal[1, 2]`` publishes ``{"type": "integer", "enum": [1, 2]}``;
-        ``Schema.enum`` is ``list[str]`` so the SDK rejected both the members
-        and, once they were strings, the ``integer`` type beside them."""
+        ``Schema.enum`` is ``list[str]``, so the SDK rejects the members.
+
+        Re-spelling them as strings satisfies the SDK and breaks the round
+        trip: the model answers ``"1"``, and the executor validates that
+        against the *canonical* integer schema and rejects every call. The
+        constraint Gemini cannot carry is dropped instead, the canonical type
+        stays so the model returns the right JSON kind, and the permitted
+        values move into the description.
+        """
 
         def handler(level: Literal[1, 2]) -> None: ...
 
@@ -212,23 +219,57 @@ class TestGeminiEnums:
 
         out = sanitize_gemini_schema(emitted)
         level = out["properties"]["level"]
-        assert level["enum"] == ["1", "2"]
-        assert level["type"] == "string"
-        assert "integer" in level["description"]
+        assert level["type"] == "integer"
+        assert "enum" not in level
+        assert level["description"] == "Allowed values: 1, 2."
         _gemini_declaration(out)
 
-    def test_const_conversion_yields_string_members(self) -> None:
+    @pytest.mark.asyncio
+    async def test_the_emitted_shape_round_trips_through_execute(self) -> None:
+        """The point of the rewrite: what Gemini can answer must be a value
+        the executor accepts, and the enum must still be enforced."""
+        gantry = AgentGantry()
+
+        @gantry.register
+        def set_level(level: Literal[1, 2]) -> str:
+            """Set the level to one of the allowed values."""
+            return f"level={level}"
+
+        await gantry.sync()
+        declarations = await gantry.retrieve_tools("set the level", limit=1, dialect="gemini")
+        parameters = declarations[0]["parameters"]
+        assert parameters["properties"]["level"] == {
+            "type": "integer",
+            "description": "Allowed values: 1, 2.",
+        }
+        _gemini_declaration(parameters)
+
+        from agent_gantry.schema.execution import ExecutionStatus, ToolCall
+
+        ok = await gantry.execute(ToolCall(tool_name="set_level", arguments={"level": 1}))
+        assert ok.status is ExecutionStatus.SUCCESS, ok.error
+        assert ok.result == "level=1"
+
+        # The canonical schema still carries the enum, so a value outside it
+        # is rejected even though Gemini was not told to constrain itself.
+        bad = await gantry.execute(ToolCall(tool_name="set_level", arguments={"level": 3}))
+        assert bad.status is ExecutionStatus.FAILURE
+        assert "one of [1, 2]" in (bad.error or "")
+        await gantry.close()
+
+    def test_const_conversion_drops_a_non_string_enum_too(self) -> None:
         """The sanitizer's own ``const`` → ``enum`` rewrite produced a
         non-string member for a non-string constant."""
         out = sanitize_gemini_schema(
             {"type": "object", "properties": {"x": {"type": "integer", "const": 3}}}
         )
-        assert out["properties"]["x"]["enum"] == ["3"]
-        assert out["properties"]["x"]["type"] == "string"
+        assert out["properties"]["x"]["type"] == "integer"
+        assert "enum" not in out["properties"]["x"]
         assert "const" not in out["properties"]["x"]
+        assert out["properties"]["x"]["description"] == "Allowed values: 3."
         _gemini_declaration(out)
 
-    def test_members_use_their_json_spelling(self) -> None:
+    def test_values_are_named_in_their_json_spelling(self) -> None:
         out = sanitize_gemini_schema(
             {
                 "type": "object",
@@ -239,10 +280,18 @@ class TestGeminiEnums:
                 },
             }
         )
-        assert out["properties"]["flag"]["enum"] == ["true"]
-        assert out["properties"]["ratio"]["enum"] == ["0.5", "1"]
-        assert out["properties"]["mixed"]["enum"] == ["1", "auto"]
-        assert out["properties"]["mixed"]["type"] == "string"
+        properties = out["properties"]
+        assert properties["flag"] == {
+            "type": "boolean",
+            "description": "Allowed values: true.",
+        }
+        assert properties["ratio"] == {
+            "type": "number",
+            "description": "Allowed values: 0.5, 1.",
+        }
+        # A mixed-kind enum has no single canonical type to keep; the SDK
+        # accepts a property that declares none.
+        assert properties["mixed"] == {"description": 'Allowed values: 1, "auto".'}
         _gemini_declaration(out)
 
     def test_existing_description_is_kept_ahead_of_the_hint(self) -> None:
@@ -252,8 +301,7 @@ class TestGeminiEnums:
                 "properties": {"x": {"type": "integer", "enum": [1], "description": "Pick one."}},
             }
         )
-        assert out["properties"]["x"]["description"].startswith("Pick one.")
-        assert "integer" in out["properties"]["x"]["description"]
+        assert out["properties"]["x"]["description"] == "Pick one. Allowed values: 1."
 
     def test_string_enum_is_left_alone(self) -> None:
         out = sanitize_gemini_schema(
@@ -284,9 +332,12 @@ class TestGeminiEnums:
             }
         )
         x = out["properties"]["x"]
-        assert x["type"] == "string"
-        assert x["enum"] == ["1", "2"]
+        # the type list collapses to the non-null type plus ``nullable``...
+        assert x["type"] == "integer"
         assert x["nullable"] is True
+        # ...and the non-string members leave the enum for the description
+        assert "enum" not in x
+        assert x["description"] == "Allowed values: 1, 2."
         _gemini_declaration(out)
 
 

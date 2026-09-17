@@ -293,6 +293,55 @@ class TestQueryBounds:
 
 
 # --------------------------------------------------------------------------- #
+# Sync durability
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_a_failed_sync_keeps_the_late_registration_pending() -> None:
+    """``sync()`` drained the pending buffer before doing the work behind it.
+    On a transient embedder failure the buffer was empty and ``_synced`` was
+    still True from the previous run, so the new tool was never retried and
+    stayed invisible even after the backend recovered."""
+    gantry = AgentGantry()
+
+    @gantry.register
+    def first_tool(x: int) -> int:
+        """An initial tool that syncs without trouble."""
+        return x
+
+    await gantry.sync()
+    assert gantry._synced is True
+
+    @gantry.register
+    def late_tool(y: int) -> int:
+        """A tool registered after the first successful sync."""
+        return y
+
+    healthy = gantry._embedder.embed_batch
+    attempts = {"n": 0}
+
+    async def flaky(texts: Any, batch_size: Any = None) -> Any:
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise RuntimeError("embedder down")
+        return await healthy(texts, batch_size)
+
+    gantry._embedder.embed_batch = flaky  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="embedder down"):
+        await gantry.retrieve_tools("late tool", limit=5)
+
+    # the registration survives, and the gantry knows it still owes a sync
+    assert [tool.name for tool in gantry._pending_tools] == ["late_tool"]
+    assert gantry._synced is False
+
+    names = [t["function"]["name"] for t in await gantry.retrieve_tools("late tool", limit=5)]
+    assert "late_tool" in names
+    assert gantry._pending_tools == []
+
+
+# --------------------------------------------------------------------------- #
 # Rate limiter
 # --------------------------------------------------------------------------- #
 

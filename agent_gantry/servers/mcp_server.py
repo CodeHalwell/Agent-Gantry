@@ -31,6 +31,7 @@ service.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -113,6 +114,16 @@ def _render_tool_output(value: Any) -> str:
     return render_result(value)
 
 
+def _unique_wire_name(candidate: str, taken: set[str]) -> str:
+    """``candidate``, suffixed ``_2``, ``_3``… until it is not already ``taken``."""
+    if candidate not in taken:
+        return candidate
+    index = 2
+    while f"{candidate}_{index}" in taken:
+        index += 1
+    return f"{candidate}_{index}"
+
+
 class _ASGIProxy:
     """Wrap a bound ASGI handler so Starlette's ``Route`` treats it as an app.
 
@@ -127,6 +138,80 @@ class _ASGIProxy:
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         await self._handler(scope, receive, send)
+
+
+class _StreamableHTTPApp:
+    """ASGI app that owns the SDK session manager's lifecycle.
+
+    ``StreamableHTTPSessionManager.handle_request`` needs the task group that
+    only exists inside ``manager.run()``. Starlette does **not** run a
+    *mounted* sub-application's lifespan (checked against starlette 1.6), so
+    an app that started the manager from its own lifespan alone worked when
+    served directly and failed the moment it was mounted into an existing
+    service — the documented way to use it — reaching an uninitialised
+    manager on the first request.
+
+    So the manager is started here instead: eagerly from the lifespan when
+    this app is served directly, and lazily on the first request when it is
+    mounted. ``run()`` may be entered only once per manager, so both paths
+    funnel through one guarded start.
+    """
+
+    def __init__(self, manager: Any) -> None:
+        self._manager = manager
+        # Created lazily: constructing a lock binds it to whichever loop is
+        # running at construction, which need not be the serving one.
+        self._lock: asyncio.Lock | None = None
+        self._task: asyncio.Task[None] | None = None
+        self._close: asyncio.Event | None = None
+
+    async def start(self) -> None:
+        """Enter ``manager.run()`` once, and wait until it is serving."""
+        if self._task is not None:
+            return
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            if self._task is not None:
+                return
+            ready = asyncio.Event()
+            close = asyncio.Event()
+            failure: list[BaseException] = []
+
+            async def runner() -> None:
+                try:
+                    async with self._manager.run():
+                        ready.set()
+                        await close.wait()
+                except BaseException as exc:  # noqa: BLE001 - re-raised below
+                    failure.append(exc)
+                    ready.set()
+
+            task = asyncio.create_task(runner())
+            await ready.wait()
+            if failure:
+                raise RuntimeError(
+                    f"MCP Streamable HTTP session manager failed to start: {failure[0]}"
+                ) from failure[0]
+            self._task, self._close = task, close
+
+    async def stop(self) -> None:
+        """Leave ``manager.run()``, if this app started it."""
+        task, close = self._task, self._close
+        self._task = self._close = None
+        if close is not None:
+            close.set()
+        if task is not None:
+            try:
+                await asyncio.wait_for(task, timeout=5)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                task.cancel()
+            except Exception:
+                logger.debug("Error stopping the MCP session manager", exc_info=True)
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        await self.start()
+        await self._manager.handle_request(scope, receive, send)
 
 
 def _security_settings(
@@ -251,6 +336,14 @@ class MCPServer:
         counts: dict[str, int] = {}
         for tool in definitions:
             counts[tool.name] = counts.get(tool.name, 0) + 1
+        # Every *bare* name is reserved before any qualifying happens, and each
+        # generated name joins the set as it is minted. A qualified name can
+        # therefore never land on another tool's real name — ``a.x`` and
+        # ``b.x`` qualify to ``a_x``/``b_x`` while a genuine ``default.a_x``
+        # keeps ``a_x``, and the loser takes a numeric suffix. Without this,
+        # the second assignment simply overwrote the first in ``_exposed`` and
+        # a client calling one tool reached the other.
+        taken = {tool.name for tool in definitions}
         self._exposed = {}
         wire_tools: list[Tool] = []
         for tool in definitions:
@@ -258,7 +351,10 @@ class MCPServer:
             if counts[tool.name] > 1:
                 # Same bare name in several namespaces: qualify all of them
                 # so the mapping is deterministic whatever the listing order.
-                wire_name = _WIRE_NAME_INVALID.sub("_", f"{tool.namespace}_{tool.name}")
+                wire_name = _unique_wire_name(
+                    _WIRE_NAME_INVALID.sub("_", f"{tool.namespace}_{tool.name}"), taken
+                )
+                taken.add(wire_name)
             self._exposed[wire_name] = tool
             wire_tools.append(self._convert_tool(tool, wire_name=wire_name))
         return wire_tools
@@ -521,9 +617,11 @@ class MCPServer:
 
         Use this to mount Gantry into an existing ASGI service
         (``app.mount("/", gantry_mcp.streamable_http_app())``); ``run_http``
-        serves it standalone. The SDK's session manager must run inside the
-        app's lifespan, which the returned app wires up — mount it with that
-        lifespan intact (Starlette propagates lifespan events to mounted apps).
+        serves it standalone. Either way works: the returned app starts the
+        SDK's session manager from its own lifespan when served directly, and
+        on the first request when mounted — a parent Starlette or FastAPI app
+        does not run a mounted sub-application's lifespan, so relying on that
+        alone would leave the manager uninitialised.
 
         Args:
             path: Endpoint path clients connect to (default ``/mcp``).
@@ -548,12 +646,19 @@ class MCPServer:
             security_settings=_security_settings(allowed_hosts, allowed_origins),
         )
 
+        handler = _StreamableHTTPApp(manager)
+
         @contextlib.asynccontextmanager
         async def lifespan(app: Any) -> AsyncIterator[None]:
-            async with manager.run():
+            # Eager start when this app is served directly; harmless when it
+            # is mounted and this never runs, because the first request
+            # starts the manager itself.
+            await handler.start()
+            try:
                 yield
+            finally:
+                await handler.stop()
 
-        handler = _ASGIProxy(manager.handle_request)
         path = "/" + path.strip("/")
         routes: list[Any] = [Route(path, endpoint=handler, methods=["GET", "POST", "DELETE"])]
         if path != "/":
