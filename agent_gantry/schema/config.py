@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from agent_gantry.schema.base import reject_newlines
 
@@ -96,7 +96,16 @@ class RateLimitConfig(BaseModel):
     max_calls_per_minute: int = 60
     max_calls_per_hour: int = 1000
     max_concurrent: int = 10
-    burst_size: int | None = Field(default=None, description="Burst size for token bucket strategy")
+    burst_size: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Token bucket capacity; defaults to max_calls_per_minute. Must be at "
+            "least 1: a zero-capacity bucket can never accumulate the token a "
+            "call needs, so it would block the key permanently rather than "
+            "limiting it."
+        ),
+    )
     per_tool: bool = Field(default=True, description="Rate limit per tool (vs. globally)")
     per_namespace: bool = Field(default=False, description="Rate limit per namespace")
 
@@ -124,18 +133,100 @@ class TelemetryConfig(BaseModel):
     prometheus_port: int = 9090
 
 
+#: Transports an :class:`MCPServerConfig` can name. ``stdio`` spawns a local
+#: subprocess; ``streamable_http`` and ``sse`` connect to a remote server by
+#: URL (Streamable HTTP is the current MCP spec transport, SSE the legacy one
+#: it superseded — many hosted servers still speak it).
+MCPTransport = Literal["stdio", "streamable_http", "sse"]
+
+
 class MCPServerConfig(BaseModel):
-    """Configuration for an MCP server to connect to."""
+    """Configuration for an MCP server to connect to.
+
+    Exactly one of ``command`` (a local stdio server) or ``url`` (a remote
+    HTTP server) must be given. ``transport`` is inferred from that — stdio
+    for a command, Streamable HTTP for a URL — and only needs setting to
+    ``"sse"`` for a remote server that still speaks the legacy SSE transport.
+
+    Example::
+
+        MCPServerConfig(name="fs", command=["npx", "-y", "@modelcontextprotocol/server-filesystem"])
+        MCPServerConfig(name="search", url="https://mcp.example.com/mcp",
+                        headers={"Authorization": "Bearer ..."})
+    """
 
     name: str
-    command: list[str]
+    command: list[str] = Field(
+        default_factory=list,
+        description="Command (and leading arguments) that starts a local stdio server.",
+    )
     args: list[str] = Field(default_factory=list)
-    env: dict[str, str] = Field(default_factory=dict)
+    env: dict[str, str] = Field(default_factory=dict, repr=False)
     namespace: str = "default"
+    url: str | None = Field(
+        default=None,
+        description="Endpoint of a remote MCP server (Streamable HTTP or SSE).",
+    )
+    headers: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Extra HTTP headers for remote servers (auth tokens go here). "
+            "Kept out of repr(), which is NOT the same as kept out of "
+            "model_dump() or to_config() - redact before logging either."
+        ),
+        repr=False,
+    )
+    transport: MCPTransport | None = Field(
+        default=None,
+        description="Transport to use; inferred from command/url when unset.",
+    )
+    timeout_s: float = Field(
+        default=30.0,
+        gt=0,
+        description="HTTP request timeout for remote transports, in seconds.",
+    )
 
     model_config = ConfigDict(validate_assignment=True)
 
     _reject_newline_identifiers = field_validator("name", "namespace")(reject_newlines)
+
+    @model_validator(mode="after")
+    def _check_endpoint(self) -> MCPServerConfig:
+        """Require exactly one endpoint, and a transport that matches it."""
+        has_command = bool(self.command)
+        has_url = bool(self.url)
+        if has_command == has_url:
+            raise ValueError(
+                f"MCP server '{self.name}': give exactly one of 'command' (local stdio "
+                "server) or 'url' (remote HTTP server)."
+            )
+        if self.transport == "stdio" and not has_command:
+            raise ValueError(f"MCP server '{self.name}': transport 'stdio' requires 'command'.")
+        if self.transport in ("streamable_http", "sse") and not has_url:
+            raise ValueError(
+                f"MCP server '{self.name}': transport '{self.transport}' requires 'url'."
+            )
+        if has_url:
+            scheme = self.url.split("://", 1)[0].lower() if "://" in self.url else ""
+            if scheme not in ("http", "https"):
+                raise ValueError(
+                    f"MCP server '{self.name}': 'url' must be an http(s) URL, got {self.url!r}."
+                )
+        return self
+
+    @property
+    def resolved_transport(self) -> MCPTransport:
+        """The transport this config uses, inferring it from the endpoint given."""
+        if self.transport is not None:
+            return self.transport
+        return "stdio" if self.command else "streamable_http"
+
+    @property
+    def endpoint(self) -> str:
+        """Human-readable endpoint for logs: the command line or the URL."""
+        if self.command:
+            return " ".join(self.command + self.args)
+        return self.url or ""
 
 
 class MCPConfig(BaseModel):
@@ -184,6 +275,14 @@ class AgentGantryConfig(BaseModel):
 
     auto_sync: bool = True
     sync_on_register: bool = False
+    prune_on_sync: bool = Field(
+        default=False,
+        description=(
+            "Delete tools from the vector store that are no longer registered with this "
+            "gantry when sync() runs. Off by default: several gantries may legitimately "
+            "share one persistent store and register different subsets."
+        ),
+    )
 
     @classmethod
     def from_yaml(cls, path: str) -> AgentGantryConfig:

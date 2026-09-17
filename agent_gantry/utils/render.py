@@ -13,9 +13,79 @@ framework package and only duck-types on ``.text``.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 __all__ = ["render_result"]
+
+
+#: The ``type`` discriminators of every MCP content block, from the SDK's own
+#: ``ContentBlock`` union (TextContent, ImageContent, AudioContent,
+#: ResourceLink, EmbeddedResource). Spelled out rather than imported: this
+#: module is deliberately dependency-light and import-safe. A test pins the
+#: set against the installed SDK so a protocol addition cannot drift past it.
+_MCP_BLOCK_TYPES = frozenset({"text", "image", "audio", "resource", "resource_link"})
+
+
+def _is_content_block(item: Any) -> bool:
+    """Whether ``item`` is an MCP content block.
+
+    Accepting *any* string ``type`` was too weak to be identity: typed lists
+    are ordinary outside MCP, so a record like ``{"title": ..., "score": ...,
+    "content": [{"type": "paragraph", "text": ...}]}`` was taken for a result
+    and rendered as its blocks, dropping every sibling field. The protocol
+    names its block types, so membership is the check.
+    """
+    kind = item.get("type") if isinstance(item, dict) else getattr(item, "type", None)
+    return isinstance(kind, str) and kind in _MCP_BLOCK_TYPES
+
+
+def _result_content(value: Any) -> Any:
+    """A result's ``content``, read through a mapping as well as an object.
+
+    A proxied or JSON-decoded ``CallToolResult`` arrives as a plain dict,
+    where ``getattr`` finds nothing: such a result was never recognised and
+    rendered as its own repr instead of its text.
+    """
+    if isinstance(value, dict):
+        return value.get("content")
+    return getattr(value, "content", None)
+
+
+def _is_mcp_result(value: Any) -> bool:
+    """Whether ``value`` wraps content blocks, or merely has a ``content`` field.
+
+    Duck-typing on ``content`` alone swept up ordinary records —
+    ``Article(title="...", content=["body"], score=0.9)`` is the obvious case
+    — and unwrapping those emitted the content items and dropped the title
+    and the score, the same defect the ``.text`` path has to guard against.
+    """
+    content = _result_content(value)
+    if not isinstance(content, (list, tuple)) or isinstance(value, type):
+        return False
+    if content:
+        # Something to unwrap: the items decide, and nothing else can. Letting
+        # a marker field vouch for them classified
+        # ``Result(content=["body"], is_error=False, score=0.9)`` as a result
+        # — ``False is not None`` — and dropped the score. An attribute name
+        # is not protocol identity when the payload itself can be checked.
+        return all(_is_content_block(item) for item in content)
+    # Empty content, so the payload cannot vouch for itself. A false positive
+    # here is *not* free, as an earlier round of this guard assumed: rendering
+    # a non-result as a result yields ``""``, which discards the whole record
+    # rather than just its content items.
+    #
+    # ``isError`` is therefore not accepted as identity — it is an ordinary
+    # field name, and on empty content it distinguishes nothing. What remains
+    # is real identity: an instance of an SDK type, or a structured payload to
+    # render. Both spellings, since mcp 2.x renamed ``structuredContent`` to
+    # ``structured_content``.
+    if type(value).__module__.split(".")[0] == "mcp":
+        return True
+    names = ("structuredContent", "structured_content")
+    if isinstance(value, dict):
+        return any(value.get(name) is not None for name in names)
+    return any(getattr(value, name, None) is not None for name in names)
 
 
 def _block_text(block: Any) -> str:
@@ -23,15 +93,42 @@ def _block_text(block: Any) -> str:
     if isinstance(block, str):
         return block
     # AF Content objects (TextContent, FunctionResultContent, ...) expose .text.
+    # A content block declaring ``type`` has said what it is, so its text is
+    # taken at face value — ``""`` included. Requiring a truthy string treated
+    # a tool that legitimately returned nothing as having no text at all and
+    # emitted the block's repr instead, and disagreed with
+    # ``mcp_server._is_text_block``, which accepts an empty one.
+    declared = _is_content_block(block)
     text = getattr(block, "text", None)
-    if isinstance(text, str) and text:
+    if isinstance(text, str) and (text or declared):
         return text
     if isinstance(block, dict):
         for key in ("text", "content", "output"):
             value = block.get(key)
-            if isinstance(value, str) and value:
+            if isinstance(value, str) and (value or (declared and key == "text")):
                 return value
     return str(block)
+
+
+def _structured_text(result: Any) -> str:
+    """JSON for a result's structured content, or ``""`` if it carries none.
+
+    An MCP ``CallToolResult`` may answer entirely through
+    ``structuredContent``, leaving ``content`` empty. Rendering the blocks
+    alone then produced ``""`` — a successful call reported as no output,
+    with the actual result silently dropped.
+    """
+    for attribute in ("structuredContent", "structured_content"):
+        value = getattr(result, attribute, None)
+        if value is None and isinstance(result, dict):
+            value = result.get(attribute)
+        if value in (None, {}, []):
+            continue
+        try:
+            return json.dumps(value, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            return str(value)
+    return ""
 
 
 def render_result(
@@ -75,8 +172,19 @@ def render_result(
         parts = [_block_text(item) for item in result]
         text = " ".join(p for p in parts if p)
     else:
-        # Single content-block-like object (has .text) or an arbitrary value.
-        text = _block_text(result)
+        if _is_mcp_result(result):
+            # A result object wrapping content blocks — an MCP CallToolResult
+            # proxied from an upstream server, say — renders as its blocks,
+            # falling back to its structured content when those yield nothing.
+            # Identity is required: a plain record whose ``content`` happens to
+            # hold a list is not one, and unwrapping it dropped its siblings.
+            # The ``.text`` path below stays duck-typed, as this helper's
+            # callers rely on.
+            parts = [_block_text(item) for item in _result_content(result)]
+            text = " ".join(p for p in parts if p) or _structured_text(result)
+        else:
+            # Single content-block-like object (has .text) or an arbitrary value.
+            text = _block_text(result)
 
     if collapse_whitespace:
         text = " ".join(text.split())

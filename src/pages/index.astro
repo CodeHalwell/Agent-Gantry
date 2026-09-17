@@ -3,6 +3,7 @@ import DocsLayout from '../layouts/DocsLayout.astro';
 import ToolJourney from '../components/ToolJourney';
 import ProviderMatrix from '../components/ProviderMatrix';
 import { buildHighlightedJourneyStages } from '../lib/journey';
+import { SITE_VERSION } from '../lib/version';
 
 const stages = await buildHighlightedJourneyStages();
 ---
@@ -10,7 +11,7 @@ const stages = await buildHighlightedJourneyStages();
   <section class="hero">
     <p class="eyebrow">Universal Tool Orchestration Platform</p>
     <h1>Give every agent the right tools at the right moment.</h1>
-    <p class="lead">Agent-Gantry is a Python library (v0.11.0) for semantic tool routing, secure execution, provider schema conversion, MCP/A2A interoperability, and framework adapters. It replaces prompt-stuffing hundreds of tools with a governed retrieval-and-execution layer.</p>
+    <p class="lead">Agent-Gantry is a Python library (v{SITE_VERSION}) for semantic tool routing, secure execution, provider schema conversion, MCP/A2A interoperability, and framework adapters. It replaces prompt-stuffing hundreds of tools with a governed retrieval-and-execution layer.</p>
     <ul role="list" style="display: flex; flex-wrap: wrap; gap: 0.5rem; padding: 0; margin: 0; list-style: none;">
       <li><a class="pill" href="/Agent-Gantry/docs/getting-started/">Start the journey →</a></li>
       <li><a class="pill" href="/Agent-Gantry/docs/api/">API reference</a></li>

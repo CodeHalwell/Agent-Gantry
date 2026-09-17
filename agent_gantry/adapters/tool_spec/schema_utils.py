@@ -18,6 +18,7 @@ later conversion of that tool.
 from __future__ import annotations
 
 import copy
+import json
 from typing import Any
 
 __all__ = [
@@ -148,14 +149,47 @@ def _make_nullable(subschema: dict[str, Any]) -> None:
         _wrap_in_nullable_anyof(subschema)
 
 
-def _strict_in_place(node: Any) -> None:
-    """Recursively apply OpenAI's strict-mode constraints to ``node``."""
+def _inline_decorated_ref(node: dict[str, Any], root: dict[str, Any]) -> bool:
+    """Replace a ``$ref`` that has sibling keys with the schema it names.
+
+    OpenAI rejects ``{"$ref": "#/$defs/X", "description": "..."}`` under
+    ``strict: true`` — a pointer may not carry *any* sibling, not even an
+    annotation, which is exactly what Pydantic emits for a documented
+    nested-model field. The OpenAI SDK's own ``_ensure_strict_json_schema``
+    unravels such nodes, and this does the same so the transform's output
+    agrees with it: the target is copied in and the siblings win over it, as
+    they would in the SDK. Returns whether anything was inlined; the caller
+    then applies the strict rules to the inlined content like any other node.
+    """
+    ref = node.get("$ref")
+    if not isinstance(ref, str) or len(node) == 1:
+        return False
+    target = _resolve_pointer(root, ref)
+    if target is None:
+        return False
+    siblings = {k: v for k, v in node.items() if k != "$ref"}
+    node.clear()
+    node.update({**copy.deepcopy(target), **siblings})
+    return True
+
+
+def _strict_in_place(node: Any, root: dict[str, Any], depth: int = 0) -> None:
+    """Recursively apply OpenAI's strict-mode constraints to ``node``.
+
+    ``root`` resolves local ``$ref`` pointers; ``depth`` counts how many
+    decorated refs were inlined on the way down, so a self-referential model
+    whose recursive field also carries a description — which has no finite
+    inlined spelling — terminates instead of recursing without bound.
+    """
     if isinstance(node, list):
         for item in node:
-            _strict_in_place(item)
+            _strict_in_place(item, root, depth)
         return
     if not isinstance(node, dict):
         return
+
+    if depth < _MAX_INLINE_DEPTH and _inline_decorated_ref(node, root):
+        depth += 1
 
     properties = node.get("properties")
     if isinstance(properties, dict):
@@ -167,7 +201,7 @@ def _strict_in_place(node: Any) -> None:
         )
         for name, subschema in properties.items():
             if isinstance(subschema, dict):
-                _strict_in_place(subschema)
+                _strict_in_place(subschema, root, depth)
                 if name in optional:
                     _make_nullable(subschema)
         node["required"] = list(properties)
@@ -175,16 +209,16 @@ def _strict_in_place(node: Any) -> None:
 
     for key in _SUBSCHEMA_KEYS:
         if key in node:
-            _strict_in_place(node[key])
+            _strict_in_place(node[key], root, depth)
     for key in _SUBSCHEMA_LIST_KEYS:
         if isinstance(node.get(key), list):
-            _strict_in_place(node[key])
+            _strict_in_place(node[key], root, depth)
     if isinstance(node.get("$defs"), dict):
         for subschema in node["$defs"].values():
-            _strict_in_place(subschema)
+            _strict_in_place(subschema, root, depth)
     if isinstance(node.get("definitions"), dict):
         for subschema in node["definitions"].values():
-            _strict_in_place(subschema)
+            _strict_in_place(subschema, root, depth)
 
 
 def strict_json_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
@@ -216,7 +250,11 @@ def strict_json_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
     if not schema:
         return {"type": "object", "properties": {}, "required": [], "additionalProperties": False}
     transformed = copy.deepcopy(schema)
-    _strict_in_place(transformed)
+    # Pointers resolve against the copy being transformed: the targets they
+    # inline are deep-copied out of it, so the canonical schema is never read
+    # into the result by reference. Re-applying the rules to an already
+    # transformed ``$defs`` entry is a no-op, so processing order is immaterial.
+    _strict_in_place(transformed, transformed)
     return transformed
 
 
@@ -285,40 +323,110 @@ def _declares_object(declared: Any) -> bool:
     return False
 
 
-def _is_typeless_enum(node: dict[str, Any]) -> bool:
-    """Whether ``node`` is an ``enum`` carrying no ``type``.
+def _resolve_local_ref(ref: str, root: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Resolve a ``#/...`` JSON pointer within ``root``; ``None`` if it cannot be.
 
-    ``_enum_schema`` declares a ``type`` beside the members only when they
-    share exactly one *scalar* JSON kind, so several shapes publish typeless:
-    members spanning several kinds (``Literal[1, "auto"]``, and ``Literal[1,
-    2.5]``, since JSON Schema separates ``integer`` from ``number``),
-    composite members (a tuple-valued ``Enum``, whose members are arrays no
-    scalar type names), and any ``None`` member — ``Literal["a", None]`` and
-    ``Literal[None]`` both land in that same catch-all branch.
+    Only same-document pointers are followed. Anything else — an external
+    URL, a pointer into a document this call was not given — is unresolvable
+    by design, and the caller treats that as "cannot confirm a type".
+    """
+    if root is None or not ref.startswith("#/"):
+        return None
+    node: Any = root
+    for part in ref[2:].split("/"):
+        part = part.replace("~1", "/").replace("~0", "~")
+        if not isinstance(node, dict) or part not in node:
+            return None
+        node = node[part]
+    return node if isinstance(node, dict) else None
 
-    Which is why this asks only whether a ``type`` is present, rather than
-    re-deriving one from the members: nothing downstream supplies a missing
-    one. :func:`strict_json_schema` widens and wraps the types it finds but
-    never invents one, so a member-kind test that concluded ``string`` (or
-    ``null``) would be naming a type the published schema does not carry.
-    That is what let an optional ``Literal["a", None]`` through the guard:
-    skipping ``None`` left a lone ``string`` kind, and the tool went out
-    ``strict: true`` with a typeless property for the provider to reject.
 
-    Reported rather than repaired: a type *list* is not something strict mode
-    accepts either, so the honest answer is that the schema has no strict
-    spelling and the tool should go out non-strict.
+def _declares_type(
+    node: dict[str, Any],
+    root: dict[str, Any] | None = None,
+    seen: set[int] | None = None,
+) -> bool:
+    """Whether ``node`` says what kind of value it accepts.
+
+    Strict mode requires every property to name its type, directly or
+    through a combinator or a pointer to a definition that does. A schema
+    with none of these — ``{"description": "anything"}``, an empty ``{}``,
+    or an ``enum`` whose members share no single kind — publishes a typeless
+    property, and the provider rejects the whole tool request rather than
+    that one parameter.
+
+    This asks only whether a type is *declared*, never whether one could be
+    derived (say, from ``enum`` members): nothing downstream supplies a
+    missing one. :func:`strict_json_schema` widens and wraps the types it
+    finds but never invents one, so a derived answer would name a type the
+    published schema does not carry. Reported rather than repaired, then: the
+    honest answer is that the schema has no strict spelling and the tool
+    should go out non-strict.
     """
     if node.get("type") is not None:
-        return False
+        return True
+    ref = node.get("$ref")
+    if isinstance(ref, str):
+        # The reference existing is not the same as the target declaring a
+        # type. ``{"$ref": "#/$defs/Anything"}`` pointing at a
+        # description-only definition was taken as typed, so a schema with no
+        # strict spelling was published ``strict: true`` for the provider to
+        # reject — the failure this function exists to report.
+        target = _resolve_local_ref(ref, root)
+        if target is None:
+            # Unresolvable (external, or simply absent): strict mode needs a
+            # declared type and this cannot confirm one, so report it rather
+            # than assume.
+            return False
+        if id(target) in (seen or set()):
+            # A reference cycle with no type anywhere along it.
+            return False
+        return _declares_type(target, root, (seen or set()) | {id(target)})
+    # As with ``$ref`` above, the combinator existing is not the same as its
+    # branches declaring types: ``{"anyOf": [{"description": "free form"}]}``
+    # counted as typed and went out ``strict: true`` with nothing for the
+    # provider to read.
+    #
+    # ``anyOf``/``oneOf`` admit a value matching *any* branch, so every branch
+    # needs a type. ``allOf`` requires a value to match all of them at once,
+    # so one branch carrying the type is enough — the others commonly add
+    # only constraints or a description.
+    for key in ("anyOf", "oneOf"):
+        branches = node.get(key)
+        if isinstance(branches, list):
+            return bool(branches) and all(
+                isinstance(branch, dict) and _declares_type(branch, root, seen)
+                for branch in branches
+            )
+    branches = node.get("allOf")
+    if isinstance(branches, list):
+        return any(
+            isinstance(branch, dict) and _declares_type(branch, root, seen)
+            for branch in branches
+        )
+    return False
+
+
+def _is_typeless_enum(node: dict[str, Any]) -> bool:
+    """Whether ``node`` is an ``enum`` declaring no type.
+
+    ``_enum_schema`` declares a ``type`` beside the members only when they
+    share exactly one *scalar* JSON kind, so ``Literal[1, "auto"]``, a
+    tuple-valued ``Enum`` and ``Literal["a", None]`` all publish typeless.
+    Property subschemas are covered by :func:`_declares_type` directly; this
+    catches the same shape where it is not a property, such as the ``items``
+    of a ``list[Literal[1, "auto"]]``.
+    """
     members = node.get("enum")
-    return isinstance(members, list) and bool(members)
+    return isinstance(members, list) and bool(members) and not _declares_type(node)
 
 
-def _collect_open_maps(node: Any, path: str, out: list[str]) -> None:
+def _collect_open_maps(
+    node: Any, path: str, out: list[str], root: dict[str, Any] | None = None
+) -> None:
     if isinstance(node, list):
         for index, item in enumerate(node):
-            _collect_open_maps(item, f"{path}[{index}]", out)
+            _collect_open_maps(item, f"{path}[{index}]", out, root)
         return
     if not isinstance(node, dict):
         return
@@ -351,20 +459,16 @@ def _collect_open_maps(node: Any, path: str, out: list[str]) -> None:
             out.append(path or "<root>")
 
     if _is_typeless_enum(node):
-        # An ``enum`` whose members span more than one JSON kind — or which
-        # are composite — has no single ``type`` to declare, because
-        # ``_enum_schema`` sets one only when the kinds agree and are scalar.
-        # So ``Literal[1, "auto"]`` publishes a *typeless* property.
-        # Strict mode requires every property to name its type, so the
-        # provider rejects the whole tool request rather than that one
-        # parameter. Reported rather than repaired: widening to a type *list*
-        # is not something strict mode accepts either, so the honest answer is
-        # that this schema has no strict spelling and the tool should go out
-        # non-strict.
+        # Reached other than through ``properties`` (which reports typeless
+        # subschemas itself below): the ``items`` of a ``list[Literal[1,
+        # "auto"]]``, say. Same failure as any typeless property — strict
+        # mode requires a declared type, and the provider rejects the whole
+        # tool request rather than that one schema.
         out.append(path or "<root>")
 
     if isinstance(properties, dict):
         for name, subschema in properties.items():
+            child_path = f"{path}.{name}" if path else name
             if subschema is False:
                 # A property satisfiable by no value at all. Strict mode makes
                 # every property *required*, so the transform would emit a
@@ -375,26 +479,63 @@ def _collect_open_maps(node: Any, path: str, out: list[str]) -> None:
                 # forbids, trading an uncallable tool for one that accepts what
                 # the executor rejects. Non-strict handles it correctly, where
                 # the property is simply omitted.
-                out.append(f"{path}.{name}" if path else name)
+                out.append(child_path)
                 continue
-            _collect_open_maps(subschema, f"{path}.{name}" if path else name, out)
+            if subschema is True:
+                # The all-permissive boolean schema: valid JSON Schema, and
+                # exactly as typeless as ``{}``. Only ``False`` was special
+                # cased, so this passed the scan untouched and the tool went
+                # out ``strict: true`` with a property the provider has no
+                # type to read.
+                out.append(child_path)
+                continue
+            if isinstance(subschema, dict) and not _declares_type(subschema, root):
+                # A property that declares no type at all — ``{"description":
+                # "anything"}``, an empty ``{}``, or an enum spanning several
+                # kinds. Only the enum shape used to be caught, so the others
+                # went out ``strict: true`` with no ``type`` for the provider
+                # to read, and it rejected the whole request. Nothing beneath
+                # a typeless property changes the verdict, so it is not walked.
+                out.append(child_path)
+                continue
+            _collect_open_maps(subschema, child_path, out, root)
     additional = node.get("additionalProperties")
     if isinstance(additional, dict):
-        _collect_open_maps(additional, f"{path}.<values>" if path else "<values>", out)
+        _collect_open_maps(additional, f"{path}.<values>" if path else "<values>", out, root)
     for key in _SUBSCHEMA_KEYS:
         if key in node:
-            _collect_open_maps(node[key], f"{path}.{key}" if path else key, out)
+            child = node[key]
+            child_path = f"{path}.{key}" if path else key
+            # A nested schema needs a type as much as a direct property does.
+            # ``_declares_type`` was applied only under ``properties``, so an
+            # array whose ``items`` were typeless —
+            # ``{"type": "array", "items": {"anyOf": [{"description": "..."}]}}``
+            # — passed on the strength of the *property's* own ``array`` and
+            # went out ``strict: true`` with nothing for the provider to read.
+            if child is True or (isinstance(child, dict) and not _declares_type(child, root)):
+                out.append(child_path)
+                continue
+            _collect_open_maps(child, child_path, out, root)
     for key in _SUBSCHEMA_LIST_KEYS:
         if isinstance(node.get(key), list):
-            _collect_open_maps(node[key], f"{path}.{key}" if path else key, out)
+            _collect_open_maps(node[key], f"{path}.{key}" if path else key, out, root)
     for defs_key in ("$defs", "definitions"):
         if isinstance(node.get(defs_key), dict):
             for name, subschema in node[defs_key].items():
-                _collect_open_maps(subschema, f"{defs_key}.{name}", out)
+                _collect_open_maps(subschema, f"{defs_key}.{name}", out, root)
 
 
-def unsupported_strict_paths(schema: dict[str, Any] | None) -> list[str]:
-    """Locations in ``schema`` that OpenAI strict mode cannot express.
+def unsupported_strict_paths(
+    schema: dict[str, Any] | None, *, inlines_refs: bool = True
+) -> list[str]:
+    """Locations in ``schema`` that a provider's strict mode cannot express.
+
+    ``inlines_refs`` selects whether the caller's transform inlines a
+    decorated ``$ref``. OpenAI's does and gives up at a depth limit, so a
+    required self-reference leaves behind the very shape the inlining exists
+    to remove. Anthropic's never inlines and is untroubled by it, so gating
+    its strict mode on that probe withheld grammar-constrained sampling from
+    a recursive model for an entirely unrelated provider's limitation.
 
     Strict mode requires every object to enumerate its properties and set
     ``additionalProperties: false``; it has no representation for an object
@@ -421,8 +562,45 @@ def unsupported_strict_paths(schema: dict[str, Any] | None) -> list[str]:
     if not schema:
         return []
     found: list[str] = []
-    _collect_open_maps(schema, "", found)
+    _collect_open_maps(schema, "", found, schema)
+    if inlines_refs:
+        found.extend(_residual_decorated_refs(schema))
     return found
+
+
+def _residual_decorated_refs(schema: dict[str, Any]) -> list[str]:
+    """Paths where a ``$ref`` with sibling keys survives the strict transform.
+
+    ``_strict_in_place`` inlines a decorated ``$ref`` because OpenAI rejects
+    one that carries siblings, but it stops at ``_MAX_INLINE_DEPTH`` — a
+    self-referential model whose recursive field also has a description has no
+    finite inlined spelling. The node left at the limit is exactly the shape
+    the inlining exists to remove, and reporting nothing meant the tool went
+    out ``strict: true`` for the provider to reject. Asking the transform
+    itself keeps this honest however the depth rule changes.
+    """
+    try:
+        transformed = strict_json_schema(schema)
+    except Exception:  # pragma: no cover - the caller re-raises on its own path
+        return []
+    found: list[str] = []
+    _collect_decorated_refs(transformed, "", found)
+    return found
+
+
+def _collect_decorated_refs(node: Any, path: str, out: list[str]) -> None:
+    """Record every ``{"$ref": ..., <other keys>}`` node under ``node``."""
+    if isinstance(node, list):
+        for index, item in enumerate(node):
+            _collect_decorated_refs(item, f"{path}[{index}]", out)
+        return
+    if not isinstance(node, dict):
+        return
+    if "$ref" in node and any(key != "$ref" for key in node):
+        out.append(path or "<root>")
+        return
+    for key, value in node.items():
+        _collect_decorated_refs(value, f"{path}.{key}" if path else key, out)
 
 
 #: Keywords Gemini and Vertex AI reject whose removal cannot change which
@@ -498,6 +676,101 @@ def _inline_local_refs(node: Any, root: dict[str, Any], depth: int = 0) -> Any:
     return {key: _inline_local_refs(value, root, depth) for key, value in node.items()}
 
 
+def _gemini_type_list_in_place(node: dict[str, Any]) -> None:
+    """Rewrite a ``type`` list into the scalar ``type`` Gemini models.
+
+    ``google.genai.types.Schema.type`` is a single enum, so the ``["string",
+    "null"]`` introspection emits for a required ``str | None`` fails SDK
+    validation outright. Gemini spells nullability as ``nullable: true``
+    instead; one remaining type is used as is, and several become ``anyOf``
+    branches, with the node's other keywords left where they are — the SDK
+    still applies a ``minLength`` or ``description`` beside an ``anyOf``.
+    """
+    declared = node.get("type")
+    if not isinstance(declared, list):
+        return
+    remaining = [t for t in declared if t != "null"]
+    if not remaining:
+        node["type"] = "null"  # ``["null"]``: the scalar spelling says it all
+        return
+    if len(remaining) < len(declared):
+        node["nullable"] = True
+    if len(remaining) == 1:
+        node["type"] = remaining[0]
+        return
+    del node["type"]
+    if not isinstance(node.get("anyOf"), list):
+        node["anyOf"] = [{"type": t} for t in remaining]
+    # Otherwise an ``anyOf`` already narrows the value, and Gemini has no
+    # ``allOf`` to intersect the two with, so the type list is dropped rather
+    # than emitted in a shape the SDK rejects.
+
+
+def _gemini_enum_in_place(node: dict[str, Any]) -> None:
+    """Spell ``enum`` members the way ``Schema.enum`` (``list[str]``) demands.
+
+    ``Literal[1, 2]`` publishes ``{"type": "integer", "enum": [1, 2]}``, and
+    the ``const`` conversion above can produce a non-string member the same
+    way; the SDK rejects both. Gemini's enum contract is string-typed, and a
+    non-string member cannot be re-spelled as a string without breaking the
+    round trip (the model would answer with a string the executor then
+    rejects against the canonical schema), so such an enum is dropped and its
+    permitted values are named in the description instead. A ``null`` member
+    is not a string either; it becomes ``nullable: true`` rather than the
+    literal ``"null"``.
+    """
+    members = node.get("enum")
+    if not isinstance(members, list) or not members:
+        return
+    kept = [m for m in members if m is not None]
+    if len(kept) < len(members):
+        node["nullable"] = True
+        if not kept:
+            del node["enum"]  # ``Literal[None]``: nothing left to enumerate
+            node.setdefault("type", "null")
+            return
+    if all(isinstance(m, str) for m in kept):
+        node["enum"] = kept
+        return
+    # A non-string member cannot be carried: Gemini's ``enum`` is string-typed.
+    # Stringifying the members made the *emission* valid and the round trip
+    # broken — the model then answers a ``Literal[1, 2]`` with ``"1"``, which
+    # the executor validates against the canonical *integer* schema and
+    # rejects, so every call to the tool failed with "must be an integer".
+    # Drop the constraint the provider cannot express, keep the canonical
+    # type so the model returns the right JSON kind, and name the permitted
+    # values in the description. The enum is still enforced on the way back
+    # in, against the canonical schema, where it always was.
+    del node["enum"]
+    allowed = ", ".join(json.dumps(member) for member in kept)
+    hint = f"Allowed values: {allowed}."
+    description = node.get("description")
+    node["description"] = f"{description} {hint}" if description else hint
+
+
+def _gemini_prefix_items_in_place(node: dict[str, Any]) -> None:
+    """Fold ``prefixItems`` into ``items``, which Gemini does model.
+
+    A ``tuple[int, str]`` parameter publishes positional ``prefixItems``,
+    which the SDK forbids as an unknown key. Gemini cannot constrain
+    positions, so every element is allowed to be any of the prefix schemas
+    instead — ``items: {"anyOf": [...]}`` — while ``minItems``/``maxItems``
+    keep the length exact. An existing schema-valued ``items`` (the rest
+    elements) joins the union rather than being discarded; a boolean one
+    (``false`` for a fixed tuple) is redundant beside ``maxItems``.
+    """
+    prefix = node.pop("prefixItems", None)
+    if not isinstance(prefix, list):
+        return
+    branches = [p for p in prefix if isinstance(p, dict)]
+    existing = node.get("items")
+    if isinstance(existing, dict):
+        branches.append(existing)
+    if not branches:
+        return
+    node["items"] = branches[0] if len(branches) == 1 else {"anyOf": branches}
+
+
 def _sanitize_gemini_in_place(node: Any) -> None:
     if isinstance(node, list):
         for item in node:
@@ -514,6 +787,13 @@ def _sanitize_gemini_in_place(node: Any) -> None:
     # supported — convert rather than drop, so the constraint survives.
     if "const" in node:
         node["enum"] = [node.pop("const")]
+
+    # Order matters: a nullable type list must collapse to its scalar before
+    # the enum pass reads ``type``, and ``prefixItems`` must become ``items``
+    # before the recursion below sanitizes what is under ``items``.
+    _gemini_type_list_in_place(node)
+    _gemini_enum_in_place(node)
+    _gemini_prefix_items_in_place(node)
 
     properties = node.get("properties")
     if isinstance(properties, dict):

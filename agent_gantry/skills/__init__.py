@@ -15,12 +15,25 @@ Two helpers are exposed for callers:
 Both helpers fall back gracefully when the package was installed without
 the skill files (e.g. someone vendored the source tree by hand and
 trimmed it).
+
+The loaders re-exported from :mod:`agent_gantry.skills.loader`
+(:func:`load_skills_from_directory`, :func:`load_skill`,
+:func:`skill_from_markdown`) go the other way: they read any Agent Skills
+``SKILL.md`` directory into :class:`~agent_gantry.schema.skill.Skill` records
+for semantic retrieval via ``AgentGantry.add_skills_from_directory``.
 """
 
 from __future__ import annotations
 
 import shutil
 from pathlib import Path
+
+from agent_gantry.skills.loader import (
+    SkillParseError,
+    load_skill,
+    load_skills_from_directory,
+    skill_from_markdown,
+)
 
 _SKILL_DIR_NAME = "agent-gantry"
 
@@ -86,4 +99,11 @@ def install_to(target: str | Path, *, overwrite: bool = False) -> Path:
     return dst
 
 
-__all__ = ["install_to", "skill_path"]
+__all__ = [
+    "SkillParseError",
+    "install_to",
+    "load_skill",
+    "load_skills_from_directory",
+    "skill_from_markdown",
+    "skill_path",
+]

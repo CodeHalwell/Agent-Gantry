@@ -1,12 +1,23 @@
 """
 Main CLI entry point for Agent-Gantry.
+
+Every inspection command works against a *real* registry: point ``--module``
+at the Python module that holds your ``AgentGantry`` instance (``pkg.tools``
+or ``pkg.tools:my_gantry``) and ``list``/``search``/``lint``/``sim``/``sync``
+operate on that instance — its embedder, its vector store, its tools.
+``serve-mcp`` exposes the same registry to Claude Desktop, Claude Code and
+any other MCP client over stdio or HTTP. Without ``--module`` a small demo
+registry is used so the commands can be tried before any code exists.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib
 import sys
+from collections.abc import Sequence
+from pathlib import Path
 
 from agent_gantry import AgentGantry
 from agent_gantry.schema.query import ConversationContext, ToolQuery
@@ -15,6 +26,7 @@ from agent_gantry.schema.query import ConversationContext, ToolQuery
 # (searched at startup). install_to() expands the leading ~ via Path.expanduser().
 _DEFAULT_SKILL_TARGET = "./skills"
 _CLAUDE_SKILLS_DIR = "~/.claude/skills"
+_DEFAULT_MODULE_ATTR = "tools"
 
 
 def _load_demo_tools(gantry: AgentGantry) -> None:
@@ -36,25 +48,187 @@ def _load_demo_tools(gantry: AgentGantry) -> None:
         return f"Refund {amount} for {order_id}"
 
 
-def main(argv: list[str] | None = None) -> int:
-    """
-    Main entry point for the Agent-Gantry CLI.
+def _split_module_spec(spec: str, default_attr: str) -> tuple[str, str]:
+    """Split ``pkg.mod:attr`` into ``(module, attr)``; the attr is optional."""
+    module, _, attr = spec.partition(":")
+    return module.strip(), (attr.strip() or default_attr)
 
-    Returns:
-        Exit code
+
+def _ensure_cwd_importable() -> None:
+    """Put the working directory on ``sys.path``, as ``python -m`` would.
+
+    ``agent-gantry`` is an installed console script, so the directory the user
+    ran it from is *not* on the path: ``--module pkg.tools`` from a project
+    root — the flag's own documented use — failed with ``ModuleNotFoundError``
+    against a local, uninstalled package.
     """
+    cwd = str(Path.cwd())
+    if cwd not in sys.path:
+        sys.path.insert(0, cwd)
+
+
+def _import_gantry(spec: str, default_attr: str) -> AgentGantry:
+    """Import the ``AgentGantry`` instance a ``--module`` spec names."""
+    module_path, attr = _split_module_spec(spec, default_attr)
+    _ensure_cwd_importable()
+    try:
+        module = importlib.import_module(module_path)
+    except ImportError as exc:
+        raise SystemExit(f"error: could not import module '{module_path}': {exc}") from exc
+    gantry = getattr(module, attr, None)
+    if not isinstance(gantry, AgentGantry):
+        found = type(gantry).__name__ if gantry is not None else "nothing"
+        raise SystemExit(
+            f"error: '{module_path}' has no AgentGantry at attribute '{attr}' (found {found}). "
+            f"Use --module {module_path}:<attr> to name the instance."
+        )
+    return gantry
+
+
+async def build_gantry_async(
+    modules: Sequence[str] | None,
+    *,
+    attr: str = _DEFAULT_MODULE_ATTR,
+    config: str | None = None,
+    quiet: bool = False,
+    persist: bool = False,
+) -> AgentGantry:
+    """Resolve the gantry a CLI invocation should operate on.
+
+    - One ``--module``: that module's own instance is used directly, so the
+      command sees the user's configured embedder and vector store.
+    - Several: their tools are collected into one fresh gantry (built from
+      ``--config`` when given), the same merge ``AgentGantry.from_modules``
+      performs.
+    - None: the demo registry, with a note on stderr so nobody mistakes it
+      for their own tools.
+
+    Async because the gantry it returns must be built on the *same* event loop
+    the command will then run on: a loop-bound backend (a pgvector pool, say)
+    initialised here and used from a second ``asyncio.run`` would be talking
+    to a closed loop.
+
+    Building does not write: ``persist`` defaults to ``False`` so merely
+    naming ``--config`` and a ``--module`` cannot embed and upsert the whole
+    registry into somebody's configured store. ``sync --dry-run`` is the
+    sharpest case — it promises to report what *would* be embedded — but
+    ``list``, ``lint`` and ``sim`` are read-only too. Commands that should
+    write reach ``sync()`` on their own: it is the one place that does.
+    """
+    modules = list(modules or [])
+    base_config = None
+    if config:
+        from agent_gantry.schema.config import AgentGantryConfig
+
+        try:
+            base_config = AgentGantryConfig.from_yaml(config)
+        except Exception as exc:
+            # A missing file or malformed YAML is a usage error, and reached
+            # the user as a raw traceback while the neighbouring --module path
+            # reported it as one line. Caught broadly on purpose: the failure
+            # arrives as FileNotFoundError, pydantic's ValidationError or
+            # yaml's own YAMLError (not a ValueError), and naming them would
+            # let a fourth through.
+            raise SystemExit(f"error: could not load config '{config}': {exc}") from exc
+
+    if len(modules) == 1 and base_config is None:
+        return _import_gantry(modules[0], attr)
+
+    if modules:
+        gantry = AgentGantry(config=base_config)
+        for spec in modules:
+            _import_gantry(spec, attr)  # fail early, with the CLI's own message
+        # ONE call with every spec: the facade's duplicate detection keeps a
+        # per-call ``seen`` set, so splitting the specs across calls reset it
+        # and a later module silently overwrote an earlier tool of the same
+        # qualified name instead of warning and keeping the first. Specs carry
+        # their own ``:attr``, so differing attributes no longer force a split.
+        await gantry.collect_tools_from_modules(modules, module_attr=attr, persist=persist)
+        return gantry
+
+    gantry = AgentGantry(config=base_config)
+    _load_demo_tools(gantry)
+    if not quiet:
+        print(
+            "note: no --module given; using the built-in demo tools. "
+            "Pass --module pkg.tools[:attr] to inspect your own registry.",
+            file=sys.stderr,
+        )
+    return gantry
+
+
+def build_gantry(
+    modules: Sequence[str] | None,
+    *,
+    attr: str = _DEFAULT_MODULE_ATTR,
+    config: str | None = None,
+    quiet: bool = False,
+    persist: bool = False,
+) -> AgentGantry:
+    """Synchronous :func:`build_gantry_async`, for callers with no loop running.
+
+    The CLI itself does not use this — it builds the gantry inside the one
+    loop its command runs on (see :func:`build_gantry_async`).
+
+    ``persist=True`` is refused here. Persisting initialises the configured
+    backend, and this helper does that inside an ``asyncio.run`` it then
+    closes, so a loop-bound backend (a pgvector pool) would come back holding
+    a closed loop and fail on first use in the caller's own. Await
+    :func:`build_gantry_async` on the loop you will use instead.
+
+    Raises:
+        ValueError: If ``persist`` is True.
+    """
+    if persist:
+        raise ValueError(
+            "build_gantry(persist=True) would initialise the backend on a loop it "
+            "then closes, leaving a loop-bound store (pgvector) unusable. Await "
+            "build_gantry_async(..., persist=True) on the loop you will use."
+        )
+    return asyncio.run(
+        build_gantry_async(modules, attr=attr, config=config, quiet=quiet, persist=persist)
+    )
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "--module",
+        "-m",
+        action="append",
+        default=None,
+        metavar="MODULE[:ATTR]",
+        help="Module holding your AgentGantry instance (repeatable). "
+        f"ATTR defaults to '{_DEFAULT_MODULE_ATTR}'.",
+    )
+    common.add_argument(
+        "--attr",
+        default=_DEFAULT_MODULE_ATTR,
+        help=f"Attribute name for --module entries without ':ATTR' (default {_DEFAULT_MODULE_ATTR}).",
+    )
+    common.add_argument(
+        "--config",
+        default=None,
+        metavar="PATH",
+        help="YAML config (AgentGantryConfig) for the gantry the CLI builds.",
+    )
+
     parser = argparse.ArgumentParser(prog="agent-gantry", description="Agent-Gantry CLI")
     subparsers = parser.add_subparsers(dest="command")
 
-    list_parser = subparsers.add_parser("list", help="List registered tools")
+    list_parser = subparsers.add_parser("list", parents=[common], help="List registered tools")
     list_parser.add_argument("--namespace", default=None, help="Namespace filter")
 
-    search_parser = subparsers.add_parser("search", help="Search for relevant tools")
+    search_parser = subparsers.add_parser(
+        "search", parents=[common], help="Search for relevant tools"
+    )
     search_parser.add_argument("query", help="Natural language query")
     search_parser.add_argument("--limit", type=int, default=5, help="Maximum tools to return")
+    search_parser.add_argument("--namespace", default=None, help="Namespace filter")
 
     lint_parser = subparsers.add_parser(
         "lint",
+        parents=[common],
         help="Detect tool-description authoring mistakes",
     )
     lint_parser.add_argument(
@@ -72,6 +246,7 @@ def main(argv: list[str] | None = None) -> int:
 
     sim_parser = subparsers.add_parser(
         "sim",
+        parents=[common],
         help="Print the cosine similarity between two registered tools",
     )
     sim_parser.add_argument("tool_a", help="First tool name (or namespace.name)")
@@ -79,6 +254,7 @@ def main(argv: list[str] | None = None) -> int:
 
     sync_parser = subparsers.add_parser(
         "sync",
+        parents=[common],
         help="Sync tool embeddings into the configured vector store",
     )
     sync_parser.add_argument(
@@ -90,6 +266,46 @@ def main(argv: list[str] | None = None) -> int:
         "--force",
         action="store_true",
         help="Force re-sync of all tools regardless of fingerprint match.",
+    )
+    sync_parser.add_argument(
+        "--prune",
+        action="store_true",
+        default=None,
+        help="Also delete stored tools that are no longer registered "
+        "(default: the config's prune_on_sync).",
+    )
+
+    serve_parser = subparsers.add_parser(
+        "serve-mcp",
+        parents=[common],
+        help="Expose the registry as an MCP server (stdio, Streamable HTTP or SSE)",
+    )
+    serve_parser.add_argument(
+        "--transport",
+        choices=["stdio", "http", "sse"],
+        default="stdio",
+        help="stdio for Claude Desktop/Claude Code; http (Streamable HTTP) or sse for remote clients.",
+    )
+    serve_parser.add_argument(
+        "--mode",
+        choices=["dynamic", "static", "hybrid"],
+        default="dynamic",
+        help="dynamic: two meta-tools; static: every tool; hybrid: --expose tools plus meta-tools.",
+    )
+    serve_parser.add_argument(
+        "--expose",
+        action="append",
+        default=None,
+        metavar="TOOL",
+        help="Tool listed directly in hybrid mode (name or namespace.name; repeatable).",
+    )
+    serve_parser.add_argument("--name", default="agent-gantry", help="MCP server name.")
+    serve_parser.add_argument("--host", default="127.0.0.1", help="Bind host for http/sse.")
+    serve_parser.add_argument("--port", type=int, default=8000, help="Bind port for http/sse.")
+    serve_parser.add_argument(
+        "--path",
+        default=None,
+        help="Endpoint path for http/sse (default: /mcp for http, /sse for sse).",
     )
 
     skill_parser = subparsers.add_parser(
@@ -119,57 +335,83 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Just print the path to the bundled skill (no copy).",
     )
+    return parser
 
+
+def main(argv: list[str] | None = None) -> int:
+    """
+    Main entry point for the Agent-Gantry CLI.
+
+    Returns:
+        Exit code
+    """
+    parser = _build_parser()
     args = parser.parse_args(argv)
 
     if args.command is None:
         parser.print_help()
         return 0
 
-    # install-skill is a pure file-copy operation; it doesn't need a
-    # gantry instance or demo tool registration.
     if args.command == "install-skill":
-        gantry = None  # type: ignore[assignment]
-    else:
-        gantry = AgentGantry()
-        _load_demo_tools(gantry)
-        # Defer the eager sync until we know the command actually needs it —
-        # lint/sim/sync --dry-run shouldn't trigger embedding work.
-        if args.command not in ("lint", "sim", "sync"):
-            asyncio.run(gantry.sync())
+        return _run_install_skill(args)
+
+    # One event loop for the whole command: the gantry's backend is built and
+    # used inside it, so a loop-bound pool (pgvector) is never handed to a
+    # second, later loop.
+    return asyncio.run(_run_command(args))
+
+
+async def _run_command(args: argparse.Namespace) -> int:
+    """Build the gantry and run the requested subcommand, on one event loop."""
+    # stdio MCP serving owns stdout, so the demo-registry note (stderr) is the
+    # only thing the CLI may print before the protocol starts.
+    gantry = await build_gantry_async(args.module, attr=args.attr, config=args.config)
 
     if args.command == "list":
-        tools = asyncio.run(gantry.list_tools(namespace=args.namespace))
-        for tool in tools:
+        tools = gantry.list_tools_sync(namespace=args.namespace)
+        for tool in sorted(tools, key=lambda t: (t.namespace, t.name)):
             print(f"{tool.namespace}.{tool.name}: {tool.description}")
         return 0
 
     if args.command == "search":
+        # ``--limit`` is a bare int, so a value outside ToolQuery's 1..50
+        # range raised a raw pydantic ValidationError out of asyncio.run.
+        # The same guard the framework selectors use, reported as a CLI error.
+        from agent_gantry.integrations.frameworks.base import check_query_bounds
+
+        try:
+            check_query_bounds(
+                limit=args.limit, score_threshold=0.0, owner="agent-gantry search"
+            )
+        except ValueError as exc:
+            raise SystemExit(f"error: {exc}") from exc
         context = ConversationContext(query=args.query)
-        query = ToolQuery(context=context, limit=args.limit, score_threshold=0.0)
-        result = asyncio.run(gantry.retrieve(query))
+        query = ToolQuery(
+            context=context,
+            limit=args.limit,
+            score_threshold=0.0,
+            namespaces=[args.namespace] if args.namespace else None,
+        )
+        result = await gantry.retrieve(query)
         if not result.tools:
             print("No tools found.")
             return 0
         for scored in result.tools:
-            print(f"{scored.tool.name} ({scored.semantic_score:.2f}) - {scored.tool.description}")
+            tool = scored.tool
+            print(f"{tool.namespace}.{tool.name} ({scored.semantic_score:.2f}) - {tool.description}")
         return 0
 
     if args.command == "lint":
-        analysis = asyncio.run(
-            gantry.analyze_registry(
-                similarity_threshold=args.similarity_threshold,
-                tag_overlap_share=args.tag_overlap_share,
-            )
+        analysis = await gantry.analyze_registry(
+            similarity_threshold=args.similarity_threshold,
+            tag_overlap_share=args.tag_overlap_share,
         )
         print(analysis.format_text())
         return 1 if not analysis.empty else 0
 
     if args.command == "sim":
         try:
-            score = asyncio.run(
-                gantry.pairwise_similarity(args.tool_a, args.tool_b)
-            )
+            score = await gantry.pairwise_similarity(args.tool_a, args.tool_b)
         except LookupError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
@@ -177,32 +419,80 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "sync":
-        return asyncio.run(_run_sync_command(gantry, dry_run=args.dry_run, force=args.force))
+        return await _run_sync_command(
+            gantry, dry_run=args.dry_run, force=args.force, prune=args.prune
+        )
 
-    if args.command == "install-skill":
-        from agent_gantry.skills import install_to, skill_path
+    if args.command == "serve-mcp":
+        return await _run_serve_mcp(gantry, args)
 
-        if args.print_path:
-            try:
-                print(skill_path())
-                return 0
-            except FileNotFoundError as exc:
-                print(f"error: {exc}", file=sys.stderr)
-                return 2
-        target = _CLAUDE_SKILLS_DIR if args.claude else (args.target or _DEFAULT_SKILL_TARGET)
+    _build_parser().print_help()
+    return 0
+
+
+def _run_install_skill(args: argparse.Namespace) -> int:
+    """Run the ``install-skill`` subcommand (a pure file copy)."""
+    from agent_gantry.skills import install_to, skill_path
+
+    if args.print_path:
         try:
-            dst = install_to(target, overwrite=args.overwrite)
-        except FileExistsError as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            print("  Re-run with --overwrite to replace.", file=sys.stderr)
-            return 2
+            print(skill_path())
+            return 0
         except FileNotFoundError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
-        print(f"Installed Agent-Gantry skill to {dst}")
-        return 0
+    target = _CLAUDE_SKILLS_DIR if args.claude else (args.target or _DEFAULT_SKILL_TARGET)
+    try:
+        dst = install_to(target, overwrite=args.overwrite)
+    except FileExistsError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        print("  Re-run with --overwrite to replace.", file=sys.stderr)
+        return 2
+    except FileNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(f"Installed Agent-Gantry skill to {dst}")
+    return 0
 
-    parser.print_help()
+
+async def _run_serve_mcp(gantry: AgentGantry, args: argparse.Namespace) -> int:
+    """Run the ``serve-mcp`` subcommand until interrupted."""
+    try:
+        import mcp  # noqa: F401
+    except ImportError:
+        print(
+            "error: MCP support is not installed. Install it with "
+            "'pip install agent-gantry[mcp]'.",
+            file=sys.stderr,
+        )
+        return 2
+    transport = "streamable_http" if args.transport == "http" else args.transport
+    if transport != "stdio":
+        # Each transport has its own default endpoint, and ``--path`` now
+        # reaches SSE too, so advertise what the server will actually serve
+        # rather than always printing the SSE default. Both transports route
+        # on ``"/" + path.strip("/")``, so normalise the same way: printing
+        # the raw argument turned ``--path custom`` into the unusable
+        # ``http://127.0.0.1:8000custom``.
+        default_path = "/mcp" if transport == "streamable_http" else "/sse"
+        endpoint = default_path if args.path is None else "/" + args.path.strip("/")
+        print(
+            f"Serving MCP ({args.mode}) over {args.transport} at "
+            f"http://{args.host}:{args.port}{endpoint}",
+            file=sys.stderr,
+        )
+    try:
+        await gantry.serve_mcp(
+            transport=transport,
+            mode=args.mode,
+            name=args.name,
+            host=args.host,
+            port=args.port,
+            path=args.path,
+            expose=args.expose,
+        )
+    except KeyboardInterrupt:
+        pass
     return 0
 
 
@@ -211,6 +501,7 @@ async def _run_sync_command(
     *,
     dry_run: bool,
     force: bool,
+    prune: bool | None = None,
 ) -> int:
     """Run the ``gantry sync`` subcommand.
 
@@ -224,20 +515,39 @@ async def _run_sync_command(
     await gantry._ensure_initialized()
     sync_mgr = gantry._sync_manager
     all_tools = gantry.export_tools()
+    # ``--prune`` absent means "whatever the config says", so a config with
+    # ``prune_on_sync: true`` is honoured and the dry run reports what the
+    # real sync would actually do.
+    effective_prune = gantry._config.prune_on_sync if prune is None else prune
     to_sync = await sync_mgr.detect_changes(all_tools, force=force)
     if dry_run:
         if not to_sync:
             print("Up to date — no tools would be (re-)embedded.")
-            return 0
-        print(f"{len(to_sync)} tool(s) would be (re-)embedded:")
-        stored = await gantry._vector_store.get_stored_fingerprints()
-        for tool in to_sync:
-            tool_id = f"{tool.namespace}.{tool.name}"
-            reason = "new" if tool_id not in stored else "fingerprint changed"
-            print(f"  - {tool_id}: {reason}")
+        else:
+            print(f"{len(to_sync)} tool(s) would be (re-)embedded:")
+            stored = await gantry._vector_store.get_stored_fingerprints()
+            for tool in to_sync:
+                tool_id = f"{tool.namespace}.{tool.name}"
+                reason = "new" if tool_id not in stored else "fingerprint changed"
+                print(f"  - {tool_id}: {reason}")
+        if effective_prune and not all_tools:
+            # Matches prune_stale_tools' refusal: with nothing registered the
+            # real sync prunes nothing, so the report must not promise to.
+            print("No tools registered, so nothing would be pruned.")
+        elif effective_prune:
+            wanted = {f"{t.namespace}.{t.name}" for t in all_tools}
+            stale = [
+                f"{t.namespace}.{t.name}"
+                for t in await gantry._list_all_pages(gantry._vector_store.list_all)
+                if t.namespace != "__mcp_servers__" and f"{t.namespace}.{t.name}" not in wanted
+            ]
+            if stale:
+                print(f"{len(stale)} stale tool(s) would be pruned: {', '.join(sorted(stale))}")
+            else:
+                print("No stale tools to prune.")
         return 0
 
-    count = await gantry.sync(force=force)
+    count = await gantry.sync(force=force, prune=effective_prune)
     print(f"Synced {count} tool(s).")
     return 0
 

@@ -6,6 +6,7 @@ Tests MCP client, server, and protocol compliance.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -369,8 +370,30 @@ class TestAgentGantryMCPIntegration:
             # This would normally block, so we'll just verify it's called correctly
             await gantry.serve_mcp(transport="stdio", mode="dynamic")
 
-            mock_create_server.assert_called_once_with(gantry, mode="dynamic", name="agent-gantry")
+            mock_create_server.assert_called_once_with(
+                gantry, mode="dynamic", name="agent-gantry", expose=None
+            )
             mock_server.run_stdio.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_serve_mcp_http_transports(self, gantry: AgentGantry) -> None:
+        """The HTTP transports route to the server's runners with host/port/path."""
+        with patch("agent_gantry.servers.mcp_server.create_mcp_server") as mock_create_server:
+            mock_server = AsyncMock()
+            mock_create_server.return_value = mock_server
+
+            await gantry.serve_mcp(
+                transport="http", mode="hybrid", expose=["add_numbers"], port=9999, path="/x"
+            )
+            mock_create_server.assert_called_once_with(
+                gantry, mode="hybrid", name="agent-gantry", expose=["add_numbers"]
+            )
+            mock_server.run_http.assert_awaited_once_with(host="127.0.0.1", port=9999, path="/x")
+
+            await gantry.serve_mcp(transport="sse", host="0.0.0.0", allowed_hosts=["a:1"])
+            mock_server.run_sse.assert_awaited_once_with(
+                host="0.0.0.0", port=8000, allowed_hosts=["a:1"]
+            )
 
     @pytest.mark.asyncio
     async def test_serve_mcp_invalid_transport(self, gantry: AgentGantry) -> None:
@@ -490,3 +513,192 @@ class TestMCPProtocolCompliance:
         static_server = create_mcp_server(gantry, mode="static")
         static_tools = await static_server.gantry.list_tools()
         assert len(static_tools) >= 20  # All registered tools
+
+
+@pytest.mark.asyncio
+async def test_a_client_dropped_outside_a_loop_is_still_closed_at_shutdown() -> None:
+    """``forget_client`` schedules the close on the running loop, but from a
+    synchronous thread there is none, so the close was skipped and the client
+    was gone from the cache -- leaving its HTTP connection or stdio
+    subprocess alive with nothing able to reach it."""
+    from agent_gantry.core.mcp_registry import MCPRegistry
+    from agent_gantry.schema.mcp import MCPServerDefinition
+
+    class _FakeClient:
+        def __init__(self, name: str) -> None:
+            self.config = type("C", (), {"name": name})()
+            self.closed = False
+
+        async def close(self) -> None:
+            self.closed = True
+
+    registry = MCPRegistry()
+    registry.register_server(
+        MCPServerDefinition(
+            name="srv",
+            description="A stand-in server for the client-retirement check.",
+            command=["echo", "hi"],
+            namespace="default",
+        )
+    )
+    client = _FakeClient("srv")
+    registry._clients["default.srv"] = client
+
+    # Dropped from a thread with no running loop, as a synchronous
+    # re-registration would.
+    await asyncio.to_thread(registry.forget_client, "srv")
+    assert client.closed is False, "nothing can close it from there"
+    assert client not in registry._clients.values(), "and it leaves the cache"
+
+    # ...but shutdown still reaches it
+    await registry.close_all_clients()
+    assert client.closed is True
+    assert registry._retired == []
+
+
+@pytest.mark.asyncio
+async def test_a_client_added_during_shutdown_is_not_silently_dropped() -> None:
+    """``close_all_clients`` cleared its bookkeeping *after* the gather, so a
+    client cached while that await was in flight was neither closed by it nor
+    reachable through the cache afterwards. ``MCPClientPool.close_all`` clears
+    first for this reason; the registry twin cleared last."""
+    from agent_gantry.core.mcp_registry import MCPRegistry
+
+    registry = MCPRegistry()
+
+    class _SlowClient:
+        def __init__(self, name: str) -> None:
+            self.config = type("C", (), {"name": name})()
+            self.closed = False
+
+        async def close(self) -> None:
+            await asyncio.sleep(0.05)
+            self.closed = True
+
+    first = _SlowClient("first")
+    registry._clients["default.first"] = first
+
+    async def _register_during_shutdown() -> _SlowClient:
+        await asyncio.sleep(0.01)  # while the gather above is in flight
+        late = _SlowClient("late")
+        registry._clients["default.late"] = late
+        return late
+
+    latecomer = asyncio.create_task(_register_during_shutdown())
+    await registry.close_all_clients()
+    late = await latecomer
+
+    assert first.closed is True
+    # The latecomer was not part of that batch, but it must still be reachable
+    # so a later shutdown can close it -- not wiped by this one.
+    assert late in registry._clients.values() or late.closed
+    await registry.close_all_clients()
+    assert late.closed is True
+
+
+@pytest.mark.asyncio
+async def test_a_server_registered_mid_sync_is_not_dropped_from_the_buffer() -> None:
+    """``sync_servers`` cleared the whole pending buffer, so a
+    ``register_mcp_server()`` landing while it awaited was discarded: the
+    server was never embedded and ``_synced`` stayed True, so nothing tried
+    again. The tool-side buffer was fixed for exactly this; the MCP path kept
+    the blanket clear."""
+    from agent_gantry.core.mcp_registry import MCPRegistry
+    from agent_gantry.schema.mcp import MCPServerDefinition
+
+    def _definition(name: str) -> MCPServerDefinition:
+        return MCPServerDefinition(
+            name=name,
+            description=f"Server {name} for the mid-sync registration check.",
+            command=["echo", name],
+            namespace="default",
+        )
+
+    registry = MCPRegistry()
+    first = _definition("early")
+    registry.register_server(first)
+    registry.add_pending(first)
+
+    # What a sync in flight would have snapshotted...
+    snapshot = registry.get_pending()
+
+    # ...and a registration that lands while it is awaiting.
+    late = _definition("late")
+    registry.register_server(late)
+    registry.add_pending(late)
+
+    registry.drain_pending(snapshot)
+    remaining = [server.name for server in registry.get_pending()]
+    assert remaining == ["late"], remaining
+
+
+@pytest.mark.asyncio
+async def test_a_pooled_client_dropped_outside_a_loop_is_still_closed() -> None:
+    """The same lifecycle hole as above, on ``MCPClientPool``: it dropped the
+    client whether or not the close could be scheduled, so a ``remove_server``
+    from a synchronous thread stranded a live connection that ``close_all``
+    could never reach."""
+
+    class _FakeClient:
+        def __init__(self, name: str) -> None:
+            self.config = type("C", (), {"name": name})()
+            self.closed = False
+
+        async def close(self) -> None:
+            self.closed = True
+
+    pool = MCPClientPool()
+    client = _FakeClient("srv")
+    pool._clients["srv"] = client
+
+    assert await asyncio.to_thread(pool.remove_server, "srv") is True
+    assert client.closed is False, "nothing can close it from there"
+    assert client not in pool._clients.values(), "and it leaves the pool"
+
+    await pool.close_all()
+    assert client.closed is True
+    assert pool._retired == []
+
+
+@pytest.mark.asyncio
+async def test_an_empty_discovery_is_authoritative() -> None:
+    """An empty ``tools/list`` is the server's complete catalogue, so it
+    removes the tools it had. Refusing to prune on empty looks safer but has
+    no way out: every later empty answer takes the same branch, so the tools
+    stay retrievable forever and every execution is dispatched to a server
+    that no longer exposes them. Discovery *failures* raise instead."""
+
+    class _FakeClient:
+        def __init__(self, config: MCPServerConfig) -> None:
+            self.config = config
+
+    config = MCPServerConfig(name="files", command=["fake"], namespace="mcp")
+    client = _FakeClient(config)
+    tools = [
+        ToolDefinition(
+            name=f"read_file_{i}",
+            namespace="mcp",
+            description=f"Read a file from the MCP server, variant {i}.",
+            parameters_schema={"type": "object", "properties": {}},
+            metadata={"mcp_server": "files"},
+        )
+        for i in range(3)
+    ]
+
+    gantry = AgentGantry()
+    try:
+        gantry._register_mcp_tool_handlers(client, tools, resolve_client=lambda: client)
+        gantry._pending_tools.extend(tools)
+        await gantry.sync()
+        assert len(gantry._registry.list_tools("mcp")) == 3
+
+        # A server that still lists some tools prunes only the rest.
+        await gantry._remove_stale_mcp_tools(client, tools[:1])
+        assert [t.name for t in gantry._registry.list_tools("mcp")] == ["read_file_0"]
+
+        # ...and one that lists none prunes them all, from the store too.
+        await gantry._remove_stale_mcp_tools(client, [])
+        assert gantry._registry.list_tools("mcp") == []
+        assert await gantry._vector_store.list_all(namespace="mcp") == []
+    finally:
+        await gantry.close()

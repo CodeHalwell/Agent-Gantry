@@ -9,6 +9,7 @@ skills are not directly executed but provide contextual knowledge.
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
@@ -108,7 +109,9 @@ class Skill(BaseModel):
             Formatted text suitable for system prompt
         """
         lines = [
-            f"## {self.name.replace('_', ' ').title()}",
+            # Skill names are snake_case (Gantry) or kebab-case (Agent Skills
+            # directories); both read as words in a heading.
+            f"## {re.sub(r'[-_]+', ' ', self.name).strip().title()}",
             f"*Category: {self.category.value}*",
             "",
             self.content,

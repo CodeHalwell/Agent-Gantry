@@ -10,8 +10,9 @@ messages used by other frameworks.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Iterable
-from typing import Any
+from typing import Any, NoReturn
 
 
 def _blocks_text(value: Any) -> str:
@@ -198,7 +199,10 @@ def _msg_role(msg: Any) -> str:
     if role is None and isinstance(msg, dict):
         role = msg.get("role")
     if role is not None:
-        role = str(role).lower()
+        # Unwrap enum roles first: a ``(str, Enum)`` member (LlamaIndex
+        # ``MessageRole``, Haystack ``ChatRole``) stringifies to
+        # ``"MessageRole.USER"``, which none of the role checks would match.
+        role = str(getattr(role, "value", role)).lower()
         if role == "user" and _is_tool_result_message(msg):
             return "tool"
         return role
@@ -474,7 +478,9 @@ def concatenate_recent(
     Returns:
         The joined non-empty texts, or the empty string if none were found.
     """
-    if not messages:
+    # ``[-0:]`` is the *whole* list, so a zero (or negative) ``n`` must be
+    # answered explicitly rather than through the slice.
+    if n <= 0 or not messages:
         return ""
     msgs = list(messages)[-n:]
     parts = [t for t in (_msg_text(m) for m in msgs) if t.strip()]
@@ -560,6 +566,44 @@ def keyword_focused(
     return " ".join(kept)
 
 
+def _is_async_callable(candidate: Any) -> bool:
+    """Whether calling ``candidate`` returns an awaitable.
+
+    ``inspect.iscoroutinefunction`` only recognises ``async def`` functions, so
+    a generator supplied as an *object* with ``async def __call__`` — the shape
+    a stateful custom generator naturally takes — was treated as synchronous
+    and its coroutine was then ``.strip()``ed instead of awaited.
+    """
+    if inspect.iscoroutinefunction(candidate):
+        return True
+    call = getattr(candidate, "__call__", None)  # noqa: B004 - the bound method itself
+    return call is not None and inspect.iscoroutinefunction(call)
+
+
+def _reject_awaitable(value: Any, *, caller: str) -> NoReturn:
+    """Dispose of an awaitable a *synchronous* wrapper cannot await, then explain.
+
+    Only reachable for a callable whose awaitable-ness could not be seen
+    statically — a plain ``def`` that hands back ``some_async_fn(...)``, say.
+    A sync wrapper has no way to await one: there is no loop to block on, and
+    returning it unchanged just moves the crash downstream, onto whatever
+    calls ``.strip()`` or ``len()`` on a coroutine. So it is disposed of here
+    (a coroutine closed, a future or task cancelled) to keep the "never
+    awaited" warning away, and the caller is told which shape to pass.
+    """
+    close = getattr(value, "close", None)  # coroutines
+    cancel = getattr(value, "cancel", None)  # futures, tasks
+    if callable(close):
+        close()
+    elif callable(cancel):
+        cancel()
+    raise TypeError(
+        f"{caller} received a callable that returns an awaitable but is not itself "
+        "async, so the synchronous path has no way to await it. Pass an 'async def' "
+        "function, or an object with 'async def __call__'."
+    )
+
+
 def truncated(
     generator: Callable[..., Any],
     *,
@@ -587,7 +631,8 @@ def truncated(
         raise ValueError(f"keep must be 'head' or 'tail', got {keep!r}")
 
     def _cap(text: str) -> str:
-        if not text:
+        # ``text[-0:]`` is the whole string, so a zero cap must be explicit.
+        if not text or max_chars <= 0:
             return ""
         if len(text) <= max_chars:
             return text
@@ -595,9 +640,7 @@ def truncated(
             return text[-max_chars:]
         return text[:max_chars]
 
-    import inspect
-
-    if inspect.iscoroutinefunction(generator):
+    if _is_async_callable(generator):
 
         async def _async_wrapper(messages: Iterable[Any] | None) -> str:
             value = await generator(messages)
@@ -607,14 +650,18 @@ def truncated(
 
     def _wrapper(messages: Iterable[Any] | None) -> str:
         value = generator(messages)
+        if inspect.isawaitable(value):
+            # Unguarded, this reached ``_cap`` and failed with "object of type
+            # 'coroutine' has no len()", leaking the coroutine on the way.
+            _reject_awaitable(value, caller="truncated")
         return _cap(value or "")
 
     return _wrapper
 
 
 def fallback_chain(
-    *generators: Callable[[Iterable[Any] | None], str],
-) -> Callable[[Iterable[Any] | None], str]:
+    *generators: Callable[[Iterable[Any] | None], Any],
+) -> Callable[[Iterable[Any] | None], Any]:
     """Compose multiple generators, returning the first non-empty result.
 
     .. code-block:: python
@@ -626,13 +673,38 @@ def fallback_chain(
         gen = fallback_chain(last_tool_result, last_assistant_text, last_user_text)
         query = gen(messages)
 
+    Sync and async generators may be mixed. As with :func:`truncated`, the
+    composed generator is itself a coroutine function whenever any input is
+    one, so it plugs into ``ToolRefresher`` / ``GantryContextProvider``
+    (which await async generators) without further adaptation.
+
     Returns:
-        A callable with the same shape as the inputs.
+        A callable with the same call shape as the inputs — ``async`` when
+        any of them is.
     """
+    if any(_is_async_callable(gen) for gen in generators):
+
+        async def _async_composed(messages: Iterable[Any] | None) -> str:
+            for gen in generators:
+                text = gen(messages)
+                if inspect.isawaitable(text):
+                    # Awaited *here*: ``.strip()`` on the coroutine object
+                    # raised and leaked it un-awaited.
+                    text = await text
+                if text and text.strip():
+                    return text
+            return ""
+
+        return _async_composed
 
     def _composed(messages: Iterable[Any] | None) -> str:
         for gen in generators:
             text = gen(messages)
+            if inspect.isawaitable(text):
+                # ``.close()`` alone was wrong here: a future has no such
+                # method, so this raised AttributeError instead of the
+                # explanation, and left the future dangling either way.
+                _reject_awaitable(text, caller="fallback_chain")
             if text and text.strip():
                 return text
         return ""

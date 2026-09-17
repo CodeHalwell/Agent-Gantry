@@ -341,3 +341,31 @@ async def test_strategy_rejection_does_not_leak_a_concurrency_slot():
 
     # The rejected call must leave the counter untouched.
     assert limiter._concurrent[key] == 1
+
+
+def test_a_falsy_burst_size_is_not_treated_as_unset() -> None:
+    """``burst_size or max_calls_per_minute`` promoted an explicit ``0`` to the
+    per-minute rate, because ``0`` is falsy and the field defaults to ``None``.
+
+    Honouring the ``0`` literally is no better: the refill clamps to
+    ``min(capacity, ...)``, so a zero-capacity bucket can never accumulate the
+    token a call needs and blocks the key permanently rather than limiting it.
+    It is rejected at the schema instead, which is where a meaningless setting
+    belongs.
+    """
+    import pydantic
+    import pytest as _pytest
+
+    from agent_gantry.core.rate_limiter import RateLimiter
+    from agent_gantry.schema.config import RateLimitConfig
+
+    with _pytest.raises(pydantic.ValidationError):
+        RateLimitConfig(max_calls_per_minute=60, burst_size=0)
+
+    # An unset burst still falls back to the per-minute rate...
+    unset = RateLimiter(RateLimitConfig(max_calls_per_minute=60))
+    assert unset._bucket_capacity() == 60.0
+
+    # ...and a real one is honoured rather than silently widened.
+    one = RateLimiter(RateLimitConfig(max_calls_per_minute=60, burst_size=1))
+    assert one._bucket_capacity() == 1.0

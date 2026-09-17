@@ -7,6 +7,617 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-17
+
+A sweep of the semantic-routing core, the MCP layer and the skills layer.
+
+MCP now works in both directions and over the network: servers can be
+reached by URL over Streamable HTTP or SSE, and Gantry can serve over both.
+An Agent Skills (`SKILL.md`) directory loads straight into the skill store.
+Alongside those, a sweep of the adapters, stores and selection layer fixed
+defects a green test suite had not caught, each reproduced against the real
+SDK or backend first.
+
+Three behaviour changes to know about before upgrading:
+
+- **A reranker passed to `AgentGantry(reranker=...)` now runs by default.**
+  It was a no-op unless `config.reranker.enabled` was also set. Pass
+  `enable_reranking=False` on a query to opt out.
+- **`SentenceTransformersEmbedder`'s embedder id no longer depends on
+  whether the model has loaded.** The id therefore changes once on upgrade,
+  costing a single full re-embed against a persistent store — after which
+  the spurious re-embed on every process start stops.
+- **Token buckets start at `burst_size`** rather than the per-minute rate,
+  so a configured burst now actually applies to the first burst.
+
+### Fixed
+
+- **Tools registered after the first retrieval are now retrievable.**
+  `ensure_synced()` checked only a flag that the first `sync()` set, so a
+  `@gantry.register` (or `add_tool` with `auto_sync=False`, or a late
+  `add_mcp_server`) on a running gantry left the tool unembedded — retrieval
+  never returned it until someone called `sync()` by hand. The pending
+  buffer is now consulted too, and `sync()` drains it on the nothing-changed
+  path so the fingerprint scan does not re-run on every retrieval.
+  `register_mcp_server` after the first MCP sync had the same gap.
+- **An injected reranker runs by default.** `AgentGantry(reranker=...)`
+  was a silent no-op unless `config.reranker.enabled` was also flipped — a
+  flag that only governs the factory. A query whose `enable_reranking` is
+  `None` now reranks whenever a reranker exists; explicit `True`/`False`
+  still win.
+- **`list_tools()` no longer stops at 1000 tools.** Every store's `list_all`
+  defaults to `limit=1000` and the facade called it once; it now pages
+  until the store runs out. `MCPServer` static mode and the Anthropic skills
+  client, both built on `list_tools()`, inherit the fix.
+- **MCP `find_relevant_tools` surfaces tools with any embedder.** The
+  meta-tool built its `ToolQuery` with the model's default
+  `score_threshold=0.5` — the absolute cosine cutoff every other convenience
+  layer opts out of — so clients of `serve_mcp(mode="dynamic")` got an empty
+  result for embedders whose scores sit below it (MiniLM, the hash embedder)
+  with no way to tell "no match" from "filtered". It now uses `0.0`, clamps
+  `limit` to the query's bounds instead of failing validation, reports
+  parameters as JSON rather than a Python repr, names tools outside the
+  default namespace as `namespace.name` (which `execute_tool` resolves), and
+  says so when nothing matched instead of returning an empty content list.
+- **One unconventional tool no longer fails a whole MCP server's discovery.**
+  `ToolDefinition` requires `snake_case` names and 10–2000 character
+  descriptions; MCP servers routinely expose `searchWeb`, `get-weather`,
+  three-word descriptions or none at all, and a single one raised a
+  validation error for the entire `list_tools()`. Names are now normalised
+  (`searchWeb` → `search_web`, reserved verbs get a `_tool` suffix,
+  collisions a numeric one) with the original kept in
+  `metadata["mcp_tool_name"]` and used when calling the server; short
+  descriptions are padded with provenance, long ones truncated into
+  `extended_description`; server `annotations` are kept in
+  `metadata["mcp_annotations"]`.
+- **Structured tool results reach MCP clients as JSON.** `execute_tool`
+  stringified results with `str()`, handing the model `{'a': 1}`; dicts and
+  lists are now JSON and proxied `CallToolResult`s render their text blocks
+  (`render_result` learned to read objects carrying a `.content` list).
+- **`MCPManager` is used.** The facade constructed it and then carried its
+  own divergent copies of `register_mcp_server` / `sync_mcp_servers`; it
+  now delegates, and the manager's two never-called methods are gone.
+- **`Skill.to_prompt_text()` headings** read hyphenated names (`pdf-tools`
+  → "Pdf Tools"), the Agent Skills naming convention.
+
+#### Provider schema emission
+
+- **Gemini rejected whole tools over shapes the sanitiser passed through.** A
+  required `str | None` publishes `{"type": ["string", "null"]}`, a
+  `Literal[1, 2]` a non-string `enum`, and a `tuple[int, str]` a
+  `prefixItems` — all three made `FunctionDeclaration` raise, taking the tool
+  with them. Type lists now collapse to a type plus `nullable` (or an
+  `anyOf`), enum members are stringified where Gemini requires strings, and
+  `prefixItems` becomes an `items` union.
+- **A tool returning a datetime, `Decimal`, dataclass or Pydantic model no
+  longer breaks the turn.** `format_tool_result` serialised with a bare
+  `json.dumps`, so `execute_tool_calls` raised `TypeError` on a *successful*
+  call — and with `parallel=True` the sibling results were lost with it.
+- **OpenAI strict mode inlines a `$ref` carrying sibling keys**, which the
+  API rejects and the OpenAI SDK's own normaliser inlines. Reachable from
+  any Pydantic `model_json_schema()` or MCP-imported schema.
+- **Anthropic strict mode closes every object, not just the root.** Anthropic
+  requires `additionalProperties: false` on each one, so any tool with a
+  nested object parameter went out `strict: true` and malformed.
+- **A typeless property is reported as strict-unsupported.** Only the
+  typeless *enum* was caught, so `{"description": "anything"}` went out
+  `strict: true` with no type at all. The adapters already fall back to
+  non-strict once it is reported.
+- **Model output whose `arguments` decode to a non-object** (`"null"`,
+  `"[]"`) is treated as no arguments, as the Anthropic and Gemini adapters
+  and the streaming accumulator already did, rather than raising mid-turn
+  from the OpenAI-family ones.
+- **`extract_tool_calls(..., dialect="auto")`** works, matching
+  `get_adapter` and `retrieve_tools`.
+- **A Gemini tool with a non-string enum is callable.** `Literal[1, 2]`
+  publishes `{"type": "integer", "enum": [1, 2]}`, which the SDK rejects
+  because `Schema.enum` is string-typed — but re-spelling the members as
+  strings only moved the failure: the model then answered `"1"`, which the
+  executor validated against the canonical *integer* schema and rejected, so
+  every call failed. The enum Gemini cannot carry is dropped, the canonical
+  type is kept so the model returns the right JSON kind, and the permitted
+  values move into the description. The enum is still enforced on the way
+  back in, where it always was.
+
+#### Sync durability
+
+- **A failed sync no longer loses a late registration.** `sync()` drained the
+  pending buffer before doing the work behind it, so a transient embedder or
+  store failure left the buffer empty while `_synced` stayed `True` from the
+  previous run — `ensure_synced()` then saw nothing to do and the tool stayed
+  invisible even after the backend recovered. The buffer is drained only on
+  success, and a failure clears `_synced` so the next retrieval retries.
+
+#### Found in review of this release
+
+- **`sync()` could empty the vector store when nothing was registered yet.**
+  Pruning ran before the "is anything registered?" check, so a
+  `sync(prune=True)` — or any `retrieve()` on a gantry configured with
+  `prune_on_sync` — issued by a not-yet-populated instance asked the store to
+  delete everything it did not recognise. On a store shared between gantries,
+  the arrangement `prune_stale_tools` explicitly contemplates, that is every
+  tool the *other* instances registered. An empty keep set is now refused, in
+  `sync()` and in `prune_stale_tools` itself, with a warning saying why;
+  pruning a tool genuinely dropped from the code is unaffected.
+- **A combinator is strict-safe only if its branches declare types.** The
+  same mistake one arm over from the `$ref` case: `anyOf`/`oneOf`/`allOf`
+  counted as a declared type merely by being a list, so
+  `{"anyOf": [{"description": "free form"}]}` was published `strict: true`
+  with nothing for the provider to read. `anyOf`/`oneOf` now need every
+  branch typed, since a value may match any one of them; `allOf` needs only
+  one, since a value matches all of them at once and the rest commonly add
+  constraints.
+- **`serve_mcp(transport="sse", path=...)` honours the path.** SSE takes its
+  endpoint as `sse_path`, so a caller's `path` was accepted and silently
+  dropped: the server listened on `/sse` regardless, with nothing to say so.
+  A path the caller supplies is forwarded now. `path` defaults to `None`
+  ("this transport's own default") rather than `/mcp`, so an explicit
+  `path="/mcp"` on SSE is honoured instead of being mistaken for an absent
+  argument; Streamable HTTP still lands on `/mcp` when nothing is passed.
+- **`agent-gantry serve-mcp` advertises the endpoint it will serve.** The
+  status line printed `/sse` for every SSE run whatever `--path` said, so a
+  user following it connected to a route the server was not serving.
+  `--path` now defaults to unset and each transport's own default stands in
+  for it, and the printed path is normalised the way both transports route
+  (`"/" + path.strip("/")`) rather than interpolated raw — `--path custom`
+  advertised the unusable `http://127.0.0.1:8000custom`.
+- **A session manager that fails to start is reported once, not forever.**
+  `StreamableHTTPSessionManager.run()` may be entered only once per
+  instance, and entering it is what spends it — succeeding is not the point.
+  A manager that raised on the way in (a bound port, say) left the mounted
+  app looking unstarted, so the next request re-entered the spent manager
+  and got the SDK's "run() can only be called once per instance" for the
+  life of the process. The app now marks itself stopped on that path too,
+  the way it already did for a cancelled startup, and says to build a new
+  one.
+- **A qualified MCP wire alias no longer depends on listing order** — the
+  same defect as the client-side one below, on the serving side. Two
+  namespaces can qualify to the same wire string (`a+b` and `a_b` both give
+  `a_b_x`), and trimming an over-long one can do it too, so which of them
+  kept the unsuffixed alias followed whatever order the store listed in.
+  That order is free to change between syncs, silently repointing a cached
+  alias at the other tool. Aliases are allocated in qualified-name order
+  now; the listing itself still follows the store.
+- **A normalised MCP tool name no longer depends on discovery order.** Where
+  `getUser` and `get_user` both normalise to `get_user`, the bare name went
+  to whichever arrived first — and MCP promises no `tools/list` ordering, so
+  a server reordering its response silently swapped which upstream operation
+  the name referred to. The bare name is now decided by the raw names,
+  sorted, so the mapping is stable across rediscovery.
+- **A `$ref` is strict-safe only if its target declares a type.** The
+  reference existing counted as a declared type, so a property like
+  `{"$ref": "#/$defs/Anything"}` pointing at a description-only definition
+  was published `strict: true` with no type for the provider to read — the
+  failure `unsupported_strict_paths` exists to report. Same-document
+  pointers are resolved now; one that cannot be resolved is reported rather
+  than assumed good.
+- **A structured-only MCP result is no longer rendered as nothing.** A
+  `CallToolResult` may answer entirely through `structuredContent` with an
+  empty `content` list, and rendering the blocks alone gave `""` — a
+  successful call reported as no output, with the result silently dropped.
+  Structured content is the fallback when no text block yields anything.
+- **A structured result is no longer mistaken for MCP content blocks.** The
+  check accepted anything carrying `text`, so a list of records that happen
+  to have it — search hits like `{"text": ..., "score": ...}`, or objects
+  like `SearchHit(text=..., score=...)` — was rendered as content blocks:
+  the text was emitted and every other field silently dropped. Dicts and
+  objects alike must now carry the protocol's own `type` discriminator,
+  which real content blocks declare anyway — and so must a record returned
+  on its own rather than in a list, which never reached the list branch and
+  fell through to the same duck-typed rendering. Unwrapping a result's
+  `content` now needs MCP identity too: a record whose `content` field
+  happens to hold a list, `Article(title=..., content=[...], score=...)`,
+  was treated as a proxied `CallToolResult`, emitting the content items and
+  dropping every sibling field. The guard lives in `render_result` itself,
+  so the Agent Framework trace middleware — which calls it directly — is
+  covered too; that renderer's `.text` duck-typing is unchanged, since its
+  callers rely on it. Both spellings of the protocol's fields are read, so
+  an mcp 2.x result reporting through `is_error`/`structured_content` is
+  recognised rather than stringified. Those fields only speak for a result
+  whose `content` is *empty*, which has no payload to judge; where there are
+  items to unwrap, the items alone decide, so a record carrying a status
+  field cannot borrow the protocol's authority.
+- **An MCP server registered mid-sync is no longer discarded.**
+  `sync_servers()` cleared the whole pending buffer, so a
+  `register_mcp_server()` landing while it awaited was dropped: the server
+  was never embedded and `_synced` stayed `True`, so nothing tried again.
+  The buffer is now drained by identity against the snapshot the sync
+  answers for, as the tool-side buffer already was.
+- **A `SKILL.md` that is not valid UTF-8 raises `SkillParseError`.** The raw
+  `UnicodeDecodeError` escaped the loader boundary that documents
+  `SkillParseError` for a file it cannot parse, and
+  `load_skills_from_directory(strict=True)` re-raised it unchanged because it
+  catches `ValueError`, which this is not.
+- **A short frontmatter `description` is enriched, not padded.** One below
+  the ten-character minimum was kept verbatim and padded with the skill's own
+  name, putting a low-information string into the only text a skill is
+  retrieved by. The body's opening paragraph is joined to it now, with the
+  author's wording still leading.
+- **Anthropic strict mode is no longer gated on an OpenAI limitation.**
+  `unsupported_strict_paths()` also probes what survives OpenAI's
+  `$ref`-inlining transform, which gives up at a depth limit; Anthropic's
+  transform never inlines a `$ref`, so a required self-referential model lost
+  grammar-constrained sampling for an unrelated provider's constraint. The
+  probe is now opt-in via `inlines_refs`.
+- **A `SKILL.md` saved with a UTF-8 byte order mark keeps its frontmatter.**
+  Both frontmatter patterns anchor on the start of the document, so a BOM
+  made the file look like it had none: the name silently became the
+  directory's and the raw YAML became the description — the text that gets
+  embedded — which is the failure the unterminated-block guard exists to
+  stop.
+- **An explicit `burst_size=0` is honoured.** `burst_size or
+  max_calls_per_minute` promoted it to the per-minute rate, because `0` is
+  falsy and the field defaults to `None`, so a caller asking for no burst
+  got a full minute's worth up front.
+- **A Gemini result keyed by something other than a string no longer
+  raises.** The response is rebuilt through `json.dumps`, whose `default=`
+  reaches values and never keys, so a dict keyed by an enum or a tuple
+  raised `TypeError` out of a result that previously passed through
+  untouched.
+- **`agent-gantry --module` resolves against the working directory.** The
+  CLI is an installed console script, so the directory it runs from is not
+  on `sys.path` the way `python -m` puts it there: `--module pkg.tools` from
+  a project root — the flag's documented use — failed against a local,
+  uninstalled package.
+- **A bad `--config` is one line, not a traceback.** A missing file, invalid
+  YAML or a config that fails validation reached the user raw, while the
+  neighbouring `--module` failure was already a single error line.
+- **A pooled MCP client that cannot be closed is retained, not dropped.**
+  `MCPClientPool.remove_server()` scheduled a close on the running loop and
+  removed the client regardless, so calling it from a thread without one
+  stranded a live HTTP connection or stdio subprocess that `close_all()`
+  could never reach. It now keeps the client for the next async shutdown,
+  as `MCPRegistry` already did.
+- **An empty-content result is known by identity, not by a field name.**
+  `isError` was accepted as the identifying field, so
+  `Result(content=[], is_error=False, score=0.9)` rendered as `""` —
+  discarding every field, not merely the content items it did not have. With
+  no payload to judge, what identifies a result is being an SDK instance or
+  carrying structured content to render.
+- **Only the protocol's own content-block types count as content.**
+  Accepting any string `type` was too weak to be identity — typed lists are
+  ordinary outside MCP — so a record like `{"title": ..., "score": ...,
+  "content": [{"type": "paragraph", ...}]}` was taken for a result and
+  rendered as its blocks, dropping every sibling field. Membership of the
+  SDK's `ContentBlock` union (`text`, `image`, `audio`, `resource`,
+  `resource_link`) is the check now, pinned against the installed SDK by a
+  test.
+- **A typeless *nested* subschema is reported too.** `_declares_type` was
+  applied only to entries directly under `properties`, so an array whose
+  `items` were typeless — `{"type": "array", "items": {"anyOf": [{"description":
+  "..."}]}}` — passed on the strength of the property's own `array` and went
+  out `strict: true` with nothing for the provider to read.
+- **An all-permissive `true` property schema is not strict-safe.** Only
+  `false` was special cased, so `{"value": true}` passed the scan and the
+  tool went out `strict: true` with a property the provider has no type to
+  read. OpenAI's own validator refuses it — `TypeError: Expected True to be a
+  dictionary` — so it takes down every request the tool appears in; losing
+  strict mode is the cheaper failure.
+- **`burst_size=0` is rejected rather than silently disabling a key.** It was
+  promoted to the per-minute rate by an `or`; honouring it literally is no
+  better, because the refill clamps to `min(capacity, ...)` so a zero-capacity
+  bucket can never accumulate the token a call needs. The schema now requires
+  at least 1.
+- **A session manager that stops running is reported to the next request.**
+  `manager.run()` can leave its context after signalling ready — raising late,
+  or returning early — and `_task` stayed set either way, so later requests
+  sailed past the started-check and handed themselves to a manager that was no
+  longer running: an ASGI call that returns without completing the response,
+  which a client sees as a dead connection or a hang.
+- **A long server-side tool name no longer aborts a whole server's
+  discovery.** The short-description branch padded with the server's *raw*
+  name, which is uncapped, so a tool with a long name and a short description
+  built a description past `ToolDefinition`'s 2000-character ceiling. That
+  `ValidationError` was raised inside `list_tools()`' list comprehension,
+  taking every other tool on the server down with it — the failure this
+  padding exists to avoid, reached by a long name instead of a long
+  description.
+- **`agent-gantry search --limit` outside 1..50 is a clean error.** It is a
+  bare int, so an out-of-range value raised a raw pydantic `ValidationError`
+  traceback — the failure `check_query_bounds` was added to prevent on the
+  framework selectors, with the CLI's own path left unwired.
+- **A dict-shaped `CallToolResult` renders as its text.** `getattr` finds
+  nothing on a plain dict, so a proxied or JSON-decoded result was never
+  recognised and came back as its own repr.
+- **A content block that declares empty text renders empty.** Both extraction
+  paths required a *truthy* string, so a tool that legitimately returned no
+  text had its block treated as having none and got the block's repr instead
+   — and the two block predicates disagreed about what counts as content.
+- **Anthropic strict mode closes objects under legacy `definitions` too.**
+  `_collect_open_maps` and `_strict_in_place` walk both spellings; the
+  object-closing walk had only `$defs`, so a hand-authored or Pydantic v1
+  schema went out `strict: true` with the `$ref` target's nested objects
+  still open.
+- **A client cached during shutdown is not silently dropped.**
+  `close_all_clients()` cleared its bookkeeping after the gather, so a client
+  added while that await was in flight was neither closed by it nor
+  reachable afterwards. It clears first now, as `MCPClientPool.close_all`
+  already did.
+- **An MCP server that lists no tools has its tools removed, and says so.**
+  An empty `tools/list` is the server's complete catalogue, so it prunes
+  like any other answer — this deliberately does *not* mirror
+  `prune_stale_tools`' empty-keep-set guard, because there the empty set
+  comes from the gantry ("I do not know what belongs here") and here it
+  comes from the server. Discovery failures never arrive this way:
+  `MCPClient.list_tools()` invalidates the session and re-raises. Refusing
+  to prune would leave no path that ever removes them, since every later
+  empty answer takes the same branch, while a wipe is undone by the next
+  discovery that lists them. The removal is now logged at warning.
+- **A `SKILL.md` whose frontmatter is never closed is rejected.** Opening
+  `---` without a closing delimiter fell through to the "no frontmatter"
+  path, so the whole document became the body: the name silently became the
+  directory's, and the *description* — the text that gets embedded for
+  retrieval — became the raw YAML. Even `strict=True` accepted it. Ordinary
+  Markdown, including a horizontal rule further down, is untouched.
+- **An MCP client dropped outside a running loop is closed at shutdown.**
+  `forget_client` schedules the close on the running loop, and a
+  re-registration from a synchronous thread has none — so the close was
+  skipped while the client left the cache, leaving its HTTP connection or
+  stdio subprocess alive with nothing able to reach it. Such clients are
+  retained now and closed by `close_all_clients`.
+- **A `SKILL.md` the model rejects raises `SkillParseError`.** A document
+  the parser could read but `Skill` refused — a frontmatter name past the
+  length cap, say — escaped as Pydantic's `ValidationError`, so a caller
+  handling the documented exception missed it.
+- **`build_gantry(persist=True)` is refused.** The synchronous wrapper
+  initialises inside an `asyncio.run` it then closes, so a loop-bound
+  backend (a pgvector pool) came back holding a closed loop, to fail on
+  first use in the caller's own. It now says to await `build_gantry_async`
+  on the loop you will use.
+- **An empty namespace list selects nothing in `list_all` and `count`.** Both
+  used `if namespace:`, which cannot tell `None` — no filter — from `[]` — a
+  filter matching nothing — so they returned the whole collection where
+  `search` in the same adapters correctly returned nothing. Fixed across
+  Qdrant, Chroma and pgvector.
+- **A deduplicated MCP tool name keeps the name its server answers to.**
+  `getUser` normalises to `get_user`; a raw `get_user` beside it was renamed
+  `get_user_2` and lost its alias, so Gantry called `get_user_2` on a server
+  that has no such tool. The suffix also now fits inside the 128-character
+  name limit rather than running past it.
+- **Re-registering an MCP server drops the client cached for the old
+  endpoint.** `register_mcp_server` can now change a server's url, headers or
+  transport, but a client built from the previous definition went on
+  discovering and executing against the old endpoint.
+- **`MCPServerDefinition` validates its url scheme**, as `MCPServerConfig`
+  does. `register_mcp_server` builds a definition directly, so an `ftp://`
+  endpoint registered and retrieved happily and only failed later, when a
+  client was finally built from it.
+- **`agent-gantry sync` honours `prune_on_sync` from `--config`.** The
+  `--prune` flag defaulted to off rather than unset, so it overrode the
+  config in both the dry-run report and the real sync.
+- **`GantryToolset.select(limit=0)` is rejected** instead of silently becoming
+  the default limit, matching the decorator and the refresher.
+- **LanceDB `add_tools(upsert=False)` skips an id repeated within one batch**,
+  not only one already in the table.
+- **A LanceDB tag filter widens its window instead of scanning the
+  namespace.** Correctness needed more than the old fixed `limit * 2` window,
+  but reading every row made each tag query O(N); it now doubles the window
+  until enough tagged rows are found or the namespace is exhausted, so the
+  common case costs one query.
+- **The documentation site shows the released version.** It hard-coded
+  `0.11.0` in three places and had advertised it for three releases; the
+  three now read it from `package.json`, which the release bumps.
+- **A recursive decorated `$ref` falls back to non-strict.** Inlining a
+  `$ref` that carries sibling keys stops at a depth limit — a self-referential
+  model whose recursive field also has a description has no finite inlined
+  spelling — and the node left there is the very shape the inlining exists to
+  remove. It was reported as strict-safe and published under `strict: true`
+  for OpenAI to reject.
+- **The CLI runs a command on one event loop.** With `--config` and a module,
+  the gantry was built (and its backend initialised) under one `asyncio.run`
+  and used under a second, so a loop-bound pool such as pgvector's was handed
+  a closed loop.
+- **The CLI keeps the first of two same-named tools** across `--module`
+  entries, with the documented warning. Collecting a module at a time reset
+  the facade's per-call duplicate detection, so the later module silently
+  overwrote the earlier tool's definition and handler.
+- **A tool discovered before a server was reconfigured follows it.** Dropping
+  the registry's cached client was not enough: handlers created by an earlier
+  discovery closed over the old client, so an already-discovered tool went on
+  executing against the replaced endpoint. They resolve the current client at
+  call time now.
+- **A pinned tool named like a meta-tool stays reachable.** In `hybrid` mode a
+  tool called `execute_tool` or `find_relevant_tools` was advertised under the
+  meta-tool's own name, and dispatch reached the meta handler every time. The
+  meta names are reserved, so such a tool is renamed instead.
+- **`fallback_chain` and `truncated` recognise an async *callable object*.**
+  `inspect.iscoroutinefunction` is false for an object with `async def
+  __call__` — the shape a stateful custom generator takes — so the sync path
+  was built and `.strip()` called on the coroutine it returned.
+- **A *mounted* MCP app can release its session manager.** A parent
+  application does not run a mounted sub-application's lifespan, so the
+  manager the app starts on its first request had no shutdown path and its
+  task group lived until the process ended — enough to hold a host's
+  graceful shutdown open. `streamable_http_app()` publishes the owner as
+  `app.state.mcp_session`, so a host can `await app.state.mcp_session.stop()`
+  from its own shutdown. Stopping is final (the SDK's manager may be entered
+  once), and a stopped app now says so rather than surfacing the SDK's error
+  from a request.
+- **A tool registered *during* a `sync()` is no longer discarded.** The
+  sync drained the whole pending buffer once its own work landed, so a
+  `register()` that arrived while the embedder or the store was being
+  awaited went with it — and `_synced` is set on the way out, so
+  `ensure_synced` then saw no work and the tool never became retrievable.
+  Only the entries the sync actually covered are drained now, matched by
+  identity so a mid-sync *re*-registration keeps its newer definition
+  rather than being taken for the copy already stored.
+- **`agent-gantry sync --dry-run` no longer writes to the store it is
+  inspecting.** Collecting `--module` tools embedded every one of them and
+  upserted it into the backend named by `--config`, before the command had
+  decided anything — so the one command that promises to report what
+  *would* be embedded did the embedding, then commonly reported the tools
+  as already current. Building a gantry for the CLI is read-only now
+  (`list`, `lint` and `sim` were writing too); `sync` and `search` reach
+  `sync()`, which is the one place that writes.
+- **A duplicate tool name is caught across `--module` specs that name
+  different attributes.** Those were collected in separate passes and
+  `collect_tools_from_modules` starts a fresh duplicate set per call, so the
+  later module silently overwrote the earlier tool's definition and handler
+  instead of warning and keeping the first. Specs may now carry their own
+  `:attr`, so one call covers them all.
+- **A sync callable that returns an awaitable fails with an explanation
+  instead of a puzzle.** A plain `def` handing back `some_async_fn(...)`
+  cannot be spotted statically, so the synchronous path is built and there
+  is no way to await what it returns. `fallback_chain` closed the value — a
+  method futures do not have, so it raised `AttributeError` rather than the
+  explanation, and left the future dangling either way; `truncated` had no
+  guard at all, so the value reached the cap and failed with "object of type
+  'coroutine' has no len()", leaking the coroutine. Both now dispose of it
+  (closing a coroutine, cancelling a future or task) and say which shape to
+  pass instead.
+- **An idle key's `calls_last_hour` no longer counts calls it made hours
+  ago.** The statistic was the raw length of the history deque, which is
+  pruned only when a call is *admitted*, so a key that went quiet kept
+  reporting stale usage — while `calls_last_minute`, measured against the
+  clock, correctly read 0. Both windows are now counted in one pass against
+  the current time, for all three strategies.
+- **A qualified MCP wire name stays inside the 128-character limit.** A
+  definition's own name may be 128 characters, which is the cap, so
+  qualifying it as `namespace_name` on a collision overran it and a numeric
+  suffix pushed it further: every registered tool was valid, yet the listing
+  a client received could be rejected whole by name validation. Names are
+  trimmed to fit, with the suffix kept inside the cap — and because trimming
+  can itself collide, the suffix loop resolves that too.
+- **Static mode can serve a tool named after a meta-tool.** The meta-tools
+  are only on the wire in dynamic and hybrid mode, but dispatch checked their
+  names unconditionally, so static mode listed a genuine `execute_tool` under
+  its own name and then sent every call to the meta handler — failing with
+  "execute_tool requires a 'tool_name'" and leaving the real tool
+  unreachable. `sanitize_tool_name` mints that name from an upstream MCP tool
+  called `execute`, so nobody has to choose it. The check is mode-scoped now;
+  hybrid still renames a pinned tool that claims a meta name.
+- **`find_relevant_tools` clamps an explicit `limit` of 0** instead of
+  reading it as absent and substituting the configured default.
+- **A generated wire alias is callable without a prior `tools/list`.** The
+  dispatch map is built while listing, so a client calling a tool it cached
+  from an earlier process found it empty: a bare name could still resolve
+  through the registry fallback, but an alias such as `alpha_add_numbers` is
+  not a registry name and failed as unknown. The mapping is now built on
+  demand, once.
+- **A cancelled session-manager startup no longer leaks it.** If the first
+  request to a *mounted* app was cancelled while the manager was starting —
+  a client disconnecting — the runner went on into `run()` and sat there
+  while the app still believed nothing had started, so the next request
+  tried to enter the same one-shot manager. The runner is cancelled and
+  drained on that path, and because `run()` is spent either way, the app
+  reports that it cannot serve again rather than surfacing the SDK's error
+  as a mysterious startup failure.
+
+#### Stores and embedders
+
+- **Qdrant search called a method the client removed.** `AsyncQdrantClient.search`
+  went away after 1.10 while the floor is 1.7, so every Qdrant vector search
+  failed; it uses `query_points` now, falling back to `search` on old clients.
+- **Every remote store broke on the namespace filter the router sends.** The
+  router always passes a *list*, and the MCP router hard-codes
+  `["__mcp_servers__"]`, but Qdrant built a scalar `MatchValue`, Chroma a
+  scalar `where` and pgvector bound a list to `=`. Each now uses its
+  backend's any-of form, so `retrieve_tools(namespaces=[...])` and
+  `retrieve_mcp_servers()` work off the in-memory store.
+- **A backslash no longer hides a LanceDB row.** `_escape_sql_string` doubled
+  backslashes, but DataFusion string literals have no backslash escapes, so
+  the value never matched: get, count, list and delete all missed it, and
+  because upsert's delete missed too, `sync()` duplicated such rows on every
+  run. Quote-doubling alone is the correct escape, and injection is still
+  neutralised.
+- **`add_tools(upsert=False)` skips ids already present** on LanceDB, as the
+  in-memory store does, instead of inserting a duplicate row the router then
+  offers twice; **`delete()` reports a miss** rather than returning `True`
+  for a tool that was never there; and **a tag filter sees the whole
+  candidate set** instead of a fixed `limit * 2` window that dropped tagged
+  tools ranked below it.
+- **Chroma `count(namespace=...)`** stopped passing a `where` argument
+  `Collection.count` does not take (it silently returned 0), and **Qdrant
+  `list_all(offset=...)`** treats the offset as a row offset rather than
+  passing it as a point-id cursor, which made pagination a no-op.
+- **`SentenceTransformersEmbedder.get_embedder_id()` no longer changes when
+  the model loads.** It returned `dimauto` before the first embed call and
+  `dim384` after, so a persistent store re-embedded its whole registry on
+  every process start and `CachedEmbedder` missed its own first batch. Note
+  that the id changes once on upgrade, costing one re-embed.
+- **Matryoshka truncation re-normalises.** Slicing a unit vector leaves it
+  non-unit, and LanceDB's `1 - d²/2` cosine conversion is exact only for unit
+  vectors, so scores were inflated and ranking diverged from the in-memory
+  store's true cosine.
+- **`CachedEmbedder` works across event loops.** Its `asyncio.Lock` bound to
+  the first loop that contended on it and then raised "bound to a different
+  event loop" — exactly what a process-wide cache is for. It guards the
+  SQLite work with a threading lock now.
+- **`InMemoryVectorStore.add_tools` validates batch lengths before
+  mutating**, as `add_skills` already did.
+
+#### Selection
+
+- **A schema property that cannot be a Python parameter no longer breaks a
+  tool.** `user-id` or `from` made `inspect.Parameter` raise inside
+  `python_signature`, taking down the seven adapters built on
+  `callable_for_signature`. Such properties are exposed under identifier
+  aliases and mapped back before the tool runs.
+- **The prompt extractor stops querying on garbage.** A messages list with no
+  user text fell through to `str(value)`, so retrieval ran on `"[]"` or a
+  list repr, and an explicit `prompt=None` became the query `"None"`. It also
+  reads SDK message *objects* and Responses `input_text` parts now.
+- **Enum roles are unwrapped.** LlamaIndex's `MessageRole` and Haystack's
+  `ChatRole` are `(str, Enum)`, which stringifies to `"MessageRole.USER"`, so
+  every user and tool message was invisible to the query strategies and
+  `tools_already_used` stayed empty.
+- **Out-of-range `limit`/`score_threshold` fail where they are set.**
+  `with_semantic_tools(limit=60)` was swallowed by the retrieval-failure
+  handler and silently called the model with no tools on every request;
+  `ToolRefresher` and `GantryToolset.select` raised a raw pydantic error on
+  the first turn instead.
+- **`fallback_chain` accepts async generators**, which `truncated` and
+  `ToolRefresher` already document; composing one raised on the coroutine and
+  leaked it un-awaited.
+- **Token buckets start at `burst_size`** rather than the per-minute rate (so
+  a configured burst applied to neither the first burst nor `reset`), a
+  `max_calls_per_minute` of 0 refuses instead of raising `ZeroDivisionError`,
+  and `get_stats` counts calls under every strategy rather than only the
+  sliding window.
+- **`truncated(max_chars=0)` and `concatenate_recent(n=0)` return nothing**
+  instead of everything (`[-0:]` is the whole sequence).
+
+### Added
+
+- **Remote MCP servers.** `MCPServerConfig` and `MCPServerDefinition` take
+  `url=` (plus `headers=` for auth and `transport="streamable_http" | "sse"`,
+  inferred from the endpoint) as an alternative to `command=`; exactly one
+  is required. `add_mcp_server`, `register_mcp_server` and `MCPClient` use
+  the SDK's Streamable HTTP or SSE client accordingly, on both mcp 1.x and
+  2.x. Secrets (`env`, `headers`) are excluded from `repr`.
+- **Serving Gantry over HTTP.** `gantry.serve_mcp("http", host=, port=,
+  path=)` runs the Streamable HTTP transport and `serve_mcp("sse", ...)` the
+  legacy SSE one (`run_sse` previously raised `NotImplementedError`);
+  `MCPServer.streamable_http_app()` / `.sse_app()` return Starlette apps for
+  mounting into an existing service — and they work when mounted, which
+  needed the session manager to start on the first request as well as from
+  the app's own lifespan, since a parent Starlette or FastAPI app does not
+  run a mounted sub-application's lifespan. `allowed_hosts` /
+  `allowed_origins` switch on the SDK's DNS-rebinding protection.
+- **`serve_mcp(mode="hybrid", expose=[...])`** lists the named tools
+  directly next to the meta-tools (it previously behaved exactly like
+  `dynamic`). Static and hybrid listings qualify same-named tools from
+  different namespaces so both stay callable, and a qualified name never
+  takes another tool's real name (`a.x` and `b.x` become `a_x`/`b_x` while a
+  genuine `default.a_x` keeps `a_x`).
+- **Agent Skills loader.** `gantry.add_skills_from_directory(path)` and
+  `agent_gantry.skills.load_skills_from_directory` / `load_skill` /
+  `skill_from_markdown` read Claude Code's `SKILL.md` directory format
+  (frontmatter name/description/tags, Markdown body; `allowed-tools` maps to
+  `related_tools`, unknown frontmatter keys travel in `metadata`) into
+  semantically retrievable `Skill`s, so a skills folder is injected top-k
+  per prompt instead of wholesale.
+- **`sync(prune=True)`** (and `AgentGantryConfig.prune_on_sync`,
+  `agent-gantry sync --prune`) deletes stored tools this gantry no longer
+  registers — fingerprint sync only ever added, so on a persistent store a
+  tool removed from the code stayed retrievable. Off by default because
+  several gantries may share one store.
+- **The CLI works on real registries.** `--module pkg.tools[:attr]` (and
+  `--config path.yaml`) point `list`, `search`, `lint`, `sim` and `sync` at
+  your own `AgentGantry` instance instead of the demo tools; a new
+  `serve-mcp` command exposes it to Claude Desktop / Claude Code (stdio) or
+  remote clients (`--transport http|sse`, `--mode hybrid --expose ...`).
+
 ## [0.14.0] - 2026-09-05
 
 Multi-turn tool selection: what drives each turn's retrieval, and what the
@@ -3302,7 +3913,8 @@ adapters, and the provider dialects agree with it.
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.13.1...v0.14.0
 [0.13.1]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.12.0...v0.13.0

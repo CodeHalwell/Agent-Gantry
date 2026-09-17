@@ -8,9 +8,17 @@ Gemini, Mistral, Groq, and Microsoft Agent Framework.
 from __future__ import annotations
 
 import copy
+import dataclasses
+import datetime
+import decimal
+import enum
 import json
 import logging
+import pathlib
+import uuid
 from typing import TYPE_CHECKING, Any
+
+from pydantic import BaseModel
 
 from agent_gantry.adapters.tool_spec.base import ToolCallPayload
 from agent_gantry.adapters.tool_spec.schema_utils import (
@@ -37,6 +45,129 @@ def _emitted_schema(schema: dict[str, Any]) -> dict[str, Any]:
     deep-copy their input; every pass-through path has to do it here.
     """
     return copy.deepcopy(schema)
+
+
+def _jsonable(obj: Any) -> Any:
+    """``json.dumps`` fallback for the values tool handlers actually return.
+
+    A bare ``json.dumps(result)`` made ``AgentGantry.execute_tool_calls``
+    raise ``TypeError`` for any tool returning a datetime, ``Decimal``,
+    dataclass, Pydantic model or set — all ordinary return types. Each is
+    rendered the way its own JSON convention does; anything else falls back
+    to ``str`` so a result is never lost to the model over its type.
+    """
+    if isinstance(obj, BaseModel):
+        return obj.model_dump(mode="json")
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        return dataclasses.asdict(obj)
+    if isinstance(obj, (datetime.datetime, datetime.date, datetime.time)):
+        return obj.isoformat()
+    if isinstance(obj, enum.Enum):
+        return obj.value
+    if isinstance(obj, (uuid.UUID, decimal.Decimal, pathlib.PurePath)):
+        return str(obj)
+    if isinstance(obj, (set, frozenset, tuple)):
+        return list(obj)
+    if isinstance(obj, (bytes, bytearray)):
+        return obj.decode("utf-8", errors="replace")
+    return str(obj)
+
+
+def _json_text(result: Any) -> str:
+    """``result`` as the JSON text the OpenAI-shaped and Anthropic replies carry."""
+    return json.dumps(result, default=_jsonable)
+
+
+def _json_keys(value: Any) -> Any:
+    """``value`` with every mapping key JSON can name.
+
+    ``default=`` reaches values, never keys, so a dict keyed by an enum or a
+    tuple still raised ``TypeError`` out of :func:`json.dumps` — a result that
+    used to pass through untouched. ``str``/``int``/``float``/``bool``/``None``
+    keys are left alone, since ``json`` already renders them itself.
+    """
+    if isinstance(value, dict):
+        return {
+            (key if isinstance(key, (str, int, float, bool)) or key is None else str(key)): (
+                _json_keys(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_json_keys(item) for item in value]
+    return value
+
+
+def _json_native(result: Any) -> Any:
+    """``result`` rebuilt from JSON-native values only.
+
+    Gemini takes the function response as a structured object rather than
+    text, so the SDK serializes it itself and chokes on the same types
+    :func:`_jsonable` covers, anywhere in the structure. A round trip through
+    the text form converts every nested leaf in one pass.
+    """
+    return json.loads(_json_text(_json_keys(result)))
+
+
+def _arguments_dict(arguments: Any, tool_name: str, adapter: str) -> dict[str, Any]:
+    """``arguments`` as the object ``ToolCallPayload`` requires, or ``{}``.
+
+    A model can emit ``"null"``, ``"[]"`` or ``"1"`` as its arguments string;
+    those decode without error and then failed ``ToolCallPayload`` validation
+    with a ``ValidationError``, taking down the whole turn. Treated like
+    malformed JSON instead — a warning and empty arguments — which is what
+    the Anthropic and Gemini adapters and the streaming accumulator already
+    do for a non-object payload.
+    """
+    if isinstance(arguments, dict):
+        return arguments
+    _logger.warning(
+        "%s: tool arguments for '%s' decoded to %s rather than an object, "
+        "defaulting to empty dict: %r",
+        adapter,
+        tool_name,
+        type(arguments).__name__,
+        arguments,
+    )
+    return {}
+
+
+def _close_objects_in_place(node: Any) -> None:
+    """Set ``additionalProperties: false`` on every object schema in ``node``.
+
+    Anthropic strict tool use requires it on *every* object, not only the
+    root; the root alone left nested objects open and the API rejected the
+    tool. Only this one keyword is added — unlike OpenAI strict mode,
+    Anthropic keeps optional properties optional, so ``strict_json_schema``
+    would be the wrong transform here.
+    """
+    if isinstance(node, list):
+        for item in node:
+            _close_objects_in_place(item)
+        return
+    if not isinstance(node, dict):
+        return
+    properties = node.get("properties")
+    if isinstance(properties, dict):
+        node["additionalProperties"] = False
+        for subschema in properties.values():
+            _close_objects_in_place(subschema)
+    # These are the keys the SDK's own ``transform_schema`` recurses into, and
+    # deliberately not ``schema_utils._SUBSCHEMA_KEYS``: the SDK leaves objects
+    # under ``not``/``contains``/``additionalItems`` open, so closing them here
+    # would constrain shapes Anthropic itself does not, and diverge from the
+    # agreement ``test_closed_paths_agree_with_the_anthropic_sdk`` pins down.
+    for key in ("items", "anyOf", "oneOf", "allOf", "prefixItems"):
+        if key in node:
+            _close_objects_in_place(node[key])
+    # ``$defs`` and its pre-2019 spelling. ``_collect_open_maps`` and
+    # ``_strict_in_place`` already walk both, and a hand-authored or Pydantic
+    # v1 schema still uses ``definitions``: leaving it unwalked published
+    # ``strict: true`` with the ``$ref`` target's nested objects open.
+    for defs_key in ("$defs", "definitions"):
+        if isinstance(node.get(defs_key), dict):
+            for subschema in node[defs_key].values():
+                _close_objects_in_place(subschema)
 
 
 def _strict_parameters(tool: ToolDefinition, dialect: str) -> tuple[dict[str, Any], bool]:
@@ -167,6 +298,7 @@ class OpenAIAdapter:
                     arguments[:200],
                 )
                 arguments = {}
+        arguments = _arguments_dict(arguments, tool_name, "OpenAIAdapter")
 
         return ToolCallPayload(
             tool_name=tool_name,
@@ -198,7 +330,7 @@ class OpenAIAdapter:
         is_error: bool = False,
     ) -> dict[str, Any]:
         """Format result for OpenAI tool_outputs."""
-        content = result if isinstance(result, str) else json.dumps(result)
+        content = result if isinstance(result, str) else _json_text(result)
         response: dict[str, Any] = {
             "role": "tool",
             "content": content,
@@ -321,6 +453,7 @@ class OpenAIResponsesAdapter:
                     arguments[:200],
                 )
                 arguments = {}
+        arguments = _arguments_dict(arguments, tool_name, "OpenAIResponsesAdapter")
 
         return ToolCallPayload(
             tool_name=tool_name,
@@ -361,7 +494,7 @@ class OpenAIResponsesAdapter:
             "output": "result string"
         }
         """
-        output = result if isinstance(result, str) else json.dumps(result)
+        output = result if isinstance(result, str) else _json_text(result)
         response: dict[str, Any] = {
             "type": "function_call_output",
             "output": output,
@@ -426,7 +559,11 @@ class AnthropicAdapter:
             # handler's open object with one accepting no keys at all —
             # silently discarding the parameter's data rather than merely
             # leaving it unconstrained.
-            unsupported = unsupported_strict_paths(tool.parameters_schema)
+            # Anthropic's transform never inlines a decorated ``$ref``, so the
+            # OpenAI depth-limit probe does not apply to it.
+            unsupported = unsupported_strict_paths(
+                tool.parameters_schema, inlines_refs=False
+            )
             if unsupported:
                 _logger.warning(
                     "Tool %r cannot use %s strict mode: %s describes an "
@@ -440,9 +577,11 @@ class AnthropicAdapter:
                 )
             else:
                 use_strict = True
-                # Anthropic requires additionalProperties: false for strict
-                # mode to take effect.
+                # Anthropic requires additionalProperties: false on every
+                # object for strict mode to take effect — the root alone left
+                # nested objects open and the API rejected the tool.
                 input_schema["additionalProperties"] = False
+                _close_objects_in_place(input_schema)
 
         schema: dict[str, Any] = {
             "name": tool.name,
@@ -507,7 +646,7 @@ class AnthropicAdapter:
         distinguish error content from normal tool output.
         Source: https://platform.claude.com/docs/en/api/messages (tool_result block)
         """
-        content = result if isinstance(result, str) else json.dumps(result)
+        content = result if isinstance(result, str) else _json_text(result)
         response: dict[str, Any] = {
             "type": "tool_result",
             "content": content,
@@ -622,6 +761,11 @@ class GeminiAdapter:
         is_error: bool = False,
     ) -> dict[str, Any]:
         """Format result for Gemini function response."""
+        # Made JSON-native first: the SDK serializes the response object
+        # itself, so a datetime or Pydantic model anywhere in it would fail
+        # there instead. A model result becomes a plain dict and is used as
+        # the response directly, as a dict result always was.
+        result = _json_native(result)
         response_content = result if isinstance(result, dict) else {"result": result}
         payload: dict[str, Any] = {
             "functionResponse": {
@@ -736,6 +880,7 @@ class AgentFrameworkAdapter(OpenAIAdapter):
                     arguments[:200] if isinstance(arguments, str) else arguments,
                 )
                 arguments = {}
+        arguments = _arguments_dict(arguments, tool_name, "AgentFrameworkAdapter")
 
         return ToolCallPayload(
             tool_name=tool_name,

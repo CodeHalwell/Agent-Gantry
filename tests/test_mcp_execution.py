@@ -212,7 +212,9 @@ async def test_client_raises_on_iserror_result(server_config: MCPServerConfig) -
     session survives them — a tool error is not a broken connection."""
     client = MCPClient(server_config)
     try:
-        with pytest.raises(RuntimeError, match="intentional failure"):
+        # mcp 2.x's server wraps a tool's exception in a generic
+        # "Error executing tool <name>" message; 1.x relays the original text.
+        with pytest.raises(RuntimeError, match="intentional failure|Error executing tool"):
             await client.call_tool("always_fails", {})
         assert client._connected is True
         result = await client.call_tool("add_numbers", {"a": 1, "b": 2})
@@ -239,7 +241,11 @@ async def test_add_mcp_server_tools_are_executable(server_config: MCPServerConfi
         # not passed through as a successful result.
         failed = await gantry.execute(ToolCall(tool_name="always_fails", arguments={}))
         assert failed.status == ExecutionStatus.FAILURE
-        assert "intentional failure" in (failed.error or "")
+        # 1.x relays the tool's own message; 2.x's server replaces it with a
+        # generic "Error executing tool <name>" text.
+        assert "intentional failure" in (failed.error or "") or "Error executing tool" in (
+            failed.error or ""
+        )
     finally:
         await gantry.close()
 
@@ -467,3 +473,25 @@ async def test_list_tools_discovery(server_config: MCPServerConfig) -> None:
             assert tool.metadata["mcp_server"] == "test-server"
     finally:
         await client.close()
+
+
+def test_a_long_server_tool_name_does_not_abort_discovery() -> None:
+    """The short-description branch padded with the server's *raw* name, which
+    is uncapped, so a tool with a very long name and a short description built
+    a description past ``ToolDefinition``'s 2000-character ceiling. That
+    ``ValidationError`` was raised inside ``list_tools``' list comprehension,
+    taking down discovery for the whole server -- the failure this padding
+    exists to avoid, reached by a long name instead of a long description."""
+    from agent_gantry.adapters.executors.mcp_client import _split_description
+    from agent_gantry.schema.tool import ToolDefinition
+
+    description, extended = _split_description("hi", "x" * 3000, "s" * 3000)
+    assert len(description) <= 2000, len(description)
+    assert extended is None
+
+    # the real check: the definition it feeds can actually be built
+    ToolDefinition(
+        name="ok",
+        description=description,
+        parameters_schema={"type": "object", "properties": {}},
+    )

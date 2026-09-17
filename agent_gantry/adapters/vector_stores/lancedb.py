@@ -59,7 +59,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
     Security Note:
         SQL injection protection is implemented through a defense-in-depth approach:
         1. Input validation via _validate_identifier() (length limits, control char rejection)
-        2. SQL escaping via _escape_sql_string() (backslash and quote escaping)
+        2. SQL escaping via _escape_sql_string() (single-quote doubling)
         3. Limited scope - only metadata key lookups use WHERE clauses
 
         LanceDB does not currently support parameterized queries for WHERE clauses.
@@ -268,15 +268,17 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
         now = datetime.now(timezone.utc).isoformat()
         records = [to_record(item, embedding, now) for item, embedding in zip(items, embeddings)]
 
+        # Predicate over the batch's ids (escape for SQL safety)
+        ids = [_escape_sql_string(f"{item.namespace}.{item.name}") for item in items]
+        if len(ids) > 1:
+            id_predicate = "id IN ({})".format(", ".join(f"'{id_}'" for id_ in ids))
+        else:
+            id_predicate = f"id = '{ids[0]}'"
+
         if upsert:
-            # Delete existing records with same IDs (escape for SQL safety)
-            ids = [_escape_sql_string(f"{item.namespace}.{item.name}") for item in items]
+            # Delete existing records with same IDs
             try:
-                if len(ids) > 1:
-                    escaped_ids = ", ".join(f"'{id_}'" for id_ in ids)
-                    await asyncio.to_thread(table.delete, f"id IN ({escaped_ids})")
-                else:
-                    await asyncio.to_thread(table.delete, f"id = '{ids[0]}'")
+                await asyncio.to_thread(table.delete, id_predicate)
             except RuntimeError as e:
                 # LanceDB raises RuntimeError when attempting to delete non-existent records
                 # This is expected during upsert when records don't exist yet
@@ -285,6 +287,27 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
                 # Unexpected error during deletion
                 logger.warning(f"Unexpected error during upsert delete: {e}")
                 raise
+        else:
+            # Without upsert, ids already present are skipped rather than
+            # inserted again as duplicate rows (mirrors the in-memory store),
+            # and only the rows actually inserted are counted.
+            existing = await asyncio.to_thread(
+                table.search().select(["id"]).where(id_predicate).limit(None).to_list
+            )
+            seen_ids = {row["id"] for row in existing}
+            # Each accepted record joins the set, so an id repeated *within*
+            # this batch is skipped too — the in-memory store's behaviour,
+            # which checked only the table and let a duplicated batch entry
+            # through.
+            deduped = []
+            for record in records:
+                if record["id"] in seen_ids:
+                    continue
+                seen_ids.add(record["id"])
+                deduped.append(record)
+            records = deduped
+            if not records:
+                return 0
 
         await asyncio.to_thread(table.add, records)
         return len(records)
@@ -411,13 +434,9 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
             if include_embeddings
             else ["tool_json", "_distance"]
         )
-        search = (
-            self._tools_table.search(query_vector)
-            .select(columns)
-            .limit(limit * 2)  # Over-fetch for filtering
-        )
-
-        # Apply namespace filter if specified (escape for SQL safety)
+        # Build the namespace predicate first (escape for SQL safety); it is
+        # needed both for the query and to size the tag over-fetch below.
+        where_clause: str | None = None
         if filters and "namespace" in filters:
             ns_filter = filters["namespace"]
             if isinstance(ns_filter, (list, tuple, set)):
@@ -427,60 +446,92 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
                     return []
                 if len(ns_list) == 1:
                     escaped_ns = _escape_sql_string(ns_list[0])
-                    search = search.where(f"namespace = '{escaped_ns}'")
+                    where_clause = f"namespace = '{escaped_ns}'"
                 else:
                     escaped_values = ", ".join(f"'{_escape_sql_string(ns)}'" for ns in ns_list)
-                    search = search.where(f"namespace IN ({escaped_values})")
+                    where_clause = f"namespace IN ({escaped_values})"
             else:
                 escaped_ns = _escape_sql_string(ns_filter)
-                search = search.where(f"namespace = '{escaped_ns}'")
-
-        # Execute search off the event loop — LanceDB queries are synchronous
-        # Rust/file I/O and would otherwise block every concurrent coroutine.
-        results = await asyncio.to_thread(search.to_list)
-
-        # Process results
-        output: list[Any] = []
+                where_clause = f"namespace = '{escaped_ns}'"
 
         # Pre-calculate required tags for faster set operations
         required_tags: set[str] = set()
         if filters and "tags" in filters:
             required_tags = set(filters["tags"])
 
-        for row in results:
-            # LanceDB returns distance (lower is better), convert to similarity
-            distance = row.get("_distance", 0)
-            # Convert L2 distance to cosine similarity approximation
-            score = max(0.0, 1.0 - (distance / 2.0))
+        # Over-fetch for post-filtering. Tags live inside tool_json (there is
+        # no tags column to push into the predicate), so a tag filter can only
+        # be applied after deserialising a candidate — and a fixed 2x window
+        # silently dropped tagged tools ranked below it. The window is widened
+        # instead, doubling until enough tagged rows are found or the
+        # namespace is exhausted, so the common case (tagged tools ranked near
+        # the top) still costs one query rather than a full scan.
+        fetch_limit = limit * 2
+        max_rows = fetch_limit
+        if required_tags:
+            max_rows = int(await asyncio.to_thread(self._tools_table.count_rows, where_clause))
+            fetch_limit = min(max(limit * 4, 1), max_rows)
 
-            if score_threshold is not None and score < score_threshold:
-                continue
+        def _build_search(size: int) -> Any:
+            search = self._tools_table.search(query_vector).select(columns).limit(size)
+            return search.where(where_clause) if where_clause else search
 
-            # Deserialize tool (validate once; tags are checked on the model)
-            tool_json_str = row.get("tool_json")
-            if not tool_json_str:
-                logger.warning("Skipping row with missing tool_json field")
-                continue
+        def _collect(rows: list[Any]) -> list[Any]:
+            """Score, deserialise and tag-filter a page of rows, up to ``limit``."""
+            collected: list[Any] = []
+            for row in rows:
+                # LanceDB returns distance (lower is better), convert to similarity
+                distance = row.get("_distance", 0)
+                # Convert L2 distance to cosine similarity approximation
+                score = max(0.0, 1.0 - (distance / 2.0))
 
-            try:
-                tool = ToolDefinition.model_validate_json(tool_json_str)
-            except Exception as e:
-                logger.warning(f"Failed to deserialize tool: {e}")
-                continue
+                if score_threshold is not None and score < score_threshold:
+                    continue
 
-            # Filter by tags if specified
-            if required_tags and required_tags.isdisjoint(tool.tags):
-                continue
+                # Deserialize tool (validate once; tags are checked on the model)
+                tool_json_str = row.get("tool_json")
+                if not tool_json_str:
+                    logger.warning("Skipping row with missing tool_json field")
+                    continue
 
-            if include_embeddings:
-                vector = row.get("vector")
-                embedding = list(vector) if vector is not None else []
-                output.append((tool, score, embedding))
-            else:
-                output.append((tool, score))
+                try:
+                    tool = ToolDefinition.model_validate_json(tool_json_str)
+                except Exception as e:
+                    logger.warning(f"Failed to deserialize tool: {e}")
+                    continue
 
-            if len(output) >= limit:
+                # Filter by tags if specified
+                if required_tags and required_tags.isdisjoint(tool.tags):
+                    continue
+
+                if include_embeddings:
+                    vector = row.get("vector")
+                    embedding = list(vector) if vector is not None else []
+                    collected.append((tool, score, embedding))
+                else:
+                    collected.append((tool, score))
+
+                if len(collected) >= limit:
+                    break
+            return collected
+
+        output: list[Any] = []
+        while True:
+            # Execute search off the event loop — LanceDB queries are
+            # synchronous Rust/file I/O and would otherwise block every
+            # concurrent coroutine.
+            rows = await asyncio.to_thread(_build_search(fetch_limit).to_list)
+            output = _collect(rows)
+            if (
+                len(output) >= limit
+                or not required_tags
+                or fetch_limit >= max_rows
+                or len(rows) < fetch_limit
+            ):
+                # Enough matches, no tag filter to widen for, or the namespace
+                # is exhausted — either way a wider window cannot add anything.
                 break
+            fetch_limit = min(fetch_limit * 2, max_rows)
 
         return output
 
@@ -659,8 +710,13 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
 
         # Escape ID for SQL safety
         tool_id = _escape_sql_string(f"{namespace}.{name}")
+        predicate = f"id = '{tool_id}'"
         try:
-            await asyncio.to_thread(self._tools_table.delete, f"id = '{tool_id}'")
+            # LanceDB's delete is a silent no-op on a miss; count first so the
+            # documented contract ("False if not found") actually holds.
+            if not await asyncio.to_thread(self._tools_table.count_rows, predicate):
+                return False
+            await asyncio.to_thread(self._tools_table.delete, predicate)
             return True
         except Exception:
             return False
@@ -684,8 +740,12 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
 
         # Escape ID for SQL safety
         skill_id = _escape_sql_string(f"{namespace}.{name}")
+        predicate = f"id = '{skill_id}'"
         try:
-            await asyncio.to_thread(self._skills_table.delete, f"id = '{skill_id}'")
+            # Same miss-is-a-no-op semantics as delete(): count first.
+            if not await asyncio.to_thread(self._skills_table.count_rows, predicate):
+                return False
+            await asyncio.to_thread(self._skills_table.delete, predicate)
             return True
         except Exception:
             return False

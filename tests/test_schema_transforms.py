@@ -893,16 +893,25 @@ def test_a_property_forbidden_by_its_schema_has_no_strict_representation():
         }
     ) == ["m.d"]
 
-    # ``true`` is satisfiable by everything, so it needs no fallback — and
-    # neither do the schemas strict mode already handles. Widening the
-    # unsupported set costs every one of them their strict guarantees.
+    # ``true`` is satisfiable by everything *as JSON Schema*, which is why
+    # this once asserted it needed no fallback. That reasoned from the spec
+    # rather than from what the provider accepts: OpenAI's own strict
+    # validator refuses it outright —
+    #
+    #   >>> from openai.lib._pydantic import _ensure_strict_json_schema
+    #   >>> _ensure_strict_json_schema({"properties": {"ok": True}}, ...)
+    #   TypeError: Expected True to be a dictionary; path=('properties', 'ok')
+    #
+    # so publishing it ``strict: true`` takes down every request the tool
+    # appears in. Losing strict mode is the cheaper failure, which is the
+    # trade the rest of this function already makes.
     assert unsupported_strict_paths(
         {
             "type": "object",
             "properties": {"ok": True, "name": {"type": "string"}},
             "required": ["name"],
         }
-    ) == []
+    ) == ["ok"]
     assert unsupported_strict_paths(
         {
             "type": "object",
@@ -1004,9 +1013,9 @@ def test_a_typeless_additional_properties_map_is_strict_unsupported():
     schema-valued keyword strict mode cannot express and the provider rejected
     the whole tool request (PR #381 review).
 
-    The invariant is that the two spellings agree, since JSON Schema applies
-    an object's keywords whenever the instance *is* an object and writing the
-    type out is optional rather than load-bearing."""
+    The invariant is that the two spellings agree on *openness*, since JSON
+    Schema applies an object's keywords whenever the instance *is* an object
+    and writing the type out is optional for that question."""
 
     def wrap(prop: dict) -> dict:
         return {"type": "object", "properties": {"m": prop}, "required": ["m"]}
@@ -1015,14 +1024,18 @@ def test_a_typeless_additional_properties_map_is_strict_unsupported():
         ({"additionalProperties": {"type": "integer"}}, ["m"]),
         ({"additionalProperties": True}, ["m"]),
         ({"additionalProperties": {}}, ["m"]),
-        # Explicitly closed is the one that is genuinely representable, and it
-        # still passes through ``_is_open_map`` as safe rather than being
-        # excluded by the gate.
-        ({"additionalProperties": False}, []),
     ):
         untyped = unsupported_strict_paths(wrap(dict(keyword)))
         typed = unsupported_strict_paths(wrap({"type": "object", **keyword}))
         assert untyped == typed == expected, (keyword, untyped, typed)
+
+    # Explicitly closed is the one that is genuinely representable, and it
+    # still passes through ``_is_open_map`` as safe rather than being excluded
+    # by the gate. Only the *typed* spelling is strict-safe, though: strict
+    # mode requires every property to declare its type, so the typeless twin
+    # is reported — for having no type, not for being open.
+    assert unsupported_strict_paths(wrap({"type": "object", "additionalProperties": False})) == []
+    assert unsupported_strict_paths(wrap({"additionalProperties": False})) == ["m"]
 
     # Only where the node declares no type: unlike properties and
     # patternProperties, which nothing but an object schema carries, a stray
@@ -1185,7 +1198,9 @@ def test_a_typeless_enum_from_an_external_schema_is_unsupported():
     assert unsupported_strict_paths(wrapped) == ["mode"]
 
     # An empty ``enum`` is not a schema a provider accepts at all, and
-    # ``_enum_schema`` degrades it to a plain string rather than emitting one,
-    # so there is no typeless property here to report.
+    # ``_enum_schema`` degrades it to a plain string rather than emitting one
+    # — but a hand-written one is still a property declaring no type, and the
+    # guard reports every one of those, not only the ones the enum members
+    # happen to explain.
     empty = {"type": "object", "properties": {"mode": {"enum": []}}, "required": ["mode"]}
-    assert unsupported_strict_paths(empty) == []
+    assert unsupported_strict_paths(empty) == ["mode"]

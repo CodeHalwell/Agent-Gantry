@@ -641,42 +641,62 @@ class TestSQLInjectionPrevention:
             await store.get_by_name("test_tool", "namespace\x01\x02\x03")
 
     @pytest.mark.asyncio
-    async def test_backslash_escaping(self, tmp_path) -> None:
-        """Test that backslashes are properly escaped."""
+    async def test_backslashes_round_trip_and_quotes_stay_escaped(self, tmp_path) -> None:
+        """A value containing a backslash must stay findable, and a quote must not inject.
+
+        DataFusion string literals have no backslash escapes, so doubling a
+        backslash produces a literal that never matches the stored value: the
+        row became invisible to get/count/list/delete, and because upsert's
+        delete never matched either, ``sync()`` duplicated such rows on every
+        run. Quote-doubling alone is the correct (and sufficient) escape.
+        """
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
 
-        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+        from agent_gantry.adapters.vector_stores.lancedb import (
+            LanceDBVectorStore,
+            _escape_sql_string,
+        )
 
         db_path = str(tmp_path / "test_db")
         store = LanceDBVectorStore(db_path=db_path, dimension=64)
         await store.initialize()
 
-        # Test with backslashes - use simpler namespace
+        namespace = "dir\\sub"
         tool = ToolDefinition(
             name="test_tool",
-            namespace="namespace_with_underscores",  # More practical namespace
+            namespace=namespace,
             description="Tool for backslash testing",
             parameters_schema={"type": "object", "properties": {}},
         )
 
-        embeddings = [[0.5] * 64]
-        count = await store.add_tools([tool], embeddings)
-        assert count == 1
+        # Upserting the same tool repeatedly must leave exactly one row: the
+        # delete half of the upsert has to match what add() wrote.
+        for _ in range(3):
+            assert await store.add_tools([tool], [[0.5] * 64], upsert=True) == 1
+        assert await store.count(namespace) == 1
 
-        # Should be able to retrieve it
-        result = await store.get_by_name("test_tool", "namespace_with_underscores")
-        assert result is not None, "Expected to find tool"
-        assert result.namespace == "namespace_with_underscores"
+        result = await store.get_by_name("test_tool", namespace)
+        assert result is not None, "a backslash in the namespace must not hide the tool"
+        assert result.namespace == namespace
+        assert [t.name for t in await store.list_all(namespace=namespace)] == ["test_tool"]
+        assert await store.delete("test_tool", namespace) is True
+        assert await store.count(namespace) == 0
 
-        # Verify our SQL escaping implementation handles backslashes correctly
-        # Note: Testing private function here is acceptable for security-critical logic
-        from agent_gantry.adapters.vector_stores.lancedb import _escape_sql_string
+        # Backslashes pass through; single quotes are doubled, so a quote in a
+        # caller-supplied value closes no literal.
+        assert _escape_sql_string("test\\with\\backslashes") == "test\\with\\backslashes"
+        assert _escape_sql_string("x' OR '1'='1") == "x'' OR ''1''=''1"
 
-        test_str = "test\\with\\backslashes"
-        escaped = _escape_sql_string(test_str)
-        # Should escape backslashes
-        assert "\\\\" in escaped or escaped == "test\\\\with\\\\backslashes"
+        safe = ToolDefinition(
+            name="safe_tool",
+            namespace="plain",
+            description="A perfectly ordinary tool",
+            parameters_schema={"type": "object", "properties": {}},
+        )
+        await store.add_tools([safe], [[0.5] * 64], upsert=True)
+        assert await store.get_by_name("safe_tool", "x' OR '1'='1") is None
+        assert await store.count("x' OR '1'='1") == 0
 
     @pytest.mark.asyncio
     async def test_length_limit_validation(self, tmp_path) -> None:

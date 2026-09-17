@@ -56,10 +56,11 @@ class RateLimiter:
         # Sliding window: deque of timestamps per key
         self._call_history: dict[str, deque[float]] = defaultdict(lambda: deque())
 
-        # Token bucket: tokens and last refill time per key
-        self._tokens: dict[str, float] = defaultdict(
-            lambda: float(self._config.max_calls_per_minute)
-        )
+        # Token bucket: tokens and last refill time per key. A fresh bucket
+        # starts *full*, i.e. at ``burst_size`` when one is configured: seeding
+        # it with the per-minute rate capped the first burst below the
+        # configured capacity (and ``reset`` re-created the same short bucket).
+        self._tokens: dict[str, float] = defaultdict(self._bucket_capacity)
         self._last_refill: dict[str, float] = defaultdict(time.time)
 
         # Fixed window: call count and window start per key
@@ -107,6 +108,36 @@ class RateLimiter:
             return f"{namespace}.{tool_name}"
         else:
             return "global"
+
+    def _bucket_capacity(self) -> float:
+        """Token-bucket capacity: ``burst_size`` when set, else the per-minute rate.
+
+        The one definition of "a full bucket", shared by the initial fill, the
+        refill ceiling and :meth:`reset` so they cannot disagree again.
+        """
+        # ``is None``, not falsiness: ``or`` silently promoted any falsy
+        # burst to the per-minute rate. ``0`` itself is now rejected by the
+        # schema — a zero-capacity bucket clamps every refill to ``min(0, ...)``
+        # and so can never accumulate the token a call needs, blocking the key
+        # permanently instead of limiting it.
+        if self._config.burst_size is None:
+            return float(self._config.max_calls_per_minute)
+        return float(self._config.burst_size)
+
+    def _record_call(self, key: str, now: float) -> None:
+        """Log an admitted call for :meth:`get_stats`, keeping one hour of history.
+
+        The sliding-window strategy keeps this history as its own state, but
+        the token-bucket and fixed-window strategies keep theirs elsewhere and
+        recorded nothing here, so their ``calls_last_minute`` /
+        ``calls_last_hour`` stats were always 0. Pruned on write so a strategy
+        with no hourly cap cannot grow it without bound.
+        """
+        history = self._call_history[key]
+        hour_ago = now - 3600
+        while history and history[0] < hour_ago:
+            history.popleft()
+        history.append(now)
 
     async def acquire(
         self,
@@ -204,7 +235,7 @@ class RateLimiter:
         if self._config.strategy == "token_bucket":
             now = time.time()
             refill_rate = self._config.max_calls_per_minute / 60
-            max_tokens = self._config.burst_size or self._config.max_calls_per_minute
+            max_tokens = self._bucket_capacity()
             # The refill is *computed*, not stored: writing ``_tokens`` and
             # ``_last_refill`` here would make a peek indistinguishable from
             # an acquire for the next caller.
@@ -304,14 +335,18 @@ class RateLimiter:
         elapsed = now - self._last_refill[key]
         refill_rate = self._config.max_calls_per_minute / 60  # tokens per second
         new_tokens = elapsed * refill_rate
-        max_tokens = self._config.burst_size or self._config.max_calls_per_minute
+        max_tokens = self._bucket_capacity()
 
         self._tokens[key] = min(max_tokens, self._tokens[key] + new_tokens)
         self._last_refill[key] = now
 
         # Check if we have tokens
         if self._tokens[key] < 1:
-            retry_after = 1 / refill_rate
+            # Seconds until a whole token has accrued. A bucket that never
+            # refills (``max_calls_per_minute=0``) has no retry time at all:
+            # the former ``1 / refill_rate`` divided by zero there, and
+            # over-estimated the wait once part of a token had accrued.
+            retry_after = (1 - self._tokens[key]) / refill_rate if refill_rate > 0 else None
             raise RateLimitExceeded(
                 f"Rate limit exceeded: no tokens available (refills at {refill_rate:.2f}/s)",
                 retry_after=retry_after,
@@ -319,6 +354,7 @@ class RateLimiter:
 
         # Consume a token
         self._tokens[key] -= 1
+        self._record_call(key, now)
 
     async def _fixed_window_check(self, key: str) -> None:
         """Check fixed window rate limit."""
@@ -340,6 +376,7 @@ class RateLimiter:
 
         # Increment counter
         self._window_calls[key] += 1
+        self._record_call(key, now)
 
     def get_stats(self, tool_name: str | None = None, namespace: str = "default") -> dict[str, Any]:
         """
@@ -355,21 +392,33 @@ class RateLimiter:
         if tool_name:
             key = self._get_key(tool_name, namespace)
 
-            # ⚡ Bolt: Fast reverse iteration to count calls in last minute instead of filtering whole history
-            calls_last_minute = 0
+            # One reverse pass for both windows. History is ordered
+            # oldest-first, so the first entry older than the hour ends it.
+            #
+            # ``calls_last_hour`` used to be the raw length of the deque, which
+            # is only pruned when a call is *admitted*: a key that went quiet
+            # kept reporting the calls it made hours ago, while
+            # ``calls_last_minute`` — measured against the clock — correctly
+            # read 0. The two stats disagreed for as long as the key stayed
+            # idle.
             now = time.time()
-            for t in reversed(self._call_history.get(key, [])):
-                if now - t < 60:
-                    calls_last_minute += 1
-                else:
+            minute_ago, hour_ago = now - 60, now - 3600
+            calls_last_minute = calls_last_hour = 0
+            for call_time in reversed(self._call_history.get(key, ())):
+                if call_time < hour_ago:
                     break
+                calls_last_hour += 1
+                if call_time >= minute_ago:
+                    calls_last_minute += 1
 
             return {
                 "key": key,
                 "concurrent": self._concurrent.get(key, 0),
                 "calls_last_minute": calls_last_minute,
-                "calls_last_hour": len(self._call_history.get(key, [])),
-                "tokens": self._tokens.get(key, 0)
+                "calls_last_hour": calls_last_hour,
+                # ``.get`` bypasses the defaultdict factory, so a bucket never
+                # drawn on reports its full capacity rather than 0.
+                "tokens": self._tokens.get(key, self._bucket_capacity())
                 if self._config.strategy == "token_bucket"
                 else None,
             }
@@ -397,7 +446,7 @@ class RateLimiter:
         if tool_name:
             key = self._get_key(tool_name, namespace)
             self._call_history[key].clear()
-            self._tokens[key] = float(self._config.max_calls_per_minute)
+            self._tokens[key] = self._bucket_capacity()
             self._last_refill[key] = time.time()
             self._window_calls[key] = 0
             self._window_start[key] = time.time()
@@ -405,7 +454,7 @@ class RateLimiter:
                 self._concurrent[key] = 0
         else:
             self._call_history.clear()
-            self._tokens.clear()
+            self._tokens.clear()  # re-created full by the defaultdict factory
             self._last_refill.clear()
             self._window_calls.clear()
             self._window_start.clear()
