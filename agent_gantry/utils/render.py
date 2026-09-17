@@ -19,15 +19,25 @@ from typing import Any
 __all__ = ["render_result"]
 
 
-def _is_content_block(item: Any) -> bool:
-    """Whether ``item`` carries a content block's ``type`` discriminator.
+#: The ``type`` discriminators of every MCP content block, from the SDK's own
+#: ``ContentBlock`` union (TextContent, ImageContent, AudioContent,
+#: ResourceLink, EmbeddedResource). Spelled out rather than imported: this
+#: module is deliberately dependency-light and import-safe. A test pins the
+#: set against the installed SDK so a protocol addition cannot drift past it.
+_MCP_BLOCK_TYPES = frozenset({"text", "image", "audio", "resource", "resource_link"})
 
-    Deliberately loose about *which* type: a result's blocks may be image or
-    resource blocks as well as text, and every one of them declares it.
+
+def _is_content_block(item: Any) -> bool:
+    """Whether ``item`` is an MCP content block.
+
+    Accepting *any* string ``type`` was too weak to be identity: typed lists
+    are ordinary outside MCP, so a record like ``{"title": ..., "score": ...,
+    "content": [{"type": "paragraph", "text": ...}]}`` was taken for a result
+    and rendered as its blocks, dropping every sibling field. The protocol
+    names its block types, so membership is the check.
     """
-    if isinstance(item, dict):
-        return isinstance(item.get("type"), str)
-    return isinstance(getattr(item, "type", None), str)
+    kind = item.get("type") if isinstance(item, dict) else getattr(item, "type", None)
+    return isinstance(kind, str) and kind in _MCP_BLOCK_TYPES
 
 
 def _result_content(value: Any) -> Any:

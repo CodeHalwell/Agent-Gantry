@@ -504,7 +504,18 @@ def _collect_open_maps(
         _collect_open_maps(additional, f"{path}.<values>" if path else "<values>", out, root)
     for key in _SUBSCHEMA_KEYS:
         if key in node:
-            _collect_open_maps(node[key], f"{path}.{key}" if path else key, out, root)
+            child = node[key]
+            child_path = f"{path}.{key}" if path else key
+            # A nested schema needs a type as much as a direct property does.
+            # ``_declares_type`` was applied only under ``properties``, so an
+            # array whose ``items`` were typeless —
+            # ``{"type": "array", "items": {"anyOf": [{"description": "..."}]}}``
+            # — passed on the strength of the *property's* own ``array`` and
+            # went out ``strict: true`` with nothing for the provider to read.
+            if child is True or (isinstance(child, dict) and not _declares_type(child, root)):
+                out.append(child_path)
+                continue
+            _collect_open_maps(child, child_path, out, root)
     for key in _SUBSCHEMA_LIST_KEYS:
         if isinstance(node.get(key), list):
             _collect_open_maps(node[key], f"{path}.{key}" if path else key, out, root)

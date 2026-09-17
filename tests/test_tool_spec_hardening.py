@@ -1197,3 +1197,44 @@ def test_an_all_permissive_boolean_property_is_not_strict_safe() -> None:
     assert unsupported_strict_paths(
         {"type": "object", "properties": {"v": {"type": "string"}}}
     ) == []
+
+
+def test_a_typeless_nested_subschema_is_reported_too() -> None:
+    """``_declares_type`` was applied only to entries directly under
+    ``properties``, so an array whose ``items`` were typeless passed on the
+    strength of the property's own ``array`` and went out ``strict: true``
+    with nothing for the provider to read in the item schema."""
+    from agent_gantry.adapters.tool_spec.schema_utils import unsupported_strict_paths
+
+    typeless_items = {
+        "type": "object",
+        "properties": {
+            "rows": {"type": "array", "items": {"anyOf": [{"description": "free form"}]}}
+        },
+    }
+    assert unsupported_strict_paths(typeless_items) == ["rows.items"]
+
+    # a typed item schema is still fine, and so is a typed combinator branch
+    assert (
+        unsupported_strict_paths(
+            {
+                "type": "object",
+                "properties": {"rows": {"type": "array", "items": {"type": "string"}}},
+            }
+        )
+        == []
+    )
+    assert (
+        unsupported_strict_paths(
+            {
+                "type": "object",
+                "properties": {
+                    "rows": {
+                        "type": "array",
+                        "items": {"anyOf": [{"type": "string"}, {"type": "integer"}]},
+                    }
+                },
+            }
+        )
+        == []
+    )

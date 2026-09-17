@@ -268,6 +268,19 @@ Three behaviour changes to know about before upgrading:
   stranded a live HTTP connection or stdio subprocess that `close_all()`
   could never reach. It now keeps the client for the next async shutdown,
   as `MCPRegistry` already did.
+- **Only the protocol's own content-block types count as content.**
+  Accepting any string `type` was too weak to be identity — typed lists are
+  ordinary outside MCP — so a record like `{"title": ..., "score": ...,
+  "content": [{"type": "paragraph", ...}]}` was taken for a result and
+  rendered as its blocks, dropping every sibling field. Membership of the
+  SDK's `ContentBlock` union (`text`, `image`, `audio`, `resource`,
+  `resource_link`) is the check now, pinned against the installed SDK by a
+  test.
+- **A typeless *nested* subschema is reported too.** `_declares_type` was
+  applied only to entries directly under `properties`, so an array whose
+  `items` were typeless — `{"type": "array", "items": {"anyOf": [{"description":
+  "..."}]}}` — passed on the strength of the property's own `array` and went
+  out `strict: true` with nothing for the provider to read.
 - **An all-permissive `true` property schema is not strict-safe.** Only
   `false` was special cased, so `{"value": true}` passed the scan and the
   tool went out `strict: true` with a property the provider has no type to

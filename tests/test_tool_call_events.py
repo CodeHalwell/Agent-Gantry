@@ -255,6 +255,40 @@ class TestRenderResult:
 
         assert render_result(_Real()) == "from the block"
 
+    def test_only_real_mcp_block_types_count_as_content(self) -> None:
+        """A string ``type`` is not identity — typed lists are ordinary outside
+        MCP. ``{"title": ..., "score": ..., "content": [{"type": "paragraph",
+        ...}]}`` was taken for a result and rendered as ``body``, dropping
+        every sibling field. The protocol names its block types."""
+        record = {
+            "title": "T",
+            "score": 0.9,
+            "content": [{"type": "paragraph", "text": "body"}],
+        }
+        assert render_result(record) != "body"
+        assert "0.9" in render_result(record)
+
+        # ...while every type the protocol does define still unwraps
+        for kind in ("text", "image", "audio", "resource", "resource_link"):
+            block = {"type": kind, "text": "seen"}
+            assert render_result({"content": [block]}) == "seen", kind
+
+    def test_the_block_type_set_matches_the_installed_sdk(self) -> None:
+        """``_MCP_BLOCK_TYPES`` is spelled out rather than imported, to keep
+        this module import-safe. Pin it against the SDK so a protocol addition
+        cannot drift past it unnoticed."""
+        import typing
+
+        types_module = pytest.importorskip("mcp.types")
+        from agent_gantry.utils.render import _MCP_BLOCK_TYPES
+
+        from_sdk = set()
+        for cls in typing.get_args(types_module.ContentBlock):
+            field = cls.model_fields["type"]
+            args = typing.get_args(field.annotation)
+            from_sdk.add(args[0] if args else field.default)
+        assert from_sdk == set(_MCP_BLOCK_TYPES), from_sdk ^ set(_MCP_BLOCK_TYPES)
+
     def test_a_dict_shaped_result_is_recognised(self) -> None:
         """``getattr`` finds nothing on a plain dict, so a proxied or
         JSON-decoded ``CallToolResult`` was never recognised and rendered as
