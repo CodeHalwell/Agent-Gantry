@@ -227,6 +227,34 @@ class TestRenderResult:
         assert _is_mcp_result(_V2Error())
         assert _is_mcp_result(_V2Structured())
 
+    def test_a_status_field_does_not_vouch_for_unrecognised_content(self) -> None:
+        """Consulting the protocol's marker fields alongside a *non-empty*
+        ``content`` let an ordinary record borrow their authority:
+        ``Result(content=["body"], is_error=False, score=0.9)`` matched
+        because ``False is not None``, and rendered as ``body``. When there
+        are items to unwrap, only the items decide; the markers speak solely
+        for the empty-content result that has no payload to judge."""
+        from agent_gantry.utils.render import _is_mcp_result
+
+        class _Record:
+            def __init__(self) -> None:
+                self.content = ["body"]
+                self.is_error = False
+                self.score = 0.9
+
+        assert not _is_mcp_result(_Record())
+        rendered = render_result(_Record())
+        assert rendered != "body", rendered
+
+        # ...and a result whose blocks are real still unwraps even with a
+        # marker present.
+        class _Real:
+            def __init__(self) -> None:
+                self.content = [{"type": "text", "text": "from the block"}]
+                self.isError = False
+
+        assert render_result(_Real()) == "from the block"
+
 
 class TestLoggingHygiene:
     def test_package_attaches_null_handler(self) -> None:

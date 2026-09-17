@@ -41,13 +41,20 @@ def _is_mcp_result(value: Any) -> bool:
     content = getattr(value, "content", None)
     if not isinstance(content, (list, tuple)) or isinstance(value, type):
         return False
-    if content and all(_is_content_block(item) for item in content):
-        return True
-    # A result answering entirely through ``structuredContent`` leaves
-    # ``content`` empty, so its own protocol fields have to identify it. Both
-    # spellings of each: mcp 2.x renamed ``isError`` to ``is_error`` and
-    # ``structuredContent`` to ``structured_content``, and reading only the
-    # 1.x names sent a 2.x error result to ``str()``.
+    if content:
+        # Something to unwrap: the items decide, and nothing else can. Letting
+        # a marker field vouch for them classified
+        # ``Result(content=["body"], is_error=False, score=0.9)`` as a result
+        # — ``False is not None`` — and dropped the score. An attribute name
+        # is not protocol identity when the payload itself can be checked.
+        return all(_is_content_block(item) for item in content)
+    # Empty content: a result answering entirely through ``structuredContent``
+    # is indistinguishable from a plain object by payload alone, so here its
+    # own protocol fields are all there is to go on. Both spellings of each:
+    # mcp 2.x renamed ``isError`` to ``is_error`` and ``structuredContent`` to
+    # ``structured_content``, and reading only the 1.x names sent a 2.x error
+    # result to ``str()``. Nothing is dropped by a false positive here, since
+    # there are no content items to emit in the first place.
     return any(
         getattr(value, attribute, None) is not None
         for attribute in (

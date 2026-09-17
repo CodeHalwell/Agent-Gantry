@@ -213,7 +213,10 @@ Three behaviour changes to know about before upgrading:
   covered too; that renderer's `.text` duck-typing is unchanged, since its
   callers rely on it. Both spellings of the protocol's fields are read, so
   an mcp 2.x result reporting through `is_error`/`structured_content` is
-  recognised rather than stringified.
+  recognised rather than stringified. Those fields only speak for a result
+  whose `content` is *empty*, which has no payload to judge; where there are
+  items to unwrap, the items alone decide, so a record carrying a status
+  field cannot borrow the protocol's authority.
 - **An MCP server registered mid-sync is no longer discarded.**
   `sync_servers()` cleared the whole pending buffer, so a
   `register_mcp_server()` landing while it awaited was dropped: the server
