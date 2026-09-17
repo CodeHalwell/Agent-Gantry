@@ -158,6 +158,20 @@ Three behaviour changes to know about before upgrading:
 - **The documentation site shows the released version.** It hard-coded
   `0.11.0` in three places and had advertised it for three releases; the
   three now read it from `package.json`, which the release bumps.
+- **A recursive decorated `$ref` falls back to non-strict.** Inlining a
+  `$ref` that carries sibling keys stops at a depth limit — a self-referential
+  model whose recursive field also has a description has no finite inlined
+  spelling — and the node left there is the very shape the inlining exists to
+  remove. It was reported as strict-safe and published under `strict: true`
+  for OpenAI to reject.
+- **The CLI runs a command on one event loop.** With `--config` and a module,
+  the gantry was built (and its backend initialised) under one `asyncio.run`
+  and used under a second, so a loop-bound pool such as pgvector's was handed
+  a closed loop.
+- **The CLI keeps the first of two same-named tools** across `--module`
+  entries, with the documented warning. Collecting a module at a time reset
+  the facade's per-call duplicate detection, so the later module silently
+  overwrote the earlier tool's definition and handler.
 
 #### Stores and embedders
 

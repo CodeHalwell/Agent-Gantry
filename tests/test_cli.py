@@ -5,7 +5,9 @@ The ``agent-gantry`` CLI against real registries (``--module``) and its
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -32,6 +34,27 @@ def test_several_modules_are_merged_into_one_registry() -> None:
     )
     names = sorted(t.name for t in gantry.list_tools_sync())
     assert names == ["custom_tool", "tool_a1", "tool_a2"]
+
+
+def test_a_duplicate_across_modules_warns_and_keeps_the_first(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``collect_tools_from_modules`` dedupes per call, so collecting one
+    module at a time reset its ``seen`` set and the later module silently
+    overwrote the earlier tool's definition and handler."""
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        gantry = build_gantry(
+            [
+                "tests.test_modules.module_a",
+                "tests.test_modules.module_c_duplicate",
+            ]
+        )
+    assert "Skipping duplicate tool 'default.tool_a1'" in caplog.text
+    handler = gantry._registry.get_handler("default.tool_a1")
+    assert handler is not None
+    assert handler.__module__ == "tests.test_modules.module_a", "the first module must win"
 
 
 def test_missing_module_or_attribute_is_a_clear_error(capsys: pytest.CaptureFixture[str]) -> None:
@@ -102,6 +125,46 @@ def test_prune_defers_to_the_config_when_the_flag_is_absent(
     # ...and without the config setting, a dry run says nothing about pruning
     assert main(["sync", "--dry-run", "--module", "tests.test_modules.module_a"]) == 0
     assert "prune" not in capsys.readouterr().out.lower()
+
+
+def test_the_command_runs_on_one_event_loop() -> None:
+    """The gantry has to be built on the loop its command then runs on: a
+    loop-bound backend (a pgvector pool) initialised under one ``asyncio.run``
+    and used under a second is talking to a closed loop."""
+    loops: list[int] = []
+    real_retrieve = AgentGantry.retrieve
+
+    async def spy(self: AgentGantry, query: Any) -> Any:
+        loops.append(id(asyncio.get_running_loop()))
+        return await real_retrieve(self, query)
+
+    original = AgentGantry.collect_tools_from_modules
+
+    async def collect_spy(self: AgentGantry, *args: Any, **kwargs: Any) -> Any:
+        loops.append(id(asyncio.get_running_loop()))
+        return await original(self, *args, **kwargs)
+
+    with (
+        patch.object(AgentGantry, "retrieve", spy),
+        patch.object(AgentGantry, "collect_tools_from_modules", collect_spy),
+    ):
+        # two --module entries force the collect path, which used to run in
+        # its own asyncio.run() before the command opened another
+        assert (
+            main(
+                [
+                    "search",
+                    "first tool",
+                    "--module",
+                    "tests.test_modules.module_a",
+                    "--module",
+                    "tests.test_modules.module_b",
+                ]
+            )
+            == 0
+        )
+    assert len(loops) >= 2
+    assert len(set(loops)) == 1, "collection and the command must share one loop"
 
 
 def test_serve_mcp_plumbs_transport_options() -> None:

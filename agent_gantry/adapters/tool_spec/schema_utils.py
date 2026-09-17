@@ -474,7 +474,43 @@ def unsupported_strict_paths(schema: dict[str, Any] | None) -> list[str]:
         return []
     found: list[str] = []
     _collect_open_maps(schema, "", found)
+    found.extend(_residual_decorated_refs(schema))
     return found
+
+
+def _residual_decorated_refs(schema: dict[str, Any]) -> list[str]:
+    """Paths where a ``$ref`` with sibling keys survives the strict transform.
+
+    ``_strict_in_place`` inlines a decorated ``$ref`` because OpenAI rejects
+    one that carries siblings, but it stops at ``_MAX_INLINE_DEPTH`` — a
+    self-referential model whose recursive field also has a description has no
+    finite inlined spelling. The node left at the limit is exactly the shape
+    the inlining exists to remove, and reporting nothing meant the tool went
+    out ``strict: true`` for the provider to reject. Asking the transform
+    itself keeps this honest however the depth rule changes.
+    """
+    try:
+        transformed = strict_json_schema(schema)
+    except Exception:  # pragma: no cover - the caller re-raises on its own path
+        return []
+    found: list[str] = []
+    _collect_decorated_refs(transformed, "", found)
+    return found
+
+
+def _collect_decorated_refs(node: Any, path: str, out: list[str]) -> None:
+    """Record every ``{"$ref": ..., <other keys>}`` node under ``node``."""
+    if isinstance(node, list):
+        for index, item in enumerate(node):
+            _collect_decorated_refs(item, f"{path}[{index}]", out)
+        return
+    if not isinstance(node, dict):
+        return
+    if "$ref" in node and any(key != "$ref" for key in node):
+        out.append(path or "<root>")
+        return
+    for key, value in node.items():
+        _collect_decorated_refs(value, f"{path}.{key}" if path else key, out)
 
 
 #: Keywords Gemini and Vertex AI reject whose removal cannot change which

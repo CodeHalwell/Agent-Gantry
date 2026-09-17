@@ -70,7 +70,7 @@ def _import_gantry(spec: str, default_attr: str) -> AgentGantry:
     return gantry
 
 
-def build_gantry(
+async def build_gantry_async(
     modules: Sequence[str] | None,
     *,
     attr: str = _DEFAULT_MODULE_ATTR,
@@ -86,6 +86,11 @@ def build_gantry(
       performs.
     - None: the demo registry, with a note on stderr so nobody mistakes it
       for their own tools.
+
+    Async because the gantry it returns must be built on the *same* event loop
+    the command will then run on: a loop-bound backend (a pgvector pool, say)
+    initialised here and used from a second ``asyncio.run`` would be talking
+    to a closed loop.
     """
     modules = list(modules or [])
     base_config = None
@@ -99,14 +104,19 @@ def build_gantry(
 
     if modules:
         gantry = AgentGantry(config=base_config)
+        # Grouped by attribute so each group is ONE call: the facade's
+        # duplicate detection keeps a per-call ``seen`` set, so collecting a
+        # module at a time reset it and a later module silently overwrote an
+        # earlier tool of the same qualified name instead of warning and
+        # keeping the first.
+        groups: dict[str, list[str]] = {}
+        for spec in modules:
+            module_path, module_attr = _split_module_spec(spec, attr)
+            _import_gantry(spec, attr)  # fail early, with the CLI's own message
+            groups.setdefault(module_attr, []).append(module_path)
 
-        async def _collect() -> None:
-            for spec in modules:
-                module_path, module_attr = _split_module_spec(spec, attr)
-                _import_gantry(spec, attr)  # fail early, with the CLI's own message
-                await gantry.collect_tools_from_modules([module_path], module_attr=module_attr)
-
-        asyncio.run(_collect())
+        for module_attr, paths in groups.items():
+            await gantry.collect_tools_from_modules(paths, module_attr=module_attr)
         return gantry
 
     gantry = AgentGantry(config=base_config)
@@ -118,6 +128,21 @@ def build_gantry(
             file=sys.stderr,
         )
     return gantry
+
+
+def build_gantry(
+    modules: Sequence[str] | None,
+    *,
+    attr: str = _DEFAULT_MODULE_ATTR,
+    config: str | None = None,
+    quiet: bool = False,
+) -> AgentGantry:
+    """Synchronous :func:`build_gantry_async`, for callers with no loop running.
+
+    The CLI itself does not use this — it builds the gantry inside the one
+    loop its command runs on (see :func:`build_gantry_async`).
+    """
+    return asyncio.run(build_gantry_async(modules, attr=attr, config=config, quiet=quiet))
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -281,9 +306,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "install-skill":
         return _run_install_skill(args)
 
+    # One event loop for the whole command: the gantry's backend is built and
+    # used inside it, so a loop-bound pool (pgvector) is never handed to a
+    # second, later loop.
+    return asyncio.run(_run_command(args))
+
+
+async def _run_command(args: argparse.Namespace) -> int:
+    """Build the gantry and run the requested subcommand, on one event loop."""
     # stdio MCP serving owns stdout, so the demo-registry note (stderr) is the
     # only thing the CLI may print before the protocol starts.
-    gantry = build_gantry(args.module, attr=args.attr, config=args.config)
+    gantry = await build_gantry_async(args.module, attr=args.attr, config=args.config)
 
     if args.command == "list":
         tools = gantry.list_tools_sync(namespace=args.namespace)
@@ -299,7 +332,7 @@ def main(argv: list[str] | None = None) -> int:
             score_threshold=0.0,
             namespaces=[args.namespace] if args.namespace else None,
         )
-        result = asyncio.run(gantry.retrieve(query))
+        result = await gantry.retrieve(query)
         if not result.tools:
             print("No tools found.")
             return 0
@@ -309,18 +342,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "lint":
-        analysis = asyncio.run(
-            gantry.analyze_registry(
-                similarity_threshold=args.similarity_threshold,
-                tag_overlap_share=args.tag_overlap_share,
-            )
+        analysis = await gantry.analyze_registry(
+            similarity_threshold=args.similarity_threshold,
+            tag_overlap_share=args.tag_overlap_share,
         )
         print(analysis.format_text())
         return 1 if not analysis.empty else 0
 
     if args.command == "sim":
         try:
-            score = asyncio.run(gantry.pairwise_similarity(args.tool_a, args.tool_b))
+            score = await gantry.pairwise_similarity(args.tool_a, args.tool_b)
         except LookupError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
@@ -328,14 +359,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "sync":
-        return asyncio.run(
-            _run_sync_command(gantry, dry_run=args.dry_run, force=args.force, prune=args.prune)
+        return await _run_sync_command(
+            gantry, dry_run=args.dry_run, force=args.force, prune=args.prune
         )
 
     if args.command == "serve-mcp":
-        return _run_serve_mcp(gantry, args)
+        return await _run_serve_mcp(gantry, args)
 
-    parser.print_help()
+    _build_parser().print_help()
     return 0
 
 
@@ -364,7 +395,7 @@ def _run_install_skill(args: argparse.Namespace) -> int:
     return 0
 
 
-def _run_serve_mcp(gantry: AgentGantry, args: argparse.Namespace) -> int:
+async def _run_serve_mcp(gantry: AgentGantry, args: argparse.Namespace) -> int:
     """Run the ``serve-mcp`` subcommand until interrupted."""
     try:
         import mcp  # noqa: F401
@@ -383,16 +414,14 @@ def _run_serve_mcp(gantry: AgentGantry, args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
     try:
-        asyncio.run(
-            gantry.serve_mcp(
-                transport=transport,
-                mode=args.mode,
-                name=args.name,
-                host=args.host,
-                port=args.port,
-                path=args.path,
-                expose=args.expose,
-            )
+        await gantry.serve_mcp(
+            transport=transport,
+            mode=args.mode,
+            name=args.name,
+            host=args.host,
+            port=args.port,
+            path=args.path,
+            expose=args.expose,
         )
     except KeyboardInterrupt:
         pass

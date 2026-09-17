@@ -856,6 +856,47 @@ class TestTypelessProperties:
         }
         assert unsupported_strict_paths(schema) == []
 
+    def test_a_recursive_decorated_ref_falls_back_to_non_strict(self) -> None:
+        """Inlining a decorated ``$ref`` stops at the depth limit, and the node
+        left there is the very shape the inlining exists to remove — a ``$ref``
+        with siblings, which OpenAI rejects. Reporting nothing published it
+        under ``strict: true`` anyway."""
+        recursive = {
+            "type": "object",
+            "properties": {"root": {"$ref": "#/$defs/Node", "description": "the tree root"}},
+            "required": ["root"],
+            "$defs": {
+                "Node": {
+                    "type": "object",
+                    "properties": {"child": {"$ref": "#/$defs/Node", "description": "child"}},
+                    "required": ["child"],
+                }
+            },
+        }
+        assert unsupported_strict_paths(recursive) != []
+
+        tool = _tool(recursive)
+        emitted = OpenAIAdapter().to_provider_schema(tool, strict=True)["function"]
+        assert emitted.get("strict") is not True
+
+        # A ref that *does* inline finitely still gets strict mode
+        finite = {
+            "type": "object",
+            "properties": {"addr": {"$ref": "#/$defs/Address", "description": "where to ship"}},
+            "required": ["addr"],
+            "$defs": {
+                "Address": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                    "required": ["city"],
+                }
+            },
+        }
+        assert unsupported_strict_paths(finite) == []
+        out = OpenAIAdapter().to_provider_schema(_tool(finite), strict=True)["function"]
+        assert out["strict"] is True
+        assert out["parameters"]["properties"]["addr"]["type"] == "object"
+
     def test_nested_typeless_properties_are_reported_at_their_path(self) -> None:
         schema = _wrap({"type": "object", "properties": {"inner": {"description": "?"}}})
         assert unsupported_strict_paths(schema) == ["x.inner"]
