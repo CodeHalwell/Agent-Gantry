@@ -278,7 +278,11 @@ def _build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--name", default="agent-gantry", help="MCP server name.")
     serve_parser.add_argument("--host", default="127.0.0.1", help="Bind host for http/sse.")
     serve_parser.add_argument("--port", type=int, default=8000, help="Bind port for http/sse.")
-    serve_parser.add_argument("--path", default="/mcp", help="Endpoint path for http.")
+    serve_parser.add_argument(
+        "--path",
+        default=None,
+        help="Endpoint path for http/sse (default: /mcp for http, /sse for sse).",
+    )
 
     skill_parser = subparsers.add_parser(
         "install-skill",
@@ -429,9 +433,14 @@ async def _run_serve_mcp(gantry: AgentGantry, args: argparse.Namespace) -> int:
         return 2
     transport = "streamable_http" if args.transport == "http" else args.transport
     if transport != "stdio":
+        # Each transport has its own default endpoint, and ``--path`` now
+        # reaches SSE too, so advertise what the server will actually serve
+        # rather than always printing the SSE default.
+        default_path = "/mcp" if transport == "streamable_http" else "/sse"
+        endpoint = default_path if args.path is None else args.path
         print(
             f"Serving MCP ({args.mode}) over {args.transport} at "
-            f"http://{args.host}:{args.port}{args.path if transport == 'streamable_http' else '/sse'}",
+            f"http://{args.host}:{args.port}{endpoint}",
             file=sys.stderr,
         )
     try:

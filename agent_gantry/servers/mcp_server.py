@@ -268,6 +268,15 @@ class _StreamableHTTPApp:
                     self._closed = True
                 raise
             if failure:
+                # The runner reached ``run()`` before it raised, so the manager
+                # is spent even though it never served. Without marking the app
+                # stopped, ``_task`` stayed ``None`` and the next mounted
+                # request re-entered the same one-shot manager, trading this
+                # message for the SDK's "run() can only be called once per
+                # instance" for the life of the process.
+                self._closed = True
+                with contextlib.suppress(BaseException):
+                    await task
                 raise RuntimeError(
                     f"MCP Streamable HTTP session manager failed to start: {failure[0]}"
                 ) from failure[0]

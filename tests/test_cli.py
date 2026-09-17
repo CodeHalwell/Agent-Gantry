@@ -193,9 +193,27 @@ def test_serve_mcp_plumbs_transport_options() -> None:
         name="agent-gantry",
         host="127.0.0.1",
         port=8765,
-        path="/mcp",
+        path=None,
         expose=["tool_a1"],
     )
+
+
+def test_serve_mcp_advertises_the_endpoint_it_will_serve(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The status line always claimed ``/sse`` for the SSE transport, so a user
+    who passed ``--path`` was told to connect to a route the server was not
+    serving. Each transport's own default stands in for an omitted ``--path``."""
+
+    def _serve(*args: str) -> str:
+        with patch.object(AgentGantry, "serve_mcp", new_callable=AsyncMock):
+            assert main(["serve-mcp", "--module", "tests.test_modules.module_a", *args]) == 0
+        return capsys.readouterr().err
+
+    assert "http://127.0.0.1:8000/custom" in _serve("--transport", "sse", "--path", "/custom")
+    assert "http://127.0.0.1:8000/sse" in _serve("--transport", "sse")
+    assert "http://127.0.0.1:8000/custom" in _serve("--transport", "http", "--path", "/custom")
+    assert "http://127.0.0.1:8000/mcp" in _serve("--transport", "http")
 
 
 def test_the_sync_builder_refuses_to_persist(tmp_path: Path) -> None:

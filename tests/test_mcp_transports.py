@@ -784,6 +784,52 @@ async def test_a_cancelled_startup_does_not_leave_the_manager_running() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_failed_startup_marks_the_manager_spent() -> None:
+    """Entering ``run()`` is what spends a one-shot manager — succeeding is not
+    the point. A manager that raised on the way in recorded nothing, so the
+    next mounted request re-entered it and met the SDK's own "can only be
+    called once per instance" instead of this app's "build a new one"."""
+
+    class _FailingManager:
+        """Refuses to start, then reports itself spent like the real one."""
+
+        def __init__(self) -> None:
+            self.entered = 0
+
+        def run(self) -> Any:
+            self.entered += 1
+            outer = self
+
+            class _Ctx:
+                async def __aenter__(self) -> Any:
+                    if outer.entered > 1:
+                        raise RuntimeError(
+                            "StreamableHTTPSessionManager .run() can only be "
+                            "called once per instance."
+                        )
+                    raise RuntimeError("port already bound")
+
+                async def __aexit__(self, *exc: Any) -> None:
+                    return None
+
+            return _Ctx()
+
+    manager = _FailingManager()
+    app = _StreamableHTTPApp(manager)
+
+    before = asyncio.all_tasks()
+    with pytest.raises(RuntimeError, match="failed to start: port already bound"):
+        await app.start()
+
+    # The failure is reported once; after that the app says it is done rather
+    # than handing the SDK's one-shot error to a request.
+    with pytest.raises(RuntimeError, match="cannot serve again"):
+        await app.start()
+    assert manager.entered == 1
+    assert not asyncio.all_tasks() - before - {asyncio.current_task()}
+
+
+@pytest.mark.asyncio
 async def test_hybrid_mode_still_dispatches_its_own_meta_tools() -> None:
     """The guard above is mode-scoped, so hybrid must be unaffected: there the
     meta-tools *are* advertised and a pinned tool claiming one is renamed."""
@@ -1000,11 +1046,22 @@ async def test_serve_mcp_forwards_a_custom_path_to_the_sse_transport() -> None:
             await gantry.serve_mcp(transport="sse", path="/custom")
         assert run_sse.call_args.kwargs["sse_path"] == "/custom"
 
-        # ...and the Streamable HTTP default is not forwarded, so SSE keeps
-        # its own ``/sse`` when the caller asked for nothing.
+        # An explicit ``/mcp`` is a request, not an absent argument. Comparing
+        # ``path`` against the Streamable HTTP default could not tell the two
+        # apart, so this asked for ``/mcp`` and got ``/sse``.
+        with patch.object(MCPServer, "run_sse", new=AsyncMock()) as run_sse:
+            await gantry.serve_mcp(transport="sse", path="/mcp")
+        assert run_sse.call_args.kwargs["sse_path"] == "/mcp"
+
+        # ...while asking for nothing still leaves SSE on its own ``/sse``.
         with patch.object(MCPServer, "run_sse", new=AsyncMock()) as run_sse:
             await gantry.serve_mcp(transport="sse")
         assert "sse_path" not in run_sse.call_args.kwargs
+
+        # ...and http still gets its own default when nothing was asked for.
+        with patch.object(MCPServer, "run_http", new=AsyncMock()) as run_http:
+            await gantry.serve_mcp(transport="streamable_http")
+        assert run_http.call_args.kwargs["path"] == "/mcp"
 
         # http is unchanged
         with patch.object(MCPServer, "run_http", new=AsyncMock()) as run_http:

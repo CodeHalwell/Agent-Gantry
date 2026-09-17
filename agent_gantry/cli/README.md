@@ -20,9 +20,10 @@ Without `--module` a three-tool demo registry is used and a note is printed on s
 - `agent-gantry sync [--dry-run] [--force] [--prune]` — embed changed tools into the vector store;
   `--prune` also removes stored tools that are no longer registered.
 - `agent-gantry serve-mcp [--transport stdio|http|sse] [--mode dynamic|static|hybrid]
-  [--expose TOOL ...] [--host H] [--port P] [--path /mcp]` — expose the registry as an MCP server.
+  [--expose TOOL ...] [--host H] [--port P] [--path PATH]` — expose the registry as an MCP server.
   `stdio` is what Claude Desktop / Claude Code launch; `http` is the Streamable HTTP transport for
-  remote clients.
+  remote clients. `--path` defaults to each transport's own endpoint (`/mcp` for `http`, `/sse` for
+  `sse`), and the printed address is the one the server will serve.
 - `agent-gantry install-skill [--claude | --target DIR] [--overwrite] [--print-path]` — vendor the
   bundled Claude Skill.
 

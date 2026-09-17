@@ -150,8 +150,24 @@ Three behaviour changes to know about before upgrading:
 - **`serve_mcp(transport="sse", path=...)` honours the path.** SSE takes its
   endpoint as `sse_path`, so a caller's `path` was accepted and silently
   dropped: the server listened on `/sse` regardless, with nothing to say so.
-  A path the caller supplies is forwarded now; leaving it alone still gives
-  SSE its own `/sse` default rather than the Streamable HTTP one.
+  A path the caller supplies is forwarded now. `path` defaults to `None`
+  ("this transport's own default") rather than `/mcp`, so an explicit
+  `path="/mcp"` on SSE is honoured instead of being mistaken for an absent
+  argument; Streamable HTTP still lands on `/mcp` when nothing is passed.
+- **`agent-gantry serve-mcp` advertises the endpoint it will serve.** The
+  status line printed `/sse` for every SSE run whatever `--path` said, so a
+  user following it connected to a route the server was not serving.
+  `--path` now defaults to unset and each transport's own default stands in
+  for it.
+- **A session manager that fails to start is reported once, not forever.**
+  `StreamableHTTPSessionManager.run()` may be entered only once per
+  instance, and entering it is what spends it — succeeding is not the point.
+  A manager that raised on the way in (a bound port, say) left the mounted
+  app looking unstarted, so the next request re-entered the spent manager
+  and got the SDK's "run() can only be called once per instance" for the
+  life of the process. The app now marks itself stopped on that path too,
+  the way it already did for a cancelled startup, and says to build a new
+  one.
 - **A qualified MCP wire alias no longer depends on listing order** — the
   same defect as the client-side one below, on the serving side. Two
   namespaces can qualify to the same wire string (`a+b` and `a_b` both give

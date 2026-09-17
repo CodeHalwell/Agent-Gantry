@@ -1761,7 +1761,7 @@ class AgentGantry:
         *,
         host: str = "127.0.0.1",
         port: int = 8000,
-        path: str = _DEFAULT_MCP_PATH,
+        path: str | None = None,
         expose: Sequence[str] | None = None,
         **transport_options: Any,
     ) -> None:
@@ -1776,9 +1776,10 @@ class AgentGantry:
             name: Server name for identification
             host: Interface to bind for the HTTP transports (loopback by default)
             port: Port for the HTTP transports
-            path: Endpoint path. For Streamable HTTP this is the endpoint
-                itself; for ``sse`` it becomes the event-stream path, whose
-                own default (``/sse``) is kept when ``path`` is left alone.
+            path: Endpoint path, or ``None`` for each transport's own
+                default. For Streamable HTTP that is ``/mcp``; for ``sse`` it
+                is ``/sse``, and a value given here becomes the event-stream
+                path.
             expose: Tools listed directly in ``hybrid`` mode (``name`` or
                 ``namespace.name``)
             **transport_options: Forwarded to the transport runner — e.g.
@@ -1800,14 +1801,20 @@ class AgentGantry:
         if transport == "stdio":
             await server.run_stdio()
         elif transport in ("streamable_http", "http"):
-            await server.run_http(host=host, port=port, path=path, **transport_options)
+            await server.run_http(
+                host=host,
+                port=port,
+                path=_DEFAULT_MCP_PATH if path is None else path,
+                **transport_options,
+            )
         elif transport == "sse":
             # SSE takes its endpoint as ``sse_path`` and defaults to ``/sse``,
             # so ``path`` was accepted and silently dropped here: ``serve_mcp(
             # transport="sse", path="/custom")`` served ``/sse`` regardless.
-            # A caller's own value is forwarded; the Streamable HTTP default is
-            # not, so SSE keeps ``/sse`` when nothing was asked for.
-            if path != _DEFAULT_MCP_PATH:
+            # ``None`` means "whatever this transport defaults to", which is why
+            # it is the signature default: comparing against ``/mcp`` instead
+            # could not tell an explicit ``path="/mcp"`` from an absent one.
+            if path is not None:
                 transport_options.setdefault("sse_path", path)
             await server.run_sse(host=host, port=port, **transport_options)
         else:
