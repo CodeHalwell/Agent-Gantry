@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import inspect
+import keyword
 import logging
 import os
 import re
@@ -40,6 +41,8 @@ import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
+
+from pydantic import ValidationError
 
 from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
 from agent_gantry.schema.base import RECONSTRUCTED_STRING_FORMATS, schema_declares_null
@@ -208,9 +211,19 @@ class ToolSpec:
 
         ``type_matched_defaults`` (Google ADK) is an opt-in signature tweak —
         see :meth:`python_signature`.
+
+        Properties that cannot be parameter names (``user-id``, ``from``,
+        ``_token``) appear in the signature under the aliases of
+        :meth:`parameter_aliases`. A call made with those aliases — what a
+        signature-reading framework sends — is mapped back to the schema's
+        own property names before the tool runs; a call made with the
+        original names passes through unchanged.
         """
+        aliases = self.parameter_aliases()
 
         async def _fn(**kwargs: Any) -> Any:
+            if aliases:
+                kwargs = {aliases.get(key, key): value for key, value in kwargs.items()}
             return await self.ainvoke(**kwargs)
 
         _fn.__name__ = self.name
@@ -244,11 +257,15 @@ class ToolSpec:
           ``False`` / ``[]`` / ``{}``) instead of ``None`` (Google ADK's
           automatic function calling rejects both union types and a ``None``
           default whose type mismatches the annotation).
+
+        A property whose name cannot be a Python parameter is exposed under
+        an identifier alias — see :meth:`parameter_aliases`.
         """
         properties = self.parameters.get("properties") or {}
         required = set(self.parameters.get("required") or [])
         params: list[inspect.Parameter] = []
-        for name, prop in properties.items():
+        for python_name, name in self._signature_names():
+            prop = properties[name]
             prop = prop if isinstance(prop, dict) else {}
             json_type = prop.get("type")
             annotation = _annotation_for_prop(prop)
@@ -285,13 +302,73 @@ class ToolSpec:
                     default = None
             params.append(
                 inspect.Parameter(
-                    name,
+                    python_name,
                     inspect.Parameter.KEYWORD_ONLY,
                     default=default,
                     annotation=annotation,
                 )
             )
         return inspect.Signature(params)
+
+    def parameter_aliases(self) -> dict[str, str]:
+        """Signature parameter name → schema property, for the properties renamed.
+
+        A JSON-Schema property may legally be called ``user-id``, ``from`` or
+        ``_token``, but :class:`inspect.Parameter` refuses non-identifiers
+        and keywords, and the Pydantic models that signature-reading
+        frameworks derive from the signature make no field from a leading
+        underscore — the same names
+        :func:`~agent_gantry.integrations.frameworks.schema_bridge.pydantic_model_from_schema`
+        declines. One such property used to make :meth:`python_signature`,
+        and so every adapter built on :meth:`callable_for_signature`, raise
+        for the *whole* tool. Such properties are exposed under a valid
+        identifier instead (``user_id``, ``from_``, ``token``); properties
+        that are already valid names are absent from the map.
+        """
+        return {alias: name for alias, name in self._signature_names() if alias != name}
+
+    def _signature_names(self) -> list[tuple[str, str]]:
+        """``(python_name, property_name)`` pairs in schema order.
+
+        See :meth:`parameter_aliases` for which names are rewritten.
+        """
+        properties = self.parameters.get("properties") or {}
+        # Seeded with every property so an alias never shadows a real one:
+        # ``user-id`` beside ``user_id`` becomes ``user_id_2``.
+        taken = set(properties)
+        pairs: list[tuple[str, str]] = []
+        for name in properties:
+            if name.isidentifier() and not name.startswith("_") and not keyword.iskeyword(name):
+                pairs.append((name, name))
+                continue
+            alias = _identifier_alias(name, taken)
+            taken.add(alias)
+            pairs.append((alias, name))
+        return pairs
+
+
+def _identifier_alias(name: str, taken: set[str]) -> str:
+    """A valid, unreserved Python identifier to stand in for property ``name``.
+
+    Characters that cannot appear in an identifier become ``_`` and leading
+    underscores are dropped; a result that is empty or starts with a digit
+    gets a ``p_`` prefix, a keyword a trailing ``_``, and a ``_2``, ``_3``…
+    suffix keeps it distinct from ``taken``. ``user-id`` → ``user_id``,
+    ``from`` → ``from_``, ``_token`` → ``token``, ``1st`` → ``p_1st``.
+    """
+    # ``("_" + ch).isidentifier()`` is exactly "may ``ch`` continue an
+    # identifier"; a regex word-character substitution would keep
+    # alphanumerics such as ``²`` that identifiers reject.
+    alias = "".join(ch if ("_" + ch).isidentifier() else "_" for ch in name).lstrip("_")
+    if not alias.isidentifier():
+        alias = f"p_{alias}"
+    if keyword.iskeyword(alias):
+        alias = f"{alias}_"
+    candidate, n = alias, 2
+    while candidate in taken:
+        candidate = f"{alias}_{n}"
+        n += 1
+    return candidate
 
 
 _JSON_TO_PYTHON: dict[str, Any] = {
@@ -1010,6 +1087,33 @@ def _resolve_pins(
     return pinned
 
 
+def check_query_bounds(*, limit: int, score_threshold: float, owner: str) -> None:
+    """Raise ``ValueError`` if ``limit``/``score_threshold`` fall outside ``ToolQuery``'s bounds.
+
+    The selection entry points take these as plain numbers and only build the
+    :class:`~agent_gantry.schema.query.ToolQuery` on their first call, so
+    ``limit=60`` (the schema caps it at 50) surfaced as a raw pydantic error
+    from inside the first turn — or, in ``with_semantic_tools``, was swallowed
+    by the retrieval-failure handler and the model was silently called with
+    no tools on every request. Validating through a throwaway query keeps the
+    accepted range defined in exactly one place; ``owner`` names the API in
+    the message.
+    """
+    try:
+        ToolQuery(
+            context=ConversationContext(query="x"),
+            limit=limit,
+            score_threshold=score_threshold,
+        )
+    except ValidationError as exc:
+        problems = "; ".join(
+            f"{'.'.join(str(loc) for loc in err['loc'])}={err.get('input')!r} is invalid: "
+            f"{err['msg']}"
+            for err in exc.errors()
+        )
+        raise ValueError(f"{owner}: {problems}") from exc
+
+
 class GantryToolset:
     """Framework-neutral entry point: select tools, then export to a framework.
 
@@ -1069,6 +1173,13 @@ class GantryToolset:
         because the semantic slice already filled the budget, and pins never
         silently shrink the semantic slice a caller asked for.
         """
+        limit = limit or self._default_limit
+        # Checked first, and as a clear error: the ``ToolQuery`` below raised a
+        # raw ValidationError for ``limit=60`` — at the first turn, from inside
+        # whichever framework hook called here.
+        check_query_bounds(
+            limit=limit, score_threshold=score_threshold, owner="GantryToolset.select"
+        )
         context = ConversationContext(
             query=query,
             tools_already_used=list(tools_already_used or []),
@@ -1076,7 +1187,7 @@ class GantryToolset:
         result = await self._gantry.retrieve(
             ToolQuery(
                 context=context,
-                limit=limit or self._default_limit,
+                limit=limit,
                 score_threshold=score_threshold,
                 namespaces=namespaces,
             )

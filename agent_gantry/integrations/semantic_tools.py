@@ -33,6 +33,11 @@ from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, overload
 
+from pydantic import ValidationError
+
+from agent_gantry.integrations.frameworks.base import check_query_bounds
+from agent_gantry.query.strategies import last_user_text
+
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
 
@@ -135,6 +140,12 @@ class SemanticToolSelector:
             dialect_options: Options forwarded to the dialect adapter on every
                 call — e.g. ``{"strict": True}`` for OpenAI structured outputs.
         """
+        # Fail at decoration time: ``limit=60`` (``ToolQuery`` caps it at 50)
+        # otherwise raised inside every call, where the retrieval-failure
+        # handler swallowed it and the model was silently called with no tools.
+        check_query_bounds(
+            limit=limit, score_threshold=score_threshold, owner=type(self).__name__
+        )
         self._gantry = gantry
         self._prompt_param = prompt_param
         self._tools_param = tools_param
@@ -200,6 +211,7 @@ class SemanticToolSelector:
         - A parameter named by `prompt_param`
         - OpenAI-style `messages` parameter (extracts last user message)
         - Anthropic-style `messages` parameter (extracts last user message)
+        - SDK message objects and Responses-API ``input_text`` parts in either
 
         Args:
             args: Positional arguments to the function.
@@ -216,33 +228,25 @@ class SemanticToolSelector:
 
         # Helper to extract user message from messages list
         def extract_from_messages(messages: Any) -> str | None:
-            if isinstance(messages, list) and messages:
-                # Find the last user message
-                for msg in reversed(messages):
-                    if isinstance(msg, dict):
-                        role = msg.get("role", "")
-                        if role == "user":
-                            content = msg.get("content", "")
-                            if isinstance(content, str):
-                                return content
-                            # Handle content as list (multi-modal)
-                            if isinstance(content, list):
-                                for part in content:
-                                    if isinstance(part, dict) and part.get("type") == "text":
-                                        text = part.get("text", "")
-                                        if isinstance(text, str):
-                                            return text
-            return None
+            if not isinstance(messages, (list, tuple)) or not messages:
+                return None
+            # The canonical strategy reads every message shape the library
+            # routes on: role/content dicts, multimodal ``text`` parts,
+            # Responses-API ``input_text`` parts and SDK message *objects*
+            # (``.role`` / ``.content``), which a dict-only walk skipped.
+            return last_user_text(messages) or None
 
         # Try direct prompt parameter
         if self._prompt_param in params:
             value = params[self._prompt_param]
-            # If the prompt_param points to a messages list, extract from it
-            if isinstance(value, list):
-                extracted = extract_from_messages(value)
-                if extracted:
-                    return extracted
-            # Otherwise, return as string
+            if value is None:
+                return None
+            if isinstance(value, (list, tuple)):
+                # A messages list yields its last user text or *no* prompt:
+                # falling through to ``str(value)`` ran retrieval on ``"[]"``
+                # or the repr of a list of message objects.
+                return extract_from_messages(value)
+            # Only scalars are stringified
             if isinstance(value, str):
                 return value
             return str(value)
@@ -425,6 +429,12 @@ class SemanticToolSelector:
                     tools = await self._retrieve_tools(prompt)
                     if tools:
                         args, kwargs = self._inject_tools(args, kwargs, sig, tools)
+                except ValidationError:
+                    # The query itself is invalid (``limit`` / ``score_threshold``
+                    # outside ``ToolQuery``'s bounds): a configuration error,
+                    # not a transient retrieval failure — swallowing it called
+                    # the model with no tools on every request.
+                    raise
                 except Exception as e:
                     # If tool retrieval fails, call function without tools
                     _logger.warning("Tool retrieval failed, proceeding without tools: %s", e)
@@ -488,6 +498,10 @@ class SemanticToolSelector:
 
                     if tools:
                         args, kwargs = self._inject_tools(args, kwargs, sig, tools)
+                except ValidationError:
+                    # Same as the async wrapper: an invalid query is a
+                    # configuration error and must not be swallowed.
+                    raise
                 except Exception as e:
                     # If tool retrieval fails, call function without tools
                     _logger.warning("Tool retrieval failed, proceeding without tools: %s", e)

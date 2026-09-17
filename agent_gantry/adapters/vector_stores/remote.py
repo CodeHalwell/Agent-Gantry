@@ -43,6 +43,18 @@ def _validate_sql_identifier(value: str, field_name: str) -> None:
         )
 
 
+def _pg_namespace_clause(namespace: Any, param_index: int) -> tuple[str, Any]:
+    """Build the pgvector namespace predicate and the value bound to it.
+
+    The router sends namespaces as a list (``{"namespace": [...]}``); binding
+    a list to ``namespace = $n`` makes asyncpg raise DataError, so lists go
+    through ``= ANY($n::text[])``. Scalars keep the plain equality.
+    """
+    if isinstance(namespace, (list, tuple, set)):
+        return f"WHERE namespace = ANY(${param_index}::text[])", list(namespace)
+    return f"WHERE namespace = ${param_index}", namespace
+
+
 class QdrantVectorStore:
     """
     Production Qdrant vector store adapter.
@@ -122,6 +134,22 @@ class QdrantVectorStore:
     def dimension(self) -> int:
         """Return the vector dimension."""
         return self._dimension
+
+    @staticmethod
+    def _build_namespace_filter(namespace: Any) -> Any:
+        """Translate a namespace filter value into a Qdrant ``Filter``.
+
+        The router sends namespaces as a list (``{"namespace": [...]}``),
+        which needs ``MatchAny``; ``MatchValue`` only takes a scalar and
+        rejects a list with a pydantic validation error.
+        """
+        from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchValue
+
+        if isinstance(namespace, (list, tuple, set)):
+            match: Any = MatchAny(any=list(namespace))
+        else:
+            match = MatchValue(value=namespace)
+        return Filter(must=[FieldCondition(key="namespace", match=match)])
 
     def _build_quantization_config(self) -> Any:
         """Translate the configured quantization mode to Qdrant config.
@@ -252,22 +280,12 @@ class QdrantVectorStore:
         include_embeddings: bool = False,
     ) -> list[tuple[ToolDefinition, float]] | list[tuple[ToolDefinition, float, list[float]]]:
         """Search for similar tools."""
-        from qdrant_client.models import FieldCondition, Filter, MatchValue
-
         await self.initialize()
 
-        # Build filter for namespace
+        # Build filter for namespace (scalar or list, see _build_namespace_filter)
         query_filter = None
         if filters and "namespace" in filters:
-            namespace = filters["namespace"]
-            query_filter = Filter(
-                must=[
-                    FieldCondition(
-                        key="namespace",
-                        match=MatchValue(value=namespace),
-                    )
-                ]
-            )
+            query_filter = self._build_namespace_filter(filters["namespace"])
 
         # Search with optional vector retrieval. On a quantized collection,
         # oversample candidates from the compressed index and rescore them
@@ -285,15 +303,33 @@ class QdrantVectorStore:
                 # quantized collection either, but degrade gracefully: the
                 # server still searches, just with its default rescoring.
                 logger.debug("qdrant-client lacks QuantizationSearchParams; using defaults")
-        results = await self._client.search(
-            collection_name=self._collection_name,
-            query_vector=query_vector,
-            limit=limit,
-            query_filter=query_filter,
-            score_threshold=score_threshold,
-            with_vectors=include_embeddings,  # Request vectors if needed
-            search_params=search_params,
-        )
+
+        # ``search`` was removed from AsyncQdrantClient (1.19 only has
+        # ``query_points``, which returns a QueryResponse wrapping the same
+        # ScoredPoints). Fall back to ``search`` on clients that predate
+        # ``query_points`` so the qdrant-client>=1.7 floor still works.
+        query_points = getattr(self._client, "query_points", None)
+        if query_points is not None:
+            response = await query_points(
+                collection_name=self._collection_name,
+                query=query_vector,
+                limit=limit,
+                query_filter=query_filter,
+                score_threshold=score_threshold,
+                with_vectors=include_embeddings,  # Request vectors if needed
+                search_params=search_params,
+            )
+            results = response.points
+        else:
+            results = await self._client.search(
+                collection_name=self._collection_name,
+                query_vector=query_vector,
+                limit=limit,
+                query_filter=query_filter,
+                score_threshold=score_threshold,
+                with_vectors=include_embeddings,
+                search_params=search_params,
+            )
 
         # Convert results to tools
         if include_embeddings:
@@ -358,54 +394,51 @@ class QdrantVectorStore:
         limit: int = 1000,
         offset: int = 0,
     ) -> list[ToolDefinition]:
-        """List all tools."""
-        from qdrant_client.models import FieldCondition, Filter, MatchValue
+        """List all tools.
 
+        ``offset`` is a row offset. Qdrant's scroll ``offset`` is a point-id
+        cursor, so passing the row offset straight through made pagination a
+        no-op; instead pages are walked with the cursor and the first
+        ``offset`` rows are skipped.
+        """
         await self.initialize()
 
-        # Build filter for namespace
-        query_filter = None
-        if namespace:
-            query_filter = Filter(
-                must=[
-                    FieldCondition(
-                        key="namespace",
-                        match=MatchValue(value=namespace),
-                    )
-                ]
+        # Build filter for namespace (scalar or list, see _build_namespace_filter)
+        query_filter = self._build_namespace_filter(namespace) if namespace else None
+
+        tools: list[ToolDefinition] = []
+        to_skip = max(offset, 0)
+        cursor: Any = None
+        while len(tools) < limit:
+            page_size = min(256, to_skip + limit - len(tools))
+            records, cursor = await self._client.scroll(
+                collection_name=self._collection_name,
+                scroll_filter=query_filter,
+                limit=page_size,
+                offset=cursor,
+                with_payload=True,
+                with_vectors=False,
             )
-
-        # Scroll through results
-        results, _ = await self._client.scroll(
-            collection_name=self._collection_name,
-            scroll_filter=query_filter,
-            limit=limit,
-            offset=offset,
-        )
-
-        tools = []
-        for record in results:
-            tool_json = record.payload.get("tool_json", "{}")
-            tools.append(ToolDefinition.model_validate_json(tool_json))
+            for record in records:
+                if to_skip:
+                    to_skip -= 1
+                    continue
+                tool_json = (record.payload or {}).get("tool_json", "{}")
+                tools.append(ToolDefinition.model_validate_json(tool_json))
+                if len(tools) >= limit:
+                    break
+            if cursor is None or not records:
+                break
 
         return tools
 
     async def count(self, namespace: str | None = None) -> int:
         """Count tools."""
-        from qdrant_client.models import FieldCondition, Filter, MatchValue
-
         await self.initialize()
 
         if namespace:
-            # Count with filter
-            query_filter = Filter(
-                must=[
-                    FieldCondition(
-                        key="namespace",
-                        match=MatchValue(value=namespace),
-                    )
-                ]
-            )
+            # Count with filter (scalar or list, see _build_namespace_filter)
+            query_filter = self._build_namespace_filter(namespace)
             result = await self._client.count(
                 collection_name=self._collection_name,
                 count_filter=query_filter,
@@ -579,6 +612,22 @@ class ChromaVectorStore:
         """
         return self._dimension
 
+    @staticmethod
+    def _build_namespace_where(namespace: Any) -> dict[str, Any] | None:
+        """Translate a namespace filter value into a Chroma ``where`` clause.
+
+        The router sends namespaces as a list (``{"namespace": [...]}``),
+        which Chroma only accepts through the ``$in`` operator — a bare list
+        is rejected with ValueError. Returns None for an empty list, which
+        can match nothing (and ``$in`` requires a non-empty list).
+        """
+        if isinstance(namespace, (list, tuple, set)):
+            values = list(namespace)
+            if not values:
+                return None
+            return {"namespace": {"$in": values}}
+        return {"namespace": namespace}
+
     async def initialize(self) -> None:
         """Initialize the collection."""
         if self._initialized:
@@ -665,10 +714,12 @@ class ChromaVectorStore:
         """Search for similar tools."""
         await self.initialize()
 
-        # Build where filter for namespace
+        # Build where filter for namespace (scalar or list)
         where = None
         if filters and "namespace" in filters:
-            where = {"namespace": filters["namespace"]}
+            where = self._build_namespace_where(filters["namespace"])
+            if where is None:
+                return []  # empty namespace list matches nothing
 
         # Query collection with optional embeddings
         # Wrap synchronous operation to avoid blocking event loop
@@ -758,10 +809,10 @@ class ChromaVectorStore:
         """List all tools."""
         await self.initialize()
 
-        # Build where filter for namespace
+        # Build where filter for namespace (scalar or list)
         where = None
         if namespace:
-            where = {"namespace": namespace}
+            where = self._build_namespace_where(namespace)
 
         try:
             # Wrap synchronous operation to avoid blocking event loop
@@ -790,14 +841,20 @@ class ChromaVectorStore:
         try:
             where = None
             if namespace:
-                where = {"namespace": namespace}
+                where = self._build_namespace_where(namespace)
 
             # Wrap synchronous operation to avoid blocking event loop
             if where:
-                result = await asyncio.to_thread(self._collection.count, where=where)
-            else:
-                result = await asyncio.to_thread(self._collection.count)
-            return result
+                # Collection.count() takes no filter (passing one raised
+                # TypeError, swallowed below into a permanent 0). Fetch the
+                # matching ids only and count those.
+                result = await asyncio.to_thread(
+                    self._collection.get,
+                    where=where,
+                    include=[],
+                )
+                return len(result.get("ids") or [])
+            return await asyncio.to_thread(self._collection.count)
         except Exception:
             return 0
 
@@ -1067,8 +1124,8 @@ class PGVectorStore:
         params = [embedding_str, limit]
 
         if filters and "namespace" in filters:
-            namespace_clause = "WHERE namespace = $3"
-            params.append(filters["namespace"])
+            namespace_clause, ns_param = _pg_namespace_clause(filters["namespace"], 3)
+            params.append(ns_param)
 
         select_cols = "tool_json, 1 - (embedding <=> $1::vector) AS similarity"
         if include_embeddings:
@@ -1160,11 +1217,11 @@ class PGVectorStore:
         await self.initialize()
 
         namespace_clause = ""
-        params = [limit, offset]
+        params: list[Any] = [limit, offset]
 
         if namespace:
-            namespace_clause = "WHERE namespace = $3"
-            params.append(namespace)
+            namespace_clause, ns_param = _pg_namespace_clause(namespace, 3)
+            params.append(ns_param)
 
         query = f"""
             SELECT tool_json FROM "{self._table_name}"
@@ -1187,11 +1244,11 @@ class PGVectorStore:
         await self.initialize()
 
         namespace_clause = ""
-        params = []
+        params: list[Any] = []
 
         if namespace:
-            namespace_clause = "WHERE namespace = $1"
-            params.append(namespace)
+            namespace_clause, ns_param = _pg_namespace_clause(namespace, 1)
+            params.append(ns_param)
 
         query = f'SELECT COUNT(*) FROM "{self._table_name}" {namespace_clause}'
 

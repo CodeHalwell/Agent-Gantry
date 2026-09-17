@@ -124,6 +124,10 @@ def extract_tool_calls(response: Any, dialect: str = "openai") -> list[ToolCallP
     """
     from agent_gantry.adapters.tool_spec.registry import get_adapter
 
+    if dialect == "auto":
+        # ``SchemaDialect.AUTO`` means OpenAI everywhere else (the registry
+        # resolves it that way), so it must not be a ValueError here.
+        dialect = "openai"
     if dialect in _OPENAI_CHAT_DIALECTS:
         raw_calls = _openai_chat_calls(response)
     elif dialect == "openai_responses":
@@ -162,6 +166,8 @@ class StreamingToolCallAccumulator:
     """
 
     def __init__(self, dialect: str = "openai") -> None:
+        if dialect == "auto":
+            dialect = "openai"  # same resolution as the registry and extract_tool_calls
         known = {*_OPENAI_CHAT_DIALECTS, "openai_responses", "anthropic"}
         if dialect not in known:
             raise ValueError(

@@ -12,7 +12,18 @@ import asyncio
 import threading
 from typing import Any
 
+import numpy as np
+
 from agent_gantry.adapters.embedders.base import EmbeddingAdapter
+
+
+def _l2_normalize(vector: list[float]) -> list[float]:
+    """Rescale ``vector`` to unit length; a zero vector is returned unchanged."""
+    arr = np.asarray(vector, dtype=np.float64)
+    norm = float(np.linalg.norm(arr))
+    if norm == 0.0:
+        return list(vector)
+    return (arr / norm).tolist()
 
 
 class NomicEmbedder(EmbeddingAdapter):
@@ -172,16 +183,16 @@ class NomicEmbedder(EmbeddingAdapter):
         Apply Matryoshka truncation to embeddings.
 
         The underlying sentence-transformers model is called with
-        ``normalize_embeddings=True``, so the embeddings are already
-        L2-normalized. Following Nomic's Matryoshka recommendation, we
-        simply truncate these normalized embeddings to the desired dimension
-        without any additional normalization steps.
+        ``normalize_embeddings=True``, so the full embeddings are unit
+        vectors — but a sliced prefix of a unit vector is not. Nomic's own
+        Matryoshka recipe re-normalises after truncation, and downstream
+        scoring assumes unit vectors (LanceDB's ``1 - d/2`` cosine
+        conversion is only exact for them), so re-normalise here.
         """
         if self._dimension >= self.FULL_DIMENSION:
             return embeddings
 
-        # Simple truncation of already-normalized embeddings
-        return [emb[: self._dimension] for emb in embeddings]
+        return [_l2_normalize(emb[: self._dimension]) for emb in embeddings]
 
     async def embed_text(self, text: str) -> list[float]:
         """

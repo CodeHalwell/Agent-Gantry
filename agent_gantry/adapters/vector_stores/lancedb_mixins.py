@@ -31,11 +31,14 @@ logger = logging.getLogger(__name__)
 
 def _escape_sql_string(value: str) -> str:
     """
-    Escape special characters in SQL strings to prevent injection.
+    Escape a string for inclusion in a LanceDB (DataFusion) SQL literal.
 
-    This function provides SQL injection protection for LanceDB queries by:
-    1. Escaping backslashes (must be done first)
-    2. Escaping single quotes using SQL standard ('') escaping
+    Single quotes are doubled — the SQL-standard escape and the only one
+    DataFusion string literals recognise. Backslashes are deliberately left
+    untouched: DataFusion has no backslash escapes, so ``'a\\\\b'`` is the
+    two-backslash literal and never matches a stored ``a\\b``. Doubling them
+    made any value containing a backslash un-findable, so upsert's delete
+    never matched and ``sync()`` duplicated such rows on every run.
 
     Note: This is used in conjunction with _validate_identifier() which rejects
     control characters and enforces length limits. LanceDB does not currently
@@ -53,8 +56,7 @@ def _escape_sql_string(value: str) -> str:
     Returns:
         Escaped string safe for SQL inclusion
     """
-    # Escape backslashes first, then single quotes
-    return value.replace("\\", "\\\\").replace("'", "''")
+    return value.replace("'", "''")
 
 
 def _validate_identifier(value: str, field_name: str) -> None:

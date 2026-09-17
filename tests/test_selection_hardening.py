@@ -1,0 +1,352 @@
+"""
+Regression tests for the selection-layer audit.
+
+Covers the ways a tool could fail to be selected, or a selection wrapper could
+fail outright: schema property names that are not Python identifiers, message
+shapes the prompt extractor mis-read, out-of-range knobs that failed on the
+first turn instead of at construction, and the rate limiter's token-bucket
+accounting.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from enum import Enum
+from typing import Any
+
+import pytest
+
+from agent_gantry import AgentGantry, with_semantic_tools
+from agent_gantry.core.rate_limiter import RateLimiter, RateLimitExceeded
+from agent_gantry.integrations.frameworks.base import GantryToolset
+from agent_gantry.integrations.refresh import ToolRefresher
+from agent_gantry.query import fallback_chain, last_user_text
+from agent_gantry.query.strategies import (
+    _msg_role,
+    concatenate_recent,
+    last_tool_result,
+    latest_activity,
+    tool_names_used,
+    truncated,
+)
+from agent_gantry.schema.config import RateLimitConfig
+from agent_gantry.schema.tool import ToolDefinition
+
+
+@pytest.fixture
+async def weather_gantry() -> AgentGantry:
+    gantry = AgentGantry()
+
+    @gantry.register(tags=["weather"])
+    def get_weather(city: str) -> str:
+        """Get the current weather for a city."""
+        return f"sunny in {city}"
+
+    await gantry.sync()
+    return gantry
+
+
+# --------------------------------------------------------------------------- #
+# Schema property names that cannot be Python parameters
+# --------------------------------------------------------------------------- #
+
+
+class TestNonIdentifierProperties:
+    @pytest.fixture
+    async def toolset(self) -> GantryToolset:
+        gantry = AgentGantry()
+        tool = ToolDefinition(
+            name="lookup_user",
+            description="Look up a user record by id in the directory service.",
+            parameters_schema={
+                "type": "object",
+                "properties": {
+                    "user-id": {"type": "string"},
+                    "from": {"type": "string"},
+                    "_token": {"type": "string"},
+                    "normal": {"type": "string"},
+                },
+                "required": ["user-id"],
+            },
+        )
+
+        async def handler(**kwargs: Any) -> dict[str, Any]:
+            return kwargs
+
+        await gantry.add_tool(tool, handler=handler)
+        return GantryToolset(gantry)
+
+    @pytest.mark.asyncio
+    async def test_a_signature_is_built_from_unusable_names(
+        self, toolset: GantryToolset
+    ) -> None:
+        """``inspect.Parameter`` rejects ``user-id`` and ``from``; one such
+        property made ``python_signature`` — and so the seven adapters built on
+        ``callable_for_signature`` — raise for the whole tool."""
+        spec = (await toolset.select("look up a user by id", limit=1))[0]
+        signature = spec.python_signature()
+        assert list(signature.parameters) == ["user_id", "from_", "token", "normal"]
+        assert spec.parameter_aliases() == {
+            "user_id": "user-id",
+            "from_": "from",
+            "token": "_token",
+        }
+
+    @pytest.mark.asyncio
+    async def test_calling_by_alias_reaches_the_schema_name(
+        self, toolset: GantryToolset
+    ) -> None:
+        """A framework calls with the aliases it read off the signature; the
+        tool must receive the property names its schema declares."""
+        spec = (await toolset.select("look up a user by id", limit=1))[0]
+        fn = spec.callable_for_signature()
+        assert await fn(user_id="u1", from_="eu", token="t", normal="n") == {
+            "user-id": "u1",
+            "from": "eu",
+            "_token": "t",
+            "normal": "n",
+        }
+
+    @pytest.mark.asyncio
+    async def test_an_alias_never_shadows_a_real_property(self) -> None:
+        gantry = AgentGantry()
+        tool = ToolDefinition(
+            name="clashing_tool",
+            description="A tool whose property names collide once normalised.",
+            parameters_schema={
+                "type": "object",
+                "properties": {"user_id": {"type": "string"}, "user-id": {"type": "string"}},
+            },
+        )
+        await gantry.add_tool(tool, handler=lambda **kw: kw)
+        spec = (await GantryToolset(gantry).select("clashing", limit=1))[0]
+        assert list(spec.python_signature().parameters) == ["user_id", "user_id_2"]
+        assert spec.parameter_aliases() == {"user_id_2": "user-id"}
+
+
+# --------------------------------------------------------------------------- #
+# Prompt extraction
+# --------------------------------------------------------------------------- #
+
+
+class _Message:
+    """An SDK-style message object rather than a dict."""
+
+    def __init__(self, role: str, content: Any) -> None:
+        self.role = role
+        self.content = content
+
+
+class TestPromptExtraction:
+    @pytest.mark.asyncio
+    async def test_a_messages_list_with_no_user_text_selects_nothing(
+        self, weather_gantry: AgentGantry
+    ) -> None:
+        """``str(value)`` on the list ran retrieval on ``"[]"`` or a list
+        repr, so arbitrary tools were selected for a nonsense query."""
+        seen: list[str] = []
+        original = weather_gantry.retrieve
+
+        async def spy(query: Any) -> Any:
+            seen.append(query.context.query)
+            return await original(query)
+
+        weather_gantry.retrieve = spy  # type: ignore[method-assign]
+
+        @with_semantic_tools(weather_gantry, prompt_param="messages", score_threshold=0.0)
+        async def generate(messages: Any, *, tools: Any = None) -> Any:
+            return tools
+
+        assert await generate([]) is None
+        assert await generate([{"role": "system", "content": "You are helpful."}]) is None
+        assert seen == [], "no query should have been issued at all"
+
+    @pytest.mark.asyncio
+    async def test_message_objects_and_none_are_read_correctly(
+        self, weather_gantry: AgentGantry
+    ) -> None:
+        seen: list[str] = []
+        original = weather_gantry.retrieve
+
+        async def spy(query: Any) -> Any:
+            seen.append(query.context.query)
+            return await original(query)
+
+        weather_gantry.retrieve = spy  # type: ignore[method-assign]
+
+        @with_semantic_tools(weather_gantry, prompt_param="messages", score_threshold=0.0)
+        async def generate(messages: Any, *, tools: Any = None) -> Any:
+            return tools
+
+        # An object-shaped message is read like a dict one
+        tools = await generate([_Message("user", "weather in Paris")])
+        assert tools and tools[0]["function"]["name"] == "get_weather"
+        assert seen == ["weather in Paris"]
+
+        # An explicit None prompt must not become the query "None"
+        @with_semantic_tools(weather_gantry, score_threshold=0.0)
+        async def generate2(prompt: str | None = None, *, tools: Any = None) -> Any:
+            return tools
+
+        seen.clear()
+        assert await generate2() is None
+        assert seen == []
+
+
+# --------------------------------------------------------------------------- #
+# Query strategies
+# --------------------------------------------------------------------------- #
+
+
+class _Role(str, Enum):
+    """The shape LlamaIndex ``MessageRole`` and Haystack ``ChatRole`` use."""
+
+    USER = "user"
+    TOOL = "tool"
+
+
+class TestQueryStrategies:
+    def test_enum_roles_are_unwrapped(self) -> None:
+        """``str(Role.USER)`` is ``"_Role.USER"``, so every role check missed
+        and user/tool messages were invisible to the router."""
+        messages = [
+            _Message(_Role.USER, "weather in Paris"),
+            _Message(_Role.TOOL, "sunny 21C"),
+        ]
+        messages[1].name = "get_weather"
+
+        assert _msg_role(messages[0]) == "user"
+        assert _msg_role(messages[1]) == "tool"
+        assert last_user_text(messages) == "weather in Paris"
+        # last_tool_result names the tool it came from, as it does for dicts
+        assert last_tool_result(messages) == "result of get_weather: sunny 21C"
+        # latest_activity reports the newest activity's own text, unprefixed
+        assert latest_activity(messages) == "sunny 21C"
+        assert tool_names_used(messages) == ["get_weather"]
+
+    def test_zero_caps_return_nothing(self) -> None:
+        """``text[-0:]`` is the whole string and ``msgs[-0:]`` the whole list,
+        so a zero cap returned everything."""
+        assert truncated(lambda _m: "hello world", max_chars=0)(None) == ""
+        messages = [{"role": "user", "content": "a"}, {"role": "user", "content": "b"}]
+        assert concatenate_recent(messages, n=0) == ""
+        assert concatenate_recent(messages, n=1) == "b"
+
+    @pytest.mark.asyncio
+    async def test_fallback_chain_accepts_async_generators(self) -> None:
+        """Composing an async generator raised ``AttributeError`` on the
+        coroutine and leaked it un-awaited."""
+
+        async def empty(_messages: Any) -> str:
+            return ""
+
+        async def answer(_messages: Any) -> str:
+            return "from async"
+
+        chained = fallback_chain(empty, answer, last_user_text)
+        assert asyncio.iscoroutinefunction(chained)
+        assert await chained([{"role": "user", "content": "hi"}]) == "from async"
+
+        # A chain of sync generators stays sync
+        sync_chain = fallback_chain(lambda _m: "", last_user_text)
+        assert not asyncio.iscoroutinefunction(sync_chain)
+        assert sync_chain([{"role": "user", "content": "hi"}]) == "hi"
+
+        # An async generator that yields nothing falls through to a sync one
+        mixed = fallback_chain(empty, last_user_text)
+        assert await mixed([{"role": "user", "content": "hi"}]) == "hi"
+
+
+# --------------------------------------------------------------------------- #
+# Out-of-range selection knobs
+# --------------------------------------------------------------------------- #
+
+
+class TestQueryBounds:
+    @pytest.mark.asyncio
+    async def test_the_decorator_fails_at_decoration_not_silently_every_call(
+        self, weather_gantry: AgentGantry
+    ) -> None:
+        """``limit=60`` exceeds ``ToolQuery``'s cap; the resulting error was
+        caught by the retrieval-failure handler, so the model was called with
+        no tools on every request and nothing said so."""
+        with pytest.raises(ValueError, match="limit"):
+            with_semantic_tools(weather_gantry, limit=60)
+
+        with pytest.raises(ValueError, match="score_threshold"):
+            with_semantic_tools(weather_gantry, score_threshold=1.5)
+
+    @pytest.mark.asyncio
+    async def test_refresher_and_toolset_report_bounds_clearly(
+        self, weather_gantry: AgentGantry
+    ) -> None:
+        with pytest.raises(ValueError, match="ToolRefresher"):
+            ToolRefresher(weather_gantry, limit=60)
+
+        with pytest.raises(ValueError, match="GantryToolset.select"):
+            await GantryToolset(weather_gantry).select("weather", limit=60)
+
+    @pytest.mark.asyncio
+    async def test_valid_bounds_still_work(self, weather_gantry: AgentGantry) -> None:
+        assert ToolRefresher(weather_gantry, limit=50) is not None
+        assert await GantryToolset(weather_gantry).select("weather", limit=1)
+
+
+# --------------------------------------------------------------------------- #
+# Rate limiter
+# --------------------------------------------------------------------------- #
+
+
+class TestTokenBucket:
+    @pytest.mark.asyncio
+    async def test_a_fresh_bucket_holds_burst_size(self) -> None:
+        """The bucket was seeded with the per-minute rate, so ``burst_size``
+        never applied to the first burst (nor after ``reset``)."""
+        limiter = RateLimiter(
+            RateLimitConfig(
+                strategy="token_bucket",
+                max_calls_per_minute=10,
+                burst_size=100,
+                max_concurrent=1000,
+            )
+        )
+        admitted = 0
+        for _ in range(100):
+            try:
+                await limiter.acquire("tool", "ns")
+            except RateLimitExceeded:
+                break
+            admitted += 1
+        assert admitted == 100
+
+        await limiter.reset("tool", "ns")
+        assert limiter.get_stats("tool", "ns")["tokens"] == pytest.approx(100.0)
+
+    @pytest.mark.asyncio
+    async def test_a_zero_rate_refuses_instead_of_dividing_by_zero(self) -> None:
+        """``retry_after = 1 / refill_rate`` raised ZeroDivisionError for the
+        natural "block everything" setting."""
+        limiter = RateLimiter(
+            RateLimitConfig(strategy="token_bucket", max_calls_per_minute=0, max_concurrent=10)
+        )
+        assert limiter.would_exceed("tool", "ns") is not None
+        with pytest.raises(RateLimitExceeded) as excinfo:
+            await limiter.acquire("tool", "ns")
+        assert excinfo.value.retry_after is None
+
+    @pytest.mark.asyncio
+    async def test_stats_count_calls_for_every_strategy(self) -> None:
+        """``get_stats`` read only the sliding-window history, so token-bucket
+        and fixed-window reported zero calls however many had run."""
+        for strategy in ("token_bucket", "fixed_window", "sliding_window"):
+            limiter = RateLimiter(
+                RateLimitConfig(
+                    strategy=strategy, max_calls_per_minute=60, max_concurrent=100
+                )
+            )
+            for _ in range(5):
+                await limiter.acquire("tool", "ns")
+                await limiter.release("tool", "ns")
+            stats = limiter.get_stats("tool", "ns")
+            assert stats["calls_last_minute"] == 5, strategy
+            assert stats["calls_last_hour"] == 5, strategy

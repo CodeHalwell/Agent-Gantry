@@ -80,6 +80,7 @@ from agent_gantry.integrations.frameworks.base import (
     DEFAULT_TOOL_LIMIT,
     GantryToolset,
     ToolSpec,
+    check_query_bounds,
 )
 from agent_gantry.query import latest_activity, tool_names_used
 from agent_gantry.query.strategies import _msg_text
@@ -175,6 +176,10 @@ class ToolRefresher:
         query_generator: Callable[[Iterable[Any] | None], Any] | None = None,
         track_used: bool = True,
     ) -> None:
+        # Fail at construction rather than on the first turn: a ``limit``
+        # outside ``ToolQuery``'s bounds otherwise surfaced as a raw
+        # ValidationError from inside the first ``refresh``.
+        check_query_bounds(limit=limit, score_threshold=score_threshold, owner="ToolRefresher")
         self._gantry = gantry
         self._toolset = GantryToolset(gantry, default_limit=limit)
         self._limit = limit

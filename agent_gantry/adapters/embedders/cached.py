@@ -33,6 +33,7 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -75,7 +76,12 @@ class CachedEmbedder:
         self._conn = sqlite3.connect(
             str(self._cache_path), check_same_thread=False
         )
-        self._lock = asyncio.Lock()
+        # A threading.Lock, not an asyncio.Lock: the guarded SQLite work runs
+        # in to_thread workers, and one embedder is shared across event loops
+        # (the sync bridge runs asyncio.run per call; pytest uses a loop per
+        # test). An asyncio.Lock binds to the first loop that contends on it
+        # and then raises "bound to a different event loop" everywhere else.
+        self._db_lock = threading.Lock()
         self._init_schema()
         self.hits = 0
         self.misses = 0
@@ -126,10 +132,7 @@ class CachedEmbedder:
         # SQLite operations are CPU/IO blocking; offload them to a thread
         # so a long lookup doesn't starve the event loop in concurrent
         # workloads (a chat session running other tasks in parallel).
-        async with self._lock:
-            cached = await asyncio.to_thread(
-                self._lookup_batch, embedder_id, hashes
-            )
+        cached = await asyncio.to_thread(self._lookup_batch, embedder_id, hashes)
 
         outputs: list[list[float] | None] = [cached.get(h) for h in hashes]
         miss_indices = [i for i, v in enumerate(outputs) if v is None]
@@ -169,12 +172,7 @@ class CachedEmbedder:
                 )
 
             by_hash = dict(zip(unique_miss_hashes, new_embeddings))
-            async with self._lock:
-                await asyncio.to_thread(
-                    self._store_batch,
-                    embedder_id,
-                    list(by_hash.items()),
-                )
+            await asyncio.to_thread(self._store_batch, embedder_id, list(by_hash.items()))
             for i in miss_indices:
                 outputs[i] = by_hash[hashes[i]]
 
@@ -191,17 +189,18 @@ class CachedEmbedder:
         # Also dedupe hashes in case the input batch had duplicates.
         unique_hashes = list(dict.fromkeys(hashes))
         out: dict[str, list[float]] = {}
-        cur = self._conn.cursor()
-        for i in range(0, len(unique_hashes), 500):
-            chunk = unique_hashes[i : i + 500]
-            placeholders = ",".join("?" * len(chunk))
-            rows = cur.execute(
-                f"SELECT text_hash, embedding FROM embeddings "
-                f"WHERE embedder_id = ? AND text_hash IN ({placeholders})",
-                (embedder_id, *chunk),
-            ).fetchall()
-            for h, blob in rows:
-                out[h] = json.loads(blob)
+        with self._db_lock:
+            cur = self._conn.cursor()
+            for i in range(0, len(unique_hashes), 500):
+                chunk = unique_hashes[i : i + 500]
+                placeholders = ",".join("?" * len(chunk))
+                rows = cur.execute(
+                    f"SELECT text_hash, embedding FROM embeddings "
+                    f"WHERE embedder_id = ? AND text_hash IN ({placeholders})",
+                    (embedder_id, *chunk),
+                ).fetchall()
+                for h, blob in rows:
+                    out[h] = json.loads(blob)
         return out
 
     def _store_batch(
@@ -209,7 +208,7 @@ class CachedEmbedder:
         embedder_id: str,
         items: list[tuple[str, list[float]]],
     ) -> None:
-        with self._conn:
+        with self._db_lock, self._conn:
             self._conn.executemany(
                 "INSERT OR REPLACE INTO embeddings "
                 "(embedder_id, text_hash, embedding) VALUES (?, ?, ?)",

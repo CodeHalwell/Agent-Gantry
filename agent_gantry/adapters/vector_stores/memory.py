@@ -73,8 +73,15 @@ class InMemoryVectorStore:
         upsert: bool = True,
     ) -> int:
         """Add tools with their embeddings."""
+        # Validate BEFORE mutating (as add_skills does): a plain zip would
+        # store the matching prefix and leave a partial registry behind a
+        # failed call. A length mismatch means an upstream embed failure.
+        if len(tools) != len(embeddings):
+            raise ValueError(
+                f"tools/embeddings length mismatch: {len(tools)} != {len(embeddings)}"
+            )
         count = 0
-        for tool, embedding in zip(tools, embeddings):
+        for tool, embedding in zip(tools, embeddings, strict=True):
             key = f"{tool.namespace}.{tool.name}"
             if key not in self._tools or upsert:
                 self._tools[key] = tool

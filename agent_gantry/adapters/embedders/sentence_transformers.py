@@ -13,9 +13,20 @@ import threading
 import warnings
 from typing import Any
 
+import numpy as np
+
 from agent_gantry.adapters.embedders.base import EmbeddingAdapter
 
 logger = logging.getLogger(__name__)
+
+
+def _l2_normalize(vector: list[float]) -> list[float]:
+    """Rescale ``vector`` to unit length; a zero vector is returned unchanged."""
+    arr = np.asarray(vector, dtype=np.float64)
+    norm = float(np.linalg.norm(arr))
+    if norm == 0.0:
+        return list(vector)
+    return (arr / norm).tolist()
 
 
 class SentenceTransformersEmbedder(EmbeddingAdapter):
@@ -49,6 +60,9 @@ class SentenceTransformersEmbedder(EmbeddingAdapter):
         """
         self._model_name = model
         self._requested_dimension = dimension
+        # Kept as given: _requested_dimension is clamped to the native size
+        # on load, and the embedder id must not change when the model loads.
+        self._configured_dimension = dimension
         self._device = device
         self._model: Any = None
         self._native_dimension: int | None = None
@@ -153,9 +167,12 @@ class SentenceTransformersEmbedder(EmbeddingAdapter):
 
         result = embedding.tolist()
 
-        # Truncate if a smaller dimension was requested
+        # Truncate if a smaller dimension was requested. A sliced prefix of a
+        # unit vector is no longer unit length, so re-normalise: LanceDB's
+        # ``1 - d/2`` cosine conversion (and dot-product scoring generally)
+        # is only exact for unit vectors.
         if self._requested_dimension and len(result) > self._requested_dimension:
-            result = result[:self._requested_dimension]
+            result = _l2_normalize(result[: self._requested_dimension])
 
         return result
 
@@ -191,9 +208,15 @@ class SentenceTransformersEmbedder(EmbeddingAdapter):
 
         results = embeddings.tolist()
 
-        # Truncate if a smaller dimension was requested
+        # Truncate if a smaller dimension was requested, re-normalising the
+        # sliced prefix (see embed_text).
         if self._requested_dimension:
-            results = [emb[:self._requested_dimension] for emb in results]
+            results = [
+                _l2_normalize(emb[: self._requested_dimension])
+                if len(emb) > self._requested_dimension
+                else emb
+                for emb in results
+            ]
 
         return results
 
@@ -206,6 +229,17 @@ class SentenceTransformersEmbedder(EmbeddingAdapter):
             return False
 
     def get_embedder_id(self) -> str:
-        """Return a unique identifier for this embedder configuration."""
-        dim = self._requested_dimension or self._native_dimension or "auto"
+        """Return a unique identifier for this embedder configuration.
+
+        The id must not depend on whether the model has loaded yet: the sync
+        manager compares it with the store's recorded id *before* the first
+        embed call, so an id that changed after loading ("dimauto" ->
+        "dim384") forced a full re-embed on every process start and made
+        ``CachedEmbedder`` miss its own first batch. The configured dimension
+        is known up front, and with none requested the output size is a fixed
+        property of the model name, so the name alone identifies the
+        configuration. Resolving the native dimension here instead would
+        block the caller's event loop on a model load.
+        """
+        dim = self._configured_dimension or "auto"
         return f"SentenceTransformersEmbedder-{self._model_name}-dim{dim}"

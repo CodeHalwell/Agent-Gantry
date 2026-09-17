@@ -198,7 +198,10 @@ def _msg_role(msg: Any) -> str:
     if role is None and isinstance(msg, dict):
         role = msg.get("role")
     if role is not None:
-        role = str(role).lower()
+        # Unwrap enum roles first: a ``(str, Enum)`` member (LlamaIndex
+        # ``MessageRole``, Haystack ``ChatRole``) stringifies to
+        # ``"MessageRole.USER"``, which none of the role checks would match.
+        role = str(getattr(role, "value", role)).lower()
         if role == "user" and _is_tool_result_message(msg):
             return "tool"
         return role
@@ -474,7 +477,9 @@ def concatenate_recent(
     Returns:
         The joined non-empty texts, or the empty string if none were found.
     """
-    if not messages:
+    # ``[-0:]`` is the *whole* list, so a zero (or negative) ``n`` must be
+    # answered explicitly rather than through the slice.
+    if n <= 0 or not messages:
         return ""
     msgs = list(messages)[-n:]
     parts = [t for t in (_msg_text(m) for m in msgs) if t.strip()]
@@ -587,7 +592,8 @@ def truncated(
         raise ValueError(f"keep must be 'head' or 'tail', got {keep!r}")
 
     def _cap(text: str) -> str:
-        if not text:
+        # ``text[-0:]`` is the whole string, so a zero cap must be explicit.
+        if not text or max_chars <= 0:
             return ""
         if len(text) <= max_chars:
             return text
@@ -613,8 +619,8 @@ def truncated(
 
 
 def fallback_chain(
-    *generators: Callable[[Iterable[Any] | None], str],
-) -> Callable[[Iterable[Any] | None], str]:
+    *generators: Callable[[Iterable[Any] | None], Any],
+) -> Callable[[Iterable[Any] | None], Any]:
     """Compose multiple generators, returning the first non-empty result.
 
     .. code-block:: python
@@ -626,9 +632,31 @@ def fallback_chain(
         gen = fallback_chain(last_tool_result, last_assistant_text, last_user_text)
         query = gen(messages)
 
+    Sync and async generators may be mixed. As with :func:`truncated`, the
+    composed generator is itself a coroutine function whenever any input is
+    one, so it plugs into ``ToolRefresher`` / ``GantryContextProvider``
+    (which await async generators) without further adaptation.
+
     Returns:
-        A callable with the same shape as the inputs.
+        A callable with the same call shape as the inputs — ``async`` when
+        any of them is.
     """
+    import inspect
+
+    if any(inspect.iscoroutinefunction(gen) for gen in generators):
+
+        async def _async_composed(messages: Iterable[Any] | None) -> str:
+            for gen in generators:
+                text = gen(messages)
+                if inspect.isawaitable(text):
+                    # Awaited *here*: ``.strip()`` on the coroutine object
+                    # raised and leaked it un-awaited.
+                    text = await text
+                if text and text.strip():
+                    return text
+            return ""
+
+        return _async_composed
 
     def _composed(messages: Iterable[Any] | None) -> str:
         for gen in generators:

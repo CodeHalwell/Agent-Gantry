@@ -61,6 +61,110 @@ hand; the rest are additive.
 - **`Skill.to_prompt_text()` headings** read hyphenated names (`pdf-tools`
   → "Pdf Tools"), the Agent Skills naming convention.
 
+#### Provider schema emission
+
+- **Gemini rejected whole tools over shapes the sanitiser passed through.** A
+  required `str | None` publishes `{"type": ["string", "null"]}`, a
+  `Literal[1, 2]` a non-string `enum`, and a `tuple[int, str]` a
+  `prefixItems` — all three made `FunctionDeclaration` raise, taking the tool
+  with them. Type lists now collapse to a type plus `nullable` (or an
+  `anyOf`), enum members are stringified where Gemini requires strings, and
+  `prefixItems` becomes an `items` union.
+- **A tool returning a datetime, `Decimal`, dataclass or Pydantic model no
+  longer breaks the turn.** `format_tool_result` serialised with a bare
+  `json.dumps`, so `execute_tool_calls` raised `TypeError` on a *successful*
+  call — and with `parallel=True` the sibling results were lost with it.
+- **OpenAI strict mode inlines a `$ref` carrying sibling keys**, which the
+  API rejects and the OpenAI SDK's own normaliser inlines. Reachable from
+  any Pydantic `model_json_schema()` or MCP-imported schema.
+- **Anthropic strict mode closes every object, not just the root.** Anthropic
+  requires `additionalProperties: false` on each one, so any tool with a
+  nested object parameter went out `strict: true` and malformed.
+- **A typeless property is reported as strict-unsupported.** Only the
+  typeless *enum* was caught, so `{"description": "anything"}` went out
+  `strict: true` with no type at all. The adapters already fall back to
+  non-strict once it is reported.
+- **Model output whose `arguments` decode to a non-object** (`"null"`,
+  `"[]"`) is treated as no arguments, as the Anthropic and Gemini adapters
+  and the streaming accumulator already did, rather than raising mid-turn
+  from the OpenAI-family ones.
+- **`extract_tool_calls(..., dialect="auto")`** works, matching
+  `get_adapter` and `retrieve_tools`.
+
+#### Stores and embedders
+
+- **Qdrant search called a method the client removed.** `AsyncQdrantClient.search`
+  went away after 1.10 while the floor is 1.7, so every Qdrant vector search
+  failed; it uses `query_points` now, falling back to `search` on old clients.
+- **Every remote store broke on the namespace filter the router sends.** The
+  router always passes a *list*, and the MCP router hard-codes
+  `["__mcp_servers__"]`, but Qdrant built a scalar `MatchValue`, Chroma a
+  scalar `where` and pgvector bound a list to `=`. Each now uses its
+  backend's any-of form, so `retrieve_tools(namespaces=[...])` and
+  `retrieve_mcp_servers()` work off the in-memory store.
+- **A backslash no longer hides a LanceDB row.** `_escape_sql_string` doubled
+  backslashes, but DataFusion string literals have no backslash escapes, so
+  the value never matched: get, count, list and delete all missed it, and
+  because upsert's delete missed too, `sync()` duplicated such rows on every
+  run. Quote-doubling alone is the correct escape, and injection is still
+  neutralised.
+- **`add_tools(upsert=False)` skips ids already present** on LanceDB, as the
+  in-memory store does, instead of inserting a duplicate row the router then
+  offers twice; **`delete()` reports a miss** rather than returning `True`
+  for a tool that was never there; and **a tag filter sees the whole
+  candidate set** instead of a fixed `limit * 2` window that dropped tagged
+  tools ranked below it.
+- **Chroma `count(namespace=...)`** stopped passing a `where` argument
+  `Collection.count` does not take (it silently returned 0), and **Qdrant
+  `list_all(offset=...)`** treats the offset as a row offset rather than
+  passing it as a point-id cursor, which made pagination a no-op.
+- **`SentenceTransformersEmbedder.get_embedder_id()` no longer changes when
+  the model loads.** It returned `dimauto` before the first embed call and
+  `dim384` after, so a persistent store re-embedded its whole registry on
+  every process start and `CachedEmbedder` missed its own first batch. Note
+  that the id changes once on upgrade, costing one re-embed.
+- **Matryoshka truncation re-normalises.** Slicing a unit vector leaves it
+  non-unit, and LanceDB's `1 - d²/2` cosine conversion is exact only for unit
+  vectors, so scores were inflated and ranking diverged from the in-memory
+  store's true cosine.
+- **`CachedEmbedder` works across event loops.** Its `asyncio.Lock` bound to
+  the first loop that contended on it and then raised "bound to a different
+  event loop" — exactly what a process-wide cache is for. It guards the
+  SQLite work with a threading lock now.
+- **`InMemoryVectorStore.add_tools` validates batch lengths before
+  mutating**, as `add_skills` already did.
+
+#### Selection
+
+- **A schema property that cannot be a Python parameter no longer breaks a
+  tool.** `user-id` or `from` made `inspect.Parameter` raise inside
+  `python_signature`, taking down the seven adapters built on
+  `callable_for_signature`. Such properties are exposed under identifier
+  aliases and mapped back before the tool runs.
+- **The prompt extractor stops querying on garbage.** A messages list with no
+  user text fell through to `str(value)`, so retrieval ran on `"[]"` or a
+  list repr, and an explicit `prompt=None` became the query `"None"`. It also
+  reads SDK message *objects* and Responses `input_text` parts now.
+- **Enum roles are unwrapped.** LlamaIndex's `MessageRole` and Haystack's
+  `ChatRole` are `(str, Enum)`, which stringifies to `"MessageRole.USER"`, so
+  every user and tool message was invisible to the query strategies and
+  `tools_already_used` stayed empty.
+- **Out-of-range `limit`/`score_threshold` fail where they are set.**
+  `with_semantic_tools(limit=60)` was swallowed by the retrieval-failure
+  handler and silently called the model with no tools on every request;
+  `ToolRefresher` and `GantryToolset.select` raised a raw pydantic error on
+  the first turn instead.
+- **`fallback_chain` accepts async generators**, which `truncated` and
+  `ToolRefresher` already document; composing one raised on the coroutine and
+  leaked it un-awaited.
+- **Token buckets start at `burst_size`** rather than the per-minute rate (so
+  a configured burst applied to neither the first burst nor `reset`), a
+  `max_calls_per_minute` of 0 refuses instead of raising `ZeroDivisionError`,
+  and `get_stats` counts calls under every strategy rather than only the
+  sliding window.
+- **`truncated(max_chars=0)` and `concatenate_recent(n=0)` return nothing**
+  instead of everything (`[-0:]` is the whole sequence).
+
 ### Added
 
 - **Remote MCP servers.** `MCPServerConfig` and `MCPServerDefinition` take
