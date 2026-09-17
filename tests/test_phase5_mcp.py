@@ -369,8 +369,30 @@ class TestAgentGantryMCPIntegration:
             # This would normally block, so we'll just verify it's called correctly
             await gantry.serve_mcp(transport="stdio", mode="dynamic")
 
-            mock_create_server.assert_called_once_with(gantry, mode="dynamic", name="agent-gantry")
+            mock_create_server.assert_called_once_with(
+                gantry, mode="dynamic", name="agent-gantry", expose=None
+            )
             mock_server.run_stdio.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_serve_mcp_http_transports(self, gantry: AgentGantry) -> None:
+        """The HTTP transports route to the server's runners with host/port/path."""
+        with patch("agent_gantry.servers.mcp_server.create_mcp_server") as mock_create_server:
+            mock_server = AsyncMock()
+            mock_create_server.return_value = mock_server
+
+            await gantry.serve_mcp(
+                transport="http", mode="hybrid", expose=["add_numbers"], port=9999, path="/x"
+            )
+            mock_create_server.assert_called_once_with(
+                gantry, mode="hybrid", name="agent-gantry", expose=["add_numbers"]
+            )
+            mock_server.run_http.assert_awaited_once_with(host="127.0.0.1", port=9999, path="/x")
+
+            await gantry.serve_mcp(transport="sse", host="0.0.0.0", allowed_hosts=["a:1"])
+            mock_server.run_sse.assert_awaited_once_with(
+                host="0.0.0.0", port=8000, allowed_hosts=["a:1"]
+            )
 
     @pytest.mark.asyncio
     async def test_serve_mcp_invalid_transport(self, gantry: AgentGantry) -> None:

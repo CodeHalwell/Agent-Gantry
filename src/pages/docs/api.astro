@@ -17,10 +17,19 @@ import CodeBlock from '../../components/CodeBlock.astro';
     <li><code>retrieve(...)</code> / <code>retrieve_tools(...)</code>: retrieve relevant tools for a query and return internal or provider-specific schemas.</li>
     <li><code>execute(ToolCall)</code>: execute a selected call through the execution engine.</li>
     <li><code>close()</code>: release vector store, telemetry, and protocol resources.</li>
+    <li><code>add_mcp_server(MCPServerConfig(command=[...] | url="https://..."))</code>: discover tools from a local (stdio) or remote (Streamable HTTP / SSE) MCP server; <code>register_mcp_server(...)</code> registers server metadata for semantic server selection.</li>
+    <li><code>serve_mcp(transport="stdio" | "http" | "sse", mode="dynamic" | "static" | "hybrid", expose=[...])</code>: expose the registry as an MCP server.</li>
+    <li><code>add_skills_from_directory(path)</code> / <code>retrieve_skills_as_prompt(query)</code>: load Agent Skills (<code>SKILL.md</code>) and inject only the relevant ones per prompt.</li>
+    <li><code>sync(prune=True)</code>: also remove stored tools that are no longer registered.</li>
   </ul>
   <h2>Decorator path</h2>
   <p><code>with_semantic_tools</code> wraps existing async generation functions and injects a <code>tools</code> argument based on the prompt parameter.</p>
   <h2>CLI</h2>
-  <CodeBlock lang="bash" code={`agent-gantry install-skill --claude
+  <CodeBlock lang="bash" code={`agent-gantry list --module my_app.tools
+agent-gantry search "refund an order" --module my_app.tools --limit 3
+agent-gantry sync --dry-run --prune --module my_app.tools
+agent-gantry serve-mcp --module my_app.tools --transport http --mode hybrid --expose get_weather
+agent-gantry install-skill --claude
 agent-gantry install-skill --target ./skills`} />
+  <p>Every inspection command accepts <code>--module pkg.tools[:attr]</code> and then operates on that module's own <code>AgentGantry</code> instance (its embedder, its vector store). Without it a small demo registry is used.</p>
 </DocsLayout>

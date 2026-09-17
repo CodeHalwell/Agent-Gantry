@@ -10,7 +10,7 @@ core `ExecutionEngine`.
   translating results and errors.
 - `a2a_executor.py`: Runs tool calls against remote A2A agents over HTTP, mapping A2A skill metadata
   into `ToolDefinition` objects and converting responses into `ToolResult` instances.
-- `mcp_client.py`: Discovers and executes tools hosted on MCP servers (stdio or sockets), handling
+- `mcp_client.py`: Discovers and executes tools hosted on MCP servers (local stdio subprocesses, or remote Streamable HTTP / SSE endpoints via `MCPServerConfig(url=...)`), handling
   MCP meta-tools as well as direct tool invocations.
 
 ## When to use an executor

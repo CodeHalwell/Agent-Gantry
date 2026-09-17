@@ -39,7 +39,6 @@ from agent_gantry.schema.mcp import MCPServerDefinition
 from agent_gantry.schema.query import RetrievalResult, ScoredTool, ToolQuery
 from agent_gantry.schema.skill import Skill, SkillSearchResult
 from agent_gantry.schema.tool import ToolCapability, ToolDefinition
-from agent_gantry.utils.fingerprint import compute_tool_fingerprint
 
 if TYPE_CHECKING:
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
@@ -567,7 +566,9 @@ class AgentGantry:
         """Embed and save tools in batches. Delegates to SyncManager."""
         return await self._sync_manager.sync_batches(tools_to_sync, batch_size)
 
-    async def sync(self, batch_size: int = 100, force: bool = False) -> int:
+    async def sync(
+        self, batch_size: int = 100, force: bool = False, prune: bool | None = None
+    ) -> int:
         """
         Sync pending registrations to vector store with smart change detection.
 
@@ -578,6 +579,11 @@ class AgentGantry:
         Args:
             batch_size: Number of tools to embed and sync in each batch
             force: If True, re-embed all tools regardless of fingerprints
+            prune: Also delete stored tools that this gantry no longer
+                registers, so a tool removed from the code stops being
+                retrievable on a persistent store. ``None`` defers to
+                ``config.prune_on_sync`` (off by default, because several
+                gantries may share one store and register different subsets).
 
         Returns:
             Number of tools synced (0 if nothing changed)
@@ -594,6 +600,8 @@ class AgentGantry:
 
         # Get all registered tools (pending + already registered)
         all_tools = self.export_tools()
+        if prune if prune is not None else self._config.prune_on_sync:
+            await self.prune_stale_tools(keep=all_tools)
         if not all_tools:
             self._synced = True
             return 0
@@ -609,6 +617,10 @@ class AgentGantry:
             # Ensure handlers are registered even if tools are already in DB
             for tool in all_tools:
                 self._registry.register_tool(tool)
+            # Every pending definition is now known to the registry and the
+            # store, so drain the buffer — otherwise ensure_synced() would
+            # re-run the fingerprint scan on every retrieval.
+            self._pending_tools = []
 
             return 0
 
@@ -634,6 +646,38 @@ class AgentGantry:
         logger.info(f"Synced {total_synced} tools")
         return total_synced
 
+    async def prune_stale_tools(self, keep: Sequence[ToolDefinition] | None = None) -> int:
+        """
+        Delete stored tools that this gantry no longer registers.
+
+        Fingerprint sync only ever adds and updates, so on a persistent store
+        a tool deleted from the code stayed retrievable forever — the router
+        kept offering the model a tool ``execute()`` could not run. MCP
+        server pseudo-entries (namespace ``__mcp_servers__``) are left alone;
+        :meth:`sync_mcp_servers` owns those.
+
+        Args:
+            keep: The tools to keep; defaults to everything currently
+                registered or pending on this gantry.
+
+        Returns:
+            Number of tools removed from the store.
+        """
+        await self._ensure_initialized()
+        wanted = {f"{t.namespace}.{t.name}" for t in (keep if keep is not None else self.export_tools())}
+        stored = await self._list_all_pages(self._vector_store.list_all)
+        removed = 0
+        for tool in stored:
+            if tool.namespace == "__mcp_servers__":
+                continue
+            if f"{tool.namespace}.{tool.name}" in wanted:
+                continue
+            if await self._vector_store.delete(tool.name, tool.namespace):
+                removed += 1
+        if removed:
+            logger.info(f"Pruned {removed} stale tool(s) no longer registered with this gantry")
+        return removed
+
     def _get_embedder_id(self) -> str:
         """Get a unique identifier for the current embedder configuration."""
         return self._sync_manager.get_embedder_id()
@@ -644,24 +688,35 @@ class AgentGantry:
 
         This is called automatically before retrieval operations.
         Uses smart fingerprinting to avoid unnecessary re-embedding.
+
+        A registration made *after* the first sync (``@gantry.register`` on a
+        running gantry, ``add_mcp_server`` with ``auto_sync=False``, ...) sits
+        in the pending buffer, so the buffer is checked as well as the
+        ``_synced`` flag — the flag alone left late registrations unembedded,
+        hence unretrievable, until someone called ``sync()`` by hand.
         """
-        if not self._synced:
+        if not self._synced or self._pending_tools:
             await self.sync()
 
     async def _ensure_mcp_synced(self) -> None:
         """
         Ensure MCP servers are synced to the vector store.
 
-        Similar to ensure_synced() but for MCP server metadata.
+        Similar to ensure_synced() but for MCP server metadata: a server
+        registered after the first MCP sync is pending in the MCP registry
+        and triggers a re-sync here.
         """
-        if not self._mcp_synced:
+        pending = self._mcp_registry.get_pending() if self._mcp_registry is not None else []
+        if not self._mcp_synced or pending:
             await self.sync_mcp_servers()
 
     async def sync_mcp_servers(self, batch_size: int = 100, force: bool = False) -> int:
         """
         Sync pending MCP server registrations to vector store.
 
-        Uses smart fingerprinting to avoid unnecessary re-embedding.
+        Uses smart fingerprinting to avoid unnecessary re-embedding. The work
+        is done by :class:`~agent_gantry.core.mcp_manager.MCPManager`; this
+        facade method only initialises the store and tracks the synced flag.
 
         Args:
             batch_size: Number of servers to embed and sync in each batch
@@ -672,120 +727,13 @@ class AgentGantry:
         """
         await self._ensure_initialized()
 
-        if self._mcp_registry is None:
+        if self._mcp_manager is None:
             self._mcp_synced = True
             return 0
 
-        # Get all registered servers
-        all_servers = self._mcp_registry.list_servers()
-        if not all_servers:
-            self._mcp_synced = True
-            return 0
-
-        # Transform all MCP servers into pseudo-tools to calculate fingerprints
-        pseudo_tools_map: dict[str, ToolDefinition] = {}
-        for server in all_servers:
-            pseudo_name = f"mcp_server_{server.namespace}_{server.name}".replace("-", "_")
-            pseudo_tool = ToolDefinition(
-                name=pseudo_name,
-                namespace="__mcp_servers__",
-                description=server.to_searchable_text(),
-                parameters_schema={"type": "object", "properties": {}},
-                metadata={
-                    "entity_type": "mcp_server",
-                    "server_name": server.name,
-                    "server_namespace": server.namespace,
-                    "server_tags": server.tags,
-                    "server_capabilities": server.capabilities,
-                    "server_command": server.command,
-                },
-            )
-            pseudo_tools_map[f"{server.namespace}.{server.name}"] = pseudo_tool
-
-        # Compute fingerprints for current servers (using their pseudo-tool representations)
-        current_fingerprints = {
-            f"{server.namespace}.{server.name}": compute_tool_fingerprint(pseudo_tool)
-            for server in all_servers
-            for pseudo_tool in [pseudo_tools_map[f"{server.namespace}.{server.name}"]]
-        }
-
-        # Get stored fingerprints from vector store
-        embedder_id = self._get_embedder_id()
-        needs_full_resync = force
-
-        stored_fingerprints = await self._vector_store.get_stored_fingerprints()
-
-        # Check if embedder changed (requires full re-embed)
-        stored_embedder = await self._vector_store.get_metadata("embedder_id")
-        stored_dim = await self._vector_store.get_metadata("dimension")
-
-        if stored_embedder and stored_embedder != embedder_id:
-            logger.info(
-                f"Embedder changed from '{stored_embedder}' to '{embedder_id}'. "
-                "Full re-sync required for MCP servers."
-            )
-            needs_full_resync = True
-        elif stored_dim and int(stored_dim) != self._vector_store.dimension:
-            logger.info(
-                f"Dimension changed from {stored_dim} to {self._vector_store.dimension}. "
-                "Full re-sync required for MCP servers."
-            )
-            needs_full_resync = True
-
-        # Determine which servers need syncing
-        if needs_full_resync:
-            servers_to_sync = all_servers
-        else:
-            servers_to_sync = []
-            for server in all_servers:
-                server_id = f"{server.namespace}.{server.name}"
-                pseudo_name = f"mcp_server_{server.namespace}_{server.name}".replace("-", "_")
-                pseudo_tool_id = f"__mcp_servers__.{pseudo_name}"
-
-                current_fp = current_fingerprints[server_id]
-                # Stored fingerprint uses the pseudo_tool_id
-                stored_fp = stored_fingerprints.get(pseudo_tool_id, "")
-
-                if current_fp != stored_fp:
-                    servers_to_sync.append(server)
-                    if stored_fp:
-                        logger.debug(f"MCP server '{server_id}' changed, will re-embed")
-                    else:
-                        logger.debug(f"MCP server '{server_id}' is new, will embed")
-
-        # Clear pending servers since we're handling sync via fingerprints now
-        self._mcp_registry.clear_pending()
-
-        # Nothing to sync
-        if not servers_to_sync:
-            logger.debug(f"All {len(all_servers)} MCP servers up-to-date, skipping sync")
-            self._mcp_synced = True
-            return 0
-
-        logger.info(f"Syncing {len(servers_to_sync)}/{len(all_servers)} MCP servers to vector store...")
-
-        total_synced = 0
-        for i in range(0, len(servers_to_sync), batch_size):
-            batch = servers_to_sync[i : i + batch_size]
-            texts = [s.to_searchable_text() for s in batch]
-            embeddings = await self._embedder.embed_batch(texts)
-
-            # Get the pre-created pseudo-tools for the batch
-            pseudo_tools = [pseudo_tools_map[f"{server.namespace}.{server.name}"] for server in batch]
-
-            # Use the existing add_tools method with upsert=True
-            count = await self._vector_store.add_tools(pseudo_tools, embeddings, upsert=True)
-            total_synced += count
-
-        # Update sync metadata (if supported)
-        await self._vector_store.update_sync_metadata(
-            embedder_id=embedder_id,
-            dimension=self._vector_store.dimension,
-        )
-
+        count = await self._mcp_manager.sync_servers(batch_size=batch_size, force=force)
         self._mcp_synced = True
-        logger.info(f"Synced {total_synced} MCP servers")
-        return total_synced
+        return count
 
     async def collect_tools_from_modules(
         self,
@@ -909,15 +857,18 @@ class AgentGantry:
                 )
 
         overall_start = perf_counter()
-        if (
-            self._config.reranker.enabled
-            and self._reranker is not None
-            and query.enable_reranking is None
-        ):
-            # Copy rather than assign: this branch was unreachable while the
-            # field defaulted to False, so making it live also made the
-            # in-place mutation live, and a caller reusing one ToolQuery (a
-            # cached template, say) would have the field flipped underneath it.
+        if self._reranker is not None and query.enable_reranking is None:
+            # A reranker exists either because the config enabled one (the
+            # factory returns None otherwise) or because the caller injected
+            # one via ``AgentGantry(reranker=...)`` — and an injected reranker
+            # is as configured as it gets, so it runs by default too. Gating
+            # this on ``config.reranker.enabled`` made the injected form a
+            # silent no-op unless the caller also flipped a config flag that
+            # only governs the factory.
+            #
+            # Copy rather than assign: a caller reusing one ToolQuery (a
+            # cached template, say) must not have the field flipped underneath
+            # it.
             query = query.model_copy(update={"enable_reranking": True})
 
         # Use telemetry span if available, otherwise use a no-op async context manager
@@ -1361,11 +1312,16 @@ class AgentGantry:
         "No handler found" when executed through the engine.
         """
 
-        def make_handler(tool_name: str) -> Callable[..., Any]:
-            async def mcp_tool_handler(**arguments: Any) -> Any:
-                return await client.call_tool(tool_name, arguments)
+        def make_handler(tool: ToolDefinition) -> Callable[..., Any]:
+            # Dispatch with the name the *server* knows: discovery normalises
+            # ``searchWeb`` to ``search_web`` for Gantry's identifier rules
+            # and keeps the original in metadata.
+            server_tool_name = str(tool.metadata.get("mcp_tool_name") or tool.name)
 
-            mcp_tool_handler.__name__ = f"mcp_{tool_name}"
+            async def mcp_tool_handler(**arguments: Any) -> Any:
+                return await client.call_tool(server_tool_name, arguments)
+
+            mcp_tool_handler.__name__ = f"mcp_{tool.name}"
             return mcp_tool_handler
 
         for tool in tools:
@@ -1409,7 +1365,7 @@ class AgentGantry:
             # auto_sync=False — a handler alone isn't enough, execute() looks
             # the definition up in the registry.
             self._registry.register_tool(tool)
-            handler = make_handler(tool.name)
+            handler = make_handler(tool)
             self._registry.register_handler(key, handler)
             self._tool_handlers[key] = handler
 
@@ -1450,7 +1406,7 @@ class AgentGantry:
     def register_mcp_server(
         self,
         name: str,
-        command: list[str],
+        command: list[str] | None = None,
         *,
         description: str,
         namespace: str = "default",
@@ -1459,6 +1415,9 @@ class AgentGantry:
         tags: list[str] | None = None,
         examples: list[str] | None = None,
         capabilities: list[str] | None = None,
+        url: str | None = None,
+        headers: dict[str, str] | None = None,
+        transport: str | None = None,
     ) -> None:
         """
         Register an MCP server for dynamic selection via semantic routing.
@@ -1469,7 +1428,9 @@ class AgentGantry:
 
         Args:
             name: Unique name for the server
-            command: Command to start the MCP server (e.g., ["npx", "@modelcontextprotocol/server-filesystem"])
+            command: Command to start a local stdio MCP server (e.g.
+                ``["npx", "@modelcontextprotocol/server-filesystem"]``). Give
+                either this or ``url``.
             description: Description of what the server provides
             namespace: Namespace for organizing servers
             args: Additional command-line arguments
@@ -1477,6 +1438,14 @@ class AgentGantry:
             tags: Tags for categorizing the server
             examples: Example queries this server handles
             capabilities: Server capabilities (e.g., "read_files", "write_files")
+            url: Endpoint of a remote MCP server (Streamable HTTP, or SSE with
+                ``transport="sse"``)
+            headers: Extra HTTP headers for a remote server (auth tokens)
+            transport: ``"stdio"``, ``"streamable_http"`` or ``"sse"``;
+                inferred from ``command``/``url`` when omitted
+
+        Raises:
+            RuntimeError: If MCP support is unavailable (``pip install agent-gantry[mcp]``)
 
         Example:
             >>> gantry.register_mcp_server(
@@ -1488,26 +1457,41 @@ class AgentGantry:
             ...     examples=["read a file", "write to a file", "list directory contents"],
             ...     capabilities=["read_files", "write_files", "list_directory"],
             ... )
+            >>> gantry.register_mcp_server(
+            ...     name="search",
+            ...     url="https://mcp.example.com/mcp",
+            ...     headers={"Authorization": "Bearer ..."},
+            ...     description="Web search and page fetching",
+            ... )
         """
-        from agent_gantry.schema.mcp import MCPServerDefinition
-
-        server_def = MCPServerDefinition(
-            name=name,
-            namespace=namespace,
+        manager = self._require_mcp_manager()
+        manager.register_server(
+            name,
+            command,
             description=description,
-            command=command,
-            args=args or [],
-            env=env or {},
-            tags=tags or [],
-            examples=examples or [],
-            capabilities=capabilities or [],
+            namespace=namespace,
+            args=args,
+            env=env,
+            tags=tags,
+            examples=examples,
+            capabilities=capabilities,
+            url=url,
+            headers=headers,
+            transport=transport,
         )
+        # A server registered after the first MCP sync must be embedded before
+        # the next retrieval; ``_ensure_mcp_synced`` also checks the pending
+        # list, this just keeps the flag honest.
+        self._mcp_synced = False
 
-        # Register in MCP registry and mark as pending for sync
-        self._mcp_registry.register_server(server_def)
-        self._mcp_registry.add_pending(server_def)
-
-        logger.info(f"Registered MCP server: {server_def.qualified_name}")
+    def _require_mcp_manager(self) -> Any:
+        """Return the MCP manager, or explain how to enable MCP support."""
+        if self._mcp_manager is None:
+            raise RuntimeError(
+                "MCP support is not available. Install it with "
+                "'pip install agent-gantry[mcp]' (or 'uv add \"agent-gantry[mcp]\"')."
+            )
+        return self._mcp_manager
 
     async def retrieve_mcp_servers(
         self,
@@ -1536,6 +1520,7 @@ class AgentGantry:
             >>> for server in servers:
             ...     print(f"Server: {server.name} - {server.description}")
         """
+        self._require_mcp_manager()
         await self._ensure_initialized()
         await self._ensure_mcp_synced()
 
@@ -1582,6 +1567,7 @@ class AgentGantry:
             >>> count = await gantry.discover_tools_from_server("filesystem")
             >>> print(f"Discovered {count} tools")
         """
+        self._require_mcp_manager()
         await self._ensure_initialized()
 
         # Get the MCP client for this server
@@ -1655,29 +1641,57 @@ class AgentGantry:
             raise
 
     async def serve_mcp(
-        self, transport: str = "stdio", mode: str = "dynamic", name: str = "agent-gantry"
+        self,
+        transport: str = "stdio",
+        mode: str = "dynamic",
+        name: str = "agent-gantry",
+        *,
+        host: str = "127.0.0.1",
+        port: int = 8000,
+        path: str = "/mcp",
+        expose: Sequence[str] | None = None,
+        **transport_options: Any,
     ) -> None:
         """
         Start serving as an MCP server.
 
         Args:
-            transport: Transport type ("stdio" or "sse")
-            mode: Server mode ("dynamic", "static", or "hybrid")
+            transport: ``"stdio"`` (local clients such as Claude Desktop or
+                Claude Code), ``"streamable_http"`` (alias ``"http"``; the
+                current MCP spec transport) or ``"sse"`` (legacy).
+            mode: Server mode (``"dynamic"``, ``"static"`` or ``"hybrid"``)
             name: Server name for identification
+            host: Interface to bind for the HTTP transports (loopback by default)
+            port: Port for the HTTP transports
+            path: Endpoint path for Streamable HTTP (``http://host:port/path``)
+            expose: Tools listed directly in ``hybrid`` mode (``name`` or
+                ``namespace.name``)
+            **transport_options: Forwarded to the transport runner — e.g.
+                ``allowed_hosts=[...]`` / ``allowed_origins=[...]`` to enable
+                DNS-rebinding protection, ``stateless=True`` or
+                ``json_response=True`` for Streamable HTTP.
+
+        Example:
+            >>> await gantry.serve_mcp()  # stdio, dynamic meta-tools
+            >>> await gantry.serve_mcp("http", port=8765, mode="hybrid", expose=["get_weather"])
         """
         from agent_gantry.servers.mcp_server import create_mcp_server
 
         await self._ensure_initialized()
         await self.ensure_synced()
 
-        server = create_mcp_server(self, mode=mode, name=name)
+        server = create_mcp_server(self, mode=mode, name=name, expose=expose)
 
         if transport == "stdio":
             await server.run_stdio()
+        elif transport in ("streamable_http", "http"):
+            await server.run_http(host=host, port=port, path=path, **transport_options)
         elif transport == "sse":
-            await server.run_sse()
+            await server.run_sse(host=host, port=port, **transport_options)
         else:
-            raise ValueError(f"Unsupported transport: {transport}")
+            raise ValueError(
+                f"Unsupported transport: {transport} (stdio, streamable_http/http or sse)"
+            )
 
     async def add_a2a_agent(self, config: A2AAgentConfig) -> int:
         """
@@ -1783,7 +1797,26 @@ class AgentGantry:
         """
         await self._ensure_initialized()
         await self.ensure_synced()
-        return await self._vector_store.list_all(namespace=namespace)
+        return await self._list_all_pages(self._vector_store.list_all, namespace=namespace)
+
+    @staticmethod
+    async def _list_all_pages(
+        list_page: Callable[..., Any], *, page_size: int = 1000, **kwargs: Any
+    ) -> list[Any]:
+        """Drain a paginated ``list_all``-style store method.
+
+        Every store's ``list_all`` defaults to ``limit=1000``, so calling it
+        once silently truncated registries past a thousand tools. Pages are
+        fetched until one comes back short.
+        """
+        items: list[Any] = []
+        offset = 0
+        while True:
+            page = list(await list_page(limit=page_size, offset=offset, **kwargs))
+            items.extend(page)
+            if len(page) < page_size:
+                return items
+            offset += page_size
 
     def list_tools_sync(
         self,
@@ -2069,6 +2102,43 @@ class AgentGantry:
             [skill.to_embedding_text() for skill in skills]
         )
         return int(await store.add_skills(skills, embeddings, upsert=True))
+
+    async def add_skills_from_directory(
+        self,
+        path: str,
+        *,
+        namespace: str = "default",
+        recursive: bool = True,
+        strict: bool = False,
+    ) -> int:
+        """
+        Load every Agent Skills ``SKILL.md`` under ``path`` and embed them.
+
+        Reads the `Agent Skills <https://agentskills.io>`_ directory format
+        Claude Code and the Claude Agent SDK use (``<skill>/SKILL.md`` with
+        ``name``/``description`` frontmatter and Markdown instructions), so an
+        existing skills folder becomes semantically retrievable as-is:
+        :meth:`retrieve_skills_as_prompt` then injects only the skills that
+        match the current prompt instead of every skill's metadata.
+
+        Args:
+            path: A skills directory (e.g. ``~/.claude/skills``) or one
+                skill's directory.
+            namespace: Namespace for the loaded skills (frontmatter
+                ``namespace`` wins per skill).
+            recursive: Search nested directories.
+            strict: Raise on the first unparsable ``SKILL.md`` instead of
+                logging and skipping it.
+
+        Returns:
+            Number of skills stored.
+        """
+        from agent_gantry.skills.loader import load_skills_from_directory
+
+        skills = load_skills_from_directory(
+            path, namespace=namespace, recursive=recursive, strict=strict
+        )
+        return await self.add_skills(skills)
 
     async def retrieve_skills(
         self,

@@ -7,6 +7,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+A sweep of the semantic-routing core, the MCP layer and the skills layer.
+Two of the fixes change behaviour users may have been working around by
+hand; the rest are additive.
+
+### Fixed
+
+- **Tools registered after the first retrieval are now retrievable.**
+  `ensure_synced()` checked only a flag that the first `sync()` set, so a
+  `@gantry.register` (or `add_tool` with `auto_sync=False`, or a late
+  `add_mcp_server`) on a running gantry left the tool unembedded — retrieval
+  never returned it until someone called `sync()` by hand. The pending
+  buffer is now consulted too, and `sync()` drains it on the nothing-changed
+  path so the fingerprint scan does not re-run on every retrieval.
+  `register_mcp_server` after the first MCP sync had the same gap.
+- **An injected reranker runs by default.** `AgentGantry(reranker=...)`
+  was a silent no-op unless `config.reranker.enabled` was also flipped — a
+  flag that only governs the factory. A query whose `enable_reranking` is
+  `None` now reranks whenever a reranker exists; explicit `True`/`False`
+  still win.
+- **`list_tools()` no longer stops at 1000 tools.** Every store's `list_all`
+  defaults to `limit=1000` and the facade called it once; it now pages
+  until the store runs out. `MCPServer` static mode and the Anthropic skills
+  client, both built on `list_tools()`, inherit the fix.
+- **MCP `find_relevant_tools` surfaces tools with any embedder.** The
+  meta-tool built its `ToolQuery` with the model's default
+  `score_threshold=0.5` — the absolute cosine cutoff every other convenience
+  layer opts out of — so clients of `serve_mcp(mode="dynamic")` got an empty
+  result for embedders whose scores sit below it (MiniLM, the hash embedder)
+  with no way to tell "no match" from "filtered". It now uses `0.0`, clamps
+  `limit` to the query's bounds instead of failing validation, reports
+  parameters as JSON rather than a Python repr, names tools outside the
+  default namespace as `namespace.name` (which `execute_tool` resolves), and
+  says so when nothing matched instead of returning an empty content list.
+- **One unconventional tool no longer fails a whole MCP server's discovery.**
+  `ToolDefinition` requires `snake_case` names and 10–2000 character
+  descriptions; MCP servers routinely expose `searchWeb`, `get-weather`,
+  three-word descriptions or none at all, and a single one raised a
+  validation error for the entire `list_tools()`. Names are now normalised
+  (`searchWeb` → `search_web`, reserved verbs get a `_tool` suffix,
+  collisions a numeric one) with the original kept in
+  `metadata["mcp_tool_name"]` and used when calling the server; short
+  descriptions are padded with provenance, long ones truncated into
+  `extended_description`; server `annotations` are kept in
+  `metadata["mcp_annotations"]`.
+- **Structured tool results reach MCP clients as JSON.** `execute_tool`
+  stringified results with `str()`, handing the model `{'a': 1}`; dicts and
+  lists are now JSON and proxied `CallToolResult`s render their text blocks
+  (`render_result` learned to read objects carrying a `.content` list).
+- **`MCPManager` is used.** The facade constructed it and then carried its
+  own divergent copies of `register_mcp_server` / `sync_mcp_servers`; it
+  now delegates, and the manager's two never-called methods are gone.
+- **`Skill.to_prompt_text()` headings** read hyphenated names (`pdf-tools`
+  → "Pdf Tools"), the Agent Skills naming convention.
+
+### Added
+
+- **Remote MCP servers.** `MCPServerConfig` and `MCPServerDefinition` take
+  `url=` (plus `headers=` for auth and `transport="streamable_http" | "sse"`,
+  inferred from the endpoint) as an alternative to `command=`; exactly one
+  is required. `add_mcp_server`, `register_mcp_server` and `MCPClient` use
+  the SDK's Streamable HTTP or SSE client accordingly, on both mcp 1.x and
+  2.x. Secrets (`env`, `headers`) are excluded from `repr`.
+- **Serving Gantry over HTTP.** `gantry.serve_mcp("http", host=, port=,
+  path=)` runs the Streamable HTTP transport and `serve_mcp("sse", ...)` the
+  legacy SSE one (`run_sse` previously raised `NotImplementedError`);
+  `MCPServer.streamable_http_app()` / `.sse_app()` return Starlette apps for
+  mounting into an existing service. `allowed_hosts` / `allowed_origins`
+  switch on the SDK's DNS-rebinding protection.
+- **`serve_mcp(mode="hybrid", expose=[...])`** lists the named tools
+  directly next to the meta-tools (it previously behaved exactly like
+  `dynamic`). Static and hybrid listings qualify same-named tools from
+  different namespaces so both stay callable.
+- **Agent Skills loader.** `gantry.add_skills_from_directory(path)` and
+  `agent_gantry.skills.load_skills_from_directory` / `load_skill` /
+  `skill_from_markdown` read Claude Code's `SKILL.md` directory format
+  (frontmatter name/description/tags, Markdown body; `allowed-tools` maps to
+  `related_tools`, unknown frontmatter keys travel in `metadata`) into
+  semantically retrievable `Skill`s, so a skills folder is injected top-k
+  per prompt instead of wholesale.
+- **`sync(prune=True)`** (and `AgentGantryConfig.prune_on_sync`,
+  `agent-gantry sync --prune`) deletes stored tools this gantry no longer
+  registers — fingerprint sync only ever added, so on a persistent store a
+  tool removed from the code stayed retrievable. Off by default because
+  several gantries may share one store.
+- **The CLI works on real registries.** `--module pkg.tools[:attr]` (and
+  `--config path.yaml`) point `list`, `search`, `lint`, `sim` and `sync` at
+  your own `AgentGantry` instance instead of the demo tools; a new
+  `serve-mcp` command exposes it to Claude Desktop / Claude Code (stdio) or
+  remote clients (`--transport http|sse`, `--mode hybrid --expose ...`).
+
 ## [0.14.0] - 2026-09-05
 
 Multi-turn tool selection: what drives each turn's retrieval, and what the

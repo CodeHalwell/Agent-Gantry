@@ -212,7 +212,9 @@ async def test_client_raises_on_iserror_result(server_config: MCPServerConfig) -
     session survives them — a tool error is not a broken connection."""
     client = MCPClient(server_config)
     try:
-        with pytest.raises(RuntimeError, match="intentional failure"):
+        # mcp 2.x's server wraps a tool's exception in a generic
+        # "Error executing tool <name>" message; 1.x relays the original text.
+        with pytest.raises(RuntimeError, match="intentional failure|Error executing tool"):
             await client.call_tool("always_fails", {})
         assert client._connected is True
         result = await client.call_tool("add_numbers", {"a": 1, "b": 2})
@@ -239,7 +241,11 @@ async def test_add_mcp_server_tools_are_executable(server_config: MCPServerConfi
         # not passed through as a successful result.
         failed = await gantry.execute(ToolCall(tool_name="always_fails", arguments={}))
         assert failed.status == ExecutionStatus.FAILURE
-        assert "intentional failure" in (failed.error or "")
+        # 1.x relays the tool's own message; 2.x's server replaces it with a
+        # generic "Error executing tool <name>" text.
+        assert "intentional failure" in (failed.error or "") or "Error executing tool" in (
+            failed.error or ""
+        )
     finally:
         await gantry.close()
 

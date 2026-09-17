@@ -1,14 +1,16 @@
 """
 MCP server lifecycle manager for Agent-Gantry.
 
-Handles MCP server registration, sync, discovery, and serving.
+Handles MCP server registration and sync for dynamic (semantic) server
+selection. :class:`~agent_gantry.core.gantry.AgentGantry` delegates
+``register_mcp_server`` / ``sync_mcp_servers`` here; on-demand tool discovery
+stays on the facade because it wires execution handlers into the tool
+registry.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from agent_gantry.schema.mcp import MCPServerDefinition
@@ -20,7 +22,6 @@ if TYPE_CHECKING:
     from agent_gantry.adapters.vector_stores.base import VectorStoreAdapter
     from agent_gantry.core.mcp_registry import MCPRegistry
     from agent_gantry.core.mcp_router import MCPRouter
-    from agent_gantry.schema.config import MCPServerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ class MCPManager:
     def register_server(
         self,
         name: str,
-        command: list[str],
+        command: list[str] | None = None,
         *,
         description: str,
         namespace: str = "default",
@@ -68,18 +69,29 @@ class MCPManager:
         tags: list[str] | None = None,
         examples: list[str] | None = None,
         capabilities: list[str] | None = None,
+        url: str | None = None,
+        headers: dict[str, str] | None = None,
+        transport: str | None = None,
     ) -> None:
-        """Register an MCP server for dynamic semantic selection."""
+        """Register an MCP server for dynamic semantic selection.
+
+        Give either ``command`` (local stdio server) or ``url`` (remote
+        Streamable HTTP / SSE server); see
+        :class:`~agent_gantry.schema.mcp.MCPServerDefinition`.
+        """
         server_def = MCPServerDefinition(
             name=name,
             namespace=namespace,
             description=description,
-            command=command,
+            command=command or [],
             args=args or [],
             env=env or {},
             tags=tags or [],
             examples=examples or [],
             capabilities=capabilities or [],
+            url=url,
+            headers=headers or {},
+            transport=transport,  # type: ignore[arg-type]
         )
 
         self._registry.register_server(server_def)
@@ -212,97 +224,3 @@ class MCPManager:
             namespaces=namespaces,
         )
         return [scored.server for scored in result.servers]
-
-    async def add_server(self, config: MCPServerConfig) -> int:
-        """
-        Add an MCP server by immediately discovering all its tools.
-
-        Returns:
-            Number of tools discovered
-        """
-        from agent_gantry.adapters.executors.mcp_client import MCPClient
-
-        # Discovery-only client: list_tools seeds a persistent connection,
-        # so close it before dropping the client or the subprocess lives on.
-        client = MCPClient(config)
-        try:
-            tools = await client.list_tools()
-        finally:
-            await client.close()
-        return len(tools)
-
-    async def discover_tools_from_server(
-        self,
-        server_name: str,
-        namespace: str = "default",
-        timeout: float = 30.0,
-    ) -> int:
-        """
-        Dynamically discover tools from a previously registered MCP server.
-
-        Returns:
-            Number of tools discovered
-
-        Raises:
-            ValueError: If server not registered
-            TimeoutError: If connection times out
-        """
-        client = self._registry.get_client(server_name, namespace)
-        if not client:
-            raise ValueError(
-                f"MCP server '{namespace}.{server_name}' not found. "
-                f"Register it first with register_mcp_server()."
-            )
-
-        try:
-            tools = await asyncio.wait_for(client.list_tools(), timeout=timeout)
-
-            self._registry.update_health(
-                server_name,
-                namespace,
-                available=True,
-                last_success=datetime.now(timezone.utc),
-                consecutive_failures=0,
-            )
-
-            logger.info(
-                f"Discovered {len(tools)} tools from MCP server: {namespace}.{server_name}"
-            )
-            return len(tools)
-
-        except asyncio.TimeoutError:
-            server = self._registry.get_server(server_name, namespace)
-            consecutive_failures = server.health.consecutive_failures + 1 if server else 1
-
-            self._registry.update_health(
-                server_name,
-                namespace,
-                available=False,
-                last_failure=datetime.now(timezone.utc),
-                consecutive_failures=consecutive_failures,
-            )
-
-            logger.error(
-                f"Timeout discovering tools from MCP server {namespace}.{server_name} "
-                f"(timeout: {timeout}s)"
-            )
-            raise TimeoutError(
-                f"MCP server {namespace}.{server_name} did not respond within {timeout}s"
-            )
-
-        except Exception as e:
-            server = self._registry.get_server(server_name, namespace)
-            consecutive_failures = server.health.consecutive_failures + 1 if server else 1
-
-            self._registry.update_health(
-                server_name,
-                namespace,
-                available=False,
-                last_failure=datetime.now(timezone.utc),
-                consecutive_failures=consecutive_failures,
-            )
-
-            logger.error(
-                f"Failed to discover tools from MCP server {namespace}.{server_name}: {e}"
-            )
-            raise

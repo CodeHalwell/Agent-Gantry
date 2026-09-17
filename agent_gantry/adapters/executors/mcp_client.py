@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -18,6 +20,94 @@ from mcp.client.stdio import stdio_client
 
 from agent_gantry.schema.config import MCPServerConfig
 from agent_gantry.schema.tool import ToolDefinition, ToolSource
+
+# ``ToolDefinition.name`` must match ``^[a-z][a-z0-9_]*$``, but MCP tool names
+# are free-form (``searchWeb``, ``get-weather``, ``Browser.Navigate`` are all
+# common in the wild). Discovery used to hand the raw name to the model and
+# fail validation — one unconventional tool took the whole server's discovery
+# down. The name is normalised here instead; the server still sees the
+# original, which ``_convert_tool`` keeps in ``metadata["mcp_tool_name"]``.
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+_NON_IDENTIFIER = re.compile(r"[^a-z0-9_]+")
+_RESERVED_TOOL_NAMES = frozenset({"register", "retrieve", "execute", "list", "delete"})
+_NAME_MAX_LENGTH = 128
+_DESCRIPTION_MIN_LENGTH = 10
+_DESCRIPTION_MAX_LENGTH = 2000
+_EXTENDED_DESCRIPTION_MAX_LENGTH = 10000
+
+
+def sanitize_tool_name(raw: str) -> str:
+    """Normalise an external tool name into Gantry's ``snake_case`` identifier form.
+
+    ``searchWeb`` -> ``search_web``, ``get-weather`` -> ``get_weather``,
+    ``Browser.Navigate`` -> ``browser_navigate``, ``2fa`` -> ``t_2fa``. Names
+    that collide with Gantry's reserved verbs get a ``_tool`` suffix. The
+    result always satisfies :class:`~agent_gantry.schema.tool.ToolDefinition`'s
+    name pattern; an input with no usable characters becomes ``tool``.
+    """
+    name = _CAMEL_BOUNDARY.sub("_", raw.strip())
+    name = _NON_IDENTIFIER.sub("_", name.lower())
+    name = re.sub(r"_+", "_", name).strip("_")
+    if not name:
+        name = "tool"
+    if not name[0].isalpha():
+        name = f"t_{name}"
+    if name in _RESERVED_TOOL_NAMES:
+        name = f"{name}_tool"
+    return name[:_NAME_MAX_LENGTH].rstrip("_") or "tool"
+
+
+def _dedupe_names(names: list[str]) -> list[str]:
+    """Suffix repeated names (``get_user``, ``get_user_2``, ...) so a server whose
+    ``getUser`` and ``get_user`` both normalise to one identifier keeps both."""
+    seen: dict[str, int] = {}
+    out: list[str] = []
+    taken = set(names)
+    for name in names:
+        count = seen.get(name, 0)
+        seen[name] = count + 1
+        if count == 0:
+            out.append(name)
+            continue
+        candidate = f"{name}_{count + 1}"
+        while candidate in taken:
+            count += 1
+            candidate = f"{name}_{count + 1}"
+        taken.add(candidate)
+        out.append(candidate)
+    return out
+
+
+def _truncate(text: str, limit: int) -> str:
+    """Cut ``text`` to ``limit`` characters at a word boundary, marking the cut."""
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 1]
+    space = cut.rfind(" ")
+    if space > limit // 2:
+        cut = cut[:space]
+    return cut.rstrip() + "…"
+
+
+def _split_description(raw: str | None, tool_name: str, server_name: str) -> tuple[str, str | None]:
+    """Fit an MCP description into ``(description, extended_description)``.
+
+    A description under Gantry's 10-character floor (``"Add"``, or ``None`` for
+    a tool with none) is padded with the tool's provenance rather than
+    rejected; one over the 2000-character ceiling keeps its head as the
+    searchable description and the full text (itself capped) as the extended
+    description so nothing the server wrote is lost.
+    """
+    text = " ".join((raw or "").split())
+    if len(text) < _DESCRIPTION_MIN_LENGTH:
+        base = text or f"Tool {tool_name}"
+        return f"{base} (MCP tool '{tool_name}' from server '{server_name}')", None
+    if len(text) <= _DESCRIPTION_MAX_LENGTH:
+        return text, None
+    return (
+        _truncate(text, _DESCRIPTION_MAX_LENGTH),
+        _truncate(text, _EXTENDED_DESCRIPTION_MAX_LENGTH),
+    )
 
 
 class MCPClient:
@@ -57,6 +147,73 @@ class MCPClient:
         self._loop_id: int | None = None
 
     @asynccontextmanager
+    async def _open_transport(self) -> AsyncIterator[tuple[Any, Any]]:
+        """Open the configured transport and yield its ``(read, write)`` streams.
+
+        ``stdio`` spawns the server subprocess; ``streamable_http`` and ``sse``
+        connect to ``config.url`` with ``config.headers`` (the place for
+        bearer tokens). The HTTP client modules are imported lazily so the
+        stdio path never touches httpx.
+        """
+        transport = self.config.resolved_transport
+        if transport == "stdio":
+            server_params = StdioServerParameters(
+                command=self.config.command[0],
+                args=self.config.command[1:] + self.config.args,
+                env=self.config.env or None,
+            )
+            async with stdio_client(server_params) as (read, write):
+                yield read, write
+            return
+
+        url = self.config.url
+        if not url:  # pragma: no cover - MCPServerConfig validation guarantees this
+            raise RuntimeError(f"MCP server '{self.config.name}' has no url for {transport}")
+        headers = dict(self.config.headers) or None
+        if transport == "sse":
+            from mcp.client.sse import sse_client
+
+            async with sse_client(
+                url, headers=headers, timeout=self.config.timeout_s
+            ) as (read, write):
+                yield read, write
+            return
+
+        # Streamable HTTP. The SDK renamed the helper between minors:
+        # ``streamable_http_client`` (1.28+, the only spelling on 2.x) takes a
+        # pre-built HTTP client; the older ``streamablehttp_client`` takes
+        # headers/timeout directly and is deprecated where both exist.
+        try:
+            from mcp.client.streamable_http import (
+                create_mcp_http_client,
+                streamable_http_client,
+            )
+        except ImportError:  # pragma: no cover - SDKs predating the rename
+            from mcp.client.streamable_http import streamablehttp_client
+
+            async with streamablehttp_client(
+                url, headers=headers, timeout=self.config.timeout_s
+            ) as streams:
+                yield streams[0], streams[1]
+            return
+
+        # The SDK's own factory, not a bare httpx import: mcp 2.x ships
+        # against its own HTTP client module, so this is the only spelling
+        # that works on every SDK version. Its defaults (30s connect/write,
+        # 300s read for long-lived streams) stay; only the connect budget is
+        # narrowed to the configured timeout, via the client's own Timeout
+        # type so no HTTP library is imported here.
+        http_client = create_mcp_http_client(headers=headers)
+        try:
+            timeout_cls = type(http_client.timeout)
+            http_client.timeout = timeout_cls(self.config.timeout_s, read=300.0)
+        except Exception:  # pragma: no cover - keep the SDK defaults on any surprise
+            pass
+        async with http_client:
+            async with streamable_http_client(url, http_client=http_client) as streams:
+                yield streams[0], streams[1]
+
+    @asynccontextmanager
     async def connect(self) -> Any:
         """
         Connect to the MCP server.
@@ -64,13 +221,7 @@ class MCPClient:
         Yields:
             ClientSession for interacting with the server
         """
-        server_params = StdioServerParameters(
-            command=self.config.command[0],
-            args=self.config.command[1:] + self.config.args,
-            env=self.config.env or None,
-        )
-
-        async with stdio_client(server_params) as (read, write):
+        async with self._open_transport() as (read, write):
             async with ClientSession(read, write) as session:
                 # Initialize the session
                 await session.initialize()
@@ -270,7 +421,16 @@ class MCPClient:
         except Exception:
             await self._invalidate_session()
             raise
-        return [self._convert_tool(tool) for tool in result.tools]
+        tools = [self._convert_tool(tool) for tool in result.tools]
+        # Two raw names can normalise to one identifier (``getUser`` and
+        # ``get_user``); keep both rather than letting the second overwrite
+        # the first in the registry. The original name in metadata is what
+        # gets sent back to the server, so the suffix is purely local.
+        unique = _dedupe_names([tool.name for tool in tools])
+        return [
+            tool if tool.name == name else tool.model_copy(update={"name": name})
+            for tool, name in zip(tools, unique)
+        ]
 
     def _convert_tool(self, mcp_tool: Any) -> ToolDefinition:
         """
@@ -282,9 +442,13 @@ class MCPClient:
         Returns:
             ToolDefinition object
         """
-        # Extract tool information
-        name = mcp_tool.name
-        description = mcp_tool.description or f"Tool: {name}"
+        # Extract tool information. The raw name is what the server answers
+        # to; the normalised one is what Gantry (and the model) sees.
+        raw_name = str(mcp_tool.name)
+        name = sanitize_tool_name(raw_name)
+        description, extended = _split_description(
+            getattr(mcp_tool, "description", None), raw_name, self.config.name
+        )
 
         # Convert input schema to parameters_schema. mcp 2.x renamed the
         # attribute inputSchema -> input_schema (the old spelling remains a
@@ -296,19 +460,44 @@ class MCPClient:
             or {"type": "object", "properties": {}, "required": []}
         )
 
+        metadata: dict[str, Any] = {"mcp_server": self.config.name}
+        if self.config.command:
+            metadata["mcp_command"] = " ".join(self.config.command)
+        else:
+            metadata["mcp_url"] = self.config.url
+            metadata["mcp_transport"] = self.config.resolved_transport
+        if name != raw_name:
+            # Only recorded when it differs, so tools from well-behaved
+            # servers keep byte-identical metadata (and fingerprints).
+            metadata["mcp_tool_name"] = raw_name
+        # Server-declared annotations (readOnlyHint, destructiveHint, ...)
+        # are worth keeping for policy decisions downstream.
+        annotations = getattr(mcp_tool, "annotations", None)
+        if annotations is not None:
+            dump = getattr(annotations, "model_dump", None)
+            try:
+                as_dict = dump(exclude_none=True) if callable(dump) else dict(annotations)
+            except Exception:
+                as_dict = None
+            if as_dict:
+                metadata["mcp_annotations"] = as_dict
+
         # Create ToolDefinition with MCP source
         return ToolDefinition(
             name=name,
             description=description,
+            extended_description=extended,
             parameters_schema=parameters_schema,
             namespace=self.config.namespace,
             source=ToolSource.MCP_SERVER,
             source_uri=f"mcp://{self.config.name}",
-            metadata={
-                "mcp_server": self.config.name,
-                "mcp_command": " ".join(self.config.command),
-            },
+            metadata=metadata,
         )
+
+    @staticmethod
+    def server_tool_name(tool: ToolDefinition) -> str:
+        """The name the MCP server knows ``tool`` by (before normalisation)."""
+        return str(tool.metadata.get("mcp_tool_name") or tool.name)
 
     async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         """

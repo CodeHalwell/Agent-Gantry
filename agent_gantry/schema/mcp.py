@@ -10,9 +10,10 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from agent_gantry.schema.base import HealthMetrics, reject_newlines
+from agent_gantry.schema.config import MCPTransport
 
 
 class MCPServerHealth(HealthMetrics):
@@ -56,13 +57,27 @@ class MCPServerDefinition(BaseModel):
         description="Example queries this server handles (max 10 examples, each should be concise)",
     )
 
-    # Connection configuration (from MCPServerConfig)
+    # Connection configuration (from MCPServerConfig). Exactly one of
+    # ``command`` (local stdio server) or ``url`` (remote HTTP server).
     command: list[str] = Field(
-        ...,
-        min_length=1,
-        description="Command to start the MCP server. "
+        default_factory=list,
+        description="Command to start a local stdio MCP server. "
         "WARNING: Ensure command components are from trusted sources to prevent command injection. "
         "Never pass unsanitized user input directly to this field.",
+    )
+    url: str | None = Field(
+        default=None,
+        description="Endpoint of a remote MCP server (Streamable HTTP or legacy SSE).",
+    )
+    headers: dict[str, str] = Field(
+        default_factory=dict,
+        description="Extra HTTP headers for remote servers (auth tokens). "
+        "Marked as sensitive - avoid logging.",
+        repr=False,
+    )
+    transport: MCPTransport | None = Field(
+        default=None,
+        description="Transport to use; inferred from command/url when unset.",
     )
     args: list[str] = Field(
         default_factory=list,
@@ -97,10 +112,35 @@ class MCPServerDefinition(BaseModel):
 
     _reject_newline_identifiers = field_validator("name", "namespace")(reject_newlines)
 
+    @model_validator(mode="after")
+    def _check_endpoint(self) -> MCPServerDefinition:
+        """Require exactly one endpoint, and a transport that matches it."""
+        has_command = bool(self.command)
+        has_url = bool(self.url)
+        if has_command == has_url:
+            raise ValueError(
+                f"MCP server '{self.name}': give exactly one of 'command' (local stdio "
+                "server) or 'url' (remote HTTP server)."
+            )
+        if self.transport == "stdio" and not has_command:
+            raise ValueError(f"MCP server '{self.name}': transport 'stdio' requires 'command'.")
+        if self.transport in ("streamable_http", "sse") and not has_url:
+            raise ValueError(
+                f"MCP server '{self.name}': transport '{self.transport}' requires 'url'."
+            )
+        return self
+
     @property
     def qualified_name(self) -> str:
         """Return namespace.name."""
         return f"{self.namespace}.{self.name}"
+
+    @property
+    def resolved_transport(self) -> MCPTransport:
+        """The transport this server uses, inferring it from the endpoint given."""
+        if self.transport is not None:
+            return self.transport
+        return "stdio" if self.command else "streamable_http"
 
     @property
     def content_hash(self) -> str:
@@ -151,4 +191,7 @@ class MCPServerDefinition(BaseModel):
             "args": self.args,
             "env": self.env,
             "namespace": self.namespace,
+            "url": self.url,
+            "headers": self.headers,
+            "transport": self.transport,
         }

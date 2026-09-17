@@ -1,24 +1,39 @@
 # agent_gantry/cli
 
-The command-line interface ships a small set of utilities for inspecting tools and running demo
-servers. It is implemented with Click in `main.py` and is available as the `agent-gantry` entry
-point after installation.
+The command-line interface ships as the `agent-gantry` entry point (`python -m agent_gantry.cli`
+works too). It is a thin argparse front end over the `AgentGantry` facade in `core/gantry.py`.
+
+## Pointing it at your registry
+
+Every inspection command accepts `--module pkg.tools[:attr]` naming the module that holds your
+`AgentGantry` instance (attribute `tools` by default, or `--attr NAME`). With one `--module` the
+CLI uses that instance directly, so it sees your configured embedder and vector store; with
+several, their tools are merged into one fresh gantry (optionally built from `--config path.yaml`).
+Without `--module` a three-tool demo registry is used and a note is printed on stderr.
 
 ## Commands
 
-- `agent-gantry list`: Bootstraps demo tools using the in-memory embedder/vector store and prints the
-  registered tools.
-- `agent-gantry search "<query>" --limit 3`: Runs semantic retrieval over the demo registry and shows
-  scored results.
-- `agent-gantry serve-mcp`: Starts an MCP server in dynamic mode with the demo tools (useful for
-  quick Claude Desktop trials).
-
-You can also invoke it module-style:
+- `agent-gantry list [--namespace NS]` — print the registered tools.
+- `agent-gantry search "<query>" [--limit N] [--namespace NS]` — semantic retrieval with scores.
+- `agent-gantry lint` — flag description cross-references, near-duplicate tools and over-used tags.
+- `agent-gantry sim tool_a tool_b` — cosine similarity between two tools' searchable text.
+- `agent-gantry sync [--dry-run] [--force] [--prune]` — embed changed tools into the vector store;
+  `--prune` also removes stored tools that are no longer registered.
+- `agent-gantry serve-mcp [--transport stdio|http|sse] [--mode dynamic|static|hybrid]
+  [--expose TOOL ...] [--host H] [--port P] [--path /mcp]` — expose the registry as an MCP server.
+  `stdio` is what Claude Desktop / Claude Code launch; `http` is the Streamable HTTP transport for
+  remote clients.
+- `agent-gantry install-skill [--claude | --target DIR] [--overwrite] [--print-path]` — vendor the
+  bundled Claude Skill.
 
 ```bash
-python -m agent_gantry.cli search "refund an order" --limit 2
+agent-gantry search "refund an order" --module my_app.tools --limit 3
+agent-gantry serve-mcp --module my_app.tools:gantry --mode hybrid --expose get_weather
 ```
 
-The CLI is intentionally minimal and delegates all heavy lifting to the `AgentGantry` facade in
-`core/gantry.py`. If you want to add new commands, follow the patterns in `main.py` so the tooling
-stays consistent with the rest of the codebase.***
+For Claude Desktop, register the stdio server in `claude_desktop_config.json`:
+
+```json
+{"mcpServers": {"my-tools": {"command": "agent-gantry",
+                             "args": ["serve-mcp", "--module", "my_app.tools"]}}}
+```

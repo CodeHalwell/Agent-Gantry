@@ -528,8 +528,6 @@ class TestMCPWorkflow:
     @pytest.mark.asyncio
     async def test_mcp_server_fingerprinting(self) -> None:
         """Test that MCP servers are not re-embedded if fingerprints match."""
-        gantry = AgentGantry()
-
         # Mock vector store so we can track calls to add_tools
         mock_vector_store = AsyncMock()
         mock_vector_store.dimension = 768
@@ -550,12 +548,14 @@ class TestMCPWorkflow:
         # When get_stored_fingerprints is called, return our tracked ones
         mock_vector_store.get_stored_fingerprints.side_effect = lambda: stored_fps.copy()
 
-        gantry._vector_store = mock_vector_store
-
         # Mock embedder
         mock_embedder = AsyncMock()
         mock_embedder.embed_batch.return_value = [[0.1] * 768]
-        gantry._embedder = mock_embedder
+
+        # Inject through the constructor: the MCP manager/router are wired at
+        # construction, so swapping private attributes afterwards would leave
+        # them pointing at the defaults.
+        gantry = AgentGantry(vector_store=mock_vector_store, embedder=mock_embedder)
 
         # Register an MCP server
         gantry.register_mcp_server(

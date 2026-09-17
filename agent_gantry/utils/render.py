@@ -75,8 +75,15 @@ def render_result(
         parts = [_block_text(item) for item in result]
         text = " ".join(p for p in parts if p)
     else:
-        # Single content-block-like object (has .text) or an arbitrary value.
-        text = _block_text(result)
+        content = getattr(result, "content", None)
+        if isinstance(content, (list, tuple)) and not isinstance(result, type):
+            # A result object wrapping content blocks — an MCP CallToolResult
+            # proxied from an upstream server, say — renders as its blocks.
+            parts = [_block_text(item) for item in content]
+            text = " ".join(p for p in parts if p)
+        else:
+            # Single content-block-like object (has .text) or an arbitrary value.
+            text = _block_text(result)
 
     if collapse_whitespace:
         text = " ".join(text.split())

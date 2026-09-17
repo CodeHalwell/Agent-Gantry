@@ -4,7 +4,7 @@
 
 *Context is precious. Execution is sacred. Trust is earned.*
 
-Agent-Gantry is a Python library (**v0.11.0**) for building agents that can discover, select, and execute the right tools without flooding every prompt with every schema your organization owns. It combines semantic retrieval, provider schema conversion, secure execution, framework bridges, MCP/A2A interoperability, persistence adapters, and observability into one tool orchestration layer.
+Agent-Gantry is a Python library (**v0.14.0**) for building agents that can discover, select, and execute the right tools without flooding every prompt with every schema your organization owns. It combines semantic retrieval, provider schema conversion, secure execution, framework bridges, MCP/A2A interoperability, persistence adapters, and observability into one tool orchestration layer.
 
 ## Documentation
 
@@ -74,6 +74,8 @@ Agent-Gantry automatically fingerprints registered tools, syncs definitions to t
 - **Secure execution:** run tools through policies, capabilities, timeouts, retries, rate limits, circuit breakers, callbacks, and telemetry.
 - **Persistence and retrieval:** use in-memory defaults, LanceDB, Qdrant, Chroma, pgvector, OpenAI/Nomic/sentence-transformers embeddings, and rerankers.
 - **Framework coverage:** Microsoft Agent Framework plus LangChain, LangGraph, LlamaIndex, CrewAI, Google ADK, Pydantic AI, OpenAI Agents SDK, Haystack, Agno, Strands Agents, and DSPy.
+- **MCP both ways:** consume local (stdio) and remote (Streamable HTTP / SSE) MCP servers, and serve your registry to Claude Desktop, Claude Code or any remote client with `gantry.serve_mcp()` / `agent-gantry serve-mcp --module my_app.tools` — two meta-tools instead of the whole tool list.
+- **Skills, retrieved by meaning:** load any Agent Skills (`SKILL.md`) directory with `gantry.add_skills_from_directory(...)` and inject only the skills relevant to each prompt.
 - **Bundled Claude Skill:** install with `agent-gantry install-skill --claude` or target a project-local skills directory.
 
 ## Manual retrieval and execution

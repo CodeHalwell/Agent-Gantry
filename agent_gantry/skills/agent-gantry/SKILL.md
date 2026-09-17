@@ -405,17 +405,24 @@ OpenAI-compatible custom endpoints (Requesty, OpenRouter, Together, vLLM, …) a
 
 ## MCP
 
-Expose Gantry as an MCP server (Claude Desktop, Cline, etc.):
+Expose Gantry as an MCP server (Claude Desktop, Claude Code, Cline, any remote MCP client):
 
 ```python
 gantry = AgentGantry()
 # ... register tools, await gantry.sync() ...
-await gantry.serve_mcp(transport="stdio", mode="dynamic")
+await gantry.serve_mcp()                                   # stdio, dynamic meta-tools
+await gantry.serve_mcp("http", port=8000, path="/mcp")     # Streamable HTTP (remote clients)
+await gantry.serve_mcp("sse", port=8000)                   # legacy SSE transport
+await gantry.serve_mcp(mode="hybrid", expose=["get_weather", "billing.search"])
 ```
 
-`mode="dynamic"` exposes only two meta-tools (`find_relevant_tools`, `execute_tool`) — the MCP client semantic-searches Gantry on demand. ~90% smaller tool list footprint than `mode="static"`.
+- `mode="dynamic"` (default) exposes two meta-tools, `find_relevant_tools` and `execute_tool` — the client semantic-searches Gantry on demand, so its tool list stays two entries long however many tools you register (~90% smaller than `mode="static"`). `find_relevant_tools` reports each match's exact `tool_name` (qualified as `namespace.name` outside the default namespace) and JSON Schema parameters.
+- `mode="hybrid"` lists the tools named in `expose` directly *and* keeps the meta-tools for everything else — for the handful of tools a client should always see.
+- `mode="static"` lists every tool.
+- From the shell: `agent-gantry serve-mcp --module my_app.tools [--transport http|sse] [--mode hybrid --expose get_weather]`. For Claude Desktop, put `{"command": "agent-gantry", "args": ["serve-mcp", "--module", "my_app.tools"]}` under `mcpServers`.
+- To mount into an existing ASGI service: `create_mcp_server(gantry).streamable_http_app("/mcp")` returns a Starlette app (keep its lifespan). Pass `allowed_hosts=[...]` / `allowed_origins=[...]` to `serve_mcp` to enable DNS-rebinding protection when binding beyond loopback.
 
-Consume external MCP servers:
+Consume external MCP servers — local (stdio) or remote (Streamable HTTP / SSE):
 
 ```python
 from agent_gantry.schema.config import MCPServerConfig
@@ -426,7 +433,16 @@ await gantry.add_mcp_server(MCPServerConfig(
     args=["--path", "/tmp"],
     namespace="fs",
 ))
+await gantry.add_mcp_server(MCPServerConfig(
+    name="search",
+    url="https://mcp.example.com/mcp",                 # Streamable HTTP (inferred from url)
+    headers={"Authorization": "Bearer ..."},           # auth goes in headers; never logged
+    namespace="web",
+))
+await gantry.add_mcp_server(MCPServerConfig(name="legacy", url="https://old.example.com/sse", transport="sse"))
 ```
+
+Exactly one of `command` / `url` is required. Discovered tool names are normalised to Gantry's `snake_case` (`searchWeb` → `search_web`, `get-weather` → `get_weather`); the server is still called by its original name (kept in `metadata["mcp_tool_name"]`), and short/long descriptions are padded/truncated rather than rejected, so one unconventional tool never fails a server's whole discovery. Same `url=`/`headers=`/`transport=` keywords on `gantry.register_mcp_server(...)` for dynamic server selection (see cookbook Recipe 7).
 
 ## A2A
 
@@ -441,13 +457,18 @@ Skills exposed: `tool_discovery` (semantic search) and `tool_execution` (run a t
 
 The `agent-gantry` command ships with the package. Inside a uv project, prefix with `uv run` (e.g. `uv run agent-gantry list`); the bare `agent-gantry` form works when the package is on `PATH` (pip install or an activated venv).
 
+Every inspection command works on **your** registry: `--module pkg.tools` (or `pkg.tools:attr`) names the module holding your `AgentGantry` instance and the CLI uses that instance directly — its embedder, its vector store. Without `--module` a three-tool demo registry is used (a note goes to stderr).
+
 ```bash
-uv run agent-gantry list                              # list registered demo tools
-uv run agent-gantry search "refund order" --limit 3   # semantic search
-uv run agent-gantry lint                              # detect tool-description authoring mistakes
-uv run agent-gantry sim toolA toolB                   # cosine similarity between two tools
-uv run agent-gantry sync --dry-run                    # which tools would (re-)embed and why
-uv run agent-gantry install-skill --claude            # install THIS skill into ~/.claude/skills
+uv run agent-gantry list --module my_app.tools                     # list registered tools
+uv run agent-gantry search "refund order" --module my_app.tools     # semantic search, --limit 3
+uv run agent-gantry lint --module my_app.tools                      # detect tool-description authoring mistakes
+uv run agent-gantry sim toolA toolB --module my_app.tools           # cosine similarity between two tools
+uv run agent-gantry sync --dry-run --module my_app.tools            # which tools would (re-)embed and why
+uv run agent-gantry sync --prune --module my_app.tools              # also drop stored tools no longer registered
+uv run agent-gantry serve-mcp --module my_app.tools                 # MCP server over stdio (Claude Desktop / Claude Code)
+uv run agent-gantry serve-mcp --module my_app.tools --transport http --mode hybrid --expose get_weather
+uv run agent-gantry install-skill --claude                          # install THIS skill into ~/.claude/skills
 ```
 
 `lint` flags three patterns that silently degrade routing quality:
@@ -515,6 +536,30 @@ enable_console_logging()   # attaches a console handler + sets the agent_gantry 
 ```
 
 Telemetry (`ConsoleTelemetryAdapter`, the default) still emits structured records; they flow to whatever handlers your app configured. There's nothing to silence anymore — a default `AgentGantry()` is quiet.
+
+## Skills (procedural memory, retrieved by meaning)
+
+Skills are how-tos, patterns and procedures that are **injected into the prompt**, never executed. Gantry embeds each skill's metadata once and retrieves only the ones relevant to the current prompt — the same top-k routing it applies to tools, so a library of hundreds of skills costs a few hundred tokens per turn instead of every skill's description.
+
+```python
+from agent_gantry import AgentGantry, Skill, SkillCategory
+
+gantry = AgentGantry()
+await gantry.add_skill(Skill(
+    name="api_pagination",
+    description="How to implement cursor-based pagination for API endpoints",
+    content="Use cursor-based pagination: return an opaque cursor per page ...",
+    category=SkillCategory.HOW_TO, tags=["api", "pagination"], related_tools=["fetch_page"],
+))
+
+# Any Agent Skills directory (Claude Code / Claude Agent SDK `SKILL.md` format) loads as-is:
+await gantry.add_skills_from_directory("~/.claude/skills")          # name/description/body per SKILL.md
+
+system_prompt += await gantry.retrieve_skills_as_prompt(user_prompt, limit=3)   # "" when nothing matches
+results = await gantry.retrieve_skills("paginate the users endpoint", limit=3, namespace="docs", category="how_to")
+```
+
+`retrieve_skills_as_prompt` formats each hit with `Skill.to_prompt_text()` (a heading, the category, the full content, related tools). Skill content is injected verbatim — register skills only from sources you trust. Works with the default in-memory store and LanceDB; a model switch re-embeds stored skills automatically.
 
 ## Debugging routing
 
@@ -612,6 +657,9 @@ This catches the headline mistakes: a tool description that names another tool (
 | Cold-start re-embeds every time | Default `InMemoryVectorStore` is ephemeral | Wrap embedder in `CachedEmbedder` or use `[lancedb]` |
 | OpenAI embedder can't reach my proxy | Custom base_url not configured | Pass `api_base=...` in `EmbedderConfig` or set `OPENAI_BASE_URL` |
 | No telemetry / INFO logs appear (0.8.0+) | Library no longer configures logging by default | Call `enable_console_logging()` or configure your own handler on the `agent_gantry` logger |
+| A tool registered after the first `retrieve()` never shows up (≤0.14.0) | `ensure_synced()` only checked a flag, so late registrations stayed unembedded | Upgrade (late registrations now sync automatically), or call `await gantry.sync()` after registering |
+| Deleted tool still retrievable from a persistent store | Sync only adds/updates; stale rows are kept for stores shared between gantries | `await gantry.sync(prune=True)` / `agent-gantry sync --prune`, or `prune_on_sync: true` in config |
+| MCP `find_relevant_tools` returns nothing (≤0.14.0) | The meta-tool inherited `ToolQuery`'s 0.5 absolute cutoff | Upgrade; the meta-tool now uses `score_threshold=0.0` like every other convenience layer |
 
 ## Persistent embedding cache
 
@@ -667,7 +715,14 @@ from agent_gantry import (
     ToolCallEvent,                # delivered to gantry.on_tool_call(callback)
     ToolQuery, ConversationContext,
     ToolCapability, ToolCost, ToolDefinition, ToolHealth, ToolSource,
+    Skill, SkillCategory, SkillSearchResult,   # procedural memory (see "Skills")
 )
+# Skills: gantry.add_skill / add_skills / add_skills_from_directory(path)
+#         gantry.retrieve_skills(query) / retrieve_skills_as_prompt(query)
+# MCP:    gantry.serve_mcp(transport="stdio"|"http"|"sse", mode=..., expose=[...])
+#         gantry.add_mcp_server(MCPServerConfig(command=[...] | url="https://...", headers=...))
+#         gantry.register_mcp_server(name, command=None, *, url=None, description=...)
+#         gantry.sync(prune=True) drops stored tools that are no longer registered
 # Observability built-ins (0.8.0+):
 #   gantry.on_tool_call(cb)            -> framework-agnostic ToolCallEvent stream
 #   provider.trace() / attach_to(..., trace=True)  -> console trace middleware
@@ -713,6 +768,8 @@ from agent_gantry.query import (
     keyword_focused, truncated, latest_activity,
 )
 from agent_gantry.adapters.embedders.cached import CachedEmbedder
+from agent_gantry.skills import load_skills_from_directory, load_skill   # Agent Skills (SKILL.md) loaders
+from agent_gantry.servers.mcp_server import create_mcp_server          # .streamable_http_app() / .sse_app()
 from agent_gantry.utils.registry_linter import (
     analyze_registry, pairwise_similarity, RegistryAnalysis,
 )

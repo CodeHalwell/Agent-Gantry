@@ -195,8 +195,15 @@ gantry.register_mcp_server(
     description="Query and mutate PostgreSQL databases",
     tags=["database", "sql"],
 )
+gantry.register_mcp_server(                     # remote servers work the same way
+    name="search",
+    url="https://mcp.example.com/mcp",          # Streamable HTTP; transport="sse" for legacy servers
+    headers={"Authorization": "Bearer ..."},
+    description="Web search and page fetching",
+    tags=["web", "search"],
+)
 
-await gantry.sync_mcp_servers()
+await gantry.sync_mcp_servers()                 # optional: retrieve_mcp_servers() syncs on demand
 
 # Semantic search to pick servers, then connect only those:
 servers = await gantry.retrieve_mcp_servers("read config.yaml", limit=1)
@@ -205,6 +212,23 @@ for s in servers:
 
 tools = await gantry.retrieve_tools("read my config.yaml")
 ```
+
+Going the other way — serving your registry to MCP clients — is one call: `await gantry.serve_mcp()` (stdio) or `await gantry.serve_mcp("http", port=8000)` (Streamable HTTP), or `agent-gantry serve-mcp --module my_app.tools` from the shell. `mode="hybrid", expose=[...]` pins a few always-visible tools next to the `find_relevant_tools` / `execute_tool` meta-tools.
+
+## Recipe 7b: Skills — inject only the relevant how-tos per prompt
+
+```python
+# Load an Agent Skills folder (Claude Code's ~/.claude/skills layout: <skill>/SKILL.md)
+await gantry.add_skills_from_directory("./skills", namespace="team")
+
+async def answer(user_prompt: str) -> str:
+    guidance = await gantry.retrieve_skills_as_prompt(user_prompt, limit=2, namespace="team")
+    system = BASE_SYSTEM_PROMPT + ("\n\n" + guidance if guidance else "")
+    tools = await gantry.retrieve_tools(user_prompt, limit=5)
+    ...
+```
+
+Only the frontmatter (name, description, tags) is embedded; the Markdown body is injected verbatim when the skill is selected, so skill authors change nothing.
 
 ## Recipe 8: Many-tool registry — keep recall high with the linter + verbose logging
 
