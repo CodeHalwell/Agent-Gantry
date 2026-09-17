@@ -51,6 +51,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# The Streamable HTTP endpoint default. Named so ``serve_mcp`` can tell a
+# caller's own path from the default it never asked for.
+_DEFAULT_MCP_PATH = "/mcp"
+
 
 class AgentGantry:
     """
@@ -1757,7 +1761,7 @@ class AgentGantry:
         *,
         host: str = "127.0.0.1",
         port: int = 8000,
-        path: str = "/mcp",
+        path: str = _DEFAULT_MCP_PATH,
         expose: Sequence[str] | None = None,
         **transport_options: Any,
     ) -> None:
@@ -1772,7 +1776,9 @@ class AgentGantry:
             name: Server name for identification
             host: Interface to bind for the HTTP transports (loopback by default)
             port: Port for the HTTP transports
-            path: Endpoint path for Streamable HTTP (``http://host:port/path``)
+            path: Endpoint path. For Streamable HTTP this is the endpoint
+                itself; for ``sse`` it becomes the event-stream path, whose
+                own default (``/sse``) is kept when ``path`` is left alone.
             expose: Tools listed directly in ``hybrid`` mode (``name`` or
                 ``namespace.name``)
             **transport_options: Forwarded to the transport runner — e.g.
@@ -1796,6 +1802,13 @@ class AgentGantry:
         elif transport in ("streamable_http", "http"):
             await server.run_http(host=host, port=port, path=path, **transport_options)
         elif transport == "sse":
+            # SSE takes its endpoint as ``sse_path`` and defaults to ``/sse``,
+            # so ``path`` was accepted and silently dropped here: ``serve_mcp(
+            # transport="sse", path="/custom")`` served ``/sse`` regardless.
+            # A caller's own value is forwarded; the Streamable HTTP default is
+            # not, so SSE keeps ``/sse`` when nothing was asked for.
+            if path != _DEFAULT_MCP_PATH:
+                transport_options.setdefault("sse_path", path)
             await server.run_sse(host=host, port=port, **transport_options)
         else:
             raise ValueError(

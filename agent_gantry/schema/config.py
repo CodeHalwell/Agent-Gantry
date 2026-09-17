@@ -160,7 +160,11 @@ class MCPServerConfig(BaseModel):
     )
     headers: dict[str, str] = Field(
         default_factory=dict,
-        description="Extra HTTP headers for remote servers (auth tokens go here). Not repr'd.",
+        description=(
+            "Extra HTTP headers for remote servers (auth tokens go here). "
+            "Kept out of repr(), which is NOT the same as kept out of "
+            "model_dump() or to_config() - redact before logging either."
+        ),
         repr=False,
     )
     transport: MCPTransport | None = Field(

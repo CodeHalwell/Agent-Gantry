@@ -71,8 +71,11 @@ class MCPServerDefinition(BaseModel):
     )
     headers: dict[str, str] = Field(
         default_factory=dict,
-        description="Extra HTTP headers for remote servers (auth tokens). "
-        "Marked as sensitive - avoid logging.",
+        description=(
+            "Extra HTTP headers for remote servers (auth tokens). Kept out of "
+            "repr(), which is NOT the same as kept out of model_dump() or "
+            "to_config() - redact before logging either."
+        ),
         repr=False,
     )
     transport: MCPTransport | None = Field(
@@ -86,8 +89,11 @@ class MCPServerDefinition(BaseModel):
     )
     env: dict[str, str] = Field(
         default_factory=dict,
-        description="Environment variables for the server process. "
-        "Marked as sensitive - avoid logging.",
+        description=(
+            "Environment variables for the server process. Kept out of "
+            "repr(), which is NOT the same as kept out of model_dump() "
+            "or to_config() - redact before logging either."
+        ),
         repr=False,
     )
 

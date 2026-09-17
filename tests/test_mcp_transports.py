@@ -16,7 +16,7 @@ import json
 import socket
 from collections.abc import AsyncIterator
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -987,3 +987,28 @@ async def test_a_qualified_alias_does_not_depend_on_listing_order() -> None:
         await gantry.close()
 
     assert len(meanings) == 1, f"'a_b_x' changed meaning with listing order: {meanings}"
+
+
+@pytest.mark.asyncio
+async def test_serve_mcp_forwards_a_custom_path_to_the_sse_transport() -> None:
+    """SSE takes its endpoint as ``sse_path``, so ``path`` was accepted and
+    silently dropped: ``serve_mcp(transport="sse", path="/custom")`` served
+    ``/sse`` regardless, with nothing to say so."""
+    gantry = AgentGantry()
+    try:
+        with patch.object(MCPServer, "run_sse", new=AsyncMock()) as run_sse:
+            await gantry.serve_mcp(transport="sse", path="/custom")
+        assert run_sse.call_args.kwargs["sse_path"] == "/custom"
+
+        # ...and the Streamable HTTP default is not forwarded, so SSE keeps
+        # its own ``/sse`` when the caller asked for nothing.
+        with patch.object(MCPServer, "run_sse", new=AsyncMock()) as run_sse:
+            await gantry.serve_mcp(transport="sse")
+        assert "sse_path" not in run_sse.call_args.kwargs
+
+        # http is unchanged
+        with patch.object(MCPServer, "run_http", new=AsyncMock()) as run_http:
+            await gantry.serve_mcp(transport="streamable_http", path="/custom")
+        assert run_http.call_args.kwargs["path"] == "/custom"
+    finally:
+        await gantry.close()

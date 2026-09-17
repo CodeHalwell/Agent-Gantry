@@ -147,6 +147,11 @@ Three behaviour changes to know about before upgrading:
   branch typed, since a value may match any one of them; `allOf` needs only
   one, since a value matches all of them at once and the rest commonly add
   constraints.
+- **`serve_mcp(transport="sse", path=...)` honours the path.** SSE takes its
+  endpoint as `sse_path`, so a caller's `path` was accepted and silently
+  dropped: the server listened on `/sse` regardless, with nothing to say so.
+  A path the caller supplies is forwarded now; leaving it alone still gives
+  SSE its own `/sse` default rather than the Streamable HTTP one.
 - **A qualified MCP wire alias no longer depends on listing order** — the
   same defect as the client-side one below, on the serving side. Two
   namespaces can qualify to the same wire string (`a+b` and `a_b` both give
