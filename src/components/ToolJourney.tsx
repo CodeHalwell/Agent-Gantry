@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import React from 'react';
+import { useMemo, useState, useRef } from 'react';
 
 type Stage = { title: string; detail: string; codeHtml: string };
 
@@ -6,7 +7,24 @@ type Props = { stages: Stage[] };
 
 export default function ToolJourney({ stages }: Props) {
   const [active, setActive] = useState(0);
+  const tabsRef = useRef<(HTMLButtonElement | null)[]>([]);
   const stage = useMemo(() => stages[active], [active, stages]);
+
+  const handleKeyDown = (e: React.KeyboardEvent, index: number) => {
+    let newIndex = index;
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      newIndex = (index + 1) % stages.length;
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      newIndex = (index - 1 + stages.length) % stages.length;
+    }
+
+    if (newIndex !== index) {
+      setActive(newIndex);
+      tabsRef.current[newIndex]?.focus();
+    }
+  };
 
   return (
     <div className="card">
@@ -14,11 +32,14 @@ export default function ToolJourney({ stages }: Props) {
         {stages.map((s, i) => (
           <button
             key={s.title}
+            ref={(el) => { tabsRef.current[i] = el; }}
             role="tab"
             aria-selected={i === active}
             aria-controls="journey-tabpanel"
             id={`journey-tab-${i}`}
+            tabIndex={i === active ? 0 : -1}
             onClick={() => setActive(i)}
+            onKeyDown={(e) => handleKeyDown(e, i)}
             style={{
               padding: '1rem',
               borderRadius: '1rem',
