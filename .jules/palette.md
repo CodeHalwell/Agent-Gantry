@@ -117,3 +117,7 @@
 ## 2026-08-20 - [Spatial Visual Context for Active Links]
 **Learning:** When sidebar navigation links indicate their active state only by changing text color and font weight, the change may be too subtle for users with low vision or cognitive impairments to quickly locate their current page within a dense menu. Sighted users benefit from a clear, spatial visual indicator (like a background block) corresponding to the `aria-current` state.
 **Action:** When implementing navigation links with `aria-current="page"`, always provide a strong spatial visual state (e.g., adding `background: var(--panel2)`) alongside text changes to ensure clear spatial context for sighted users.
+
+## 2026-09-17 - [Programmatic Focus for ARIA Tablist Keyboard Navigation]
+**Learning:** Merely updating the active state index via keyboard handlers is insufficient for ARIA tablists. If focus is not programmatically shifted to the newly activated tab, keyboard focus becomes trapped and subsequent keypresses originate from the wrong element.
+**Action:** When implementing keyboard navigation (ArrowRight/ArrowLeft) for ARIA tablists, use DOM refs to track the tab elements, call `e.preventDefault()` to stop page scrolling, and programmatically call `.focus()` on the newly activated tab.
