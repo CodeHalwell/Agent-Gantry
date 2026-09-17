@@ -180,14 +180,18 @@ class MCPRegistry:
         # Retired clients included: one dropped outside a running loop had no
         # way to be closed then, and is unreachable through the cache now.
         clients = list(self._clients.values()) + self._retired
+        # Cleared *before* the await, as ``MCPClientPool.close_all`` does:
+        # clearing afterwards discarded any client registered or retired while
+        # the gather was in flight, so it was neither closed here nor
+        # reachable through the cache again.
+        self._clients.clear()
+        self._retired.clear()
         results = await asyncio.gather(
             *(client.close() for client in clients), return_exceptions=True
         )
         for result in results:
             if isinstance(result, BaseException):
                 logger.debug("Error closing MCP client", exc_info=result)
-        self._clients.clear()
-        self._retired.clear()
 
     def get_pending(self) -> list[MCPServerDefinition]:
         """

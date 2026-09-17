@@ -376,3 +376,27 @@ def test_a_bad_config_is_reported_as_one_line(
     with pytest.raises(SystemExit) as broken:
         main(["list", "--config", str(malformed)])
     assert "could not load config" in str(broken.value)
+
+
+def test_search_limit_outside_the_query_bounds_is_a_clean_error() -> None:
+    """``--limit`` is a bare int, so a value outside ToolQuery's 1..50 range
+    raised a raw pydantic ValidationError traceback out of ``asyncio.run`` --
+    the failure ``check_query_bounds`` was added to prevent everywhere else."""
+    for limit in ("60", "0"):
+        with pytest.raises(SystemExit) as excinfo:
+            main(
+                [
+                    "search",
+                    "anything",
+                    "--module",
+                    "tests.test_modules.module_a",
+                    "--limit",
+                    limit,
+                ]
+            )
+        assert "agent-gantry search" in str(excinfo.value)
+
+    # an in-range limit still runs
+    assert (
+        main(["search", "tool", "--module", "tests.test_modules.module_a", "--limit", "2"]) == 0
+    )

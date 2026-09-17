@@ -160,9 +160,14 @@ def _close_objects_in_place(node: Any) -> None:
     for key in ("items", "anyOf", "oneOf", "allOf", "prefixItems"):
         if key in node:
             _close_objects_in_place(node[key])
-    if isinstance(node.get("$defs"), dict):
-        for subschema in node["$defs"].values():
-            _close_objects_in_place(subschema)
+    # ``$defs`` and its pre-2019 spelling. ``_collect_open_maps`` and
+    # ``_strict_in_place`` already walk both, and a hand-authored or Pydantic
+    # v1 schema still uses ``definitions``: leaving it unwalked published
+    # ``strict: true`` with the ``$ref`` target's nested objects open.
+    for defs_key in ("$defs", "definitions"):
+        if isinstance(node.get(defs_key), dict):
+            for subschema in node[defs_key].values():
+                _close_objects_in_place(subschema)
 
 
 def _strict_parameters(tool: ToolDefinition, dialect: str) -> tuple[dict[str, Any], bool]:

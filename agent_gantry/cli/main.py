@@ -374,6 +374,17 @@ async def _run_command(args: argparse.Namespace) -> int:
         return 0
 
     if args.command == "search":
+        # ``--limit`` is a bare int, so a value outside ToolQuery's 1..50
+        # range raised a raw pydantic ValidationError out of asyncio.run.
+        # The same guard the framework selectors use, reported as a CLI error.
+        from agent_gantry.integrations.frameworks.base import check_query_bounds
+
+        try:
+            check_query_bounds(
+                limit=args.limit, score_threshold=0.0, owner="agent-gantry search"
+            )
+        except ValueError as exc:
+            raise SystemExit(f"error: {exc}") from exc
         context = ConversationContext(query=args.query)
         query = ToolQuery(
             context=context,

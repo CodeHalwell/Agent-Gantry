@@ -557,6 +557,46 @@ async def test_a_client_dropped_outside_a_loop_is_still_closed_at_shutdown() -> 
 
 
 @pytest.mark.asyncio
+async def test_a_client_added_during_shutdown_is_not_silently_dropped() -> None:
+    """``close_all_clients`` cleared its bookkeeping *after* the gather, so a
+    client cached while that await was in flight was neither closed by it nor
+    reachable through the cache afterwards. ``MCPClientPool.close_all`` clears
+    first for this reason; the registry twin cleared last."""
+    from agent_gantry.core.mcp_registry import MCPRegistry
+
+    registry = MCPRegistry()
+
+    class _SlowClient:
+        def __init__(self, name: str) -> None:
+            self.config = type("C", (), {"name": name})()
+            self.closed = False
+
+        async def close(self) -> None:
+            await asyncio.sleep(0.05)
+            self.closed = True
+
+    first = _SlowClient("first")
+    registry._clients["default.first"] = first
+
+    async def _register_during_shutdown() -> _SlowClient:
+        await asyncio.sleep(0.01)  # while the gather above is in flight
+        late = _SlowClient("late")
+        registry._clients["default.late"] = late
+        return late
+
+    latecomer = asyncio.create_task(_register_during_shutdown())
+    await registry.close_all_clients()
+    late = await latecomer
+
+    assert first.closed is True
+    # The latecomer was not part of that batch, but it must still be reachable
+    # so a later shutdown can close it -- not wiped by this one.
+    assert late in registry._clients.values() or late.closed
+    await registry.close_all_clients()
+    assert late.closed is True
+
+
+@pytest.mark.asyncio
 async def test_a_server_registered_mid_sync_is_not_dropped_from_the_buffer() -> None:
     """``sync_servers`` cleared the whole pending buffer, so a
     ``register_mcp_server()`` landing while it awaited was discarded: the

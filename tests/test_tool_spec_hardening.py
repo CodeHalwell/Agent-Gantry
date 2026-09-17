@@ -1161,3 +1161,22 @@ def test_anthropic_strict_is_not_gated_on_openais_ref_inlining_limit() -> None:
     }
     assert unsupported_strict_paths(open_map)
     assert unsupported_strict_paths(open_map, inlines_refs=False)
+
+
+def test_the_legacy_definitions_keyword_is_closed_too() -> None:
+    """``_collect_open_maps`` and ``_strict_in_place`` walk both ``$defs`` and
+    its pre-2019 spelling; the Anthropic object-closing walk only had
+    ``$defs``. A hand-authored or Pydantic v1 schema went out ``strict: true``
+    with the ``$ref`` target's nested objects still open."""
+    from agent_gantry.adapters.tool_spec.providers import _close_objects_in_place
+
+    schema = {
+        "type": "object",
+        "properties": {"addr": {"$ref": "#/definitions/Address"}},
+        "definitions": {
+            "Address": {"type": "object", "properties": {"city": {"type": "string"}}}
+        },
+    }
+    _close_objects_in_place(schema)
+    assert schema["definitions"]["Address"]["additionalProperties"] is False
+    assert schema["additionalProperties"] is False

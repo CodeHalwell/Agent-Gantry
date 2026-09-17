@@ -127,8 +127,18 @@ def _split_description(raw: str | None, tool_name: str, server_name: str) -> tup
     """
     text = " ".join((raw or "").split())
     if len(text) < _DESCRIPTION_MIN_LENGTH:
-        base = text or f"Tool {tool_name}"
-        return f"{base} (MCP tool '{tool_name}' from server '{server_name}')", None
+        # ``tool_name`` is the server's raw name, before ``sanitize_tool_name``
+        # caps it, so padding with it unbounded could push the result past
+        # ``ToolDefinition``'s 2000-character ceiling. That raised inside the
+        # list comprehension in ``list_tools``, taking down discovery for the
+        # whole server — the failure this padding exists to avoid, reached by
+        # a long name instead of a long description.
+        base = text or f"Tool {_truncate(tool_name, _NAME_MAX_LENGTH)}"
+        padded = (
+            f"{base} (MCP tool '{_truncate(tool_name, _NAME_MAX_LENGTH)}' "
+            f"from server '{_truncate(server_name, _NAME_MAX_LENGTH)}')"
+        )
+        return _truncate(padded, _DESCRIPTION_MAX_LENGTH), None
     if len(text) <= _DESCRIPTION_MAX_LENGTH:
         return text, None
     return (

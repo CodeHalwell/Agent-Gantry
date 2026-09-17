@@ -255,6 +255,36 @@ class TestRenderResult:
 
         assert render_result(_Real()) == "from the block"
 
+    def test_a_dict_shaped_result_is_recognised(self) -> None:
+        """``getattr`` finds nothing on a plain dict, so a proxied or
+        JSON-decoded ``CallToolResult`` was never recognised and rendered as
+        its own repr instead of its text."""
+        assert render_result({"content": [{"type": "text", "text": "42"}]}) == "42"
+        assert render_result({"content": [], "structuredContent": {"n": 1}}) == '{"n": 1}'
+
+        # ...and a dict that merely has a ``content`` list is still not one
+        record = {"content": ["body"], "isError": False, "score": 0.9}
+        assert render_result(record) != "body"
+
+        # the plain ``text``-key shape keeps working
+        assert render_result({"text": "from-dict"}) == "from-dict"
+
+    def test_a_block_that_declares_empty_text_renders_empty(self) -> None:
+        """Both extraction paths required a *truthy* string, so a tool that
+        legitimately returned no text had its block treated as having none and
+        got the block's repr instead. ``mcp_server._is_text_block`` accepts an
+        empty one, so the two disagreed about what counts as content."""
+        assert render_result([{"type": "text", "text": ""}]) == ""
+
+        class _Empty:
+            type = "text"
+            text = ""
+
+        assert render_result(_Empty()) == ""
+
+        # an object with no declared type and no text still falls back to repr
+        assert "object at" in render_result(type("X", (), {})())
+
 
 class TestLoggingHygiene:
     def test_package_attaches_null_handler(self) -> None:

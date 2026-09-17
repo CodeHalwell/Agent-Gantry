@@ -473,3 +473,25 @@ async def test_list_tools_discovery(server_config: MCPServerConfig) -> None:
             assert tool.metadata["mcp_server"] == "test-server"
     finally:
         await client.close()
+
+
+def test_a_long_server_tool_name_does_not_abort_discovery() -> None:
+    """The short-description branch padded with the server's *raw* name, which
+    is uncapped, so a tool with a very long name and a short description built
+    a description past ``ToolDefinition``'s 2000-character ceiling. That
+    ``ValidationError`` was raised inside ``list_tools``' list comprehension,
+    taking down discovery for the whole server -- the failure this padding
+    exists to avoid, reached by a long name instead of a long description."""
+    from agent_gantry.adapters.executors.mcp_client import _split_description
+    from agent_gantry.schema.tool import ToolDefinition
+
+    description, extended = _split_description("hi", "x" * 3000, "s" * 3000)
+    assert len(description) <= 2000, len(description)
+    assert extended is None
+
+    # the real check: the definition it feeds can actually be built
+    ToolDefinition(
+        name="ok",
+        description=description,
+        parameters_schema={"type": "object", "properties": {}},
+    )

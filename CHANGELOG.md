@@ -268,6 +268,35 @@ Three behaviour changes to know about before upgrading:
   stranded a live HTTP connection or stdio subprocess that `close_all()`
   could never reach. It now keeps the client for the next async shutdown,
   as `MCPRegistry` already did.
+- **A long server-side tool name no longer aborts a whole server's
+  discovery.** The short-description branch padded with the server's *raw*
+  name, which is uncapped, so a tool with a long name and a short description
+  built a description past `ToolDefinition`'s 2000-character ceiling. That
+  `ValidationError` was raised inside `list_tools()`' list comprehension,
+  taking every other tool on the server down with it — the failure this
+  padding exists to avoid, reached by a long name instead of a long
+  description.
+- **`agent-gantry search --limit` outside 1..50 is a clean error.** It is a
+  bare int, so an out-of-range value raised a raw pydantic `ValidationError`
+  traceback — the failure `check_query_bounds` was added to prevent on the
+  framework selectors, with the CLI's own path left unwired.
+- **A dict-shaped `CallToolResult` renders as its text.** `getattr` finds
+  nothing on a plain dict, so a proxied or JSON-decoded result was never
+  recognised and came back as its own repr.
+- **A content block that declares empty text renders empty.** Both extraction
+  paths required a *truthy* string, so a tool that legitimately returned no
+  text had its block treated as having none and got the block's repr instead
+   — and the two block predicates disagreed about what counts as content.
+- **Anthropic strict mode closes objects under legacy `definitions` too.**
+  `_collect_open_maps` and `_strict_in_place` walk both spellings; the
+  object-closing walk had only `$defs`, so a hand-authored or Pydantic v1
+  schema went out `strict: true` with the `$ref` target's nested objects
+  still open.
+- **A client cached during shutdown is not silently dropped.**
+  `close_all_clients()` cleared its bookkeeping after the gather, so a client
+  added while that await was in flight was neither closed by it nor
+  reachable afterwards. It clears first now, as `MCPClientPool.close_all`
+  already did.
 - **An MCP server that lists no tools has its tools removed, and says so.**
   An empty `tools/list` is the server's complete catalogue, so it prunes
   like any other answer — this deliberately does *not* mirror

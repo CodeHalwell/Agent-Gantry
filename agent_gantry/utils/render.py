@@ -30,6 +30,18 @@ def _is_content_block(item: Any) -> bool:
     return isinstance(getattr(item, "type", None), str)
 
 
+def _result_content(value: Any) -> Any:
+    """A result's ``content``, read through a mapping as well as an object.
+
+    A proxied or JSON-decoded ``CallToolResult`` arrives as a plain dict,
+    where ``getattr`` finds nothing: such a result was never recognised and
+    rendered as its own repr instead of its text.
+    """
+    if isinstance(value, dict):
+        return value.get("content")
+    return getattr(value, "content", None)
+
+
 def _is_mcp_result(value: Any) -> bool:
     """Whether ``value`` wraps content blocks, or merely has a ``content`` field.
 
@@ -38,7 +50,7 @@ def _is_mcp_result(value: Any) -> bool:
     — and unwrapping those emitted the content items and dropped the title
     and the score, the same defect the ``.text`` path has to guard against.
     """
-    content = getattr(value, "content", None)
+    content = _result_content(value)
     if not isinstance(content, (list, tuple)) or isinstance(value, type):
         return False
     if content:
@@ -55,15 +67,10 @@ def _is_mcp_result(value: Any) -> bool:
     # ``structured_content``, and reading only the 1.x names sent a 2.x error
     # result to ``str()``. Nothing is dropped by a false positive here, since
     # there are no content items to emit in the first place.
-    return any(
-        getattr(value, attribute, None) is not None
-        for attribute in (
-            "structuredContent",
-            "structured_content",
-            "isError",
-            "is_error",
-        )
-    )
+    names = ("structuredContent", "structured_content", "isError", "is_error")
+    if isinstance(value, dict):
+        return any(value.get(name) is not None for name in names)
+    return any(getattr(value, name, None) is not None for name in names)
 
 
 def _block_text(block: Any) -> str:
@@ -71,13 +78,19 @@ def _block_text(block: Any) -> str:
     if isinstance(block, str):
         return block
     # AF Content objects (TextContent, FunctionResultContent, ...) expose .text.
+    # A content block declaring ``type`` has said what it is, so its text is
+    # taken at face value — ``""`` included. Requiring a truthy string treated
+    # a tool that legitimately returned nothing as having no text at all and
+    # emitted the block's repr instead, and disagreed with
+    # ``mcp_server._is_text_block``, which accepts an empty one.
+    declared = _is_content_block(block)
     text = getattr(block, "text", None)
-    if isinstance(text, str) and text:
+    if isinstance(text, str) and (text or declared):
         return text
     if isinstance(block, dict):
         for key in ("text", "content", "output"):
             value = block.get(key)
-            if isinstance(value, str) and value:
+            if isinstance(value, str) and (value or (declared and key == "text")):
                 return value
     return str(block)
 
@@ -152,7 +165,7 @@ def render_result(
             # hold a list is not one, and unwrapping it dropped its siblings.
             # The ``.text`` path below stays duck-typed, as this helper's
             # callers rely on.
-            parts = [_block_text(item) for item in getattr(result, "content")]
+            parts = [_block_text(item) for item in _result_content(result)]
             text = " ".join(p for p in parts if p) or _structured_text(result)
         else:
             # Single content-block-like object (has .text) or an arbitrary value.
