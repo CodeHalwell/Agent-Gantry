@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import io
 import json
 import socket
 from collections.abc import AsyncIterator
@@ -35,6 +36,35 @@ from agent_gantry.servers.mcp_server import (
     _StreamableHTTPApp,
     create_mcp_server,
 )
+
+
+def _task_dump() -> str:
+    """Every live task's stack, for a hang that only happens on CI."""
+    parts = []
+    for task in asyncio.all_tasks():
+        buffer = io.StringIO()
+        with contextlib.suppress(Exception):
+            task.print_stack(file=buffer, limit=15)
+        parts.append(f"--- {task!r}\n{buffer.getvalue()}")
+    return "\n".join(parts) or "<no live tasks>"
+
+
+async def _bounded(coro: Any, timeout: float, label: str) -> Any:
+    """``wait_for`` that reports *which* step hung, and what everything was doing.
+
+    ``test_the_app_serves_when_mounted_into_another_service`` has timed out on
+    macOS, Windows and Linux under Python 3.13 — normal-speed runs, so not a
+    loaded runner — and does not reproduce locally, in isolation, within its
+    own file or under the full suite on 3.13. A bare ``TimeoutError`` in the
+    CI summary cannot say whether the client is waiting on a response, the
+    session manager never started, or uvicorn will not shut down, and a
+    re-run throws the evidence away. So a timeout names its step and carries
+    the task stacks with it.
+    """
+    try:
+        return await asyncio.wait_for(coro, timeout)
+    except asyncio.TimeoutError as exc:
+        raise AssertionError(f"timed out after {timeout}s: {label}\n{_task_dump()}") from exc
 
 
 def _free_port() -> int:
@@ -596,13 +626,14 @@ async def test_the_app_serves_when_mounted_into_another_service() -> None:
             MCPServerConfig(name="mounted", url=f"http://127.0.0.1:{port}/tools/mcp")
         )
         try:
-            tools = await asyncio.wait_for(client.list_tools(), 60)
+            tools = await _bounded(client.list_tools(), 60, "client.list_tools() over the mount")
             assert sorted(t.name for t in tools) == ["execute_tool", "find_relevant_tools"]
-            result = await asyncio.wait_for(
+            result = await _bounded(
                 client.call_tool(
                     "execute_tool", {"tool_name": "add_numbers", "arguments": {"a": 2, "b": 3}}
                 ),
                 60,
+                "client.call_tool() over the mount",
             )
             assert _text(result) == "5"
         finally:
@@ -619,13 +650,16 @@ async def test_the_app_serves_when_mounted_into_another_service() -> None:
     finally:
         # ``force_exit`` as well as ``should_exit``: graceful shutdown waits
         # for open connections, and this test has already asserted everything
-        # it cares about, so waiting on a drain only converts a loaded runner
-        # into a timeout. Seen on macOS 3.13 and Windows 3.13, both on jobs
-        # running 2-3x their usual wall clock.
+        # it cares about, so waiting on a drain would turn a slow shutdown
+        # into a timeout. Note this did *not* fix the timeouts it was added
+        # for -- they recurred on ubuntu 3.13 at normal speed (501s), so the
+        # "loaded runner" reading was wrong and the remaining suspect is a
+        # 3.13-specific race; see ``_bounded`` above for what the next
+        # failure will report.
         server.should_exit = True
         server.force_exit = True
         try:
-            await asyncio.wait_for(task, 60)
+            await _bounded(task, 60, "uvicorn shutdown after force_exit")
         finally:
             if not task.done():
                 task.cancel()
