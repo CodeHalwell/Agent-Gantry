@@ -7,9 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-17
+
 A sweep of the semantic-routing core, the MCP layer and the skills layer.
-Two of the fixes change behaviour users may have been working around by
-hand; the rest are additive.
+
+MCP now works in both directions and over the network: servers can be
+reached by URL over Streamable HTTP or SSE, and Gantry can serve over both.
+An Agent Skills (`SKILL.md`) directory loads straight into the skill store.
+Alongside those, a sweep of the adapters, stores and selection layer fixed
+defects a green test suite had not caught, each reproduced against the real
+SDK or backend first.
+
+Three behaviour changes to know about before upgrading:
+
+- **A reranker passed to `AgentGantry(reranker=...)` now runs by default.**
+  It was a no-op unless `config.reranker.enabled` was also set. Pass
+  `enable_reranking=False` on a query to opt out.
+- **`SentenceTransformersEmbedder`'s embedder id no longer depends on
+  whether the model has loaded.** The id therefore changes once on upgrade,
+  costing a single full re-embed against a persistent store — after which
+  the spurious re-embed on every process start stops.
+- **Token buckets start at `burst_size`** rather than the per-minute rate,
+  so a configured burst now actually applies to the first burst.
 
 ### Fixed
 
@@ -3496,7 +3515,8 @@ adapters, and the provider dialects agree with it.
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.13.1...v0.14.0
 [0.13.1]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.12.0...v0.13.0
