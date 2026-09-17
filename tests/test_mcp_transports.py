@@ -644,6 +644,43 @@ async def test_a_qualified_wire_name_never_takes_another_tools_name() -> None:
     await gantry.close()
 
 
+@pytest.mark.asyncio
+async def test_a_qualified_wire_name_stays_within_the_length_limit() -> None:
+    """A definition's own name may be 128 characters, which is the cap, so
+    qualifying it as ``namespace_name`` overran it and a collision suffix
+    pushed it further. Every registered tool was valid, yet the listing a
+    client received could be rejected whole by name validation."""
+    gantry = AgentGantry()
+
+    async def handler(**kwargs: Any) -> dict[str, Any]:
+        return kwargs
+
+    long_name = "a" * 120
+    # Namespaces that differ only *past* the cut, so trimming alone would
+    # merge the two tools into one wire name.
+    for namespace in ("n" * 130 + "_one", "n" * 130 + "_two"):
+        await gantry.add_tool(
+            ToolDefinition(
+                name=long_name,
+                namespace=namespace,
+                description="A tool whose qualified wire name overruns the limit",
+                parameters_schema={"type": "object", "properties": {}},
+            ),
+            handler=handler,
+        )
+
+    server = create_mcp_server(gantry, mode="static")
+    wire_names = [tool.name for tool in await server._list_tools()]
+    assert all(len(name) <= 128 for name in wire_names), [len(n) for n in wire_names]
+    # ...and trimming has not collapsed them onto each other
+    assert len(wire_names) == len(set(wire_names)) == 2, wire_names
+    assert {tool.namespace for tool in server._exposed.values()} == {
+        "n" * 130 + "_one",
+        "n" * 130 + "_two",
+    }
+    await gantry.close()
+
+
 def test_render_tool_output_prefers_json_for_structured_results() -> None:
     assert _render_tool_output({"a": 1, "b": [1, 2]}) == '{"a": 1, "b": [1, 2]}'
     assert _render_tool_output("plain") == "plain"

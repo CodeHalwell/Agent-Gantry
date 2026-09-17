@@ -114,14 +114,39 @@ def _render_tool_output(value: Any) -> str:
     return render_result(value)
 
 
+# Matches the cap the client applies to names coming the other way
+# (``mcp_client._NAME_MAX_LENGTH``), and the cap on ``ToolDefinition.name``.
+_WIRE_NAME_MAX_LENGTH = 128
+
+
+def _fit_wire_name(candidate: str, suffix: str = "") -> str:
+    """Trim ``candidate`` so ``candidate + suffix`` fits the wire-name cap.
+
+    A definition's own name may be up to 128 characters, which is the cap, so
+    qualifying it as ``namespace_name`` overruns it — and a collision suffix
+    pushes it further. Every registered tool was valid, yet the listing a
+    client received could be rejected whole by name validation.
+    """
+    room = _WIRE_NAME_MAX_LENGTH - len(suffix)
+    return f"{candidate[:room].rstrip('_')}{suffix}" if suffix else candidate[:room]
+
+
 def _unique_wire_name(candidate: str, taken: set[str]) -> str:
-    """``candidate``, suffixed ``_2``, ``_3``… until it is not already ``taken``."""
+    """``candidate``, suffixed ``_2``, ``_3``… until it is not already ``taken``.
+
+    Both the candidate and each suffixed form are kept inside the wire-name
+    cap. Trimming can itself collide — two long names agreeing on their first
+    128 characters — which the suffix loop then resolves.
+    """
+    candidate = _fit_wire_name(candidate)
     if candidate not in taken:
         return candidate
     index = 2
-    while f"{candidate}_{index}" in taken:
+    while True:
+        name = _fit_wire_name(candidate, f"_{index}")
+        if name not in taken:
+            return name
         index += 1
-    return f"{candidate}_{index}"
 
 
 class _ASGIProxy:

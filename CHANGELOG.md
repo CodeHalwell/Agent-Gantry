@@ -232,6 +232,13 @@ Three behaviour changes to know about before upgrading:
   reporting stale usage — while `calls_last_minute`, measured against the
   clock, correctly read 0. Both windows are now counted in one pass against
   the current time, for all three strategies.
+- **A qualified MCP wire name stays inside the 128-character limit.** A
+  definition's own name may be 128 characters, which is the cap, so
+  qualifying it as `namespace_name` on a collision overran it and a numeric
+  suffix pushed it further: every registered tool was valid, yet the listing
+  a client received could be rejected whole by name validation. Names are
+  trimmed to fit, with the suffix kept inside the cap — and because trimming
+  can itself collide, the suffix loop resolves that too.
 
 #### Stores and embedders
 
