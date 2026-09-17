@@ -557,6 +557,34 @@ async def test_a_client_dropped_outside_a_loop_is_still_closed_at_shutdown() -> 
 
 
 @pytest.mark.asyncio
+async def test_a_pooled_client_dropped_outside_a_loop_is_still_closed() -> None:
+    """The same lifecycle hole as above, on ``MCPClientPool``: it dropped the
+    client whether or not the close could be scheduled, so a ``remove_server``
+    from a synchronous thread stranded a live connection that ``close_all``
+    could never reach."""
+
+    class _FakeClient:
+        def __init__(self, name: str) -> None:
+            self.config = type("C", (), {"name": name})()
+            self.closed = False
+
+        async def close(self) -> None:
+            self.closed = True
+
+    pool = MCPClientPool()
+    client = _FakeClient("srv")
+    pool._clients["srv"] = client
+
+    assert await asyncio.to_thread(pool.remove_server, "srv") is True
+    assert client.closed is False, "nothing can close it from there"
+    assert client not in pool._clients.values(), "and it leaves the pool"
+
+    await pool.close_all()
+    assert client.closed is True
+    assert pool._retired == []
+
+
+@pytest.mark.asyncio
 async def test_an_empty_discovery_is_authoritative() -> None:
     """An empty ``tools/list`` is the server's complete catalogue, so it
     removes the tools it had. Refusing to prune on empty looks safer but has

@@ -584,6 +584,11 @@ class MCPClientPool:
     def __init__(self) -> None:
         """Initialize the client pool."""
         self._clients: dict[str, MCPClient] = {}
+        # Clients dropped from the pool that could not be closed at the time
+        # (no running loop). ``close_all`` still owns them; see
+        # ``remove_server``. ``MCPRegistry`` keeps the same list for the same
+        # reason.
+        self._retired: list[MCPClient] = []
 
     def add_server(self, config: MCPServerConfig) -> MCPClient:
         """
@@ -633,7 +638,11 @@ class MCPClientPool:
         Remove an MCP server from the pool.
 
         Best-effort closes the client's persistent connection (scheduled on
-        the running loop when there is one).
+        the running loop when there is one). Called without one — from a
+        plain thread, say — the close cannot be scheduled, so the client is
+        retained for ``close_all`` instead of being dropped: forgetting it
+        there stranded a live HTTP connection or stdio subprocess that
+        nothing could reach again, surviving to process teardown.
 
         Args:
             name: Server name
@@ -644,7 +653,8 @@ class MCPClientPool:
         client = self._clients.pop(name, None)
         if client is None:
             return False
-        _schedule_client_close(client)
+        if not _schedule_client_close(client):
+            self._retired.append(client)
         return True
 
     async def close_all(self) -> None:
@@ -654,7 +664,10 @@ class MCPClientPool:
         client (each close can wait up to 5s on a stuck owner task), not the
         sum across servers.
         """
-        clients = list(self._clients.values())
+        # ``_retired`` holds clients dropped by ``remove_server`` with no loop
+        # to close them on; this is the next async shutdown it was waiting for.
+        clients = list(self._clients.values()) + self._retired
+        self._retired = []
         results = await asyncio.gather(
             *(client.close() for client in clients), return_exceptions=True
         )

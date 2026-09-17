@@ -19,6 +19,38 @@ from typing import Any
 __all__ = ["render_result"]
 
 
+def _is_content_block(item: Any) -> bool:
+    """Whether ``item`` carries a content block's ``type`` discriminator.
+
+    Deliberately loose about *which* type: a result's blocks may be image or
+    resource blocks as well as text, and every one of them declares it.
+    """
+    if isinstance(item, dict):
+        return isinstance(item.get("type"), str)
+    return isinstance(getattr(item, "type", None), str)
+
+
+def _is_mcp_result(value: Any) -> bool:
+    """Whether ``value`` wraps content blocks, or merely has a ``content`` field.
+
+    Duck-typing on ``content`` alone swept up ordinary records —
+    ``Article(title="...", content=["body"], score=0.9)`` is the obvious case
+    — and unwrapping those emitted the content items and dropped the title
+    and the score, the same defect the ``.text`` path has to guard against.
+    """
+    content = getattr(value, "content", None)
+    if not isinstance(content, (list, tuple)) or isinstance(value, type):
+        return False
+    if content and all(_is_content_block(item) for item in content):
+        return True
+    # A result answering entirely through ``structuredContent`` leaves
+    # ``content`` empty, so its own protocol fields have to identify it.
+    return any(
+        getattr(value, attribute, None) is not None
+        for attribute in ("structuredContent", "structured_content", "isError")
+    )
+
+
 def _block_text(block: Any) -> str:
     """Best-effort text for a single content block."""
     if isinstance(block, str):
@@ -97,12 +129,15 @@ def render_result(
         parts = [_block_text(item) for item in result]
         text = " ".join(p for p in parts if p)
     else:
-        content = getattr(result, "content", None)
-        if isinstance(content, (list, tuple)) and not isinstance(result, type):
+        if _is_mcp_result(result):
             # A result object wrapping content blocks — an MCP CallToolResult
             # proxied from an upstream server, say — renders as its blocks,
             # falling back to its structured content when those yield nothing.
-            parts = [_block_text(item) for item in content]
+            # Identity is required: a plain record whose ``content`` happens to
+            # hold a list is not one, and unwrapping it dropped its siblings.
+            # The ``.text`` path below stays duck-typed, as this helper's
+            # callers rely on.
+            parts = [_block_text(item) for item in getattr(result, "content")]
             text = " ".join(p for p in parts if p) or _structured_text(result)
         else:
             # Single content-block-like object (has .text) or an arbitrary value.

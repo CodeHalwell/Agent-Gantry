@@ -208,7 +208,16 @@ Three behaviour changes to know about before upgrading:
   `content` now needs MCP identity too: a record whose `content` field
   happens to hold a list, `Article(title=..., content=[...], score=...)`,
   was treated as a proxied `CallToolResult`, emitting the content items and
-  dropping every sibling field.
+  dropping every sibling field. The guard lives in `render_result` itself,
+  so the Agent Framework trace middleware — which calls it directly — is
+  covered too; that renderer's `.text` duck-typing is unchanged, since its
+  callers rely on it.
+- **A pooled MCP client that cannot be closed is retained, not dropped.**
+  `MCPClientPool.remove_server()` scheduled a close on the running loop and
+  removed the client regardless, so calling it from a thread without one
+  stranded a live HTTP connection or stdio subprocess that `close_all()`
+  could never reach. It now keeps the client for the next async shutdown,
+  as `MCPRegistry` already did.
 - **An MCP server that lists no tools has its tools removed, and says so.**
   An empty `tools/list` is the server's complete catalogue, so it prunes
   like any other answer — this deliberately does *not* mirror

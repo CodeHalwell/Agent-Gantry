@@ -185,6 +185,27 @@ class TestRenderResult:
     def test_fallback_str(self) -> None:
         assert render_result(123) == "123"
 
+    def test_a_record_with_a_content_list_is_not_unwrapped(self) -> None:
+        """Duck-typing on ``content`` swept up ordinary records: an
+        ``Article(title=..., content=["body"], score=...)`` rendered as
+        ``body``, dropping every sibling field. ``_render_tool_output``
+        gained this guard first; the Agent Framework trace middleware calls
+        ``render_result`` directly and bypassed it."""
+        from dataclasses import dataclass
+
+        @dataclass
+        class Article:
+            title: str
+            content: list[str]
+            score: float
+
+        rendered = render_result(Article("Headline", ["body"], 0.9))
+        assert "Headline" in rendered and "0.9" in rendered, rendered
+
+        # ...while a real result wrapping content blocks still unwraps
+        blocks = type("R", (), {"content": [{"type": "text", "text": "from the block"}]})()
+        assert render_result(blocks) == "from the block"
+
 
 class TestLoggingHygiene:
     def test_package_attaches_null_handler(self) -> None:
@@ -310,8 +331,23 @@ def test_a_structured_only_result_is_not_rendered_as_empty() -> None:
 
     assert render_result(_WithText()) == "from the block"
 
-    # ...and one with neither is still the empty string
+    # ...and one with neither is still the empty string. ``isError`` is what
+    # identifies it: every real ``CallToolResult`` carries it (the SDK
+    # declares it with a ``False`` default), which is how an empty-content
+    # result is told apart from a plain object that happens to have a
+    # ``content`` attribute.
     class _Empty:
-        content: list[object] = []
+        def __init__(self) -> None:
+            self.content: list[object] = []
+            self.isError = False
 
     assert render_result(_Empty()) == ""
+
+    # A plain record with an empty ``content`` and none of the protocol's
+    # fields is not a result, and keeps its own representation rather than
+    # being rendered as no output at all.
+    class _NotAResult:
+        content: list[object] = []
+        title = "Headline"
+
+    assert "_NotAResult" in render_result(_NotAResult())

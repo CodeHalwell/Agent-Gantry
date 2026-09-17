@@ -45,7 +45,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool
 
 from agent_gantry.schema.query import ConversationContext, ToolQuery
-from agent_gantry.utils.render import render_result
+from agent_gantry.utils.render import _is_mcp_result, render_result
 
 if TYPE_CHECKING:
     from agent_gantry import AgentGantry
@@ -109,40 +109,6 @@ def _is_text_block(item: Any) -> bool:
         return item.get("type") == "text" and "text" in item
     return getattr(item, "type", None) == "text" and isinstance(
         getattr(item, "text", None), str
-    )
-
-
-def _is_content_block(item: Any) -> bool:
-    """Whether ``item`` carries the protocol's content-block discriminator.
-
-    Looser than :func:`_is_text_block`: a result's blocks may be image or
-    resource blocks as well as text, and every one of them declares ``type``.
-    """
-    if isinstance(item, dict):
-        return isinstance(item.get("type"), str)
-    return isinstance(getattr(item, "type", None), str)
-
-
-def _is_mcp_result(value: Any) -> bool:
-    """Whether ``value`` is an MCP ``CallToolResult`` rather than a record that
-    merely has a ``content`` field.
-
-    Duck-typing on ``content`` alone swept up ordinary records —
-    ``Article(title="...", content=["body"], score=0.9)`` is the obvious case
-    — and rendering those through :func:`render_result` emitted the content
-    items and dropped the title and the score: the defect
-    :func:`_is_text_block` exists to stop, one field over.
-    """
-    content = getattr(value, "content", None)
-    if not isinstance(content, (list, tuple)):
-        return False
-    if content and all(_is_content_block(item) for item in content):
-        return True
-    # A result answering entirely through ``structuredContent`` leaves
-    # ``content`` empty, so its own protocol fields have to identify it.
-    return any(
-        getattr(value, attribute, None) is not None
-        for attribute in ("structuredContent", "structured_content", "isError")
     )
 
 
