@@ -968,10 +968,17 @@ def test_a_record_object_with_a_text_attribute_is_not_a_content_block() -> None:
     rendered = _render_tool_output([SearchHit("match", 0.9), SearchHit("other", 0.4)])
     assert "0.9" in rendered and "0.4" in rendered, rendered
 
-    # a real content block still renders as its text
+    # ...and the same record returned on its own, which never reaches the list
+    # branch above: it fell through to the duck-typed renderer and came back as
+    # ``match``, with the score dropped.
+    bare = _render_tool_output(SearchHit("match", 0.9))
+    assert "0.9" in bare, bare
+
+    # a real content block still renders as its text, wrapped or not
     import mcp.types as types
 
     assert _render_tool_output([types.TextContent(type="text", text="hello")]) == "hello"
+    assert _render_tool_output(types.TextContent(type="text", text="hello")) == "hello"
 
 
 def test_a_record_that_merely_has_a_text_field_is_not_a_content_block() -> None:

@@ -554,3 +554,50 @@ async def test_a_client_dropped_outside_a_loop_is_still_closed_at_shutdown() -> 
     await registry.close_all_clients()
     assert client.closed is True
     assert registry._retired == []
+
+
+@pytest.mark.asyncio
+async def test_an_empty_discovery_does_not_wipe_a_servers_tools() -> None:
+    """``tools/list`` answering with nothing is ambiguous — a server still
+    populating its catalogue reads the same as one that withdrew every tool —
+    and the destructive reading dropped them all from the registry *and* the
+    vector store, costing a full re-embed to recover."""
+
+    class _FakeClient:
+        def __init__(self, config: MCPServerConfig) -> None:
+            self.config = config
+
+    config = MCPServerConfig(name="files", command=["fake"], namespace="mcp")
+    client = _FakeClient(config)
+    tools = [
+        ToolDefinition(
+            name=f"read_file_{i}",
+            namespace="mcp",
+            description=f"Read a file from the MCP server, variant {i}.",
+            parameters_schema={"type": "object", "properties": {}},
+            metadata={"mcp_server": "files"},
+        )
+        for i in range(3)
+    ]
+
+    gantry = AgentGantry()
+    try:
+        gantry._register_mcp_tool_handlers(client, tools, resolve_client=lambda: client)
+        gantry._pending_tools.extend(tools)
+        await gantry.sync()
+        names = sorted(t.name for t in gantry._registry.list_tools("mcp"))
+        assert names == ["read_file_0", "read_file_1", "read_file_2"]
+
+        await gantry._remove_stale_mcp_tools(client, [])
+        assert sorted(t.name for t in gantry._registry.list_tools("mcp")) == names
+        stored = await gantry._vector_store.list_all(namespace="mcp")
+        assert sorted(t.name for t in stored) == names
+
+        # ...while a server that still lists *some* tools prunes the rest, as
+        # it always did.
+        await gantry._remove_stale_mcp_tools(client, tools[:1])
+        assert [t.name for t in gantry._registry.list_tools("mcp")] == ["read_file_0"]
+        stored = await gantry._vector_store.list_all(namespace="mcp")
+        assert [t.name for t in stored] == ["read_file_0"]
+    finally:
+        await gantry.close()

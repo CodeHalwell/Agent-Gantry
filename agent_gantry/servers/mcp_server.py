@@ -131,7 +131,17 @@ def _render_tool_output(value: Any) -> str:
             return json.dumps(value, ensure_ascii=False, default=str)
         except (TypeError, ValueError):
             return render_result(value)
-    return render_result(value)
+    if value is None or isinstance(value, bytes):
+        return render_result(value)
+    if _is_text_block(value) or isinstance(getattr(value, "content", None), (list, tuple)):
+        # A genuine content block, or a result object wrapping them — an MCP
+        # ``CallToolResult`` proxied from an upstream server.
+        return render_result(value)
+    # An ordinary record. ``render_result`` duck-types on ``.text``, so a tool
+    # returning a single ``SearchHit(text="match", score=0.9)`` rendered as
+    # ``match`` with every other field dropped — the defect ``_is_text_block``
+    # was added for, in the shape that never reaches the list branch above.
+    return str(value)
 
 
 # Matches the cap the client applies to names coming the other way

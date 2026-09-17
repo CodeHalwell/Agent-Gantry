@@ -1481,6 +1481,9 @@ class AgentGantry:
         A stale tool's handler closes over the replaced client, so executing
         it would reconnect using the old server command — retrieval could
         silently dispatch work to the obsolete process.
+
+        A server that lists *no* tools is left alone; see the comment on the
+        guard below.
         """
         server_name = client.config.name
         namespace = client.config.namespace
@@ -1494,6 +1497,25 @@ class AgentGantry:
             )
 
         stale = [t for t in self._registry.list_tools(namespace) if is_stale(t)]
+        if not fresh and stale:
+            # A successful but empty ``tools/list`` is not a mandate to delete
+            # everything. A server still populating its catalogue — plugin
+            # discovery, a remote fetch, a reconnect — can answer before its
+            # tools are registered, which is why the protocol has
+            # ``notifications/tools/list_changed`` at all. Taking that answer
+            # at face value dropped every one of the server's tools from the
+            # registry *and* the vector store, costing a full re-embed to
+            # recover and leaving retrieval blind until someone noticed.
+            # Keeping a genuinely withdrawn tool costs an "unknown tool" from
+            # the server if it is ever called: cheaper, and visible.
+            # ``prune_stale_tools`` refuses an empty keep set for the same
+            # reason; this is that guard on the MCP-scoped path.
+            logger.warning(
+                f"MCP server '{namespace}.{server_name}' listed no tools; keeping the "
+                f"{len(stale)} already registered rather than removing them. "
+                "Re-discover once the server lists its tools."
+            )
+            return
         for t in stale:
             self._registry.delete_tool(t.name, t.namespace)
             self._tool_handlers.pop(f"{t.namespace}.{t.name}", None)

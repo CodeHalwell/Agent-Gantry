@@ -200,7 +200,19 @@ Three behaviour changes to know about before upgrading:
   like `SearchHit(text=..., score=...)` — was rendered as content blocks:
   the text was emitted and every other field silently dropped. Dicts and
   objects alike must now carry the protocol's own `type` discriminator,
-  which real content blocks declare anyway.
+  which real content blocks declare anyway — and so must a record returned
+  on its own rather than in a list, which never reached the list branch and
+  fell through to the same duck-typed rendering.
+- **An MCP server that lists no tools no longer wipes the ones it already
+  registered.** A successful but empty `tools/list` was read as "every tool
+  was withdrawn" and removed them from the registry *and* the vector store,
+  costing a full re-embed to recover and leaving retrieval blind meanwhile.
+  A server still populating its catalogue — plugin discovery, a remote
+  fetch, a reconnect — answers exactly the same way, which is why the
+  protocol carries `notifications/tools/list_changed` at all. The empty
+  answer is now logged and ignored; a response listing *some* tools still
+  prunes the rest, as before. This is `prune_stale_tools`' empty-keep-set
+  guard applied to its MCP-scoped sibling.
 - **A `SKILL.md` whose frontmatter is never closed is rejected.** Opening
   `---` without a closing delimiter fell through to the "no frontmatter"
   path, so the whole document became the body: the name silently became the
