@@ -385,20 +385,30 @@ class RateLimiter:
         if tool_name:
             key = self._get_key(tool_name, namespace)
 
-            # ⚡ Bolt: Fast reverse iteration to count calls in last minute instead of filtering whole history
-            calls_last_minute = 0
+            # One reverse pass for both windows. History is ordered
+            # oldest-first, so the first entry older than the hour ends it.
+            #
+            # ``calls_last_hour`` used to be the raw length of the deque, which
+            # is only pruned when a call is *admitted*: a key that went quiet
+            # kept reporting the calls it made hours ago, while
+            # ``calls_last_minute`` — measured against the clock — correctly
+            # read 0. The two stats disagreed for as long as the key stayed
+            # idle.
             now = time.time()
-            for t in reversed(self._call_history.get(key, [])):
-                if now - t < 60:
-                    calls_last_minute += 1
-                else:
+            minute_ago, hour_ago = now - 60, now - 3600
+            calls_last_minute = calls_last_hour = 0
+            for call_time in reversed(self._call_history.get(key, ())):
+                if call_time < hour_ago:
                     break
+                calls_last_hour += 1
+                if call_time >= minute_ago:
+                    calls_last_minute += 1
 
             return {
                 "key": key,
                 "concurrent": self._concurrent.get(key, 0),
                 "calls_last_minute": calls_last_minute,
-                "calls_last_hour": len(self._call_history.get(key, [])),
+                "calls_last_hour": calls_last_hour,
                 # ``.get`` bypasses the defaultdict factory, so a bucket never
                 # drawn on reports its full capacity rather than 0.
                 "tokens": self._tokens.get(key, self._bucket_capacity())

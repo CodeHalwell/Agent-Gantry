@@ -226,6 +226,12 @@ Three behaviour changes to know about before upgrading:
   'coroutine' has no len()", leaking the coroutine. Both now dispose of it
   (closing a coroutine, cancelling a future or task) and say which shape to
   pass instead.
+- **An idle key's `calls_last_hour` no longer counts calls it made hours
+  ago.** The statistic was the raw length of the history deque, which is
+  pruned only when a call is *admitted*, so a key that went quiet kept
+  reporting stale usage — while `calls_last_minute`, measured against the
+  clock, correctly read 0. Both windows are now counted in one pass against
+  the current time, for all three strategies.
 
 #### Stores and embedders
 

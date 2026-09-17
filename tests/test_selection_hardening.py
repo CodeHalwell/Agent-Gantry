@@ -11,8 +11,10 @@ accounting.
 from __future__ import annotations
 
 import asyncio
+import time
 from enum import Enum
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -452,10 +454,14 @@ async def test_a_registration_made_during_a_sync_is_not_discarded() -> None:
     # the tool the sync could not have known about is still owed
     assert [tool.name for tool in gantry._pending_tools] == ["third_tool"]
 
-    names = {
-        t["function"]["name"] for t in await gantry.retrieve_tools("multiply a number", limit=10)
-    }
-    assert names == {"first_tool", "second_tool", "third_tool"}
+    # ...and a retrieval settles the debt on its own, via ensure_synced. The
+    # assertion is on the store rather than on what comes back: which tools
+    # clear a query's score threshold depends on the embedder installed, and
+    # what this test is about is that the late tool gets embedded at all.
+    await gantry.retrieve_tools("multiply a number", limit=10)
+    stored = {tool.name for tool in await gantry._vector_store.list_all(limit=100)}
+    assert stored == {"first_tool", "second_tool", "third_tool"}
+    assert gantry._pending_tools == []
 
 
 @pytest.mark.asyncio
@@ -502,6 +508,40 @@ async def test_a_tool_re_registered_during_a_sync_keeps_the_newer_definition() -
 # --------------------------------------------------------------------------- #
 # Rate limiter
 # --------------------------------------------------------------------------- #
+
+
+class TestRateLimitStats:
+    @pytest.mark.asyncio
+    async def test_an_idle_key_does_not_report_calls_it_made_hours_ago(self) -> None:
+        """``calls_last_hour`` was the raw length of the history deque, which
+        is pruned only when a call is *admitted*. A key that went quiet kept
+        reporting hours-old calls, while ``calls_last_minute`` -- measured
+        against the clock -- correctly read 0, so the two disagreed."""
+        for strategy in ("token_bucket", "fixed_window", "sliding_window"):
+            limiter = RateLimiter(
+                RateLimitConfig(
+                    strategy=strategy,
+                    max_calls_per_minute=1000,
+                    max_calls_per_hour=10000,
+                    max_concurrent=1000,
+                )
+            )
+            now = time.time()
+            for _ in range(3):
+                await limiter.acquire("tool", "ns")
+            assert limiter.get_stats("tool", "ns")["calls_last_hour"] == 3, strategy
+
+            # two hours later, with no further calls
+            with patch("time.time", return_value=now + 7200):
+                idle = limiter.get_stats("tool", "ns")
+            assert idle["calls_last_hour"] == 0, strategy
+            assert idle["calls_last_minute"] == 0, strategy
+
+            # ...and a window that has only partly elapsed counts what remains
+            with patch("time.time", return_value=now + 120):
+                partly = limiter.get_stats("tool", "ns")
+            assert partly["calls_last_hour"] == 3, strategy
+            assert partly["calls_last_minute"] == 0, strategy
 
 
 class TestTokenBucket:
