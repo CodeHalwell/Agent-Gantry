@@ -256,6 +256,31 @@ class TestQueryStrategies:
         mixed = fallback_chain(empty, last_user_text)
         assert await mixed([{"role": "user", "content": "hi"}]) == "hi"
 
+    @pytest.mark.asyncio
+    async def test_an_async_callable_object_is_recognised(self) -> None:
+        """``inspect.iscoroutinefunction`` is false for an object with
+        ``async def __call__`` — the shape a stateful generator takes — so the
+        sync path was built and ``.strip()`` was called on its coroutine."""
+
+        class AsyncGenerator:
+            def __init__(self, text: str) -> None:
+                self._text = text
+
+            async def __call__(self, _messages: Any) -> str:
+                return self._text
+
+        chained = fallback_chain(AsyncGenerator("from object"), last_user_text)
+        assert asyncio.iscoroutinefunction(chained)
+        assert await chained([{"role": "user", "content": "hi"}]) == "from object"
+
+        # an empty one still falls through to the sync generator after it
+        falls_through = fallback_chain(AsyncGenerator(""), last_user_text)
+        assert await falls_through([{"role": "user", "content": "hi"}]) == "hi"
+
+        # truncated() shares the detection
+        capped = truncated(AsyncGenerator("abcdefgh"), max_chars=4)
+        assert await capped([{"role": "user", "content": "hi"}]) == "efgh"
+
 
 # --------------------------------------------------------------------------- #
 # Out-of-range selection knobs

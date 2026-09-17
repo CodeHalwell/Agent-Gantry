@@ -1303,7 +1303,11 @@ class AgentGantry:
 
         # Wire execution handlers so discovered tools run through
         # gantry.execute() (security, retries, telemetry) via the MCP client.
-        self._register_mcp_tool_handlers(client, tools)
+        # Resolved from the client map at call time, so a later re-add with a
+        # different command or url is picked up by handlers made here.
+        self._register_mcp_tool_handlers(
+            client, tools, resolve_client=lambda: self._direct_mcp_clients.get(client_key)
+        )
         await self._remove_stale_mcp_tools(client, tools)
 
         # Add all tools first, then sync once — per-tool add_tool() would
@@ -1315,11 +1319,26 @@ class AgentGantry:
 
         return len(tools)
 
-    def _register_mcp_tool_handlers(self, client: Any, tools: list[ToolDefinition]) -> None:
+    def _register_mcp_tool_handlers(
+        self,
+        client: Any,
+        tools: list[ToolDefinition],
+        resolve_client: Callable[[], Any] | None = None,
+    ) -> None:
         """Register execution handlers that proxy tool calls to an MCP client.
 
         Without a handler, MCP-discovered tools are retrievable but fail with
         "No handler found" when executed through the engine.
+
+        Args:
+            client: The client discovery ran against, used when no resolver is
+                given (and as the fallback when a resolver returns nothing).
+            tools: The discovered tool definitions to wire up.
+            resolve_client: Looks the *current* client up at call time. A
+                handler that closed over the client forever went on executing
+                against a replaced endpoint: re-registering a server with a
+                new url drops the registry's cached client, but the handlers
+                already created held the old one directly.
         """
 
         def make_handler(tool: ToolDefinition) -> Callable[..., Any]:
@@ -1329,7 +1348,8 @@ class AgentGantry:
             server_tool_name = str(tool.metadata.get("mcp_tool_name") or tool.name)
 
             async def mcp_tool_handler(**arguments: Any) -> Any:
-                return await client.call_tool(server_tool_name, arguments)
+                current = resolve_client() if resolve_client is not None else None
+                return await (current or client).call_tool(server_tool_name, arguments)
 
             mcp_tool_handler.__name__ = f"mcp_{tool.name}"
             return mcp_tool_handler
@@ -1592,8 +1612,16 @@ class AgentGantry:
             # Discover tools from the server with timeout protection
             tools = await asyncio.wait_for(client.list_tools(), timeout=timeout)
 
-            # Wire execution handlers (tools execute via the MCP client)
-            self._register_mcp_tool_handlers(client, tools)
+            # Wire execution handlers (tools execute via the MCP client).
+            # Resolved through the registry on every call so a server
+            # re-registered with a different endpoint is honoured by tools
+            # discovered before the change.
+            registry = self._mcp_registry
+
+            def _current_client() -> Any:
+                return registry.get_client(server_name, namespace) if registry else None
+
+            self._register_mcp_tool_handlers(client, tools, resolve_client=_current_client)
             await self._remove_stale_mcp_tools(client, tools)
 
             # Add all tools first, then sync once (avoids per-tool full syncs)

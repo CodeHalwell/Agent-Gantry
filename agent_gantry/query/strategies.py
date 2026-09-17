@@ -10,6 +10,7 @@ messages used by other frameworks.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Iterable
 from typing import Any
 
@@ -565,6 +566,20 @@ def keyword_focused(
     return " ".join(kept)
 
 
+def _is_async_callable(candidate: Any) -> bool:
+    """Whether calling ``candidate`` returns an awaitable.
+
+    ``inspect.iscoroutinefunction`` only recognises ``async def`` functions, so
+    a generator supplied as an *object* with ``async def __call__`` — the shape
+    a stateful custom generator naturally takes — was treated as synchronous
+    and its coroutine was then ``.strip()``ed instead of awaited.
+    """
+    if inspect.iscoroutinefunction(candidate):
+        return True
+    call = getattr(candidate, "__call__", None)  # noqa: B004 - the bound method itself
+    return call is not None and inspect.iscoroutinefunction(call)
+
+
 def truncated(
     generator: Callable[..., Any],
     *,
@@ -601,9 +616,7 @@ def truncated(
             return text[-max_chars:]
         return text[:max_chars]
 
-    import inspect
-
-    if inspect.iscoroutinefunction(generator):
+    if _is_async_callable(generator):
 
         async def _async_wrapper(messages: Iterable[Any] | None) -> str:
             value = await generator(messages)
@@ -641,9 +654,7 @@ def fallback_chain(
         A callable with the same call shape as the inputs — ``async`` when
         any of them is.
     """
-    import inspect
-
-    if any(inspect.iscoroutinefunction(gen) for gen in generators):
+    if any(_is_async_callable(gen) for gen in generators):
 
         async def _async_composed(messages: Iterable[Any] | None) -> str:
             for gen in generators:
@@ -661,6 +672,15 @@ def fallback_chain(
     def _composed(messages: Iterable[Any] | None) -> str:
         for gen in generators:
             text = gen(messages)
+            if inspect.isawaitable(text):
+                # Only reachable for a generator whose awaitable-ness could not
+                # be seen statically; closing it keeps the "never awaited"
+                # warning (and the leak) away.
+                text.close()  # type: ignore[attr-defined]
+                raise TypeError(
+                    "fallback_chain received an async generator it could not detect; "
+                    "pass an 'async def' function or an object with 'async def __call__'."
+                )
             if text and text.strip():
                 return text
         return ""

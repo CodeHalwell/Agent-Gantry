@@ -387,6 +387,84 @@ async def test_re_registering_a_server_drops_the_cached_client() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_reconfigured_server_is_honoured_by_existing_handlers() -> None:
+    """Dropping the registry's cached client is not enough: a handler created
+    by an earlier discovery closed over the old client directly, so an
+    already-discovered tool kept executing against the replaced endpoint."""
+    gantry = AgentGantry()
+    gantry.register_mcp_server(
+        name="search", url="https://old.example/mcp", description="The original search endpoint"
+    )
+    used: list[str] = []
+
+    def arm(client: Any) -> None:
+        client.list_tools = AsyncMock(
+            return_value=[
+                ToolDefinition(
+                    name="probe",
+                    description="A probe tool used to report its endpoint",
+                    parameters_schema={"type": "object", "properties": {}},
+                    metadata={"mcp_server": "search"},
+                )
+            ]
+        )
+
+        async def call_tool(name: str, arguments: dict[str, Any], _c: Any = client) -> str:
+            used.append(_c.config.url)
+            return "ok"
+
+        client.call_tool = call_tool
+
+    arm(gantry._mcp_registry.get_client("search"))
+    await gantry.discover_tools_from_server("search")
+    await gantry.execute(ToolCall(tool_name="probe", arguments={}))
+
+    gantry.register_mcp_server(
+        name="search", url="https://new.example/mcp", description="The replacement search endpoint"
+    )
+    arm(gantry._mcp_registry.get_client("search"))
+    result = await gantry.execute(ToolCall(tool_name="probe", arguments={}))
+
+    assert result.status == ExecutionStatus.SUCCESS, result.error
+    assert used == ["https://old.example/mcp", "https://new.example/mcp"]
+    await gantry.close()
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_tool_named_like_a_meta_tool_stays_reachable() -> None:
+    """``_call_tool`` dispatches the meta names before consulting ``_exposed``,
+    so a pinned tool claiming one was advertised and then unreachable."""
+    gantry = AgentGantry()
+
+    async def handler(**kwargs: Any) -> str:
+        return "pinned!"
+
+    await gantry.add_tool(
+        ToolDefinition(
+            name="execute_tool",
+            description="A user tool whose name clashes with the meta-tool",
+            parameters_schema={"type": "object", "properties": {}},
+        ),
+        handler=handler,
+    )
+    server = create_mcp_server(gantry, mode="hybrid", expose=["execute_tool"])
+
+    wire_names = [tool.name for tool in await server._list_tools()]
+    assert len(wire_names) == len(set(wire_names)), wire_names
+    assert "find_relevant_tools" in wire_names and "execute_tool" in wire_names
+    assert server._exposed["default_execute_tool"].name == "execute_tool"
+
+    # the pinned tool is callable under its renamed wire name...
+    assert await server._call_tool("default_execute_tool", {}) == [
+        {"type": "text", "text": "pinned!"}
+    ]
+    # ...and the meta-tool still owns its own name
+    with pytest.raises(ValueError, match="requires a 'tool_name'"):
+        await server._call_tool("execute_tool", {})
+    await gantry.close()
+
+
+@pytest.mark.asyncio
 async def test_handlers_dispatch_with_the_servers_own_name() -> None:
     """The normalised name is Gantry's; the server must be called by its own."""
     gantry = AgentGantry()

@@ -297,7 +297,15 @@ class MCPServer:
             return self._direct_tools(await self.gantry.list_tools())
         tools = self._get_meta_tools()
         if self.mode == "hybrid":
-            tools.extend(self._direct_tools(await self._pinned_tools()))
+            # The meta-tools are already on the wire and ``_call_tool``
+            # dispatches their names before consulting ``_exposed``, so a
+            # pinned tool of the same name would be advertised and then be
+            # unreachable. Reserving them renames it instead.
+            tools.extend(
+                self._direct_tools(
+                    await self._pinned_tools(), reserved={tool.name for tool in tools}
+                )
+            )
         return tools
 
     async def _pinned_tools(self) -> list[ToolDefinition]:
@@ -331,8 +339,15 @@ class MCPServer:
             )
         return pinned
 
-    def _direct_tools(self, definitions: Sequence[ToolDefinition]) -> list[Tool]:
-        """Convert definitions to wire tools, folding namespaces into names on collision."""
+    def _direct_tools(
+        self, definitions: Sequence[ToolDefinition], *, reserved: set[str] | None = None
+    ) -> list[Tool]:
+        """Convert definitions to wire tools, folding namespaces into names on collision.
+
+        ``reserved`` names are already spoken for on the wire (the meta-tools
+        in hybrid mode), so a definition claiming one is renamed rather than
+        shadowed.
+        """
         counts: dict[str, int] = {}
         for tool in definitions:
             counts[tool.name] = counts.get(tool.name, 0) + 1
@@ -343,12 +358,19 @@ class MCPServer:
         # keeps ``a_x``, and the loser takes a numeric suffix. Without this,
         # the second assignment simply overwrote the first in ``_exposed`` and
         # a client calling one tool reached the other.
-        taken = {tool.name for tool in definitions}
+        taken = {tool.name for tool in definitions} | (reserved or set())
         self._exposed = {}
         wire_tools: list[Tool] = []
         for tool in definitions:
             wire_name = tool.name
-            if counts[tool.name] > 1:
+            if reserved and wire_name in reserved:
+                # Claims a meta-tool's name: rename unconditionally, since the
+                # meta handler would otherwise win every dispatch.
+                wire_name = _unique_wire_name(
+                    _WIRE_NAME_INVALID.sub("_", f"{tool.namespace}_{tool.name}"), taken
+                )
+                taken.add(wire_name)
+            elif counts[tool.name] > 1:
                 # Same bare name in several namespaces: qualify all of them
                 # so the mapping is deterministic whatever the listing order.
                 wire_name = _unique_wire_name(

@@ -172,6 +172,19 @@ Three behaviour changes to know about before upgrading:
   entries, with the documented warning. Collecting a module at a time reset
   the facade's per-call duplicate detection, so the later module silently
   overwrote the earlier tool's definition and handler.
+- **A tool discovered before a server was reconfigured follows it.** Dropping
+  the registry's cached client was not enough: handlers created by an earlier
+  discovery closed over the old client, so an already-discovered tool went on
+  executing against the replaced endpoint. They resolve the current client at
+  call time now.
+- **A pinned tool named like a meta-tool stays reachable.** In `hybrid` mode a
+  tool called `execute_tool` or `find_relevant_tools` was advertised under the
+  meta-tool's own name, and dispatch reached the meta handler every time. The
+  meta names are reserved, so such a tool is renamed instead.
+- **`fallback_chain` and `truncated` recognise an async *callable object*.**
+  `inspect.iscoroutinefunction` is false for an object with `async def
+  __call__` — the shape a stateful custom generator takes — so the sync path
+  was built and `.strip()` called on the coroutine it returned.
 
 #### Stores and embedders
 
