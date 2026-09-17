@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable, Iterable
-from typing import Any
+from typing import Any, NoReturn
 
 
 def _blocks_text(value: Any) -> str:
@@ -580,6 +580,30 @@ def _is_async_callable(candidate: Any) -> bool:
     return call is not None and inspect.iscoroutinefunction(call)
 
 
+def _reject_awaitable(value: Any, *, caller: str) -> NoReturn:
+    """Dispose of an awaitable a *synchronous* wrapper cannot await, then explain.
+
+    Only reachable for a callable whose awaitable-ness could not be seen
+    statically — a plain ``def`` that hands back ``some_async_fn(...)``, say.
+    A sync wrapper has no way to await one: there is no loop to block on, and
+    returning it unchanged just moves the crash downstream, onto whatever
+    calls ``.strip()`` or ``len()`` on a coroutine. So it is disposed of here
+    (a coroutine closed, a future or task cancelled) to keep the "never
+    awaited" warning away, and the caller is told which shape to pass.
+    """
+    close = getattr(value, "close", None)  # coroutines
+    cancel = getattr(value, "cancel", None)  # futures, tasks
+    if callable(close):
+        close()
+    elif callable(cancel):
+        cancel()
+    raise TypeError(
+        f"{caller} received a callable that returns an awaitable but is not itself "
+        "async, so the synchronous path has no way to await it. Pass an 'async def' "
+        "function, or an object with 'async def __call__'."
+    )
+
+
 def truncated(
     generator: Callable[..., Any],
     *,
@@ -626,6 +650,10 @@ def truncated(
 
     def _wrapper(messages: Iterable[Any] | None) -> str:
         value = generator(messages)
+        if inspect.isawaitable(value):
+            # Unguarded, this reached ``_cap`` and failed with "object of type
+            # 'coroutine' has no len()", leaking the coroutine on the way.
+            _reject_awaitable(value, caller="truncated")
         return _cap(value or "")
 
     return _wrapper
@@ -673,14 +701,10 @@ def fallback_chain(
         for gen in generators:
             text = gen(messages)
             if inspect.isawaitable(text):
-                # Only reachable for a generator whose awaitable-ness could not
-                # be seen statically; closing it keeps the "never awaited"
-                # warning (and the leak) away.
-                text.close()  # type: ignore[attr-defined]
-                raise TypeError(
-                    "fallback_chain received an async generator it could not detect; "
-                    "pass an 'async def' function or an object with 'async def __call__'."
-                )
+                # ``.close()`` alone was wrong here: a future has no such
+                # method, so this raised AttributeError instead of the
+                # explanation, and left the future dangling either way.
+                _reject_awaitable(text, caller="fallback_chain")
             if text and text.strip():
                 return text
         return ""

@@ -281,6 +281,40 @@ class TestQueryStrategies:
         capped = truncated(AsyncGenerator("abcdefgh"), max_chars=4)
         assert await capped([{"role": "user", "content": "hi"}]) == "efgh"
 
+    @pytest.mark.asyncio
+    async def test_an_awaitable_returned_by_a_sync_callable_is_rejected_cleanly(
+        self, recwarn: pytest.WarningsRecorder
+    ) -> None:
+        """A plain ``def`` that hands back ``some_async_fn(...)`` cannot be
+        spotted statically, so the *sync* path is built and there is no way to
+        await what it returns. ``fallback_chain`` closed the value, which a
+        future has no method for -- so it raised ``AttributeError`` rather than
+        the explanation, and left the future dangling. ``truncated`` had no
+        guard at all: the value reached ``_cap`` and failed with "object of
+        type 'coroutine' has no len()", leaking the coroutine.
+        """
+
+        async def real_async(_messages: Any) -> str:
+            return "async result"
+
+        def returns_coroutine(messages: Any) -> Any:
+            return real_async(messages)
+
+        def returns_future(_messages: Any) -> Any:
+            future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+            future.set_result("future result")
+            return future
+
+        messages = [{"role": "user", "content": "hi"}]
+        for generator in (returns_coroutine, returns_future):
+            with pytest.raises(TypeError, match="no way to await it"):
+                fallback_chain(generator, last_user_text)(messages)
+            with pytest.raises(TypeError, match="no way to await it"):
+                truncated(generator, max_chars=4)(messages)
+
+        # ...and nothing is left un-awaited behind the error
+        assert not [w for w in recwarn if "never awaited" in str(w.message)]
+
 
 # --------------------------------------------------------------------------- #
 # Out-of-range selection knobs

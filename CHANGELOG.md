@@ -216,6 +216,16 @@ Three behaviour changes to know about before upgrading:
   later module silently overwrote the earlier tool's definition and handler
   instead of warning and keeping the first. Specs may now carry their own
   `:attr`, so one call covers them all.
+- **A sync callable that returns an awaitable fails with an explanation
+  instead of a puzzle.** A plain `def` handing back `some_async_fn(...)`
+  cannot be spotted statically, so the synchronous path is built and there
+  is no way to await what it returns. `fallback_chain` closed the value — a
+  method futures do not have, so it raised `AttributeError` rather than the
+  explanation, and left the future dangling either way; `truncated` had no
+  guard at all, so the value reached the cap and failed with "object of type
+  'coroutine' has no len()", leaking the coroutine. Both now dispose of it
+  (closing a coroutine, cancelling a future or task) and say which shape to
+  pass instead.
 
 #### Stores and embedders
 
