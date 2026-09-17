@@ -158,7 +158,9 @@ Three behaviour changes to know about before upgrading:
   status line printed `/sse` for every SSE run whatever `--path` said, so a
   user following it connected to a route the server was not serving.
   `--path` now defaults to unset and each transport's own default stands in
-  for it.
+  for it, and the printed path is normalised the way both transports route
+  (`"/" + path.strip("/")`) rather than interpolated raw — `--path custom`
+  advertised the unusable `http://127.0.0.1:8000custom`.
 - **A session manager that fails to start is reported once, not forever.**
   `StreamableHTTPSessionManager.run()` may be entered only once per
   instance, and entering it is what spends it — succeeding is not the point.

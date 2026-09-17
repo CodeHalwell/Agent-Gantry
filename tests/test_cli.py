@@ -215,6 +215,12 @@ def test_serve_mcp_advertises_the_endpoint_it_will_serve(
     assert "http://127.0.0.1:8000/custom" in _serve("--transport", "http", "--path", "/custom")
     assert "http://127.0.0.1:8000/mcp" in _serve("--transport", "http")
 
+    # Both transports route on ``"/" + path.strip("/")``, so a path given
+    # without a leading slash must print the route the server will serve --
+    # the raw argument gave the unusable ``http://127.0.0.1:8000custom``.
+    assert "http://127.0.0.1:8000/custom" in _serve("--transport", "http", "--path", "custom")
+    assert "http://127.0.0.1:8000/custom" in _serve("--transport", "sse", "--path", "custom/")
+
 
 def test_the_sync_builder_refuses_to_persist(tmp_path: Path) -> None:
     """``build_gantry`` initialises inside an ``asyncio.run`` it then closes,

@@ -435,9 +435,12 @@ async def _run_serve_mcp(gantry: AgentGantry, args: argparse.Namespace) -> int:
     if transport != "stdio":
         # Each transport has its own default endpoint, and ``--path`` now
         # reaches SSE too, so advertise what the server will actually serve
-        # rather than always printing the SSE default.
+        # rather than always printing the SSE default. Both transports route
+        # on ``"/" + path.strip("/")``, so normalise the same way: printing
+        # the raw argument turned ``--path custom`` into the unusable
+        # ``http://127.0.0.1:8000custom``.
         default_path = "/mcp" if transport == "streamable_http" else "/sse"
-        endpoint = default_path if args.path is None else args.path
+        endpoint = default_path if args.path is None else "/" + args.path.strip("/")
         print(
             f"Serving MCP ({args.mode}) over {args.transport} at "
             f"http://{args.host}:{args.port}{endpoint}",
