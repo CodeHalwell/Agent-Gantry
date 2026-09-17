@@ -11,6 +11,7 @@ and executes through it.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import socket
 from collections.abc import AsyncIterator
@@ -103,16 +104,19 @@ class _Served:
         raise RuntimeError("uvicorn did not start")
 
     async def __aexit__(self, *exc: Any) -> None:
+        # ``force_exit`` too: a graceful shutdown waits for open connections,
+        # which on a loaded runner is indistinguishable from a hang. The
+        # assertions have already run by here.
         self._uvicorn.should_exit = True
+        self._uvicorn.force_exit = True
         assert self._task is not None
         try:
-            # Generous: a loaded CI runner takes far longer than a laptop to
-            # drain, and a cancelled server task is a confusing way to learn
-            # the test was merely slow.
             await asyncio.wait_for(self._task, 60)
         finally:
             if not self._task.done():
                 self._task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                    await asyncio.wait_for(self._task, 10)
 
 
 @pytest.fixture(params=["streamable_http", "sse"])
@@ -602,20 +606,31 @@ async def test_the_app_serves_when_mounted_into_another_service() -> None:
             )
             assert _text(result) == "5"
         finally:
-            await client.close()
+            # Bounded: an unbounded await here turns a hang into a test that
+            # never finishes, which says far less than a named failure.
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(client.close(), 30)
 
         # Nothing runs a mounted app's lifespan, so the manager it started on
         # the first request is ours to release — the handle the method
-        # publishes for exactly this. Without it the lingering task group can
-        # hold uvicorn's graceful shutdown open on a slow runner.
-        await mounted.state.mcp_session.stop()
+        # publishes for exactly this.
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(mounted.state.mcp_session.stop(), 30)
     finally:
+        # ``force_exit`` as well as ``should_exit``: graceful shutdown waits
+        # for open connections, and this test has already asserted everything
+        # it cares about, so waiting on a drain only converts a loaded runner
+        # into a timeout. Seen on macOS 3.13 and Windows 3.13, both on jobs
+        # running 2-3x their usual wall clock.
         server.should_exit = True
+        server.force_exit = True
         try:
             await asyncio.wait_for(task, 60)
         finally:
             if not task.done():
                 task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                    await asyncio.wait_for(task, 10)
             await gantry.close()
 
 
