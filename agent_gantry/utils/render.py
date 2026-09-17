@@ -70,14 +70,19 @@ def _is_mcp_result(value: Any) -> bool:
         # — ``False is not None`` — and dropped the score. An attribute name
         # is not protocol identity when the payload itself can be checked.
         return all(_is_content_block(item) for item in content)
-    # Empty content: a result answering entirely through ``structuredContent``
-    # is indistinguishable from a plain object by payload alone, so here its
-    # own protocol fields are all there is to go on. Both spellings of each:
-    # mcp 2.x renamed ``isError`` to ``is_error`` and ``structuredContent`` to
-    # ``structured_content``, and reading only the 1.x names sent a 2.x error
-    # result to ``str()``. Nothing is dropped by a false positive here, since
-    # there are no content items to emit in the first place.
-    names = ("structuredContent", "structured_content", "isError", "is_error")
+    # Empty content, so the payload cannot vouch for itself. A false positive
+    # here is *not* free, as an earlier round of this guard assumed: rendering
+    # a non-result as a result yields ``""``, which discards the whole record
+    # rather than just its content items.
+    #
+    # ``isError`` is therefore not accepted as identity — it is an ordinary
+    # field name, and on empty content it distinguishes nothing. What remains
+    # is real identity: an instance of an SDK type, or a structured payload to
+    # render. Both spellings, since mcp 2.x renamed ``structuredContent`` to
+    # ``structured_content``.
+    if type(value).__module__.split(".")[0] == "mcp":
+        return True
+    names = ("structuredContent", "structured_content")
     if isinstance(value, dict):
         return any(value.get(name) is not None for name in names)
     return any(getattr(value, name, None) is not None for name in names)

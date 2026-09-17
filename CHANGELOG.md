@@ -268,6 +268,12 @@ Three behaviour changes to know about before upgrading:
   stranded a live HTTP connection or stdio subprocess that `close_all()`
   could never reach. It now keeps the client for the next async shutdown,
   as `MCPRegistry` already did.
+- **An empty-content result is known by identity, not by a field name.**
+  `isError` was accepted as the identifying field, so
+  `Result(content=[], is_error=False, score=0.9)` rendered as `""` —
+  discarding every field, not merely the content items it did not have. With
+  no payload to judge, what identifies a result is being an SDK instance or
+  carrying structured content to render.
 - **Only the protocol's own content-block types count as content.**
   Accepting any string `type` was too weak to be identity — typed lists are
   ordinary outside MCP — so a record like `{"title": ..., "score": ...,

@@ -206,26 +206,40 @@ class TestRenderResult:
         blocks = type("R", (), {"content": [{"type": "text", "text": "from the block"}]})()
         assert render_result(blocks) == "from the block"
 
-    def test_an_mcp_2x_result_is_recognised_by_its_snake_case_fields(self) -> None:
-        """mcp 2.x renamed ``isError``/``structuredContent`` to ``is_error``/
-        ``structured_content``. Reading only the 1.x spellings sent a 2.x
-        error result -- which reports through the flag with empty content --
-        to ``str()``, so the client got a repr instead of a rendered error.
-        ``mcp_client`` already reads both."""
+    def test_an_empty_content_result_is_known_by_identity_not_field_names(self) -> None:
+        """With no content to judge, what identifies a result is being one.
+
+        ``isError`` was once accepted as the identifying field. It is an
+        ordinary name that says nothing on empty content, and taking it as
+        identity made ``Result(content=[], is_error=False, score=0.9)`` render
+        as ``""`` -- discarding every field, not merely the content items it
+        did not have. So: an SDK instance, or a structured payload to render.
+        ``structured_content`` is mcp 2.x's spelling of ``structuredContent``
+        and qualifies on its own, being a payload rather than a name.
+        """
         from agent_gantry.utils.render import _is_mcp_result
 
-        class _V2Error:
-            def __init__(self) -> None:
-                self.content: list[object] = []
-                self.is_error = True
+        types_module = pytest.importorskip("mcp.types")
 
+        # identity: any SDK result, whichever spelling its fields use
+        assert _is_mcp_result(types_module.CallToolResult(content=[]))
+
+        # payload: the 2.x structured spelling, on a plain object
         class _V2Structured:
             def __init__(self) -> None:
                 self.content: list[object] = []
                 self.structured_content = {"rows": [1]}
 
-        assert _is_mcp_result(_V2Error())
         assert _is_mcp_result(_V2Structured())
+
+        # ...and a status field alone is not identity
+        class _Record:
+            def __init__(self) -> None:
+                self.content: list[object] = []
+                self.is_error = False
+                self.score = 0.9
+
+        assert not _is_mcp_result(_Record())
 
     def test_a_status_field_does_not_vouch_for_unrecognised_content(self) -> None:
         """Consulting the protocol's marker fields alongside a *non-empty*
@@ -444,23 +458,22 @@ def test_a_structured_only_result_is_not_rendered_as_empty() -> None:
 
     assert render_result(_WithText()) == "from the block"
 
-    # ...and one with neither is still the empty string. ``isError`` is what
-    # identifies it: every real ``CallToolResult`` carries it (the SDK
-    # declares it with a ``False`` default), which is how an empty-content
-    # result is told apart from a plain object that happens to have a
-    # ``content`` attribute.
-    class _Empty:
+    # ...and a real result with neither is still the empty string. Tested with
+    # the SDK's own type rather than a stand-in: ``isError`` was once taken as
+    # the identifying field, but it is an ordinary name that says nothing on
+    # empty content, so what identifies such a result is being one.
+    types_module = pytest.importorskip("mcp.types")
+    assert render_result(types_module.CallToolResult(content=[])) == ""
+
+    # A plain record with an empty ``content`` is not a result, whatever
+    # status fields it carries, and keeps its own representation rather than
+    # being rendered as no output at all -- which would discard every field it
+    # has, not merely the content items it does not.
+    class _NotAResult:
         def __init__(self) -> None:
             self.content: list[object] = []
-            self.isError = False
+            self.is_error = False
+            self.score = 0.9
 
-    assert render_result(_Empty()) == ""
-
-    # A plain record with an empty ``content`` and none of the protocol's
-    # fields is not a result, and keeps its own representation rather than
-    # being rendered as no output at all.
-    class _NotAResult:
-        content: list[object] = []
-        title = "Headline"
-
-    assert "_NotAResult" in render_result(_NotAResult())
+    rendered = render_result(_NotAResult())
+    assert "_NotAResult" in rendered, rendered
