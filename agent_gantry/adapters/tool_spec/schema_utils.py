@@ -481,6 +481,14 @@ def _collect_open_maps(
                 # the property is simply omitted.
                 out.append(child_path)
                 continue
+            if subschema is True:
+                # The all-permissive boolean schema: valid JSON Schema, and
+                # exactly as typeless as ``{}``. Only ``False`` was special
+                # cased, so this passed the scan untouched and the tool went
+                # out ``strict: true`` with a property the provider has no
+                # type to read.
+                out.append(child_path)
+                continue
             if isinstance(subschema, dict) and not _declares_type(subschema, root):
                 # A property that declares no type at all — ``{"description":
                 # "anything"}``, an empty ``{}``, or an enum spanning several

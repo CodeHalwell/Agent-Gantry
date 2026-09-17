@@ -268,6 +268,23 @@ Three behaviour changes to know about before upgrading:
   stranded a live HTTP connection or stdio subprocess that `close_all()`
   could never reach. It now keeps the client for the next async shutdown,
   as `MCPRegistry` already did.
+- **An all-permissive `true` property schema is not strict-safe.** Only
+  `false` was special cased, so `{"value": true}` passed the scan and the
+  tool went out `strict: true` with a property the provider has no type to
+  read. OpenAI's own validator refuses it — `TypeError: Expected True to be a
+  dictionary` — so it takes down every request the tool appears in; losing
+  strict mode is the cheaper failure.
+- **`burst_size=0` is rejected rather than silently disabling a key.** It was
+  promoted to the per-minute rate by an `or`; honouring it literally is no
+  better, because the refill clamps to `min(capacity, ...)` so a zero-capacity
+  bucket can never accumulate the token a call needs. The schema now requires
+  at least 1.
+- **A session manager that stops running is reported to the next request.**
+  `manager.run()` can leave its context after signalling ready — raising late,
+  or returning early — and `_task` stayed set either way, so later requests
+  sailed past the started-check and handed themselves to a manager that was no
+  longer running: an ASGI call that returns without completing the response,
+  which a client sees as a dead connection or a hang.
 - **A long server-side tool name no longer aborts a whole server's
   discovery.** The short-description branch padded with the server's *raw*
   name, which is uncapped, so a tool with a long name and a short description

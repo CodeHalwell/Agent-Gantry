@@ -220,6 +220,10 @@ class _StreamableHTTPApp:
         self._task: asyncio.Task[None] | None = None
         self._close: asyncio.Event | None = None
         self._closed = False
+        # What the runner died of, when it died on its own rather than being
+        # stopped. Reported to the next request instead of that request
+        # meeting a manager that is no longer running.
+        self._runner_failure: BaseException | None = None
 
     async def start(self) -> None:
         """Enter ``manager.run()`` once, and wait until it is serving."""
@@ -231,12 +235,26 @@ class _StreamableHTTPApp:
                 "This MCP app has been stopped and cannot serve again; "
                 "build a new one with streamable_http_app()."
             )
-        if self._task is not None:
-            return
+        task = self._task
+        if task is not None:
+            if not task.done():
+                return
+            # The runner finished without ``stop()`` being called, so
+            # ``manager.run()`` left its context: it either raised after
+            # signalling ready or returned early. ``_task`` stayed set either
+            # way, so every later request sailed past this guard and handed
+            # itself to a session manager that is no longer running — an ASGI
+            # call that returns without completing the response, which the
+            # client sees as a dead connection or a hang.
+            self._closed = True
+            raise RuntimeError(
+                "The MCP Streamable HTTP session manager stopped running; "
+                "build a new app with streamable_http_app()."
+            ) from self._runner_failure
         if self._lock is None:
             self._lock = asyncio.Lock()
         async with self._lock:
-            if self._task is not None:
+            if self._task is not None and not self._task.done():
                 return
             ready = asyncio.Event()
             close = asyncio.Event()
@@ -254,6 +272,7 @@ class _StreamableHTTPApp:
                         await close.wait()
                 except BaseException as exc:  # noqa: BLE001 - re-raised below
                     failure.append(exc)
+                    self._runner_failure = exc
                     ready.set()
 
             task = asyncio.create_task(runner())

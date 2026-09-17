@@ -115,9 +115,11 @@ class RateLimiter:
         The one definition of "a full bucket", shared by the initial fill, the
         refill ceiling and :meth:`reset` so they cannot disagree again.
         """
-        # ``is None``, not falsiness: ``burst_size=0`` is a real setting
-        # ("admit nothing until a token refills") and ``or`` silently promoted
-        # it to the per-minute rate.
+        # ``is None``, not falsiness: ``or`` silently promoted any falsy
+        # burst to the per-minute rate. ``0`` itself is now rejected by the
+        # schema — a zero-capacity bucket clamps every refill to ``min(0, ...)``
+        # and so can never accumulate the token a call needs, blocking the key
+        # permanently instead of limiting it.
         if self._config.burst_size is None:
             return float(self._config.max_calls_per_minute)
         return float(self._config.burst_size)

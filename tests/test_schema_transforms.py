@@ -893,16 +893,25 @@ def test_a_property_forbidden_by_its_schema_has_no_strict_representation():
         }
     ) == ["m.d"]
 
-    # ``true`` is satisfiable by everything, so it needs no fallback — and
-    # neither do the schemas strict mode already handles. Widening the
-    # unsupported set costs every one of them their strict guarantees.
+    # ``true`` is satisfiable by everything *as JSON Schema*, which is why
+    # this once asserted it needed no fallback. That reasoned from the spec
+    # rather than from what the provider accepts: OpenAI's own strict
+    # validator refuses it outright —
+    #
+    #   >>> from openai.lib._pydantic import _ensure_strict_json_schema
+    #   >>> _ensure_strict_json_schema({"properties": {"ok": True}}, ...)
+    #   TypeError: Expected True to be a dictionary; path=('properties', 'ok')
+    #
+    # so publishing it ``strict: true`` takes down every request the tool
+    # appears in. Losing strict mode is the cheaper failure, which is the
+    # trade the rest of this function already makes.
     assert unsupported_strict_paths(
         {
             "type": "object",
             "properties": {"ok": True, "name": {"type": "string"}},
             "required": ["name"],
         }
-    ) == []
+    ) == ["ok"]
     assert unsupported_strict_paths(
         {
             "type": "object",

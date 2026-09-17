@@ -96,7 +96,16 @@ class RateLimitConfig(BaseModel):
     max_calls_per_minute: int = 60
     max_calls_per_hour: int = 1000
     max_concurrent: int = 10
-    burst_size: int | None = Field(default=None, description="Burst size for token bucket strategy")
+    burst_size: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Token bucket capacity; defaults to max_calls_per_minute. Must be at "
+            "least 1: a zero-capacity bucket can never accumulate the token a "
+            "call needs, so it would block the key permanently rather than "
+            "limiting it."
+        ),
+    )
     per_tool: bool = Field(default=True, description="Rate limit per tool (vs. globally)")
     per_namespace: bool = Field(default=False, description="Rate limit per namespace")
 

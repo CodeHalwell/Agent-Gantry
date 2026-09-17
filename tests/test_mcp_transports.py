@@ -818,6 +818,43 @@ async def test_a_cancelled_startup_does_not_leave_the_manager_running() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_runner_that_dies_is_reported_to_the_next_request() -> None:
+    """``manager.run()`` can leave its context after signalling ready — raising
+    late, or simply returning. ``_task`` stayed set either way, so every later
+    request sailed past the guard and handed itself to a manager that was no
+    longer running: an ASGI call that returns without completing the response,
+    which the client sees as a dead connection or a hang."""
+
+    class _ExitsEarlyManager:
+        """Enters, signals ready, then leaves on its own."""
+
+        def run(self) -> Any:
+            class _Ctx:
+                async def __aenter__(self) -> Any:
+                    return None
+
+                async def __aexit__(self, *exc: Any) -> None:
+                    return None
+
+            return _Ctx()
+
+        async def handle_request(self, *args: Any) -> None:  # pragma: no cover
+            raise AssertionError("must not be reached once the runner is gone")
+
+    app = _StreamableHTTPApp(_ExitsEarlyManager())
+    # The runner parks on ``close.wait()``, so force the "it finished" state
+    # the way a late failure or an early return would.
+    await app.start()
+    assert app._task is not None
+    app._task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await app._task
+
+    with pytest.raises(RuntimeError, match="stopped running|cannot serve again"):
+        await app.start()
+
+
+@pytest.mark.asyncio
 async def test_a_failed_startup_marks_the_manager_spent() -> None:
     """Entering ``run()`` is what spends a one-shot manager — succeeding is not
     the point. A manager that raised on the way in recorded nothing, so the

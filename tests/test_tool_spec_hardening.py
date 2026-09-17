@@ -1180,3 +1180,20 @@ def test_the_legacy_definitions_keyword_is_closed_too() -> None:
     _close_objects_in_place(schema)
     assert schema["definitions"]["Address"]["additionalProperties"] is False
     assert schema["additionalProperties"] is False
+
+
+def test_an_all_permissive_boolean_property_is_not_strict_safe() -> None:
+    """``{"value": true}`` is valid JSON Schema and exactly as typeless as
+    ``{}``. Only ``false`` was special cased, so this passed the scan and the
+    tool went out ``strict: true`` with a property the provider has no type to
+    read."""
+    from agent_gantry.adapters.tool_spec.schema_utils import unsupported_strict_paths
+
+    assert unsupported_strict_paths({"type": "object", "properties": {"value": True}}) == [
+        "value"
+    ]
+    # ``false`` was already caught, and a typed property is still fine
+    assert unsupported_strict_paths({"type": "object", "properties": {"v": False}}) == ["v"]
+    assert unsupported_strict_paths(
+        {"type": "object", "properties": {"v": {"type": "string"}}}
+    ) == []
