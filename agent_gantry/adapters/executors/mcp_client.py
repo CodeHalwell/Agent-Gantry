@@ -59,7 +59,12 @@ def sanitize_tool_name(raw: str) -> str:
 
 def _dedupe_names(names: list[str]) -> list[str]:
     """Suffix repeated names (``get_user``, ``get_user_2``, ...) so a server whose
-    ``getUser`` and ``get_user`` both normalise to one identifier keeps both."""
+    ``getUser`` and ``get_user`` both normalise to one identifier keeps both.
+
+    The suffix is applied *within* the name-length cap rather than beyond it:
+    two names that agree on their first 128 characters would otherwise produce
+    an over-long identifier that ``ToolDefinition`` forbids.
+    """
     seen: dict[str, int] = {}
     out: list[str] = []
     taken = set(names)
@@ -69,13 +74,19 @@ def _dedupe_names(names: list[str]) -> list[str]:
         if count == 0:
             out.append(name)
             continue
-        candidate = f"{name}_{count + 1}"
+        candidate = _suffixed(name, count + 1)
         while candidate in taken:
             count += 1
-            candidate = f"{name}_{count + 1}"
+            candidate = _suffixed(name, count + 1)
         taken.add(candidate)
         out.append(candidate)
     return out
+
+
+def _suffixed(name: str, index: int) -> str:
+    """``name`` with ``_<index>`` appended, trimmed to the name-length cap."""
+    suffix = f"_{index}"
+    return f"{name[: _NAME_MAX_LENGTH - len(suffix)].rstrip('_')}{suffix}"
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -421,16 +432,24 @@ class MCPClient:
         except Exception:
             await self._invalidate_session()
             raise
+        raw_names = [str(tool.name) for tool in result.tools]
         tools = [self._convert_tool(tool) for tool in result.tools]
         # Two raw names can normalise to one identifier (``getUser`` and
         # ``get_user``); keep both rather than letting the second overwrite
-        # the first in the registry. The original name in metadata is what
-        # gets sent back to the server, so the suffix is purely local.
+        # the first in the registry. The suffix is purely local, so the
+        # server's own name has to travel with the renamed tool — a tool
+        # whose raw name needed no normalising still loses it to the suffix,
+        # and dispatching on ``get_user_2`` would call a tool the server does
+        # not have.
         unique = _dedupe_names([tool.name for tool in tools])
-        return [
-            tool if tool.name == name else tool.model_copy(update={"name": name})
-            for tool, name in zip(tools, unique)
-        ]
+        out: list[ToolDefinition] = []
+        for tool, name, raw in zip(tools, unique, raw_names):
+            if tool.name == name:
+                out.append(tool)
+                continue
+            metadata = {**tool.metadata, "mcp_tool_name": raw}
+            out.append(tool.model_copy(update={"name": name, "metadata": metadata}))
+        return out
 
     def _convert_tool(self, mcp_tool: Any) -> ToolDefinition:
         """

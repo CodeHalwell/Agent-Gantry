@@ -286,6 +286,11 @@ class TestQueryBounds:
         with pytest.raises(ValueError, match="GantryToolset.select"):
             await GantryToolset(weather_gantry).select("weather", limit=60)
 
+        # ``limit or default`` used to turn an explicit 0 into the default and
+        # slip it past the check entirely.
+        with pytest.raises(ValueError, match="limit"):
+            await GantryToolset(weather_gantry).select("weather", limit=0)
+
     @pytest.mark.asyncio
     async def test_valid_bounds_still_work(self, weather_gantry: AgentGantry) -> None:
         assert ToolRefresher(weather_gantry, limit=50) is not None

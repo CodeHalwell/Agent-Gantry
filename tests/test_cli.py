@@ -76,6 +76,34 @@ def test_sync_dry_run_reports_new_and_stale_tools(capsys: pytest.CaptureFixture[
     assert "No stale tools to prune." in out
 
 
+def test_prune_defers_to_the_config_when_the_flag_is_absent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--prune`` defaulted to False rather than None, so it overrode
+    ``sync()``'s "None means use the config" and a config asking for pruning
+    was ignored — in the dry-run report as well as the real sync."""
+    config = tmp_path / "gantry.yaml"
+    config.write_text("prune_on_sync: true\n", encoding="utf-8")
+    assert (
+        main(
+            [
+                "sync",
+                "--dry-run",
+                "--config",
+                str(config),
+                "--module",
+                "tests.test_modules.module_a",
+            ]
+        )
+        == 0
+    )
+    assert "prune" in capsys.readouterr().out.lower()
+
+    # ...and without the config setting, a dry run says nothing about pruning
+    assert main(["sync", "--dry-run", "--module", "tests.test_modules.module_a"]) == 0
+    assert "prune" not in capsys.readouterr().out.lower()
+
+
 def test_serve_mcp_plumbs_transport_options() -> None:
     with patch.object(AgentGantry, "serve_mcp", new_callable=AsyncMock) as serve:
         assert (

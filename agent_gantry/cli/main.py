@@ -200,7 +200,9 @@ def _build_parser() -> argparse.ArgumentParser:
     sync_parser.add_argument(
         "--prune",
         action="store_true",
-        help="Also delete stored tools that are no longer registered.",
+        default=None,
+        help="Also delete stored tools that are no longer registered "
+        "(default: the config's prune_on_sync).",
     )
 
     serve_parser = subparsers.add_parser(
@@ -402,7 +404,7 @@ async def _run_sync_command(
     *,
     dry_run: bool,
     force: bool,
-    prune: bool = False,
+    prune: bool | None = None,
 ) -> int:
     """Run the ``gantry sync`` subcommand.
 
@@ -416,6 +418,10 @@ async def _run_sync_command(
     await gantry._ensure_initialized()
     sync_mgr = gantry._sync_manager
     all_tools = gantry.export_tools()
+    # ``--prune`` absent means "whatever the config says", so a config with
+    # ``prune_on_sync: true`` is honoured and the dry run reports what the
+    # real sync would actually do.
+    effective_prune = gantry._config.prune_on_sync if prune is None else prune
     to_sync = await sync_mgr.detect_changes(all_tools, force=force)
     if dry_run:
         if not to_sync:
@@ -427,7 +433,7 @@ async def _run_sync_command(
                 tool_id = f"{tool.namespace}.{tool.name}"
                 reason = "new" if tool_id not in stored else "fingerprint changed"
                 print(f"  - {tool_id}: {reason}")
-        if prune:
+        if effective_prune:
             wanted = {f"{t.namespace}.{t.name}" for t in all_tools}
             stale = [
                 f"{t.namespace}.{t.name}"
@@ -440,7 +446,7 @@ async def _run_sync_command(
                 print("No stale tools to prune.")
         return 0
 
-    count = await gantry.sync(force=force, prune=prune)
+    count = await gantry.sync(force=force, prune=effective_prune)
     print(f"Synced {count} tool(s).")
     return 0
 

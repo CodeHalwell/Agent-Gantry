@@ -94,6 +94,15 @@ class MCPManager:
             transport=transport,  # type: ignore[arg-type]
         )
 
+        # Re-registering under the same name may point somewhere else now
+        # (a new url, headers or command). A client cached from the previous
+        # definition would keep discovering and executing against the old
+        # endpoint, so it is dropped here; the next lookup builds one from
+        # the definition just registered.
+        previous = self._registry.get_server(name, namespace)
+        if previous is not None and previous.to_config() != server_def.to_config():
+            self._registry.forget_client(name, namespace)
+
         self._registry.register_server(server_def)
         self._registry.add_pending(server_def)
         logger.info(f"Registered MCP server: {server_def.qualified_name}")

@@ -296,11 +296,94 @@ async def test_discovery_survives_unconventional_tools() -> None:
     assert by_name["echo"].description.startswith("Tool echo")
     assert len(by_name["get_weather"].description) <= 2000
     assert by_name["get_weather"].extended_description is not None
-    assert {
-        by_name["get_user"].metadata.get("mcp_tool_name"),
-        by_name["get_user_2"].metadata.get("mcp_tool_name"),
-    } == {"getUser", None}
+    # Both keep the name their server answers to: ``getUser`` normalised into
+    # ``get_user``, and the raw ``get_user`` was pushed to ``get_user_2`` by
+    # the collision, so it needs the alias just as much.
+    assert by_name["get_user"].metadata["mcp_tool_name"] == "getUser"
+    assert by_name["get_user_2"].metadata["mcp_tool_name"] == "get_user"
     assert all(t.namespace == "wild" for t in tools)
+
+
+@pytest.mark.asyncio
+async def test_a_deduplicated_name_keeps_the_servers_own_name() -> None:
+    """``getUser`` normalises to ``get_user``; a raw ``get_user`` beside it is
+    renamed ``get_user_2``. The rename is local, so the *server's* name has to
+    travel with it — dispatching on ``get_user_2`` would call a tool the
+    server does not have."""
+    client = MCPClient(MCPServerConfig(name="wild", command=["srv"], namespace="wild"))
+    session = AsyncMock()
+    session.list_tools = AsyncMock(
+        return_value=MagicMock(
+            tools=[
+                _mock_tool("getUser", "Fetch one user record by id"),
+                _mock_tool("get_user", "Fetch one user record by id (snake)"),
+            ]
+        )
+    )
+    client._ensure_session = AsyncMock(return_value=session)  # type: ignore[method-assign]
+
+    tools = await client.list_tools()
+    assert [tool.name for tool in tools] == ["get_user", "get_user_2"]
+    assert [MCPClient.server_tool_name(tool) for tool in tools] == ["getUser", "get_user"]
+
+
+@pytest.mark.asyncio
+async def test_a_dedup_suffix_stays_within_the_name_limit() -> None:
+    """``ToolDefinition`` caps a name at 128 characters, and ``model_copy``
+    does not revalidate, so the suffix has to fit inside the cap rather than
+    extend past it."""
+    client = MCPClient(MCPServerConfig(name="wild", command=["srv"], namespace="wild"))
+    session = AsyncMock()
+    session.list_tools = AsyncMock(
+        return_value=MagicMock(
+            tools=[
+                _mock_tool("a" * 130, "A very long tool name"),
+                _mock_tool("a" * 128 + "bb", "Another name sharing its prefix"),
+            ]
+        )
+    )
+    client._ensure_session = AsyncMock(return_value=session)  # type: ignore[method-assign]
+
+    tools = await client.list_tools()
+    assert len({tool.name for tool in tools}) == 2
+    for tool in tools:
+        assert len(tool.name) <= 128
+        # still a valid definition, which model_copy would not have checked
+        ToolDefinition.model_validate(tool.model_dump())
+
+
+def test_a_definition_rejects_a_non_http_url() -> None:
+    """``register_mcp_server`` builds a definition directly, so without this
+    an ``ftp://`` endpoint registered and retrieved fine and only failed much
+    later, when a client was finally built from it."""
+    with pytest.raises(ValueError, match="http"):
+        MCPServerDefinition(
+            name="bad", description="A server with an unusable url scheme", url="ftp://x.example/y"
+        )
+
+
+@pytest.mark.asyncio
+async def test_re_registering_a_server_drops_the_cached_client() -> None:
+    """A client cached from the previous definition would keep discovering and
+    executing against the old endpoint."""
+    gantry = AgentGantry()
+    gantry.register_mcp_server(
+        name="search", url="https://old.example/mcp", description="The original search endpoint"
+    )
+    assert gantry._mcp_registry.get_client("search").config.url == "https://old.example/mcp"
+
+    gantry.register_mcp_server(
+        name="search", url="https://new.example/mcp", description="The replacement search endpoint"
+    )
+    assert gantry._mcp_registry.get_client("search").config.url == "https://new.example/mcp"
+
+    # An unchanged re-registration keeps the existing client
+    before = gantry._mcp_registry.get_client("search")
+    gantry.register_mcp_server(
+        name="search", url="https://new.example/mcp", description="The replacement search endpoint"
+    )
+    assert gantry._mcp_registry.get_client("search") is before
+    await gantry.close()
 
 
 @pytest.mark.asyncio

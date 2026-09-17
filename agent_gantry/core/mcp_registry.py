@@ -102,6 +102,24 @@ class MCPRegistry:
 
         return client
 
+    def forget_client(self, name: str, namespace: str = "default") -> bool:
+        """Drop a cached client, closing its connection, keeping the server.
+
+        Used when a server is re-registered with a different endpoint: the
+        cached client still points at the old one.
+
+        Returns:
+            True if a cached client was dropped.
+        """
+        client = self._clients.pop(f"{namespace}.{name}", None)
+        if client is None:
+            return False
+        from agent_gantry.adapters.executors.mcp_client import _schedule_client_close
+
+        _schedule_client_close(client)
+        logger.debug(f"Dropped cached MCP client for: {namespace}.{name}")
+        return True
+
     def list_servers(self, namespace: str | None = None) -> list[MCPServerDefinition]:
         """
         List all registered servers.

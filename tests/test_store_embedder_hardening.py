@@ -130,6 +130,18 @@ async def test_lancedb_add_without_upsert_skips_existing(lancedb_store: Any) -> 
 
 
 @pytest.mark.asyncio
+async def test_lancedb_add_without_upsert_dedupes_within_one_batch(lancedb_store: Any) -> None:
+    """Checking only the table let an id repeated *inside* the batch through."""
+    await lancedb_store.initialize()
+    tool = _tool("dup_tool")
+    inserted = await lancedb_store.add_tools(
+        [tool, tool], [[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]], upsert=False
+    )
+    assert inserted == 1
+    assert await lancedb_store.count() == 1
+
+
+@pytest.mark.asyncio
 async def test_lancedb_delete_reports_a_miss(lancedb_store: Any) -> None:
     """``delete`` returned True for a name that was never there, so
     ``AgentGantry.delete_tool`` reported success for an unknown tool."""
@@ -154,6 +166,20 @@ async def test_lancedb_tag_filter_sees_past_the_overfetch_window(lancedb_store: 
         query_vector=[1.0, 0.0, 0.0, 0.0], limit=3, filters={"tags": ["special"]}
     )
     assert [tool.name for tool, _score in results] == ["tagged_tool"]
+
+    # An untagged search is unaffected by the widening, and a namespace filter
+    # still composes with the tag filter.
+    plain = await lancedb_store.search(query_vector=[1.0, 0.0, 0.0, 0.0], limit=3)
+    assert len(plain) == 3
+    await lancedb_store.add_tools(
+        [_tool("scoped_tool", namespace="other", tags=["special"])], [[0.0, 1.0, 0.0, 0.0]]
+    )
+    scoped = await lancedb_store.search(
+        query_vector=[1.0, 0.0, 0.0, 0.0],
+        limit=5,
+        filters={"tags": ["special"], "namespace": ["other"]},
+    )
+    assert [tool.name for tool, _score in scoped] == ["scoped_tool"]
 
 
 # --------------------------------------------------------------------------- #

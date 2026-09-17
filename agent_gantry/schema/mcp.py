@@ -128,6 +128,17 @@ class MCPServerDefinition(BaseModel):
             raise ValueError(
                 f"MCP server '{self.name}': transport '{self.transport}' requires 'url'."
             )
+        if has_url:
+            # The same check ``MCPServerConfig`` applies. Without it,
+            # ``register_mcp_server`` (which builds a definition directly)
+            # accepted an ``ftp://`` endpoint and only failed much later, when
+            # a client was finally constructed from it — registration and
+            # retrieval having appeared to succeed in between.
+            scheme = self.url.split("://", 1)[0].lower() if "://" in self.url else ""
+            if scheme not in ("http", "https"):
+                raise ValueError(
+                    f"MCP server '{self.name}': 'url' must be an http(s) URL, got {self.url!r}."
+                )
         return self
 
     @property

@@ -294,8 +294,18 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
             existing = await asyncio.to_thread(
                 table.search().select(["id"]).where(id_predicate).limit(None).to_list
             )
-            existing_ids = {row["id"] for row in existing}
-            records = [record for record in records if record["id"] not in existing_ids]
+            seen_ids = {row["id"] for row in existing}
+            # Each accepted record joins the set, so an id repeated *within*
+            # this batch is skipped too — the in-memory store's behaviour,
+            # which checked only the table and let a duplicated batch entry
+            # through.
+            deduped = []
+            for record in records:
+                if record["id"] in seen_ids:
+                    continue
+                seen_ids.add(record["id"])
+                deduped.append(record)
+            records = deduped
             if not records:
                 return 0
 
@@ -450,62 +460,78 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
             required_tags = set(filters["tags"])
 
         # Over-fetch for post-filtering. Tags live inside tool_json (there is
-        # no tags column to push into the predicate), so a tag filter must see
-        # every candidate: a fixed 2x window silently dropped tagged tools
-        # ranked below it. Fetch every row the namespace predicate admits
-        # instead; ANN queries need a concrete limit, hence the count.
+        # no tags column to push into the predicate), so a tag filter can only
+        # be applied after deserialising a candidate — and a fixed 2x window
+        # silently dropped tagged tools ranked below it. The window is widened
+        # instead, doubling until enough tagged rows are found or the
+        # namespace is exhausted, so the common case (tagged tools ranked near
+        # the top) still costs one query rather than a full scan.
         fetch_limit = limit * 2
+        max_rows = fetch_limit
         if required_tags:
-            candidate_rows = int(
-                await asyncio.to_thread(self._tools_table.count_rows, where_clause)
-            )
-            fetch_limit = max(fetch_limit, candidate_rows)
+            max_rows = int(await asyncio.to_thread(self._tools_table.count_rows, where_clause))
+            fetch_limit = min(max(limit * 4, 1), max_rows)
 
-        search = self._tools_table.search(query_vector).select(columns).limit(fetch_limit)
-        if where_clause:
-            search = search.where(where_clause)
+        def _build_search(size: int) -> Any:
+            search = self._tools_table.search(query_vector).select(columns).limit(size)
+            return search.where(where_clause) if where_clause else search
 
-        # Execute search off the event loop — LanceDB queries are synchronous
-        # Rust/file I/O and would otherwise block every concurrent coroutine.
-        results = await asyncio.to_thread(search.to_list)
+        def _collect(rows: list[Any]) -> list[Any]:
+            """Score, deserialise and tag-filter a page of rows, up to ``limit``."""
+            collected: list[Any] = []
+            for row in rows:
+                # LanceDB returns distance (lower is better), convert to similarity
+                distance = row.get("_distance", 0)
+                # Convert L2 distance to cosine similarity approximation
+                score = max(0.0, 1.0 - (distance / 2.0))
 
-        # Process results
+                if score_threshold is not None and score < score_threshold:
+                    continue
+
+                # Deserialize tool (validate once; tags are checked on the model)
+                tool_json_str = row.get("tool_json")
+                if not tool_json_str:
+                    logger.warning("Skipping row with missing tool_json field")
+                    continue
+
+                try:
+                    tool = ToolDefinition.model_validate_json(tool_json_str)
+                except Exception as e:
+                    logger.warning(f"Failed to deserialize tool: {e}")
+                    continue
+
+                # Filter by tags if specified
+                if required_tags and required_tags.isdisjoint(tool.tags):
+                    continue
+
+                if include_embeddings:
+                    vector = row.get("vector")
+                    embedding = list(vector) if vector is not None else []
+                    collected.append((tool, score, embedding))
+                else:
+                    collected.append((tool, score))
+
+                if len(collected) >= limit:
+                    break
+            return collected
+
         output: list[Any] = []
-
-        for row in results:
-            # LanceDB returns distance (lower is better), convert to similarity
-            distance = row.get("_distance", 0)
-            # Convert L2 distance to cosine similarity approximation
-            score = max(0.0, 1.0 - (distance / 2.0))
-
-            if score_threshold is not None and score < score_threshold:
-                continue
-
-            # Deserialize tool (validate once; tags are checked on the model)
-            tool_json_str = row.get("tool_json")
-            if not tool_json_str:
-                logger.warning("Skipping row with missing tool_json field")
-                continue
-
-            try:
-                tool = ToolDefinition.model_validate_json(tool_json_str)
-            except Exception as e:
-                logger.warning(f"Failed to deserialize tool: {e}")
-                continue
-
-            # Filter by tags if specified
-            if required_tags and required_tags.isdisjoint(tool.tags):
-                continue
-
-            if include_embeddings:
-                vector = row.get("vector")
-                embedding = list(vector) if vector is not None else []
-                output.append((tool, score, embedding))
-            else:
-                output.append((tool, score))
-
-            if len(output) >= limit:
+        while True:
+            # Execute search off the event loop — LanceDB queries are
+            # synchronous Rust/file I/O and would otherwise block every
+            # concurrent coroutine.
+            rows = await asyncio.to_thread(_build_search(fetch_limit).to_list)
+            output = _collect(rows)
+            if (
+                len(output) >= limit
+                or not required_tags
+                or fetch_limit >= max_rows
+                or len(rows) < fetch_limit
+            ):
+                # Enough matches, no tag filter to widen for, or the namespace
+                # is exhausted — either way a wider window cannot add anything.
                 break
+            fetch_limit = min(fetch_limit * 2, max_rows)
 
         return output
 

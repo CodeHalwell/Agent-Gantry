@@ -1173,7 +1173,9 @@ class GantryToolset:
         because the semantic slice already filled the budget, and pins never
         silently shrink the semantic slice a caller asked for.
         """
-        limit = limit or self._default_limit
+        # ``or`` would turn an explicit ``limit=0`` into the default and slip
+        # it past the bounds check below, unlike the decorator and refresher.
+        limit = self._default_limit if limit is None else limit
         # Checked first, and as a clear error: the ``ToolQuery`` below raised a
         # raw ValidationError for ``limit=60`` — at the first turn, from inside
         # whichever framework hook called here.

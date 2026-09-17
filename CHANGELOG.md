@@ -128,6 +128,37 @@ Three behaviour changes to know about before upgrading:
   invisible even after the backend recovered. The buffer is drained only on
   success, and a failure clears `_synced` so the next retrieval retries.
 
+#### Found in review of this release
+
+- **A deduplicated MCP tool name keeps the name its server answers to.**
+  `getUser` normalises to `get_user`; a raw `get_user` beside it was renamed
+  `get_user_2` and lost its alias, so Gantry called `get_user_2` on a server
+  that has no such tool. The suffix also now fits inside the 128-character
+  name limit rather than running past it.
+- **Re-registering an MCP server drops the client cached for the old
+  endpoint.** `register_mcp_server` can now change a server's url, headers or
+  transport, but a client built from the previous definition went on
+  discovering and executing against the old endpoint.
+- **`MCPServerDefinition` validates its url scheme**, as `MCPServerConfig`
+  does. `register_mcp_server` builds a definition directly, so an `ftp://`
+  endpoint registered and retrieved happily and only failed later, when a
+  client was finally built from it.
+- **`agent-gantry sync` honours `prune_on_sync` from `--config`.** The
+  `--prune` flag defaulted to off rather than unset, so it overrode the
+  config in both the dry-run report and the real sync.
+- **`GantryToolset.select(limit=0)` is rejected** instead of silently becoming
+  the default limit, matching the decorator and the refresher.
+- **LanceDB `add_tools(upsert=False)` skips an id repeated within one batch**,
+  not only one already in the table.
+- **A LanceDB tag filter widens its window instead of scanning the
+  namespace.** Correctness needed more than the old fixed `limit * 2` window,
+  but reading every row made each tag query O(N); it now doubles the window
+  until enough tagged rows are found or the namespace is exhausted, so the
+  common case costs one query.
+- **The documentation site shows the released version.** It hard-coded
+  `0.11.0` in three places and had advertised it for three releases; the
+  three now read it from `package.json`, which the release bumps.
+
 #### Stores and embedders
 
 - **Qdrant search called a method the client removed.** `AsyncQdrantClient.search`
