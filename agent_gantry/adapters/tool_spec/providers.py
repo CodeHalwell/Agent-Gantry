@@ -132,6 +132,11 @@ def _close_objects_in_place(node: Any) -> None:
         node["additionalProperties"] = False
         for subschema in properties.values():
             _close_objects_in_place(subschema)
+    # These are the keys the SDK's own ``transform_schema`` recurses into, and
+    # deliberately not ``schema_utils._SUBSCHEMA_KEYS``: the SDK leaves objects
+    # under ``not``/``contains``/``additionalItems`` open, so closing them here
+    # would constrain shapes Anthropic itself does not, and diverge from the
+    # agreement ``test_closed_paths_agree_with_the_anthropic_sdk`` pins down.
     for key in ("items", "anyOf", "oneOf", "allOf", "prefixItems"):
         if key in node:
             _close_objects_in_place(node[key])

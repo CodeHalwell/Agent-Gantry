@@ -418,10 +418,19 @@ class MCPServer:
 
     async def _call_tool(self, name: str, arguments: dict[str, Any]) -> list[Any]:
         """Dispatch a tool call (shared across mcp versions)."""
-        if name == "find_relevant_tools":
-            return await self._handle_find_relevant_tools(arguments)
-        if name == "execute_tool":
-            return await self._handle_execute_tool(arguments)
+        # The meta-tools are only ever on the wire in dynamic and hybrid mode.
+        # Static mode advertises the registry as-is, so a tool genuinely named
+        # ``execute_tool`` is the only thing that name can mean there — yet
+        # these checks ran unconditionally, listing it under its own name and
+        # then sending every call to the meta handler, which failed with
+        # "execute_tool requires a 'tool_name'". In hybrid mode a pinned tool
+        # claiming a meta name has already been renamed (``reserved``), so the
+        # meta-tool still wins its own name here.
+        if self.mode != "static":
+            if name == "find_relevant_tools":
+                return await self._handle_find_relevant_tools(arguments)
+            if name == "execute_tool":
+                return await self._handle_execute_tool(arguments)
         exposed = self._exposed.get(name)
         if exposed is not None:
             # Direct execution of a listed tool; pin the namespace so a
@@ -567,8 +576,11 @@ class MCPServer:
         query = str(arguments.get("query") or "").strip()
         if not query:
             raise ValueError("find_relevant_tools requires a non-empty 'query'")
+        # ``or`` treated an explicit ``limit: 0`` as absent and substituted the
+        # configured default, so the clamp below never saw the caller's value.
+        raw_limit = arguments.get("limit")
         try:
-            limit = int(arguments.get("limit") or self._find_limit)
+            limit = self._find_limit if raw_limit is None else int(raw_limit)
         except (TypeError, ValueError):
             limit = self._find_limit
         limit = max(_FIND_LIMIT_MIN, min(limit, _FIND_LIMIT_MAX))

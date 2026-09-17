@@ -239,6 +239,16 @@ Three behaviour changes to know about before upgrading:
   a client received could be rejected whole by name validation. Names are
   trimmed to fit, with the suffix kept inside the cap — and because trimming
   can itself collide, the suffix loop resolves that too.
+- **Static mode can serve a tool named after a meta-tool.** The meta-tools
+  are only on the wire in dynamic and hybrid mode, but dispatch checked their
+  names unconditionally, so static mode listed a genuine `execute_tool` under
+  its own name and then sent every call to the meta handler — failing with
+  "execute_tool requires a 'tool_name'" and leaving the real tool
+  unreachable. `sanitize_tool_name` mints that name from an upstream MCP tool
+  called `execute`, so nobody has to choose it. The check is mode-scoped now;
+  hybrid still renames a pinned tool that claims a meta name.
+- **`find_relevant_tools` clamps an explicit `limit` of 0** instead of
+  reading it as absent and substituting the configured default.
 
 #### Stores and embedders
 

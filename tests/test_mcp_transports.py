@@ -39,8 +39,11 @@ def _free_port() -> int:
 
 
 def _text(result: Any) -> str:
-    for block in result.content:
-        text = getattr(block, "text", None)
+    # ``_call_tool`` returns the content blocks directly; a client result wraps
+    # them in ``.content``.
+    blocks = result.content if hasattr(result, "content") else result
+    for block in blocks:
+        text = block.get("text") if isinstance(block, dict) else getattr(block, "text", None)
         if text is not None:
             return text
     raise AssertionError(f"No text content in {result!r}")
@@ -641,6 +644,110 @@ async def test_a_qualified_wire_name_never_takes_another_tools_name() -> None:
         "a_x_2": ("a", "x"),
         "b_x": ("b", "x"),
     }
+    await gantry.close()
+
+
+@pytest.mark.asyncio
+async def test_static_mode_can_serve_a_tool_named_after_a_meta_tool() -> None:
+    """The meta-tools are only on the wire in dynamic and hybrid mode, but
+    dispatch checked their names unconditionally. Static mode therefore listed
+    a genuine ``execute_tool`` under its own name and sent every call to the
+    meta handler, which failed with "execute_tool requires a 'tool_name'".
+
+    ``sanitize_tool_name`` can mint this name from an upstream MCP tool called
+    ``execute``, so it is reachable without anyone choosing it.
+    """
+    gantry = AgentGantry()
+
+    async def handler(**kwargs: Any) -> dict[str, Any]:
+        return {"ran": "the real tool", **kwargs}
+
+    for name in ("execute_tool", "find_relevant_tools"):
+        await gantry.add_tool(
+            ToolDefinition(
+                name=name,
+                description="A genuine registered tool that happens to be named this",
+                parameters_schema={"type": "object", "properties": {"a": {"type": "integer"}}},
+            ),
+            handler=handler,
+        )
+
+    server = create_mcp_server(gantry, mode="static")
+    # listed under their own names, since nothing else claims them here
+    assert sorted(tool.name for tool in await server._list_tools()) == [
+        "execute_tool",
+        "find_relevant_tools",
+    ]
+    for name in ("execute_tool", "find_relevant_tools"):
+        assert "the real tool" in _text(await server._call_tool(name, {"a": 1})), name
+    await gantry.close()
+
+
+@pytest.mark.asyncio
+async def test_hybrid_mode_still_dispatches_its_own_meta_tools() -> None:
+    """The guard above is mode-scoped, so hybrid must be unaffected: there the
+    meta-tools *are* advertised and a pinned tool claiming one is renamed."""
+    gantry = AgentGantry()
+
+    async def handler(**kwargs: Any) -> dict[str, Any]:
+        return {"ran": "the real tool", **kwargs}
+
+    await gantry.add_tool(
+        ToolDefinition(
+            name="execute_tool",
+            description="A pinned tool claiming a meta-tool's name in hybrid mode",
+            parameters_schema={"type": "object", "properties": {"a": {"type": "integer"}}},
+        ),
+        handler=handler,
+    )
+    server = create_mcp_server(gantry, mode="hybrid", expose=["execute_tool"])
+    wire_names = {tool.name for tool in await server._list_tools()}
+    assert "execute_tool" in wire_names and "find_relevant_tools" in wire_names
+    # the meta-tool keeps its name and its handler...
+    with pytest.raises(ValueError, match="requires a 'tool_name'"):
+        await server._call_tool("execute_tool", {"a": 1})
+    # ...and the pinned tool is reachable under the renamed one
+    renamed = next(name for name in wire_names if name not in {"execute_tool",
+                                                               "find_relevant_tools"})
+    assert "the real tool" in _text(await server._call_tool(renamed, {"a": 1}))
+    await gantry.close()
+
+
+@pytest.mark.asyncio
+async def test_find_relevant_tools_clamps_an_explicit_zero_limit() -> None:
+    """``int(arguments.get("limit") or default)`` read an explicit ``0`` as
+    absent and substituted the configured default, so the clamp below never
+    saw the caller's value."""
+    gantry = AgentGantry()
+
+    async def handler(**kwargs: Any) -> dict[str, Any]:
+        return kwargs
+
+    for i in range(4):
+        await gantry.add_tool(
+            ToolDefinition(
+                name=f"sample_tool_{i}",
+                description=f"Sample tool {i} for the limit clamp test",
+                parameters_schema={"type": "object", "properties": {}},
+            ),
+            handler=handler,
+        )
+    server = create_mcp_server(gantry, mode="dynamic")
+
+    captured: list[int] = []
+    original = gantry.retrieve
+
+    async def recording(query: Any) -> Any:
+        captured.append(query.limit)
+        return await original(query)
+
+    gantry.retrieve = recording  # type: ignore[method-assign]
+    await server._call_tool("find_relevant_tools", {"query": "sample", "limit": 0})
+    await server._call_tool("find_relevant_tools", {"query": "sample"})
+    gantry.retrieve = original  # type: ignore[method-assign]
+
+    # an explicit 0 clamps to the minimum; an absent one takes the default
+    assert captured == [1, server._find_limit]
     await gantry.close()
 
 

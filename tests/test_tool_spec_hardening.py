@@ -721,6 +721,39 @@ class TestAnthropicStrictClosesEveryObject:
             _anthropic_sdk_transform(_NESTED_OBJECTS)
         )
 
+    def test_subschema_keys_the_sdk_skips_are_left_open(self) -> None:
+        """The recursion list mirrors the SDK's, *not*
+        ``schema_utils._SUBSCHEMA_KEYS``. Reaching for the wider list looks
+        like a fix and is a regression: Anthropic's own ``transform_schema``
+        leaves objects under ``not``/``contains``/``additionalItems`` open, so
+        closing them would constrain shapes the API itself does not.
+        """
+        schema = {
+            "type": "object",
+            "properties": {
+                "a": {
+                    "type": "object",
+                    "properties": {"k": {"type": "string"}},
+                    "not": {"type": "object", "properties": {"x": {"type": "string"}}},
+                },
+                "b": {
+                    "type": "array",
+                    "contains": {"type": "object", "properties": {"y": {"type": "string"}}},
+                },
+                "c": {
+                    "type": "array",
+                    "additionalItems": {
+                        "type": "object",
+                        "properties": {"z": {"type": "string"}},
+                    },
+                },
+            },
+        }
+        out = AnthropicAdapter().to_provider_schema(_tool(schema), strict=True)
+        assert _closed_object_paths(out["input_schema"]) == _closed_object_paths(
+            _anthropic_sdk_transform(schema)
+        ) == {"<root>", "properties.a"}
+
     def test_optional_properties_stay_optional(self) -> None:
         """Anthropic keeps optionality, so OpenAI's transform — every property
         required, the rest widened to null — would be the wrong one here."""
