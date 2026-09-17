@@ -382,7 +382,29 @@ def _declares_type(
             # A reference cycle with no type anywhere along it.
             return False
         return _declares_type(target, root, (seen or set()) | {id(target)})
-    return any(isinstance(node.get(key), list) for key in ("anyOf", "oneOf", "allOf"))
+    # As with ``$ref`` above, the combinator existing is not the same as its
+    # branches declaring types: ``{"anyOf": [{"description": "free form"}]}``
+    # counted as typed and went out ``strict: true`` with nothing for the
+    # provider to read.
+    #
+    # ``anyOf``/``oneOf`` admit a value matching *any* branch, so every branch
+    # needs a type. ``allOf`` requires a value to match all of them at once,
+    # so one branch carrying the type is enough — the others commonly add
+    # only constraints or a description.
+    for key in ("anyOf", "oneOf"):
+        branches = node.get(key)
+        if isinstance(branches, list):
+            return bool(branches) and all(
+                isinstance(branch, dict) and _declares_type(branch, root, seen)
+                for branch in branches
+            )
+    branches = node.get("allOf")
+    if isinstance(branches, list):
+        return any(
+            isinstance(branch, dict) and _declares_type(branch, root, seen)
+            for branch in branches
+        )
+    return False
 
 
 def _is_typeless_enum(node: dict[str, Any]) -> bool:

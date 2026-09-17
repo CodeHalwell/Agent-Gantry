@@ -924,3 +924,21 @@ def test_a_record_that_merely_has_a_text_field_is_not_a_content_block() -> None:
 
     # a real block carries the protocol's discriminator and still renders
     assert _render_tool_output([{"type": "text", "text": "hello"}]) == "hello"
+
+
+def test_normalised_mcp_names_do_not_depend_on_discovery_order() -> None:
+    """``getUser`` and ``get_user`` both normalise to ``get_user``, and the
+    bare name went to whichever arrived first. MCP promises no ``tools/list``
+    ordering, so a server reordering its response silently swapped which
+    upstream operation ``get_user`` referred to, and a model calling the name
+    it was given last time reached the other tool."""
+    from agent_gantry.adapters.executors.mcp_client import _dedupe_names
+
+    meanings = set()
+    for raw in (["getUser", "get_user"], ["get_user", "getUser"]):
+        normalised = [sanitize_tool_name(name) for name in raw]
+        unique = _dedupe_names(normalised, raw)
+        assert sorted(unique) == ["get_user", "get_user_2"], unique
+        meanings.add(dict(zip(unique, raw))["get_user"])
+
+    assert len(meanings) == 1, f"'get_user' changed meaning with order: {meanings}"

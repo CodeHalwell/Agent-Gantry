@@ -804,6 +804,47 @@ class TestAnthropicStrictClosesEveryObject:
         }
         assert unsupported_strict_paths(external) == ["x"]
 
+    def test_a_combinator_needs_its_branches_to_declare_types(self) -> None:
+        """As with ``$ref``, the combinator existing counted as a declared
+        type, so ``{"anyOf": [{"description": "free form"}]}`` went out
+        ``strict: true`` with nothing for the provider to read."""
+        from agent_gantry.adapters.tool_spec.schema_utils import unsupported_strict_paths
+
+        def _paths(prop: dict[str, Any], **extra: Any) -> list[str]:
+            return unsupported_strict_paths(
+                {"type": "object", "properties": {"x": prop}, **extra}
+            )
+
+        # anyOf/oneOf admit a value matching *any* branch, so every branch
+        # needs a type...
+        assert _paths({"anyOf": [{"description": "free form"}]}) == ["x"]
+        assert _paths({"anyOf": [{"type": "string"}, {"description": "d"}]}) == ["x"]
+        assert _paths({"anyOf": [{"type": "string"}, {"type": "null"}]}) == []
+        assert _paths({"oneOf": [{"type": "integer"}, {"type": "null"}]}) == []
+        assert _paths({"anyOf": []}) == ["x"]
+
+        # ...while allOf requires a value to match all of them at once, so one
+        # branch carrying the type is enough; the rest add constraints.
+        assert _paths({"allOf": [{"type": "string"}, {"description": "d"}]}) == []
+        assert _paths({"allOf": [{"description": "d"}]}) == ["x"]
+
+        # and it composes with reference resolution
+        assert (
+            _paths(
+                {"anyOf": [{"$ref": "#/$defs/T"}, {"type": "null"}]},
+                **{
+                    "$defs": {
+                        "T": {
+                            "type": "object",
+                            "properties": {},
+                            "additionalProperties": False,
+                        }
+                    }
+                },
+            )
+            == []
+        )
+
     def test_optional_properties_stay_optional(self) -> None:
         """Anthropic keeps optionality, so OpenAI's transform — every property
         required, the rest widened to null — would be the wrong one here."""

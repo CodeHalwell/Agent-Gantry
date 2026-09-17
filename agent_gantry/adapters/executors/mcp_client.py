@@ -57,27 +57,43 @@ def sanitize_tool_name(raw: str) -> str:
     return name[:_NAME_MAX_LENGTH].rstrip("_") or "tool"
 
 
-def _dedupe_names(names: list[str]) -> list[str]:
+def _dedupe_names(names: list[str], raw_names: list[str] | None = None) -> list[str]:
     """Suffix repeated names (``get_user``, ``get_user_2``, ...) so a server whose
     ``getUser`` and ``get_user`` both normalise to one identifier keeps both.
+
+    Which of a colliding pair keeps the bare name is decided by the *raw*
+    names, sorted, not by position in the list. MCP does not promise a stable
+    ``tools/list`` order, so deciding by position meant a server reordering
+    its response silently swapped which upstream operation ``get_user``
+    refers to — and a model calling the name it was given last time then
+    reached the other tool. ``raw_names`` defaults to ``names`` for callers
+    with nothing else to go on.
 
     The suffix is applied *within* the name-length cap rather than beyond it:
     two names that agree on their first 128 characters would otherwise produce
     an over-long identifier that ``ToolDefinition`` forbids.
     """
-    seen: dict[str, int] = {}
-    out: list[str] = []
+    sources = raw_names if raw_names is not None and len(raw_names) == len(names) else names
+    # Rank each position among the entries it collides with, by raw name.
+    groups: dict[str, list[tuple[str, int]]] = {}
+    for index, (name, raw) in enumerate(zip(names, sources)):
+        groups.setdefault(name, []).append((raw, index))
+    rank: dict[int, int] = {}
+    for members in groups.values():
+        for order, (_raw, index) in enumerate(sorted(members)):
+            rank[index] = order
+
     taken = set(names)
-    for name in names:
-        count = seen.get(name, 0)
-        seen[name] = count + 1
-        if count == 0:
+    out: list[str] = []
+    for index, name in enumerate(names):
+        if rank[index] == 0:
             out.append(name)
             continue
-        candidate = _suffixed(name, count + 1)
+        count = rank[index] + 1
+        candidate = _suffixed(name, count)
         while candidate in taken:
             count += 1
-            candidate = _suffixed(name, count + 1)
+            candidate = _suffixed(name, count)
         taken.add(candidate)
         out.append(candidate)
     return out
@@ -441,7 +457,7 @@ class MCPClient:
         # whose raw name needed no normalising still loses it to the suffix,
         # and dispatching on ``get_user_2`` would call a tool the server does
         # not have.
-        unique = _dedupe_names([tool.name for tool in tools])
+        unique = _dedupe_names([tool.name for tool in tools], raw_names)
         out: list[ToolDefinition] = []
         for tool, name, raw in zip(tools, unique, raw_names):
             if tool.name == name:

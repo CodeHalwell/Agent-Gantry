@@ -139,6 +139,20 @@ Three behaviour changes to know about before upgrading:
   tool the *other* instances registered. An empty keep set is now refused, in
   `sync()` and in `prune_stale_tools` itself, with a warning saying why;
   pruning a tool genuinely dropped from the code is unaffected.
+- **A combinator is strict-safe only if its branches declare types.** The
+  same mistake one arm over from the `$ref` case: `anyOf`/`oneOf`/`allOf`
+  counted as a declared type merely by being a list, so
+  `{"anyOf": [{"description": "free form"}]}` was published `strict: true`
+  with nothing for the provider to read. `anyOf`/`oneOf` now need every
+  branch typed, since a value may match any one of them; `allOf` needs only
+  one, since a value matches all of them at once and the rest commonly add
+  constraints.
+- **A normalised MCP tool name no longer depends on discovery order.** Where
+  `getUser` and `get_user` both normalise to `get_user`, the bare name went
+  to whichever arrived first — and MCP promises no `tools/list` ordering, so
+  a server reordering its response silently swapped which upstream operation
+  the name referred to. The bare name is now decided by the raw names,
+  sorted, so the mapping is stable across rediscovery.
 - **A `$ref` is strict-safe only if its target declares a type.** The
   reference existing counted as a declared type, so a property like
   `{"$ref": "#/$defs/Anything"}` pointing at a description-only definition
