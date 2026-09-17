@@ -198,6 +198,95 @@ def test_serve_mcp_plumbs_transport_options() -> None:
     )
 
 
+def test_a_duplicate_under_a_different_attribute_is_still_caught(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Specs naming different attributes were collected in separate passes,
+    and ``collect_tools_from_modules`` starts a fresh ``seen`` set per call, so
+    a cross-pass duplicate slipped through and the later module silently
+    overwrote the earlier tool's definition and handler."""
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        gantry = build_gantry(
+            [
+                "tests.test_modules.module_a",
+                "tests.test_modules.module_d_duplicate_attr:other_tools",
+            ]
+        )
+    assert "Skipping duplicate tool 'default.tool_a1'" in caplog.text
+    handler = gantry._registry.get_handler("default.tool_a1")
+    assert handler is not None
+    assert handler.__module__ == "tests.test_modules.module_a", "the first module must win"
+
+
+def test_building_the_gantry_does_not_write_to_the_store(tmp_path: Path) -> None:
+    """Collecting modules embedded every tool and upserted it into the
+    configured store, before the command had decided anything. ``sync
+    --dry-run`` promises to report what *would* be embedded, so with
+    ``--config`` pointing at a real backend it mutated the very state it was
+    asked only to inspect -- and then reported the tools as already current.
+    """
+    config = tmp_path / "gantry.yaml"
+    config.write_text("auto_sync: false\n", encoding="utf-8")
+    gantry = build_gantry(
+        ["tests.test_modules.module_a", "tests.test_modules.module_b"], config=str(config)
+    )
+
+    async def inspect() -> list[Any]:
+        await gantry._ensure_initialized()
+        return await gantry._vector_store.list_all(limit=100)
+
+    assert asyncio.run(inspect()) == [], "building must not embed or store anything"
+    # ...but the tools are all there to be inspected, and a later sync stores
+    # them, so nothing is lost by holding the write back.
+    assert gantry.tool_count == 4
+    assert len(asyncio.run(_sync_and_list(gantry))) == 4
+
+
+async def _sync_and_list(gantry: AgentGantry) -> list[Any]:
+    await gantry.sync()
+    return await gantry._vector_store.list_all(limit=100)
+
+
+def test_a_dry_run_leaves_a_persistent_store_untouched(tmp_path: Path) -> None:
+    """The end-to-end shape of the above: two dry runs in a row against one
+    store both report the same work as outstanding, because neither did it."""
+    store = tmp_path / "store"
+    config = tmp_path / "gantry.yaml"
+    config.write_text(
+        f"vector_store:\n  type: lancedb\n  db_path: {store}\n", encoding="utf-8"
+    )
+    pytest.importorskip("lancedb")
+
+    for _ in range(2):
+        assert (
+            main(
+                [
+                    "sync",
+                    "--dry-run",
+                    "--config",
+                    str(config),
+                    "--module",
+                    "tests.test_modules.module_a",
+                ]
+            )
+            == 0
+        )
+    # LanceDB lays out its directory on connect, so count rows, not files.
+    async def rows() -> list[Any]:
+        from agent_gantry.schema.config import AgentGantryConfig
+
+        probe = AgentGantry(config=AgentGantryConfig.from_yaml(str(config)))
+        await probe._ensure_initialized()
+        try:
+            return await probe._vector_store.list_all(limit=100)
+        finally:
+            await probe.close()
+
+    assert asyncio.run(rows()) == [], "a dry run must not embed or store anything"
+
+
 def test_config_option_builds_the_gantry_from_yaml(tmp_path: Path) -> None:
     config = tmp_path / "gantry.yaml"
     config.write_text("auto_sync: false\nexecution:\n  max_retries: 1\n", encoding="utf-8")

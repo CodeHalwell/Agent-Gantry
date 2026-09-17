@@ -194,6 +194,28 @@ Three behaviour changes to know about before upgrading:
   from its own shutdown. Stopping is final (the SDK's manager may be entered
   once), and a stopped app now says so rather than surfacing the SDK's error
   from a request.
+- **A tool registered *during* a `sync()` is no longer discarded.** The
+  sync drained the whole pending buffer once its own work landed, so a
+  `register()` that arrived while the embedder or the store was being
+  awaited went with it — and `_synced` is set on the way out, so
+  `ensure_synced` then saw no work and the tool never became retrievable.
+  Only the entries the sync actually covered are drained now, matched by
+  identity so a mid-sync *re*-registration keeps its newer definition
+  rather than being taken for the copy already stored.
+- **`agent-gantry sync --dry-run` no longer writes to the store it is
+  inspecting.** Collecting `--module` tools embedded every one of them and
+  upserted it into the backend named by `--config`, before the command had
+  decided anything — so the one command that promises to report what
+  *would* be embedded did the embedding, then commonly reported the tools
+  as already current. Building a gantry for the CLI is read-only now
+  (`list`, `lint` and `sim` were writing too); `sync` and `search` reach
+  `sync()`, which is the one place that writes.
+- **A duplicate tool name is caught across `--module` specs that name
+  different attributes.** Those were collected in separate passes and
+  `collect_tools_from_modules` starts a fresh duplicate set per call, so the
+  later module silently overwrote the earlier tool's definition and handler
+  instead of warning and keeping the first. Specs may now carry their own
+  `:attr`, so one call covers them all.
 
 #### Stores and embedders
 

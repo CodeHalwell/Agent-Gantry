@@ -371,6 +371,100 @@ async def test_a_failed_sync_keeps_the_late_registration_pending() -> None:
     assert gantry._pending_tools == []
 
 
+@pytest.mark.asyncio
+async def test_a_registration_made_during_a_sync_is_not_discarded() -> None:
+    """``sync()`` drained the whole pending buffer once its own work landed.
+
+    A ``register()`` that arrived while the embedder or the store was being
+    awaited is not in the snapshot the sync embedded, but it was cleared with
+    it -- and ``_synced`` goes True on the way out, so ``ensure_synced`` then
+    saw no work and the tool never became retrievable.
+    """
+    gantry = AgentGantry()
+
+    @gantry.register
+    def first_tool(x: int) -> int:
+        """An initial tool, synced before the race begins."""
+        return x
+
+    await gantry.sync()
+
+    @gantry.register
+    def second_tool(x: int) -> int:
+        """The tool whose sync the late registration races."""
+        return x * 2
+
+    healthy = gantry._embedder.embed_batch
+    embedding = asyncio.Event()
+
+    async def slow(texts: Any, batch_size: Any = None) -> Any:
+        embedding.set()
+        await asyncio.sleep(0.05)
+        return await healthy(texts, batch_size)
+
+    gantry._embedder.embed_batch = slow  # type: ignore[method-assign]
+
+    async def register_midway() -> None:
+        await embedding.wait()
+
+        @gantry.register
+        def third_tool(x: int) -> int:
+            """A tool registered while the sync above is still in flight."""
+            return x * 3
+
+    await asyncio.gather(gantry.sync(), register_midway())
+    gantry._embedder.embed_batch = healthy  # type: ignore[method-assign]
+
+    # the tool the sync could not have known about is still owed
+    assert [tool.name for tool in gantry._pending_tools] == ["third_tool"]
+
+    names = {
+        t["function"]["name"] for t in await gantry.retrieve_tools("multiply a number", limit=10)
+    }
+    assert names == {"first_tool", "second_tool", "third_tool"}
+
+
+@pytest.mark.asyncio
+async def test_a_tool_re_registered_during_a_sync_keeps_the_newer_definition() -> None:
+    """Draining by qualified name would drop the update and leave the
+    superseded definition in the store, so the drain matches on identity."""
+    gantry = AgentGantry()
+
+    @gantry.register
+    def only_tool(x: int) -> int:
+        """The original description, which the re-registration replaces."""
+        return x
+
+    healthy = gantry._embedder.embed_batch
+    embedding = asyncio.Event()
+
+    async def slow(texts: Any, batch_size: Any = None) -> Any:
+        embedding.set()
+        await asyncio.sleep(0.05)
+        return await healthy(texts, batch_size)
+
+    gantry._embedder.embed_batch = slow  # type: ignore[method-assign]
+
+    async def re_register() -> None:
+        await embedding.wait()
+
+        @gantry.register(name="only_tool")
+        def replacement(x: int) -> int:
+            """The replacement description, registered mid-sync."""
+            return x * 2
+
+    await asyncio.gather(gantry.sync(), re_register())
+    gantry._embedder.embed_batch = healthy  # type: ignore[method-assign]
+
+    assert [tool.name for tool in gantry._pending_tools] == ["only_tool"]
+    await gantry.sync()
+    stored = await gantry._vector_store.list_all(limit=10)
+    assert [t.description for t in stored] == [
+        "The replacement description, registered mid-sync."
+    ]
+
+
+
 # --------------------------------------------------------------------------- #
 # Rate limiter
 # --------------------------------------------------------------------------- #

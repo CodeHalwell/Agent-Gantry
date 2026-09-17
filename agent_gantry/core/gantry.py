@@ -600,6 +600,10 @@ class AgentGantry:
 
         # Get all registered tools (pending + already registered)
         all_tools = self.export_tools()
+        # The pending entries *this* sync is answerable for. A register() that
+        # lands while the awaits below are in flight appends to the buffer but
+        # is not in this snapshot, so it must survive the drain.
+        pending_snapshot = list(self._pending_tools)
         if prune if prune is not None else self._config.prune_on_sync:
             await self.prune_stale_tools(keep=all_tools)
         if not all_tools:
@@ -617,10 +621,10 @@ class AgentGantry:
             # Ensure handlers are registered even if tools are already in DB
             for tool in all_tools:
                 self._registry.register_tool(tool)
-            # Every pending definition is now known to the registry and the
-            # store, so drain the buffer — otherwise ensure_synced() would
-            # re-run the fingerprint scan on every retrieval.
-            self._pending_tools = []
+            # Every pending definition in the snapshot is now known to the
+            # registry and the store, so drain it — otherwise ensure_synced()
+            # would re-run the fingerprint scan on every retrieval.
+            self._drain_pending(pending_snapshot)
 
             return 0
 
@@ -642,8 +646,6 @@ class AgentGantry:
             self._synced = False
             raise
 
-        self._pending_tools = []
-
         # Ensure all tools are registered (even those not synced). Compare by
         # qualified name — `tool in tools_to_sync` would deep-compare Pydantic
         # models pairwise (O(N²) over full schemas).
@@ -652,9 +654,36 @@ class AgentGantry:
             if f"{tool.namespace}.{tool.name}" not in synced_keys:
                 self._registry.register_tool(tool)
 
+        # After the registry writes above, so a definition that superseded the
+        # snapshot mid-sync is the one left standing.
+        self._drain_pending(pending_snapshot)
+
         self._synced = True
         logger.info(f"Synced {total_synced} tools")
         return total_synced
+
+    def _drain_pending(self, covered: Sequence[ToolDefinition]) -> None:
+        """Drop exactly the pending entries a completed sync covered.
+
+        Clearing the whole buffer discards a ``register()`` that landed while
+        ``sync()`` was awaiting the embedder or the store: such a tool is not
+        in the snapshot that was embedded, but ``_synced`` is set to ``True``
+        on the way out, so ``ensure_synced`` would then see nothing to do and
+        the tool would never become retrievable.
+
+        Identity, not qualified name, decides what was covered. Re-registering
+        a tool mid-sync appends a *new* definition under a name the snapshot
+        already carries; matching by name would drop that update and leave the
+        superseded version in the store.
+        """
+        done = {id(tool) for tool in covered}
+        self._pending_tools = [tool for tool in self._pending_tools if id(tool) not in done]
+        # Whatever is left arrived mid-sync, so it is newer than the snapshot
+        # this sync just wrote into the registry. Re-assert it, or
+        # ``export_tools`` would keep serving the superseded definition it
+        # finds in the registry and the next sync would store that instead.
+        for tool in self._pending_tools:
+            self._registry.register_tool(tool)
 
     async def prune_stale_tools(self, keep: Sequence[ToolDefinition] | None = None) -> int:
         """
@@ -749,6 +778,8 @@ class AgentGantry:
         self,
         modules: Sequence[str],
         module_attr: str = "tools",
+        *,
+        persist: bool = True,
     ) -> int:
         """
         Import AgentGantry instances from other modules and register their tools locally.
@@ -758,8 +789,18 @@ class AgentGantry:
         registry so they can be retrieved and executed without sharing vector stores.
 
         Args:
-            modules: Iterable of module paths (dot-notation) to import.
-            module_attr: Attribute name on each module that holds an AgentGantry instance (default "tools").
+            modules: Iterable of module specs to import. Each is a dot-notation
+                module path, optionally suffixed ``:attr`` to name the
+                attribute holding that module's instance — so modules using
+                different attribute names can be collected in one call, and
+                duplicate detection spans all of them.
+            module_attr: Attribute name for specs that carry no ``:attr``
+                (default "tools").
+            persist: Embed the collected tools and write them to the vector
+                store. Pass ``False`` to register them in memory only, leaving
+                the store untouched — for read-only inspection of somebody's
+                configured backend. They stay pending, so the next
+                ``sync()`` (which ``retrieve()`` triggers) embeds them.
 
         Returns:
             Number of tools imported into this gantry.
@@ -772,12 +813,16 @@ class AgentGantry:
         seen: set[str] = set()
         tools_to_add: list[ToolDefinition] = []
 
-        for module_path in modules:
+        for spec in modules:
+            # A module path cannot contain ":", so the split is unambiguous.
+            module_path, _, spec_attr = spec.partition(":")
+            module_path = module_path.strip()
+            attr = spec_attr.strip() or module_attr
             module = importlib.import_module(module_path)
-            other = getattr(module, module_attr, None)
+            other = getattr(module, attr, None)
             if not isinstance(other, AgentGantry):
                 raise ValueError(
-                    f"Module '{module_path}' does not expose an AgentGantry instance at '{module_attr}'. "
+                    f"Module '{module_path}' does not expose an AgentGantry instance at '{attr}'. "
                     f"Found: {type(other).__name__ if other else 'None'}"
                 )
 
@@ -813,7 +858,14 @@ class AgentGantry:
 
             logger.info(f"Imported {len(all_tools)} tools from module '{module_path}'")
 
-        if tools_to_add:
+        if tools_to_add and not persist:
+            # Registry only: `list_tools_sync`, the linter and `sim` all read
+            # from there, so inspection works without writing a row. They stay
+            # pending as well, so the first retrieval embeds them.
+            for tool in tools_to_add:
+                self._registry.register_tool(tool)
+            self._pending_tools.extend(tools_to_add)
+        elif tools_to_add:
             await self._ensure_initialized()
             batch_size = 100
             for i in range(0, len(tools_to_add), batch_size):

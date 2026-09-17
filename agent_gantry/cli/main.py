@@ -76,6 +76,7 @@ async def build_gantry_async(
     attr: str = _DEFAULT_MODULE_ATTR,
     config: str | None = None,
     quiet: bool = False,
+    persist: bool = False,
 ) -> AgentGantry:
     """Resolve the gantry a CLI invocation should operate on.
 
@@ -91,6 +92,13 @@ async def build_gantry_async(
     the command will then run on: a loop-bound backend (a pgvector pool, say)
     initialised here and used from a second ``asyncio.run`` would be talking
     to a closed loop.
+
+    Building does not write: ``persist`` defaults to ``False`` so merely
+    naming ``--config`` and a ``--module`` cannot embed and upsert the whole
+    registry into somebody's configured store. ``sync --dry-run`` is the
+    sharpest case — it promises to report what *would* be embedded — but
+    ``list``, ``lint`` and ``sim`` are read-only too. Commands that should
+    write reach ``sync()`` on their own: it is the one place that does.
     """
     modules = list(modules or [])
     base_config = None
@@ -104,19 +112,14 @@ async def build_gantry_async(
 
     if modules:
         gantry = AgentGantry(config=base_config)
-        # Grouped by attribute so each group is ONE call: the facade's
-        # duplicate detection keeps a per-call ``seen`` set, so collecting a
-        # module at a time reset it and a later module silently overwrote an
-        # earlier tool of the same qualified name instead of warning and
-        # keeping the first.
-        groups: dict[str, list[str]] = {}
         for spec in modules:
-            module_path, module_attr = _split_module_spec(spec, attr)
             _import_gantry(spec, attr)  # fail early, with the CLI's own message
-            groups.setdefault(module_attr, []).append(module_path)
-
-        for module_attr, paths in groups.items():
-            await gantry.collect_tools_from_modules(paths, module_attr=module_attr)
+        # ONE call with every spec: the facade's duplicate detection keeps a
+        # per-call ``seen`` set, so splitting the specs across calls reset it
+        # and a later module silently overwrote an earlier tool of the same
+        # qualified name instead of warning and keeping the first. Specs carry
+        # their own ``:attr``, so differing attributes no longer force a split.
+        await gantry.collect_tools_from_modules(modules, module_attr=attr, persist=persist)
         return gantry
 
     gantry = AgentGantry(config=base_config)
@@ -136,13 +139,16 @@ def build_gantry(
     attr: str = _DEFAULT_MODULE_ATTR,
     config: str | None = None,
     quiet: bool = False,
+    persist: bool = False,
 ) -> AgentGantry:
     """Synchronous :func:`build_gantry_async`, for callers with no loop running.
 
     The CLI itself does not use this — it builds the gantry inside the one
     loop its command runs on (see :func:`build_gantry_async`).
     """
-    return asyncio.run(build_gantry_async(modules, attr=attr, config=config, quiet=quiet))
+    return asyncio.run(
+        build_gantry_async(modules, attr=attr, config=config, quiet=quiet, persist=persist)
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
