@@ -63,6 +63,41 @@ class TestRemoteNamespaceFilters:
         }
         assert ChromaVectorStore._build_namespace_where("a") == {"namespace": "a"}
 
+    def test_an_empty_namespace_list_selects_nothing_everywhere(self) -> None:
+        """``search`` returns nothing for an empty namespace list, but
+        ``list_all`` and ``count`` used ``if namespace:``, which cannot tell
+        ``None`` -- no filter -- from ``[]`` -- a filter matching nothing -- so
+        they returned the whole collection instead."""
+        from agent_gantry.adapters.vector_stores.remote import _selects_nothing
+
+        assert _selects_nothing([]) is True
+        assert _selects_nothing(()) is True
+        assert _selects_nothing(set()) is True
+        # a populated filter, a scalar, and "no filter at all" all still query
+        assert _selects_nothing(["a"]) is False
+        assert _selects_nothing("a") is False
+        assert _selects_nothing(None) is False
+
+    @pytest.mark.asyncio
+    async def test_empty_namespace_list_short_circuits_list_all_and_count(self) -> None:
+        """Each adapter returns the empty answer without reaching its client,
+        so the guard holds whether or not a backend is running."""
+        from agent_gantry.adapters.vector_stores.remote import (
+            ChromaVectorStore,
+            PGVectorStore,
+            QdrantVectorStore,
+        )
+
+        for cls in (QdrantVectorStore, ChromaVectorStore, PGVectorStore):
+            store = cls.__new__(cls)
+
+            async def _no_client() -> None:  # the client is never built
+                return None
+
+            store.initialize = _no_client  # type: ignore[method-assign]
+            assert await cls.list_all(store, namespace=[]) == [], cls.__name__
+            assert await cls.count(store, namespace=[]) == 0, cls.__name__
+
     def test_qdrant_uses_matchany_for_a_list(self) -> None:
         pytest.importorskip("qdrant_client")
         from qdrant_client.models import MatchAny, MatchValue

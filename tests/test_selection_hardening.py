@@ -510,6 +510,81 @@ async def test_a_tool_re_registered_during_a_sync_keeps_the_newer_definition() -
 # --------------------------------------------------------------------------- #
 
 
+class TestPruneSafety:
+    @pytest.mark.asyncio
+    async def test_an_empty_registry_does_not_prune_a_shared_store(self) -> None:
+        """``sync()`` pruned before checking whether anything was registered,
+        so a gantry that had not registered yet asked the store to delete
+        everything it did not know about -- which, on a store shared between
+        gantries, is everything the others put there."""
+        from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
+
+        shared = InMemoryVectorStore()
+        producer = AgentGantry(vector_store=shared)
+        for i in range(3):
+            await producer.add_tool(
+                ToolDefinition(
+                    name=f"important_tool_{i}",
+                    description=f"A tool another service registered, number {i}",
+                    parameters_schema={"type": "object", "properties": {}},
+                ),
+                handler=lambda **kw: kw,
+            )
+        await producer.sync()
+        stored = sorted(tool.name for tool in await shared.list_all(limit=100))
+        assert len(stored) == 3
+
+        # a second gantry on the same store, pruning on, nothing registered yet
+        latecomer = AgentGantry(vector_store=shared)
+        assert latecomer.export_tools() == []
+        await latecomer.sync(prune=True)
+        assert sorted(tool.name for tool in await shared.list_all(limit=100)) == stored
+
+        # ...and the same through the config flag, and through the public method
+        from agent_gantry.schema.config import AgentGantryConfig
+
+        configured = AgentGantry(
+            vector_store=shared, config=AgentGantryConfig(prune_on_sync=True)
+        )
+        await configured.sync()
+        assert await configured.prune_stale_tools() == 0
+        assert sorted(tool.name for tool in await shared.list_all(limit=100)) == stored
+        await producer.close()
+
+    @pytest.mark.asyncio
+    async def test_pruning_still_removes_a_tool_dropped_from_the_code(self) -> None:
+        """The guard above must not disable pruning when the gantry does know
+        which tools belong to it."""
+        from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
+
+        def _tool(name: str) -> ToolDefinition:
+            return ToolDefinition(
+                name=name,
+                description=f"Tool {name} used in the prune regression check",
+                parameters_schema={"type": "object", "properties": {}},
+            )
+
+        shared = InMemoryVectorStore()
+        first = AgentGantry(vector_store=shared)
+        for name in ("kept_one", "kept_two", "removed_from_code"):
+            await first.add_tool(_tool(name), handler=lambda **kw: kw)
+        await first.sync()
+
+        # a later run of the same service, one tool deleted from the code
+        second = AgentGantry(vector_store=shared)
+        for name in ("kept_one", "kept_two"):
+            await second.add_tool(_tool(name), handler=lambda **kw: kw)
+        await second.sync(prune=True)
+        assert sorted(tool.name for tool in await shared.list_all(limit=100)) == [
+            "kept_one",
+            "kept_two",
+        ]
+        # an explicit keep list prunes too
+        assert await second.prune_stale_tools(keep=[_tool("kept_one")]) == 1
+        assert [tool.name for tool in await shared.list_all(limit=100)] == ["kept_one"]
+        await first.close()
+
+
 class TestRateLimitStats:
     @pytest.mark.asyncio
     async def test_an_idle_key_does_not_report_calls_it_made_hours_ago(self) -> None:

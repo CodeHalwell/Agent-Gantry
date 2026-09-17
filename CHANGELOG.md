@@ -130,6 +130,20 @@ Three behaviour changes to know about before upgrading:
 
 #### Found in review of this release
 
+- **`sync()` could empty the vector store when nothing was registered yet.**
+  Pruning ran before the "is anything registered?" check, so a
+  `sync(prune=True)` — or any `retrieve()` on a gantry configured with
+  `prune_on_sync` — issued by a not-yet-populated instance asked the store to
+  delete everything it did not recognise. On a store shared between gantries,
+  the arrangement `prune_stale_tools` explicitly contemplates, that is every
+  tool the *other* instances registered. An empty keep set is now refused, in
+  `sync()` and in `prune_stale_tools` itself, with a warning saying why;
+  pruning a tool genuinely dropped from the code is unaffected.
+- **An empty namespace list selects nothing in `list_all` and `count`.** Both
+  used `if namespace:`, which cannot tell `None` — no filter — from `[]` — a
+  filter matching nothing — so they returned the whole collection where
+  `search` in the same adapters correctly returned nothing. Fixed across
+  Qdrant, Chroma and pgvector.
 - **A deduplicated MCP tool name keeps the name its server answers to.**
   `getUser` normalises to `get_user`; a raw `get_user` beside it was renamed
   `get_user_2` and lost its alias, so Gantry called `get_user_2` on a server

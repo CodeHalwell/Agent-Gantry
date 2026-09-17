@@ -604,7 +604,11 @@ class AgentGantry:
         # lands while the awaits below are in flight appends to the buffer but
         # is not in this snapshot, so it must survive the drain.
         pending_snapshot = list(self._pending_tools)
-        if prune if prune is not None else self._config.prune_on_sync:
+        # Only prune against a registry that actually says what belongs here;
+        # ``prune_stale_tools`` refuses an empty keep set as well, but the
+        # ordering used to put the call *before* the empty check below, so a
+        # sync on a not-yet-populated gantry asked it to delete everything.
+        if all_tools and (prune if prune is not None else self._config.prune_on_sync):
             await self.prune_stale_tools(keep=all_tools)
         if not all_tools:
             self._synced = True
@@ -695,6 +699,13 @@ class AgentGantry:
         server pseudo-entries (namespace ``__mcp_servers__``) are left alone;
         :meth:`sync_mcp_servers` owns those.
 
+        Nothing is pruned when the keep set is empty. An empty registry means
+        "this gantry does not know what belongs here" far more often than it
+        means "the store should be empty" — a lazily-registering or
+        not-yet-populated gantry hits it — and on a store shared between
+        gantries, as the note above contemplates, acting on it would delete
+        every tool the *other* instances registered.
+
         Args:
             keep: The tools to keep; defaults to everything currently
                 registered or pending on this gantry.
@@ -704,6 +715,14 @@ class AgentGantry:
         """
         await self._ensure_initialized()
         wanted = {f"{t.namespace}.{t.name}" for t in (keep if keep is not None else self.export_tools())}
+        if not wanted:
+            logger.warning(
+                "Refusing to prune: this gantry registers no tools, so pruning "
+                "would delete every stored tool, including any registered by "
+                "other gantries sharing this store. Clear the store directly if "
+                "that is what you want."
+            )
+            return 0
         stored = await self._list_all_pages(self._vector_store.list_all)
         removed = 0
         for tool in stored:

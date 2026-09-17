@@ -468,7 +468,11 @@ async def _run_sync_command(
                 tool_id = f"{tool.namespace}.{tool.name}"
                 reason = "new" if tool_id not in stored else "fingerprint changed"
                 print(f"  - {tool_id}: {reason}")
-        if effective_prune:
+        if effective_prune and not all_tools:
+            # Matches prune_stale_tools' refusal: with nothing registered the
+            # real sync prunes nothing, so the report must not promise to.
+            print("No tools registered, so nothing would be pruned.")
+        elif effective_prune:
             wanted = {f"{t.namespace}.{t.name}" for t in all_tools}
             stale = [
                 f"{t.namespace}.{t.name}"

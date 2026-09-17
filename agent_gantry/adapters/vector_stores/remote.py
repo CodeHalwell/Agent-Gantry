@@ -55,6 +55,17 @@ def _pg_namespace_clause(namespace: Any, param_index: int) -> tuple[str, Any]:
     return f"WHERE namespace = ${param_index}", namespace
 
 
+def _selects_nothing(namespace: Any) -> bool:
+    """Whether a namespace filter is an empty list, which selects nothing.
+
+    ``if namespace:`` cannot tell ``None`` — no filter at all — from ``[]``, a
+    filter that matches nothing, so ``list_all`` and ``count`` returned the
+    whole collection for an empty list while ``search`` in the same adapters
+    correctly returned nothing.
+    """
+    return isinstance(namespace, (list, tuple, set)) and not namespace
+
+
 class QdrantVectorStore:
     """
     Production Qdrant vector store adapter.
@@ -402,6 +413,10 @@ class QdrantVectorStore:
         ``offset`` rows are skipped.
         """
         await self.initialize()
+        if _selects_nothing(namespace):
+            # An empty list is a filter that matches nothing, not the
+            # absence of one, which is how ``search`` reads it.
+            return []
 
         # Build filter for namespace (scalar or list, see _build_namespace_filter)
         query_filter = self._build_namespace_filter(namespace) if namespace else None
@@ -435,6 +450,10 @@ class QdrantVectorStore:
     async def count(self, namespace: str | None = None) -> int:
         """Count tools."""
         await self.initialize()
+        if _selects_nothing(namespace):
+            # An empty list is a filter that matches nothing, not the
+            # absence of one, which is how ``search`` reads it.
+            return 0
 
         if namespace:
             # Count with filter (scalar or list, see _build_namespace_filter)
@@ -808,6 +827,10 @@ class ChromaVectorStore:
     ) -> list[ToolDefinition]:
         """List all tools."""
         await self.initialize()
+        if _selects_nothing(namespace):
+            # An empty list is a filter that matches nothing, not the
+            # absence of one, which is how ``search`` reads it.
+            return []
 
         # Build where filter for namespace (scalar or list)
         where = None
@@ -837,6 +860,10 @@ class ChromaVectorStore:
     async def count(self, namespace: str | None = None) -> int:
         """Count tools."""
         await self.initialize()
+        if _selects_nothing(namespace):
+            # An empty list is a filter that matches nothing, not the
+            # absence of one, which is how ``search`` reads it.
+            return 0
 
         try:
             where = None
@@ -1215,6 +1242,10 @@ class PGVectorStore:
     ) -> list[ToolDefinition]:
         """List all tools."""
         await self.initialize()
+        if _selects_nothing(namespace):
+            # An empty list is a filter that matches nothing, not the
+            # absence of one, which is how ``search`` reads it.
+            return []
 
         namespace_clause = ""
         params: list[Any] = [limit, offset]
@@ -1242,6 +1273,10 @@ class PGVectorStore:
     async def count(self, namespace: str | None = None) -> int:
         """Count tools."""
         await self.initialize()
+        if _selects_nothing(namespace):
+            # An empty list is a filter that matches nothing, not the
+            # absence of one, which is how ``search`` reads it.
+            return 0
 
         namespace_clause = ""
         params: list[Any] = []
