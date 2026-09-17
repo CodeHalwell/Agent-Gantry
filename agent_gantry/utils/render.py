@@ -44,10 +44,18 @@ def _is_mcp_result(value: Any) -> bool:
     if content and all(_is_content_block(item) for item in content):
         return True
     # A result answering entirely through ``structuredContent`` leaves
-    # ``content`` empty, so its own protocol fields have to identify it.
+    # ``content`` empty, so its own protocol fields have to identify it. Both
+    # spellings of each: mcp 2.x renamed ``isError`` to ``is_error`` and
+    # ``structuredContent`` to ``structured_content``, and reading only the
+    # 1.x names sent a 2.x error result to ``str()``.
     return any(
         getattr(value, attribute, None) is not None
-        for attribute in ("structuredContent", "structured_content", "isError")
+        for attribute in (
+            "structuredContent",
+            "structured_content",
+            "isError",
+            "is_error",
+        )
     )
 
 

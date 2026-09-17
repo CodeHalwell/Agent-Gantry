@@ -17,6 +17,7 @@ import asyncio
 import importlib
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 from agent_gantry import AgentGantry
 from agent_gantry.schema.query import ConversationContext, ToolQuery
@@ -53,9 +54,23 @@ def _split_module_spec(spec: str, default_attr: str) -> tuple[str, str]:
     return module.strip(), (attr.strip() or default_attr)
 
 
+def _ensure_cwd_importable() -> None:
+    """Put the working directory on ``sys.path``, as ``python -m`` would.
+
+    ``agent-gantry`` is an installed console script, so the directory the user
+    ran it from is *not* on the path: ``--module pkg.tools`` from a project
+    root — the flag's own documented use — failed with ``ModuleNotFoundError``
+    against a local, uninstalled package.
+    """
+    cwd = str(Path.cwd())
+    if cwd not in sys.path:
+        sys.path.insert(0, cwd)
+
+
 def _import_gantry(spec: str, default_attr: str) -> AgentGantry:
     """Import the ``AgentGantry`` instance a ``--module`` spec names."""
     module_path, attr = _split_module_spec(spec, default_attr)
+    _ensure_cwd_importable()
     try:
         module = importlib.import_module(module_path)
     except ImportError as exc:
@@ -105,7 +120,16 @@ async def build_gantry_async(
     if config:
         from agent_gantry.schema.config import AgentGantryConfig
 
-        base_config = AgentGantryConfig.from_yaml(config)
+        try:
+            base_config = AgentGantryConfig.from_yaml(config)
+        except Exception as exc:
+            # A missing file or malformed YAML is a usage error, and reached
+            # the user as a raw traceback while the neighbouring --module path
+            # reported it as one line. Caught broadly on purpose: the failure
+            # arrives as FileNotFoundError, pydantic's ValidationError or
+            # yaml's own YAMLError (not a ValueError), and naming them would
+            # let a fourth through.
+            raise SystemExit(f"error: could not load config '{config}': {exc}") from exc
 
     if len(modules) == 1 and base_config is None:
         return _import_gantry(modules[0], attr)

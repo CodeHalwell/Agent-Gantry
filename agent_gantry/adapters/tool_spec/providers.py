@@ -78,6 +78,26 @@ def _json_text(result: Any) -> str:
     return json.dumps(result, default=_jsonable)
 
 
+def _json_keys(value: Any) -> Any:
+    """``value`` with every mapping key JSON can name.
+
+    ``default=`` reaches values, never keys, so a dict keyed by an enum or a
+    tuple still raised ``TypeError`` out of :func:`json.dumps` — a result that
+    used to pass through untouched. ``str``/``int``/``float``/``bool``/``None``
+    keys are left alone, since ``json`` already renders them itself.
+    """
+    if isinstance(value, dict):
+        return {
+            (key if isinstance(key, (str, int, float, bool)) or key is None else str(key)): (
+                _json_keys(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_json_keys(item) for item in value]
+    return value
+
+
 def _json_native(result: Any) -> Any:
     """``result`` rebuilt from JSON-native values only.
 
@@ -86,7 +106,7 @@ def _json_native(result: Any) -> Any:
     :func:`_jsonable` covers, anywhere in the structure. A round trip through
     the text form converts every nested leaf in one pass.
     """
-    return json.loads(_json_text(result))
+    return json.loads(_json_text(_json_keys(result)))
 
 
 def _arguments_dict(arguments: Any, tool_name: str, adapter: str) -> dict[str, Any]:

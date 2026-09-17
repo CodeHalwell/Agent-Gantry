@@ -232,3 +232,26 @@ def test_documents_without_frontmatter_are_still_accepted() -> None:
     assert parse_skill_markdown("# Title\n\nJust a body.\n")[0] == {}
     assert parse_skill_markdown("Some text\n\n---\n\nMore text\n")[0] == {}
     assert parse_skill_markdown("---\nname: ok\n---\n\nBody\n")[0] == {"name": "ok"}
+
+
+def test_a_byte_order_mark_does_not_hide_the_frontmatter(tmp_path: Path) -> None:
+    """Both frontmatter patterns anchor on the start of the document, so an
+    editor's UTF-8 BOM made a perfectly good ``SKILL.md`` look like it had
+    none: the name silently became the directory's and the raw YAML became the
+    description -- the embedded text -- exactly what the unterminated-block
+    guard exists to prevent."""
+    from agent_gantry.skills.loader import load_skill
+
+    directory = tmp_path / "bom_skill"
+    directory.mkdir()
+    (directory / "SKILL.md").write_text(
+        "﻿---\nname: bom-skill\n"
+        "description: A skill whose file was saved with a byte order mark.\n"
+        "---\n\nThe body.\n",
+        encoding="utf-8",
+    )
+
+    skill = load_skill(directory)
+    assert skill.name == "bom-skill"
+    assert skill.description == "A skill whose file was saved with a byte order mark."
+    assert "---" not in skill.description

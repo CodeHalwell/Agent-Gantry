@@ -115,7 +115,12 @@ class RateLimiter:
         The one definition of "a full bucket", shared by the initial fill, the
         refill ceiling and :meth:`reset` so they cannot disagree again.
         """
-        return float(self._config.burst_size or self._config.max_calls_per_minute)
+        # ``is None``, not falsiness: ``burst_size=0`` is a real setting
+        # ("admit nothing until a token refills") and ``or`` silently promoted
+        # it to the per-minute rate.
+        if self._config.burst_size is None:
+            return float(self._config.max_calls_per_minute)
+        return float(self._config.burst_size)
 
     def _record_call(self, key: str, now: float) -> None:
         """Log an admitted call for :meth:`get_stats`, keeping one hour of history.

@@ -206,6 +206,27 @@ class TestRenderResult:
         blocks = type("R", (), {"content": [{"type": "text", "text": "from the block"}]})()
         assert render_result(blocks) == "from the block"
 
+    def test_an_mcp_2x_result_is_recognised_by_its_snake_case_fields(self) -> None:
+        """mcp 2.x renamed ``isError``/``structuredContent`` to ``is_error``/
+        ``structured_content``. Reading only the 1.x spellings sent a 2.x
+        error result -- which reports through the flag with empty content --
+        to ``str()``, so the client got a repr instead of a rendered error.
+        ``mcp_client`` already reads both."""
+        from agent_gantry.utils.render import _is_mcp_result
+
+        class _V2Error:
+            def __init__(self) -> None:
+                self.content: list[object] = []
+                self.is_error = True
+
+        class _V2Structured:
+            def __init__(self) -> None:
+                self.content: list[object] = []
+                self.structured_content = {"rows": [1]}
+
+        assert _is_mcp_result(_V2Error())
+        assert _is_mcp_result(_V2Structured())
+
 
 class TestLoggingHygiene:
     def test_package_attaches_null_handler(self) -> None:

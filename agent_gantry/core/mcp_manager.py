@@ -119,6 +119,10 @@ class MCPManager:
             Number of servers synced
         """
         all_servers = self._registry.list_servers()
+        # The pending entries *this* sync answers for. A register_mcp_server()
+        # landing while the awaits below are in flight appends to the buffer
+        # but is not in this snapshot, so it must survive the drain.
+        pending_snapshot = self._registry.get_pending()
         if not all_servers:
             self._synced = True
             return 0
@@ -189,7 +193,7 @@ class MCPManager:
                     else:
                         logger.debug(f"MCP server '{server_id}' is new, will embed")
 
-        self._registry.clear_pending()
+        self._registry.drain_pending(pending_snapshot)
 
         if not servers_to_sync:
             logger.debug(f"All {len(all_servers)} MCP servers up-to-date, skipping sync")

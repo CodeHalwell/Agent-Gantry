@@ -557,6 +557,42 @@ async def test_a_client_dropped_outside_a_loop_is_still_closed_at_shutdown() -> 
 
 
 @pytest.mark.asyncio
+async def test_a_server_registered_mid_sync_is_not_dropped_from_the_buffer() -> None:
+    """``sync_servers`` cleared the whole pending buffer, so a
+    ``register_mcp_server()`` landing while it awaited was discarded: the
+    server was never embedded and ``_synced`` stayed True, so nothing tried
+    again. The tool-side buffer was fixed for exactly this; the MCP path kept
+    the blanket clear."""
+    from agent_gantry.core.mcp_registry import MCPRegistry
+    from agent_gantry.schema.mcp import MCPServerDefinition
+
+    def _definition(name: str) -> MCPServerDefinition:
+        return MCPServerDefinition(
+            name=name,
+            description=f"Server {name} for the mid-sync registration check.",
+            command=["echo", name],
+            namespace="default",
+        )
+
+    registry = MCPRegistry()
+    first = _definition("early")
+    registry.register_server(first)
+    registry.add_pending(first)
+
+    # What a sync in flight would have snapshotted...
+    snapshot = registry.get_pending()
+
+    # ...and a registration that lands while it is awaiting.
+    late = _definition("late")
+    registry.register_server(late)
+    registry.add_pending(late)
+
+    registry.drain_pending(snapshot)
+    remaining = [server.name for server in registry.get_pending()]
+    assert remaining == ["late"], remaining
+
+
+@pytest.mark.asyncio
 async def test_a_pooled_client_dropped_outside_a_loop_is_still_closed() -> None:
     """The same lifecycle hole as above, on ``MCPClientPool``: it dropped the
     client whether or not the close could be scheduled, so a ``remove_server``

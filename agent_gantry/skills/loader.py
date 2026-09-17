@@ -77,6 +77,12 @@ def parse_skill_markdown(text: str) -> tuple[dict[str, Any], str]:
     Raises:
         SkillParseError: When the frontmatter is not valid YAML or not a mapping.
     """
+    # An editor that writes a UTF-8 BOM puts it before the ``---``, which
+    # anchors both patterns off the start and made the file look like it had
+    # no frontmatter at all: the name silently became the directory's and the
+    # raw YAML became the description, exactly the case the unclosed-block
+    # guard below exists to stop.
+    text = text.lstrip("\ufeff")
     match = _FRONTMATTER.match(text)
     if not match:
         if _FRONTMATTER_OPEN.match(text):

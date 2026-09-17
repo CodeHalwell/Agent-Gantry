@@ -7,6 +7,7 @@ Manages MCP server registration, health tracking, and lifecycle.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from agent_gantry.adapters.executors.mcp_client import MCPClient
@@ -200,6 +201,18 @@ class MCPRegistry:
     def clear_pending(self) -> None:
         """Clear the pending servers list."""
         self._pending = []
+
+    def drain_pending(self, covered: Sequence[MCPServerDefinition]) -> None:
+        """Drop only the pending entries ``covered`` accounts for.
+
+        A blanket :meth:`clear_pending` discarded a ``register_mcp_server()``
+        that landed while a sync was awaiting, so the server was never
+        embedded and ``_synced`` stayed ``True`` — the same late-registration
+        loss the tool-side buffer had. Identity, not equality: two
+        registrations of the same definition are distinct buffer entries.
+        """
+        done = {id(server) for server in covered}
+        self._pending = [server for server in self._pending if id(server) not in done]
 
     def update_health(
         self,

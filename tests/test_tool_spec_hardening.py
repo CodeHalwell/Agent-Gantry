@@ -1097,3 +1097,28 @@ class TestAutoDialect:
             extract_tool_calls({}, dialect="nope")
         with pytest.raises(ValueError, match="not implemented"):
             StreamingToolCallAccumulator(dialect="nope")
+
+
+def test_a_result_keyed_by_a_non_string_survives_the_gemini_round_trip() -> None:
+    """Gemini takes the function response as a structured object, so the
+    result is rebuilt through ``json.dumps``. ``default=`` reaches values and
+    never keys, so a dict keyed by an enum or a tuple raised ``TypeError`` out
+    of a result that previously passed through untouched."""
+    import enum
+
+    from agent_gantry.adapters.tool_spec.providers import _json_native
+
+    class Kind(enum.Enum):
+        PRIMARY = "primary"
+
+    rebuilt = _json_native({Kind.PRIMARY: 1, ("a", "b"): 2, "plain": 3, 4: "int keys are fine"})
+    assert rebuilt == {
+        "Kind.PRIMARY": 1,
+        "('a', 'b')": 2,
+        "plain": 3,
+        "4": "int keys are fine",
+    }
+
+    # nested, and inside lists
+    nested = _json_native({"rows": [{Kind.PRIMARY: "x"}]})
+    assert nested == {"rows": [{"Kind.PRIMARY": "x"}]}

@@ -211,7 +211,38 @@ Three behaviour changes to know about before upgrading:
   dropping every sibling field. The guard lives in `render_result` itself,
   so the Agent Framework trace middleware — which calls it directly — is
   covered too; that renderer's `.text` duck-typing is unchanged, since its
-  callers rely on it.
+  callers rely on it. Both spellings of the protocol's fields are read, so
+  an mcp 2.x result reporting through `is_error`/`structured_content` is
+  recognised rather than stringified.
+- **An MCP server registered mid-sync is no longer discarded.**
+  `sync_servers()` cleared the whole pending buffer, so a
+  `register_mcp_server()` landing while it awaited was dropped: the server
+  was never embedded and `_synced` stayed `True`, so nothing tried again.
+  The buffer is now drained by identity against the snapshot the sync
+  answers for, as the tool-side buffer already was.
+- **A `SKILL.md` saved with a UTF-8 byte order mark keeps its frontmatter.**
+  Both frontmatter patterns anchor on the start of the document, so a BOM
+  made the file look like it had none: the name silently became the
+  directory's and the raw YAML became the description — the text that gets
+  embedded — which is the failure the unterminated-block guard exists to
+  stop.
+- **An explicit `burst_size=0` is honoured.** `burst_size or
+  max_calls_per_minute` promoted it to the per-minute rate, because `0` is
+  falsy and the field defaults to `None`, so a caller asking for no burst
+  got a full minute's worth up front.
+- **A Gemini result keyed by something other than a string no longer
+  raises.** The response is rebuilt through `json.dumps`, whose `default=`
+  reaches values and never keys, so a dict keyed by an enum or a tuple
+  raised `TypeError` out of a result that previously passed through
+  untouched.
+- **`agent-gantry --module` resolves against the working directory.** The
+  CLI is an installed console script, so the directory it runs from is not
+  on `sys.path` the way `python -m` puts it there: `--module pkg.tools` from
+  a project root — the flag's documented use — failed against a local,
+  uninstalled package.
+- **A bad `--config` is one line, not a traceback.** A missing file, invalid
+  YAML or a config that fails validation reached the user raw, while the
+  neighbouring `--module` failure was already a single error line.
 - **A pooled MCP client that cannot be closed is retained, not dropped.**
   `MCPClientPool.remove_server()` scheduled a close on the running loop and
   removed the client regardless, so calling it from a thread without one

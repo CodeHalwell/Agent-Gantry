@@ -612,6 +612,15 @@ class AgentGantry:
         # ``prune_stale_tools`` refuses an empty keep set as well, but the
         # ordering used to put the call *before* the empty check below, so a
         # sync on a not-yet-populated gantry asked it to delete everything.
+        #
+        # Known non-atomic window: the prune commits before the embed/store
+        # pass below. If a tool is renamed (old name pruned, new one pending)
+        # and the embed then fails transiently, the deletion is not rolled
+        # back even though this sync reports failure. The next successful sync
+        # re-embeds the new name, so the store converges; the gap is that the
+        # old name is gone meanwhile. Pruning afterwards instead would leave
+        # both names live for the duration of every sync, which is the worse
+        # trade for the far more common case.
         if all_tools and (prune if prune is not None else self._config.prune_on_sync):
             await self.prune_stale_tools(keep=all_tools)
         if not all_tools:

@@ -341,3 +341,18 @@ async def test_strategy_rejection_does_not_leak_a_concurrency_slot():
 
     # The rejected call must leave the counter untouched.
     assert limiter._concurrent[key] == 1
+
+
+def test_an_explicit_zero_burst_size_is_not_treated_as_unset() -> None:
+    """``burst_size or max_calls_per_minute`` promoted an explicit ``0`` to the
+    per-minute rate, because ``0`` is falsy and the field defaults to ``None``.
+    A caller asking for no burst got a full minute's worth up front."""
+    from agent_gantry.core.rate_limiter import RateLimiter
+    from agent_gantry.schema.config import RateLimitConfig
+
+    limiter = RateLimiter(RateLimitConfig(max_calls_per_minute=60, burst_size=0))
+    assert limiter._bucket_capacity() == 0.0
+
+    # ...and an unset burst still falls back to the per-minute rate
+    unset = RateLimiter(RateLimitConfig(max_calls_per_minute=60))
+    assert unset._bucket_capacity() == 60.0

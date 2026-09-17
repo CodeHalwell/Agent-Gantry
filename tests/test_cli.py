@@ -6,6 +6,7 @@ The ``agent-gantry`` CLI against real registries (``--module``) and its
 from __future__ import annotations
 
 import asyncio
+import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -335,3 +336,43 @@ def test_config_option_builds_the_gantry_from_yaml(tmp_path: Path) -> None:
     assert gantry._config.auto_sync is False
     assert gantry._config.execution.max_retries == 1
     assert gantry.tool_count == 4
+
+
+def test_module_specs_resolve_against_the_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``agent-gantry`` is an installed console script, so the directory it is
+    run from is not on ``sys.path`` the way ``python -m`` would put it there.
+    ``--module pkg.tools`` from a project root -- the flag's own documented
+    use -- failed against a local, uninstalled package."""
+    package = tmp_path / "localpkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "tools.py").write_text(
+        "from agent_gantry import AgentGantry\n\ntools = AgentGantry()\n"
+    )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delitem(sys.modules, "localpkg", raising=False)
+    monkeypatch.delitem(sys.modules, "localpkg.tools", raising=False)
+    path_before = list(sys.path)
+    try:
+        assert main(["list", "--module", "localpkg.tools"]) == 0
+    finally:
+        sys.path[:] = path_before
+
+
+def test_a_bad_config_is_reported_as_one_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A missing file or malformed YAML reached the user as a raw traceback,
+    while the neighbouring ``--module`` failure was a single line."""
+    with pytest.raises(SystemExit) as missing:
+        main(["list", "--config", str(tmp_path / "nope.yaml")])
+    assert "could not load config" in str(missing.value)
+
+    malformed = tmp_path / "bad.yaml"
+    malformed.write_text("a: [1,\n")
+    with pytest.raises(SystemExit) as broken:
+        main(["list", "--config", str(malformed)])
+    assert "could not load config" in str(broken.value)
