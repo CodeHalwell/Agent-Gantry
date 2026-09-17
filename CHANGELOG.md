@@ -147,6 +147,14 @@ Three behaviour changes to know about before upgrading:
   branch typed, since a value may match any one of them; `allOf` needs only
   one, since a value matches all of them at once and the rest commonly add
   constraints.
+- **A qualified MCP wire alias no longer depends on listing order** — the
+  same defect as the client-side one below, on the serving side. Two
+  namespaces can qualify to the same wire string (`a+b` and `a_b` both give
+  `a_b_x`), and trimming an over-long one can do it too, so which of them
+  kept the unsuffixed alias followed whatever order the store listed in.
+  That order is free to change between syncs, silently repointing a cached
+  alias at the other tool. Aliases are allocated in qualified-name order
+  now; the listing itself still follows the store.
 - **A normalised MCP tool name no longer depends on discovery order.** Where
   `getUser` and `get_user` both normalise to `get_user`, the bare name went
   to whichever arrived first — and MCP promises no `tools/list` ordering, so

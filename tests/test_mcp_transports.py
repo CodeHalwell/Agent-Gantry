@@ -957,3 +957,33 @@ def test_normalised_mcp_names_do_not_depend_on_discovery_order() -> None:
         meanings.add(dict(zip(unique, raw))["get_user"])
 
     assert len(meanings) == 1, f"'get_user' changed meaning with order: {meanings}"
+
+
+@pytest.mark.asyncio
+async def test_a_qualified_alias_does_not_depend_on_listing_order() -> None:
+    """Two namespaces can qualify to the same wire string -- ``a+b`` and
+    ``a_b`` both give ``a_b_x`` -- and the unsuffixed alias went to whichever
+    the store listed first. That order is free to change between syncs, so a
+    cached call would silently reach the other tool."""
+
+    def _tool(namespace: str) -> ToolDefinition:
+        return ToolDefinition(
+            name="x",
+            namespace=namespace,
+            description=f"Tool x in namespace {namespace}, for alias stability",
+            parameters_schema={"type": "object", "properties": {}},
+        )
+
+    meanings = set()
+    for order in (["a+b", "a_b"], ["a_b", "a+b"]):
+        gantry = AgentGantry()
+        for namespace in order:
+            await gantry.add_tool(_tool(namespace), handler=lambda **kw: kw)
+        server = create_mcp_server(gantry, mode="static")
+        # emitted in the order given, so only the allocation is sorted
+        wire_names = [tool.name for tool in await server._list_tools()]
+        assert sorted(wire_names) == ["a_b_x", "a_b_x_2"], wire_names
+        meanings.add(server._exposed["a_b_x"].namespace)
+        await gantry.close()
+
+    assert len(meanings) == 1, f"'a_b_x' changed meaning with listing order: {meanings}"

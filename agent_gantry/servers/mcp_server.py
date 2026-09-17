@@ -438,24 +438,38 @@ class MCPServer:
         # the second assignment simply overwrote the first in ``_exposed`` and
         # a client calling one tool reached the other.
         taken = {tool.name for tool in definitions} | (reserved or set())
+
+        # Which tools need a generated name: one claiming a meta-tool's name
+        # (the meta handler would otherwise win every dispatch) and one whose
+        # bare name is shared across namespaces.
+        needs_alias = [
+            index
+            for index, tool in enumerate(definitions)
+            if (reserved and tool.name in reserved) or counts[tool.name] > 1
+        ]
+        # Allocated in qualified-name order, not listing order. Two namespaces
+        # can qualify to the same wire string — ``a+b`` and ``a_b`` both give
+        # ``a_b_x`` — and trimming an over-long one can do it too, so *which*
+        # of them keeps the unsuffixed alias would otherwise follow whatever
+        # order the store happened to list in. That order is free to change
+        # between syncs, silently repointing a cached alias at the other tool.
+        assigned: dict[int, str] = {}
+        for index in sorted(
+            needs_alias,
+            key=lambda i: f"{definitions[i].namespace}.{definitions[i].name}",
+        ):
+            tool = definitions[index]
+            wire_name = _unique_wire_name(
+                _WIRE_NAME_INVALID.sub("_", f"{tool.namespace}_{tool.name}"), taken
+            )
+            taken.add(wire_name)
+            assigned[index] = wire_name
+
+        # Emitted in listing order, so only the *allocation* is sorted.
         self._exposed = {}
         wire_tools: list[Tool] = []
-        for tool in definitions:
-            wire_name = tool.name
-            if reserved and wire_name in reserved:
-                # Claims a meta-tool's name: rename unconditionally, since the
-                # meta handler would otherwise win every dispatch.
-                wire_name = _unique_wire_name(
-                    _WIRE_NAME_INVALID.sub("_", f"{tool.namespace}_{tool.name}"), taken
-                )
-                taken.add(wire_name)
-            elif counts[tool.name] > 1:
-                # Same bare name in several namespaces: qualify all of them
-                # so the mapping is deterministic whatever the listing order.
-                wire_name = _unique_wire_name(
-                    _WIRE_NAME_INVALID.sub("_", f"{tool.namespace}_{tool.name}"), taken
-                )
-                taken.add(wire_name)
+        for index, tool in enumerate(definitions):
+            wire_name = assigned.get(index, tool.name)
             self._exposed[wire_name] = tool
             wire_tools.append(self._convert_tool(tool, wire_name=wire_name))
         return wire_tools
