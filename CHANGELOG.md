@@ -139,6 +139,18 @@ Three behaviour changes to know about before upgrading:
   tool the *other* instances registered. An empty keep set is now refused, in
   `sync()` and in `prune_stale_tools` itself, with a warning saying why;
   pruning a tool genuinely dropped from the code is unaffected.
+- **A `$ref` is strict-safe only if its target declares a type.** The
+  reference existing counted as a declared type, so a property like
+  `{"$ref": "#/$defs/Anything"}` pointing at a description-only definition
+  was published `strict: true` with no type for the provider to read — the
+  failure `unsupported_strict_paths` exists to report. Same-document
+  pointers are resolved now; one that cannot be resolved is reported rather
+  than assumed good.
+- **A structured-only MCP result is no longer rendered as nothing.** A
+  `CallToolResult` may answer entirely through `structuredContent` with an
+  empty `content` list, and rendering the blocks alone gave `""` — a
+  successful call reported as no output, with the result silently dropped.
+  Structured content is the fallback when no text block yields anything.
 - **A structured result is no longer mistaken for MCP content blocks.** The
   check accepted any dict carrying a `text` key, so a list of records that
   happen to have one — search hits like `{"text": ..., "score": ...}` — was

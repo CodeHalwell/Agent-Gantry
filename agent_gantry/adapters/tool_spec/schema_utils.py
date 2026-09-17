@@ -323,7 +323,29 @@ def _declares_object(declared: Any) -> bool:
     return False
 
 
-def _declares_type(node: dict[str, Any]) -> bool:
+def _resolve_local_ref(ref: str, root: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Resolve a ``#/...`` JSON pointer within ``root``; ``None`` if it cannot be.
+
+    Only same-document pointers are followed. Anything else — an external
+    URL, a pointer into a document this call was not given — is unresolvable
+    by design, and the caller treats that as "cannot confirm a type".
+    """
+    if root is None or not ref.startswith("#/"):
+        return None
+    node: Any = root
+    for part in ref[2:].split("/"):
+        part = part.replace("~1", "/").replace("~0", "~")
+        if not isinstance(node, dict) or part not in node:
+            return None
+        node = node[part]
+    return node if isinstance(node, dict) else None
+
+
+def _declares_type(
+    node: dict[str, Any],
+    root: dict[str, Any] | None = None,
+    seen: set[int] | None = None,
+) -> bool:
     """Whether ``node`` says what kind of value it accepts.
 
     Strict mode requires every property to name its type, directly or
@@ -343,8 +365,23 @@ def _declares_type(node: dict[str, Any]) -> bool:
     """
     if node.get("type") is not None:
         return True
-    if isinstance(node.get("$ref"), str):
-        return True
+    ref = node.get("$ref")
+    if isinstance(ref, str):
+        # The reference existing is not the same as the target declaring a
+        # type. ``{"$ref": "#/$defs/Anything"}`` pointing at a
+        # description-only definition was taken as typed, so a schema with no
+        # strict spelling was published ``strict: true`` for the provider to
+        # reject — the failure this function exists to report.
+        target = _resolve_local_ref(ref, root)
+        if target is None:
+            # Unresolvable (external, or simply absent): strict mode needs a
+            # declared type and this cannot confirm one, so report it rather
+            # than assume.
+            return False
+        if id(target) in (seen or set()):
+            # A reference cycle with no type anywhere along it.
+            return False
+        return _declares_type(target, root, (seen or set()) | {id(target)})
     return any(isinstance(node.get(key), list) for key in ("anyOf", "oneOf", "allOf"))
 
 
@@ -362,10 +399,12 @@ def _is_typeless_enum(node: dict[str, Any]) -> bool:
     return isinstance(members, list) and bool(members) and not _declares_type(node)
 
 
-def _collect_open_maps(node: Any, path: str, out: list[str]) -> None:
+def _collect_open_maps(
+    node: Any, path: str, out: list[str], root: dict[str, Any] | None = None
+) -> None:
     if isinstance(node, list):
         for index, item in enumerate(node):
-            _collect_open_maps(item, f"{path}[{index}]", out)
+            _collect_open_maps(item, f"{path}[{index}]", out, root)
         return
     if not isinstance(node, dict):
         return
@@ -420,7 +459,7 @@ def _collect_open_maps(node: Any, path: str, out: list[str]) -> None:
                 # the property is simply omitted.
                 out.append(child_path)
                 continue
-            if isinstance(subschema, dict) and not _declares_type(subschema):
+            if isinstance(subschema, dict) and not _declares_type(subschema, root):
                 # A property that declares no type at all — ``{"description":
                 # "anything"}``, an empty ``{}``, or an enum spanning several
                 # kinds. Only the enum shape used to be caught, so the others
@@ -429,20 +468,20 @@ def _collect_open_maps(node: Any, path: str, out: list[str]) -> None:
                 # a typeless property changes the verdict, so it is not walked.
                 out.append(child_path)
                 continue
-            _collect_open_maps(subschema, child_path, out)
+            _collect_open_maps(subschema, child_path, out, root)
     additional = node.get("additionalProperties")
     if isinstance(additional, dict):
-        _collect_open_maps(additional, f"{path}.<values>" if path else "<values>", out)
+        _collect_open_maps(additional, f"{path}.<values>" if path else "<values>", out, root)
     for key in _SUBSCHEMA_KEYS:
         if key in node:
-            _collect_open_maps(node[key], f"{path}.{key}" if path else key, out)
+            _collect_open_maps(node[key], f"{path}.{key}" if path else key, out, root)
     for key in _SUBSCHEMA_LIST_KEYS:
         if isinstance(node.get(key), list):
-            _collect_open_maps(node[key], f"{path}.{key}" if path else key, out)
+            _collect_open_maps(node[key], f"{path}.{key}" if path else key, out, root)
     for defs_key in ("$defs", "definitions"):
         if isinstance(node.get(defs_key), dict):
             for name, subschema in node[defs_key].items():
-                _collect_open_maps(subschema, f"{defs_key}.{name}", out)
+                _collect_open_maps(subschema, f"{defs_key}.{name}", out, root)
 
 
 def unsupported_strict_paths(schema: dict[str, Any] | None) -> list[str]:
@@ -473,7 +512,7 @@ def unsupported_strict_paths(schema: dict[str, Any] | None) -> list[str]:
     if not schema:
         return []
     found: list[str] = []
-    _collect_open_maps(schema, "", found)
+    _collect_open_maps(schema, "", found, schema)
     found.extend(_residual_decorated_refs(schema))
     return found
 

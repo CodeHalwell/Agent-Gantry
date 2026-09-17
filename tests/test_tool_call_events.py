@@ -283,3 +283,35 @@ class TestLoggingHygiene:
             file_handler.close()
             lg.setLevel(level_before)
             assert list(lg.handlers) == handlers_before
+
+
+def test_a_structured_only_result_is_not_rendered_as_empty() -> None:
+    """An MCP ``CallToolResult`` may answer entirely through
+    ``structuredContent``, leaving ``content`` empty. Rendering the blocks
+    alone gave ``""`` -- a successful call reported as no output, with the
+    result silently dropped."""
+    import json as _json
+
+    from agent_gantry.utils.render import render_result
+
+    class _Result:
+        def __init__(self) -> None:
+            self.content: list[object] = []
+            self.structuredContent = {"rows": [1, 2, 3], "total": 3}
+            self.isError = False
+
+    assert _json.loads(render_result(_Result())) == {"rows": [1, 2, 3], "total": 3}
+
+    # a result with text blocks still prefers them
+    class _WithText(_Result):
+        def __init__(self) -> None:
+            super().__init__()
+            self.content = [{"type": "text", "text": "from the block"}]
+
+    assert render_result(_WithText()) == "from the block"
+
+    # ...and one with neither is still the empty string
+    class _Empty:
+        content: list[object] = []
+
+    assert render_result(_Empty()) == ""

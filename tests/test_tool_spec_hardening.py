@@ -754,6 +754,56 @@ class TestAnthropicStrictClosesEveryObject:
             _anthropic_sdk_transform(schema)
         ) == {"<root>", "properties.a"}
 
+    def test_a_ref_to_a_typeless_target_is_not_strict_safe(self) -> None:
+        """A ``$ref`` counted as a declared type merely by existing, so
+        ``{"$ref": "#/$defs/Anything"}`` pointing at a description-only
+        definition was published ``strict: true`` with no type for the
+        provider to read -- the failure this check exists to report."""
+        from agent_gantry.adapters.tool_spec.schema_utils import unsupported_strict_paths
+
+        typeless = {
+            "type": "object",
+            "properties": {"thing": {"$ref": "#/$defs/Anything"}},
+            "$defs": {"Anything": {"description": "No type declared anywhere."}},
+        }
+        assert unsupported_strict_paths(typeless) == ["thing"]
+        assert OpenAIAdapter().to_provider_schema(_tool(typeless), strict=True)[
+            "function"
+        ].get("strict") is not True
+
+        # ...while a ref whose target *does* declare a type stays strict-safe,
+        # recursion included, and an unresolvable one is reported rather than
+        # assumed good.
+        typed = {
+            "type": "object",
+            "properties": {"thing": {"$ref": "#/$defs/Thing"}},
+            "$defs": {
+                "Thing": {
+                    "type": "object",
+                    "properties": {"x": {"type": "string"}},
+                    "additionalProperties": False,
+                }
+            },
+        }
+        assert unsupported_strict_paths(typed) == []
+        recursive = {
+            "type": "object",
+            "properties": {"node": {"$ref": "#/$defs/Node"}},
+            "$defs": {
+                "Node": {
+                    "type": "object",
+                    "properties": {"next": {"$ref": "#/$defs/Node"}},
+                    "additionalProperties": False,
+                }
+            },
+        }
+        assert unsupported_strict_paths(recursive) == []
+        external = {
+            "type": "object",
+            "properties": {"x": {"$ref": "https://example.com/schema.json"}},
+        }
+        assert unsupported_strict_paths(external) == ["x"]
+
     def test_optional_properties_stay_optional(self) -> None:
         """Anthropic keeps optionality, so OpenAI's transform — every property
         required, the rest widened to null — would be the wrong one here."""

@@ -13,6 +13,7 @@ framework package and only duck-types on ``.text``.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 __all__ = ["render_result"]
@@ -32,6 +33,27 @@ def _block_text(block: Any) -> str:
             if isinstance(value, str) and value:
                 return value
     return str(block)
+
+
+def _structured_text(result: Any) -> str:
+    """JSON for a result's structured content, or ``""`` if it carries none.
+
+    An MCP ``CallToolResult`` may answer entirely through
+    ``structuredContent``, leaving ``content`` empty. Rendering the blocks
+    alone then produced ``""`` — a successful call reported as no output,
+    with the actual result silently dropped.
+    """
+    for attribute in ("structuredContent", "structured_content"):
+        value = getattr(result, attribute, None)
+        if value is None and isinstance(result, dict):
+            value = result.get(attribute)
+        if value in (None, {}, []):
+            continue
+        try:
+            return json.dumps(value, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            return str(value)
+    return ""
 
 
 def render_result(
@@ -78,9 +100,10 @@ def render_result(
         content = getattr(result, "content", None)
         if isinstance(content, (list, tuple)) and not isinstance(result, type):
             # A result object wrapping content blocks — an MCP CallToolResult
-            # proxied from an upstream server, say — renders as its blocks.
+            # proxied from an upstream server, say — renders as its blocks,
+            # falling back to its structured content when those yield nothing.
             parts = [_block_text(item) for item in content]
-            text = " ".join(p for p in parts if p)
+            text = " ".join(p for p in parts if p) or _structured_text(result)
         else:
             # Single content-block-like object (has .text) or an arbitrary value.
             text = _block_text(result)
