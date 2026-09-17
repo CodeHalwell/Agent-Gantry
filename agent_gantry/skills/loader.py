@@ -44,6 +44,9 @@ logger = logging.getLogger(__name__)
 SKILL_FILE_NAME = "SKILL.md"
 
 _FRONTMATTER = re.compile(r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*\r?\n?", re.DOTALL)
+# The opening delimiter alone — used to tell a document with no frontmatter
+# from one whose block was never closed.
+_FRONTMATTER_OPEN = re.compile(r"\A---[ \t]*\r?\n")
 _DESCRIPTION_MIN = 10
 _DESCRIPTION_MAX = 2000
 _CONTENT_MAX = 50000
@@ -76,6 +79,16 @@ def parse_skill_markdown(text: str) -> tuple[dict[str, Any], str]:
     """
     match = _FRONTMATTER.match(text)
     if not match:
+        if _FRONTMATTER_OPEN.match(text):
+            # Opened a frontmatter block and never closed it. Falling through
+            # to "no frontmatter" took the whole document as the body, so the
+            # name silently became the directory's and the *description* --
+            # the text that gets embedded -- became the raw YAML. Even
+            # ``strict=True`` accepted it.
+            raise SkillParseError(
+                "frontmatter opened with '---' but never closed; "
+                "add a closing '---' line"
+            )
         return {}, text
     import yaml  # type: ignore[import-untyped]  # a core dependency, imported lazily
 

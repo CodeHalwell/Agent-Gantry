@@ -203,3 +203,32 @@ def test_a_model_rejection_is_reported_as_a_skill_parse_error(tmp_path: Path) ->
 
     # ...and the non-strict path still skips it rather than raising
     assert load_skills_from_directory(tmp_path, strict=False) == []
+
+
+def test_unterminated_frontmatter_is_rejected(tmp_path: Path) -> None:
+    """A document that opens ``---`` and never closes it fell through to the
+    "no frontmatter" path, so the whole thing became the body: the name
+    silently became the directory's and the description -- the text that gets
+    embedded -- became the raw YAML. ``strict=True`` accepted it too."""
+    skill_dir = tmp_path / "unterminated"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: my_skill\ndescription: A skill whose frontmatter never closes.\n"
+        "\nBody text, with no closing delimiter.\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SkillParseError, match="never closed"):
+        load_skill(skill_dir / "SKILL.md")
+    with pytest.raises(SkillParseError, match="never closed"):
+        load_skills_from_directory(tmp_path, strict=True)
+    assert load_skills_from_directory(tmp_path, strict=False) == []
+
+
+def test_documents_without_frontmatter_are_still_accepted() -> None:
+    """The guard keys off the *opening* delimiter at the start of the file, so
+    ordinary Markdown -- including a horizontal rule further down -- is
+    untouched."""
+    assert parse_skill_markdown("# Title\n\nJust a body.\n")[0] == {}
+    assert parse_skill_markdown("Some text\n\n---\n\nMore text\n")[0] == {}
+    assert parse_skill_markdown("---\nname: ok\n---\n\nBody\n")[0] == {"name": "ok"}

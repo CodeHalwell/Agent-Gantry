@@ -653,22 +653,24 @@ class MCPClientPool:
 _pending_close_tasks: set[asyncio.Task[None]] = set()
 
 
-def _schedule_client_close(client: MCPClient) -> None:
+def _schedule_client_close(client: MCPClient) -> bool:
     """Schedule ``client.close()`` on the running loop, if any.
 
-    Best-effort: callers are expected to be inside a running loop. Without
-    one the close is skipped (logged) and the connection is left to process
-    teardown — use ``await client.close()`` from async code for a
-    deterministic shutdown.
+    Returns:
+        True when a close was scheduled. False means there was no running
+        loop to schedule it on, and the caller still owns the client — it
+        must keep a reference so the connection or stdio subprocess can be
+        closed at the next async shutdown rather than surviving to process
+        teardown.
     """
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         logger.debug(
-            "No running event loop; skipping close of MCP client '%s'",
+            "No running event loop; deferring close of MCP client '%s'",
             client.config.name,
         )
-        return
+        return False
     task = loop.create_task(client.close())
     # The loop holds only weak references to tasks; without a strong external
     # reference the close task can be garbage-collected mid-flight, silently

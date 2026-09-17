@@ -158,6 +158,18 @@ Three behaviour changes to know about before upgrading:
   the text was emitted and every other field silently dropped. Dicts and
   objects alike must now carry the protocol's own `type` discriminator,
   which real content blocks declare anyway.
+- **A `SKILL.md` whose frontmatter is never closed is rejected.** Opening
+  `---` without a closing delimiter fell through to the "no frontmatter"
+  path, so the whole document became the body: the name silently became the
+  directory's, and the *description* — the text that gets embedded for
+  retrieval — became the raw YAML. Even `strict=True` accepted it. Ordinary
+  Markdown, including a horizontal rule further down, is untouched.
+- **An MCP client dropped outside a running loop is closed at shutdown.**
+  `forget_client` schedules the close on the running loop, and a
+  re-registration from a synchronous thread has none — so the close was
+  skipped while the client left the cache, leaving its HTTP connection or
+  stdio subprocess alive with nothing able to reach it. Such clients are
+  retained now and closed by `close_all_clients`.
 - **A `SKILL.md` the model rejects raises `SkillParseError`.** A document
   the parser could read but `Skill` refused — a frontmatter name past the
   length cap, say — escaped as Pydantic's `ValidationError`, so a caller

@@ -30,6 +30,11 @@ class MCPRegistry:
         """Initialize the registry."""
         self._servers: dict[str, MCPServerDefinition] = {}
         self._clients: dict[str, MCPClient] = {}
+        # Clients dropped from the cache that could not be closed at the time,
+        # because no event loop was running to schedule the close on. Held so
+        # ``close_all_clients`` can still reach them; otherwise the HTTP
+        # connection or stdio subprocess would survive to process teardown.
+        self._retired: list[MCPClient] = []
         self._pending: list[MCPServerDefinition] = []
 
     def register_server(
@@ -116,7 +121,8 @@ class MCPRegistry:
             return False
         from agent_gantry.adapters.executors.mcp_client import _schedule_client_close
 
-        _schedule_client_close(client)
+        if not _schedule_client_close(client):
+            self._retired.append(client)
         logger.debug(f"Dropped cached MCP client for: {namespace}.{name}")
         return True
 
@@ -155,7 +161,8 @@ class MCPRegistry:
             if client is not None:
                 from agent_gantry.adapters.executors.mcp_client import _schedule_client_close
 
-                _schedule_client_close(client)
+                if not _schedule_client_close(client):
+                    self._retired.append(client)
             logger.debug(f"Deleted MCP server: {key}")
             return True
         return False
@@ -169,7 +176,9 @@ class MCPRegistry:
         """
         import asyncio
 
-        clients = list(self._clients.values())
+        # Retired clients included: one dropped outside a running loop had no
+        # way to be closed then, and is unreachable through the cache now.
+        clients = list(self._clients.values()) + self._retired
         results = await asyncio.gather(
             *(client.close() for client in clients), return_exceptions=True
         )
@@ -177,6 +186,7 @@ class MCPRegistry:
             if isinstance(result, BaseException):
                 logger.debug("Error closing MCP client", exc_info=result)
         self._clients.clear()
+        self._retired.clear()
 
     def get_pending(self) -> list[MCPServerDefinition]:
         """

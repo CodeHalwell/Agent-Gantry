@@ -6,6 +6,7 @@ Tests MCP client, server, and protocol compliance.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -512,3 +513,44 @@ class TestMCPProtocolCompliance:
         static_server = create_mcp_server(gantry, mode="static")
         static_tools = await static_server.gantry.list_tools()
         assert len(static_tools) >= 20  # All registered tools
+
+
+@pytest.mark.asyncio
+async def test_a_client_dropped_outside_a_loop_is_still_closed_at_shutdown() -> None:
+    """``forget_client`` schedules the close on the running loop, but from a
+    synchronous thread there is none, so the close was skipped and the client
+    was gone from the cache -- leaving its HTTP connection or stdio
+    subprocess alive with nothing able to reach it."""
+    from agent_gantry.core.mcp_registry import MCPRegistry
+    from agent_gantry.schema.mcp import MCPServerDefinition
+
+    class _FakeClient:
+        def __init__(self, name: str) -> None:
+            self.config = type("C", (), {"name": name})()
+            self.closed = False
+
+        async def close(self) -> None:
+            self.closed = True
+
+    registry = MCPRegistry()
+    registry.register_server(
+        MCPServerDefinition(
+            name="srv",
+            description="A stand-in server for the client-retirement check.",
+            command=["echo", "hi"],
+            namespace="default",
+        )
+    )
+    client = _FakeClient("srv")
+    registry._clients["default.srv"] = client
+
+    # Dropped from a thread with no running loop, as a synchronous
+    # re-registration would.
+    await asyncio.to_thread(registry.forget_client, "srv")
+    assert client.closed is False, "nothing can close it from there"
+    assert client not in registry._clients.values(), "and it leaves the cache"
+
+    # ...but shutdown still reaches it
+    await registry.close_all_clients()
+    assert client.closed is True
+    assert registry._retired == []
