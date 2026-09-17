@@ -145,7 +145,22 @@ def build_gantry(
 
     The CLI itself does not use this — it builds the gantry inside the one
     loop its command runs on (see :func:`build_gantry_async`).
+
+    ``persist=True`` is refused here. Persisting initialises the configured
+    backend, and this helper does that inside an ``asyncio.run`` it then
+    closes, so a loop-bound backend (a pgvector pool) would come back holding
+    a closed loop and fail on first use in the caller's own. Await
+    :func:`build_gantry_async` on the loop you will use instead.
+
+    Raises:
+        ValueError: If ``persist`` is True.
     """
+    if persist:
+        raise ValueError(
+            "build_gantry(persist=True) would initialise the backend on a loop it "
+            "then closes, leaving a loop-bound store (pgvector) unusable. Await "
+            "build_gantry_async(..., persist=True) on the loop you will use."
+        )
     return asyncio.run(
         build_gantry_async(modules, attr=attr, config=config, quiet=quiet, persist=persist)
     )

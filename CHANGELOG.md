@@ -139,6 +139,17 @@ Three behaviour changes to know about before upgrading:
   tool the *other* instances registered. An empty keep set is now refused, in
   `sync()` and in `prune_stale_tools` itself, with a warning saying why;
   pruning a tool genuinely dropped from the code is unaffected.
+- **A structured result is no longer mistaken for MCP content blocks.** The
+  check accepted any dict carrying a `text` key, so a list of records that
+  happen to have one — search hits like `{"text": ..., "score": ...}` — was
+  rendered as content blocks: the text was emitted and every other field
+  silently dropped. A dict must now carry the protocol's own `type`
+  discriminator.
+- **`build_gantry(persist=True)` is refused.** The synchronous wrapper
+  initialises inside an `asyncio.run` it then closes, so a loop-bound
+  backend (a pgvector pool) came back holding a closed loop, to fail on
+  first use in the caller's own. It now says to await `build_gantry_async`
+  on the loop you will use.
 - **An empty namespace list selects nothing in `list_all` and `count`.** Both
   used `if namespace:`, which cannot tell `None` — no filter — from `[]` — a
   filter matching nothing — so they returned the whole collection where

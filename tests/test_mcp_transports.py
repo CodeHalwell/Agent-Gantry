@@ -11,6 +11,7 @@ and executes through it.
 from __future__ import annotations
 
 import asyncio
+import json
 import socket
 from collections.abc import AsyncIterator
 from typing import Any
@@ -747,6 +748,10 @@ async def test_a_cancelled_startup_does_not_leave_the_manager_running() -> None:
     manager = _SlowManager()
     app = _StreamableHTTPApp(manager)
 
+    # Compared against a snapshot rather than matched on ``repr``: a task's
+    # repr carries the source path, so a name-substring test passes or fails
+    # on where the checkout happens to live.
+    before = asyncio.all_tasks()
     starting = asyncio.create_task(app.start())
     await asyncio.sleep(0.05)
     starting.cancel()
@@ -754,7 +759,8 @@ async def test_a_cancelled_startup_does_not_leave_the_manager_running() -> None:
         await starting
     await asyncio.sleep(0.4)  # well past the manager's startup
 
-    assert not [task for task in asyncio.all_tasks() if "runner" in repr(task)]
+    leaked = asyncio.all_tasks() - before - {asyncio.current_task()}
+    assert not leaked, leaked
     # the manager was spent by that attempt, so the next request is told so
     # plainly rather than meeting the SDK's own one-shot error
     with pytest.raises(RuntimeError, match="cannot serve again"):
@@ -877,3 +883,16 @@ def test_render_tool_output_prefers_json_for_structured_results() -> None:
     proxied = MagicMock()
     proxied.content = [block]
     assert _render_tool_output(proxied) == "from block"
+
+
+def test_a_record_that_merely_has_a_text_field_is_not_a_content_block() -> None:
+    """The predicate accepted any dict with a ``text`` key, so a structured
+    result whose records happen to carry one -- search hits are the obvious
+    case -- rendered as content blocks: the text was emitted and every other
+    field silently dropped."""
+    hits = [{"text": "match", "score": 0.9}, {"text": "other", "score": 0.4}]
+    rendered = _render_tool_output(hits)
+    assert json.loads(rendered) == hits, "scores must survive"
+
+    # a real block carries the protocol's discriminator and still renders
+    assert _render_tool_output([{"type": "text", "text": "hello"}]) == "hello"

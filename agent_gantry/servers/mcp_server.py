@@ -89,6 +89,24 @@ def _text_block(text: str) -> dict[str, Any]:
     return {"type": "text", "text": text}
 
 
+def _is_text_block(item: Any) -> bool:
+    """Whether ``item`` is an MCP text content block rather than a data record.
+
+    A *dict* must carry the protocol's own discriminator. Testing only for a
+    ``text`` key swept up ordinary records that happen to have one — search
+    hits like ``{"text": "match", "score": 0.9}`` are the obvious case — and
+    rendering them as blocks emitted the text and silently dropped every
+    other field.
+
+    An object is taken at its word: those reach here as real content blocks
+    from an upstream server, through our own client, so a ``text`` attribute
+    is not something an ordinary result acquires by coincidence.
+    """
+    if isinstance(item, dict):
+        return item.get("type") == "text" and "text" in item
+    return hasattr(item, "text")
+
+
 def _render_tool_output(value: Any) -> str:
     """Stringify a tool result for an MCP client.
 
@@ -102,10 +120,7 @@ def _render_tool_output(value: Any) -> str:
         return value
     if isinstance(value, (dict, list, tuple)):
         blocks = value if isinstance(value, (list, tuple)) else None
-        if blocks is not None and blocks and all(
-            hasattr(item, "text") or (isinstance(item, dict) and "text" in item)
-            for item in blocks
-        ):
+        if blocks is not None and blocks and all(_is_text_block(item) for item in blocks):
             return render_result(blocks)
         try:
             return json.dumps(value, ensure_ascii=False, default=str)
