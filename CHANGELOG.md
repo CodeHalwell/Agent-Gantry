@@ -204,17 +204,21 @@ Three behaviour changes to know about before upgrading:
   objects alike must now carry the protocol's own `type` discriminator,
   which real content blocks declare anyway — and so must a record returned
   on its own rather than in a list, which never reached the list branch and
-  fell through to the same duck-typed rendering.
-- **An MCP server that lists no tools no longer wipes the ones it already
-  registered.** A successful but empty `tools/list` was read as "every tool
-  was withdrawn" and removed them from the registry *and* the vector store,
-  costing a full re-embed to recover and leaving retrieval blind meanwhile.
-  A server still populating its catalogue — plugin discovery, a remote
-  fetch, a reconnect — answers exactly the same way, which is why the
-  protocol carries `notifications/tools/list_changed` at all. The empty
-  answer is now logged and ignored; a response listing *some* tools still
-  prunes the rest, as before. This is `prune_stale_tools`' empty-keep-set
-  guard applied to its MCP-scoped sibling.
+  fell through to the same duck-typed rendering. Unwrapping a result's
+  `content` now needs MCP identity too: a record whose `content` field
+  happens to hold a list, `Article(title=..., content=[...], score=...)`,
+  was treated as a proxied `CallToolResult`, emitting the content items and
+  dropping every sibling field.
+- **An MCP server that lists no tools has its tools removed, and says so.**
+  An empty `tools/list` is the server's complete catalogue, so it prunes
+  like any other answer — this deliberately does *not* mirror
+  `prune_stale_tools`' empty-keep-set guard, because there the empty set
+  comes from the gantry ("I do not know what belongs here") and here it
+  comes from the server. Discovery failures never arrive this way:
+  `MCPClient.list_tools()` invalidates the session and re-raises. Refusing
+  to prune would leave no path that ever removes them, since every later
+  empty answer takes the same branch, while a wipe is undone by the next
+  discovery that lists them. The removal is now logged at warning.
 - **A `SKILL.md` whose frontmatter is never closed is rejected.** Opening
   `---` without a closing delimiter fell through to the "no frontmatter"
   path, so the whole document became the body: the name silently became the

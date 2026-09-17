@@ -112,6 +112,40 @@ def _is_text_block(item: Any) -> bool:
     )
 
 
+def _is_content_block(item: Any) -> bool:
+    """Whether ``item`` carries the protocol's content-block discriminator.
+
+    Looser than :func:`_is_text_block`: a result's blocks may be image or
+    resource blocks as well as text, and every one of them declares ``type``.
+    """
+    if isinstance(item, dict):
+        return isinstance(item.get("type"), str)
+    return isinstance(getattr(item, "type", None), str)
+
+
+def _is_mcp_result(value: Any) -> bool:
+    """Whether ``value`` is an MCP ``CallToolResult`` rather than a record that
+    merely has a ``content`` field.
+
+    Duck-typing on ``content`` alone swept up ordinary records —
+    ``Article(title="...", content=["body"], score=0.9)`` is the obvious case
+    — and rendering those through :func:`render_result` emitted the content
+    items and dropped the title and the score: the defect
+    :func:`_is_text_block` exists to stop, one field over.
+    """
+    content = getattr(value, "content", None)
+    if not isinstance(content, (list, tuple)):
+        return False
+    if content and all(_is_content_block(item) for item in content):
+        return True
+    # A result answering entirely through ``structuredContent`` leaves
+    # ``content`` empty, so its own protocol fields have to identify it.
+    return any(
+        getattr(value, attribute, None) is not None
+        for attribute in ("structuredContent", "structured_content", "isError")
+    )
+
+
 def _render_tool_output(value: Any) -> str:
     """Stringify a tool result for an MCP client.
 
@@ -133,7 +167,7 @@ def _render_tool_output(value: Any) -> str:
             return render_result(value)
     if value is None or isinstance(value, bytes):
         return render_result(value)
-    if _is_text_block(value) or isinstance(getattr(value, "content", None), (list, tuple)):
+    if _is_text_block(value) or _is_mcp_result(value):
         # A genuine content block, or a result object wrapping them — an MCP
         # ``CallToolResult`` proxied from an upstream server.
         return render_result(value)

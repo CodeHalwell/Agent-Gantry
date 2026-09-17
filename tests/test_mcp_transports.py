@@ -974,6 +974,18 @@ def test_a_record_object_with_a_text_attribute_is_not_a_content_block() -> None:
     bare = _render_tool_output(SearchHit("match", 0.9))
     assert "0.9" in bare, bare
 
+    # A record whose ``content`` field happens to be a list is not a proxied
+    # ``CallToolResult`` either: unwrapping it emitted the content items and
+    # dropped the title and score, the same defect one field over.
+    @dataclass
+    class Article:
+        title: str
+        content: list[str]
+        score: float
+
+    article = _render_tool_output(Article("Headline", ["body"], 0.9))
+    assert "Headline" in article and "0.9" in article, article
+
     # a real content block still renders as its text, wrapped or not
     import mcp.types as types
 

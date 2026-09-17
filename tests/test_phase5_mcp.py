@@ -557,11 +557,12 @@ async def test_a_client_dropped_outside_a_loop_is_still_closed_at_shutdown() -> 
 
 
 @pytest.mark.asyncio
-async def test_an_empty_discovery_does_not_wipe_a_servers_tools() -> None:
-    """``tools/list`` answering with nothing is ambiguous — a server still
-    populating its catalogue reads the same as one that withdrew every tool —
-    and the destructive reading dropped them all from the registry *and* the
-    vector store, costing a full re-embed to recover."""
+async def test_an_empty_discovery_is_authoritative() -> None:
+    """An empty ``tools/list`` is the server's complete catalogue, so it
+    removes the tools it had. Refusing to prune on empty looks safer but has
+    no way out: every later empty answer takes the same branch, so the tools
+    stay retrievable forever and every execution is dispatched to a server
+    that no longer exposes them. Discovery *failures* raise instead."""
 
     class _FakeClient:
         def __init__(self, config: MCPServerConfig) -> None:
@@ -585,19 +586,15 @@ async def test_an_empty_discovery_does_not_wipe_a_servers_tools() -> None:
         gantry._register_mcp_tool_handlers(client, tools, resolve_client=lambda: client)
         gantry._pending_tools.extend(tools)
         await gantry.sync()
-        names = sorted(t.name for t in gantry._registry.list_tools("mcp"))
-        assert names == ["read_file_0", "read_file_1", "read_file_2"]
+        assert len(gantry._registry.list_tools("mcp")) == 3
 
-        await gantry._remove_stale_mcp_tools(client, [])
-        assert sorted(t.name for t in gantry._registry.list_tools("mcp")) == names
-        stored = await gantry._vector_store.list_all(namespace="mcp")
-        assert sorted(t.name for t in stored) == names
-
-        # ...while a server that still lists *some* tools prunes the rest, as
-        # it always did.
+        # A server that still lists some tools prunes only the rest.
         await gantry._remove_stale_mcp_tools(client, tools[:1])
         assert [t.name for t in gantry._registry.list_tools("mcp")] == ["read_file_0"]
-        stored = await gantry._vector_store.list_all(namespace="mcp")
-        assert [t.name for t in stored] == ["read_file_0"]
+
+        # ...and one that lists none prunes them all, from the store too.
+        await gantry._remove_stale_mcp_tools(client, [])
+        assert gantry._registry.list_tools("mcp") == []
+        assert await gantry._vector_store.list_all(namespace="mcp") == []
     finally:
         await gantry.close()
