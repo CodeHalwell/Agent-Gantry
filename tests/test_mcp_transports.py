@@ -877,12 +877,40 @@ def test_render_tool_output_prefers_json_for_structured_results() -> None:
     assert _render_tool_output({"a": 1, "b": [1, 2]}) == '{"a": 1, "b": [1, 2]}'
     assert _render_tool_output("plain") == "plain"
     assert _render_tool_output(42) == "42"
-    block = MagicMock()
-    block.text = "from block"
+    # A stand-in shaped like a real ``TextContent``, not a MagicMock: a mock
+    # has every attribute, so it cannot distinguish a content block from an
+    # ordinary record and would pass whatever the predicate asked for.
+    class _TextBlock:
+        type = "text"
+
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    block = _TextBlock("from block")
     assert _render_tool_output([block]) == "from block"
     proxied = MagicMock()
     proxied.content = [block]
     assert _render_tool_output(proxied) == "from block"
+
+
+def test_a_record_object_with_a_text_attribute_is_not_a_content_block() -> None:
+    """The object path took a ``text`` attribute at its word, so a tool
+    returning records -- ``[SearchHit(text=..., score=...)]`` -- had them
+    rendered as blocks and every other field silently dropped."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class SearchHit:
+        text: str
+        score: float
+
+    rendered = _render_tool_output([SearchHit("match", 0.9), SearchHit("other", 0.4)])
+    assert "0.9" in rendered and "0.4" in rendered, rendered
+
+    # a real content block still renders as its text
+    import mcp.types as types
+
+    assert _render_tool_output([types.TextContent(type="text", text="hello")]) == "hello"
 
 
 def test_a_record_that_merely_has_a_text_field_is_not_a_content_block() -> None:

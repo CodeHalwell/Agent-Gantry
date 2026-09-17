@@ -98,13 +98,18 @@ def _is_text_block(item: Any) -> bool:
     rendering them as blocks emitted the text and silently dropped every
     other field.
 
-    An object is taken at its word: those reach here as real content blocks
-    from an upstream server, through our own client, so a ``text`` attribute
-    is not something an ordinary result acquires by coincidence.
+    An *object* must carry it too. Taking a ``text`` attribute at its word
+    was wrong for the same reason: a tool returning records —
+    ``[SearchHit(text="match", score=0.9)]`` — hands over objects that all
+    have one, and they were rendered as blocks with every other field
+    dropped. Real content blocks (``TextContent`` and friends) declare
+    ``type``, so requiring it costs them nothing.
     """
     if isinstance(item, dict):
         return item.get("type") == "text" and "text" in item
-    return hasattr(item, "text")
+    return getattr(item, "type", None) == "text" and isinstance(
+        getattr(item, "text", None), str
+    )
 
 
 def _render_tool_output(value: Any) -> str:

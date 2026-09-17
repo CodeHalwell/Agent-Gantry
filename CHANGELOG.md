@@ -152,11 +152,16 @@ Three behaviour changes to know about before upgrading:
   successful call reported as no output, with the result silently dropped.
   Structured content is the fallback when no text block yields anything.
 - **A structured result is no longer mistaken for MCP content blocks.** The
-  check accepted any dict carrying a `text` key, so a list of records that
-  happen to have one — search hits like `{"text": ..., "score": ...}` — was
-  rendered as content blocks: the text was emitted and every other field
-  silently dropped. A dict must now carry the protocol's own `type`
-  discriminator.
+  check accepted anything carrying `text`, so a list of records that happen
+  to have it — search hits like `{"text": ..., "score": ...}`, or objects
+  like `SearchHit(text=..., score=...)` — was rendered as content blocks:
+  the text was emitted and every other field silently dropped. Dicts and
+  objects alike must now carry the protocol's own `type` discriminator,
+  which real content blocks declare anyway.
+- **A `SKILL.md` the model rejects raises `SkillParseError`.** A document
+  the parser could read but `Skill` refused — a frontmatter name past the
+  length cap, say — escaped as Pydantic's `ValidationError`, so a caller
+  handling the documented exception missed it.
 - **`build_gantry(persist=True)` is refused.** The synchronous wrapper
   initialises inside an `asyncio.run` it then closes, so a loop-bound
   backend (a pgvector pool) came back holding a closed loop, to fail on

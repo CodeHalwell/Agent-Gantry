@@ -33,6 +33,8 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from agent_gantry.schema.skill import Skill, SkillCategory
 
 logger = logging.getLogger(__name__)
@@ -198,19 +200,26 @@ def skill_from_markdown(
     }
     metadata.setdefault("format", "agent-skills")
 
-    return Skill(
-        name=name,
-        namespace=str(frontmatter.get("namespace") or namespace),
-        description=description,
-        content=content,
-        summary=summary_text,
-        category=resolved_category,
-        tags=_as_str_list(frontmatter.get("tags")),
-        related_tools=related_tools,
-        source="skill_md",
-        source_uri=source_uri,
-        metadata=metadata,
-    )
+    try:
+        return Skill(
+            name=name,
+            namespace=str(frontmatter.get("namespace") or namespace),
+            description=description,
+            content=content,
+            summary=summary_text,
+            category=resolved_category,
+            tags=_as_str_list(frontmatter.get("tags")),
+            related_tools=related_tools,
+            source="skill_md",
+            source_uri=source_uri,
+            metadata=metadata,
+        )
+    except ValidationError as exc:
+        # A document this function could read but the model rejects — a
+        # frontmatter name past the length cap, say. Pydantic's error is a
+        # ValueError, so it propagated as itself, and a caller handling the
+        # documented SkillParseError missed it.
+        raise SkillParseError(f"skill {name!r} is not valid: {exc}") from exc
 
 
 def load_skill(path: str | Path, *, namespace: str = "default") -> Skill:

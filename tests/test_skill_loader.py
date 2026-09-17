@@ -182,3 +182,24 @@ def test_bundled_skill_loads_through_the_loader() -> None:
     assert [s.name for s in skills] == ["agent-gantry"]
     assert "semantic" in skills[0].description.lower()
     assert skills[0].content.startswith("# Agent-Gantry")
+
+
+def test_a_model_rejection_is_reported_as_a_skill_parse_error(tmp_path: Path) -> None:
+    """A document the parser can read but the model rejects -- a frontmatter
+    name past the length cap -- raised Pydantic's ValidationError. That is a
+    ValueError, so it escaped as itself and a caller handling the documented
+    SkillParseError missed it."""
+    skill_dir = tmp_path / "toolong"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: " + "a" * 200 + "\ndescription: A skill whose name exceeds the limit.\n---\n\nBody.\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SkillParseError):
+        load_skill(skill_dir / "SKILL.md")
+    with pytest.raises(SkillParseError):
+        load_skills_from_directory(tmp_path, strict=True)
+
+    # ...and the non-strict path still skips it rather than raising
+    assert load_skills_from_directory(tmp_path, strict=False) == []
