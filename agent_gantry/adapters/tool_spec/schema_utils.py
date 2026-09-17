@@ -506,8 +506,17 @@ def _collect_open_maps(
                 _collect_open_maps(subschema, f"{defs_key}.{name}", out, root)
 
 
-def unsupported_strict_paths(schema: dict[str, Any] | None) -> list[str]:
-    """Locations in ``schema`` that OpenAI strict mode cannot express.
+def unsupported_strict_paths(
+    schema: dict[str, Any] | None, *, inlines_refs: bool = True
+) -> list[str]:
+    """Locations in ``schema`` that a provider's strict mode cannot express.
+
+    ``inlines_refs`` selects whether the caller's transform inlines a
+    decorated ``$ref``. OpenAI's does and gives up at a depth limit, so a
+    required self-reference leaves behind the very shape the inlining exists
+    to remove. Anthropic's never inlines and is untroubled by it, so gating
+    its strict mode on that probe withheld grammar-constrained sampling from
+    a recursive model for an entirely unrelated provider's limitation.
 
     Strict mode requires every object to enumerate its properties and set
     ``additionalProperties: false``; it has no representation for an object
@@ -535,7 +544,8 @@ def unsupported_strict_paths(schema: dict[str, Any] | None) -> list[str]:
         return []
     found: list[str] = []
     _collect_open_maps(schema, "", found, schema)
-    found.extend(_residual_decorated_refs(schema))
+    if inlines_refs:
+        found.extend(_residual_decorated_refs(schema))
     return found
 
 

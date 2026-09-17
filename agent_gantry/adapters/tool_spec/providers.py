@@ -554,7 +554,11 @@ class AnthropicAdapter:
             # handler's open object with one accepting no keys at all —
             # silently discarding the parameter's data rather than merely
             # leaving it unconstrained.
-            unsupported = unsupported_strict_paths(tool.parameters_schema)
+            # Anthropic's transform never inlines a decorated ``$ref``, so the
+            # OpenAI depth-limit probe does not apply to it.
+            unsupported = unsupported_strict_paths(
+                tool.parameters_schema, inlines_refs=False
+            )
             if unsupported:
                 _logger.warning(
                     "Tool %r cannot use %s strict mode: %s describes an "

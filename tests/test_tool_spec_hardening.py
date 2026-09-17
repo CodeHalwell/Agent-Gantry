@@ -1122,3 +1122,42 @@ def test_a_result_keyed_by_a_non_string_survives_the_gemini_round_trip() -> None
     # nested, and inside lists
     nested = _json_native({"rows": [{Kind.PRIMARY: "x"}]})
     assert nested == {"rows": [{"Kind.PRIMARY": "x"}]}
+
+
+def test_anthropic_strict_is_not_gated_on_openais_ref_inlining_limit() -> None:
+    """``unsupported_strict_paths`` also probes what survives OpenAI's
+    ``$ref``-inlining transform, which gives up at a depth limit. Anthropic's
+    transform never inlines a ``$ref``, so sharing that probe withheld
+    grammar-constrained sampling from a required self-referential model for an
+    unrelated provider's limitation."""
+    from agent_gantry.adapters.tool_spec.schema_utils import unsupported_strict_paths
+
+    recursive = {
+        "type": "object",
+        "properties": {"root": {"$ref": "#/$defs/Node", "description": "decorated ref"}},
+        "required": ["root"],
+        "additionalProperties": False,
+        "$defs": {
+            "Node": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "child": {"$ref": "#/$defs/Node", "description": "the nested child"},
+                },
+                "required": ["name", "child"],
+                "additionalProperties": False,
+            }
+        },
+    }
+
+    assert unsupported_strict_paths(recursive), "OpenAI still cannot express it"
+    assert unsupported_strict_paths(recursive, inlines_refs=False) == []
+
+    # ...and an open map is still unsupported for either provider, since that
+    # has nothing to do with ``$ref`` inlining.
+    open_map = {
+        "type": "object",
+        "properties": {"bag": {"type": "object", "additionalProperties": {"type": "integer"}}},
+    }
+    assert unsupported_strict_paths(open_map)
+    assert unsupported_strict_paths(open_map, inlines_refs=False)

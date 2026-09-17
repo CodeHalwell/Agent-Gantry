@@ -179,7 +179,15 @@ def skill_from_markdown(
         # The description is what gets embedded, so a missing one is filled
         # from the body's opening paragraph rather than left empty.
         fallback = _first_paragraph(body)
-        description = description or fallback
+        # A *short* description is joined to the fallback rather than padded
+        # on its own: ``description: PDF tools`` used to be kept verbatim and
+        # padded to reach the minimum, which put a low-information string into
+        # the only text the skill is retrieved by. The author's wording still
+        # leads, so nothing they wrote is discarded.
+        if description and fallback and description.lower() not in fallback.lower():
+            description = f"{description}. {fallback}"
+        else:
+            description = description or fallback
         if len(description) < _DESCRIPTION_MIN:
             description = f"{description or name} (skill '{name}')"
     description = _fit(description, _DESCRIPTION_MAX)
@@ -257,7 +265,15 @@ def load_skill(path: str | Path, *, namespace: str = "default") -> Skill:
         file = file / SKILL_FILE_NAME
     if not file.is_file():
         raise FileNotFoundError(f"No {SKILL_FILE_NAME} at {file}")
-    text = file.read_text(encoding="utf-8")
+    try:
+        text = file.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        # This boundary documents ``SkillParseError`` for a file it cannot
+        # parse, and a file that is not UTF-8 is exactly that. The raw
+        # ``UnicodeDecodeError`` escaped it, and
+        # ``load_skills_from_directory(strict=True)`` re-raised it unchanged
+        # because it catches ``ValueError``, which this is not.
+        raise SkillParseError(f"{file} is not valid UTF-8: {exc}") from exc
     try:
         return skill_from_markdown(
             text,

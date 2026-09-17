@@ -220,6 +220,22 @@ Three behaviour changes to know about before upgrading:
   was never embedded and `_synced` stayed `True`, so nothing tried again.
   The buffer is now drained by identity against the snapshot the sync
   answers for, as the tool-side buffer already was.
+- **A `SKILL.md` that is not valid UTF-8 raises `SkillParseError`.** The raw
+  `UnicodeDecodeError` escaped the loader boundary that documents
+  `SkillParseError` for a file it cannot parse, and
+  `load_skills_from_directory(strict=True)` re-raised it unchanged because it
+  catches `ValueError`, which this is not.
+- **A short frontmatter `description` is enriched, not padded.** One below
+  the ten-character minimum was kept verbatim and padded with the skill's own
+  name, putting a low-information string into the only text a skill is
+  retrieved by. The body's opening paragraph is joined to it now, with the
+  author's wording still leading.
+- **Anthropic strict mode is no longer gated on an OpenAI limitation.**
+  `unsupported_strict_paths()` also probes what survives OpenAI's
+  `$ref`-inlining transform, which gives up at a depth limit; Anthropic's
+  transform never inlines a `$ref`, so a required self-referential model lost
+  grammar-constrained sampling for an unrelated provider's constraint. The
+  probe is now opt-in via `inlines_refs`.
 - **A `SKILL.md` saved with a UTF-8 byte order mark keeps its frontmatter.**
   Both frontmatter patterns anchor on the start of the document, so a BOM
   made the file look like it had none: the name silently became the

@@ -255,3 +255,39 @@ def test_a_byte_order_mark_does_not_hide_the_frontmatter(tmp_path: Path) -> None
     assert skill.name == "bom-skill"
     assert skill.description == "A skill whose file was saved with a byte order mark."
     assert "---" not in skill.description
+
+
+def test_a_file_that_is_not_utf8_is_a_skill_parse_error(tmp_path: Path) -> None:
+    """This boundary documents ``SkillParseError`` for a file it cannot parse,
+    and a file that is not UTF-8 is exactly that. The raw ``UnicodeDecodeError``
+    escaped it, and ``load_skills_from_directory(strict=True)`` re-raised it
+    unchanged because it catches ``ValueError``, which this is not."""
+    from agent_gantry.skills.loader import SkillParseError, load_skill
+
+    directory = tmp_path / "bad_bytes"
+    directory.mkdir()
+    (directory / "SKILL.md").write_bytes(
+        b"---\nname: x\ndescription: A skill file holding invalid bytes.\n---\n\n\xff\xfe body\n"
+    )
+
+    with pytest.raises(SkillParseError, match="not valid UTF-8"):
+        load_skill(directory)
+
+
+def test_a_short_description_is_enriched_rather_than_padded() -> None:
+    """The description is the only text a skill is retrieved by, so a
+    frontmatter one below the minimum used to be kept verbatim and padded with
+    the skill's own name -- adding length but no information. The body's
+    opening paragraph is joined to it instead, with the author's wording
+    still leading."""
+    from agent_gantry.skills.loader import skill_from_markdown
+
+    skill = skill_from_markdown(
+        "---\nname: pdf-helper\ndescription: PDF tools\n---\n\n"
+        "Extracts text and tables from PDF documents, merges and splits them, "
+        "and fills in form fields.\n",
+        default_name="pdf-helper",
+    )
+    assert skill.description.startswith("PDF tools")
+    assert "merges and splits" in skill.description
+    assert "(skill 'pdf-helper')" not in skill.description
