@@ -185,6 +185,15 @@ Three behaviour changes to know about before upgrading:
   `inspect.iscoroutinefunction` is false for an object with `async def
   __call__` — the shape a stateful custom generator takes — so the sync path
   was built and `.strip()` called on the coroutine it returned.
+- **A *mounted* MCP app can release its session manager.** A parent
+  application does not run a mounted sub-application's lifespan, so the
+  manager the app starts on its first request had no shutdown path and its
+  task group lived until the process ended — enough to hold a host's
+  graceful shutdown open. `streamable_http_app()` publishes the owner as
+  `app.state.mcp_session`, so a host can `await app.state.mcp_session.stop()`
+  from its own shutdown. Stopping is final (the SDK's manager may be entered
+  once), and a stopped app now says so rather than surfacing the SDK's error
+  from a request.
 
 #### Stores and embedders
 

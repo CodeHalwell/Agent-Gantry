@@ -164,9 +164,18 @@ class _StreamableHTTPApp:
         self._lock: asyncio.Lock | None = None
         self._task: asyncio.Task[None] | None = None
         self._close: asyncio.Event | None = None
+        self._closed = False
 
     async def start(self) -> None:
         """Enter ``manager.run()`` once, and wait until it is serving."""
+        if self._closed:
+            # The SDK's manager may be entered only once, so a stopped app
+            # cannot be revived — say so rather than surfacing the SDK's
+            # "run() can only be called once per instance" from a request.
+            raise RuntimeError(
+                "This MCP app has been stopped and cannot serve again; "
+                "build a new one with streamable_http_app()."
+            )
         if self._task is not None:
             return
         if self._lock is None:
@@ -196,7 +205,8 @@ class _StreamableHTTPApp:
             self._task, self._close = task, close
 
     async def stop(self) -> None:
-        """Leave ``manager.run()``, if this app started it."""
+        """Leave ``manager.run()``, if this app started it. Not restartable."""
+        self._closed = True
         task, close = self._task, self._close
         self._task = self._close = None
         if close is not None:
@@ -645,6 +655,21 @@ class MCPServer:
         does not run a mounted sub-application's lifespan, so relying on that
         alone would leave the manager uninitialised.
 
+        That cuts both ways at shutdown: a mounted app is never told to stop
+        either, so the manager it started would live until the process ends.
+        The owner is published as ``app.state.mcp_session`` for a host that
+        wants to release it explicitly::
+
+            mcp_app = gantry_mcp.streamable_http_app()
+            host.mount("/tools", mcp_app)
+
+            @host.on_event("shutdown")          # or your lifespan's finally
+            async def _stop_mcp() -> None:
+                await mcp_app.state.mcp_session.stop()
+
+        Stopping is final: the SDK's manager may be entered only once, so
+        build a new app to serve again.
+
         Args:
             path: Endpoint path clients connect to (default ``/mcp``).
             json_response: Reply with plain JSON instead of an SSE stream
@@ -687,7 +712,14 @@ class MCPServer:
             # ``Mount`` serves the trailing-slash form and any sub-path
             # without a redirect round-trip for clients that add one.
             routes.append(Mount(path, app=handler))
-        return Starlette(routes=routes, lifespan=lifespan)
+        app = Starlette(routes=routes, lifespan=lifespan)
+        # The session manager's owner, published so a host that *mounts* this
+        # app can release it: a parent application does not run a mounted
+        # sub-application's lifespan, so the manager this app starts on its
+        # first request would otherwise live until the process ends. Call
+        # ``await app.state.mcp_session.stop()`` from the host's own shutdown.
+        app.state.mcp_session = handler
+        return app
 
     def sse_app(
         self,

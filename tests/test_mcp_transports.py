@@ -96,7 +96,14 @@ class _Served:
     async def __aexit__(self, *exc: Any) -> None:
         self._uvicorn.should_exit = True
         assert self._task is not None
-        await asyncio.wait_for(self._task, 15)
+        try:
+            # Generous: a loaded CI runner takes far longer than a laptop to
+            # drain, and a cancelled server task is a confusing way to learn
+            # the test was merely slow.
+            await asyncio.wait_for(self._task, 60)
+        finally:
+            if not self._task.done():
+                self._task.cancel()
 
 
 @pytest.fixture(params=["streamable_http", "sse"])
@@ -114,7 +121,7 @@ async def test_remote_roundtrip(served: tuple[_Served, AgentGantry]) -> None:
     running, _gantry = served
     client = MCPClient(MCPServerConfig(name="remote", url=running.url, transport=running.transport))
     try:
-        tools = await asyncio.wait_for(client.list_tools(), 30)
+        tools = await asyncio.wait_for(client.list_tools(), 60)
         # hybrid: the pinned tool is listed directly next to the meta-tools
         assert sorted(t.name for t in tools) == [
             "add_numbers",
@@ -576,18 +583,31 @@ async def test_the_app_serves_when_mounted_into_another_service() -> None:
             MCPServerConfig(name="mounted", url=f"http://127.0.0.1:{port}/tools/mcp")
         )
         try:
-            tools = await asyncio.wait_for(client.list_tools(), 30)
+            tools = await asyncio.wait_for(client.list_tools(), 60)
             assert sorted(t.name for t in tools) == ["execute_tool", "find_relevant_tools"]
-            result = await client.call_tool(
-                "execute_tool", {"tool_name": "add_numbers", "arguments": {"a": 2, "b": 3}}
+            result = await asyncio.wait_for(
+                client.call_tool(
+                    "execute_tool", {"tool_name": "add_numbers", "arguments": {"a": 2, "b": 3}}
+                ),
+                60,
             )
             assert _text(result) == "5"
         finally:
             await client.close()
+
+        # Nothing runs a mounted app's lifespan, so the manager it started on
+        # the first request is ours to release — the handle the method
+        # publishes for exactly this. Without it the lingering task group can
+        # hold uvicorn's graceful shutdown open on a slow runner.
+        await mounted.state.mcp_session.stop()
     finally:
         server.should_exit = True
-        await asyncio.wait_for(task, 15)
-        await gantry.close()
+        try:
+            await asyncio.wait_for(task, 60)
+        finally:
+            if not task.done():
+                task.cancel()
+            await gantry.close()
 
 
 @pytest.mark.asyncio
