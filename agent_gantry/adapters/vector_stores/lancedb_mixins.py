@@ -180,10 +180,12 @@ class LanceDBMetadataMixin:
 
         try:
             escaped_key = _escape_sql_string(key)
-            query = self._metadata_table.search().where(f"key = '{escaped_key}'").limit(1)  # type: ignore
-            results = await asyncio.to_thread(query.to_list)
-            if results and results[0].get("value") is not None:
-                value: str = results[0]["value"]
+            query = self._metadata_table.search().where(f"key = '{escaped_key}'").select(["value"]).limit(1)  # type: ignore
+            table = await asyncio.to_thread(query.to_arrow)
+
+            value_list = table["value"].to_pylist()
+            if value_list and value_list[0] is not None:
+                value: str = value_list[0]
                 return value
         except Exception as e:
             logger.debug(f"get_metadata failed for key '{key}': {e}")
