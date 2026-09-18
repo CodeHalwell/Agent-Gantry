@@ -775,3 +775,31 @@ class TestAddToolHandlerWiring:
         assert g._registry.get_handler("beta.whoami") is beta_handler
         # The handler map is keyed by qualified name, so both are counted.
         assert g.tool_count == 2
+
+
+def test_the_latch_helper_is_absent_rather_than_exploding_without_the_mcp_extra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``reset_sse_shutdown_latch`` lives behind the ``mcp`` extra.
+
+    A module ``__getattr__`` must raise ``AttributeError`` for a name it cannot
+    supply. Leaking the underlying ``ImportError`` would make ``hasattr`` raise
+    instead of returning ``False`` — and feature-detecting an optional cleanup
+    helper is precisely how a caller reaches for this one, since a host that
+    does not serve MCP has no reason to depend on the extra.
+    """
+    import sys
+
+    import agent_gantry
+
+    # None in sys.modules makes the import inside __getattr__ fail the way a
+    # bare install does, without needing one.
+    monkeypatch.setitem(sys.modules, "agent_gantry.servers.mcp_server", None)
+
+    assert hasattr(agent_gantry, "reset_sse_shutdown_latch") is False
+
+    with pytest.raises(AttributeError) as caught:
+        agent_gantry.reset_sse_shutdown_latch
+
+    message = str(caught.value)
+    assert "agent-gantry[mcp]" in message, f"must name the extra to install, got: {message}"

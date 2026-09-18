@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-09-18
+
+Selection without embeddings, and the end of the CI hang that had been costing
+six-hour jobs on `main`.
+
+`JevSelector` puts the catalogue to a decision model and asks, per entry,
+whether it is relevant — no embedder, no vector store, no sync — across tools,
+Agent Skills and MCP servers alike. `JevReranker` refines semantic search
+instead of replacing it. Both are optional, both are off by default, and both
+fail open: a provider that is unavailable, rate-limited or slow costs
+precision, never the catalogue.
+
+On the measurements: against a properly configured embedder, recall is a tie.
+The difference is precision — 1-3 spurious tools against 16 — which is the
+context-window tax rather than "finds better tools". A bigger embedder did not
+help; `examples=[...]` on the tools did, taking the default MiniLM from 1/5 to
+5/5 on the same set. If you take one thing from this release, take that.
+
+Two things to know before upgrading:
+
+- **Queries are now embedded with the query-side instruction.** Asymmetric
+  models (Nomic v1.5, E5, BGE) were being handed `search_document:` for the
+  prompt. Stored vectors are untouched, so no re-embed is needed, but ranking
+  may shift slightly for those models — in the right direction.
+- **A configured selector defers the sync.** `retrieve()` no longer opens the
+  vector store or embeds into it until it knows the selector has not answered,
+  so a selector-only deployment runs without a store being reachable at all.
+  Nothing changes when no selector is configured.
+
 ### Added
 
 - **Selection as an alternative to semantic matching, backed by TypeSafe's Jev.**
@@ -45,6 +74,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   step ran.
 - `SelectionCandidate` / `SelectionResult` in `agent_gantry.schema.selection`,
   the provider-neutral shapes a selector works in.
+
+
+- `reset_sse_shutdown_latch()`, exported from the package and from
+  `agent_gantry.servers.mcp_server`. The `sse_starlette` shutdown latch that
+  caused this branch's CI hang is a process global with no recovery from
+  outside, so any host that stops one MCP server and starts another — a test
+  suite, a supervisor, a hot reload — hits the identical hang. Gantry's own
+  tests now call the public function rather than a private copy.
+
+- `SelectionCandidate` now carries a tool's `examples`, which the embedding
+  path has always included via `to_searchable_text()`. Withholding the single
+  strongest signal a catalogue entry has from the selector, while handing it to
+  the vector store, was a handicap rather than a fair comparison.
+
+### Changed
+
+- `retrieve()` defers `ensure_synced()`, `_ensure_initialized()` and (for MCP)
+  `_ensure_mcp_synced()` until it knows the selector has not answered. Those
+  steps open the vector store and embed into it, which the selector path never
+  reads, so a selector-only deployment now runs without a store being reachable
+  at all. Selection reads the registry *and* the pending buffer, because
+  `add_tool` without a handler — how MCP and A2A discovery add theirs — appends
+  only to the latter.
 
 ### Fixed
 
@@ -93,15 +145,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     servers (a source of tools rather than one). `SelectorAdapter.select()`
     now takes `kind`, and each catalogue gets a question about what it holds.
 
-### Added (test and operational)
-
-- `reset_sse_shutdown_latch()`, exported from the package and from
-  `agent_gantry.servers.mcp_server`. The `sse_starlette` shutdown latch that
-  caused this branch's CI hang is a process global with no recovery from
-  outside, so any host that stops one MCP server and starts another — a test
-  suite, a supervisor, a hot reload — hits the identical hang. Gantry's own
-  tests now call the public function rather than a private copy.
-
 - **Queries were embedded with the document-side instruction.** Retrieval now
   calls `embed_query()` rather than `embed_text()` for the prompt, on all three
   paths (tools, skills, MCP servers). `NomicEmbedder` has carried a correct
@@ -120,20 +163,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   top-1 answers and only a couple of ranks. It is off-label use of the model
   rather than a visible bug, and it will matter more on larger corpora.
 
-- `SelectionCandidate` now carries a tool's `examples`, which the embedding
-  path has always included via `to_searchable_text()`. Withholding the single
-  strongest signal a catalogue entry has from the selector, while handing it to
-  the vector store, was a handicap rather than a fair comparison.
-
-### Changed
-
-- `retrieve()` defers `ensure_synced()`, `_ensure_initialized()` and (for MCP)
-  `_ensure_mcp_synced()` until it knows the selector has not answered. Those
-  steps open the vector store and embed into it, which the selector path never
-  reads, so a selector-only deployment now runs without a store being reachable
-  at all. Selection reads the registry *and* the pending buffer, because
-  `add_tool` without a handler — how MCP and A2A discovery add theirs — appends
-  only to the latter.
+- `agent_gantry.reset_sse_shutdown_latch` raised `ModuleNotFoundError` instead
+  of `AttributeError` when the `mcp` extra was not installed. A module
+  `__getattr__` has to raise `AttributeError` for a name it cannot supply, or
+  `hasattr()` propagates rather than returning `False` — and feature-detecting
+  an optional cleanup helper is exactly how a host that does not serve MCP
+  would reach for this one. It now declines like every other MCP-gated export,
+  and names the extra to install.
 
 ## [0.15.0] - 2026-09-17
 
@@ -4041,7 +4077,8 @@ adapters, and the provider dialects agree with it.
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.13.1...v0.14.0
 [0.13.1]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.13.0...v0.13.1
