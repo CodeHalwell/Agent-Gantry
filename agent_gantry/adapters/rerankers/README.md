@@ -42,3 +42,9 @@ selector only where the catalogue is small enough to send on every query.
 
 A reranker also fails open: if the provider is unavailable, the vector-search order is returned
 untouched, so losing it costs precision rather than tools.
+
+Worth knowing before you reach for one: a reranker can only reorder what search handed it. On a
+12-tool catalogue asked for its single best tool, `JevReranker` took top-1 accuracy from 1/5 to 4/5;
+the remaining miss was a tool that never entered the shortlist, so no amount of reranking could
+promote it. The router fetches `limit * 4` candidates, so a small `limit` makes a narrow shortlist —
+raise it if the reranker seems to be missing obvious answers.
