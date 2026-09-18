@@ -40,6 +40,10 @@ DEFAULT_GROUP_QUESTION = (
 #: most worth tuning per deployment.
 DEFAULT_THRESHOLD = 0.3
 
+#: Bucket key for candidates carrying no group. Bracketed so it cannot collide
+#: with a real namespace or MCP server name.
+_UNGROUPED = "(ungrouped)"
+
 
 class JevSelector(SelectorAdapter):
     """Select tools, skills or MCP servers with TypeSafe's Jev model.
@@ -114,18 +118,36 @@ class JevSelector(SelectorAdapter):
         if not candidates or limit <= 0:
             return SelectionResult()
 
-        considered = list(candidates[: self._max_candidates])
         if len(candidates) > self._max_candidates:
+            # Falling back, not truncating. Scoring an insertion-order prefix
+            # would make every later entry permanently unreachable while
+            # reporting success, so a tool registered after the ceiling could
+            # never be retrieved however relevant it was — and semantic
+            # routing, which has no such ceiling, would never get a look in.
             logger.warning(
-                f"Jev selection saw {len(candidates)} candidates and scores only the first "
-                f"{self._max_candidates}; raise max_candidates or use the reranker over "
-                "semantic search for a catalogue this size."
+                f"Jev selection saw {len(candidates)} candidates, over the "
+                f"{self._max_candidates} ceiling; falling back to semantic routing. Raise "
+                "max_candidates, or use the reranker over semantic search at this size."
             )
+            return SelectionResult(
+                fallback=True,
+                reason=f"catalogue of {len(candidates)} exceeds max_candidates={self._max_candidates}",
+            )
+        considered = list(candidates)
 
         groups = {c.group for c in considered if c.group}
-        if len(considered) > self._group_after and len(groups) > 1:
-            return await self._select_two_stage(query, considered, limit)
-        return await self._select_one_stage(query, considered, limit)
+        try:
+            if len(considered) > self._group_after and len(groups) > 1:
+                return await self._select_two_stage(query, considered, limit)
+            return await self._select_one_stage(query, considered, limit)
+        except Exception as exc:  # noqa: BLE001 - fail open is the contract
+            # The client already turns provider failures into a fallback
+            # verdict, so reaching here means a defect in this adapter. Even
+            # then the caller must get its catalogue back: raising out of the
+            # selection layer costs the agent every tool it has, which is a
+            # far worse failure than an unselected list.
+            logger.warning(f"Jev selection raised; falling back: {exc}", exc_info=True)
+            return SelectionResult(fallback=True, reason=f"{type(exc).__name__}: {exc}")
 
     async def _select_one_stage(
         self,
@@ -152,12 +174,14 @@ class JevSelector(SelectorAdapter):
         """Narrow to the best groups, then score only their members."""
         by_group: dict[str, list[SelectionCandidate]] = {}
         for candidate in candidates:
-            by_group.setdefault(candidate.group or "", []).append(candidate)
+            # A real group name can never collide with the sentinel, because
+            # ``group`` is a namespace or server name and neither is bracketed.
+            by_group.setdefault(candidate.group or _UNGROUPED, []).append(candidate)
 
         group_candidates = [
             SelectionCandidate(
                 id=group,
-                name=group or "(ungrouped)",
+                name=group,
                 # The members are the only thing that says what a namespace is
                 # for, so the group's description is a roll-call of its tools.
                 description="Contains: " + ", ".join(c.name for c in members),

@@ -48,6 +48,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Five defects in the new selection path**, all found by review on #419 and
+  each reproduced before being fixed:
+  - A tool added without a handler was invisible to selection. `add_tool(tool)`
+    with no handler — how MCP and A2A discovery add theirs — appends only to the
+    pending buffer, and the catalogue was built from the registry alone. Worse
+    than a ranking miss: if any other tool let the selector answer, the semantic
+    fallback never ran and the tool stayed unreachable.
+  - A catalogue over `max_candidates` was silently truncated to an
+    insertion-order prefix and reported as a success, so semantic routing — which
+    has no such ceiling — never got a look in. It now falls back, which is what
+    `SelectorConfig` always documented.
+  - A single candidate with no `group` broke the two-stage path: the bucket key
+    `""` fails `SelectionCandidate`'s `min_length=1`, and the `ValidationError`
+    escaped `select()` instead of failing open, taking the caller's whole
+    catalogue with it.
+  - Selection is now hardened to fail open on *any* exception, not just the
+    provider failures the client already converts. Raising out of a selection
+    layer costs the agent every tool it has.
+  - Tool and MCP selection no longer open the vector store or sync to it.
+
 - **Queries were embedded with the document-side instruction.** Retrieval now
   calls `embed_query()` rather than `embed_text()` for the prompt, on all three
   paths (tools, skills, MCP servers). `NomicEmbedder` has carried a correct
@@ -73,10 +93,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `retrieve()` defers `ensure_synced()` until it knows the selector has not
-  answered. Syncing embeds every changed tool into the vector store, and a
-  selector that answers has just made that work pointless; the registry is
-  complete without it, so nothing can be hidden from selection by the deferral.
+- `retrieve()` defers `ensure_synced()`, `_ensure_initialized()` and (for MCP)
+  `_ensure_mcp_synced()` until it knows the selector has not answered. Those
+  steps open the vector store and embed into it, which the selector path never
+  reads, so a selector-only deployment now runs without a store being reachable
+  at all. Selection reads the registry *and* the pending buffer, because
+  `add_tool` without a handler — how MCP and A2A discovery add theirs — appends
+  only to the latter.
 
 ## [0.15.0] - 2026-09-17
 

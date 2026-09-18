@@ -960,10 +960,20 @@ class AgentGantry:
             # the whole catalogue to the model at full price.
             return None
 
+        # Registry *and* pending buffer. ``add_tool`` without a handler — which
+        # is how MCP and A2A discovery add theirs — appends only to
+        # ``_pending_tools``, so a registry-only view makes those tools
+        # invisible to selection. Worse than invisible: if anything else
+        # answers, the semantic fallback never runs and they stay unreachable
+        # until something forces a sync.
+        known = list(self._registry.list_tools())
+        seen = {t.qualified_name for t in known}
+        known.extend(t for t in self._pending_tools if t.qualified_name not in seen)
+
         # Through the router's own filter, not a second copy of it: a selector
         # surfacing a deprecated or circuit-broken tool that the semantic path
         # hides would quietly widen what the agent can reach.
-        tools = self._router.filter_tools(self._registry.list_tools(), query)
+        tools = self._router.filter_tools(known, query)
         if not tools:
             return None
 
@@ -1005,6 +1015,10 @@ class AgentGantry:
         if self._selector is None:
             return None
         store = self._skills_store()
+        # Unlike tools and MCP servers, the skill catalogue lives in the store
+        # itself rather than in an in-memory registry, so reading it needs the
+        # store open. Only the *embedding* is skipped on this path.
+        await self._ensure_initialized()
         skills = await store.list_all_skills()
 
         if namespace is not None:
@@ -1083,7 +1097,11 @@ class AgentGantry:
         Returns:
             RetrievalResult with scored tools
         """
-        await self._ensure_initialized()
+        # Deliberately no ``_ensure_initialized()`` here: it opens the vector
+        # store, which the selector path never reads. Both fallback routes
+        # below (``ensure_synced`` and the skills/MCP paths) initialise it
+        # themselves, so a selector-only deployment can run without a store
+        # being reachable at all — which is the point of having one.
 
         # SimpleEmbedder produces hash-based scores that cluster tightly
         # regardless of semantic relevance. Pairing it with a non-zero
@@ -1847,16 +1865,19 @@ class AgentGantry:
             ...     print(f"Server: {server.name} - {server.description}")
         """
         self._require_mcp_manager()
-        await self._ensure_initialized()
-        # Synced even on the selector path, which does not read the vectors it
-        # produces: sync is also what drains servers registered since the last
-        # one, and a server missing from the catalogue is a worse trade than
-        # some embedding work that goes unused.
-        await self._ensure_mcp_synced()
 
+        # Before the sync, not after. ``register_server()`` puts the definition
+        # straight into the registry that ``_select_mcp_servers`` reads; the
+        # pending buffer it also appends to is purely the vector store's
+        # backlog. So syncing first embedded every server for a path that never
+        # reads those vectors, and made the embedding-free route fail whenever
+        # the embedder or store was unavailable.
         selected = await self._select_mcp_servers(query, limit, score_threshold, namespaces)
         if selected is not None:
             return selected
+
+        await self._ensure_initialized()
+        await self._ensure_mcp_synced()
 
         result = await self._mcp_router.route(
             query=query,

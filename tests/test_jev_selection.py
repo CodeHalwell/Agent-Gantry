@@ -553,3 +553,137 @@ async def test_mcp_server_retrieval_uses_the_selector() -> None:
         assert [server.name for server in servers] == ["files"]
     finally:
         await gantry.close()
+
+
+# ----------------------------------------------------------------------
+# Findings from review on #419
+# ----------------------------------------------------------------------
+
+
+async def test_a_tool_added_without_a_handler_still_reaches_the_selector() -> None:
+    """``add_tool(tool)`` with no handler lands only in the pending buffer.
+
+    That is how MCP and A2A discovery add theirs. Building the catalogue from
+    the registry alone made them invisible to selection — and because the other
+    tools still let the selector answer, the semantic fallback never ran, so
+    they stayed unreachable rather than merely unranked.
+    """
+    from agent_gantry import AgentGantry
+    from agent_gantry.schema.config import AgentGantryConfig
+
+    selector = _StubSelector({"default.discovered": 0.9})
+    gantry = AgentGantry(config=AgentGantryConfig(auto_sync=False), selector=selector)
+    try:
+        await gantry.add_tool(_tool("registered"), lambda: None)
+        await gantry.add_tool(_tool("discovered"))  # no handler -> pending only
+
+        await gantry.retrieve_tools("anything", limit=5)
+
+        assert selector.seen, "the selector was never consulted"
+        assert any("discovered" in candidate_id for candidate_id in selector.seen[0])
+    finally:
+        await gantry.close()
+
+
+async def test_a_catalogue_over_the_ceiling_falls_back_rather_than_truncating() -> None:
+    """Scoring an insertion-order prefix would strand everything after it.
+
+    Reporting success while silently ignoring the tail means semantic routing —
+    which has no such ceiling — never gets a look in, so a tool registered past
+    the ceiling could never be retrieved however relevant it was.
+    """
+    selector = JevSelector(client=_StubJevClient(), max_candidates=3)
+    candidates = [_candidate(f"t{i}") for i in range(10)]
+
+    result = await selector.select("q", candidates, limit=5)
+
+    assert result.fallback is True
+    assert "max_candidates" in (result.reason or "")
+    assert result.selected == []
+
+
+async def test_an_ungrouped_candidate_does_not_break_the_two_stage_path() -> None:
+    """``group=None`` bucketed to ``""``, which ``SelectionCandidate`` rejects.
+
+    The ``ValidationError`` escaped ``select()`` instead of failing open, so a
+    single ungrouped entry in a large catalogue took the caller's tools away.
+    """
+    stub = _StubJevClient(
+        JevVerdict(scores={"g1": 0.9, "g2": 0.4, "(ungrouped)": 0.2}),
+        JevVerdict(scores={"a": 0.8}),
+    )
+    selector = JevSelector(client=stub, group_after=2, max_groups=1)
+    candidates = [
+        _candidate("a", group="g1"),
+        _candidate("b", group="g2"),
+        _candidate("c"),  # no group at all
+    ]
+
+    result = await selector.select("q", candidates, limit=5)
+
+    assert result.fallback is False
+    assert result.selected == ["a"]
+    assert "(ungrouped)" in stub.scored[0], "the ungrouped bucket must still be offered"
+
+
+async def test_an_adapter_defect_falls_open_like_a_provider_failure() -> None:
+    """Fail-open is the contract, and a bug in here must not break it."""
+
+    class _Exploding:
+        async def score(self, state: Any, candidates: Any, question: str) -> Any:
+            raise ValueError("adapter defect")
+
+    result = await JevSelector(client=_Exploding()).select("q", [_candidate("a")], limit=5)
+
+    assert result.fallback is True
+    assert "ValueError" in (result.reason or "")
+
+
+async def test_tool_selection_never_opens_the_vector_store() -> None:
+    """A selector-only deployment should not need a store to be reachable.
+
+    Initialising eagerly meant an unavailable or deliberately unused store took
+    down the one path that never reads it.
+    """
+    from agent_gantry import AgentGantry
+
+    class _ExplodingStore:
+        async def initialize(self) -> None:
+            raise AssertionError("the selector path must not open the vector store")
+
+    selector = _StubSelector({"default.alpha": 0.9})
+    gantry = AgentGantry(selector=selector)
+    await gantry.add_tool(_tool("alpha"), lambda: None)
+    gantry._vector_store = _ExplodingStore()
+    gantry._initialized = False
+
+    result = await gantry.retrieve_tools("find alpha", limit=2)
+    assert [schema["function"]["name"] for schema in result] == ["alpha"]
+
+
+async def test_mcp_selection_never_syncs_server_vectors() -> None:
+    """``register_server`` already populates the registry selection reads.
+
+    Syncing first embedded every server for a path that never reads those
+    vectors, and broke the embedding-free route whenever the embedder or store
+    was unavailable.
+    """
+    from agent_gantry import AgentGantry
+
+    selector = _StubSelector({"default.files": 0.9})
+    gantry = AgentGantry(selector=selector)
+    if gantry._mcp_registry is None:  # pragma: no cover - mcp extra absent
+        await gantry.close()
+        pytest.skip("MCP support is not installed")
+
+    gantry.register_mcp_server(
+        "files", ["echo", "files"], description="Reads and writes files on disk."
+    )
+
+    async def _explode(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("the selector path must not sync MCP vectors")
+
+    gantry.sync_mcp_servers = _explode  # type: ignore[method-assign]
+
+    servers = await gantry.retrieve_mcp_servers("open a file", limit=2)
+    assert [server.name for server in servers] == ["files"]
