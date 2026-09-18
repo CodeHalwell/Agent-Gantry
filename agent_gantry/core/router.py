@@ -20,6 +20,8 @@ import numpy as np
 _logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
     from agent_gantry.adapters.llm_client import LLMClient
     from agent_gantry.adapters.rerankers.base import RerankerAdapter
@@ -403,6 +405,34 @@ class SemanticRouter:
             scored_tools.append((tool, final_score))
 
         return scored_tools, tool_embeddings
+
+    def filter_tools(
+        self,
+        tools: Sequence[ToolDefinition],
+        query: ToolQuery,
+    ) -> list[ToolDefinition]:
+        """Apply a query's hard constraints to a list of tools.
+
+        The same rules :meth:`route` applies to vector-search candidates —
+        deprecation, namespaces, capabilities, sources and circuit-breaker
+        health. Public so a selector, which never sees a vector-search
+        candidate, filters by exactly these rules rather than a second copy of
+        them that could drift: a selector surfacing a deprecated or unhealthy
+        tool the semantic path hides would be a silent widening of what the
+        agent can reach.
+
+        Args:
+            tools: Tools to filter.
+            query: The query whose constraints apply.
+
+        Returns:
+            The tools the query permits, in their incoming order.
+        """
+        req_caps = set(query.required_capabilities) if query.required_capabilities else None
+        exc_caps = set(query.excluded_capabilities) if query.excluded_capabilities else None
+        return [
+            tool for tool in tools if self._is_tool_allowed(tool, query, req_caps, exc_caps)
+        ]
 
     def _is_tool_allowed(
         self,

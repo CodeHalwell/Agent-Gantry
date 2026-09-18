@@ -28,11 +28,13 @@ from agent_gantry.observability.opentelemetry_adapter import (
 if TYPE_CHECKING:
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
     from agent_gantry.adapters.rerankers.base import RerankerAdapter
+    from agent_gantry.adapters.selectors.base import SelectorAdapter
     from agent_gantry.adapters.vector_stores.base import VectorStoreAdapter
     from agent_gantry.observability.telemetry import TelemetryAdapter
     from agent_gantry.schema.config import (
         EmbedderConfig,
         RerankerConfig,
+        SelectorConfig,
         TelemetryConfig,
         VectorStoreConfig,
     )
@@ -138,6 +140,28 @@ def build_reranker(config: RerankerConfig) -> RerankerAdapter | None:
 
         return CrossEncoderReranker(
             model=config.model or "cross-encoder/ms-marco-MiniLM-L-6-v2",
+        )
+    if config.type == "jev":
+        from agent_gantry.adapters.rerankers.jev import JevReranker
+
+        return JevReranker(model=config.model)
+    return None
+
+
+def build_selector(config: SelectorConfig) -> SelectorAdapter | None:
+    """Construct a selector from configuration, or ``None`` when disabled."""
+    if not config.enabled:
+        return None
+    if config.type == "jev":
+        from agent_gantry.adapters.selectors.jev import JevSelector
+
+        return JevSelector(
+            model=config.model,
+            threshold=config.threshold,
+            max_candidates=config.max_candidates,
+            group_after=config.group_after,
+            max_groups=config.max_groups,
+            timeout=config.timeout_s,
         )
     return None
 

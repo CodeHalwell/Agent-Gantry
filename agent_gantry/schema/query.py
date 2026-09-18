@@ -107,6 +107,10 @@ class RetrievalResult(BaseModel):
     query_embedding_time_ms: float
     vector_search_time_ms: float
     rerank_time_ms: float | None = None
+    #: Time spent in a selector, when one answered instead of the semantic
+    #: router. ``None`` on the semantic path; the two embedding/search timings
+    #: are then 0.0, because neither step ran.
+    selection_time_ms: float | None = None
     total_time_ms: float
 
     candidate_count: int

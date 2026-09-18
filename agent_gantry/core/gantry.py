@@ -22,6 +22,7 @@ from agent_gantry.core.executor import ExecutionEngine
 from agent_gantry.core.factories import (
     build_embedder,
     build_reranker,
+    build_selector,
     build_telemetry,
     build_vector_store,
 )
@@ -37,12 +38,14 @@ from agent_gantry.schema.config import (
 from agent_gantry.schema.introspection import build_parameters_schema
 from agent_gantry.schema.mcp import MCPServerDefinition
 from agent_gantry.schema.query import RetrievalResult, ScoredTool, ToolQuery
+from agent_gantry.schema.selection import SelectionCandidate
 from agent_gantry.schema.skill import Skill, SkillSearchResult
 from agent_gantry.schema.tool import ToolCapability, ToolDefinition
 
 if TYPE_CHECKING:
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
     from agent_gantry.adapters.rerankers.base import RerankerAdapter
+    from agent_gantry.adapters.selectors.base import SelectorAdapter
     from agent_gantry.adapters.vector_stores.base import VectorStoreAdapter
     from agent_gantry.core.rate_limiter import RateLimiter
     from agent_gantry.observability.telemetry import TelemetryAdapter
@@ -79,6 +82,7 @@ class AgentGantry:
         vector_store: VectorStoreAdapter | None = None,
         embedder: EmbeddingAdapter | None = None,
         reranker: RerankerAdapter | None = None,
+        selector: SelectorAdapter | None = None,
         telemetry: TelemetryAdapter | None = None,
         security_policy: SecurityPolicy | None = None,
         modules: Sequence[str] | None = None,
@@ -92,6 +96,10 @@ class AgentGantry:
             vector_store: Custom vector store adapter
             embedder: Custom embedding adapter
             reranker: Custom reranker adapter
+            selector: Custom selector adapter. A selector replaces semantic
+                matching: the catalogue is put to a decision model directly,
+                with no embeddings and no vector search. Retrieval falls back
+                to the semantic router whenever it declines or fails.
             telemetry: Custom telemetry adapter
             security_policy: Security policy for permission checks
         """
@@ -99,6 +107,7 @@ class AgentGantry:
         self._vector_store = vector_store or build_vector_store(self._config.vector_store)
         self._embedder = embedder or build_embedder(self._config.embedder)
         self._reranker = reranker or build_reranker(self._config.reranker)
+        self._selector = selector or build_selector(self._config.selector)
         self._telemetry = telemetry or build_telemetry(self._config.telemetry)
         self._security_policy = security_policy or SecurityPolicy()
         self._registry = ToolRegistry()
@@ -259,6 +268,16 @@ class AgentGantry:
         # Close the execution engine (cached A2A clients, etc.)
         await self._executor.close()
 
+        # Close the selector and reranker, which may hold HTTP clients.
+        for adapter in (self._selector, self._reranker):
+            aclose = getattr(adapter, "aclose", None)
+            if aclose is None:
+                continue
+            try:
+                await aclose()
+            except Exception:
+                logger.debug(f"Error closing {type(adapter).__name__}", exc_info=True)
+
         # Close vector store if it has a close method
         close_method = getattr(self._vector_store, "close", None)
         if close_method:
@@ -405,6 +424,7 @@ class AgentGantry:
         vector_store: VectorStoreAdapter | None = None,
         embedder: EmbeddingAdapter | None = None,
         reranker: RerankerAdapter | None = None,
+        selector: SelectorAdapter | None = None,
         telemetry: TelemetryAdapter | None = None,
         security_policy: SecurityPolicy | None = None,
     ) -> AgentGantry:
@@ -414,8 +434,8 @@ class AgentGantry:
         Args:
             modules: Iterable of module paths (dot-notation) to import.
             attr: Attribute on each module that holds an AgentGantry instance (default "tools").
-            config/vector_store/embedder/reranker/telemetry/security_policy: Optional overrides
-                for the constructed gantry instance.
+            config/vector_store/embedder/reranker/selector/telemetry/security_policy:
+                Optional overrides for the constructed gantry instance.
 
         Returns:
             A populated AgentGantry instance.
@@ -426,6 +446,7 @@ class AgentGantry:
             vector_store=vector_store,
             embedder=embedder,
             reranker=reranker,
+            selector=selector,
             telemetry=telemetry,
             security_policy=security_policy,
         )
@@ -910,6 +931,144 @@ class AgentGantry:
 
         return imported
 
+    # ------------------------------------------------------------------
+    # Selection — the alternative to semantic matching.
+    #
+    # A selector puts the catalogue to a decision model directly: no query
+    # embedding, no vector search, no sync. Each helper returns ``None`` when
+    # the selector is absent, has nothing to work with, or declined to answer,
+    # and the caller then takes the semantic path unchanged. Falling back is
+    # the normal case, not an error path: a provider hiccup must cost
+    # precision, never the catalogue.
+    # ------------------------------------------------------------------
+
+    async def _select_tools(
+        self, query: ToolQuery
+    ) -> tuple[list[ScoredTool], float, int] | None:
+        """Choose tools with the configured selector.
+
+        Returns:
+            ``(scored tools, selection milliseconds, candidates considered)``,
+            or ``None`` to fall back to semantic routing.
+        """
+        if self._selector is None:
+            return None
+        text = query.context.query
+        if not text.strip():
+            # No signal to select on, and unlike a zero vector this would put
+            # the whole catalogue to the model at full price.
+            return None
+
+        # Through the router's own filter, not a second copy of it: a selector
+        # surfacing a deprecated or circuit-broken tool that the semantic path
+        # hides would quietly widen what the agent can reach.
+        tools = self._router.filter_tools(self._registry.list_tools(), query)
+        if not tools:
+            return None
+
+        by_id = {tool.qualified_name: tool for tool in tools}
+        candidates = [SelectionCandidate.from_tool(tool) for tool in tools]
+
+        start = perf_counter()
+        result = await self._selector.select(text, candidates, query.limit)
+        elapsed_ms = (perf_counter() - start) * 1000
+        if result.fallback:
+            logger.debug(f"Selector declined ({result.reason}); using semantic routing")
+            return None
+
+        # The query's own threshold still applies. On this path it reads as a
+        # minimum probability rather than a minimum cosine score — a different
+        # scale, but the same direction, and it keeps a per-query override
+        # available on top of the selector's configured threshold.
+        threshold = query.score_threshold or 0.0
+        scored = [
+            ScoredTool(
+                tool=by_id[candidate_id],
+                semantic_score=result.scores.get(candidate_id, 0.0),
+                rerank_score=None,
+            )
+            for candidate_id in result.selected
+            if candidate_id in by_id and result.scores.get(candidate_id, 0.0) >= threshold
+        ]
+        return scored, elapsed_ms, len(candidates)
+
+    async def _select_skills(
+        self,
+        query: str,
+        limit: int,
+        namespace: str | list[str] | None,
+        category: str | None,
+        score_threshold: float | None,
+    ) -> list[SkillSearchResult] | None:
+        """Choose skills with the configured selector, or ``None`` to fall back."""
+        if self._selector is None:
+            return None
+        store = self._skills_store()
+        skills = await store.list_all_skills()
+
+        if namespace is not None:
+            allowed = {namespace} if isinstance(namespace, str) else set(namespace)
+            skills = [skill for skill in skills if skill.namespace in allowed]
+        if category is not None:
+            skills = [
+                skill
+                for skill in skills
+                if str(getattr(skill.category, "value", skill.category)) == category
+            ]
+        if not skills:
+            return None
+
+        by_id = {f"{skill.namespace}.{skill.name}": skill for skill in skills}
+        candidates = [SelectionCandidate.from_skill(skill) for skill in skills]
+        result = await self._selector.select(query, candidates, limit)
+        if result.fallback:
+            logger.debug(f"Selector declined ({result.reason}); using semantic skill search")
+            return None
+
+        threshold = score_threshold or 0.0
+        return [
+            SkillSearchResult(
+                skill=by_id[candidate_id],
+                score=min(1.0, max(0.0, result.scores.get(candidate_id, 0.0))),
+            )
+            for candidate_id in result.selected
+            if candidate_id in by_id and result.scores.get(candidate_id, 0.0) >= threshold
+        ]
+
+    async def _select_mcp_servers(
+        self,
+        query: str,
+        limit: int,
+        score_threshold: float | None,
+        namespaces: list[str] | None,
+    ) -> list[MCPServerDefinition] | None:
+        """Choose MCP servers with the configured selector, or ``None`` to fall back."""
+        if self._selector is None or self._mcp_registry is None:
+            return None
+        if not query.strip():
+            return None
+
+        servers = self._mcp_registry.list_servers()
+        if namespaces:
+            allowed = set(namespaces)
+            servers = [server for server in servers if server.namespace in allowed]
+        if not servers:
+            return None
+
+        by_id = {f"{server.namespace}.{server.name}": server for server in servers}
+        candidates = [SelectionCandidate.from_mcp_server(server) for server in servers]
+        result = await self._selector.select(query, candidates, limit)
+        if result.fallback:
+            logger.debug(f"Selector declined ({result.reason}); using semantic MCP routing")
+            return None
+
+        threshold = score_threshold or 0.0
+        return [
+            by_id[candidate_id]
+            for candidate_id in result.selected
+            if candidate_id in by_id and result.scores.get(candidate_id, 0.0) >= threshold
+        ]
+
     async def retrieve(self, query: ToolQuery) -> RetrievalResult:
         """
         Core semantic routing function.
@@ -925,15 +1084,18 @@ class AgentGantry:
         """
         await self._ensure_initialized()
 
-        # Auto-sync with smart change detection
-        await self.ensure_synced()
-
         # SimpleEmbedder produces hash-based scores that cluster tightly
         # regardless of semantic relevance. Pairing it with a non-zero
         # score_threshold typically results in "0 tools surfaced" silently
         # (which integrators report as a frustrating first-day failure).
-        # Warn loudly on the first such retrieval call.
-        if isinstance(self._embedder, SimpleEmbedder) and not SimpleEmbedder._warned_about_threshold:
+        # Warn loudly on the first such retrieval call — but only when
+        # something is actually going to embed: a selector-only deployment
+        # never touches the embedder, so the warning would be noise.
+        if (
+            self._selector is None
+            and isinstance(self._embedder, SimpleEmbedder)
+            and not SimpleEmbedder._warned_about_threshold
+        ):
             threshold = getattr(query, "score_threshold", None) or 0.0
             if threshold > 0.0:
                 SimpleEmbedder._warned_about_threshold = True
@@ -973,7 +1135,35 @@ class AgentGantry:
             if self._telemetry else AsyncNoopContext()
         )
         async with span_cm:
-            routing_result = await self._router.route(query)
+            selection = await self._select_tools(query)
+            if selection is None:
+                # Only now: syncing embeds every changed tool into the vector
+                # store, and a selector that answers has just made that work
+                # pointless. The registry is already complete without it —
+                # ``add_tool`` populates it directly, and the pending list it
+                # also appends to is purely the vector store's backlog — so
+                # deferring the sync cannot hide a tool from selection.
+                await self.ensure_synced()
+                routing_result = await self._router.route(query)
+            else:
+                routing_result = None
+
+        if selection is not None:
+            selected, selection_time_ms, candidate_count = selection
+            retrieval = RetrievalResult(
+                tools=selected,
+                # Both zero, and honestly so: neither step ran.
+                query_embedding_time_ms=0.0,
+                vector_search_time_ms=0.0,
+                selection_time_ms=selection_time_ms,
+                total_time_ms=(perf_counter() - overall_start) * 1000,
+                candidate_count=candidate_count,
+                filtered_count=len(selected),
+                trace_id=str(uuid.uuid4()),
+            )
+            if self._telemetry:
+                await self._telemetry.record_retrieval(query, retrieval)
+            return retrieval
 
         # routing_result.tools is a list of (tool, semantic_score) tuples
         scored = []
@@ -1657,7 +1847,15 @@ class AgentGantry:
         """
         self._require_mcp_manager()
         await self._ensure_initialized()
+        # Synced even on the selector path, which does not read the vectors it
+        # produces: sync is also what drains servers registered since the last
+        # one, and a server missing from the catalogue is a worse trade than
+        # some embedding work that goes unused.
         await self._ensure_mcp_synced()
+
+        selected = await self._select_mcp_servers(query, limit, score_threshold, namespaces)
+        if selected is not None:
+            return selected
 
         result = await self._mcp_router.route(
             query=query,
@@ -2327,6 +2525,13 @@ class AgentGantry:
         if not query.strip():
             return []
         store = self._skills_store()
+
+        # Before the embedding work: the selector needs neither a query vector
+        # nor current skill vectors, so taking this path skips both.
+        selected = await self._select_skills(query, limit, namespace, category, score_threshold)
+        if selected is not None:
+            return selected
+
         await self._ensure_initialized()
         await self._ensure_skill_vectors_current(store)
         query_embedding = await self._embedder.embed_text(query)

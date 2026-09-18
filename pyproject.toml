@@ -48,6 +48,12 @@ dev = [
     "pytest-cov>=4.0.0",
     "ruff>=0.1.0",
     "python-dotenv>=1.0.0",
+    # Unlike the other adapter extras (torch, chromadb) this is pure Python
+    # with five small dependencies, so it is cheap to install and lets the Jev
+    # tests build real question objects instead of stand-ins — worth having for
+    # an SDK this new. Tests still importorskip it, so a resolution failure
+    # here skips rather than breaks the suite.
+    "agent-gantry[jev]",
 ]
 agent-frameworks = [
     # Range: >=1.5.0,<2.0.0.
@@ -268,6 +274,22 @@ cohere = [
     #         https://docs.cohere.com/v2/reference/rerank
     "cohere>=7.0.8",
 ]
+jev = [
+    # TypeSafe's Jev decision model, behind JevReranker and JevSelector.
+    # Launched 2026-09-15; 0.7.0 is the release this code was written and
+    # verified against on 2026-09-18 — signatures checked against the installed
+    # package rather than the docs, because the SDK is days old and its API is
+    # explicitly still early access.
+    #
+    # Co-resolution, all checked 2026-09-18:
+    #   - requires pydantic>=2.12. The agent-frameworks extra already resolves
+    #     to 2.12.5 (see the google-adk notes above), so this adds no new
+    #     pressure on that pin.
+    #   - requires tenacity>=9; already in the tree at 9.1.4.
+    #   - ships against `httpx2`, a SEPARATE distribution from the `httpx` the
+    #     mcp extra pulls in. The two coexist; do not "consolidate" them.
+    "typesafe-sdk>=0.7.0",
+]
 # Individual vector store providers
 qdrant = [
     "qdrant-client>=1.7.0",
@@ -377,7 +399,7 @@ llm-providers = [
     "agent-gantry[openai,anthropic,google-genai,google-vertexai,mistral,groq]",
 ]
 all = [
-    "agent-gantry[dev,embeddings,openai,cohere,vector-stores,lancedb,nomic,mcp,a2a,llm-providers,agent-frameworks,example-tools]",
+    "agent-gantry[dev,embeddings,openai,cohere,jev,vector-stores,lancedb,nomic,mcp,a2a,llm-providers,agent-frameworks,example-tools]",
 ]
 
 [project.scripts]

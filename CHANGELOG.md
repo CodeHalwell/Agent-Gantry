@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Selection as an alternative to semantic matching, backed by TypeSafe's Jev.**
+  Jev is a "System One" model: it takes state plus typed questions and returns
+  typed answers with calibrated probabilities, in 70-500ms, and cannot generate
+  text. Two ways in, both optional and both behind the new `jev` extra:
+
+  - **`JevSelector`** replaces embed-then-search. `AgentGantry(selector=...)`
+    (or `SelectorConfig(enabled=True)`) puts the catalogue to the model
+    directly and asks, per entry, whether it is relevant — no embedder, no
+    vector store, no sync. It covers all three catalogues: tools
+    (`retrieve`/`retrieve_tools`), Agent Skills (`retrieve_skills`) and MCP
+    servers (`retrieve_mcp_servers`).
+  - **`JevReranker`** refines semantic search instead of replacing it, as a
+    drop-in `RerankerAdapter` (`RerankerConfig(type="jev")`). Reranking a
+    shortlist works at any catalogue size, because only the shortlist is sent.
+
+  The trade to plan around: a selector sends every candidate on every query, so
+  cost grows with the catalogue rather than staying flat. That suits tens to a
+  few hundred entries; above that, semantic retrieval with the reranker over its
+  shortlist remains the right shape. `SelectorConfig.group_after` handles the
+  middle ground by narrowing to the best namespaces before scoring their members.
+
+  Both fail open. A provider that is unavailable, rate-limited or slow costs
+  precision, never the catalogue: the selector reports a fallback and retrieval
+  takes the semantic path, and the reranker returns the vector-search order
+  untouched. Neither raises into a caller's retrieval path.
+
+  Query constraints are applied before anything is sent — deprecation,
+  namespaces, capabilities, sources and circuit-breaker health all go through
+  the router's own filter, now public as `SemanticRouter.filter_tools()`, so a
+  selector cannot surface a tool the semantic path would hide.
+
+- `RetrievalResult.selection_time_ms`, set when a selector answered. The
+  embedding and vector-search timings read `0.0` on that path, because neither
+  step ran.
+- `SelectionCandidate` / `SelectionResult` in `agent_gantry.schema.selection`,
+  the provider-neutral shapes a selector works in.
+
+### Changed
+
+- `retrieve()` defers `ensure_synced()` until it knows the selector has not
+  answered. Syncing embeds every changed tool into the vector store, and a
+  selector that answers has just made that work pointless; the registry is
+  complete without it, so nothing can be hidden from selection by the deferral.
+
 ## [0.15.0] - 2026-09-17
 
 A sweep of the semantic-routing core, the MCP layer and the skills layer.

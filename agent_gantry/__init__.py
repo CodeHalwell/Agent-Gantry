@@ -25,6 +25,7 @@ from agent_gantry.integrations.semantic_tools import (
 from agent_gantry.observability.console import enable_console_logging
 from agent_gantry.schema.execution import ToolCall, ToolCallEvent, ToolResult
 from agent_gantry.schema.query import ConversationContext, ToolQuery
+from agent_gantry.schema.selection import SelectionCandidate, SelectionResult
 from agent_gantry.schema.skill import Skill, SkillCategory, SkillSearchResult
 from agent_gantry.schema.tool import (
     ToolCapability,
@@ -79,11 +80,19 @@ def extract_tool_calls(response: "Any", dialect: str = "openai") -> "list[Any]":
 
 
 def __getattr__(name: str) -> "Any":
-    """Lazily surface the streaming accumulator at package level."""
+    """Lazily surface exports whose modules carry optional dependencies."""
     if name == "StreamingToolCallAccumulator":
         from agent_gantry.adapters.tool_spec import round_trip
 
         return round_trip.StreamingToolCallAccumulator
+    if name == "JevReranker":
+        from agent_gantry.adapters.rerankers.jev import JevReranker
+
+        return JevReranker
+    if name == "JevSelector":
+        from agent_gantry.adapters.selectors.jev import JevSelector
+
+        return JevSelector
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -92,6 +101,8 @@ __all__ = [
     "AgentGantry",
     "StreamingToolCallAccumulator",
     "GantryContextProvider",
+    "JevReranker",
+    "JevSelector",
     "MissingRequiredToolError",
     "RetrievalCandidate",
     "RetrievalDecision",
@@ -107,6 +118,8 @@ __all__ = [
     "ToolResult",
     "ToolQuery",
     "ConversationContext",
+    "SelectionCandidate",
+    "SelectionResult",
     "Skill",
     "SkillCategory",
     "SkillSearchResult",

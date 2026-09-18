@@ -49,9 +49,56 @@ class RerankerConfig(BaseModel):
     """Configuration for reranker backend."""
 
     enabled: bool = False
-    type: Literal["cohere", "cross_encoder", "llm"] = "cross_encoder"
+    type: Literal["cohere", "cross_encoder", "jev", "llm"] = "cross_encoder"
     model: str | None = None
     top_k: int = 10
+
+
+class SelectorConfig(BaseModel):
+    """Configuration for a selector, the alternative to semantic routing.
+
+    A selector asks a decision model directly which catalogue entries are
+    relevant, instead of embedding the query and searching a vector store.
+    Every candidate is sent on every query, so cost grows with the catalogue
+    rather than staying flat — which is affordable for tens to a few hundred
+    entries and is why ``max_candidates`` exists. Above that, prefer semantic
+    retrieval with ``RerankerConfig(type="jev")`` over its shortlist.
+
+    Retrieval falls back to the semantic router whenever the selector is
+    disabled, over its candidate ceiling, or unable to answer.
+    """
+
+    enabled: bool = False
+    type: Literal["jev"] = "jev"
+    model: str | None = None
+    threshold: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum probability for an entry to be selected. TypeSafe's own "
+            "skill-selection recipe gates at 0.30."
+        ),
+    )
+    max_candidates: int = Field(
+        default=512,
+        ge=1,
+        description="Largest catalogue the selector will score in one call.",
+    )
+    group_after: int = Field(
+        default=120,
+        ge=1,
+        description=(
+            "Catalogue size above which selection narrows by group (namespace, "
+            "or originating MCP server) before scoring members."
+        ),
+    )
+    max_groups: int = Field(
+        default=5, ge=1, description="How many groups the narrowing pass keeps."
+    )
+    timeout_s: float | None = Field(
+        default=None, gt=0, description="Per-request timeout; the SDK's own default is 10s."
+    )
 
 
 class LLMConfig(BaseModel):
@@ -267,6 +314,7 @@ class AgentGantryConfig(BaseModel):
     vector_store: VectorStoreConfig = Field(default_factory=VectorStoreConfig)
     embedder: EmbedderConfig = Field(default_factory=EmbedderConfig)
     reranker: RerankerConfig = Field(default_factory=RerankerConfig)
+    selector: SelectorConfig = Field(default_factory=SelectorConfig)
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
