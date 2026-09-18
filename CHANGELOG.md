@@ -7,6 +7,134 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Selection as an alternative to semantic matching, backed by TypeSafe's Jev.**
+  Jev is a "System One" model: it takes state plus typed questions and returns
+  typed answers with calibrated probabilities, in 70-500ms, and cannot generate
+  text. Two ways in, both optional and both behind the new `jev` extra:
+
+  - **`JevSelector`** replaces embed-then-search. `AgentGantry(selector=...)`
+    (or `SelectorConfig(enabled=True)`) puts the catalogue to the model
+    directly and asks, per entry, whether it is relevant — no embedder, no
+    vector store, no sync. It covers all three catalogues: tools
+    (`retrieve`/`retrieve_tools`), Agent Skills (`retrieve_skills`) and MCP
+    servers (`retrieve_mcp_servers`).
+  - **`JevReranker`** refines semantic search instead of replacing it, as a
+    drop-in `RerankerAdapter` (`RerankerConfig(type="jev")`). Reranking a
+    shortlist works at any catalogue size, because only the shortlist is sent.
+
+  The trade to plan around: a selector sends every candidate on every query, so
+  cost grows with the catalogue rather than staying flat. That suits tens to a
+  few hundred entries; above that, semantic retrieval with the reranker over its
+  shortlist remains the right shape. `SelectorConfig.group_after` handles the
+  middle ground by narrowing to the best namespaces before scoring their members.
+
+  Both fail open. A provider that is unavailable, rate-limited or slow costs
+  precision, never the catalogue: the selector reports a fallback and retrieval
+  takes the semantic path, and the reranker returns the vector-search order
+  untouched. Neither raises into a caller's retrieval path.
+
+  Query constraints are applied before anything is sent — deprecation,
+  namespaces, capabilities, sources and circuit-breaker health all go through
+  the router's own filter, now public as `SemanticRouter.filter_tools()`, so a
+  selector cannot surface a tool the semantic path would hide.
+
+- `RetrievalResult.selection_time_ms`, set when a selector answered. The
+  embedding and vector-search timings read `0.0` on that path, because neither
+  step ran.
+- `SelectionCandidate` / `SelectionResult` in `agent_gantry.schema.selection`,
+  the provider-neutral shapes a selector works in.
+
+### Fixed
+
+- **Five defects in the new selection path**, all found by review on #419 and
+  each reproduced before being fixed:
+  - A tool added without a handler was invisible to selection. `add_tool(tool)`
+    with no handler — how MCP and A2A discovery add theirs — appends only to the
+    pending buffer, and the catalogue was built from the registry alone. Worse
+    than a ranking miss: if any other tool let the selector answer, the semantic
+    fallback never ran and the tool stayed unreachable.
+  - A catalogue over `max_candidates` was silently truncated to an
+    insertion-order prefix and reported as a success, so semantic routing — which
+    has no such ceiling — never got a look in. It now falls back, which is what
+    `SelectorConfig` always documented.
+  - A single candidate with no `group` broke the two-stage path: the bucket key
+    `""` fails `SelectionCandidate`'s `min_length=1`, and the `ValidationError`
+    escaped `select()` instead of failing open, taking the caller's whole
+    catalogue with it.
+  - Selection is now hardened to fail open on *any* exception, not just the
+    provider failures the client already converts. Raising out of a selection
+    layer costs the agent every tool it has.
+  - Tool and MCP selection no longer open the vector store or sync to it.
+  - `AgentGantry(selector=...)` was added *between* `reranker` and `telemetry`,
+    silently rebinding every later positional argument: a caller passing
+    telemetry fifth had it stored as the selector, and retrieval then called
+    `.select()` on it. The parameter now goes last, so existing positional
+    calls mean what they always did.
+  - `SelectionCandidate.from_skill` dropped a skill's own `tags` and forwarded
+    only its category, giving the selector strictly less than the embedding
+    path gets from `to_embedding_text()`.
+  - Request batching counted the question once per batch, but it is sent inside
+    *every* candidate's instructions, so a batch of n was under-counted by
+    (n-1) questions — enough to push a large batch past the provider's budget
+    and lose the pass to a rejection the local estimate said was impossible.
+  - `CachedEmbedder` had no `embed_query`, so wrapping an asymmetric embedder
+    in the cache silently reverted the fix above: retrieval fell back to
+    `embed_text` and reached the wrapped embedder's *document* side. Query
+    vectors are cached under their own key, since an asymmetric model returns
+    different vectors for the two sides.
+  - Skill selection read one page of the catalogue. Both stores default
+    `list_all_skills()` to `limit=1000`, so a larger store let the selector
+    answer confidently from a prefix and report success, keeping the semantic
+    fallback from running. It now pages to the end, and declines above a bound.
+  - Every catalogue was asked whether the entry was a useful *tool*, including
+    Agent Skills (procedural knowledge to read, not something to call) and MCP
+    servers (a source of tools rather than one). `SelectorAdapter.select()`
+    now takes `kind`, and each catalogue gets a question about what it holds.
+
+### Added (test and operational)
+
+- `reset_sse_shutdown_latch()`, exported from the package and from
+  `agent_gantry.servers.mcp_server`. The `sse_starlette` shutdown latch that
+  caused this branch's CI hang is a process global with no recovery from
+  outside, so any host that stops one MCP server and starts another — a test
+  suite, a supervisor, a hot reload — hits the identical hang. Gantry's own
+  tests now call the public function rather than a private copy.
+
+- **Queries were embedded with the document-side instruction.** Retrieval now
+  calls `embed_query()` rather than `embed_text()` for the prompt, on all three
+  paths (tools, skills, MCP servers). `NomicEmbedder` has carried a correct
+  `embed_query` — documented as "optimal for retrieval" — since it was written,
+  and nothing ever called it, so nomic-embed-text-v1.5 was being asked to
+  embed prompts with `search_document:` instead of `search_query:`. The
+  protocol gained `embed_query()` with a default that forwards to
+  `embed_text()`, and the call sites resolve it through a helper rather than
+  assuming it exists: `EmbeddingAdapter` is a `Protocol`, so that default
+  reaches only adapters that actually subclass it, and one written against the
+  protocol structurally — the point of a protocol — would otherwise have hit
+  `AttributeError` on its first retrieval. Symmetric and third-party adapters
+  keep working untouched.
+
+  Honest about the size of it: measured on a 12-tool catalogue this changed no
+  top-1 answers and only a couple of ranks. It is off-label use of the model
+  rather than a visible bug, and it will matter more on larger corpora.
+
+- `SelectionCandidate` now carries a tool's `examples`, which the embedding
+  path has always included via `to_searchable_text()`. Withholding the single
+  strongest signal a catalogue entry has from the selector, while handing it to
+  the vector store, was a handicap rather than a fair comparison.
+
+### Changed
+
+- `retrieve()` defers `ensure_synced()`, `_ensure_initialized()` and (for MCP)
+  `_ensure_mcp_synced()` until it knows the selector has not answered. Those
+  steps open the vector store and embed into it, which the selector path never
+  reads, so a selector-only deployment now runs without a store being reachable
+  at all. Selection reads the registry *and* the pending buffer, because
+  `add_tool` without a handler — how MCP and A2A discovery add theirs — appends
+  only to the latter.
+
 ## [0.15.0] - 2026-09-17
 
 A sweep of the semantic-routing core, the MCP layer and the skills layer.

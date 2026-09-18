@@ -35,6 +35,7 @@ from agent_gantry.servers.mcp_server import (
     _render_tool_output,
     _StreamableHTTPApp,
     create_mcp_server,
+    reset_sse_shutdown_latch,
 )
 
 
@@ -52,19 +53,44 @@ def _task_dump() -> str:
 async def _bounded(coro: Any, timeout: float, label: str) -> Any:
     """``wait_for`` that reports *which* step hung, and what everything was doing.
 
-    ``test_the_app_serves_when_mounted_into_another_service`` has timed out on
-    macOS, Windows and Linux under Python 3.13 — normal-speed runs, so not a
-    loaded runner — and does not reproduce locally, in isolation, within its
-    own file or under the full suite on 3.13. A bare ``TimeoutError`` in the
-    CI summary cannot say whether the client is waiting on a response, the
-    session manager never started, or uvicorn will not shut down, and a
-    re-run throws the evidence away. So a timeout names its step and carries
-    the task stacks with it.
+    Written for the hang that ``_release_sse_shutdown_latch`` explains, and
+    kept because it is what found it: a bare ``TimeoutError`` in a CI summary
+    cannot say whether the client is waiting on a response, the session
+    manager never started, or uvicorn will not shut down, and a re-run throws
+    the evidence away. The dump it carried — a server whose session manager
+    was still running and no in-flight request — is what ruled out every
+    explanation on the server side.
+
+    Not ``wait_for``, which cancels and unwinds the coroutine *before* it
+    raises. That tears down the client along with it, so the dump arrives with
+    half the tasks already gone, and the missing half is the one waiting.
     """
-    try:
-        return await asyncio.wait_for(coro, timeout)
-    except asyncio.TimeoutError as exc:
-        raise AssertionError(f"timed out after {timeout}s: {label}\n{_task_dump()}") from exc
+    task = asyncio.ensure_future(coro)
+    done, _pending = await asyncio.wait({task}, timeout=timeout)
+    if task in done:
+        return task.result()
+    dump = _task_dump()
+    task.cancel()
+    with contextlib.suppress(BaseException):
+        await task
+    raise AssertionError(f"timed out after {timeout}s: {label}\n{dump}")
+
+
+def _release_sse_shutdown_latch(server: uvicorn.Server) -> None:
+    """Undo the process-global "we are shutting down" latch, after *server* has stopped.
+
+    Delegates to the library's own :func:`reset_sse_shutdown_latch`, so these
+    tests exercise the function downstream users are given rather than a
+    private copy that could drift from it. The explanation of what is being
+    undone lives there.
+
+    A process that serves one server for its lifetime never meets this. A test
+    session that starts a server, stops it, and starts another one does: from
+    the first shutdown onwards, every MCP HTTP request hangs its client for
+    ever. That is what burned two six-hour CI jobs, and left the job's only
+    evidence a healthy-looking server whose session manager was still running.
+    """
+    reset_sse_shutdown_latch(server)
 
 
 def _free_port() -> int:
@@ -134,11 +160,7 @@ class _Served:
         raise RuntimeError("uvicorn did not start")
 
     async def __aexit__(self, *exc: Any) -> None:
-        # ``force_exit`` too: a graceful shutdown waits for open connections,
-        # which on a loaded runner is indistinguishable from a hang. The
-        # assertions have already run by here.
         self._uvicorn.should_exit = True
-        self._uvicorn.force_exit = True
         assert self._task is not None
         try:
             await asyncio.wait_for(self._task, 60)
@@ -147,6 +169,10 @@ class _Served:
                 self._task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
                     await asyncio.wait_for(self._task, 10)
+            # Unconditionally, and after the server is down: the latch is set
+            # by the shutdown, so an exception on the way out would otherwise
+            # leave every later test in this session serving dead streams.
+            _release_sse_shutdown_latch(self._uvicorn)
 
 
 @pytest.fixture(params=["streamable_http", "sse"])
@@ -175,7 +201,13 @@ async def test_remote_roundtrip(served: tuple[_Served, AgentGantry]) -> None:
         assert remote.metadata["mcp_url"] == running.url
         assert remote.metadata["mcp_transport"] == running.transport
 
-        found = _text(await client.call_tool("find_relevant_tools", {"query": "add two numbers"}))
+        found = _text(
+            await _bounded(
+                client.call_tool("find_relevant_tools", {"query": "add two numbers"}),
+                60,
+                f"call_tool find_relevant_tools over {running.transport}",
+            )
+        )
         assert found.startswith("Tool: add_numbers")
         assert '"properties"' in found  # parameters are JSON, not a Python repr
 
@@ -196,7 +228,8 @@ async def test_remote_roundtrip(served: tuple[_Served, AgentGantry]) -> None:
         # ...and the session survives the failed call
         assert _text(await client.call_tool("add_numbers", {"a": 1, "b": 1})) == "2"
     finally:
-        await client.close()
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(client.close(), 30)
 
 
 @pytest.mark.asyncio
@@ -207,23 +240,39 @@ async def test_remote_server_tools_execute_through_a_second_gantry(
     running, _gantry = served
     consumer = AgentGantry()
     try:
-        count = await consumer.add_mcp_server(
-            MCPServerConfig(
-                name="remote", url=running.url, transport=running.transport, namespace="remote"
-            )
+        # Bounded: this test hung here for the full CI job cap -- nearly six
+        # hours on ubuntu 3.11 and windows 3.11 in one run -- and the log
+        # simply stopped mid-suite with no traceback. A bound turns that into
+        # a named failure carrying the task stacks.
+        count = await _bounded(
+            consumer.add_mcp_server(
+                MCPServerConfig(
+                    name="remote",
+                    url=running.url,
+                    transport=running.transport,
+                    namespace="remote",
+                )
+            ),
+            60,
+            f"add_mcp_server against the {running.transport} server",
         )
         assert count == 3
-        result = await consumer.execute(
-            ToolCall(
-                tool_name="execute_tool",
-                namespace="remote",
-                arguments={"tool_name": "add_numbers", "arguments": {"a": 40, "b": 2}},
-            )
+        result = await _bounded(
+            consumer.execute(
+                ToolCall(
+                    tool_name="execute_tool",
+                    namespace="remote",
+                    arguments={"tool_name": "add_numbers", "arguments": {"a": 40, "b": 2}},
+                )
+            ),
+            60,
+            f"execute through the {running.transport} server",
         )
         assert result.status == ExecutionStatus.SUCCESS, result.error
         assert _text(result.result) == "42"
     finally:
-        await consumer.close()
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(consumer.close(), 30)
 
 
 # ---------------------------------------------------------------------------
@@ -648,24 +697,58 @@ async def test_the_app_serves_when_mounted_into_another_service() -> None:
         with contextlib.suppress(asyncio.TimeoutError):
             await asyncio.wait_for(mounted.state.mcp_session.stop(), 30)
     finally:
-        # ``force_exit`` as well as ``should_exit``: graceful shutdown waits
-        # for open connections, and this test has already asserted everything
-        # it cares about, so waiting on a drain would turn a slow shutdown
-        # into a timeout. Note this did *not* fix the timeouts it was added
-        # for -- they recurred on ubuntu 3.13 at normal speed (501s), so the
-        # "loaded runner" reading was wrong and the remaining suspect is a
-        # 3.13-specific race; see ``_bounded`` above for what the next
-        # failure will report.
         server.should_exit = True
-        server.force_exit = True
         try:
-            await _bounded(task, 60, "uvicorn shutdown after force_exit")
+            await _bounded(task, 60, "uvicorn shutdown")
         finally:
             if not task.done():
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
                     await asyncio.wait_for(task, 10)
+            _release_sse_shutdown_latch(server)
             await gantry.close()
+
+
+@pytest.mark.asyncio
+async def test_a_second_server_still_streams_after_the_first_has_shut_down() -> None:
+    """Two servers in sequence in one process: the second used to answer nothing.
+
+    Stopping the first one latches ``sse_starlette``'s process-global shutdown
+    flag (see ``_release_sse_shutdown_latch``), and nothing clears it, so every
+    later streaming response was cancelled between its headers and its body:
+    the client read a ``200``, then waited for a stream that had already been
+    abandoned. Nothing in the suite asserted that a shutdown leaves the *next*
+    server able to serve, so the damage landed on whichever test happened to
+    run after one — as a hang with no failure, which is how it reached ``main``
+    and cost two six-hour CI jobs.
+    """
+    sse = pytest.importorskip("sse_starlette.sse")
+
+    gantry = await _served_gantry()
+    try:
+        for cycle in range(2):
+            server = create_mcp_server(gantry, mode="hybrid", name="e2e", expose=["add_numbers"])
+            async with _Served(server, "streamable_http") as running:
+                client = MCPClient(MCPServerConfig(name=f"cycle{cycle}", url=running.url))
+                try:
+                    tools = await _bounded(
+                        client.list_tools(), 60, f"client.list_tools() on cycle {cycle}"
+                    )
+                    assert "add_numbers" in {t.name for t in tools}
+                finally:
+                    with contextlib.suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(client.close(), 30)
+                # Latch it here, exactly as the watcher does on seeing the
+                # server shut down. Waiting for the real thing would not test
+                # anything reliably: the watcher polls on a 500ms tick, so
+                # whether it catches a given shutdown before the test's event
+                # loop closes is a coin flip — which is precisely why this
+                # reached ``main`` as an intermittent hang rather than a
+                # failure. Setting the flag makes the second cycle deterministic.
+                sse.AppStatus.should_exit = True
+    finally:
+        sse.AppStatus.should_exit = False
+        await gantry.close()
 
 
 @pytest.mark.asyncio

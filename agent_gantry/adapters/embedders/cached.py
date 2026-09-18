@@ -37,6 +37,8 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from agent_gantry.adapters.embedders.base import embed_query
+
 if TYPE_CHECKING:
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
 
@@ -44,6 +46,12 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_CACHE_PATH = Path.home() / ".cache" / "agent_gantry" / "embeddings.sqlite"
+
+
+#: Prefix distinguishing query-side cache entries from document-side ones.
+#: Hashed into the key rather than stored as a column, so the existing cache
+#: schema is unchanged and old entries stay valid.
+_QUERY_SCOPE = "\x00query\x00"
 
 
 def _hash(text: str) -> str:
@@ -112,6 +120,41 @@ class CachedEmbedder:
         if callable(get_id):
             return get_id()
         return f"{self.model_name}:{self.dimension}"
+
+    async def embed_query(self, query: str) -> list[float]:
+        """Embed a search query, preserving an asymmetric embedder's query side.
+
+        Without this, the wrapper has no ``embed_query``, so retrieval falls
+        back to ``embed_text`` and reaches the *document* side of whatever is
+        wrapped. ``CachedEmbedder(NomicEmbedder(...))`` would then embed every
+        prompt with ``search_document:`` — silently undoing the asymmetry for
+        anyone who added caching, which the wrapper advertises as safe for any
+        embedder.
+
+        Cached under a query-scoped key. An asymmetric model returns different
+        vectors for the same text on the two sides, so sharing the document key
+        would serve a document vector for a query and poison the other
+        direction on the way back.
+
+        Args:
+            query: The query to embed.
+
+        Returns:
+            Embedding vector.
+        """
+        embedder_id = self.get_embedder_id()
+        key = _hash(f"{_QUERY_SCOPE}{query}")
+
+        cached = await asyncio.to_thread(self._lookup_batch, embedder_id, [key])
+        hit = cached.get(key)
+        if hit is not None:
+            self.hits += 1
+            return hit
+
+        self.misses += 1
+        vector = await embed_query(self._embedder, query)
+        await asyncio.to_thread(self._store_batch, embedder_id, [(key, vector)])
+        return vector
 
     async def embed_text(self, text: str) -> list[float]:
         result = await self.embed_batch([text])
