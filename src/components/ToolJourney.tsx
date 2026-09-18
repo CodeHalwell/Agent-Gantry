@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import React, { useMemo, useState, useRef } from 'react';
 
 type Stage = { title: string; detail: string; codeHtml: string };
 
@@ -7,6 +7,17 @@ type Props = { stages: Stage[] };
 export default function ToolJourney({ stages }: Props) {
   const [active, setActive] = useState(0);
   const stage = useMemo(() => stages[active], [active, stages]);
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      const direction = e.key === 'ArrowRight' ? 1 : -1;
+      const nextActive = (active + direction + stages.length) % stages.length;
+      setActive(nextActive);
+      tabRefs.current[nextActive]?.focus();
+    }
+  };
 
   return (
     <div className="card">
@@ -18,7 +29,10 @@ export default function ToolJourney({ stages }: Props) {
             aria-selected={i === active}
             aria-controls="journey-tabpanel"
             id={`journey-tab-${i}`}
+            tabIndex={i === active ? 0 : -1}
+            ref={(el) => { tabRefs.current[i] = el; }}
             onClick={() => setActive(i)}
+            onKeyDown={handleKeyDown}
             style={{
               padding: '1rem',
               borderRadius: '1rem',
@@ -48,6 +62,9 @@ export default function ToolJourney({ stages }: Props) {
         </p>
         <figure
           className="code-block"
+          role="region"
+          aria-label="Code snippet"
+          tabIndex={0}
           dangerouslySetInnerHTML={{ __html: stage.codeHtml }}
         />
       </div>
