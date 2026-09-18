@@ -52,19 +52,59 @@ def _task_dump() -> str:
 async def _bounded(coro: Any, timeout: float, label: str) -> Any:
     """``wait_for`` that reports *which* step hung, and what everything was doing.
 
-    ``test_the_app_serves_when_mounted_into_another_service`` has timed out on
-    macOS, Windows and Linux under Python 3.13 — normal-speed runs, so not a
-    loaded runner — and does not reproduce locally, in isolation, within its
-    own file or under the full suite on 3.13. A bare ``TimeoutError`` in the
-    CI summary cannot say whether the client is waiting on a response, the
-    session manager never started, or uvicorn will not shut down, and a
-    re-run throws the evidence away. So a timeout names its step and carries
-    the task stacks with it.
+    Written for the hang that ``_release_sse_shutdown_latch`` explains, and
+    kept because it is what found it: a bare ``TimeoutError`` in a CI summary
+    cannot say whether the client is waiting on a response, the session
+    manager never started, or uvicorn will not shut down, and a re-run throws
+    the evidence away. The dump it carried — a server whose session manager
+    was still running and no in-flight request — is what ruled out every
+    explanation on the server side.
+
+    Not ``wait_for``, which cancels and unwinds the coroutine *before* it
+    raises. That tears down the client along with it, so the dump arrives with
+    half the tasks already gone, and the missing half is the one waiting.
     """
+    task = asyncio.ensure_future(coro)
+    done, _pending = await asyncio.wait({task}, timeout=timeout)
+    if task in done:
+        return task.result()
+    dump = _task_dump()
+    task.cancel()
+    with contextlib.suppress(BaseException):
+        await task
+    raise AssertionError(f"timed out after {timeout}s: {label}\n{dump}")
+
+
+def _release_sse_shutdown_latch(server: uvicorn.Server) -> None:
+    """Undo the process-global "we are shutting down" latch, after *server* has stopped.
+
+    ``sse_starlette`` — which the MCP SDK returns every streaming response
+    through — runs one background watcher per thread that polls the uvicorn
+    server it finds on ``SIGTERM``'s handler. The moment that server's
+    ``should_exit`` is set, the watcher latches its own module-global
+    ``AppStatus.should_exit``, and nothing ever clears it again. From then on
+    every ``EventSourceResponse`` in the process takes the shutdown path
+    immediately: the task group is cancelled after ``http.response.start`` goes
+    out but before the body does, so the client receives headers and then waits
+    for a stream that has already been abandoned.
+
+    A process that serves one server for its lifetime never notices. A test
+    session that starts a server, stops it, and starts another one does: from
+    the first shutdown onwards, every MCP HTTP request hangs its client for
+    ever. That is what burned two six-hour CI jobs and left the job's only
+    evidence a healthy-looking server whose session manager was still running.
+
+    So each shutdown releases what it latched. The stopped server's own flag is
+    cleared as well, because the watcher holds a reference to it and polls on a
+    500ms tick — clearing only the global leaves it free to re-latch from a
+    server that has already exited.
+    """
+    server.should_exit = False
     try:
-        return await asyncio.wait_for(coro, timeout)
-    except asyncio.TimeoutError as exc:
-        raise AssertionError(f"timed out after {timeout}s: {label}\n{_task_dump()}") from exc
+        from sse_starlette import sse as sse_starlette
+    except ImportError:  # pragma: no cover - the SDK depends on it
+        return
+    sse_starlette.AppStatus.should_exit = False
 
 
 def _free_port() -> int:
@@ -134,11 +174,7 @@ class _Served:
         raise RuntimeError("uvicorn did not start")
 
     async def __aexit__(self, *exc: Any) -> None:
-        # ``force_exit`` too: a graceful shutdown waits for open connections,
-        # which on a loaded runner is indistinguishable from a hang. The
-        # assertions have already run by here.
         self._uvicorn.should_exit = True
-        self._uvicorn.force_exit = True
         assert self._task is not None
         try:
             await asyncio.wait_for(self._task, 60)
@@ -147,6 +183,10 @@ class _Served:
                 self._task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
                     await asyncio.wait_for(self._task, 10)
+            # Unconditionally, and after the server is down: the latch is set
+            # by the shutdown, so an exception on the way out would otherwise
+            # leave every later test in this session serving dead streams.
+            _release_sse_shutdown_latch(self._uvicorn)
 
 
 @pytest.fixture(params=["streamable_http", "sse"])
@@ -671,24 +711,58 @@ async def test_the_app_serves_when_mounted_into_another_service() -> None:
         with contextlib.suppress(asyncio.TimeoutError):
             await asyncio.wait_for(mounted.state.mcp_session.stop(), 30)
     finally:
-        # ``force_exit`` as well as ``should_exit``: graceful shutdown waits
-        # for open connections, and this test has already asserted everything
-        # it cares about, so waiting on a drain would turn a slow shutdown
-        # into a timeout. Note this did *not* fix the timeouts it was added
-        # for -- they recurred on ubuntu 3.13 at normal speed (501s), so the
-        # "loaded runner" reading was wrong and the remaining suspect is a
-        # 3.13-specific race; see ``_bounded`` above for what the next
-        # failure will report.
         server.should_exit = True
-        server.force_exit = True
         try:
-            await _bounded(task, 60, "uvicorn shutdown after force_exit")
+            await _bounded(task, 60, "uvicorn shutdown")
         finally:
             if not task.done():
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
                     await asyncio.wait_for(task, 10)
+            _release_sse_shutdown_latch(server)
             await gantry.close()
+
+
+@pytest.mark.asyncio
+async def test_a_second_server_still_streams_after_the_first_has_shut_down() -> None:
+    """Two servers in sequence in one process: the second used to answer nothing.
+
+    Stopping the first one latches ``sse_starlette``'s process-global shutdown
+    flag (see ``_release_sse_shutdown_latch``), and nothing clears it, so every
+    later streaming response was cancelled between its headers and its body:
+    the client read a ``200``, then waited for a stream that had already been
+    abandoned. Nothing in the suite asserted that a shutdown leaves the *next*
+    server able to serve, so the damage landed on whichever test happened to
+    run after one — as a hang with no failure, which is how it reached ``main``
+    and cost two six-hour CI jobs.
+    """
+    sse = pytest.importorskip("sse_starlette.sse")
+
+    gantry = await _served_gantry()
+    try:
+        for cycle in range(2):
+            server = create_mcp_server(gantry, mode="hybrid", name="e2e", expose=["add_numbers"])
+            async with _Served(server, "streamable_http") as running:
+                client = MCPClient(MCPServerConfig(name=f"cycle{cycle}", url=running.url))
+                try:
+                    tools = await _bounded(
+                        client.list_tools(), 60, f"client.list_tools() on cycle {cycle}"
+                    )
+                    assert "add_numbers" in {t.name for t in tools}
+                finally:
+                    with contextlib.suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(client.close(), 30)
+                # Latch it here, exactly as the watcher does on seeing the
+                # server shut down. Waiting for the real thing would not test
+                # anything reliably: the watcher polls on a 500ms tick, so
+                # whether it catches a given shutdown before the test's event
+                # loop closes is a coin flip — which is precisely why this
+                # reached ``main`` as an intermittent hang rather than a
+                # failure. Setting the flag makes the second cycle deterministic.
+                sse.AppStatus.should_exit = True
+    finally:
+        sse.AppStatus.should_exit = False
+        await gantry.close()
 
 
 @pytest.mark.asyncio
