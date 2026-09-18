@@ -687,3 +687,50 @@ async def test_mcp_selection_never_syncs_server_vectors() -> None:
 
     servers = await gantry.retrieve_mcp_servers("open a file", limit=2)
     assert [server.name for server in servers] == ["files"]
+
+
+async def test_positional_constructor_arguments_still_mean_what_they_did() -> None:
+    """``AgentGantry.__init__`` is public and takes positional arguments.
+
+    Adding ``selector`` beside ``reranker``, where it belongs by subject,
+    silently rebound every later parameter: a caller passing telemetry fifth
+    had it stored as the selector, and retrieval then called ``.select()`` on
+    it. The new parameter goes last for that reason.
+    """
+    import inspect
+
+    from agent_gantry import AgentGantry
+    from agent_gantry.observability.console import NoopTelemetryAdapter
+
+    names = list(inspect.signature(AgentGantry.__init__).parameters)
+    assert names[-1] == "selector", f"selector must stay last; got {names}"
+
+    telemetry = NoopTelemetryAdapter()
+    gantry = AgentGantry(None, None, None, None, telemetry)  # 5th positional
+    try:
+        assert gantry._telemetry is telemetry
+        assert gantry._selector is None
+    finally:
+        await gantry.close()
+
+
+def test_a_skills_own_tags_reach_the_selector() -> None:
+    """The embedding path puts them in ``to_embedding_text()``; so must this.
+
+    Forwarding only the category gave the selector strictly less to work with
+    than the vector store gets.
+    """
+    from agent_gantry.schema.skill import Skill, SkillCategory
+
+    skill = Skill(
+        name="deploying",
+        description="How to deploy the service to production safely.",
+        content="Body.",
+        tags=["release", "ops"],
+        category=SkillCategory.HOW_TO,
+    )
+    candidate = SelectionCandidate.from_skill(skill)
+
+    assert "release" in candidate.tags
+    assert "ops" in candidate.tags
+    assert SkillCategory.HOW_TO.value in candidate.tags

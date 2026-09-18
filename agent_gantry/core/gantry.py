@@ -83,11 +83,16 @@ class AgentGantry:
         vector_store: VectorStoreAdapter | None = None,
         embedder: EmbeddingAdapter | None = None,
         reranker: RerankerAdapter | None = None,
-        selector: SelectorAdapter | None = None,
         telemetry: TelemetryAdapter | None = None,
         security_policy: SecurityPolicy | None = None,
         modules: Sequence[str] | None = None,
         module_attr: str = "tools",
+        # Appended rather than slotted in beside ``reranker`` where it belongs
+        # by subject: this signature is public and takes positional arguments,
+        # so inserting a parameter mid-list silently rebinds every later one.
+        # A caller passing telemetry fifth would have had it stored as the
+        # selector, and retrieval would then have called ``.select()`` on it.
+        selector: SelectorAdapter | None = None,
     ) -> None:
         """
         Initialize AgentGantry.
@@ -97,12 +102,14 @@ class AgentGantry:
             vector_store: Custom vector store adapter
             embedder: Custom embedding adapter
             reranker: Custom reranker adapter
+            telemetry: Custom telemetry adapter
+            security_policy: Security policy for permission checks
             selector: Custom selector adapter. A selector replaces semantic
                 matching: the catalogue is put to a decision model directly,
                 with no embeddings and no vector search. Retrieval falls back
-                to the semantic router whenever it declines or fails.
-            telemetry: Custom telemetry adapter
-            security_policy: Security policy for permission checks
+                to the semantic router whenever it declines or fails. Last in
+                the list to keep existing positional calls meaning what they
+                did; pass it by keyword.
         """
         self._config = config or AgentGantryConfig()
         self._vector_store = vector_store or build_vector_store(self._config.vector_store)

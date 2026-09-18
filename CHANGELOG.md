@@ -67,6 +67,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     provider failures the client already converts. Raising out of a selection
     layer costs the agent every tool it has.
   - Tool and MCP selection no longer open the vector store or sync to it.
+  - `AgentGantry(selector=...)` was added *between* `reranker` and `telemetry`,
+    silently rebinding every later positional argument: a caller passing
+    telemetry fifth had it stored as the selector, and retrieval then called
+    `.select()` on it. The parameter now goes last, so existing positional
+    calls mean what they always did.
+  - `SelectionCandidate.from_skill` dropped a skill's own `tags` and forwarded
+    only its category, giving the selector strictly less than the embedding
+    path gets from `to_embedding_text()`.
 
 - **Queries were embedded with the document-side instruction.** Retrieval now
   calls `embed_query()` rather than `embed_text()` for the prompt, on all three

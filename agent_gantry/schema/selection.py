@@ -67,17 +67,22 @@ class SelectionCandidate(BaseModel):
         """Build a candidate from a :class:`~agent_gantry.schema.skill.Skill`.
 
         The skill's body is deliberately left out: it runs to 50,000
-        characters, and what a skill is *for* lives in its description. The
-        category rides along as a tag, since it is the one extra signal that
-        separates otherwise similar skills.
+        characters, and what a skill is *for* lives in its description.
+        Everything else the embedding path puts in ``to_embedding_text()``
+        comes across — the author's own tags as well as the category. Sending
+        the category alone would have given the selector strictly less to go on
+        than the vector store gets, which is a handicap rather than a choice.
         """
         category = getattr(skill, "category", None)
+        tags = list(getattr(skill, "tags", []) or [])
+        if category:
+            tags.append(str(getattr(category, "value", category)))
         return cls(
             id=f"{skill.namespace}.{skill.name}",
             name=f"{skill.namespace}.{skill.name}",
             description=skill.description,
             group=skill.namespace,
-            tags=[str(getattr(category, "value", category))] if category else [],
+            tags=tags,
         )
 
     @classmethod

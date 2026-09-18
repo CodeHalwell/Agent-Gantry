@@ -11,7 +11,8 @@ Demonstrations of Agent-Gantry's protocol support for MCP (Model Context Protoco
 - `dynamic_mcp_selection_demo.py`: Semantic selection of MCP servers, so a prompt connects to the
   one server it needs rather than all of them.
 - `jev_mcp_selection_demo.py`: The same job through a decision model instead of embeddings, covering
-  both MCP servers and Agent Skills, and ending with the system-prompt fragment skills inject as.
+  both MCP servers and Agent Skills, and ending with the fragment that a selected skill injects
+  into the system prompt.
 - `claude_desktop_config.json`: Sample configuration for pointing Claude Desktop at the MCP demo.
 
 ## Run commands
