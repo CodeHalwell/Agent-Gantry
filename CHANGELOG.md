@@ -75,6 +75,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `SelectionCandidate.from_skill` dropped a skill's own `tags` and forwarded
     only its category, giving the selector strictly less than the embedding
     path gets from `to_embedding_text()`.
+  - Request batching counted the question once per batch, but it is sent inside
+    *every* candidate's instructions, so a batch of n was under-counted by
+    (n-1) questions — enough to push a large batch past the provider's budget
+    and lose the pass to a rejection the local estimate said was impossible.
+  - Every catalogue was asked whether the entry was a useful *tool*, including
+    Agent Skills (procedural knowledge to read, not something to call) and MCP
+    servers (a source of tools rather than one). `SelectorAdapter.select()`
+    now takes `kind`, and each catalogue gets a question about what it holds.
+
+### Added (test and operational)
+
+- `reset_sse_shutdown_latch()`, exported from the package and from
+  `agent_gantry.servers.mcp_server`. The `sse_starlette` shutdown latch that
+  caused this branch's CI hang is a process global with no recovery from
+  outside, so any host that stops one MCP server and starts another — a test
+  suite, a supervisor, a hot reload — hits the identical hang. Gantry's own
+  tests now call the public function rather than a private copy.
 
 - **Queries were embedded with the document-side instruction.** Retrieval now
   calls `embed_query()` rather than `embed_text()` for the prompt, on all three

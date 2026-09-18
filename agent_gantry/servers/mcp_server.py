@@ -195,6 +195,47 @@ class _ASGIProxy:
         await self._handler(scope, receive, send)
 
 
+def reset_sse_shutdown_latch(server: Any | None = None) -> None:
+    """Clear ``sse_starlette``'s process-global "we are shutting down" latch.
+
+    ``sse_starlette`` — which the MCP SDK returns every streaming response
+    through — runs a watcher that polls the uvicorn server it finds on
+    ``SIGTERM``'s handler. The moment that server's ``should_exit`` is set, the
+    watcher latches its own module-global ``AppStatus.should_exit``, and
+    nothing ever clears it. Every later ``EventSourceResponse`` in the process
+    then takes the shutdown path immediately: the task group is cancelled after
+    ``http.response.start`` has gone out but before the body does, so a client
+    reads a ``200`` and then waits for a stream that has already been
+    abandoned.
+
+    A process that serves one server for its lifetime never meets this. A
+    process that stops one and starts another does, from the first shutdown
+    onwards — a test suite, a supervisor restarting a server, a hot reload.
+    There is no way to recover from outside, which is why this is public rather
+    than buried in Gantry's own tests.
+
+    Call it after stopping a server and before starting the next::
+
+        await gantry.serve_mcp(...)   # ... and later, stopped
+        reset_sse_shutdown_latch(uvicorn_server)
+
+    Args:
+        server: The uvicorn server that was just stopped, if you have it. Its
+            own ``should_exit`` is cleared too, because the watcher keeps a
+            reference to it and polls on a 500ms tick — clearing only the
+            global leaves it free to re-latch from a server that has already
+            exited.
+    """
+    if server is not None:
+        with contextlib.suppress(Exception):
+            server.should_exit = False
+    try:
+        from sse_starlette import sse as sse_starlette
+    except ImportError:  # pragma: no cover - the SDK depends on it
+        return
+    sse_starlette.AppStatus.should_exit = False
+
+
 class _StreamableHTTPApp:
     """ASGI app that owns the SDK session manager's lifecycle.
 

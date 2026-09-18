@@ -1042,7 +1042,7 @@ class AgentGantry:
 
         by_id = {f"{skill.namespace}.{skill.name}": skill for skill in skills}
         candidates = [SelectionCandidate.from_skill(skill) for skill in skills]
-        result = await self._selector.select(query, candidates, limit)
+        result = await self._selector.select(query, candidates, limit, kind="skill")
         if result.fallback:
             logger.debug(f"Selector declined ({result.reason}); using semantic skill search")
             return None
@@ -1079,7 +1079,7 @@ class AgentGantry:
 
         by_id = {f"{server.namespace}.{server.name}": server for server in servers}
         candidates = [SelectionCandidate.from_mcp_server(server) for server in servers]
-        result = await self._selector.select(query, candidates, limit)
+        result = await self._selector.select(query, candidates, limit, kind="mcp_server")
         if result.fallback:
             logger.debug(f"Selector declined ({result.reason}); using semantic MCP routing")
             return None

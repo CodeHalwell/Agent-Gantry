@@ -389,9 +389,13 @@ class _StubSelector:
         self.scores = scores or {}
         self.fallback = fallback
         self.seen: list[list[str]] = []
+        self.kinds: list[str] = []
 
-    async def select(self, query: str, candidates: Any, limit: int) -> SelectionResult:
+    async def select(
+        self, query: str, candidates: Any, limit: int, *, kind: str = "tool"
+    ) -> SelectionResult:
         self.seen.append([c.id for c in candidates])
+        self.kinds.append(kind)
         if self.fallback:
             return SelectionResult(fallback=True, reason="stub declined")
         scores = {c.id: self.scores.get(c.name, 0.0) for c in candidates}
@@ -734,3 +738,82 @@ def test_a_skills_own_tags_reach_the_selector() -> None:
     assert "release" in candidate.tags
     assert "ops" in candidate.tags
     assert SkillCategory.HOW_TO.value in candidate.tags
+
+
+def test_the_question_is_budgeted_once_per_candidate_not_once_per_batch() -> None:
+    """``_score_batch`` puts the question in *every* candidate's instructions.
+
+    Counting it once as shared overhead under-counted a batch of n by (n-1)
+    questions, which is enough to push a large batch past the provider's budget
+    and lose the whole pass to a rejection the local estimate said was
+    impossible.
+    """
+    question = "Would this tool help accomplish the request? " * 20
+    candidates = [SelectionCandidate(id=f"t{i}", name=f"t{i}") for i in range(20)]
+
+    budget = estimate_tokens("q") + estimate_tokens(question) * 4
+    client = JevClient(client=_StubTypeSafe({}), token_budget=budget)
+    batches = client.batch("q", candidates, question)
+
+    assert len(batches) > 1, "a long question repeated 20 times must not fit one request"
+    assert [c.id for batch in batches for c in batch] == [c.id for c in candidates]
+    assert max(len(batch) for batch in batches) <= 5, "batches still over budget"
+
+
+async def test_each_catalogue_is_asked_about_the_thing_it_holds() -> None:
+    """A skill is knowledge to read, not a tool to call.
+
+    jev-1.13 "answers the question you wrote, not the one you meant", so asking
+    whether a *tool* would help biases the answer when the candidate is an
+    Agent Skill or an MCP server.
+    """
+    asked: list[str] = []
+
+    class _Recording:
+        async def score(self, state: Any, candidates: Any, question: str) -> JevVerdict:
+            asked.append(question)
+            return JevVerdict(scores={c.id: 0.9 for c in candidates})
+
+    selector = JevSelector(client=_Recording())
+    for kind in ("tool", "skill", "mcp_server"):
+        await selector.select("q", [_candidate("a")], limit=1, kind=kind)
+
+    assert "tool" in asked[0]
+    assert "skill" in asked[1]
+    assert "server" in asked[2]
+    assert len(set(asked)) == 3, "each catalogue must get its own question"
+
+
+async def test_an_explicit_question_overrides_every_catalogue() -> None:
+    asked: list[str] = []
+
+    class _Recording:
+        async def score(self, state: Any, candidates: Any, question: str) -> JevVerdict:
+            asked.append(question)
+            return JevVerdict()
+
+    selector = JevSelector(client=_Recording(), question="my own question")
+    for kind in ("tool", "skill", "mcp_server"):
+        await selector.select("q", [_candidate("a")], limit=1, kind=kind)
+
+    assert asked == ["my own question"] * 3
+
+
+async def test_the_facade_tells_the_selector_which_catalogue_it_is_choosing() -> None:
+    """Otherwise every catalogue gets the tool question, which is wrong for two."""
+    from agent_gantry import AgentGantry
+    from agent_gantry.schema.skill import Skill
+
+    selector = _StubSelector({"default.deploying": 0.8, "default.alpha": 0.9})
+    gantry = AgentGantry(selector=selector)
+    try:
+        await gantry.add_tool(_tool("alpha"), lambda: None)
+        await gantry.add_skill(
+            Skill(name="deploying", description="How to deploy safely.", content="Body.")
+        )
+        await gantry.retrieve_tools("anything", limit=1)
+        await gantry.retrieve_skills("anything", limit=1)
+
+        assert selector.kinds == ["tool", "skill"]
+    finally:
+        await gantry.close()

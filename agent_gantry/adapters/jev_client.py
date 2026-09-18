@@ -235,12 +235,21 @@ class JevClient:
             Batches, each estimated to fit the token budget. A single candidate
             too large to fit is given a batch of its own rather than dropped.
         """
-        overhead = estimate_tokens(state) + estimate_tokens(question)
+        # The state is sent once per request; the question is not. Every
+        # candidate's ``instructions`` carries its own copy (see
+        # ``_score_batch``), so counting it once as shared overhead
+        # under-counted a batch of n by (n-1) questions — enough to push a
+        # large batch past the provider's budget and lose the whole pass to a
+        # 422 that the local estimate said could not happen.
+        overhead = estimate_tokens(state)
+        per_candidate = estimate_tokens(question)
         batches: list[list[SelectionCandidate]] = []
         current: list[SelectionCandidate] = []
         current_tokens = overhead
         for candidate in candidates:
-            cost = estimate_tokens(candidate_payload(candidate, self._max_description_chars))
+            cost = per_candidate + estimate_tokens(
+                candidate_payload(candidate, self._max_description_chars)
+            )
             if current and current_tokens + cost > self._token_budget:
                 batches.append(current)
                 current = []

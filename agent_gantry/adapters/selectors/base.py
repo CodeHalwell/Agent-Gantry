@@ -36,6 +36,8 @@ class SelectorAdapter(Protocol):
         query: str,
         candidates: Sequence[SelectionCandidate],
         limit: int,
+        *,
+        kind: str = "tool",
     ) -> SelectionResult:
         """Select the entries relevant to *query*.
 
@@ -43,6 +45,11 @@ class SelectorAdapter(Protocol):
             query: The user's request.
             candidates: The catalogue to choose from.
             limit: Maximum number of entries to return.
+            kind: What is being chosen — ``"tool"``, ``"skill"`` or
+                ``"mcp_server"``. A decision model reads the question it is
+                given literally, so asking "would this *tool* help?" about an
+                Agent Skill asks the wrong thing: a skill is procedural
+                knowledge to read, not something to call.
 
         Returns:
             A :class:`SelectionResult`. Implementations must not raise for a

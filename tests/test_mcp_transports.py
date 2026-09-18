@@ -35,6 +35,7 @@ from agent_gantry.servers.mcp_server import (
     _render_tool_output,
     _StreamableHTTPApp,
     create_mcp_server,
+    reset_sse_shutdown_latch,
 )
 
 
@@ -78,33 +79,18 @@ async def _bounded(coro: Any, timeout: float, label: str) -> Any:
 def _release_sse_shutdown_latch(server: uvicorn.Server) -> None:
     """Undo the process-global "we are shutting down" latch, after *server* has stopped.
 
-    ``sse_starlette`` — which the MCP SDK returns every streaming response
-    through — runs one background watcher per thread that polls the uvicorn
-    server it finds on ``SIGTERM``'s handler. The moment that server's
-    ``should_exit`` is set, the watcher latches its own module-global
-    ``AppStatus.should_exit``, and nothing ever clears it again. From then on
-    every ``EventSourceResponse`` in the process takes the shutdown path
-    immediately: the task group is cancelled after ``http.response.start`` goes
-    out but before the body does, so the client receives headers and then waits
-    for a stream that has already been abandoned.
+    Delegates to the library's own :func:`reset_sse_shutdown_latch`, so these
+    tests exercise the function downstream users are given rather than a
+    private copy that could drift from it. The explanation of what is being
+    undone lives there.
 
-    A process that serves one server for its lifetime never notices. A test
+    A process that serves one server for its lifetime never meets this. A test
     session that starts a server, stops it, and starts another one does: from
     the first shutdown onwards, every MCP HTTP request hangs its client for
-    ever. That is what burned two six-hour CI jobs and left the job's only
+    ever. That is what burned two six-hour CI jobs, and left the job's only
     evidence a healthy-looking server whose session manager was still running.
-
-    So each shutdown releases what it latched. The stopped server's own flag is
-    cleared as well, because the watcher holds a reference to it and polls on a
-    500ms tick — clearing only the global leaves it free to re-latch from a
-    server that has already exited.
     """
-    server.should_exit = False
-    try:
-        from sse_starlette import sse as sse_starlette
-    except ImportError:  # pragma: no cover - the SDK depends on it
-        return
-    sse_starlette.AppStatus.should_exit = False
+    reset_sse_shutdown_latch(server)
 
 
 def _free_port() -> int:

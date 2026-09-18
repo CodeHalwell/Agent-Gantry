@@ -28,12 +28,41 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_QUESTION = "Would this tool help accomplish the request? Answer about this tool only."
+#: One question per catalogue, because jev-1.13 "answers the question you
+#: wrote, not the one you meant". Asking whether a *tool* would help is the
+#: wrong question about an Agent Skill, which is procedural knowledge to read
+#: rather than something to call, and about an MCP server, which is a source of
+#: tools rather than one itself.
+DEFAULT_QUESTIONS = {
+    "tool": "Would this tool help accomplish the request? Answer about this tool only.",
+    "skill": (
+        "Would this skill's instructions help someone carry out the request? "
+        "Answer about this skill only."
+    ),
+    "mcp_server": (
+        "Would this server provide tools useful for the request? "
+        "Answer about this server only."
+    ),
+}
 
-DEFAULT_GROUP_QUESTION = (
-    "Could any tool in this group help accomplish the request? "
-    "Answer about this group only."
-)
+DEFAULT_QUESTION = DEFAULT_QUESTIONS["tool"]
+
+DEFAULT_GROUP_QUESTIONS = {
+    "tool": (
+        "Could any tool in this group help accomplish the request? "
+        "Answer about this group only."
+    ),
+    "skill": (
+        "Could any skill in this group help someone carry out the request? "
+        "Answer about this group only."
+    ),
+    "mcp_server": (
+        "Could any server in this group provide tools useful for the request? "
+        "Answer about this group only."
+    ),
+}
+
+DEFAULT_GROUP_QUESTION = DEFAULT_GROUP_QUESTIONS["tool"]
 
 #: Below this probability a candidate is not selected. TypeSafe's own skill
 #: recipe gates at 0.30; the same value is used here, and it is the one knob
@@ -51,10 +80,12 @@ class JevSelector(SelectorAdapter):
     Args:
         api_key: TypeSafe API key. Defaults to ``TYPESAFE_API_KEY``.
         model: Model id. Defaults to the SDK's default (``jev-latest``).
-        question: The yes/no question asked of each candidate. Jev "answers the
-            question you wrote, not the one you meant" — scoping words and
-            negations are read literally — so this is worth tuning.
-        group_question: The question asked of each group in the two-stage path.
+        question: The yes/no question asked of each candidate, overriding the
+            per-catalogue defaults. Jev "answers the question you wrote, not
+            the one you meant" — scoping words and negations are read
+            literally — so this is worth tuning.
+        group_question: The question asked of each group in the two-stage path,
+            overriding the per-catalogue defaults.
         threshold: Minimum probability for a candidate to be selected.
         max_candidates: Hard ceiling on candidates scored in one call, before
             grouping. Guards cost on an unexpectedly large registry.
@@ -73,8 +104,8 @@ class JevSelector(SelectorAdapter):
         api_key: str | None = None,
         model: str | None = None,
         *,
-        question: str = DEFAULT_QUESTION,
-        group_question: str = DEFAULT_GROUP_QUESTION,
+        question: str | None = None,
+        group_question: str | None = None,
         threshold: float = DEFAULT_THRESHOLD,
         max_candidates: int = 512,
         group_after: int = 120,
@@ -82,6 +113,9 @@ class JevSelector(SelectorAdapter):
         timeout: float | None = None,
         client: Any | None = None,
     ) -> None:
+        # ``None`` means "use the question for whatever catalogue is being
+        # selected"; an explicit string overrides all of them, which is what a
+        # caller tuning one deployment wants.
         self._question = question
         self._group_question = group_question
         self._threshold = float(threshold)
@@ -98,11 +132,21 @@ class JevSelector(SelectorAdapter):
             f"threshold={self._threshold}"
         )
 
+    def _question_for(self, kind: str) -> str:
+        """The per-candidate question for *kind*, unless one was configured."""
+        return self._question or DEFAULT_QUESTIONS.get(kind, DEFAULT_QUESTION)
+
+    def _group_question_for(self, kind: str) -> str:
+        """The group-pass question for *kind*, unless one was configured."""
+        return self._group_question or DEFAULT_GROUP_QUESTIONS.get(kind, DEFAULT_GROUP_QUESTION)
+
     async def select(
         self,
         query: str,
         candidates: Sequence[SelectionCandidate],
         limit: int,
+        *,
+        kind: str = "tool",
     ) -> SelectionResult:
         """Select the candidates relevant to *query*.
 
@@ -110,6 +154,9 @@ class JevSelector(SelectorAdapter):
             query: The user's request. Sent as the shared state.
             candidates: The catalogue to choose from.
             limit: Maximum number of ids to return.
+            kind: Which catalogue this is — ``"tool"``, ``"skill"`` or
+                ``"mcp_server"`` — which picks the question asked about each
+                entry.
 
         Returns:
             A :class:`SelectionResult`, best first. Never raises for a provider
@@ -138,8 +185,8 @@ class JevSelector(SelectorAdapter):
         groups = {c.group for c in considered if c.group}
         try:
             if len(considered) > self._group_after and len(groups) > 1:
-                return await self._select_two_stage(query, considered, limit)
-            return await self._select_one_stage(query, considered, limit)
+                return await self._select_two_stage(query, considered, limit, kind)
+            return await self._select_one_stage(query, considered, limit, kind)
         except Exception as exc:  # noqa: BLE001 - fail open is the contract
             # The client already turns provider failures into a fallback
             # verdict, so reaching here means a defect in this adapter. Even
@@ -154,9 +201,10 @@ class JevSelector(SelectorAdapter):
         query: str,
         candidates: Sequence[SelectionCandidate],
         limit: int,
+        kind: str,
     ) -> SelectionResult:
         """Score every candidate and keep those over the threshold."""
-        verdict = await self._client.score(query, candidates, self._question)
+        verdict = await self._client.score(query, candidates, self._question_for(kind))
         if verdict.fallback:
             return SelectionResult(
                 fallback=True,
@@ -170,6 +218,7 @@ class JevSelector(SelectorAdapter):
         query: str,
         candidates: Sequence[SelectionCandidate],
         limit: int,
+        kind: str,
     ) -> SelectionResult:
         """Narrow to the best groups, then score only their members."""
         by_group: dict[str, list[SelectionCandidate]] = {}
@@ -190,7 +239,7 @@ class JevSelector(SelectorAdapter):
         ]
 
         group_verdict = await self._client.score(
-            query, group_candidates, self._group_question
+            query, group_candidates, self._group_question_for(kind)
         )
         if group_verdict.fallback:
             # Narrowing failed, and scoring everything instead would be the
@@ -211,7 +260,7 @@ class JevSelector(SelectorAdapter):
         kept = ranked_groups[: self._max_groups]
         members = [c for group in kept for c in by_group[group]]
 
-        verdict = await self._client.score(query, members, self._question)
+        verdict = await self._client.score(query, members, self._question_for(kind))
         if verdict.fallback:
             return SelectionResult(
                 fallback=True,

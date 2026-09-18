@@ -93,6 +93,10 @@ def __getattr__(name: str) -> "Any":
         from agent_gantry.adapters.selectors.jev import JevSelector
 
         return JevSelector
+    if name == "reset_sse_shutdown_latch":
+        from agent_gantry.servers.mcp_server import reset_sse_shutdown_latch
+
+        return reset_sse_shutdown_latch
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -111,6 +115,7 @@ __all__ = [
     "enable_console_logging",
     "extract_tool_calls",
     "render_result",
+    "reset_sse_shutdown_latch",
     "with_semantic_tools",
     "set_default_gantry",
     "ToolCall",

@@ -440,12 +440,22 @@ ignore = ["E501", "E402"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-# A hung test aborts the run with every thread's stack instead of idling to
-# the CI job cap. Two runs have burned ~6 hours each on a test that serves MCP
-# over HTTP and then never returns; the log ends mid-suite with no traceback,
-# which says nothing about where it stopped. No test here takes anywhere near
-# this long -- the whole suite is minutes -- so the bound only ever catches a
-# genuine hang.
+# Diagnostic only, and worth being precise about: pytest calls
+# ``faulthandler.dump_traceback_later(timeout, file=stderr)`` WITHOUT
+# ``exit=True``, so this prints every thread's stack after 300s and then lets
+# the test carry on hanging. It does not abort the run and it does not fail the
+# test.
+#
+# That is still the difference between a six-hour job whose log ends mid-suite
+# with no traceback -- which is what two runs cost before this -- and one that
+# says where it stopped while it is stopping. The actual bound on the tests
+# that hung is ``_bounded`` in tests/test_mcp_transports.py, which wraps the
+# specific awaits and fails them with the live task stacks attached.
+#
+# Adding pytest-timeout would make the abort real; it is deliberately not here,
+# as a dependency worth choosing on purpose rather than slipping into a fix.
+# No test runs near 300s -- the whole suite is minutes -- so nothing legitimate
+# trips this.
 faulthandler_timeout = 300
 
 [tool.uv]
