@@ -9,6 +9,7 @@ never called it, so the prefix it exists to apply was never applied.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -199,7 +200,7 @@ async def test_a_non_awaitable_embed_query_is_not_called() -> None:
     embedder.embed_text.assert_awaited_once_with("q")
 
 
-async def test_a_cache_wrapper_preserves_the_query_side() -> None:
+async def test_a_cache_wrapper_preserves_the_query_side(tmp_path: Path) -> None:
     """``CachedEmbedder`` advertises that it wraps any embedder safely.
 
     Without its own ``embed_query`` the retrieval helper falls back to
@@ -208,15 +209,11 @@ async def test_a_cache_wrapper_preserves_the_query_side() -> None:
     with ``search_document:``, silently undoing the asymmetry for anyone who
     added caching.
     """
-    import tempfile
-    from pathlib import Path as _Path
-
     from agent_gantry.adapters.embedders.cached import CachedEmbedder
 
     inner = _RecordingEmbedder()
-    with tempfile.TemporaryDirectory() as tmp:
-        cached = CachedEmbedder(inner, cache_path=_Path(tmp) / "c.sqlite")
-
+    cached = CachedEmbedder(inner, cache_path=tmp_path / "c.sqlite")
+    try:
         vector = await cached.embed_query("find alpha")
 
         assert vector == [1.0, 0.0, 0.0, 0.0]
@@ -226,17 +223,20 @@ async def test_a_cache_wrapper_preserves_the_query_side() -> None:
         # Second call is served from the cache, not the embedder.
         await cached.embed_query("find alpha")
         assert inner.queries == ["find alpha"], "a cache hit must not re-embed"
+    finally:
+        # Windows will not delete a SQLite file whose connection is still open,
+        # so the cache has to be closed before the tmp directory is cleaned up.
+        cached.close()
 
 
-async def test_the_query_cache_does_not_collide_with_the_document_cache() -> None:
+async def test_the_query_cache_does_not_collide_with_the_document_cache(
+    tmp_path: Path,
+) -> None:
     """An asymmetric model returns different vectors for the two sides.
 
     Sharing one key would serve a document vector for a query, and poison the
     other direction on the way back.
     """
-    import tempfile
-    from pathlib import Path as _Path
-
     from agent_gantry.adapters.embedders.cached import CachedEmbedder
 
     class _Asymmetric(_RecordingEmbedder):
@@ -249,14 +249,15 @@ async def test_the_query_cache_does_not_collide_with_the_document_cache() -> Non
             return [0.0, 1.0, 0.0, 0.0]
 
     inner = _Asymmetric()
-    with tempfile.TemporaryDirectory() as tmp:
-        cached = CachedEmbedder(inner, cache_path=_Path(tmp) / "c.sqlite")
-
+    cached = CachedEmbedder(inner, cache_path=tmp_path / "c.sqlite")
+    try:
         document_vector = await cached.embed_text("same text")
         query_vector = await cached.embed_query("same text")
 
         assert document_vector == [1.0, 0.0, 0.0, 0.0]
         assert query_vector == [0.0, 1.0, 0.0, 0.0], "the query side was served a document vector"
+    finally:
+        cached.close()
 
 
 async def test_skill_selection_pages_past_the_stores_default_limit() -> None:
