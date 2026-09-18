@@ -197,3 +197,116 @@ async def test_a_non_awaitable_embed_query_is_not_called() -> None:
 
     assert await embed_query(embedder, "q") == [0.1, 0.2, 0.3, 0.4]
     embedder.embed_text.assert_awaited_once_with("q")
+
+
+async def test_a_cache_wrapper_preserves_the_query_side() -> None:
+    """``CachedEmbedder`` advertises that it wraps any embedder safely.
+
+    Without its own ``embed_query`` the retrieval helper falls back to
+    ``embed_text``, which reaches the *document* side of whatever is wrapped —
+    so ``CachedEmbedder(NomicEmbedder(...))`` would go on embedding prompts
+    with ``search_document:``, silently undoing the asymmetry for anyone who
+    added caching.
+    """
+    import tempfile
+    from pathlib import Path as _Path
+
+    from agent_gantry.adapters.embedders.cached import CachedEmbedder
+
+    inner = _RecordingEmbedder()
+    with tempfile.TemporaryDirectory() as tmp:
+        cached = CachedEmbedder(inner, cache_path=_Path(tmp) / "c.sqlite")
+
+        vector = await cached.embed_query("find alpha")
+
+        assert vector == [1.0, 0.0, 0.0, 0.0]
+        assert inner.queries == ["find alpha"], "the wrapper must use the query side"
+        assert "find alpha" not in inner.documents
+
+        # Second call is served from the cache, not the embedder.
+        await cached.embed_query("find alpha")
+        assert inner.queries == ["find alpha"], "a cache hit must not re-embed"
+
+
+async def test_the_query_cache_does_not_collide_with_the_document_cache() -> None:
+    """An asymmetric model returns different vectors for the two sides.
+
+    Sharing one key would serve a document vector for a query, and poison the
+    other direction on the way back.
+    """
+    import tempfile
+    from pathlib import Path as _Path
+
+    from agent_gantry.adapters.embedders.cached import CachedEmbedder
+
+    class _Asymmetric(_RecordingEmbedder):
+        async def embed_text(self, text: str) -> list[float]:
+            self.documents.append(text)
+            return [1.0, 0.0, 0.0, 0.0]
+
+        async def embed_query(self, query: str) -> list[float]:
+            self.queries.append(query)
+            return [0.0, 1.0, 0.0, 0.0]
+
+    inner = _Asymmetric()
+    with tempfile.TemporaryDirectory() as tmp:
+        cached = CachedEmbedder(inner, cache_path=_Path(tmp) / "c.sqlite")
+
+        document_vector = await cached.embed_text("same text")
+        query_vector = await cached.embed_query("same text")
+
+        assert document_vector == [1.0, 0.0, 0.0, 0.0]
+        assert query_vector == [0.0, 1.0, 0.0, 0.0], "the query side was served a document vector"
+
+
+async def test_skill_selection_pages_past_the_stores_default_limit() -> None:
+    """``list_all_skills()`` defaults to ``limit=1000`` on both stores.
+
+    One call reads the first page, and the selector would then answer from a
+    truncated catalogue and report success — keeping the semantic fallback from
+    ever running, so every skill past the first page stayed unreachable.
+    """
+    from typing import Any as _Any
+
+    from agent_gantry import AgentGantry
+    from agent_gantry.schema.selection import SelectionResult
+
+    seen: list[int] = []
+
+    class _CountingSelector:
+        async def select(
+            self, query: str, candidates: _Any, limit: int, *, kind: str = "tool"
+        ) -> SelectionResult:
+            seen.append(len(candidates))
+            return SelectionResult(fallback=True, reason="counted")
+
+    gantry = AgentGantry(selector=_CountingSelector())
+    try:
+        from agent_gantry.schema.skill import Skill
+
+        def _skills(start: int, count: int) -> list[Skill]:
+            return [
+                Skill(
+                    name=f"skill_{start + i}",
+                    description=f"Skill number {start + i} does a thing.",
+                    content="Body.",
+                )
+                for i in range(count)
+            ]
+
+        store = gantry._vector_store
+        pages = [_skills(0, 1000), _skills(1000, 1000), _skills(2000, 7)]
+        calls: list[tuple[int, int]] = []
+
+        async def _paged(limit: int = 1000, offset: int = 0, **_: _Any) -> list[_Any]:
+            calls.append((limit, offset))
+            index = offset // 1000
+            return pages[index] if index < len(pages) else []
+
+        store.list_all_skills = _paged  # type: ignore[method-assign]
+        await gantry._select_skills("q", 3, None, None, None)
+
+        assert len(calls) == 3, f"must page until a short page arrives, got {calls}"
+        assert seen == [2007], "the whole catalogue must reach the selector"
+    finally:
+        await gantry.close()

@@ -79,6 +79,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     *every* candidate's instructions, so a batch of n was under-counted by
     (n-1) questions — enough to push a large batch past the provider's budget
     and lose the pass to a rejection the local estimate said was impossible.
+  - `CachedEmbedder` had no `embed_query`, so wrapping an asymmetric embedder
+    in the cache silently reverted the fix above: retrieval fell back to
+    `embed_text` and reached the wrapped embedder's *document* side. Query
+    vectors are cached under their own key, since an asymmetric model returns
+    different vectors for the two sides.
+  - Skill selection read one page of the catalogue. Both stores default
+    `list_all_skills()` to `limit=1000`, so a larger store let the selector
+    answer confidently from a prefix and report success, keeping the semantic
+    fallback from running. It now pages to the end, and declines above a bound.
   - Every catalogue was asked whether the entry was a useful *tool*, including
     Agent Skills (procedural knowledge to read, not something to call) and MCP
     servers (a source of tools rather than one). `SelectorAdapter.select()`

@@ -55,6 +55,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: Ceiling on how many skills are read into memory for selection. Well above
+#: any selector's own ``max_candidates`` (512 by default), so in practice the
+#: selector declines first; this only stops an enormous store being paged into
+#: memory before that happens.
+_MAX_SELECTABLE_SKILLS = 10_000
+
 # The Streamable HTTP endpoint default. Named so ``serve_mcp`` can tell a
 # caller's own path from the default it never asked for.
 _DEFAULT_MCP_PATH = "/mcp"
@@ -1026,7 +1032,29 @@ class AgentGantry:
         # itself rather than in an in-memory registry, so reading it needs the
         # store open. Only the *embedding* is skipped on this path.
         await self._ensure_initialized()
-        skills = await store.list_all_skills()
+
+        # Paged, not a single call: both skill stores default
+        # ``list_all_skills()`` to ``limit=1000``, so one call silently reads
+        # the first page. The selector would then answer confidently from a
+        # truncated catalogue, report success, and keep the semantic fallback
+        # from ever running — the same silent-truncation failure the selector's
+        # own candidate ceiling was just fixed for.
+        skills: list[Skill] = []
+        page_size = 1000
+        while len(skills) <= _MAX_SELECTABLE_SKILLS:
+            page = await store.list_all_skills(limit=page_size, offset=len(skills))
+            skills.extend(page)
+            if len(page) < page_size:
+                break
+        else:
+            # Ran past the bound rather than reaching the end. Selecting over a
+            # prefix here would be the truncation this loop exists to avoid, so
+            # hand it to the semantic path, which has no such ceiling.
+            logger.warning(
+                f"Skill catalogue exceeds {_MAX_SELECTABLE_SKILLS}; using semantic search."
+            )
+            return None
+
 
         if namespace is not None:
             allowed = {namespace} if isinstance(namespace, str) else set(namespace)
