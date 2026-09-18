@@ -89,6 +89,11 @@ def candidate_payload(candidate: SelectionCandidate, max_description_chars: int)
         payload["description"] = description
     if candidate.tags:
         payload["tags"] = list(candidate.tags)
+    if candidate.examples:
+        # Capped: examples are the strongest signal an entry carries, but a
+        # tool may hold ten of them and they would otherwise dominate a batch's
+        # token budget on their own.
+        payload["examples"] = list(candidate.examples[:5])
     return payload
 
 

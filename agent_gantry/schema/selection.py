@@ -30,6 +30,11 @@ class SelectionCandidate(BaseModel):
             came from. Used by two-stage selection, which narrows to groups
             before narrowing to members.
         tags: Optional extra signals.
+        examples: Example requests this entry handles. Carried because the
+            embedding path already embeds them via ``to_searchable_text()``,
+            and they are the single strongest signal a catalogue entry has:
+            withholding them from a selector while giving them to the vector
+            store is not a fair comparison, it is a handicap.
     """
 
     id: str = Field(..., min_length=1)
@@ -37,6 +42,7 @@ class SelectionCandidate(BaseModel):
     description: str = ""
     group: str | None = None
     tags: list[str] = Field(default_factory=list)
+    examples: list[str] = Field(default_factory=list)
 
     @classmethod
     def from_tool(cls, tool: Any) -> SelectionCandidate:
@@ -53,6 +59,7 @@ class SelectionCandidate(BaseModel):
             description=tool.description,
             group=tool.namespace,
             tags=list(tool.tags),
+            examples=list(tool.examples),
         )
 
     @classmethod
@@ -86,6 +93,7 @@ class SelectionCandidate(BaseModel):
             description=server.description,
             group=server.namespace,
             tags=list(getattr(server, "tags", []) or []),
+            examples=list(getattr(server, "examples", []) or []),
         )
 
 

@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
+from agent_gantry.adapters.embedders.base import embed_query
 from agent_gantry.adapters.embedders.openai import OpenAIEmbedder
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 from agent_gantry.core.executor import ExecutionEngine
@@ -2534,7 +2535,7 @@ class AgentGantry:
 
         await self._ensure_initialized()
         await self._ensure_skill_vectors_current(store)
-        query_embedding = await self._embedder.embed_text(query)
+        query_embedding = await embed_query(self._embedder, query)
         filters: dict[str, Any] = {}
         if namespace is not None:
             filters["namespace"] = namespace

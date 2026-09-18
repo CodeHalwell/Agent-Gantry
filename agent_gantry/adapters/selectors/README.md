@@ -20,19 +20,37 @@ relevant. No embeddings, no vector store, no sync step.
 | Understands negation, scoping, "not X" | Poor | Good |
 | Catalogue ceiling | Millions | Tens to a few hundred |
 
-Measured on one 12-tool catalogue with five unambiguous queries (`all-MiniLM-L6-v2` for the semantic
-side), asking each for its single best tool:
+Measured on one 12-tool catalogue and 13 queries, through the real retrieval path, with `limit=2`.
+Tools carry the tags and `examples=[...]` that `@gantry.register` encourages, because that turns out
+to matter more than anything else here.
 
-| | top-1 correct | latency |
-|---|---|---|
-| semantic routing alone | 1 / 5 | ~10 ms |
-| semantic + `JevReranker` | 4 / 5 | ~300 ms |
-| `JevSelector` | 5 / 5 | ~260 ms |
+| | recall@2 | spurious tools | abstained | latency |
+|---|---|---|---|---|
+| `all-MiniLM-L6-v2` (the default) | 10/11 | 16 | 0/2 | 9 ms |
+| `nomic-embed-text-v1.5` | 10/11 | 16 | 0/2 | 13 ms |
+| `JevSelector` (threshold 0.3) | 11/11 | 3 | 0/2 | 251 ms |
+| `JevSelector` (threshold 0.5) | 10/11 | 1 | 1/2 | 256 ms |
 
-The reranker's one miss is the shape of the technique rather than a tuning problem: it can only
-reorder what vector search handed it, and the right tool was not in the shortlist to be promoted.
-A selector reads the whole catalogue, so it has nothing to miss — which is the case for using it
-where the catalogue is small enough to afford.
+Read that carefully, because the headline is not "the selector finds better tools".
+
+**Recall is a tie.** Semantic search does its job: with decent metadata it puts the right tool in the
+top 2 almost every time. If you are choosing a selector expecting it to find tools embeddings miss,
+that is not what the numbers say.
+
+**Precision is the difference — 16 spurious tools against 1 to 3.** A top-k retriever always returns
+`k`; it has no way to say "only one of these is relevant". Every spurious tool is a full schema in
+the prompt, which is the context-window tax this library exists to reduce, so this is the axis that
+pays for itself.
+
+**Neither abstains reliably.** Asked things no tool could help with, both mostly returned something.
+The selector at 0.5 managed one of two. If "return nothing" matters to you, raise the threshold and
+measure on your own catalogue.
+
+**The embedding model was not the lever; the metadata was.** `nomic-embed-text-v1.5` scored
+identically to a 2021 MiniLM, and `bge-large-en-v1.5` (1024-dim, larger than both) did worse. What
+moved the needle was `examples=[...]` on the tools: on an earlier run with descriptions only, MiniLM
+took 1 of 5 single-answer queries; adding tags and examples took the same model to 5 of 5. Before
+reaching for a selector, or a bigger embedder, write the examples.
 
 One 151-tool pass cost 11,127 input tokens in a single request, about 1.2 s, and **$0.000467**.
 

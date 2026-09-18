@@ -46,6 +46,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SelectionCandidate` / `SelectionResult` in `agent_gantry.schema.selection`,
   the provider-neutral shapes a selector works in.
 
+### Fixed
+
+- **Queries were embedded with the document-side instruction.** Retrieval now
+  calls `embed_query()` rather than `embed_text()` for the prompt, on all three
+  paths (tools, skills, MCP servers). `NomicEmbedder` has carried a correct
+  `embed_query` — documented as "optimal for retrieval" — since it was written,
+  and nothing ever called it, so nomic-embed-text-v1.5 was being asked to
+  embed prompts with `search_document:` instead of `search_query:`. The
+  protocol gained `embed_query()` with a default that forwards to
+  `embed_text()`, and the call sites resolve it through a helper rather than
+  assuming it exists: `EmbeddingAdapter` is a `Protocol`, so that default
+  reaches only adapters that actually subclass it, and one written against the
+  protocol structurally — the point of a protocol — would otherwise have hit
+  `AttributeError` on its first retrieval. Symmetric and third-party adapters
+  keep working untouched.
+
+  Honest about the size of it: measured on a 12-tool catalogue this changed no
+  top-1 answers and only a couple of ranks. It is off-label use of the model
+  rather than a visible bug, and it will matter more on larger corpora.
+
+- `SelectionCandidate` now carries a tool's `examples`, which the embedding
+  path has always included via `to_searchable_text()`. Withholding the single
+  strongest signal a catalogue entry has from the selector, while handing it to
+  the vector store, was a handicap rather than a fair comparison.
+
 ### Changed
 
 - `retrieve()` defers `ensure_synced()` until it knows the selector has not

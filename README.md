@@ -77,6 +77,47 @@ Agent-Gantry automatically fingerprints registered tools, syncs definitions to t
 - **MCP both ways:** consume local (stdio) and remote (Streamable HTTP / SSE) MCP servers, and serve your registry to Claude Desktop, Claude Code or any remote client with `gantry.serve_mcp()` / `agent-gantry serve-mcp --module my_app.tools` — two meta-tools instead of the whole tool list.
 - **Skills, retrieved by meaning:** load any Agent Skills (`SKILL.md`) directory with `gantry.add_skills_from_directory(...)` and inject only the skills relevant to each prompt.
 - **Bundled Claude Skill:** install with `agent-gantry install-skill --claude` or target a project-local skills directory.
+- **Selection without embeddings:** point a decision model at the catalogue instead of a vector store. `JevSelector` replaces embed-then-search for tools, skills and MCP servers; `JevReranker` refines the shortlist when the catalogue is too large to send. Both fail open to semantic routing.
+
+## Selecting tools without a vector store
+
+Semantic routing embeds the query and searches. A *selector* asks a decision
+model directly, which needs no embedder, no vector store and no sync — and can
+return nothing when nothing fits, which top-k cannot express.
+
+```python
+from agent_gantry import AgentGantry, JevSelector
+
+gantry = AgentGantry(selector=JevSelector(threshold=0.3))  # reads TYPESAFE_API_KEY
+
+@gantry.register(tags=["email"], examples=["show my messages", "any new mail"])
+def list_inbox(limit: int = 10) -> list[str]:
+    """List the most recent messages sitting in the inbox."""
+    return []
+
+@gantry.register(tags=["email"], examples=["email Bob about the meeting"])
+def send_email(to: str, body: str) -> str:
+    """Send an email message to a named recipient."""
+    return "sent"
+
+# With a key, this honours the negation and returns list_inbox alone.
+# Without one, selection fails open and semantic routing answers instead.
+tools = await gantry.retrieve_tools("show my messages, but do not send anything")
+```
+
+The same selector covers `retrieve_skills()` and `retrieve_mcp_servers()`. Above
+a few hundred entries, keep semantic search and refine it instead:
+
+```python
+from agent_gantry import AgentGantry, JevReranker
+
+gantry = AgentGantry(reranker=JevReranker())   # reorders the vector-search shortlist
+```
+
+Write `examples=[...]` on your tools before reaching for either: on our own
+benchmark that moved the default embedder from 1/5 to 5/5, more than any model
+change did. See `agent_gantry/adapters/selectors/README.md` for the measured
+trade-offs.
 
 ## Manual retrieval and execution
 

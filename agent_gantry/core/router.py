@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from agent_gantry.adapters.embedders.base import embed_query
+
 _logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -291,7 +293,11 @@ class SemanticRouter:
 
         try:
             embed_start = perf_counter()
-            query_embedding = await self._embedder.embed_text(query.context.query)
+            # embed_query, not embed_text: an asymmetric embedder wants a
+            # different instruction on the thing being searched for than on
+            # the thing stored. The protocol default forwards to embed_text,
+            # so a symmetric embedder is unaffected.
+            query_embedding = await embed_query(self._embedder, query.context.query)
             query_embedding_time_ms = (perf_counter() - embed_start) * 1000
 
             filters: dict[str, list[str]] | None = None

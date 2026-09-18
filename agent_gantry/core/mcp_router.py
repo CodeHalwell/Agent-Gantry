@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 
 # Import for registry access
+from agent_gantry.adapters.embedders.base import embed_query
 from agent_gantry.core.mcp_registry import MCPRegistry
 
 
@@ -88,7 +89,7 @@ class MCPRouter:
 
         # Embed the query
         embed_start = perf_counter()
-        query_embedding = await self._embedder.embed_text(query)
+        query_embedding = await embed_query(self._embedder, query)
         query_embedding_time_ms = (perf_counter() - embed_start) * 1000
 
         # Search for relevant servers
