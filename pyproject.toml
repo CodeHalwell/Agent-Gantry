@@ -418,6 +418,13 @@ ignore = ["E501", "E402"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+# A hung test aborts the run with every thread's stack instead of idling to
+# the CI job cap. Two runs have burned ~6 hours each on a test that serves MCP
+# over HTTP and then never returns; the log ends mid-suite with no traceback,
+# which says nothing about where it stopped. No test here takes anywhere near
+# this long -- the whole suite is minutes -- so the bound only ever catches a
+# genuine hang.
+faulthandler_timeout = 300
 
 [tool.uv]
 prerelease = "if-necessary-or-explicit"

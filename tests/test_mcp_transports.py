@@ -175,7 +175,13 @@ async def test_remote_roundtrip(served: tuple[_Served, AgentGantry]) -> None:
         assert remote.metadata["mcp_url"] == running.url
         assert remote.metadata["mcp_transport"] == running.transport
 
-        found = _text(await client.call_tool("find_relevant_tools", {"query": "add two numbers"}))
+        found = _text(
+            await _bounded(
+                client.call_tool("find_relevant_tools", {"query": "add two numbers"}),
+                60,
+                f"call_tool find_relevant_tools over {running.transport}",
+            )
+        )
         assert found.startswith("Tool: add_numbers")
         assert '"properties"' in found  # parameters are JSON, not a Python repr
 
@@ -196,7 +202,8 @@ async def test_remote_roundtrip(served: tuple[_Served, AgentGantry]) -> None:
         # ...and the session survives the failed call
         assert _text(await client.call_tool("add_numbers", {"a": 1, "b": 1})) == "2"
     finally:
-        await client.close()
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(client.close(), 30)
 
 
 @pytest.mark.asyncio
@@ -207,23 +214,39 @@ async def test_remote_server_tools_execute_through_a_second_gantry(
     running, _gantry = served
     consumer = AgentGantry()
     try:
-        count = await consumer.add_mcp_server(
-            MCPServerConfig(
-                name="remote", url=running.url, transport=running.transport, namespace="remote"
-            )
+        # Bounded: this test hung here for the full CI job cap -- nearly six
+        # hours on ubuntu 3.11 and windows 3.11 in one run -- and the log
+        # simply stopped mid-suite with no traceback. A bound turns that into
+        # a named failure carrying the task stacks.
+        count = await _bounded(
+            consumer.add_mcp_server(
+                MCPServerConfig(
+                    name="remote",
+                    url=running.url,
+                    transport=running.transport,
+                    namespace="remote",
+                )
+            ),
+            60,
+            f"add_mcp_server against the {running.transport} server",
         )
         assert count == 3
-        result = await consumer.execute(
-            ToolCall(
-                tool_name="execute_tool",
-                namespace="remote",
-                arguments={"tool_name": "add_numbers", "arguments": {"a": 40, "b": 2}},
-            )
+        result = await _bounded(
+            consumer.execute(
+                ToolCall(
+                    tool_name="execute_tool",
+                    namespace="remote",
+                    arguments={"tool_name": "add_numbers", "arguments": {"a": 40, "b": 2}},
+                )
+            ),
+            60,
+            f"execute through the {running.transport} server",
         )
         assert result.status == ExecutionStatus.SUCCESS, result.error
         assert _text(result.result) == "42"
     finally:
-        await consumer.close()
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(consumer.close(), 30)
 
 
 # ---------------------------------------------------------------------------
