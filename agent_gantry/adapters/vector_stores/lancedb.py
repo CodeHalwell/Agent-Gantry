@@ -291,10 +291,9 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
             # Without upsert, ids already present are skipped rather than
             # inserted again as duplicate rows (mirrors the in-memory store),
             # and only the rows actually inserted are counted.
-            existing = await asyncio.to_thread(
-                table.search().select(["id"]).where(id_predicate).limit(None).to_list
-            )
-            seen_ids = {row["id"] for row in existing}
+            query = table.search().select(["id"]).where(id_predicate).limit(None)
+            existing_table = await asyncio.to_thread(query.to_arrow)
+            seen_ids = set(existing_table["id"].to_pylist()) if len(existing_table) > 0 else set()
             # Each accepted record joins the set, so an id repeated *within*
             # this batch is skipped too — the in-memory store's behaviour,
             # which checked only the table and let a duplicated batch entry
@@ -594,18 +593,22 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
         if where_clauses:
             search = search.where(" AND ".join(where_clauses))
 
-        results = await asyncio.to_thread(search.to_list)
+        # Bolt optimization: Use to_arrow instead of to_list to prevent dictionary allocation for every row
+        # Must explicitly project '_distance'
+        table = await asyncio.to_thread(search.select(["skill_json", "_distance"]).to_arrow)
+
+        distances = table["_distance"].to_pylist()
+        skill_jsons = table["skill_json"].to_pylist()
 
         output: list[tuple[Skill, float]] = []
-        for row in results:
-            distance = row.get("_distance", 0)
-            score = max(0.0, 1.0 - (distance / 2.0))
+        for distance, skill_json_str in zip(distances, skill_jsons):
+            distance_val = distance if distance is not None else 0
+            score = max(0.0, 1.0 - (distance_val / 2.0))
 
             if score_threshold is not None and score < score_threshold:
                 continue
 
             # Deserialize skill with None check
-            skill_json_str = row.get("skill_json")
             if not skill_json_str:
                 logger.warning("Skipping row with missing skill_json field")
                 continue
@@ -643,11 +646,12 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
         # Escape ID for SQL safety
         tool_id = _escape_sql_string(f"{namespace}.{name}")
         try:
-            results = await asyncio.to_thread(
-                self._tools_table.search().where(f"id = '{tool_id}'").limit(1).to_list
-            )
-            if results:
-                tool_json_str = results[0].get("tool_json")
+            query = self._tools_table.search().where(f"id = '{tool_id}'").select(["tool_json"]).limit(1)
+            table = await asyncio.to_thread(query.to_arrow)
+
+            tool_json_list = table["tool_json"].to_pylist()
+            if tool_json_list and tool_json_list[0]:
+                tool_json_str = tool_json_list[0]
                 if tool_json_str:
                     return ToolDefinition.model_validate_json(tool_json_str)
                 else:
@@ -677,11 +681,12 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
         # Escape ID for SQL safety
         skill_id = _escape_sql_string(f"{namespace}.{name}")
         try:
-            results = await asyncio.to_thread(
-                self._skills_table.search().where(f"id = '{skill_id}'").limit(1).to_list
-            )
-            if results:
-                skill_json_str = results[0].get("skill_json")
+            query = self._skills_table.search().where(f"id = '{skill_id}'").select(["skill_json"]).limit(1)
+            table = await asyncio.to_thread(query.to_arrow)
+
+            skill_json_list = table["skill_json"].to_pylist()
+            if skill_json_list and skill_json_list[0]:
+                skill_json_str = skill_json_list[0]
                 if skill_json_str:
                     return Skill.model_validate_json(skill_json_str)
                 else:
