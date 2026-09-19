@@ -43,17 +43,35 @@ from agent_gantry import AgentGantry
 def build_gantry() -> AgentGantry:
     gantry = AgentGantry()
 
-    @gantry.register(tags=["weather"])
+    @gantry.register(
+        tags=["weather"],
+        examples=[
+            "what's the weather in London",
+            "is it raining in Leeds",
+        ],
+    )
     def get_weather(city: str) -> str:
         """Get the current weather for a city."""
         return f"It is 21C and sunny in {city}."
 
-    @gantry.register(tags=["email"])
+    @gantry.register(
+        tags=["email"],
+        examples=[
+            "email the team about the delay",
+            "send a message to Sam",
+        ],
+    )
     def send_email(to: str, body: str = "") -> str:
         """Compose and send an email message to a recipient."""
         return f"Email sent to {to}."
 
-    @gantry.register(tags=["finance"])
+    @gantry.register(
+        tags=["finance"],
+        examples=[
+            "how much is 50 euros in pounds",
+            "convert 100 dollars to yen",
+        ],
+    )
     def convert_currency(amount: float, frm: str, to: str) -> str:
         """Convert an amount of money from one currency to another."""
         return f"{amount} {frm} = {amount * 1.1:.2f} {to}"

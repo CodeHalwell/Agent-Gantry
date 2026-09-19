@@ -62,24 +62,48 @@ async def build_gantry() -> AgentGantry:
     gantry = AgentGantry()
 
     # Research role
-    @gantry.register(tags=["research"])
+    @gantry.register(
+        tags=["research"],
+        examples=[
+            "find the support article on password resets",
+            "what do the docs say about refunds",
+        ],
+    )
     def search_knowledge_base(query: str) -> str:
         """Search the internal KB for support articles."""
         return f"3 articles matching '{query}'"
 
-    @gantry.register(tags=["research"])
+    @gantry.register(
+        tags=["research"],
+        examples=[
+            "where is order 12345",
+            "has my order shipped yet",
+        ],
+    )
     def lookup_order(order_id: str) -> dict:
         """Look up order details by id."""
         return {"order_id": order_id, "status": "shipped", "carrier": "DHL"}
 
     # Billing role
-    @gantry.register(tags=["billing"])
+    @gantry.register(
+        tags=["billing"],
+        examples=[
+            "send me my latest invoice",
+            "what was I charged last month",
+        ],
+    )
     def get_invoice(user_id: str) -> dict:
         """Get the latest invoice for a user."""
         return {"user_id": user_id, "amount_due": "$0.00"}
 
     # Writing role
-    @gantry.register(tags=["writing"])
+    @gantry.register(
+        tags=["writing"],
+        examples=[
+            "draft a reply to the customer",
+            "write an email explaining the delay",
+        ],
+    )
     def draft_email(subject: str, body: str) -> str:
         """Draft a customer-facing email response."""
         return f"DRAFT: {subject}\n\n{body}"

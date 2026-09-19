@@ -57,12 +57,24 @@ async def main() -> None:
     # 1. Initialize Agent-Gantry and register tools.
     gantry = AgentGantry()
 
-    @gantry.register(tags=["weather"])
+    @gantry.register(
+        tags=["weather"],
+        examples=[
+            "what's the weather in London",
+            "is it raining in Leeds",
+        ],
+    )
     def get_weather(location: str) -> str:
         """Get the current weather in a given location."""
         return f"The weather in {location} is sunny and 25C."
 
-    @gantry.register(tags=["finance"])
+    @gantry.register(
+        tags=["finance"],
+        examples=[
+            "what's Apple trading at",
+            "current share price for MSFT",
+        ],
+    )
     def get_stock_price(symbol: str) -> str:
         """Get the current stock price for a symbol."""
         return f"The stock price for {symbol} is $150.00."

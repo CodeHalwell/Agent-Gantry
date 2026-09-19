@@ -12,7 +12,12 @@ async def main():
     # 1. Initialize Agent-Gantry
     gantry = AgentGantry()
 
-    @gantry.register
+    @gantry.register(
+        examples=[
+            "what's AAPL trading at right now",
+            "get me live prices for TSLA",
+        ],
+    )
     def get_market_data(ticker: str):
         """Get real-time market data for a ticker."""
         return {"ticker": ticker, "price": 250.45, "volume": "1.2M"}

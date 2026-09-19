@@ -46,22 +46,42 @@ def build_gantry() -> AgentGantry:
     """Create a Gantry instance with a few representative tools."""
     gantry = AgentGantry()
 
-    @gantry.register
+    @gantry.register(
+        examples=[
+            "what's the weather in London",
+            "is it raining in Leeds",
+        ],
+    )
     def get_weather(city: str) -> str:
         """Get the current weather for a city."""
         return f"Weather in {city}: Sunny, 22C"
 
-    @gantry.register
+    @gantry.register(
+        examples=[
+            "book me a flight to Berlin",
+            "I need to fly from Manchester to Dublin",
+        ],
+    )
     def book_flight(origin: str, destination: str) -> str:
         """Book a flight between two cities."""
         return f"Booked flight: {origin} -> {destination}"
 
-    @gantry.register
+    @gantry.register(
+        examples=[
+            "who is user 4821",
+            "pull up that customer's profile",
+        ],
+    )
     def lookup_user(user_id: str) -> dict:
         """Look up a user profile from the CRM."""
         return {"id": user_id, "plan": "pro"}
 
-    @gantry.register
+    @gantry.register(
+        examples=[
+            "refund this customer",
+            "give them their money back",
+        ],
+    )
     def issue_refund(user_id: str, amount: float) -> str:
         """Issue a refund to a user."""
         return f"Refunded ${amount:.2f} to {user_id}"

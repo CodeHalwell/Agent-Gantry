@@ -63,22 +63,42 @@ async def main() -> None:
     # ------------------------------------------------------------------
     gantry = AgentGantry()
 
-    @gantry.register
+    @gantry.register(
+        examples=[
+            "find articles about rate limiting",
+            "what does the knowledge base say about retries",
+        ],
+    )
     def search_knowledge_base(topic: str) -> str:
         """Search the internal knowledge base for articles and technical reports."""
         return f"Found 5 articles matching '{topic}'"
 
-    @gantry.register
+    @gantry.register(
+        examples=[
+            "recent papers on protein folding",
+            "what's new in reinforcement learning",
+        ],
+    )
     def get_latest_papers(field: str, max_results: int = 5) -> list[str]:
         """Retrieve the titles of the latest research papers in a scientific field."""
         return [f"{field}_paper_{i}.pdf" for i in range(1, max_results + 1)]
 
-    @gantry.register
+    @gantry.register(
+        examples=[
+            "summarise this report",
+            "give me the key findings from that PDF",
+        ],
+    )
     def summarise_document(document_path: str) -> str:
         """Summarise a document and extract key findings."""
         return f"Summary of {document_path}: [key findings extracted]"
 
-    @gantry.register
+    @gantry.register(
+        examples=[
+            "write up a report on the findings",
+            "put together a structured research report",
+        ],
+    )
     def create_report(title: str, sections: list[str]) -> str:
         """Create a structured research report with the specified sections."""
         return f"Report '{title}' created with {len(sections)} sections."
@@ -113,11 +133,11 @@ async def main() -> None:
     # mapping, so the harness approval gate is still respected.
     # ------------------------------------------------------------------
     # `create_harness_agent` is experimental and only exists in AF >= 1.7.0.
-    # This project's `agent-frameworks` extra deliberately resolves AF to its
-    # 1.5.0 floor (see the dated comment in pyproject.toml: newer AF pulls a
-    # foundry subpackage that will not co-resolve), so against the repo's own
-    # lockfile this import fails by design rather than by accident. Say so
-    # plainly instead of surfacing an ImportError.
+    # The repo's `agent-frameworks` extra used to resolve AF to its 1.5.0
+    # floor, which put this example permanently out of reach; that is fixed
+    # from 0.17.0, where the floor is 1.19.0. The guard stays for anyone on an
+    # older AF installed standalone or on a pre-0.17.0 lockfile — say so
+    # plainly instead of surfacing a bare ImportError.
     try:
         from agent_framework import create_harness_agent
     except ImportError:
@@ -132,10 +152,11 @@ async def main() -> None:
             f"1.7.0; you have {installed}."
         )
         print(
-            "The repo's extra pins AF to its 1.5.0 floor on purpose, so install "
-            "a newer AF standalone to run this one:"
+            "agent-gantry 0.17.0+ requires agent-framework>=1.19.0, so syncing "
+            "the extra is usually enough:"
         )
-        print("    pip install 'agent-framework>=1.7.0'")
+        print("    pip install -U 'agent-gantry[agent-frameworks]'")
+        print("    # or, standalone:  pip install 'agent-framework>=1.7.0'")
         await gantry.close()
         return
 

@@ -129,13 +129,20 @@ Two things to know before upgrading:
 - Sixteen of the eighteen framework examples registered tools with **no
   `examples=[...]`**, while this project's own notes call that field the largest
   lever on retrieval accuracy. Anyone copying an example inherited the worse
-  behaviour. They all carry examples now.
+  behaviour. All eighteen carry them now — 67 tools in total, written as
+  phrases a user would actually type rather than restatements of the
+  description. The rest of the examples tree is not there yet and is tracked in
+  #434; `agent_frameworks/` is the one to copy from.
 
-- `score_threshold=0.1` appeared in six places, each commented "lowering
+- `score_threshold=0.1` was scattered through the examples, commented "lowering
   threshold for SimpleEmbedder compatibility". It lowers nothing: the adapter
-  default is `0.0`, so every one was *tightening* the filter while claiming to
-  relax it. `project_demo` used `0.6`, high enough to return nothing. All
-  removed.
+  default is `0.0`, so every one was *tightening* an absolute cosine cutoff
+  while claiming to relax it. `project_demo` used `0.6`, high enough to return
+  nothing at all. Ten are removed here, from the examples rewritten in this
+  release. Roughly 47 remain across the rest of the tree — including in
+  framework examples this release did not rewrite — still carrying the
+  inverted comment. They make those examples return fewer tools than they
+  should rather than breaking anything, and they are tracked in #434.
 
 - Several examples registered a single tool, so "semantic selection" chose 1 of
   1 and demonstrated nothing. They now carry real catalogues — LangGraph shows
@@ -173,7 +180,10 @@ Two things to know before upgrading:
 - `examples/README.md` opens with a framework table rather than burying
   frameworks mid-page, states up front that everything runs keyless, and
   explains the genuinely confusing split between `agent_frameworks/` (per
-  framework) and `frameworks/` (framework-neutral plumbing).
+  framework) and `frameworks/` (framework-neutral plumbing). Its claim that
+  every example in the tree carries `examples=[...]` is narrowed to the one
+  that is true — every *framework* example does — with the rest tracked in
+  #434 rather than papered over.
 
 ## [0.16.0] - 2026-09-18
 

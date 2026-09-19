@@ -66,8 +66,12 @@ def get_weather(location: str) -> str:
 That field is the text the router embeds and the text a selector reads. On our
 own benchmark it moved the default embedder from 1/5 to 5/5 correct — a bigger
 improvement than switching to a larger embedding model. Write the phrases a
-user would actually type, not a restatement of the description. Every example
-in this tree does.
+user would actually type, not a restatement of the description.
+
+Every example under `agent_frameworks/` does this, so copying one gets you the
+good pattern. Much of the rest of the tree predates the measurement and still
+registers tools without `examples`; those are being brought in line (see
+issue #434). Copy from `agent_frameworks/` if you are starting fresh.
 
 The matching trap: leave `score_threshold` alone unless you have measured it.
 It is an **absolute** cosine cutoff, and longer queries dilute absolute
