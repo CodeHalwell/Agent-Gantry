@@ -18,9 +18,9 @@ storage-agnostic.
 
 | Adapter               | Best for                       | Config example                                   |
 |-----------------------|--------------------------------|--------------------------------------------------|
-| `InMemoryVectorStore` | Tests, quick start, notebooks  | `VectorStoreConfig(provider=\"memory\")`         |
-| `LanceDBVectorStore`  | Local persistence + fast recall| `VectorStoreConfig(provider=\"lancedb\", uri=\"./db\")` |
-| `ChromaVectorStore` / `PGVectorStore` / `QdrantVectorStore` | Managed or self-hosted vector DBs | `VectorStoreConfig(provider=\"remote\", type=\"qdrant\", url=\"http://localhost:6333\")` |
+| `InMemoryVectorStore` | Tests, quick start, notebooks  | `VectorStoreConfig(type=\"memory\")`             |
+| `LanceDBVectorStore`  | Local persistence + fast recall| `VectorStoreConfig(type=\"lancedb\", db_path=\"./db\")` |
+| `ChromaVectorStore` / `PGVectorStore` / `QdrantVectorStore` | Managed or self-hosted vector DBs | `VectorStoreConfig(type=\"qdrant\", url=\"http://localhost:6333\")` |
 
 ## Example
 
@@ -28,7 +28,7 @@ storage-agnostic.
 from agent_gantry import AgentGantry, AgentGantryConfig
 from agent_gantry.schema.config import VectorStoreConfig
 
-config = AgentGantryConfig(vector_store=VectorStoreConfig(provider="memory"))
+config = AgentGantryConfig(vector_store=VectorStoreConfig(type="memory"))
 gantry = AgentGantry(config=config)
 await gantry.sync()  # pushes tool embeddings into the chosen store
 ```

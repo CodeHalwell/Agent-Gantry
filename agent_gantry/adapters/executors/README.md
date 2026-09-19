@@ -33,4 +33,4 @@ gantry.register_executor(executor)  # makes remote skills available under execut
 ```
 
 If you need a custom remote transport, subclass `ExecutorAdapter` and supply it to `AgentGantry`; the
-core router and executor require no additional changes.*** End Patch"|()
+core router and executor require no additional changes.

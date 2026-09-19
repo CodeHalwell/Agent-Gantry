@@ -22,7 +22,7 @@ schemas are stable and are the safest place to integrate with external systems.
 from agent_gantry.schema.config import AgentGantryConfig
 
 config = AgentGantryConfig.from_yaml("gantry.yaml")
-print(config.embedder.provider)  # e.g., "openai"
+print(config.embedder.type)  # e.g., "openai"
 ```
 
 If you are integrating Agent-Gantry with another runtime or protocol, prefer importing these models

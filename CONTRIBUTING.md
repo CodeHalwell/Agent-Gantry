@@ -92,9 +92,6 @@ ruff check agent_gantry/
 # Auto-fix linting issues
 ruff check --fix agent_gantry/
 
-# Run type checker
-mypy agent_gantry/
-
 # Format code (if you have ruff format)
 ruff format agent_gantry/
 ```
@@ -212,7 +209,7 @@ async def test_retrieve_tools_returns_relevant_results(gantry, sample_tools):
 
 1. ✅ All tests pass
 2. ✅ Code passes ruff linting
-3. ✅ Code passes mypy type checking
+3. ✅ Type hints are present and correct (static typing is conventional, not CI-gated)
 4. ✅ Documentation is updated
 5. ✅ CHANGELOG.md is updated (if applicable)
 6. ✅ Commit messages are clear and descriptive
@@ -254,7 +251,6 @@ Brief description of changes
 - [ ] Tests pass locally
 - [ ] New tests added (if applicable)
 - [ ] Linting passes
-- [ ] Type checking passes
 
 ## Documentation
 - [ ] Documentation updated
@@ -291,9 +287,6 @@ pytest --cov=agent_gantry --cov-report=html
 
 # Run linter and auto-fix
 ruff check --fix .
-
-# Run type checker
-mypy agent_gantry/
 ```
 
 ### Common Issues

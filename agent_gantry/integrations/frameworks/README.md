@@ -60,8 +60,9 @@ defaults to the adapter's `default_limit` (5, `DEFAULT_TOOL_LIMIT` in
 Ported from the Microsoft Agent Framework provider
 (`GantryContextProvider(required=..., always_include=...)`), every adapter's
 `select`/`select_or_empty`/`live(...)` now accepts the same two keywords —
-shared by `GantryToolset.select` (`base.py`), so all 15 framework integrations
-get the same guarantee:
+shared by `GantryToolset.select` (`base.py`), so all 11 framework adapters
+(plus the Microsoft Agent Framework provider it was ported from) get the same
+guarantee:
 
 - **`required=[...]`** — bare or `namespace.name`-qualified tool names that
   **must** be present in the result. A name already in the semantic slice

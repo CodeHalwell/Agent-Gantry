@@ -20,11 +20,10 @@ from agent_gantry.google_adk import GoogleADKAdapter
 
 gantry = AgentGantry()
 
+@gantry.register(tags=["support", "orders"])
 def get_order_status(order_id: str) -> str:
     """Return the current shipping status for an order."""
     return "in_transit"
-
-gantry.register_tool(get_order_status, tags=["support", "orders"])
 adapter = GoogleADKAdapter(gantry)
 framework_tools = await adapter.select("check an order", limit=3)  # Native Google ADK adapter export.
 `} />
