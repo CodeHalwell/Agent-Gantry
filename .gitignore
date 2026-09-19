@@ -97,3 +97,13 @@ code_review/
 # JavaScript / Astro docs
 node_modules/
 .astro/
+
+# Generated vector stores. These are caches an example builds on first run --
+# two of them were committed by accident, without their version manifests, so
+# `list_tables()` found them and `open_table` rejected them. That crashed any
+# example that actually opened one on a clean checkout.
+# Unanchored on purpose: tool_vector_db builds its store at a path relative to
+# the working directory, so running it from the repo root drops the database
+# there rather than beside the example.
+.tool_cache/
+gantry_tools.lancedb/

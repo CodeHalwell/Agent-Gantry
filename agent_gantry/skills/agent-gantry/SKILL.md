@@ -373,13 +373,29 @@ a vector search hands the agent a tool that cannot answer the question. Jev
 declined instead. If a user is choosing between the two approaches, that — not
 the token count — is the argument.
 
-**Both fail open.** A provider that is unavailable, rate-limited, slow, or that
-answers for only some of the candidates it was asked about, costs precision and
-never the catalogue: the selector reports a fallback and retrieval takes the
-semantic path; the reranker returns the vector-search order untouched. Neither
-raises into a caller's retrieval path. If you see selection quietly stop
-working, check the logs for `Jev selection failed, falling back:` — that is the
-library declining to guess, not a silent failure.
+**Both fail open**, and neither raises into a caller's retrieval path — but
+they fail open differently, and the difference matters if you are choosing
+between them.
+
+A provider that is unavailable, rate-limited or slow costs precision and never
+the catalogue: the selector reports a fallback and retrieval takes the semantic
+path, while the reranker returns the vector-search order untouched, truncated
+to `top_k`.
+
+A provider that answers for only *some* of the candidates is not the same case.
+The selector treats it as a failed pass and falls back — a candidate that was
+never scored is indistinguishable from one scored zero, so ranking the answered
+subset would be a confident guess. The reranker keeps the pass: answered
+candidates are ordered by probability, unanswered ones keep their search rank
+*below* all of them, and the result is truncated to `top_k`. That last step is
+the caveat — where more candidates were sent than `top_k`, a high-ranked
+candidate the model simply did not answer for can be pushed out of the result.
+It is a precision loss rather than a correctness one, and it cannot happen on
+the selector path.
+
+If you see selection quietly stop working, check the logs for `Jev selection
+failed, falling back:` — that is the library declining to guess, not a silent
+failure.
 
 Query constraints are applied *before* anything is sent — deprecation,
 namespaces, capabilities, sources and circuit-breaker health all go through the

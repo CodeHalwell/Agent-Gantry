@@ -746,7 +746,7 @@ requires-dist = [
     { name = "einops", marker = "extra == 'example-tools'", specifier = ">=0.8.1" },
     { name = "einops", marker = "extra == 'nomic'", specifier = ">=0.8.1" },
     { name = "fastapi", marker = "extra == 'a2a'", specifier = ">=0.104.0" },
-    { name = "google-adk", marker = "extra == 'agent-frameworks'", specifier = ">=2.6.1" },
+    { name = "google-adk", marker = "extra == 'agent-frameworks'", specifier = ">=2.6.1,<2.8" },
     { name = "google-cloud-aiplatform", marker = "extra == 'google-vertexai'", specifier = ">=1.70.0" },
     { name = "google-genai", marker = "extra == 'google-genai'", specifier = ">=1.75.0" },
     { name = "groq", marker = "extra == 'groq'", specifier = ">=1.6.0" },

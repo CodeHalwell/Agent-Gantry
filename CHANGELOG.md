@@ -49,7 +49,9 @@ Two things to know before upgrading:
   letting adk climb backtracks agent-framework to 1.11.0. Measured rather than
   assumed: floors of 2.8.0, `<2.9` and 2.9.2 were each locked and all three
   produced AF 1.11.0. Eight minor versions of AF is a worse trade than two of
-  adk.
+  adk. The ceiling is **declared** as `google-adk>=2.6.1,<2.8`, not merely
+  recorded in a comment: without the bound a fresh resolve is free to take adk
+  2.8+ and silently undo the agent-framework result above.
 
 - The bundled Claude Skill installs as `agent-gantry install skill` as well as
   the original `agent-gantry install-skill`. Both spellings reach the same
@@ -61,6 +63,15 @@ Two things to know before upgrading:
   (console, OpenTelemetry, Prometheus) with token-savings metrics.
 
 ### Fixed
+
+- **`JevReranker` no longer breaks a caller's stub client.** Its `client`
+  argument is a documented extension point ("or a compatible stub"), and this
+  release's `require_all` keyword was passed to it unconditionally — so a stub
+  written against the published three-argument `score` raised `TypeError`
+  straight out of `rerank()`, in the one code path whose whole promise is that
+  a failing provider costs precision and never the catalogue. The keyword is
+  now only passed to a client that accepts it; an older stub is called without
+  it, which is the lenient behaviour reranking wants anyway.
 
 - **A partial Jev response no longer produces a confident, wrong selection.**
   `score()` already discarded a whole pass when a batch *raised*, on the
@@ -92,6 +103,27 @@ Two things to know before upgrading:
   and the framework-adapter count.
 
 ### Fixed (examples)
+
+- **Two generated LanceDB stores were committed to the repository, without
+  their version manifests.** `list_tables()` found them and `open_table`
+  rejected every table in them, so `project_demo/main_persistent.py` and
+  `tool_vector_db/main.py` crashed with `ValueError: Table '...' was not
+  found` on a clean clone. Both are caches an example builds on first run, so
+  they are untracked and gitignored; each example rebuilds its store in about
+  thirty seconds, which `main_persistent.py` already announced it would do.
+
+- `project_demo/main.py`, `project_demo/main_persistent.py` and
+  `tool_vector_db/main.py` checked for an API key as the first statement in
+  `main()`, so a keyless run did nothing at all — no registration, no sync, no
+  retrieval — despite this release's claim that every example shows its Gantry
+  work first. They now retrieve and print the selected tools before the gate,
+  and close the module-global gantry in a `finally`.
+
+- `crewai_example.py` selected a tool slice for a second crew member and then
+  never used it: the live run built a crew of one agent with the research task
+  only, so `refund_order`, `send_email` and `SUPPORT_BRIEF` were dead weight
+  and the per-agent routing the example is *about* was visible only in the
+  keyless preview. Both agents now run, each holding only its own slice.
 
 - **All 67 examples run from a clean checkout with no API keys.** Twelve used to
   fail outright and three looked like hangs. Each now does its Gantry work first
@@ -149,9 +181,28 @@ Two things to know before upgrading:
   two turns selecting different tools, CrewAI gives two crew members different
   slices of one catalogue.
 
-- No example closed its gantry. All do now.
+- No framework example closed its gantry. All eighteen do now, along with
+  `project_demo` and `tool_vector_db`. Thirty-seven examples elsewhere in the
+  tree still do not, and are tracked in #434 — in a short-lived script the
+  cost is a warning at interpreter shutdown rather than a leak, but they are
+  the wrong thing to copy.
 
 ### Documentation
+
+- **The bundled skill described the reranker's partial-response behaviour
+  incorrectly**, and it is the canonical guidance shipped in the wheel. It said
+  a provider answering for only some candidates leaves "the vector-search order
+  untouched". It does not: answered candidates are ordered by probability,
+  unanswered ones keep their rank below all of them, and the result is
+  truncated to `top_k` — so where more candidates were sent than `top_k`, an
+  unanswered but highly-ranked tool can be pushed out. The section now
+  separates the two fail-open cases and states that caveat.
+
+- `examples/agent_frameworks/README.md` still told readers the repo's extra
+  pins agent-framework to its 1.5.0 floor and that the harness example needs a
+  standalone install. This release raises the floor to 1.19.0, so it works out
+  of the box; only an older environment needs the separate install.
+
 
 - The Jev section of the bundled skill carries a live measurement rather than
   only aggregate numbers: against `jev-1.13.0`, a tool described as "get the

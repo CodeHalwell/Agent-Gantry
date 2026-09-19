@@ -136,6 +136,8 @@ AWS_SECRET_ACCESS_KEY=...      # so the credential must be entitled to the model
 `pydantic_ai_example.py` and `dspy_example.py` need no key at all: they run a
 full agent loop against `TestModel` and `DummyLM` respectively.
 
-`agent_framework_harness_example.py` additionally needs `agent-framework>=1.7.0`
-for its experimental `create_harness_agent`; this repo's extra pins AF to its
-1.5.0 floor on purpose, so install a newer AF standalone to run that one.
+`agent_framework_harness_example.py` needs `agent-framework>=1.7.0` for its
+experimental `create_harness_agent`. From agent-gantry 0.17.0 the
+`agent-frameworks` extra requires AF >= 1.19.0, so it works out of the box;
+only an older environment needs `pip install 'agent-framework>=1.7.0'`
+separately.

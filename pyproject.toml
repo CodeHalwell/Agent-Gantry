@@ -209,7 +209,13 @@ agent-frameworks = [
     # locked and all three produced AF 1.11.0. Eight minor versions of AF is a
     # worse trade than two of adk, so AF is kept current and adk held. Revisit
     # when adk relaxes its opentelemetry cap.
-    "google-adk>=2.6.1",
+    #
+    # The ceiling is DECLARED, not just recorded in this comment: without the
+    # upper bound a fresh resolve (or a lock refresh on a machine without this
+    # lockfile) is free to take adk 2.8+ and silently undo the AF 1.19.0
+    # result above, which is the whole point of this release's dependency
+    # work. Raise the bound and re-measure together, never separately.
+    "google-adk>=2.6.1,<2.8",
 ]
 # NOTE: the native-tool-adapter frameworks (pydantic-ai, openai-agents,
 # haystack-ai, agno, strands-agents, dspy) are NOT a project extra. They are

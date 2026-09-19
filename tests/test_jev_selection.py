@@ -284,6 +284,28 @@ async def test_unscored_tools_rank_below_scored_ones_but_are_not_dropped() -> No
     assert [tool.name for tool, _ in ranked] == ["beta", "alpha"]
 
 
+async def test_the_reranker_accepts_a_client_predating_require_all() -> None:
+    """A stub written against the published three-argument ``score``.
+
+    ``client`` is documented as taking "a compatible stub", and ``require_all``
+    was added to :meth:`JevClient.score` after that contract was published.
+    Passing it blindly turns such a stub into a ``TypeError`` raised straight
+    out of ``rerank()`` — in the one path that promises a failing provider
+    costs precision and never the catalogue.
+    """
+    # Keyed by qualified_name, which is what the reranker looks up; the
+    # ``_client`` helper's map is keyed by the name shown to the model instead,
+    # because JevClient does that translation.
+    client = _StubJevClient(JevVerdict(scores={"default.beta:1.0.0": 0.9}))
+    reranker = JevReranker(client=client)
+    tools = [(_tool("alpha"), 0.9), (_tool("beta"), 0.1)]
+
+    ranked = await reranker.rerank("q", tools, top_k=2)
+
+    assert [tool.name for tool, _ in ranked] == ["beta", "alpha"]
+    assert client.scored, "the stub should still have been asked"
+
+
 async def test_the_reranker_returns_nothing_for_nothing() -> None:
     client, stub = _client({})
     assert await JevReranker(client=client).rerank("q", [], top_k=5) == []

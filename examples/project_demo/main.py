@@ -79,25 +79,39 @@ async def generate_response(prompt: str, tools: list | None = None):
 
 
 async def main() -> None:
-    if not os.getenv("OPENAI_API_KEY"):
-        print("This demo calls the OpenAI Responses API. Set OPENAI_API_KEY to run it.")
-        print("For a demo that needs no key at all, try examples/routing/.")
-        return
-
     user_query = "I have a dataset [12.5, 14.2, 11.8, 13.9, 15.1]. Can you calculate the mean and standard deviation, and also generate a random secure password for me?"
     print(f"User Query: '{user_query}'")
 
-    final_text, tool_calls, tool_results = await generate_response(user_query)
+    try:
+        # The retrieval half needs no key, so do it first and show it. This is
+        # the part worth seeing: a 300-tool catalogue narrowed to three before
+        # a single token is spent.
+        selected = await gantry.retrieve_tools(user_query, limit=3)
+        total = len(await gantry.list_tools())
+        print(f"\nCatalogue: {total} tools. Gantry selected {len(selected)} for this query:")
+        for tool in selected:
+            # Default dialect is OpenAI chat-completions shape, so the name
+            # sits under "function" rather than at the top level.
+            print(f"  - {tool['function']['name']}")
 
-    if final_text:
-        print(f"LLM response: {final_text}")
+        if not os.getenv("OPENAI_API_KEY"):
+            print("\nSet OPENAI_API_KEY to run the model call itself.")
+            print("Everything above works without one.")
+            return
 
-    if tool_calls:
-        for tc, result in zip(tool_calls, tool_results):
-            print(f"LLM decided to call: {tc.name}({tc.arguments})")
-            print(f"Execution Result: {result.result}")
-    else:
-        print("LLM did not call any tools.")
+        final_text, tool_calls, tool_results = await generate_response(user_query)
+
+        if final_text:
+            print(f"LLM response: {final_text}")
+
+        if tool_calls:
+            for tc, result in zip(tool_calls, tool_results):
+                print(f"LLM decided to call: {tc.name}({tc.arguments})")
+                print(f"Execution Result: {result.result}")
+        else:
+            print("LLM did not call any tools.")
+    finally:
+        await gantry.close()
 
 
 if __name__ == "__main__":

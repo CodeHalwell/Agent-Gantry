@@ -98,12 +98,34 @@ async def main() -> None:
             llm=llm,
             verbose=True,
         )
-        task = Task(
+        support = Agent(
+            role="Customer Support Operative",
+            goal="Resolve the customer's issue and confirm what was done",
+            backstory="You handle refunds and customer correspondence.",
+            tools=support_tools,
+            llm=llm,
+            verbose=True,
+        )
+        research_task = Task(
             description=RESEARCH_BRIEF,
             expected_output="A summary of the customer's profile and tier.",
             agent=researcher,
         )
-        crew = Crew(agents=[researcher], tasks=[task], process=Process.sequential)
+        # Both agents run, each holding only its own slice. This is the point
+        # of the example: `support` can refund because `refund_order` was
+        # selected for its brief, and `researcher` cannot, because it was not
+        # selected for that one.
+        support_task = Task(
+            description=SUPPORT_BRIEF,
+            expected_output="Confirmation of the refund and the email sent.",
+            agent=support,
+            context=[research_task],
+        )
+        crew = Crew(
+            agents=[researcher, support],
+            tasks=[research_task, support_task],
+            process=Process.sequential,
+        )
 
         print("--- running the crew ---")
         result = await crew.kickoff_async()

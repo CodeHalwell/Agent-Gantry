@@ -38,9 +38,25 @@ from agent_gantry.schema.execution import ToolCall
 
 
 async def main():
-    # Ensure API key is set
+    # Ask a question - everything happens automatically!
+    query = "Calculate the mean of [10, 20, 30, 40, 50] and convert 100 meters to feet"
+
+    print(f"Query: {query}")
+    print("-" * 60)
+
+    # The retrieval half needs no key, so do it first. This also builds the
+    # on-disk LanceDB store on the first run; it is a cache, not a shipped
+    # artefact, so it is gitignored and rebuilt whenever it is missing.
+    selected = await tools.retrieve_tools(query, limit=10)
+    total = len(await tools.list_tools())
+    print(f"\nRetrieved {len(selected)} relevant tools out of {total}:")
+    for t in selected:
+        print(f"  • {t['function']['name']}")
+
     if not os.environ.get("OPENAI_API_KEY"):
-        print("Error: Set OPENAI_API_KEY environment variable")
+        print("\nSet OPENAI_API_KEY to run the model call itself.")
+        print("Everything above works without one.")
+        await tools.close()
         return
 
     # Create OpenAI client
@@ -69,12 +85,6 @@ async def main():
             input=prompt,
             tools=tools,
         )
-
-    # Ask a question - everything happens automatically!
-    query = "Calculate the mean of [10, 20, 30, 40, 50] and convert 100 meters to feet"
-
-    print(f"Query: {query}")
-    print("-" * 60)
 
     response = await chat(query)
 

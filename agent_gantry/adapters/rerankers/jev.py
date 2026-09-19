@@ -14,6 +14,7 @@ sent, not the registry.
 
 from __future__ import annotations
 
+import inspect
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -27,6 +28,29 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 logger = logging.getLogger(__name__)
 
 DEFAULT_QUESTION = "Would this tool help accomplish the request? Answer about this tool only."
+
+
+def _accepts_require_all(score: Any) -> bool:
+    """Whether ``score`` takes the ``require_all`` keyword.
+
+    ``client`` is a documented extension point ("or a compatible stub"), and
+    ``require_all`` was added to :meth:`JevClient.score` after that contract
+    was published. Passing it blindly turns a stub written against the older
+    three-argument signature into a ``TypeError`` raised straight through
+    ``rerank()`` — in a code path whose entire promise is that a failing
+    provider costs precision and never the catalogue. Ask first.
+
+    An unreadable signature (a C callable, an exotic mock) is treated as
+    accepting it: the keyword is the behaviour we want, so only decline it
+    where we can see it would break.
+    """
+    try:
+        parameters = inspect.signature(score).parameters
+    except (TypeError, ValueError):  # pragma: no cover - exotic callables
+        return True
+    if "require_all" in parameters:
+        return True
+    return any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values())
 
 
 class JevReranker(RerankerAdapter):
@@ -44,6 +68,9 @@ class JevReranker(RerankerAdapter):
             a correctness one; anything beyond it keeps its incoming order and
             ranks below everything scored.
         client: Optional pre-built :class:`JevClient` (or a compatible stub).
+            A stub whose ``score`` predates the ``require_all`` keyword is
+            still supported: it is called without it, which matches the
+            leniency reranking wants anyway.
 
     Raises:
         ImportError: If the ``typesafe-sdk`` package is not installed.
@@ -66,6 +93,7 @@ class JevReranker(RerankerAdapter):
             if client is not None
             else JevClient(api_key=api_key, model=model, timeout=timeout)
         )
+        self._client_takes_require_all = _accepts_require_all(self._client.score)
         logger.info(f"Initialized JevReranker with model={model or 'jev-latest'}")
 
     async def rerank(
@@ -109,9 +137,15 @@ class JevReranker(RerankerAdapter):
         # so an unscored tool keeps its search rank below the scored ones
         # rather than costing the pass. Selection cannot do that — there an
         # unanswered candidate would simply vanish.
-        verdict = await self._client.score(
-            query, candidates, self._question, require_all=False
-        )
+        if self._client_takes_require_all:
+            verdict = await self._client.score(
+                query, candidates, self._question, require_all=False
+            )
+        else:
+            # A stub predating the keyword. Its partial-response behaviour is
+            # the old lenient one, which is exactly what reranking wants, so
+            # nothing is lost by omitting it.
+            verdict = await self._client.score(query, candidates, self._question)
         if verdict.fallback:
             logger.debug(f"Jev rerank fell back ({verdict.reason}); keeping search order")
             return tools[:top_k]

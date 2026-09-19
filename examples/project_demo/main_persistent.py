@@ -102,45 +102,59 @@ async def generate_response(prompt: str, tools: list | None = None):
 
 
 async def main() -> None:
-    if not os.getenv("OPENAI_API_KEY"):
-        print("This demo calls the OpenAI Responses API. Set OPENAI_API_KEY to run it.")
-        print("For a demo that needs no key at all, try examples/routing/.")
-        return
-
-    # Check if tools are synced, if not, sync them automatically
+    # The persistence half is the point of this demo and needs no key, so it
+    # runs first: build or reuse the on-disk vector store, then retrieve from
+    # it. Only the model call below is gated.
     from examples.project_demo.tools.tools_persistent import check_sync_status, sync_tools
 
-    status = await check_sync_status()
-    if status.get("needs_sync"):
-        print("📦 Tools not yet persisted. Creating vector database...")
-        print("   (This only happens once - subsequent runs will be instant)")
-        print()
-        await sync_tools()
-        print()
-        # Refresh status after sync
+    try:
         status = await check_sync_status()
+        if status.get("needs_sync"):
+            print("📦 Tools not yet persisted. Creating vector database...")
+            print("   (This only happens once - subsequent runs will be instant)")
+            print()
+            await sync_tools()
+            print()
+            # Refresh status after sync
+            status = await check_sync_status()
 
-    print(f"✓ {status['stored']} tools loaded from persistent storage")
-    print(f"  Database: {status['db_path']}")
-    print()
-
-    user_query = "I have a dataset [12.5, 14.2, 11.8, 13.9, 15.1]. Can you calculate the mean and standard deviation, and also generate a random secure password for me?"
-    print(f"User Query: '{user_query}'")
-    print()
-
-    final_text, tool_calls, tool_results = await generate_response(user_query)
-
-    if final_text:
-        print(f"LLM response: {final_text}")
+        print(f"✓ {status['stored']} tools loaded from persistent storage")
+        print(f"  Database: {status['db_path']}")
         print()
 
-    if tool_calls:
-        print("Tools called:")
-        for tc, result in zip(tool_calls, tool_results):
-            print(f"  • {tc.name}({tc.arguments})")
-            print(f"    Result: {result.result}")
-    else:
-        print("LLM did not call any tools.")
+        user_query = "I have a dataset [12.5, 14.2, 11.8, 13.9, 15.1]. Can you calculate the mean and standard deviation, and also generate a random secure password for me?"
+        print(f"User Query: '{user_query}'")
+        print()
+
+        selected = await gantry.retrieve_tools(user_query, limit=3)
+        print(f"Gantry selected {len(selected)} of {status['stored']} tools:")
+        for tool in selected:
+            # Default dialect is OpenAI chat-completions shape, so the name
+            # sits under "function" rather than at the top level.
+            print(f"  • {tool['function']['name']}")
+        print()
+
+        if not os.getenv("OPENAI_API_KEY"):
+            print("Set OPENAI_API_KEY to run the model call itself.")
+            print("Everything above works without one, and the vector store")
+            print("it built persists for the next run.")
+            return
+
+        final_text, tool_calls, tool_results = await generate_response(user_query)
+
+        if final_text:
+            print(f"LLM response: {final_text}")
+            print()
+
+        if tool_calls:
+            print("Tools called:")
+            for tc, result in zip(tool_calls, tool_results):
+                print(f"  • {tc.name}({tc.arguments})")
+                print(f"    Result: {result.result}")
+        else:
+            print("LLM did not call any tools.")
+    finally:
+        await gantry.close()
 
 
 if __name__ == "__main__":
