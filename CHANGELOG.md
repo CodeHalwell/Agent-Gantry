@@ -48,6 +48,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- The Jev section of the bundled skill carries a live measurement rather than
+  only aggregate numbers: against `jev-1.13.0`, a tool described as "get the
+  *current* weather" scores 0.21 for "the forecast for tomorrow" and 0.98 for
+  "the weather right now", and with a forecast tool also present each query
+  picks the right one. Those two descriptions embed almost identically, so a
+  vector search hands the agent a tool that cannot answer the question — that
+  distinction, not the token count, is the argument for a selector.
+
 - The bundled skill covers 0.16.0: it had no mention of `JevSelector`,
   `JevReranker`, the `jev` extra or `reset_sse_shutdown_latch`. It also
   understated `examples=[...]` as something that merely "improves recall" — it

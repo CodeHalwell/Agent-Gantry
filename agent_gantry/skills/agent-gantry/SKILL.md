@@ -357,6 +357,22 @@ set. That is the context-window saving, not "finds better tools". A selector
 can also answer *none of these*, which top-k cannot — with `limit=3` a vector
 search always returns three tools whether or not any of them fit.
 
+The sharper win is distinctions an embedder cannot make, because it compares
+text rather than reasoning about fit. Measured live against `jev-1.13.0`, with
+a `get_weather` tool described as "get the **current** weather":
+
+| catalogue | query | Jev score |
+|---|---|---|
+| current only | "the forecast for Leeds **tomorrow**" | `get_weather` **0.21** → nothing selected |
+| current only | "the weather in Leeds **right now**" | `get_weather` **0.98** |
+| current + forecast | "the forecast for tomorrow" | `get_forecast` **0.94**, `get_weather` 0.25 |
+| current + forecast | "the weather right now" | `get_weather` **0.98**, `get_forecast` 0.35 |
+
+"current weather" and "weather forecast" embed almost on top of each other, so
+a vector search hands the agent a tool that cannot answer the question. Jev
+declined instead. If a user is choosing between the two approaches, that — not
+the token count — is the argument.
+
 **Both fail open.** A provider that is unavailable, rate-limited, slow, or that
 answers for only some of the candidates it was asked about, costs precision and
 never the catalogue: the selector reports a fallback and retrieval takes the
