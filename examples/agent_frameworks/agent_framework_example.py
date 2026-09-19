@@ -34,6 +34,7 @@ Covers three construction patterns:
 """
 
 import asyncio
+import os
 
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.orchestrations import SequentialBuilder
@@ -57,35 +58,50 @@ async def main() -> str:
     # -----------------------------------------------------------------------
     gantry = AgentGantry()
 
-    @gantry.register
+    @gantry.register(examples=["who is this user", "look up the customer profile"])
     def get_user_profile(user_id: str) -> dict[str, str]:
         """Fetch a user's profile from the CRM system including plan and region."""
         return {"user_id": user_id, "plan": "pro", "region": "us-east"}
 
-    @gantry.register
+    @gantry.register(examples=["what do they owe", "show billing for this account"])
     def get_billing_info(user_id: str) -> dict[str, str]:
         """Retrieve billing information for a customer account."""
         return {"user_id": user_id, "balance": "$0.00", "next_invoice": "2026-04-01"}
 
-    @gantry.register
+    @gantry.register(examples=["find a help article", "search the knowledge base"])
     def search_knowledge_base(query: str) -> str:
         """Search the internal knowledge base for support articles."""
         return f"Found 3 articles matching '{query}'"
 
-    @gantry.register
+    @gantry.register(examples=["any open tickets", "what support cases are outstanding"])
     def list_open_tickets(user_id: str) -> list[str]:
         """List open support tickets for a user."""
         return ["TICKET-001", "TICKET-042"]
 
     # Destructive: DELETE_DATA capability → AF approval_mode="always_require"
-    @gantry.register(capabilities=[ToolCapability.DELETE_DATA])
+    @gantry.register(
+        capabilities=[ToolCapability.DELETE_DATA],
+        examples=["delete this account", "remove the user permanently"],
+    )
     def delete_user_account(user_id: str) -> str:
         """Delete a user account. Destructive; requires human approval."""
         return f"deleted:{user_id}"
 
     await gantry.sync()
 
-    bridge = GantryToolBridge(gantry, score_threshold=0.1)
+    # No score_threshold: it defaults to 0.0. Raising it is a silent-drop
+    # trap — a longer query dilutes absolute similarity, so a non-zero
+    # cutoff can quietly return no tools at all.
+    bridge = GantryToolBridge(gantry)
+
+    if not os.getenv("OPENAI_API_KEY"):
+        print("Registered 5 tools with Gantry, including a DELETE_DATA one")
+        print("that AF will gate behind approval.\n")
+        print("Set OPENAI_API_KEY to run the agent itself — the Agent Framework")
+        print("client needs it to resolve an endpoint.")
+        await gantry.close()
+        return ""
+
     client = OpenAIChatClient()
 
     policy = SecurityPolicy(

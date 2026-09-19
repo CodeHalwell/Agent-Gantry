@@ -41,6 +41,7 @@ Run:
 from __future__ import annotations
 
 import asyncio
+import os
 
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.orchestrations import (
@@ -184,7 +185,17 @@ async def handoff_triage(
 
 async def main() -> None:
     gantry = await build_gantry()
-    bridge = GantryToolBridge(gantry, score_threshold=0.1)
+
+    if not os.getenv("OPENAI_API_KEY"):
+        print("Gantry setup complete: tools registered and synced.\n")
+        print("Set OPENAI_API_KEY to run the Agent Framework half — its chat")
+        print("client needs one to resolve an endpoint.")
+        await gantry.close()
+        return
+
+    # score_threshold defaults to 0.0; raising it silently drops tools
+    # on longer queries, so leave it alone unless you have measured.
+    bridge = GantryToolBridge(gantry)
     client = OpenAIChatClient()
 
     await sequential_pipeline(

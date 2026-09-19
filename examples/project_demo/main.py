@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -12,14 +13,23 @@ from examples.project_demo.tools.tools import tools as gantry
 
 load_dotenv()
 
-client = AsyncOpenAI()
+# Constructed lazily: at module scope this raises on import when no key is
+# set, which makes the file unimportable rather than merely unrunnable.
+_client: AsyncOpenAI | None = None
 
 
-@with_semantic_tools(gantry, limit=3, score_threshold=0.6, dialect="openai_responses")
+def client() -> AsyncOpenAI:
+    global _client
+    if _client is None:
+        _client = AsyncOpenAI()
+    return _client
+
+
+@with_semantic_tools(gantry, limit=3, score_threshold=0.0, dialect="openai_responses")
 async def generate_response(prompt: str, tools: list | None = None):
     """LLM call that gets semantic tools injected."""
 
-    first = await client.responses.create(
+    first = await client().responses.create(
         model="gpt-5.4-mini",
         input=prompt,
         tools=tools,
@@ -51,7 +61,7 @@ async def generate_response(prompt: str, tools: list | None = None):
             )
 
         # Follow up with tool results
-        follow_up = await client.responses.create(
+        follow_up = await client().responses.create(
             model="gpt-5.4-mini",
             input=function_call_outputs,
             previous_response_id=first.id,
@@ -69,6 +79,11 @@ async def generate_response(prompt: str, tools: list | None = None):
 
 
 async def main() -> None:
+    if not os.getenv("OPENAI_API_KEY"):
+        print("This demo calls the OpenAI Responses API. Set OPENAI_API_KEY to run it.")
+        print("For a demo that needs no key at all, try examples/routing/.")
+        return
+
     user_query = "I have a dataset [12.5, 14.2, 11.8, 13.9, 15.1]. Can you calculate the mean and standard deviation, and also generate a random secure password for me?"
     print(f"User Query: '{user_query}'")
 

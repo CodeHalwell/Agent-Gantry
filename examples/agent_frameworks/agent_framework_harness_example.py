@@ -47,6 +47,7 @@ Requires: pip install "agent-gantry[agent-frameworks]"
 from __future__ import annotations
 
 import asyncio
+import os
 
 from dotenv import load_dotenv
 
@@ -87,7 +88,7 @@ async def main() -> None:
     # ------------------------------------------------------------------
     # 2. Retrieve semantically relevant tools for this task
     # ------------------------------------------------------------------
-    bridge = GantryToolBridge(gantry, score_threshold=0.1)
+    bridge = GantryToolBridge(gantry)
     tools = await bridge.get_tools(
         "research papers summarise literature review write report",
         limit=5,
@@ -111,8 +112,39 @@ async def main() -> None:
     # approval_mode="always_require" via GantryToolBridge's capability
     # mapping, so the harness approval gate is still respected.
     # ------------------------------------------------------------------
-    from agent_framework import create_harness_agent  # experimental in AF 1.7.0
+    # `create_harness_agent` is experimental and only exists in AF >= 1.7.0.
+    # This project's `agent-frameworks` extra deliberately resolves AF to its
+    # 1.5.0 floor (see the dated comment in pyproject.toml: newer AF pulls a
+    # foundry subpackage that will not co-resolve), so against the repo's own
+    # lockfile this import fails by design rather than by accident. Say so
+    # plainly instead of surfacing an ImportError.
+    try:
+        from agent_framework import create_harness_agent
+    except ImportError:
+        import importlib.metadata as _md
+
+        try:
+            installed = _md.version("agent-framework")
+        except _md.PackageNotFoundError:
+            installed = "not installed"
+        print(
+            f"This example needs `create_harness_agent`, added in agent-framework "
+            f"1.7.0; you have {installed}."
+        )
+        print(
+            "The repo's extra pins AF to its 1.5.0 floor on purpose, so install "
+            "a newer AF standalone to run this one:"
+        )
+        print("    pip install 'agent-framework>=1.7.0'")
+        await gantry.close()
+        return
+
     from agent_framework.openai import OpenAIChatClient
+
+    if not os.getenv("OPENAI_API_KEY"):
+        print("Set OPENAI_API_KEY to run the harness agent.")
+        await gantry.close()
+        return
 
     client = OpenAIChatClient()
 

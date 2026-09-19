@@ -68,17 +68,17 @@ async def main() -> None:
     # 2) Export to each framework ----------------------------------------- #
     # One ``<Framework>Adapter`` class per framework; ``adapter.select(query,
     # limit=...)`` selects and builds the native tool objects in one async call.
-    from agent_gantry.integrations import frameworks as F
+    from agent_gantry.integrations import frameworks
 
     adapters = {
-        "langchain": F.LangChainAdapter,
-        "langgraph": F.LangGraphAdapter,
-        "llamaindex": F.LlamaIndexAdapter,
-        "crewai": F.CrewAIAdapter,
-        "pydantic_ai": F.PydanticAIAdapter,
-        "openai_agents": F.OpenAIAgentsAdapter,
-        "haystack": F.HaystackAdapter,
-        "agno": F.AgnoAdapter,
+        "langchain": frameworks.LangChainAdapter,
+        "langgraph": frameworks.LangGraphAdapter,
+        "llamaindex": frameworks.LlamaIndexAdapter,
+        "crewai": frameworks.CrewAIAdapter,
+        "pydantic_ai": frameworks.PydanticAIAdapter,
+        "openai_agents": frameworks.OpenAIAgentsAdapter,
+        "haystack": frameworks.HaystackAdapter,
+        "agno": frameworks.AgnoAdapter,
     }
 
     print("\nExport the selection to each framework's native tool object:")

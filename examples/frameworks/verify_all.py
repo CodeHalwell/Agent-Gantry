@@ -130,17 +130,17 @@ async def check_toolset_invoke(gantry: AgentGantry) -> tuple[bool, str]:
 
 async def check_adapters(gantry: AgentGantry) -> list[tuple[str, bool, str]]:
     """Build native tools per framework; SKIP cleanly when not installed."""
-    from agent_gantry.integrations import frameworks as F
+    from agent_gantry.integrations import frameworks
 
     adapters = [
-        ("langchain", F.LangChainAdapter),
-        ("langgraph", F.LangGraphAdapter),
-        ("llamaindex", F.LlamaIndexAdapter),
-        ("crewai", F.CrewAIAdapter),
-        ("pydantic_ai", F.PydanticAIAdapter),
-        ("openai_agents", F.OpenAIAgentsAdapter),
-        ("haystack", F.HaystackAdapter),
-        ("agno", F.AgnoAdapter),
+        ("langchain", frameworks.LangChainAdapter),
+        ("langgraph", frameworks.LangGraphAdapter),
+        ("llamaindex", frameworks.LlamaIndexAdapter),
+        ("crewai", frameworks.CrewAIAdapter),
+        ("pydantic_ai", frameworks.PydanticAIAdapter),
+        ("openai_agents", frameworks.OpenAIAgentsAdapter),
+        ("haystack", frameworks.HaystackAdapter),
+        ("agno", frameworks.AgnoAdapter),
     ]
     rows: list[tuple[str, bool, str]] = []
     for name, adapter_cls in adapters:

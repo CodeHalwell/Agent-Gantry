@@ -762,7 +762,30 @@ def main() -> None:
             "'nomic' uses sentence-transformers for better ranking."
         ),
     )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Build the session, print what was registered, and exit without a UI.",
+    )
     args = parser.parse_args()
+
+    # A TUI needs a terminal. Run under CI, a pipe, or an agent harness and
+    # the event loop would otherwise sit waiting for input that never comes,
+    # which reads as a hang rather than a clear refusal.
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    if args.check or not interactive:
+        gantry, _provider, registry_names = asyncio.run(
+            prepare_session(embedder_kind=args.embedder)
+        )
+        print(f"Session prepared with {len(registry_names)} tools registered:")
+        for name in registry_names:
+            print(f"  - {name}")
+        if not interactive and not args.check:
+            print("\nNo TTY detected, so the interactive UI was not started.")
+            print("Run this from a terminal to use it, or pass --check for this summary.")
+        asyncio.run(gantry.close())
+        return
+
     try:
         gantry, provider, registry_names = asyncio.run(
             prepare_session(embedder_kind=args.embedder)

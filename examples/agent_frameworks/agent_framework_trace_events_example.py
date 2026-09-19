@@ -34,6 +34,7 @@ import ast
 import asyncio
 import hashlib
 import operator
+import os
 import secrets
 import string
 import uuid
@@ -155,6 +156,14 @@ async def main() -> None:
 
     gantry = build_gantry()
     await gantry.sync()
+
+    if not os.getenv("OPENAI_API_KEY"):
+        print("Gantry setup complete: tools registered and synced.\n")
+        print("Set OPENAI_API_KEY to run the Agent Framework half — its chat")
+        print("client needs one to resolve an endpoint.")
+        await gantry.close()
+        return
+
 
     # Framework-agnostic event hook: fires once per tool call at gantry.execute,
     # regardless of which framework drove it. Great for logging/metrics.

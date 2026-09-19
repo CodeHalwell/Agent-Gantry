@@ -15,6 +15,7 @@ THEN RUN THIS:
 
 import asyncio
 import json
+import os
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -27,20 +28,31 @@ from examples.project_demo.tools.tools_persistent import tools as gantry
 
 load_dotenv()
 
-client = AsyncOpenAI()
+# Constructed lazily: at module scope this raises on import when no key is
+# set, which makes the file unimportable rather than merely unrunnable.
+_client: AsyncOpenAI | None = None
+
+
+def client() -> AsyncOpenAI:
+    global _client
+    if _client is None:
+        _client = AsyncOpenAI()
+    return _client
 
 
 @with_semantic_tools(
     gantry,
     limit=3,  # Only 3 most relevant tools sent to LLM
-    score_threshold=0.6,
+    # score_threshold left at 0.0: an absolute cosine cutoff of 0.6 returns
+    # nothing at all for most embedders once the query gets longer.
+    score_threshold=0.0,
     dialect="openai_responses",
     auto_sync=False,  # Don't re-sync on every call - tools are persisted!
 )
 async def generate_response(prompt: str, tools: list | None = None):
     """LLM call that gets semantic tools injected."""
     print(tools)
-    first = await client.responses.create(
+    first = await client().responses.create(
         model="gpt-5.4-mini",
         input=prompt,
         tools=tools,
@@ -72,7 +84,7 @@ async def generate_response(prompt: str, tools: list | None = None):
             )
 
         # Follow up with tool results
-        follow_up = await client.responses.create(
+        follow_up = await client().responses.create(
             model="gpt-5.4-mini",
             input=function_call_outputs,
             previous_response_id=first.id,
@@ -90,6 +102,11 @@ async def generate_response(prompt: str, tools: list | None = None):
 
 
 async def main() -> None:
+    if not os.getenv("OPENAI_API_KEY"):
+        print("This demo calls the OpenAI Responses API. Set OPENAI_API_KEY to run it.")
+        print("For a demo that needs no key at all, try examples/routing/.")
+        return
+
     # Check if tools are synced, if not, sync them automatically
     from examples.project_demo.tools.tools_persistent import check_sync_status, sync_tools
 

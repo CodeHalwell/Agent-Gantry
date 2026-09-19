@@ -32,6 +32,7 @@ The example walks through three patterns:
 """
 
 import asyncio
+import os
 
 from agent_framework import Agent, Skill, SkillsProvider
 from agent_framework.openai import OpenAIChatClient
@@ -159,6 +160,13 @@ async def main() -> None:
     load_dotenv()
     gantry = build_gantry()
     await gantry.sync()
+
+    if not os.getenv("OPENAI_API_KEY"):
+        print("Gantry setup complete: tools registered and synced.\n")
+        print("Set OPENAI_API_KEY to run the Agent Framework half — its chat")
+        print("client needs one to resolve an endpoint.")
+        await gantry.close()
+        return
 
     await example_bare_agent(gantry)
     await example_with_af_skills(gantry)
