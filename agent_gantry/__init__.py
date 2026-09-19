@@ -94,13 +94,35 @@ def __getattr__(name: str) -> "Any":
 
         return JevSelector
     if name == "reset_sse_shutdown_latch":
-        from agent_gantry.servers.mcp_server import reset_sse_shutdown_latch
+        try:
+            from agent_gantry.servers.mcp_server import reset_sse_shutdown_latch
+        except ImportError as exc:
+            # Only a genuinely absent ``mcp`` becomes a missing attribute. A
+            # module __getattr__ has to raise AttributeError for a name it
+            # cannot supply, or hasattr() propagates the ImportError instead
+            # of returning False — and feature-detecting an optional cleanup
+            # helper is exactly how a caller would reach for this one. Every
+            # other MCP-gated export behaves this way already, by not being
+            # listed here at all and falling through to the raise below.
+            #
+            # Anything else propagates untouched. An ``mcp`` that is installed
+            # but whose own dependencies are broken would otherwise be
+            # reported as "install the extra" to someone who already has it,
+            # and hasattr() would quietly answer False rather than surfacing
+            # the real fault.
+            missing = getattr(exc, "name", None) or ""
+            if missing != "mcp" and not missing.startswith("mcp."):
+                raise
+            raise AttributeError(
+                f"module {__name__!r} has no attribute {name!r}: it needs the "
+                "MCP server extra (pip install 'agent-gantry[mcp]')"
+            ) from exc
 
         return reset_sse_shutdown_latch
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__version__ = "0.15.0"
+__version__ = "0.16.0"
 __all__ = [
     "AgentGantry",
     "StreamingToolCallAccumulator",
