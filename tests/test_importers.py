@@ -777,6 +777,14 @@ class TestAddToolHandlerWiring:
         assert g.tool_count == 2
 
 
+def _reimport_mcp_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Drop the cached server module so the next import actually re-runs."""
+    import sys
+
+    for cached in [k for k in sys.modules if k.startswith("agent_gantry.servers.mcp_server")]:
+        monkeypatch.delitem(sys.modules, cached)
+
+
 def test_the_latch_helper_is_absent_rather_than_exploding_without_the_mcp_extra(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -788,13 +796,12 @@ def test_the_latch_helper_is_absent_rather_than_exploding_without_the_mcp_extra(
     helper is precisely how a caller reaches for this one, since a host that
     does not serve MCP has no reason to depend on the extra.
     """
-    import sys
-
     import agent_gantry
 
-    # None in sys.modules makes the import inside __getattr__ fail the way a
-    # bare install does, without needing one.
-    monkeypatch.setitem(sys.modules, "agent_gantry.servers.mcp_server", None)
+    # None in sys.modules makes ``import mcp`` fail the way a bare install
+    # does, with ``ImportError.name == "mcp"``.
+    monkeypatch.setitem(sys.modules, "mcp", None)
+    _reimport_mcp_server(monkeypatch)
 
     assert hasattr(agent_gantry, "reset_sse_shutdown_latch") is False
 
@@ -803,3 +810,35 @@ def test_the_latch_helper_is_absent_rather_than_exploding_without_the_mcp_extra(
 
     message = str(caught.value)
     assert "agent-gantry[mcp]" in message, f"must name the extra to install, got: {message}"
+
+
+def test_a_broken_mcp_install_reports_itself_instead_of_blaming_the_extra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only an absent ``mcp`` is translated; everything else propagates.
+
+    An ``mcp`` that is installed but whose own dependencies are broken must not
+    be reported as "install the extra" to someone who already has it — and
+    ``hasattr`` answering ``False`` would bury the real fault entirely, since
+    the caller would simply skip the helper and never learn their MCP stack is
+    unusable.
+    """
+    import agent_gantry
+
+    # Stands in for a dependency of the MCP stack being broken rather than
+    # absent: an import inside mcp_server.py that fails naming something other
+    # than ``mcp``. A missing ``mcp.<submodule>`` is deliberately *not* this
+    # case — that means the installed distribution is incomplete, and pointing
+    # at the extra is the right advice there.
+    monkeypatch.setitem(sys.modules, "agent_gantry.utils.render", None)
+    _reimport_mcp_server(monkeypatch)
+
+    with pytest.raises(ImportError) as caught:
+        agent_gantry.reset_sse_shutdown_latch
+
+    assert not isinstance(caught.value, AttributeError), (
+        "a broken dependency must stay an ImportError, not become a missing attribute"
+    )
+    assert "agent-gantry[mcp]" not in str(caught.value), (
+        "must not tell the user to install an extra they already have"
+    )

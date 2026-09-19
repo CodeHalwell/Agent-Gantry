@@ -36,6 +36,22 @@ Two things to know before upgrading:
   so a selector-only deployment runs without a store being reachable at all.
   Nothing changes when no selector is configured.
 
+Two known limitations ship with this release, both raised in review and
+tracked rather than fixed here:
+
+- **`serve_mcp()` twice in one process still hangs.**
+  `reset_sse_shutdown_latch()` releases the `sse_starlette` latch, but
+  `MCPServer._serve_asgi` does not call it after `server.serve()` returns, so
+  the public entry points do not clear it for you. Only a caller holding its
+  own server handle and calling the helper itself is covered. Tracked in
+  [#424](https://github.com/CodeHalwell/Agent-Gantry/issues/424).
+- **Tools from `AgentGantry(modules=[...])` are invisible to a selector.**
+  Those modules are loaded inside `sync()`, which the selector path now
+  defers, so a successful selection can omit them from the catalogue
+  entirely. Register them with `@gantry.register` or `add_tool` if you use a
+  selector. Tracked in
+  [#422](https://github.com/CodeHalwell/Agent-Gantry/issues/422).
+
 ### Added
 
 - **Selection as an alternative to semantic matching, backed by TypeSafe's Jev.**
@@ -74,7 +90,6 @@ Two things to know before upgrading:
   step ran.
 - `SelectionCandidate` / `SelectionResult` in `agent_gantry.schema.selection`,
   the provider-neutral shapes a selector works in.
-
 
 - `reset_sse_shutdown_latch()`, exported from the package and from
   `agent_gantry.servers.mcp_server`. The `sse_starlette` shutdown latch that
