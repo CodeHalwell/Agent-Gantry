@@ -112,6 +112,16 @@ Two things to know before upgrading:
   they are untracked and gitignored; each example rebuilds its store in about
   thirty seconds, which `main_persistent.py` already announced it would do.
 
+- **Four Agent Framework examples turned away Azure users.** Their guards
+  tested `OPENAI_API_KEY`, but AF resolves its endpoint from several settings —
+  `AZURE_OPENAI_ENDPOINT` or `AZURE_OPENAI_BASE_URL` plus
+  `AZURE_OPENAI_API_KEY` — and this repo's own TUI demo already routes both.
+  An Azure-configured reader got only the keyless half of an example that
+  would have run for them. All four now guard on whether a chat client can be
+  constructed, which is the actual question, and name both credential routes
+  when it cannot. `agent_framework_example.py` had already been fixed this way;
+  the pattern simply had not been carried across.
+
 - `project_demo/main.py`, `project_demo/main_persistent.py` and
   `tool_vector_db/main.py` checked for an API key as the first statement in
   `main()`, so a keyless run did nothing at all — no registration, no sync, no
@@ -181,11 +191,16 @@ Two things to know before upgrading:
   two turns selecting different tools, CrewAI gives two crew members different
   slices of one catalogue.
 
-- No framework example closed its gantry. All eighteen do now, along with
-  `project_demo` and `tool_vector_db`. Thirty-seven examples elsewhere in the
-  tree still do not, and are tracked in #434 — in a short-lived script the
-  cost is a warning at interpreter shutdown rather than a leak, but they are
-  the wrong thing to copy.
+- No framework example closed its gantry **on every path**. All eighteen do
+  now, along with `project_demo` and `tool_vector_db` — via `try/finally`
+  rather than a call before each `return`, which is what several of them had
+  and what made the first two attempts at this look complete when they were
+  not. Verified by ownership rather than by grepping for `close()`: a function
+  that binds a gantry and does not hand it back must close it in a `finally`;
+  a factory like `build_gantry()` correctly does not. Forty-five entry points
+  elsewhere in the tree still leak, tracked in #434 — in a short-lived script
+  the cost is a warning at interpreter shutdown rather than a real leak, but
+  they are the wrong thing to copy.
 
 ### Documentation
 

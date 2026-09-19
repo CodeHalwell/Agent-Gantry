@@ -32,7 +32,6 @@ The example walks through three patterns:
 """
 
 import asyncio
-import os
 
 from agent_framework import Agent, Skill, SkillsProvider
 from agent_framework.openai import OpenAIChatClient
@@ -179,18 +178,30 @@ async def example_workflow(gantry: AgentGantry) -> None:
 async def main() -> None:
     load_dotenv()
     gantry = build_gantry()
-    await gantry.sync()
+    try:
+        await gantry.sync()
 
-    if not os.getenv("OPENAI_API_KEY"):
-        print("Gantry setup complete: tools registered and synced.\n")
-        print("Set OPENAI_API_KEY to run the Agent Framework half — its chat")
-        print("client needs one to resolve an endpoint.")
+        # Guard on the real condition — whether a client can be built — rather than
+        # on an env var standing in for it. AF resolves its endpoint from several
+        # settings (OPENAI_API_KEY, or AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_BASE_URL
+        # plus AZURE_OPENAI_API_KEY), so "OPENAI_API_KEY is unset" is a narrower
+        # question than "can this run", and an Azure-configured reader would be
+        # turned away from an example that works for them.
+        try:
+            OpenAIChatClient()
+        except Exception as exc:
+            print("Gantry setup complete: tools registered and synced.\n")
+            print(f"No usable Agent Framework chat client ({type(exc).__name__}: {exc}).")
+            print("Set OPENAI_API_KEY, or AZURE_OPENAI_ENDPOINT (or")
+            print("AZURE_OPENAI_BASE_URL) plus AZURE_OPENAI_API_KEY, to run the")
+            print("Agent Framework half.")
+            return
+
+        await example_bare_agent(gantry)
+        await example_with_af_skills(gantry)
+        await example_workflow(gantry)
+    finally:
         await gantry.close()
-        return
-
-    await example_bare_agent(gantry)
-    await example_with_af_skills(gantry)
-    await example_workflow(gantry)
 
 
 if __name__ == "__main__":

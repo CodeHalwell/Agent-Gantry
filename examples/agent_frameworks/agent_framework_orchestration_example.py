@@ -41,7 +41,6 @@ Run:
 from __future__ import annotations
 
 import asyncio
-import os
 
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.orchestrations import (
@@ -209,33 +208,44 @@ async def handoff_triage(
 
 async def main() -> None:
     gantry = await build_gantry()
+    try:
 
-    if not os.getenv("OPENAI_API_KEY"):
-        print("Gantry setup complete: tools registered and synced.\n")
-        print("Set OPENAI_API_KEY to run the Agent Framework half — its chat")
-        print("client needs one to resolve an endpoint.")
+        # score_threshold defaults to 0.0; raising it silently drops tools
+        # on longer queries, so leave it alone unless you have measured.
+        bridge = GantryToolBridge(gantry)
+
+        # Guard on the real condition — whether a client can be built — rather than
+        # on an env var standing in for it. AF resolves its endpoint from several
+        # settings (OPENAI_API_KEY, or AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_BASE_URL
+        # plus AZURE_OPENAI_API_KEY), so "OPENAI_API_KEY is unset" is a narrower
+        # question than "can this run", and an Azure-configured reader would be
+        # turned away from an example that works for them.
+        try:
+            client = OpenAIChatClient()
+        except Exception as exc:
+            print("Gantry setup complete: tools registered and synced.\n")
+            print(f"No usable Agent Framework chat client ({type(exc).__name__}: {exc}).")
+            print("Set OPENAI_API_KEY, or AZURE_OPENAI_ENDPOINT (or")
+            print("AZURE_OPENAI_BASE_URL) plus AZURE_OPENAI_API_KEY, to run the")
+            print("Agent Framework half.")
+            return
+
+        await sequential_pipeline(
+            bridge,
+            client,
+            "Order ORD-42 is delayed — look up the status and draft a polite "
+            "apology email to the customer.",
+        )
+        await concurrent_analysts(
+            bridge,
+            client,
+            "Review account u_123: billing health and recent order status.",
+        )
+        await handoff_triage(
+            bridge, client, "My latest invoice looks wrong, can you check?"
+        )
+    finally:
         await gantry.close()
-        return
-
-    # score_threshold defaults to 0.0; raising it silently drops tools
-    # on longer queries, so leave it alone unless you have measured.
-    bridge = GantryToolBridge(gantry)
-    client = OpenAIChatClient()
-
-    await sequential_pipeline(
-        bridge,
-        client,
-        "Order ORD-42 is delayed — look up the status and draft a polite "
-        "apology email to the customer.",
-    )
-    await concurrent_analysts(
-        bridge,
-        client,
-        "Review account u_123: billing health and recent order status.",
-    )
-    await handoff_triage(
-        bridge, client, "My latest invoice looks wrong, can you check?"
-    )
 
 
 if __name__ == "__main__":
