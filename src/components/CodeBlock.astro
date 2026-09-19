@@ -11,7 +11,7 @@ const { code, lang = 'python', title } = Astro.props;
 const html = await highlightCode(code, lang);
 ---
 
-<figure class="code-block">
+<figure class="code-block" tabindex="0" role="region" aria-label={title ? `${title} code block` : `Code block`}>
   {title && <figcaption class="code-title">{title}</figcaption>}
   <Fragment set:html={html} />
 </figure>
