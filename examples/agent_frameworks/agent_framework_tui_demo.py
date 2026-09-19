@@ -786,6 +786,7 @@ def main() -> None:
         asyncio.run(gantry.close())
         return
 
+    gantry = None
     try:
         gantry, provider, registry_names = asyncio.run(
             prepare_session(embedder_kind=args.embedder)
@@ -798,6 +799,13 @@ def main() -> None:
         ).run()
     except KeyboardInterrupt:
         sys.exit(0)
+    finally:
+        # Both the normal exit and Ctrl-C land here. Without it the gantry is
+        # closed only on the non-interactive branch above — a close on one
+        # path out of three, which is the shape that kept this defect alive
+        # through two rounds of review.
+        if gantry is not None:
+            asyncio.run(gantry.close())
 
 
 if __name__ == "__main__":

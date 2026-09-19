@@ -211,10 +211,16 @@ Two things to know before upgrading:
   and what made the first two attempts at this look complete when they were
   not. Verified by ownership rather than by grepping for `close()`: a function
   that binds a gantry and does not hand it back must close it in a `finally`;
-  a factory like `build_gantry()` correctly does not. Forty-five entry points
-  elsewhere in the tree still leak, tracked in #434 — in a short-lived script
-  the cost is a warning at interpreter shutdown rather than a real leak, but
-  they are the wrong thing to copy.
+  a factory like `build_gantry()` correctly does not. That check had a blind
+  spot of its own — it only recognised a gantry bound to a local named
+  `gantry`, so it missed `tool_vector_db/main.py`, which imports the module
+  global as `tools`, and the TUI demo, which closes on one branch of three.
+  Both are fixed, and no example anywhere in the tree now closes on *some*
+  paths: that partial shape is what survived two rounds of review, so it is
+  worth more than the raw count. Thirty-eight entry points elsewhere never
+  close at all, tracked in #434 — in a short-lived script the cost is a
+  warning at interpreter shutdown rather than a real leak, but they are the
+  wrong thing to copy.
 
 ### Documentation
 

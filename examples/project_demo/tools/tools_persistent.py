@@ -1057,31 +1057,36 @@ def main():
 
     args = parser.parse_args()
 
-    if args.sync:
-        print("Initializing embedder and syncing tools...")
-        print("This may take a minute on first run (loading embedding model)...")
-        count = asyncio.run(sync_tools())
-        print(f"\nDone! {count} tools are now persisted and ready for fast retrieval.")
+    # Both branches below drive the module-global gantry, so release it on the
+    # way out whichever one ran.
+    try:
+        if args.sync:
+            print("Initializing embedder and syncing tools...")
+            print("This may take a minute on first run (loading embedding model)...")
+            count = asyncio.run(sync_tools())
+            print(f"\nDone! {count} tools are now persisted and ready for fast retrieval.")
 
-    elif args.status:
-        status = asyncio.run(check_sync_status())
-        print(f"Database path: {status['db_path']}")
-        print(f"Tools in storage: {status['stored']}")
-        print(f"Pending tools: {status['pending']}")
-        if status.get("needs_sync"):
-            print("\n⚠️  Run with --sync to persist tools")
+        elif args.status:
+            status = asyncio.run(check_sync_status())
+            print(f"Database path: {status['db_path']}")
+            print(f"Tools in storage: {status['stored']}")
+            print(f"Pending tools: {status['pending']}")
+            if status.get("needs_sync"):
+                print("\n⚠️  Run with --sync to persist tools")
+            else:
+                print("\n✓ Tools are synced and ready!")
+
+        elif args.clear:
+            if DB_PATH.exists():
+                shutil.rmtree(DB_PATH)
+                print(f"Cleared persistent storage at {DB_PATH}")
+            else:
+                print("No persistent storage to clear.")
+
         else:
-            print("\n✓ Tools are synced and ready!")
-
-    elif args.clear:
-        if DB_PATH.exists():
-            shutil.rmtree(DB_PATH)
-            print(f"Cleared persistent storage at {DB_PATH}")
-        else:
-            print("No persistent storage to clear.")
-
-    else:
-        parser.print_help()
+            parser.print_help()
+    finally:
+        asyncio.run(tools.close())
 
 
 if __name__ == "__main__":
