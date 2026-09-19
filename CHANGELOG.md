@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Documentation accuracy sweep across the repo.** Corrected the public
+  registration API in all 11 framework integration guides on the docs site
+  (`gantry.register_tool(fn, ...)` → the `@gantry.register(...)` decorator),
+  which had shown a non-existent `AgentGantry` method. Fixed configuration
+  field names throughout the adapter and schema READMEs to match the current
+  Pydantic models (`type`/`db_path`/`dimension`/`top_k`, not
+  `provider`/`uri`/`dimensions`/`top_n`), corrected the embedding-adapter
+  interface description (`embed_text`/`embed_batch`/`dimension`), and removed
+  leftover patch artifacts from the embedders and executors READMEs. Updated
+  stale tooling guidance (removed `mypy`, which is neither configured nor a
+  dev dependency, from CONTRIBUTING/PUBLISHING), fixed the version and added
+  the `serve-mcp` subcommand in CLAUDE.md, corrected integration import paths
+  (`semantic_tools`, not `decorator`), the supported tool-spec dialect list,
+  and the framework-adapter count.
+
+### Changed
+
+- **README.md** now highlights the full capability set: A2A serving and
+  discovery, the complete list of supported LLM provider dialects, batch and
+  streaming tool execution, reranker options, and the observability backends
+  (console, OpenTelemetry, Prometheus) with token-savings metrics.
+
 ## [0.16.0] - 2026-09-18
 
 Selection without embeddings, and the end of the CI hang that had been costing

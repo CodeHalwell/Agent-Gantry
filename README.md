@@ -70,13 +70,15 @@ Agent-Gantry automatically fingerprints registered tools, syncs definitions to t
 ## Core capabilities
 
 - **Semantic tool routing:** reduce prompt context by retrieving top-k relevant tools instead of injecting every tool.
-- **Register once, run anywhere:** emit schemas for OpenAI-compatible APIs, Anthropic, Gemini, framework adapters, MCP, and A2A paths.
-- **Secure execution:** run tools through policies, capabilities, timeouts, retries, rate limits, circuit breakers, callbacks, and telemetry.
-- **Persistence and retrieval:** use in-memory defaults, LanceDB, Qdrant, Chroma, pgvector, OpenAI/Nomic/sentence-transformers embeddings, and rerankers.
+- **Register once, run anywhere:** emit schemas for OpenAI (Chat Completions and Responses), Anthropic, Gemini, Mistral, Groq, and Microsoft Agent Framework dialects — plus the framework-native adapters, MCP, and A2A paths below.
+- **Secure execution:** run tools through policies, capabilities, timeouts, retries, rate limits, circuit breakers, callbacks, and telemetry. Batch and streaming tool calls are supported via `execute_batch()` and `execute_tool_calls()`.
+- **Persistence and retrieval:** use in-memory defaults, LanceDB, Qdrant, Chroma, pgvector, OpenAI/Azure/Nomic/sentence-transformers embeddings, and Cohere / cross-encoder / Jev rerankers.
 - **Framework coverage:** Microsoft Agent Framework plus LangChain, LangGraph, LlamaIndex, CrewAI, Google ADK, Pydantic AI, OpenAI Agents SDK, Haystack, Agno, Strands Agents, and DSPy.
 - **MCP both ways:** consume local (stdio) and remote (Streamable HTTP / SSE) MCP servers, and serve your registry to Claude Desktop, Claude Code or any remote client with `gantry.serve_mcp()` / `agent-gantry serve-mcp --module my_app.tools` — two meta-tools instead of the whole tool list.
+- **A2A both ways:** discover and call remote A2A agents as tools with `add_a2a_agent()`, and serve your own registry as an A2A agent (Agent Card at `/.well-known/agent.json`) with `gantry.serve_a2a()`.
 - **Skills, retrieved by meaning:** load any Agent Skills (`SKILL.md`) directory with `gantry.add_skills_from_directory(...)` and inject only the skills relevant to each prompt.
 - **Bundled Claude Skill:** install with `agent-gantry install-skill --claude` or target a project-local skills directory.
+- **Observability:** emit retrieval/execution telemetry to the console, OpenTelemetry, or Prometheus, and track token savings with the built-in metrics helpers.
 - **Selection without embeddings:** point a decision model at the catalogue instead of a vector store. `JevSelector` replaces embed-then-search for tools, skills and MCP servers; `JevReranker` refines the shortlist when the catalogue is too large to send. Both fail open to semantic routing.
 
 ## Selecting tools without a vector store
