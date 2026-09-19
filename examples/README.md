@@ -1,126 +1,131 @@
 # Agent-Gantry Examples
 
-Hands-on examples demonstrating Agent-Gantry features. Each subdirectory has its own README with more
-detail and run commands.
+Hands-on examples. **Every one of them runs from a clean checkout with no API
+keys set** — the Gantry half (registration, sync, retrieval, conversion) needs
+no credentials, so you can see what the library does before spending anything.
+Where an example finishes by calling a real model, that last step is gated and
+tells you which key it wants.
 
-## 🚀 Start Here: Fast Track Demo
+Each subdirectory has its own README with detail and run commands.
 
-**New to Agent-Gantry?** Start with the Fast Track Demo to see how to upgrade vanilla OpenAI code to semantic tools in ~10 lines:
+## Start here: your agent framework
+
+Most people arrive with a framework already chosen, so start with yours.
+
+```bash
+python examples/agent_frameworks/langchain_example.py    # no key needed to see selection
+```
+
+| Framework | Example | Installed via |
+|---|---|---|
+| LangChain | [`agent_frameworks/langchain_example.py`](agent_frameworks/langchain_example.py) | `agent-gantry[agent-frameworks]` |
+| LangGraph | [`agent_frameworks/langgraph_example.py`](agent_frameworks/langgraph_example.py) | `agent-gantry[agent-frameworks]` |
+| CrewAI | [`agent_frameworks/crewai_example.py`](agent_frameworks/crewai_example.py) | `agent-gantry[agent-frameworks]` |
+| LlamaIndex | [`agent_frameworks/llamaindex_example.py`](agent_frameworks/llamaindex_example.py) | `agent-gantry[agent-frameworks]` |
+| Google ADK | [`agent_frameworks/google_adk_example.py`](agent_frameworks/google_adk_example.py) | `agent-gantry[agent-frameworks]` |
+| Microsoft Agent Framework | [`agent_frameworks/agent_framework_provider_example.py`](agent_frameworks/agent_framework_provider_example.py) | `agent-gantry[agent-frameworks]` |
+| OpenAI Agents SDK | [`agent_frameworks/openai_agents_example.py`](agent_frameworks/openai_agents_example.py) | `pip install openai-agents` |
+| Pydantic AI | [`agent_frameworks/pydantic_ai_example.py`](agent_frameworks/pydantic_ai_example.py) | `pip install pydantic-ai-slim` |
+| Haystack | [`agent_frameworks/haystack_example.py`](agent_frameworks/haystack_example.py) | `pip install haystack-ai` |
+| Agno | [`agent_frameworks/agno_example.py`](agent_frameworks/agno_example.py) | `pip install agno` |
+| Strands | [`agent_frameworks/strands_example.py`](agent_frameworks/strands_example.py) | `pip install strands-agents` |
+| DSPy | [`agent_frameworks/dspy_example.py`](agent_frameworks/dspy_example.py) | `pip install dspy` |
+| *(none yet)* | [`agent_frameworks/generic_adapters_example.py`](agent_frameworks/generic_adapters_example.py) | — |
+
+The six rows marked `pip install ...` — OpenAI Agents SDK, Pydantic AI,
+Haystack, Agno, Strands and DSPy — are **deliberately not** part of any project
+extra: they cannot co-resolve with the combined `agent-frameworks` set. Install
+them standalone alongside `agent-gantry`. See
+[`agent_frameworks/README.md`](agent_frameworks/README.md).
+
+No adapter for your framework? [`agent_frameworks/generic_adapters_example.py`](agent_frameworks/generic_adapters_example.py) shows the
+framework-neutral `GantryToolset` + `spec.to_*` path, which works anywhere.
+
+## Not using a framework?
 
 ```bash
 python examples/fast_track_demo.py
-# or: uv run python examples/fast_track_demo.py
 ```
 
-This demo shows the "before and after" of adding Agent-Gantry to a basic LLM call, with clear side-by-side comparison.
+Upgrades a vanilla OpenAI call to semantic tools in about ten lines, with a
+before-and-after comparison.
+
+## The one thing worth knowing before you copy anything
+
+Give every tool `examples=[...]`:
+
+```python
+@gantry.register(
+    tags=["weather"],
+    examples=["what's the weather in London", "is it raining in Leeds"],
+)
+def get_weather(location: str) -> str:
+    """Get the current weather in a given location."""
+```
+
+That field is the text the router embeds and the text a selector reads. On our
+own benchmark it moved the default embedder from 1/5 to 5/5 correct — a bigger
+improvement than switching to a larger embedding model. Write the phrases a
+user would actually type, not a restatement of the description. Every example
+in this tree does.
+
+The matching trap: leave `score_threshold` alone unless you have measured it.
+It is an **absolute** cosine cutoff, and longer queries dilute absolute
+similarity, so a non-zero value silently returns fewer tools — or none —
+with no error.
 
 ## Directory map
 
-- `fast_track_demo.py`: **START HERE** - Shows how to upgrade vanilla OpenAI to semantic tools in ~10 lines.
-- `basics/`: Tool registration, async execution, multi-tool routing, and plug-and-play imports.
-- `routing/`: Advanced semantic routing, custom adapters, health-aware ranking.
-- `execution/`: Circuit breakers, batch execution, and security policy enforcement.
-- `llm_integration/`: End-to-end loops with OpenAI/Anthropic/Google/Groq/Mistral plus the semantic
-  tool decorator. **All examples use the `@with_semantic_tools` decorator** for consistent "Plug & Play" experience.
-- `agent_frameworks/`: Integration with LangChain, CrewAI, LlamaIndex, Google ADK, and more.
-- `observability/`: Console telemetry demonstration and token savings analysis.
-- `protocols/`: MCP and A2A integration demos (including Claude Desktop config).
-- `testing_limits/`: Stress tests for token savings and accuracy with large toolsets (100 tools).
+- `agent_frameworks/` — **per-framework integrations.** One file per framework,
+  each showing the static tier (select once) and, where the framework supports
+  it, the dynamic tier (re-select every turn). Start here.
+- `frameworks/` — **framework-neutral plumbing**, despite the similar name: the
+  universal `GantryToolset`/`ToolSpec` core, a cross-framework verification
+  harness, the multi-turn `ToolRefresher`, and importing existing framework
+  tools *into* Gantry. All offline.
+- `fast_track_demo.py` — vanilla OpenAI to semantic tools in ten lines.
+- `basics/` — registration, async execution, multi-tool routing, plug-and-play imports.
+- `routing/` — semantic routing, custom adapters, health-aware ranking, asymmetric
+  embedders, and the Jev selector.
+- `execution/` — circuit breakers, batch execution, security policy enforcement.
+- `llm_integration/` — end-to-end loops against OpenAI/Anthropic/Google/Groq/Mistral
+  using the `@with_semantic_tools` decorator.
+- `observability/` — console telemetry and token-savings analysis.
+- `protocols/` — MCP and A2A demos, including Claude Desktop config.
+- `project_demo/`, `tool_vector_db/` — fuller applications with persistence.
+- `testing_limits/` — stress tests for token savings and accuracy at 30 and 100 tools.
 
-## Running examples
-
-All examples are plain Python scripts. From the repo root:
-
-```bash
-# Start with the Fast Track Demo to see the "Plug & Play" experience
-python examples/fast_track_demo.py
-
-# Or use uv (recommended for reproducible environments)
-uv run python examples/fast_track_demo.py
-
-# Basic examples (plug-and-play ready)
-uv run python examples/basics/tool_demo.py
-python examples/basics/plug_and_play_semantic_filter.py
-python examples/routing/health_aware_routing_demo.py
-
-# Protocol examples
-python examples/protocols/mcp_integration_demo.py
-```
-
-Provider-specific or framework demos may need extras:
+## Installing
 
 ```bash
-# Install all example dependencies
+# Everything the examples can use
 pip install -e ".[example-tools,agent-frameworks,mcp,a2a]"
 
-# Or install only what you need
-pip install -e ".[openai,anthropic]"  # For LLM provider examples
-pip install -e ".[agent-frameworks]"   # For framework integration examples
-pip install -e ".[mcp]"                # For Claude Desktop integration
-pip install -e ".[a2a]"                # For Agent-to-Agent protocol
+# Or only what you need
+pip install -e ".[agent-frameworks]"   # LangChain, LangGraph, CrewAI, LlamaIndex, ADK, MS AF
+pip install -e ".[openai,anthropic]"   # LLM provider examples
+pip install -e ".[mcp]"                # MCP / Claude Desktop
+pip install -e ".[a2a]"                # Agent-to-Agent protocol
 ```
 
-### Plug-and-play tool catalogs
+## The two integration patterns
 
-- Import prebuilt tools from `examples.basics.toolpack` with one line:
-  ```bash
-  python examples/basics/plug_and_play_semantic_filter.py
-  ```
-- Swap in your own tool modules using `AgentGantry.from_modules([...])` to keep code changes minimal.
-
-## Key Patterns Demonstrated
-
-### "Plug & Play" Decorator Pattern (Recommended)
-
-Most examples in `llm_integration/` demonstrate the `@with_semantic_tools` decorator:
+**Decorator** — used throughout `llm_integration/`:
 
 ```python
-from agent_gantry import AgentGantry, with_semantic_tools
-
-gantry = AgentGantry()
-
-@gantry.register
-def my_tool(...):
-    """Tool description."""
-    pass
-
 @with_semantic_tools(gantry, limit=3)
 async def chat(prompt: str, *, tools=None):
-    # Tools automatically injected by decorator
-    return await client.chat.completions.create(
-        model="...",
-        messages=[{"role": "user", "content": prompt}],
-        tools=tools
-    )
+    # `tools` is injected: only the relevant ones, already in the provider's dialect
+    return await client.chat.completions.create(model="...", tools=tools, ...)
 ```
 
-### Manual Control Pattern (Power Users)
-
-Examples in `basics/` and `routing/` show fine-grained control:
+**Adapter** — used throughout `agent_frameworks/`, one call for retrieval,
+conversion and execution wiring:
 
 ```python
-from agent_gantry import AgentGantry
-
-gantry = AgentGantry()
-
-# Register tools
-@gantry.register
-def my_tool(...):
-    pass
-
-await gantry.sync()
-
-# Manually retrieve tools
-tools = await gantry.retrieve_tools("query", limit=5)
-
-# Manually execute tools
-result = await gantry.execute(ToolCall(...))
+tools = await LangChainAdapter(gantry).select(query, limit=3)
+agent = create_agent(model=llm, tools=tools)
 ```
 
-Install only the extras you need (e.g., `.[mcp]` for Claude Desktop, `.[a2a]` for the FastAPI agent).
-Multi-module tool catalogs can be stitched together with `AgentGantry.from_modules` before running a
-script when you want to reuse tool packages across demos.
-
-Most scripts print step-by-step output so you can see retrieval scores, telemetry spans, and results
-as they execute. Many demos rely only on the in-memory embedder/vector store; provider-specific demos
-(OpenAI, Anthropic, Google GenAI, etc.) will read credentials from the environment when needed.
+Either way every call routes back through `gantry.execute`, so retries,
+timeouts, circuit breakers and the security policy still apply.

@@ -92,7 +92,7 @@ The `@with_semantic_tools` decorator accepts several configuration options:
 | `gantry` | AgentGantry | (from default) | Gantry instance to use (optional if `set_default_gantry()` was called) |
 | `limit` | int | 5 | Maximum number of tools to retrieve |
 | `dialect` | str | "openai" | Tool schema format ("openai", "openai_responses", "anthropic", "gemini", "mistral", "groq", "agent_framework", "auto") |
-| `score_threshold` | float | 0.5 | Minimum relevance score for tools (lower for SimpleEmbedder) |
+| `score_threshold` | float | 0.0 | Absolute cosine cutoff. `0.0` keeps everything `limit` allows — see the note below before raising it |
 | `auto_sync` | bool | True | Automatically sync tools before retrieval |
 | `prompt_param` | str | "prompt" | Parameter name containing the user prompt |
 | `tools_param` | str | "tools" | Parameter name for injecting tools |
@@ -104,13 +104,21 @@ Example with custom configuration:
     gantry=my_gantry,         # Explicit gantry instance
     limit=2,                  # Return only top 2 tools
     dialect="anthropic",      # Use Anthropic tool format
-    score_threshold=0.3,      # Lower threshold for more results
+    score_threshold=0.0,      # Absolute cosine cutoff; 0.0 = keep all, see note below
     auto_sync=False,          # Skip automatic syncing (if already synced)
 )
 async def chat(messages, *, tools=None):
     # ... your LLM call
     pass
 ```
+
+
+> **On `score_threshold`.** It is an *absolute* cosine cutoff, not a relative
+> one, and it defaults to `0.0` (keep everything `limit` allows). Raising it
+> does **not** give you more results — it gives you fewer, and on a longer
+> query it can give you none at all, silently and with no error, because longer
+> text dilutes absolute similarity. Control breadth with `limit`; reach for
+> `score_threshold` only after measuring against your own catalogue.
 
 ## Framework-Specific Adapters
 
@@ -341,7 +349,7 @@ decorator = SemanticToolsDecorator(
     gantry,
     dialect="openai",
     limit=5,
-    score_threshold=0.4,
+    score_threshold=0.0,
 )
 
 # Apply to multiple functions

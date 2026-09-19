@@ -21,7 +21,10 @@ from agent_gantry.langchain import LangChainAdapter
 
 gantry = AgentGantry()
 
-@gantry.register(tags=["support", "orders"])
+@gantry.register(
+    tags=["support", "orders"],
+    examples=["where is my order", "has order 4471 shipped"],
+)
 def get_order_status(order_id: str) -> str:
     """Return the current shipping status for an order."""
     return "in_transit"

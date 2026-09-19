@@ -68,23 +68,18 @@ async def build_gantry() -> AgentGantry:
     return gantry
 
 
-async def main() -> None:
-    gantry = await build_gantry()
+async def run_query(query: str, gantry: AgentGantry | None = None) -> str:
+    """Select tools for ``query``, build an ADK agent, and run it.
+
+    Kept as its own function so the agent path stays callable — and testable —
+    independently of ``main``'s credential check.
+    """
+    own_gantry = gantry is None
+    gantry = gantry or await build_gantry()
     try:
         # No score_threshold: it defaults to 0.0, and raising it is a
         # silent-drop trap on longer queries.
-        adk_tools = await GoogleADKAdapter(gantry).select(USER_QUERY, limit=1)
-
-        print(f"Catalogue: 3 tools. Gantry selected {len(adk_tools)} for this query:")
-        for tool in adk_tools:
-            print(f"  - {tool.name}")
-        print("\nThe agent is built with only that slice, so it cannot call")
-        print("`refund_order` for a status question.\n")
-
-        if not (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")):
-            print("Set GOOGLE_API_KEY (or GEMINI_API_KEY) to run the agent itself.")
-            print("Everything above works without one.")
-            return
+        adk_tools = await GoogleADKAdapter(gantry).select(query, limit=1)
 
         adk_agent = Agent(
             model="gemini-2.5-flash",
@@ -101,11 +96,10 @@ async def main() -> None:
             agent=adk_agent, app_name=APP_NAME, session_service=session_service
         )
 
-        print("--- running the ADK agent ---")
         events = runner.run_async(
             user_id=USER_ID,
             session_id=SESSION_ID,
-            new_message=types.Content(role="user", parts=[types.Part(text=USER_QUERY)]),
+            new_message=types.Content(role="user", parts=[types.Part(text=query)]),
         )
 
         final_text = ""
@@ -125,7 +119,30 @@ async def main() -> None:
             if final_text:
                 break
 
-        print(f"\n{final_text or '(the model returned no text)'}")
+        return final_text
+    finally:
+        if own_gantry:
+            await gantry.close()
+
+
+async def main() -> None:
+    gantry = await build_gantry()
+    try:
+        selected = await GoogleADKAdapter(gantry).select(USER_QUERY, limit=1)
+        print(f"Catalogue: 3 tools. Gantry selected {len(selected)} for this query:")
+        for tool in selected:
+            print(f"  - {tool.name}")
+        print("\nThe agent is built with only that slice, so it cannot call")
+        print("`refund_order` for a status question.\n")
+
+        if not (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")):
+            print("Set GOOGLE_API_KEY (or GEMINI_API_KEY) to run the agent itself.")
+            print("Everything above works without one.")
+            return
+
+        print("--- running the ADK agent ---")
+        text = await run_query(USER_QUERY, gantry)
+        print(f"\n{text or '(the model returned no text)'}")
     finally:
         await gantry.close()
 

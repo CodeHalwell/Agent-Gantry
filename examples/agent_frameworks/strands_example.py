@@ -34,10 +34,15 @@ from agent_gantry.strands import StrandsAdapter
 def _has_model_credentials() -> bool:
     """Best-effort check for a configured Strands model provider.
 
-    Strands defaults to Amazon Bedrock; actually running the agent (not just
-    building it) needs AWS credentials, or another provider's API key if the
-    agent is built with a non-default ``model=``. Gating on this keeps the
-    example runnable end-to-end with no keys set.
+    Strands defaults to Amazon Bedrock, so running the agent (not just
+    building it) needs AWS credentials — or another provider's key if the
+    agent is built with a non-default ``model=``.
+
+    Deliberately only a *fast path*: the presence of a variable says nothing
+    about whether the credential is valid, in the right region, or entitled to
+    the model. A machine with unrelated AWS keys in its environment passes this
+    check and is then rejected by Bedrock, so the live run below also catches
+    the provider error rather than trusting this answer.
     """
     return bool(
         os.getenv("AWS_ACCESS_KEY_ID")
@@ -108,7 +113,22 @@ async def main() -> None:
         return
 
     print("\n--- Running Strands Agent with Gantry-sourced tools ---")
-    result = await live_agent.invoke_async(user_query)
+    try:
+        result = await live_agent.invoke_async(user_query)
+    except Exception as exc:
+        # Credentials that exist but are not usable for the configured provider
+        # are the common case here — unrelated AWS keys in the environment, the
+        # wrong region, or no Bedrock model entitlement. A raw botocore
+        # traceback makes that look like a Gantry fault, which it is not.
+        print(f"\nThe model provider rejected the call: {type(exc).__name__}: {exc}")
+        print(
+            "\nEverything above this line — selection, conversion and the live "
+            "tool hook — ran fine; only the model call failed. Strands defaults "
+            "to Amazon Bedrock, so you need AWS credentials entitled to the "
+            "model in your region, or build the agent with an explicit "
+            "`model=` for a provider you do have."
+        )
+        return
     print(f"\nFinal Response: {result}")
 
 

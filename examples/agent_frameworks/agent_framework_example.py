@@ -34,7 +34,6 @@ Covers three construction patterns:
 """
 
 import asyncio
-import os
 
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.orchestrations import SequentialBuilder
@@ -94,15 +93,20 @@ async def main() -> str:
     # cutoff can quietly return no tools at all.
     bridge = GantryToolBridge(gantry)
 
-    if not os.getenv("OPENAI_API_KEY"):
+    # Guard on the real condition — whether a client can be built — rather than
+    # on an env var standing in for it. AF resolves its endpoint from several
+    # settings, so "OPENAI_API_KEY is unset" is not the same question, and a
+    # test that substitutes a fake client should still exercise everything
+    # below.
+    try:
+        client = OpenAIChatClient()
+    except Exception as exc:
         print("Registered 5 tools with Gantry, including a DELETE_DATA one")
         print("that AF will gate behind approval.\n")
-        print("Set OPENAI_API_KEY to run the agent itself — the Agent Framework")
-        print("client needs it to resolve an endpoint.")
+        print(f"No usable Agent Framework chat client ({type(exc).__name__}: {exc}).")
+        print("Set OPENAI_API_KEY to run the agent itself.")
         await gantry.close()
         return ""
-
-    client = OpenAIChatClient()
 
     policy = SecurityPolicy(
         require_confirmation=["delete_*", "refund_*"],
