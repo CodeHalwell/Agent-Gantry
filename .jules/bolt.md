@@ -58,3 +58,8 @@
 ## 2026-08-25 - Avoid row-wise dictionary allocation with LanceDB to_list for single columns
 **Learning:** When retrieving a single column (like JSON strings) from LanceDB, using `.to_list()` allocates a dictionary for every row just to wrap the single field, causing O(N) memory overhead and slower execution on large tables.
 **Action:** Use columnar extraction via `.select(['col']).to_arrow()` and then extract the list of values directly using `table['col'].to_pylist()`. This avoids dictionary allocation per row.
+## 2026-09-19 - Optimize generator expressions in sum()
+
+**Learning:** When using `sum()` with generator expressions that return 1 for a count (e.g. `sum(1 for x in items if cond)`), it instantiates a generator and iterates over it, which carries significant overhead. This pattern was prevalent in rate limiter and security code on the hot path. Replacing it with explicit loops and using `reversed()` with early breaks (when operating on chronological logs) improves time complexity from O(N) to O(K) where K is the number of recent items.
+
+**Action:** For micro-optimizations in Python, replace conditional generator expressions passed to `sum()` with an explicit `for` loop to avoid generator overhead. When dealing with time-series or chronologically ordered data like timestamp arrays, iterate backwards and break early instead of scanning the whole collection.
