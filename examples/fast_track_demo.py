@@ -17,11 +17,6 @@ except ImportError:
 
 
 async def main():
-    # Check for API key
-    if not os.environ.get("OPENAI_API_KEY"):
-        print("⚠️  No OPENAI_API_KEY found. This demo will show the code patterns.")
-        print("    Set OPENAI_API_KEY in your environment to run the actual LLM calls.\n")
-
     print("=== Fast Track Demo: Vanilla OpenAI → Semantic Tools ===\n")
 
     # ============================================================================
@@ -91,60 +86,81 @@ response = await chat("What's the weather in Tokyo?")
     # ============================================================================
     # Run actual demo if API key is available
     # ============================================================================
-    if os.environ.get("OPENAI_API_KEY"):
-        print("\n🚀 Running actual demo...\n")
+    # None of this needs a key, so it always runs: the selection *is* the
+    # thing this demo is about, and printing a code listing instead would be
+    # showing the reader a picture of the feature rather than the feature.
+    from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
 
-        from openai import AsyncOpenAI
+    gantry = AgentGantry()
+    set_default_gantry(gantry)
 
-        from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
+    # `examples=[...]` is the text the router embeds — the single
+    # highest-value field on a tool definition.
+    @gantry.register(examples=["what's the weather in Tokyo", "is it raining in Leeds"])
+    def get_weather(city: str) -> str:
+        """Get current weather for a city."""
+        return f"Weather in {city}: Sunny, 72°F"
 
-        client = AsyncOpenAI()
-        gantry = AgentGantry()
-        set_default_gantry(gantry)
+    @gantry.register(examples=["what's AAPL trading at", "current share price for MSFT"])
+    def get_stock_price(symbol: str) -> str:
+        """Get current stock price for a symbol."""
+        return f"{symbol}: $150.00"
 
-        # Register tools
-        @gantry.register
-        def get_weather(city: str) -> str:
-            """Get current weather for a city."""
-            return f"Weather in {city}: Sunny, 72°F"
+    @gantry.register(examples=["email john about the meeting", "send a message to Sam"])
+    def send_email(to: str, subject: str) -> str:
+        """Send an email."""
+        return f"Email sent to {to}"
 
-        @gantry.register
-        def get_stock_price(symbol: str) -> str:
-            """Get current stock price for a symbol."""
-            return f"{symbol}: $150.00"
+    await gantry.sync()
 
-        @gantry.register
-        def send_email(to: str, subject: str) -> str:
-            """Send an email."""
-            return f"Email sent to {to}"
+    queries = [
+        "What's the weather in Tokyo?",
+        "What's the price of AAPL stock?",
+        "Send an email to john@example.com with subject 'Meeting'",
+    ]
 
-        # Add decorator
-        @with_semantic_tools(limit=3, score_threshold=0.1)
-        async def chat(prompt: str, *, tools=None):
-            print(f"   [Agent-Gantry] Injected {len(tools) if tools else 0} relevant tools")
-            if tools:
-                print(f"   [Agent-Gantry] Tools: {[t['function']['name'] for t in tools]}")
-            return await client.chat.completions.create(
-                model="gpt-5.5", messages=[{"role": "user", "content": prompt}], tools=tools
-            )
+    print("\n🔍 What Gantry selects for each query (no API key needed):\n")
+    for query in queries:
+        # No score_threshold: it defaults to 0.0, and raising it is a
+        # silent-drop trap on longer queries.
+        selected = await gantry.retrieve_tools(query, limit=1)
+        names = [t["function"]["name"] for t in selected]
+        print(f"   📨 {query}")
+        print(f"      → {names} (1 of 3 tools sent, not all 3)")
 
-        # Test queries
-        queries = [
-            "What's the weather in Tokyo?",
-            "What's the price of AAPL stock?",
-            "Send an email to john@example.com with subject 'Meeting'",
-        ]
+    if not os.environ.get("OPENAI_API_KEY"):
+        print("\n⚠️  Set OPENAI_API_KEY to run the same thing against a real model.")
+        print("    Everything above works without one.")
+        await gantry.close()
+        return
 
+    print("\n🚀 Running the same queries against the model...\n")
+
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI()
+
+    @with_semantic_tools(limit=3)
+    async def chat(prompt: str, *, tools=None):
+        print(f"   [Agent-Gantry] Injected {len(tools) if tools else 0} relevant tools")
+        if tools:
+            print(f"   [Agent-Gantry] Tools: {[t['function']['name'] for t in tools]}")
+        return await client.chat.completions.create(
+            model="gpt-5.5", messages=[{"role": "user", "content": prompt}], tools=tools
+        )
+
+    try:
         for query in queries:
             print(f"\n📨 Query: '{query}'")
             response = await chat(query)
 
-            # Check if LLM called tools
             if response.choices[0].message.tool_calls:
                 tool_call = response.choices[0].message.tool_calls[0]
                 print(f"   [LLM] Called tool: {tool_call.function.name}")
             else:
                 print(f"   [LLM] Response: {response.choices[0].message.content[:100]}...")
+    finally:
+        await gantry.close()
 
     # ============================================================================
     # Summary

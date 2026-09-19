@@ -400,3 +400,28 @@ def test_search_limit_outside_the_query_bounds_is_a_clean_error() -> None:
     assert (
         main(["search", "tool", "--module", "tests.test_modules.module_a", "--limit", "2"]) == 0
     )
+
+
+def test_both_skill_install_spellings_reach_the_same_code(tmp_path: Path) -> None:
+    """``install skill`` and ``install-skill`` are the same command.
+
+    The hyphenated form came first, but ``install skill`` is what people reach
+    for by analogy with every other CLI that groups verbs, and an "invalid
+    choice: 'install'" for a reasonable guess is a poor greeting.
+    """
+    for argv, name in (
+        (["install", "skill", "--target", str(tmp_path / "a")], "install skill"),
+        (["install-skill", "--target", str(tmp_path / "b")], "install-skill"),
+    ):
+        assert main(argv) == 0, f"{name} failed"
+
+    for sub in ("a", "b"):
+        installed = tmp_path / sub / "agent-gantry"
+        assert (installed / "SKILL.md").is_file(), f"{sub}: SKILL.md missing"
+        assert (installed / "references").is_dir(), f"{sub}: references/ missing"
+
+
+def test_bare_install_says_what_it_wanted(capsys: pytest.CaptureFixture[str]) -> None:
+    """``install`` with no target should not look like a crash."""
+    assert main(["install"]) == 2
+    assert "install skill" in capsys.readouterr().err

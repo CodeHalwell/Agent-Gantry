@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-gantry"
-version = "0.16.0"
+version = "0.17.0"
 description = "Universal Tool Orchestration Platform - Intelligent, secure tool orchestration for LLM-based agent systems"
 readme = "README.md"
 license = "MIT"
@@ -56,7 +56,16 @@ dev = [
     "agent-gantry[jev]",
 ]
 agent-frameworks = [
-    # Range: >=1.5.0,<2.0.0.
+    # Range: >=1.19.0,<2.0.0.
+    # RESOLVED (2026-09-19): this extra now locks agent-framework 1.19.0, the
+    # current release. The fix is the one the note below already proposed --
+    # an explicit azure-ai-agents>=1.2.0b3 entry in [tool.uv].
+    # override-dependencies, which makes the pre-release "explicit" under the
+    # prerelease policy so the resolver stops backtracking. The floor is raised
+    # to 1.19.0 because uv will not climb past a satisfied floor on its own.
+    # Full suite passes on 1.19.0 with no Gantry code changes.
+    #
+    # The original diagnosis, kept because it explains the mechanism:
     # IMPORTANT (2026-08-26): the universal uv.lock resolves this combined
     # extra to agent-framework 1.5.0 — the FLOOR, not latest. Cause: newer
     # AF's foundry subpackage (pulled in via agent-framework-core[all])
@@ -135,7 +144,7 @@ agent-frameworks = [
     # AgentResponse — use str() or .content to extract text.
     # Source: https://pypi.org/pypi/agent-framework/json
     #         https://github.com/microsoft/agent-framework/releases
-    "agent-framework>=1.5.0,<2.0.0",
+    "agent-framework>=1.19.0,<2.0.0",
     # crewai 1.15.10 (latest stable, 2026-07-31). The long-standing
     # opentelemetry conflict with agent-framework is RESOLVED as of crewai
     # 1.15.0 (2026-06-25): the pin moved from opentelemetry-api~=1.34.0 to
@@ -151,13 +160,13 @@ agent-frameworks = [
     # of reporting them as success.
     # Source: https://pypi.org/pypi/crewai/json (verified 2026-08-03;
     # adapter re-verified against crewai 1.15.17 standalone 2026-08-26)
-    "crewai>=1.15.0",
+    "crewai>=1.15.22",
     # langchain 1.3.14 (released 2026-07-16) — patch releases only since 1.3.4
     # (1.3.5 was yanked); no API changes.
     # Source: https://pypi.org/pypi/langchain/json (verified 2026-08-03;
     # adapter re-verified against langchain 1.3.17 / langchain-core 1.6.0
     # standalone 2026-08-26)
-    "langchain>=1.3.14",
+    "langchain>=1.4.2",
     # langchain-openai 1.4.1 (released 2026-07-23). 1.4.0 adds reasoning_effort
     # as a standard chat-model param; no breaking changes. Requires
     # openai>=2.45.0,<3 — the openai extra floor is bumped in lockstep.
@@ -191,7 +200,22 @@ agent-frameworks = [
     # not climb past a satisfied floor on its own, so removing sk alone left
     # the lock unchanged at 1.14.1.
     # Source: https://pypi.org/pypi/google-adk/json (verified 2026-08-03)
-    "google-adk>=2.6.1",
+    #
+    # CEILING (2026-09-19): the floor stays at 2.6.1 and the lock resolves
+    # 2.7.0 even though 2.9.2 is current, because adk >=2.8.0 caps
+    # opentelemetry-api at 1.42.1 while the rest of this extra resolves 1.43.0.
+    # Allowing adk to climb therefore backtracks agent-framework from 1.19.0 to
+    # 1.11.0 -- measured, not assumed: floors of 2.8.0, <2.9 and 2.9.2 were each
+    # locked and all three produced AF 1.11.0. Eight minor versions of AF is a
+    # worse trade than two of adk, so AF is kept current and adk held. Revisit
+    # when adk relaxes its opentelemetry cap.
+    #
+    # The ceiling is DECLARED, not just recorded in this comment: without the
+    # upper bound a fresh resolve (or a lock refresh on a machine without this
+    # lockfile) is free to take adk 2.8+ and silently undo the AF 1.19.0
+    # result above, which is the whole point of this release's dependency
+    # work. Raise the bound and re-measure together, never separately.
+    "google-adk>=2.6.1,<2.8",
 ]
 # NOTE: the native-tool-adapter frameworks (pydantic-ai, openai-agents,
 # haystack-ai, agno, strands-agents, dspy) are NOT a project extra. They are
@@ -477,5 +501,12 @@ override-dependencies = [
     # 2026-05-01 and the current AF search beta depends on >=12.0.0,<13, so no
     # prerelease pin is needed under the "if-necessary-or-explicit" policy.)
     "agent-framework-azure-ai-search>=1.0.0b1",
+    # Makes azure-ai-agents' pre-release "explicit" under the
+    # prerelease="if-necessary-or-explicit" policy above. Without this entry the
+    # marker is only transitive, the resolver refuses it, and it backtracks
+    # agent-framework all the way to its 1.5.0 floor -- which is why the lock
+    # sat 14 minor versions behind and why create_harness_agent (AF 1.7.0) was
+    # missing. Named here so the newest AF 1.x resolves.
+    "azure-ai-agents>=1.2.0b3",
 ]
 

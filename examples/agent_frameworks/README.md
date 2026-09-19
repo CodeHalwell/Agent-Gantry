@@ -15,6 +15,40 @@ The general pattern is:
    security policy all apply). No manual factory or name-based branching.
 3. **Hand** the returned native tools to your agent.
 
+## Two things that decide whether this works well
+
+**Give every tool `examples=[...]`.** It is the single highest-value field on a
+tool definition — the text the router embeds and a selector reads. On our own
+benchmark it took the default embedder from 1/5 to 5/5 correct, further than
+switching to a larger embedding model did:
+
+```python
+@gantry.register(
+    tags=["weather"],
+    examples=["what's the weather in London", "is it raining in Leeds"],
+)
+def get_weather(location: str) -> str:
+    """Get the current weather in a given location."""
+    ...
+```
+
+Write the phrases a user would actually type, not a paraphrase of the
+description. Every example in this directory does this.
+
+**Leave `score_threshold` alone unless you have measured it.** It defaults to
+`0.0` on every adapter, and it is an *absolute* cosine cutoff rather than a
+relative one. Longer queries dilute absolute similarity, so a non-zero value
+quietly returns fewer tools — or none at all — with no error to tell you.
+Use `limit` to control how many tools reach the model.
+
+## Running these without API keys
+
+Every example here runs from a clean checkout with no keys set. Registration,
+sync, retrieval and conversion need no credentials, so each file does that work
+first and prints what was selected; only a final live model call is gated, and
+it names the variable it wants. That makes these useful for seeing what Gantry
+picks before you spend anything.
+
 Each framework has a clean namespace — `from agent_gantry.<framework> import <Framework>Adapter`
 (`agent_gantry.langchain` → `LangChainAdapter`, `agent_gantry.crewai` → `CrewAIAdapter`,
 `agent_gantry.llamaindex` → `LlamaIndexAdapter`, `agent_gantry.pydantic_ai` → `PydanticAIAdapter`,
@@ -85,13 +119,25 @@ pip install agent-gantry strands-agents
 pip install agent-gantry dspy
 ```
 
-**Note on Python Version:** These examples are verified on **Python 3.13**, but should work on any supported Agent-Gantry version (**Python 3.10+**).
+**Note on Python version:** CI exercises the adapter suite on **Python 3.10, 3.11, 3.12 and 3.13** (ubuntu, plus a macOS 3.12 cell). Agent-Gantry supports 3.10+.
 
-## Environment Variables
+## Environment variables
 
-Ensure you have your API keys set in a `.env` file:
+Only needed for the final live-model step of each example; everything before it
+runs without them.
 
 ```env
-OPENAI_API_KEY=sk-...
-# Other keys as needed for specific providers
+OPENAI_API_KEY=sk-...          # most examples
+GOOGLE_API_KEY=...             # google_adk_example.py (or GEMINI_API_KEY)
+AWS_ACCESS_KEY_ID=...          # strands_example.py — Strands defaults to Bedrock,
+AWS_SECRET_ACCESS_KEY=...      # so the credential must be entitled to the model
 ```
+
+`pydantic_ai_example.py` and `dspy_example.py` need no key at all: they run a
+full agent loop against `TestModel` and `DummyLM` respectively.
+
+`agent_framework_harness_example.py` needs `agent-framework>=1.7.0` for its
+experimental `create_harness_agent`. From agent-gantry 0.17.0 the
+`agent-frameworks` extra requires AF >= 1.19.0, so it works out of the box;
+only an older environment needs `pip install 'agent-framework>=1.7.0'`
+separately.

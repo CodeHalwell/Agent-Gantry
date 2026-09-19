@@ -1,51 +1,126 @@
-import asyncio
+"""
+LangGraph + Agent-Gantry: tools re-chosen on every model turn.
 
-from dotenv import load_dotenv
-from langchain.agents import create_agent
+This is the **dynamic tier**, and it is what LangGraph gives you that plain
+LangChain does not. ``LangGraphAdapter.areact_agent`` installs middleware that
+re-runs selection before each model call, so a conversation that starts about
+the weather and turns into a refund request gets different tools on turn two —
+without you rebuilding the agent.
+
+Compare ``langchain_example.py``, where the tool list is fixed at construction.
+
+The agent build and the selection both run **without an API key**; only the
+model call needs one.
+
+Run with::
+
+    pip install agent-gantry langchain langgraph langchain-openai
+    export OPENAI_API_KEY=...        # only needed for the last step
+    python examples/agent_frameworks/langgraph_example.py
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 
 from agent_gantry import AgentGantry
 from agent_gantry.langgraph import LangGraphAdapter
 
-load_dotenv()
+# Two turns that want different tools. That contrast is the whole demo.
+TURNS = [
+    "How does Agent-Gantry route tools?",
+    "Actually, refund order 4471 and email the customer to confirm.",
+]
 
 
-async def main():
-    # 1. Initialize Agent-Gantry
+async def main() -> None:
     gantry = AgentGantry()
+    try:
+        # `examples=[...]` carries more routing weight than anything else you
+        # can add here — it is the text the router embeds. Use the phrasing a
+        # user would type.
+        @gantry.register(
+            tags=["docs"],
+            examples=["how does the router work", "search the internal docs"],
+        )
+        def search_docs(query: str) -> str:
+            """Search internal documentation about how Agent-Gantry works."""
+            return f"Docs for '{query}': Gantry retrieves the top-k relevant tools."
 
-    @gantry.register(tags=["gantry", "work"])
-    def search_docs(query: str):
-        """Search internal documentation about how Agent-Gantry works."""
-        return f"Found results for '{query}': Agent-Gantry is a tool orchestrator."
+        @gantry.register(
+            tags=["billing"],
+            examples=["refund this order", "give the customer their money back"],
+        )
+        def refund_order(order_id: str) -> str:
+            """Issue a refund against a customer order."""
+            return f"Refunded order {order_id}."
 
-    await gantry.sync()
+        @gantry.register(
+            tags=["comms"],
+            examples=["email the customer", "let them know by email"],
+        )
+        def send_email(to: str, body: str) -> str:
+            """Send an email to a customer."""
+            return f"Emailed {to}."
 
-    # 2. Setup LLM and Tools
-    llm = ChatOpenAI(model="gpt-5.5")
+        @gantry.register(
+            tags=["analytics"],
+            examples=["how many signups last month", "query the warehouse"],
+        )
+        def run_query(sql: str) -> str:
+            """Run a read-only SQL query against the analytics warehouse."""
+            return "42"
 
-    # Use Gantry to select tools and get them as native LangChain tools (which
-    # LangGraph consumes) in one call — retrieval + conversion + execution.
-    user_query = "How does Agent-Gantry work?"
-    # Lowering threshold for SimpleEmbedder compatibility in this example
-    gantry_tools = await LangGraphAdapter(gantry).select(
-        user_query, limit=2, score_threshold=0.1
-    )
-    print(f"Gantry retrieved {len(gantry_tools)} tools.")
+        await gantry.sync()
 
-    # 3. Build the Agent using LangChain's create_agent (langchain>=1.0), the
-    #    replacement for LangGraph's deprecated `create_react_agent`, which
-    #    LangGraph 2.0 removes.
-    agent = create_agent(llm, tools=gantry_tools)
+        adapter = LangGraphAdapter(gantry)
 
-    # 4. Run the Agent
-    print("--- Running LangGraph Agent with Gantry-sourced tools ---")
-    inputs = {"messages": [HumanMessage(content=user_query)]}
+        # What each turn would get, before any model is involved. This is the
+        # selection the middleware performs internally on every model call.
+        print("Catalogue: 4 tools. What each turn selects:\n")
+        for turn in TURNS:
+            chosen = await adapter.select(turn, limit=2)
+            names = ", ".join(t.name for t in chosen)
+            print(f"  {turn[:52]:<52} -> {names}")
+        print(
+            "\nDifferent turns, different tools — that is the point of the\n"
+            "dynamic tier. A statically-built agent would carry all four\n"
+            "schemas through both turns.\n"
+            "\nNote turn one also pulled in `send_email`: top-k always returns\n"
+            "k, so with limit=2 the runner-up comes along whether or not it is\n"
+            "wanted. Lower `limit`, or configure a selector, if you want the\n"
+            "catalogue to be able to answer 'none of these'.\n"
+        )
 
-    result = await agent.ainvoke(inputs)
+        if not os.getenv("OPENAI_API_KEY"):
+            print("Set OPENAI_API_KEY to run the agent itself.")
+            print("Everything above works without one.")
+            return
 
-    print(f"\nFinal Response: {result['messages'][-1].content}")
+        # areact_agent installs the selection middleware. `limit` bounds how
+        # many tools reach the model on any given turn.
+        agent = await adapter.areact_agent(ChatOpenAI(model="gpt-5.5"), limit=2)
+
+        print("--- running the agent; tools are re-selected per turn ---")
+        # Both turns, carrying the history forward, because one turn cannot
+        # show re-selection. The middleware re-runs retrieval on each call, so
+        # turn 2's refund request pulls a different slice than turn 1's
+        # documentation question — which is the whole point of the dynamic
+        # tier, and is invisible if only the first turn is sent.
+        history: list = []
+        for turn in TURNS:
+            result = await agent.ainvoke(
+                {"messages": history + [HumanMessage(content=turn)]}
+            )
+            history = result["messages"]
+            print(f"\n> {turn}")
+            print(f"{result['messages'][-1].content}")
+    finally:
+        await gantry.close()
 
 
 if __name__ == "__main__":

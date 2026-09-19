@@ -39,17 +39,35 @@ from agent_gantry import AgentGantry
 def build_gantry() -> AgentGantry:
     gantry = AgentGantry()
 
-    @gantry.register(tags=["weather"])
+    @gantry.register(
+        tags=["weather"],
+        examples=[
+            "what's the weather in London",
+            "is it raining in Leeds",
+        ],
+    )
     def get_weather(city: str) -> str:
         """Get the current weather for a city."""
         return f"It is 21C and sunny in {city}."
 
-    @gantry.register(tags=["email"])
+    @gantry.register(
+        tags=["email"],
+        examples=[
+            "email the team about the delay",
+            "send a message to Sam",
+        ],
+    )
     def send_email(to: str, body: str = "") -> str:
         """Compose and send an email message to a recipient."""
         return f"Email sent to {to}."
 
-    @gantry.register(tags=["finance"])
+    @gantry.register(
+        tags=["finance"],
+        examples=[
+            "how much is 50 euros in pounds",
+            "convert 100 dollars to yen",
+        ],
+    )
     def convert_currency(amount: float, frm: str, to: str) -> str:
         """Convert an amount of money from one currency to another."""
         return f"{amount} {frm} = {amount * 1.1:.2f} {to}"
@@ -59,57 +77,60 @@ def build_gantry() -> AgentGantry:
 
 async def main() -> None:
     gantry = build_gantry()
-    await gantry.sync()
-
     try:
-        import agno  # noqa: F401
-    except ImportError as exc:
-        print(
-            f"Agno is not installed ({exc}).\n"
-            "Install it with `pip install agno` to run this example."
-        )
-        return
+        await gantry.sync()
 
-    from agent_gantry.agno import AgnoAdapter
+        try:
+            import agno  # noqa: F401
+        except ImportError as exc:
+            print(
+                f"Agno is not installed ({exc}).\n"
+                "Install it with `pip install agno` to run this example."
+            )
+            return
 
-    adapter = AgnoAdapter(gantry)
+        from agent_gantry.agno import AgnoAdapter
 
-    # --- 1. Static tier: select once, get native agno.tools.function.Function #
-    query = "what's the weather in Paris?"
-    # Lowering threshold for SimpleEmbedder compatibility in this example.
-    static_tools = await adapter.select(query, limit=2, score_threshold=0.1)
-    print(f"[static] selected {len(static_tools)} tool(s) for {query!r}:")
-    for tool in static_tools:
-        print(f"  - {tool.name}: {tool.description}")
+        adapter = AgnoAdapter(gantry)
 
-    # Functions are directly callable — no agent/model needed.
-    print(f"[static] direct entrypoint call: {static_tools[0].entrypoint(city='Paris')}\n")
+        # --- 1. Static tier: select once, get native agno.tools.function.Function #
+        query = "what's the weather in Paris?"
+        # Lowering threshold for SimpleEmbedder compatibility in this example.
+        static_tools = await adapter.select(query, limit=2, score_threshold=0.1)
+        print(f"[static] selected {len(static_tools)} tool(s) for {query!r}:")
+        for tool in static_tools:
+            print(f"  - {tool.name}: {tool.description}")
 
-    # --- 2. Dynamic tier: per-call agent builder re-selects tools ----------- #
-    # Agno freezes an agent's tools at construction, so the builder rebuilds a
-    # fresh Agent per call. Here we just inspect the re-selected tool set
-    # (select_tools) without building a full model-backed Agent.
-    builder = adapter.agent_builder(limit=1, score_threshold=0.1)
+        # Functions are directly callable — no agent/model needed.
+        print(f"[static] direct entrypoint call: {static_tools[0].entrypoint(city='Paris')}\n")
 
-    weather_tools = await builder.select_tools("what's the weather in Tokyo?")
-    print(f"[dynamic] weather query -> {[t.name for t in weather_tools]}")
+        # --- 2. Dynamic tier: per-call agent builder re-selects tools ----------- #
+        # Agno freezes an agent's tools at construction, so the builder rebuilds a
+        # fresh Agent per call. Here we just inspect the re-selected tool set
+        # (select_tools) without building a full model-backed Agent.
+        builder = adapter.agent_builder(limit=1, score_threshold=0.1)
 
-    email_tools = await builder.select_tools("send an email to my manager")
-    print(f"[dynamic] email query   -> {[t.name for t in email_tools]}\n")
+        weather_tools = await builder.select_tools("what's the weather in Tokyo?")
+        print(f"[dynamic] weather query -> {[t.name for t in weather_tools]}")
 
-    # --- 3. Optional: build + run a real Agno agent (needs an LLM) ---------- #
-    if os.environ.get("OPENAI_API_KEY"):
-        from agno.models.openai import OpenAIChat
+        email_tools = await builder.select_tools("send an email to my manager")
+        print(f"[dynamic] email query   -> {[t.name for t in email_tools]}\n")
 
-        live_builder = adapter.agent_builder(
-            model=OpenAIChat(id="gpt-5.5"), limit=2, score_threshold=0.1
-        )
-        live_agent = await live_builder.build(query)
-        print("[live] running an Agno agent with Gantry-selected tools...")
-        response = await live_agent.arun(query)
-        print(f"[live] response.content: {response.content}")
-    else:
-        print("(Set OPENAI_API_KEY to also run a live Agno agent turn.)")
+        # --- 3. Optional: build + run a real Agno agent (needs an LLM) ---------- #
+        if os.environ.get("OPENAI_API_KEY"):
+            from agno.models.openai import OpenAIChat
+
+            live_builder = adapter.agent_builder(
+                model=OpenAIChat(id="gpt-5.5"), limit=2, score_threshold=0.1
+            )
+            live_agent = await live_builder.build(query)
+            print("[live] running an Agno agent with Gantry-selected tools...")
+            response = await live_agent.arun(query)
+            print(f"[live] response.content: {response.content}")
+        else:
+            print("(Set OPENAI_API_KEY to also run a live Agno agent turn.)")
+    finally:
+        await gantry.close()
 
 
 if __name__ == "__main__":

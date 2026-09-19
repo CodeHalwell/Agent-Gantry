@@ -154,56 +154,76 @@ async def main() -> None:
     # enable_console_logging()
 
     gantry = build_gantry()
-    await gantry.sync()
+    try:
+        await gantry.sync()
 
-    # Framework-agnostic event hook: fires once per tool call at gantry.execute,
-    # regardless of which framework drove it. Great for logging/metrics.
-    def log_event(event: ToolCallEvent) -> None:
-        status = "ok" if event.ok else f"FAILED ({event.result.error})"
-        print(
-            f"    · event: {event.tool_name} -> {status} "
-            f"({event.latency_ms:.0f} ms)"
+        # Guard on the real condition — whether a client can be built — rather than
+        # on an env var standing in for it. AF resolves its endpoint from several
+        # settings (OPENAI_API_KEY, or AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_BASE_URL
+        # plus AZURE_OPENAI_API_KEY), so "OPENAI_API_KEY is unset" is a narrower
+        # question than "can this run", and an Azure-configured reader would be
+        # turned away from an example that works for them.
+        try:
+            OpenAIChatClient()
+        except Exception as exc:
+            print("Gantry setup complete: tools registered and synced.\n")
+            print(f"No usable Agent Framework chat client ({type(exc).__name__}: {exc}).")
+            print("Set OPENAI_API_KEY, or AZURE_OPENAI_ENDPOINT (or")
+            print("AZURE_OPENAI_BASE_URL) plus AZURE_OPENAI_API_KEY, to run the")
+            print("Agent Framework half.")
+            return
+
+
+        # Framework-agnostic event hook: fires once per tool call at gantry.execute,
+        # regardless of which framework drove it. Great for logging/metrics.
+        def log_event(event: ToolCallEvent) -> None:
+            status = "ok" if event.ok else f"FAILED ({event.result.error})"
+            print(
+                f"    · event: {event.tool_name} -> {status} "
+                f"({event.latency_ms:.0f} ms)"
+            )
+
+        gantry.on_tool_call(log_event)
+
+        # Per-call routing: retrieval re-runs every chat round, so the tool surface
+        # adapts as the agent reasons. The default per_call query generator is driven
+        # by the previous tool's result, which is what makes step 2 (hashing) find
+        # the hash tool after step 1 (password generation) runs.
+        provider = AgentFrameworkAdapter(gantry).context_provider(
+            top_k=3,
+            query_strategy="per_call",
         )
 
-    gantry.on_tool_call(log_event)
+        agent = Agent(
+            OpenAIChatClient(),
+            name="ToolRouter",
+            instructions=(
+                "You are a helpful assistant. Use the provided tools to complete the "
+                "user's request, one step at a time."
+            ),
+        )
 
-    # Per-call routing: retrieval re-runs every chat round, so the tool surface
-    # adapts as the agent reasons. The default per_call query generator is driven
-    # by the previous tool's result, which is what makes step 2 (hashing) find
-    # the hash tool after step 1 (password generation) runs.
-    provider = AgentFrameworkAdapter(gantry).context_provider(
-        top_k=3,
-        query_strategy="per_call",
-    )
+        # One call wires up the context provider, the per-call retrieval middleware,
+        # AND the console trace middleware (trace=True) — no hand-rolled glue.
+        provider.attach_to(agent, trace=True)
 
-    agent = Agent(
-        OpenAIChatClient(),
-        name="ToolRouter",
-        instructions=(
-            "You are a helpful assistant. Use the provided tools to complete the "
-            "user's request, one step at a time."
-        ),
-    )
+        task = (
+            "Generate a secure 20-character password, then compute its SHA-256 hash."
+        )
+        print(f"=== task: {task} ===\n")
+        response = await agent.run(task)
 
-    # One call wires up the context provider, the per-call retrieval middleware,
-    # AND the console trace middleware (trace=True) — no hand-rolled glue.
-    provider.attach_to(agent, trace=True)
+        print("\n=== final answer ===")
+        print(render_result(response.text, limit=500))
 
-    task = (
-        "Generate a secure 20-character password, then compute its SHA-256 hash."
-    )
-    print(f"=== task: {task} ===\n")
-    response = await agent.run(task)
-
-    print("\n=== final answer ===")
-    print(render_result(response.text, limit=500))
-
-    # Per-round introspection: every retrieval decision, oldest first. This is
-    # the history `last_selection` can't give you — see what was offered at
-    # each step, not just the final round.
-    print("\n=== router selections, per round ===")
-    for i, decision in enumerate(provider.selections, start=1):
-        print(f"  round {i}: {decision.summary()}")
+        # Per-round introspection: every retrieval decision, oldest first. This is
+        # the history `last_selection` can't give you — see what was offered at
+        # each step, not just the final round.
+        print("\n=== router selections, per round ===")
+        for i, decision in enumerate(provider.selections, start=1):
+            print(f"  round {i}: {decision.summary()}")
+    finally:
+        await gantry.close()
 
 
 if __name__ == "__main__":

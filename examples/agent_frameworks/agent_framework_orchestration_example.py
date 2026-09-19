@@ -61,24 +61,48 @@ async def build_gantry() -> AgentGantry:
     gantry = AgentGantry()
 
     # Research role
-    @gantry.register(tags=["research"])
+    @gantry.register(
+        tags=["research"],
+        examples=[
+            "find the support article on password resets",
+            "what do the docs say about refunds",
+        ],
+    )
     def search_knowledge_base(query: str) -> str:
         """Search the internal KB for support articles."""
         return f"3 articles matching '{query}'"
 
-    @gantry.register(tags=["research"])
+    @gantry.register(
+        tags=["research"],
+        examples=[
+            "where is order 12345",
+            "has my order shipped yet",
+        ],
+    )
     def lookup_order(order_id: str) -> dict:
         """Look up order details by id."""
         return {"order_id": order_id, "status": "shipped", "carrier": "DHL"}
 
     # Billing role
-    @gantry.register(tags=["billing"])
+    @gantry.register(
+        tags=["billing"],
+        examples=[
+            "send me my latest invoice",
+            "what was I charged last month",
+        ],
+    )
     def get_invoice(user_id: str) -> dict:
         """Get the latest invoice for a user."""
         return {"user_id": user_id, "amount_due": "$0.00"}
 
     # Writing role
-    @gantry.register(tags=["writing"])
+    @gantry.register(
+        tags=["writing"],
+        examples=[
+            "draft a reply to the customer",
+            "write an email explaining the delay",
+        ],
+    )
     def draft_email(subject: str, body: str) -> str:
         """Draft a customer-facing email response."""
         return f"DRAFT: {subject}\n\n{body}"
@@ -184,23 +208,44 @@ async def handoff_triage(
 
 async def main() -> None:
     gantry = await build_gantry()
-    bridge = GantryToolBridge(gantry, score_threshold=0.1)
-    client = OpenAIChatClient()
+    try:
 
-    await sequential_pipeline(
-        bridge,
-        client,
-        "Order ORD-42 is delayed — look up the status and draft a polite "
-        "apology email to the customer.",
-    )
-    await concurrent_analysts(
-        bridge,
-        client,
-        "Review account u_123: billing health and recent order status.",
-    )
-    await handoff_triage(
-        bridge, client, "My latest invoice looks wrong, can you check?"
-    )
+        # score_threshold defaults to 0.0; raising it silently drops tools
+        # on longer queries, so leave it alone unless you have measured.
+        bridge = GantryToolBridge(gantry)
+
+        # Guard on the real condition — whether a client can be built — rather than
+        # on an env var standing in for it. AF resolves its endpoint from several
+        # settings (OPENAI_API_KEY, or AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_BASE_URL
+        # plus AZURE_OPENAI_API_KEY), so "OPENAI_API_KEY is unset" is a narrower
+        # question than "can this run", and an Azure-configured reader would be
+        # turned away from an example that works for them.
+        try:
+            client = OpenAIChatClient()
+        except Exception as exc:
+            print("Gantry setup complete: tools registered and synced.\n")
+            print(f"No usable Agent Framework chat client ({type(exc).__name__}: {exc}).")
+            print("Set OPENAI_API_KEY, or AZURE_OPENAI_ENDPOINT (or")
+            print("AZURE_OPENAI_BASE_URL) plus AZURE_OPENAI_API_KEY, to run the")
+            print("Agent Framework half.")
+            return
+
+        await sequential_pipeline(
+            bridge,
+            client,
+            "Order ORD-42 is delayed — look up the status and draft a polite "
+            "apology email to the customer.",
+        )
+        await concurrent_analysts(
+            bridge,
+            client,
+            "Review account u_123: billing health and recent order status.",
+        )
+        await handoff_triage(
+            bridge, client, "My latest invoice looks wrong, can you check?"
+        )
+    finally:
+        await gantry.close()
 
 
 if __name__ == "__main__":

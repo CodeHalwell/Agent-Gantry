@@ -45,22 +45,42 @@ def build_gantry() -> AgentGantry:
     """Create a Gantry instance with a few representative tools."""
     gantry = AgentGantry()
 
-    @gantry.register
+    @gantry.register(
+        examples=[
+            "what's the weather in London",
+            "is it raining in Leeds",
+        ],
+    )
     def get_weather(city: str) -> str:
         """Get the current weather for a city."""
         return f"Weather in {city}: Sunny, 22C"
 
-    @gantry.register
+    @gantry.register(
+        examples=[
+            "book me a flight to Berlin",
+            "I need to fly from Manchester to Dublin",
+        ],
+    )
     def book_flight(origin: str, destination: str) -> str:
         """Book a flight between two cities."""
         return f"Booked flight: {origin} -> {destination}"
 
-    @gantry.register
+    @gantry.register(
+        examples=[
+            "who is user 4821",
+            "pull up that customer's profile",
+        ],
+    )
     def lookup_user(user_id: str) -> dict:
         """Look up a user profile from the CRM."""
         return {"id": user_id, "plan": "pro"}
 
-    @gantry.register
+    @gantry.register(
+        examples=[
+            "refund this customer",
+            "give them their money back",
+        ],
+    )
     def issue_refund(user_id: str, amount: float) -> str:
         """Issue a refund to a user."""
         return f"Refunded ${amount:.2f} to {user_id}"
@@ -158,11 +178,30 @@ async def example_workflow(gantry: AgentGantry) -> None:
 async def main() -> None:
     load_dotenv()
     gantry = build_gantry()
-    await gantry.sync()
+    try:
+        await gantry.sync()
 
-    await example_bare_agent(gantry)
-    await example_with_af_skills(gantry)
-    await example_workflow(gantry)
+        # Guard on the real condition — whether a client can be built — rather than
+        # on an env var standing in for it. AF resolves its endpoint from several
+        # settings (OPENAI_API_KEY, or AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_BASE_URL
+        # plus AZURE_OPENAI_API_KEY), so "OPENAI_API_KEY is unset" is a narrower
+        # question than "can this run", and an Azure-configured reader would be
+        # turned away from an example that works for them.
+        try:
+            OpenAIChatClient()
+        except Exception as exc:
+            print("Gantry setup complete: tools registered and synced.\n")
+            print(f"No usable Agent Framework chat client ({type(exc).__name__}: {exc}).")
+            print("Set OPENAI_API_KEY, or AZURE_OPENAI_ENDPOINT (or")
+            print("AZURE_OPENAI_BASE_URL) plus AZURE_OPENAI_API_KEY, to run the")
+            print("Agent Framework half.")
+            return
+
+        await example_bare_agent(gantry)
+        await example_with_af_skills(gantry)
+        await example_workflow(gantry)
+    finally:
+        await gantry.close()
 
 
 if __name__ == "__main__":

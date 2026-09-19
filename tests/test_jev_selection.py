@@ -207,12 +207,37 @@ async def test_one_failed_batch_discards_the_whole_pass() -> None:
 
 
 async def test_an_unanswered_candidate_is_absent_rather_than_zero() -> None:
-    """Scoring it zero would rank it below things the model actually rejected."""
+    """Scoring it zero would rank it below things the model actually rejected.
+
+    This is the reranking contract (``require_all=False``): the shortlist comes
+    back whole either way, so an unanswered candidate simply carries no score
+    and keeps its incoming rank. Selection cannot afford the same leniency —
+    see the ``require_all=True`` half below, where an unanswered candidate
+    would vanish from the result entirely.
+    """
     client, _stub = _client({"a": 0.9})
-    verdict = await client.score("q", [_candidate("a"), _candidate("b")], "help?")
+    verdict = await client.score(
+        "q", [_candidate("a"), _candidate("b")], "help?", require_all=False
+    )
 
     assert verdict.scores == {"a": 0.9}
     assert verdict.fallback is False
+
+
+async def test_selection_will_not_rank_from_a_half_answered_response() -> None:
+    """The default (``require_all=True``) is what selection uses.
+
+    An unanswered candidate is dropped from a selection result rather than
+    merely ranked low, so answering from the subset silently hides tools from
+    the agent. ``score()`` already treats a *raised* batch this way; a response
+    that quietly omits answers is the same failure wearing a calmer face.
+    """
+    client, _stub = _client({"a": 0.9})
+    verdict = await client.score("q", [_candidate("a"), _candidate("b")], "help?")
+
+    assert verdict.fallback is True
+    assert not verdict.scores, "a fallback verdict must not carry a partial ranking"
+    assert "unanswered" in verdict.reason
 
 
 async def test_a_supplied_client_is_not_closed_by_the_wrapper() -> None:
@@ -257,6 +282,28 @@ async def test_unscored_tools_rank_below_scored_ones_but_are_not_dropped() -> No
     ranked = await reranker.rerank("q", tools, top_k=2)
 
     assert [tool.name for tool, _ in ranked] == ["beta", "alpha"]
+
+
+async def test_the_reranker_accepts_a_client_predating_require_all() -> None:
+    """A stub written against the published three-argument ``score``.
+
+    ``client`` is documented as taking "a compatible stub", and ``require_all``
+    was added to :meth:`JevClient.score` after that contract was published.
+    Passing it blindly turns such a stub into a ``TypeError`` raised straight
+    out of ``rerank()`` — in the one path that promises a failing provider
+    costs precision and never the catalogue.
+    """
+    # Keyed by qualified_name, which is what the reranker looks up; the
+    # ``_client`` helper's map is keyed by the name shown to the model instead,
+    # because JevClient does that translation.
+    client = _StubJevClient(JevVerdict(scores={"default.beta:1.0.0": 0.9}))
+    reranker = JevReranker(client=client)
+    tools = [(_tool("alpha"), 0.9), (_tool("beta"), 0.1)]
+
+    ranked = await reranker.rerank("q", tools, top_k=2)
+
+    assert [tool.name for tool, _ in ranked] == ["beta", "alpha"]
+    assert client.scored, "the stub should still have been asked"
 
 
 async def test_the_reranker_returns_nothing_for_nothing() -> None:
@@ -817,3 +864,54 @@ async def test_the_facade_tells_the_selector_which_catalogue_it_is_choosing() ->
         assert selector.kinds == ["tool", "skill"]
     finally:
         await gantry.close()
+
+
+async def test_a_half_answered_response_falls_back_instead_of_ranking_the_subset() -> None:
+    """A response missing answers must not produce a confident partial ranking.
+
+    ``score()`` already treats a raised batch this way, on the grounds that a
+    candidate which was never scored is indistinguishable from one scored zero.
+    A response that simply omits answers is the same failure with a quieter
+    face: before this was handled, the unanswered candidates were skipped as
+    "no signal", could not clear the threshold, and were dropped — so a
+    half-answered pass returned a wrong tool rather than deferring.
+    """
+    import types as _types
+
+    from agent_gantry.adapters.jev_client import JevClient
+
+    class _Answer:
+        def __init__(self, noul: float) -> None:
+            self.noul = noul
+
+    class _Client:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def system_one(self, state, questions, **kwargs):
+            self.calls += 1
+            first = next(iter(questions))
+            # Answer only the first of however many were asked.
+            return _types.SimpleNamespace(
+                model="jev-fake",
+                usage=_types.SimpleNamespace(input_tokens=10, output_tokens=0),
+                answers={first: _Answer(0.9)},
+            )
+
+        async def aclose(self) -> None:
+            return None
+
+    candidates = [
+        SelectionCandidate(id=f"t{i}", name=f"tool_{i}", description=f"Tool number {i} does a thing.")
+        for i in range(3)
+    ]
+
+    client = JevClient()
+    client._client = _Client()
+    client._sdk = pytest.importorskip("typesafe_sdk")
+
+    verdict = await client.score("some request", candidates, "Is this relevant?")
+
+    assert verdict.fallback is True, "a half-answered pass must fall back"
+    assert not verdict.scores, "a fallback verdict must carry no scores"
+    assert "unanswered" in verdict.reason, f"reason should name the cause, got: {verdict.reason}"

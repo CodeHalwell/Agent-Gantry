@@ -7,7 +7,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-09-19
+
+A maintenance release: the dependency floor moves a long way forward, the
+examples earn their keep, and Jev gets the defect that live testing found.
+
+`agent-framework` goes from 1.5.0 to **1.19.0** — fourteen minor versions the
+lock had been silently pinned behind, for a reason `pyproject.toml` had
+diagnosed months ago and left fixed-but-unapplied. `langchain`, `crewai` and
+`llama-index` also move to current. No library code changed to accommodate any
+of it.
+
+Every one of the 67 examples now runs from a clean checkout **with no API keys
+set**. Twelve used to fail and three looked like hangs.
+
+Two things to know before upgrading:
+
+- **Dependency floors are raised**, most sharply `agent-framework>=1.19.0` (was
+  `>=1.5.0`). If you are pinned below that, the `agent-frameworks` extra will no
+  longer resolve for you. `google-adk` is deliberately *not* raised — see the
+  note under Changed for the measurement behind that.
+- **Jev selection now falls back on a partial response** instead of ranking the
+  subset. If you were relying on a half-answered pass returning something, it
+  now returns nothing and retrieval takes the semantic path. That is the fix;
+  the old behaviour produced confident wrong answers.
+
+### Changed
+
+- **`agent-framework` moves from 1.5.0 to 1.19.0** — fourteen minor versions,
+  no library changes needed. The lock had been held at the *floor* by a
+  pre-release marker on `azure-ai-agents` that the resolver refused as neither
+  "necessary" nor "explicit"; naming it in `[tool.uv].override-dependencies`
+  makes it explicit and the resolver stops backtracking. The fix is the one
+  pyproject's own comment proposed and deferred. `langchain` 1.3.14 → 1.4.2,
+  `crewai` 1.15.0 → 1.15.22 and `llama-index` also move to current, and the
+  floors are raised so the lock's versions are actually guaranteed — uv will
+  not climb past a satisfied floor on its own.
+
+  `google-adk` is deliberately *not* raised. Versions from 2.8.0 cap
+  `opentelemetry-api` at 1.42.1 while the rest of the extra resolves 1.43.0, so
+  letting adk climb backtracks agent-framework to 1.11.0. Measured rather than
+  assumed: floors of 2.8.0, `<2.9` and 2.9.2 were each locked and all three
+  produced AF 1.11.0. Eight minor versions of AF is a worse trade than two of
+  adk. The ceiling is **declared** as `google-adk>=2.6.1,<2.8`, not merely
+  recorded in a comment: without the bound a fresh resolve is free to take adk
+  2.8+ and silently undo the agent-framework result above.
+
+- The bundled Claude Skill installs as `agent-gantry install skill` as well as
+  the original `agent-gantry install-skill`. Both spellings reach the same
+  code; a bare `install` now says what it wanted instead of "invalid choice".
+
+- **README.md** now highlights the full capability set: A2A serving and
+  discovery, the complete list of supported LLM provider dialects, batch and
+  streaming tool execution, reranker options, and the observability backends
+  (console, OpenTelemetry, Prometheus) with token-savings metrics.
+
 ### Fixed
+
+- **`JevReranker` no longer breaks a caller's stub client.** Its `client`
+  argument is a documented extension point ("or a compatible stub"), and this
+  release's `require_all` keyword was passed to it unconditionally — so a stub
+  written against the published three-argument `score` raised `TypeError`
+  straight out of `rerank()`, in the one code path whose whole promise is that
+  a failing provider costs precision and never the catalogue. The keyword is
+  now only passed to a client that accepts it; an older stub is called without
+  it, which is the lenient behaviour reranking wants anyway.
+
+- **A partial Jev response no longer produces a confident, wrong selection.**
+  `score()` already discarded a whole pass when a batch *raised*, on the
+  grounds that a candidate which was never scored is indistinguishable from one
+  scored zero. A response that simply omitted answers took a different path: the
+  unanswered candidates were skipped as "no signal", could not clear the
+  threshold, and were dropped — so a half-answered pass returned the wrong tool
+  rather than deferring. Selection now treats that as a failed pass and falls
+  back to semantic routing.
+
+  Reranking keeps the old behaviour via `score(..., require_all=False)`, and
+  that distinction is the point: reranking returns the shortlist whole either
+  way, so an unscored tool merely keeps its search rank, whereas in selection an
+  unanswered candidate vanishes from the result entirely.
 
 - **Documentation accuracy sweep across the repo.** Corrected the public
   registration API in all 11 framework integration guides on the docs site
@@ -24,12 +102,180 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`semantic_tools`, not `decorator`), the supported tool-spec dialect list,
   and the framework-adapter count.
 
-### Changed
+### Fixed (examples)
 
-- **README.md** now highlights the full capability set: A2A serving and
-  discovery, the complete list of supported LLM provider dialects, batch and
-  streaming tool execution, reranker options, and the observability backends
-  (console, OpenTelemetry, Prometheus) with token-savings metrics.
+- **Two generated LanceDB stores were committed to the repository, without
+  their version manifests.** `list_tables()` found them and `open_table`
+  rejected every table in them, so `project_demo/main_persistent.py` and
+  `tool_vector_db/main.py` crashed with `ValueError: Table '...' was not
+  found` on a clean clone. Both are caches an example builds on first run, so
+  they are untracked and gitignored; each example rebuilds its store in about
+  thirty seconds, which `main_persistent.py` already announced it would do.
+
+- **Four Agent Framework examples turned away Azure users.** Their guards
+  tested `OPENAI_API_KEY`, but AF resolves its endpoint from several settings —
+  `AZURE_OPENAI_ENDPOINT` or `AZURE_OPENAI_BASE_URL` plus
+  `AZURE_OPENAI_API_KEY` — and this repo's own TUI demo already routes both.
+  An Azure-configured reader got only the keyless half of an example that
+  would have run for them. All four now guard on whether a chat client can be
+  constructed, which is the actual question, and name both credential routes
+  when it cannot. `agent_framework_example.py` had already been fixed this way;
+  the pattern simply had not been carried across.
+
+- `project_demo/main.py`, `project_demo/main_persistent.py` and
+  `tool_vector_db/main.py` checked for an API key as the first statement in
+  `main()`, so a keyless run did nothing at all — no registration, no sync, no
+  retrieval — despite this release's claim that every example shows its Gantry
+  work first. They now retrieve and print the selected tools before the gate,
+  and close the module-global gantry in a `finally`.
+
+- `fast_track_demo.py` — the file `examples/README.md` sends people to when
+  they are not using a framework — printed a code listing of semantic routing
+  without a key rather than performing any. It now registers, syncs and shows
+  the real selection for each of its three queries before gating the model
+  call, and its live path no longer passes a `score_threshold` its own printed
+  snippet correctly omitted.
+
+- `langgraph_example.py` advertised "tools are re-selected per turn" and then
+  invoked the agent with the first turn only, so the live half never showed the
+  thing it names. Both turns run now, carrying the conversation forward, which
+  is what makes the second turn pull a different slice than the first.
+
+- `crewai_example.py` selected a tool slice for a second crew member and then
+  never used it: the live run built a crew of one agent with the research task
+  only, so `refund_order`, `send_email` and `SUPPORT_BRIEF` were dead weight
+  and the per-agent routing the example is *about* was visible only in the
+  keyless preview. Both agents now run, each holding only its own slice.
+
+- **All 67 examples run from a clean checkout with no API keys.** Twelve used to
+  fail outright and three looked like hangs; none now crashes or waits on a
+  credential.
+
+  Doing the *Gantry work* keyless is a stronger claim than running keyless, and
+  it was measured rather than asserted: every example was run with all
+  credentials unset, under a probe recording which facade calls it actually
+  made. **51 of 64 do real Gantry work without a key; 13 exit at a credential
+  check having demonstrated nothing.** The 51 include everything this release
+  rewrote — all of `agent_frameworks/`, plus `fast_track_demo.py`,
+  `project_demo/` and `tool_vector_db/`. The 13 are tracked in #434, and
+  `examples/README.md` now says which is which instead of claiming the stronger
+  version for the whole tree.
+
+- `google_adk_example.py` crashed with `AttributeError` before reaching the
+  agent: it read `event.content.parts[0].text` on every final response, but ADK
+  emits control events with `content=None`, and a content event can carry zero
+  parts or a part whose `text` is `None`. It now walks the parts and takes the
+  first with text.
+
+- `agent_framework_harness_example.py` imported `create_harness_agent`, which
+  exists only in `agent-framework >= 1.7.0` — and the extra resolved AF to its
+  1.5.0 floor, so the example could never run against the repo's own lockfile.
+  It now detects the missing symbol and says how to get it. (With this release's
+  AF upgrade it simply works.)
+
+- `project_demo` built its OpenAI client at module scope, which made the file
+  unimportable rather than merely unrunnable without a key. Constructed lazily
+  now.
+
+- The TUI demo blocked forever without a terminal, which reads as a hang under
+  CI or a pipe. It detects a non-TTY, prints what it registered, and exits;
+  `--check` does the same deliberately.
+
+- `strands_example.py` crashed with a raw botocore traceback on a machine
+  holding unrelated AWS credentials. Its guard accepted any of AWS/Anthropic/
+  OpenAI, but the agent it builds defaults to Amazon Bedrock — and no
+  environment check can prove a credential is valid, in the right region and
+  entitled to the model. The live run now catches the provider error and says
+  which half failed.
+
+- Sixteen of the eighteen framework examples registered tools with **no
+  `examples=[...]`**, while this project's own notes call that field the largest
+  lever on retrieval accuracy. Anyone copying an example inherited the worse
+  behaviour. All eighteen carry them now — 67 tools in total, written as
+  phrases a user would actually type rather than restatements of the
+  description. The rest of the examples tree is not there yet and is tracked in
+  #434; `agent_frameworks/` is the one to copy from.
+
+- `score_threshold=0.1` was scattered through the examples, commented "lowering
+  threshold for SimpleEmbedder compatibility". It lowers nothing: the adapter
+  default is `0.0`, so every one was *tightening* an absolute cosine cutoff
+  while claiming to relax it. `project_demo` used `0.6`, high enough to return
+  nothing at all. Ten are removed here, from the examples rewritten in this
+  release. Roughly 47 remain across the rest of the tree — including in
+  framework examples this release did not rewrite — still carrying the
+  inverted comment. They make those examples return fewer tools than they
+  should rather than breaking anything, and they are tracked in #434.
+
+- Several examples registered a single tool, so "semantic selection" chose 1 of
+  1 and demonstrated nothing. They now carry real catalogues — LangGraph shows
+  two turns selecting different tools, CrewAI gives two crew members different
+  slices of one catalogue.
+
+- No framework example closed its gantry **on every path**. All eighteen do
+  now, along with `project_demo` and `tool_vector_db` — via `try/finally`
+  rather than a call before each `return`, which is what several of them had
+  and what made the first two attempts at this look complete when they were
+  not. Verified by ownership rather than by grepping for `close()`: a function
+  that binds a gantry and does not hand it back must close it in a `finally`;
+  a factory like `build_gantry()` correctly does not. That check had a blind
+  spot of its own — it only recognised a gantry bound to a local named
+  `gantry`, so it missed `tool_vector_db/main.py`, which imports the module
+  global as `tools`, and the TUI demo, which closes on one branch of three.
+  Both are fixed, and no example anywhere in the tree now closes on *some*
+  paths: that partial shape is what survived two rounds of review, so it is
+  worth more than the raw count. Thirty-eight entry points elsewhere never
+  close at all, tracked in #434 — in a short-lived script the cost is a
+  warning at interpreter shutdown rather than a real leak, but they are the
+  wrong thing to copy.
+
+### Documentation
+
+- **The bundled skill described the reranker's partial-response behaviour
+  incorrectly**, and it is the canonical guidance shipped in the wheel. It said
+  a provider answering for only some candidates leaves "the vector-search order
+  untouched". It does not: answered candidates are ordered by probability,
+  unanswered ones keep their rank below all of them, and the result is
+  truncated to `top_k` — so where more candidates were sent than `top_k`, an
+  unanswered but highly-ranked tool can be pushed out. The section now
+  separates the two fail-open cases and states that caveat.
+
+- `examples/agent_frameworks/README.md` still told readers the repo's extra
+  pins agent-framework to its 1.5.0 floor and that the harness example needs a
+  standalone install. This release raises the floor to 1.19.0, so it works out
+  of the box; only an older environment needs the separate install.
+
+
+- The Jev section of the bundled skill carries a live measurement rather than
+  only aggregate numbers: against `jev-1.13.0`, a tool described as "get the
+  *current* weather" scores 0.21 for "the forecast for tomorrow" and 0.98 for
+  "the weather right now", and with a forecast tool also present each query
+  picks the right one. Those two descriptions embed almost identically, so a
+  vector search hands the agent a tool that cannot answer the question — that
+  distinction, not the token count, is the argument for a selector.
+
+- The bundled skill covers 0.16.0: it had no mention of `JevSelector`,
+  `JevReranker`, the `jev` extra or `reset_sse_shutdown_latch`. It also
+  understated `examples=[...]` as something that merely "improves recall" — it
+  is the single largest lever on retrieval accuracy, so the skill now says so
+  and tells a reader to check for missing `examples` *before* suggesting a
+  different embedder.
+
+- `agent_gantry/integrations/README.md` documented `score_threshold`'s default
+  as `0.5`; it is `0.0`. The same file annotated `score_threshold=0.3` as
+  "lower threshold for more results", which is backwards twice over — `0.3` is
+  higher than the default, and raising an absolute cosine cutoff returns fewer
+  tools, not more. Both corrected, with a note on why the knob behaves as it
+  does.
+
+- All twelve Astro framework pages now show `examples=[...]`; none did.
+
+- `examples/README.md` opens with a framework table rather than burying
+  frameworks mid-page, states up front that everything runs keyless, and
+  explains the genuinely confusing split between `agent_frameworks/` (per
+  framework) and `frameworks/` (framework-neutral plumbing). Its claim that
+  every example in the tree carries `examples=[...]` is narrowed to the one
+  that is true — every *framework* example does — with the rest tracked in
+  #434 rather than papered over.
 
 ## [0.16.0] - 2026-09-18
 
@@ -4116,7 +4362,8 @@ adapters, and the provider dialects agree with it.
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.13.1...v0.14.0

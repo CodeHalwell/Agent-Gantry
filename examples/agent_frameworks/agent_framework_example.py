@@ -56,150 +56,172 @@ async def main() -> str:
     # 1. Register tools with Agent-Gantry
     # -----------------------------------------------------------------------
     gantry = AgentGantry()
+    try:
 
-    @gantry.register
-    def get_user_profile(user_id: str) -> dict[str, str]:
-        """Fetch a user's profile from the CRM system including plan and region."""
-        return {"user_id": user_id, "plan": "pro", "region": "us-east"}
+        @gantry.register(examples=["who is this user", "look up the customer profile"])
+        def get_user_profile(user_id: str) -> dict[str, str]:
+            """Fetch a user's profile from the CRM system including plan and region."""
+            return {"user_id": user_id, "plan": "pro", "region": "us-east"}
 
-    @gantry.register
-    def get_billing_info(user_id: str) -> dict[str, str]:
-        """Retrieve billing information for a customer account."""
-        return {"user_id": user_id, "balance": "$0.00", "next_invoice": "2026-04-01"}
+        @gantry.register(examples=["what do they owe", "show billing for this account"])
+        def get_billing_info(user_id: str) -> dict[str, str]:
+            """Retrieve billing information for a customer account."""
+            return {"user_id": user_id, "balance": "$0.00", "next_invoice": "2026-04-01"}
 
-    @gantry.register
-    def search_knowledge_base(query: str) -> str:
-        """Search the internal knowledge base for support articles."""
-        return f"Found 3 articles matching '{query}'"
+        @gantry.register(examples=["find a help article", "search the knowledge base"])
+        def search_knowledge_base(query: str) -> str:
+            """Search the internal knowledge base for support articles."""
+            return f"Found 3 articles matching '{query}'"
 
-    @gantry.register
-    def list_open_tickets(user_id: str) -> list[str]:
-        """List open support tickets for a user."""
-        return ["TICKET-001", "TICKET-042"]
+        @gantry.register(examples=["any open tickets", "what support cases are outstanding"])
+        def list_open_tickets(user_id: str) -> list[str]:
+            """List open support tickets for a user."""
+            return ["TICKET-001", "TICKET-042"]
 
-    # Destructive: DELETE_DATA capability → AF approval_mode="always_require"
-    @gantry.register(capabilities=[ToolCapability.DELETE_DATA])
-    def delete_user_account(user_id: str) -> str:
-        """Delete a user account. Destructive; requires human approval."""
-        return f"deleted:{user_id}"
+        # Destructive: DELETE_DATA capability → AF approval_mode="always_require"
+        @gantry.register(
+            capabilities=[ToolCapability.DELETE_DATA],
+            examples=["delete this account", "remove the user permanently"],
+        )
+        def delete_user_account(user_id: str) -> str:
+            """Delete a user account. Destructive; requires human approval."""
+            return f"deleted:{user_id}"
 
-    await gantry.sync()
+        await gantry.sync()
 
-    bridge = GantryToolBridge(gantry, score_threshold=0.1)
-    client = OpenAIChatClient()
+        # No score_threshold: it defaults to 0.0. Raising it is a silent-drop
+        # trap — a longer query dilutes absolute similarity, so a non-zero
+        # cutoff can quietly return no tools at all.
+        bridge = GantryToolBridge(gantry)
 
-    policy = SecurityPolicy(
-        require_confirmation=["delete_*", "refund_*"],
-        max_requests_per_minute=60,
-    )
-    middleware = [
-        GantryApprovalMiddleware(policy),
-        GantryObservabilityMiddleware(gantry),
-    ]
+        # Guard on the real condition — whether a client can be built — rather than
+        # on an env var standing in for it. AF resolves its endpoint from several
+        # settings, so "OPENAI_API_KEY is unset" is not the same question, and a
+        # test that substitutes a fake client should still exercise everything
+        # below.
+        try:
+            client = OpenAIChatClient()
+        except Exception as exc:
+            print("Registered 5 tools with Gantry, including a DELETE_DATA one")
+            print("that AF will gate behind approval.\n")
+            print(f"No usable Agent Framework chat client ({type(exc).__name__}: {exc}).")
+            print("Set OPENAI_API_KEY to run the agent itself.")
+            return ""
 
-    # -----------------------------------------------------------------------
-    # Pattern 1: build_agent — convenience one-liner
-    #
-    # Constructs Agent(client, instructions, ...) internally.
-    # -----------------------------------------------------------------------
-    print("=== Pattern 1: build_agent ===")
-    agent1 = await bridge.build_agent(
-        client,
-        query="What plan is user abc123 on?",
-        name="SupportAgent",
-        instructions="You are a support assistant. Use tools to fetch customer data.",
-        limit=2,
-        middleware=middleware,
-    )
-    print(f"Built agent via build_agent: {agent1.name}")
+        policy = SecurityPolicy(
+            require_confirmation=["delete_*", "refund_*"],
+            max_requests_per_minute=60,
+        )
+        middleware = [
+            GantryApprovalMiddleware(policy),
+            GantryObservabilityMiddleware(gantry),
+        ]
 
-    # -----------------------------------------------------------------------
-    # Pattern 2: as_agent — direct Agent(client, ...) construction
-    #
-    # Returns a first-class Agent suitable for feeding into SequentialBuilder,
-    # HandoffBuilder, or WorkflowBuilder.
-    # -----------------------------------------------------------------------
-    print("\n=== Pattern 2: as_agent (direct Agent construction) ===")
-    billing_agent = await bridge.as_agent(
-        client,
-        query="billing invoices payments",
-        name="BillingAgent",
-        instructions="You handle billing, invoices, and payment questions.",
-        limit=2,
-        middleware=middleware,
-    )
-    support_agent = await bridge.as_agent(
-        client,
-        query="support tickets bugs technical",
-        name="SupportAgent",
-        instructions="You handle technical support tickets and bug reports.",
-        limit=2,
-        middleware=middleware,
-    )
+        # -----------------------------------------------------------------------
+        # Pattern 1: build_agent — convenience one-liner
+        #
+        # Constructs Agent(client, instructions, ...) internally.
+        # -----------------------------------------------------------------------
+        print("=== Pattern 1: build_agent ===")
+        agent1 = await bridge.build_agent(
+            client,
+            query="What plan is user abc123 on?",
+            name="SupportAgent",
+            instructions="You are a support assistant. Use tools to fetch customer data.",
+            limit=2,
+            middleware=middleware,
+        )
+        print(f"Built agent via build_agent: {agent1.name}")
 
-    # Wire agents in sequence using SequentialBuilder (no AgentExecutor needed).
-    sequential_workflow = SequentialBuilder(
-        participants=[billing_agent, support_agent]
-    ).build()
-    print(f"Built sequential workflow with {type(sequential_workflow).__name__}")
+        # -----------------------------------------------------------------------
+        # Pattern 2: as_agent — direct Agent(client, ...) construction
+        #
+        # Returns a first-class Agent suitable for feeding into SequentialBuilder,
+        # HandoffBuilder, or WorkflowBuilder.
+        # -----------------------------------------------------------------------
+        print("\n=== Pattern 2: as_agent (direct Agent construction) ===")
+        billing_agent = await bridge.as_agent(
+            client,
+            query="billing invoices payments",
+            name="BillingAgent",
+            instructions="You handle billing, invoices, and payment questions.",
+            limit=2,
+            middleware=middleware,
+        )
+        support_agent = await bridge.as_agent(
+            client,
+            query="support tickets bugs technical",
+            name="SupportAgent",
+            instructions="You handle technical support tickets and bug reports.",
+            limit=2,
+            middleware=middleware,
+        )
 
-    # -----------------------------------------------------------------------
-    # Pattern 3: build_workflow — fan-out routing with WorkflowBuilder edges
-    #
-    # build_workflow() wraps each Agent in AgentExecutor automatically before
-    # passing it to WorkflowBuilder. Use edges= for explicit routing topology.
-    # For conditional hand-off routing use build_handoff_workflow() instead.
-    # -----------------------------------------------------------------------
-    print("\n=== Pattern 3: build_workflow (fan-out / handoff) ===")
-    workflow_agent = await bridge.build_workflow(
-        agent_specs=[
-            dict(
-                client=client,
-                query="triage customer request classify routing",
-                name="Triage",
-                instructions="Classify the customer request and route it to the right team.",
-                limit=2,
-            ),
-            dict(
-                client=client,
-                query="billing invoices payments",
-                name="Billing",
-                instructions="Handle billing, invoices, and payment questions.",
-                limit=2,
-                middleware=middleware,
-            ),
-            dict(
-                client=client,
-                query="support tickets bugs technical",
-                name="Support",
-                instructions="Handle technical support and bug reports.",
-                limit=2,
-                middleware=middleware,
-            ),
-        ],
-        edges=[
-            (
-                "Triage",
-                "Billing",
-                lambda ctx: any(
-                    kw in str(ctx).lower()
-                    for kw in ("invoice", "billing", "payment", "charge")
+        # Wire agents in sequence using SequentialBuilder (no AgentExecutor needed).
+        sequential_workflow = SequentialBuilder(
+            participants=[billing_agent, support_agent]
+        ).build()
+        print(f"Built sequential workflow with {type(sequential_workflow).__name__}")
+
+        # -----------------------------------------------------------------------
+        # Pattern 3: build_workflow — fan-out routing with WorkflowBuilder edges
+        #
+        # build_workflow() wraps each Agent in AgentExecutor automatically before
+        # passing it to WorkflowBuilder. Use edges= for explicit routing topology.
+        # For conditional hand-off routing use build_handoff_workflow() instead.
+        # -----------------------------------------------------------------------
+        print("\n=== Pattern 3: build_workflow (fan-out / handoff) ===")
+        workflow_agent = await bridge.build_workflow(
+            agent_specs=[
+                dict(
+                    client=client,
+                    query="triage customer request classify routing",
+                    name="Triage",
+                    instructions="Classify the customer request and route it to the right team.",
+                    limit=2,
                 ),
-            ),
-            ("Triage", "Support"),
-        ],
-        workflow_name="CustomerServiceWorkflow",
-    )
-    print(f"Built fan-out WorkflowAgent: {workflow_agent.name}")
+                dict(
+                    client=client,
+                    query="billing invoices payments",
+                    name="Billing",
+                    instructions="Handle billing, invoices, and payment questions.",
+                    limit=2,
+                    middleware=middleware,
+                ),
+                dict(
+                    client=client,
+                    query="support tickets bugs technical",
+                    name="Support",
+                    instructions="Handle technical support and bug reports.",
+                    limit=2,
+                    middleware=middleware,
+                ),
+            ],
+            edges=[
+                (
+                    "Triage",
+                    "Billing",
+                    lambda ctx: any(
+                        kw in str(ctx).lower()
+                        for kw in ("invoice", "billing", "payment", "charge")
+                    ),
+                ),
+                ("Triage", "Support"),
+            ],
+            workflow_name="CustomerServiceWorkflow",
+        )
+        print(f"Built fan-out WorkflowAgent: {workflow_agent.name}")
 
-    # -----------------------------------------------------------------------
-    # Run the workflow agent on a sample query
-    # -----------------------------------------------------------------------
-    print("\n--- Running fan-out WorkflowAgent ---")
-    user_query = "My last invoice has an incorrect charge."
-    response = await workflow_agent.run(user_query)
-    print(f"Response: {response}")
-    return str(response)
+        # -----------------------------------------------------------------------
+        # Run the workflow agent on a sample query
+        # -----------------------------------------------------------------------
+        print("\n--- Running fan-out WorkflowAgent ---")
+        user_query = "My last invoice has an incorrect charge."
+        response = await workflow_agent.run(user_query)
+        print(f"Response: {response}")
+        return str(response)
+    finally:
+        await gantry.close()
 
 
 if __name__ == "__main__":

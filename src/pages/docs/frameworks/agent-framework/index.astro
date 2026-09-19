@@ -27,12 +27,12 @@ from agent_gantry import AgentGantry, GantryContextProvider
 
 gantry = AgentGantry()
 
-@gantry.register
+@gantry.register(examples=["what's the weather in Leeds", "is it raining"])
 def get_weather(city: str) -> str:
     """Get the current weather for a city."""
     return f"Weather in {city}: Sunny, 22°C"
 
-@gantry.register
+@gantry.register(examples=["book me a flight", "fly from Manchester to Berlin"])
 def book_flight(origin: str, destination: str) -> str:
     """Book a flight between two cities."""
     return f"Booked flight: {origin} -> {destination}"
@@ -84,7 +84,7 @@ agent = Agent(
 
   <CodeBlock lang="python" code={`from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
 
-bridge = GantryToolBridge(gantry, score_threshold=0.1)
+bridge = GantryToolBridge(gantry)
 agent = await bridge.as_agent(
     OpenAIChatClient(),
     query="billing invoices payments",
