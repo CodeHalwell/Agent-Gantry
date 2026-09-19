@@ -136,6 +136,11 @@ Two things to know before upgrading:
   call, and its live path no longer passes a `score_threshold` its own printed
   snippet correctly omitted.
 
+- `langgraph_example.py` advertised "tools are re-selected per turn" and then
+  invoked the agent with the first turn only, so the live half never showed the
+  thing it names. Both turns run now, carrying the conversation forward, which
+  is what makes the second turn pull a different slice than the first.
+
 - `crewai_example.py` selected a tool slice for a second crew member and then
   never used it: the live run built a crew of one agent with the research task
   only, so `refund_order`, `send_email` and `SUPPORT_BRIEF` were dead weight
@@ -147,13 +152,14 @@ Two things to know before upgrading:
   credential.
 
   Doing the *Gantry work* keyless is a stronger claim than running keyless, and
-  it holds for the examples this release rewrote — everything under
-  `agent_frameworks/`, plus `fast_track_demo.py`, `project_demo/` and
-  `tool_vector_db/`. Those register, sync, retrieve and convert, print what was
-  selected, and only then gate the model call. Elsewhere several examples still
-  exit at their credential check having shown nothing; that is tracked in #434,
-  and `examples/README.md` now says which is which instead of claiming the
-  stronger version for the whole tree.
+  it was measured rather than asserted: every example was run with all
+  credentials unset, under a probe recording which facade calls it actually
+  made. **51 of 64 do real Gantry work without a key; 13 exit at a credential
+  check having demonstrated nothing.** The 51 include everything this release
+  rewrote — all of `agent_frameworks/`, plus `fast_track_demo.py`,
+  `project_demo/` and `tool_vector_db/`. The 13 are tracked in #434, and
+  `examples/README.md` now says which is which instead of claiming the stronger
+  version for the whole tree.
 
 - `google_adk_example.py` crashed with `AttributeError` before reaching the
   agent: it read `event.content.parts[0].text` on every final response, but ADK

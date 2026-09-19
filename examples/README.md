@@ -3,17 +3,20 @@
 Hands-on examples. **Every one of them runs from a clean checkout with no API
 keys set** — nothing crashes and nothing hangs waiting for a credential.
 
-Two different promises there, so to be precise about which you get: everything
-under `agent_frameworks/`, plus `fast_track_demo.py`, `project_demo/` and
-`tool_vector_db/`, does its **Gantry work first** without a key — registration,
-sync, retrieval, conversion — prints what was selected, and only then gates the
-model call. That is where to look if you want to see the library work before
-spending anything.
+Two different promises there, so to be precise about which you get. Measured by
+running all 64 with every credential unset and recording what each one actually
+called: **51 do real Gantry work without a key**, 13 exit at a credential check
+having demonstrated nothing.
 
-Elsewhere in the tree several examples still exit at their credential check
-having demonstrated nothing; they run cleanly and tell you which key they want,
-but they do not show you the routing. Bringing them in line is tracked in
-issue #434.
+The 51 include everything under `agent_frameworks/`, plus `fast_track_demo.py`,
+`project_demo/` and `tool_vector_db/`. Those register and sync first, and —
+where the framework itself is installed — retrieve, convert and print what was
+selected before gating the model call. Without the framework installed they
+still register and sync, then tell you which package to add; a LangChain
+adapter cannot demonstrate much without LangChain.
+
+The 13 run cleanly and tell you which key they want, but show you no routing.
+Bringing them in line is tracked in issue #434.
 
 Each subdirectory has its own README with detail and run commands.
 

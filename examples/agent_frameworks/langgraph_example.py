@@ -106,8 +106,19 @@ async def main() -> None:
         agent = await adapter.areact_agent(ChatOpenAI(model="gpt-5.5"), limit=2)
 
         print("--- running the agent; tools are re-selected per turn ---")
-        result = await agent.ainvoke({"messages": [HumanMessage(content=TURNS[0])]})
-        print(f"\n{result['messages'][-1].content}")
+        # Both turns, carrying the history forward, because one turn cannot
+        # show re-selection. The middleware re-runs retrieval on each call, so
+        # turn 2's refund request pulls a different slice than turn 1's
+        # documentation question — which is the whole point of the dynamic
+        # tier, and is invisible if only the first turn is sent.
+        history: list = []
+        for turn in TURNS:
+            result = await agent.ainvoke(
+                {"messages": history + [HumanMessage(content=turn)]}
+            )
+            history = result["messages"]
+            print(f"\n> {turn}")
+            print(f"{result['messages'][-1].content}")
     finally:
         await gantry.close()
 
