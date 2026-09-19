@@ -1,10 +1,19 @@
 # Agent-Gantry Examples
 
 Hands-on examples. **Every one of them runs from a clean checkout with no API
-keys set** — the Gantry half (registration, sync, retrieval, conversion) needs
-no credentials, so you can see what the library does before spending anything.
-Where an example finishes by calling a real model, that last step is gated and
-tells you which key it wants.
+keys set** — nothing crashes and nothing hangs waiting for a credential.
+
+Two different promises there, so to be precise about which you get: everything
+under `agent_frameworks/`, plus `fast_track_demo.py`, `project_demo/` and
+`tool_vector_db/`, does its **Gantry work first** without a key — registration,
+sync, retrieval, conversion — prints what was selected, and only then gates the
+model call. That is where to look if you want to see the library work before
+spending anything.
+
+Elsewhere in the tree several examples still exit at their credential check
+having demonstrated nothing; they run cleanly and tell you which key they want,
+but they do not show you the routing. Bringing them in line is tracked in
+issue #434.
 
 Each subdirectory has its own README with detail and run commands.
 

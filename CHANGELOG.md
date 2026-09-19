@@ -129,6 +129,13 @@ Two things to know before upgrading:
   work first. They now retrieve and print the selected tools before the gate,
   and close the module-global gantry in a `finally`.
 
+- `fast_track_demo.py` — the file `examples/README.md` sends people to when
+  they are not using a framework — printed a code listing of semantic routing
+  without a key rather than performing any. It now registers, syncs and shows
+  the real selection for each of its three queries before gating the model
+  call, and its live path no longer passes a `score_threshold` its own printed
+  snippet correctly omitted.
+
 - `crewai_example.py` selected a tool slice for a second crew member and then
   never used it: the live run built a crew of one agent with the research task
   only, so `refund_order`, `send_email` and `SUPPORT_BRIEF` were dead weight
@@ -136,10 +143,17 @@ Two things to know before upgrading:
   keyless preview. Both agents now run, each holding only its own slice.
 
 - **All 67 examples run from a clean checkout with no API keys.** Twelve used to
-  fail outright and three looked like hangs. Each now does its Gantry work first
-  — registration, sync, retrieval, conversion — prints what was selected, and
-  only then asks for a key, so you can see what the library does before spending
-  anything.
+  fail outright and three looked like hangs; none now crashes or waits on a
+  credential.
+
+  Doing the *Gantry work* keyless is a stronger claim than running keyless, and
+  it holds for the examples this release rewrote — everything under
+  `agent_frameworks/`, plus `fast_track_demo.py`, `project_demo/` and
+  `tool_vector_db/`. Those register, sync, retrieve and convert, print what was
+  selected, and only then gate the model call. Elsewhere several examples still
+  exit at their credential check having shown nothing; that is tracked in #434,
+  and `examples/README.md` now says which is which instead of claiming the
+  stronger version for the whole tree.
 
 - `google_adk_example.py` crashed with `AttributeError` before reaching the
   agent: it read `event.content.parts[0].text` on every final response, but ADK
