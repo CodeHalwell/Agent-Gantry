@@ -16,10 +16,9 @@ This guide explains how to build and publish Agent-Gantry to PyPI using `uv`.
     ```bash
     uv run pytest
     ```
-4.  **Check Linting**: Ensure code passes linting and type checks.
+4.  **Check Linting**: Ensure code passes linting.
     ```bash
     uv run ruff check agent_gantry/
-    uv run mypy agent_gantry/
     ```
 
 ## Step 2: Build the Distribution

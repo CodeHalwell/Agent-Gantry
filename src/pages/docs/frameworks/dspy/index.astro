@@ -22,11 +22,10 @@ from agent_gantry.dspy import DSPyAdapter
 dspy.configure(lm=dspy.LM("openai/gpt-4o-mini"))
 gantry = AgentGantry()
 
+@gantry.register(tags=["support", "orders"])
 def get_order_status(order_id: str) -> str:
     """Return the current shipping status for an order."""
     return "in_transit"
-
-gantry.register_tool(get_order_status, tags=["support", "orders"])
 adapter = DSPyAdapter(gantry)
 framework_tools = await adapter.select("check an order", limit=3)  # Native dspy.Tool objects.
 

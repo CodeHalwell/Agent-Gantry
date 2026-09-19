@@ -52,8 +52,8 @@ from agent_gantry.schema.config import EmbedderConfig, VectorStoreConfig
 
 # Just change configuration - same code everywhere else
 config = AgentGantryConfig(
-    embedder=EmbedderConfig(provider="nomic", model="nomic-embed-text-v1.5"),
-    vector_store=VectorStoreConfig(provider="lancedb", uri="./gantry.lance"),
+    embedder=EmbedderConfig(type="nomic", model="nomic-embed-text-v1.5"),
+    vector_store=VectorStoreConfig(type="lancedb", db_path="./gantry.lance"),
 )
 
 gantry = AgentGantry(config=config)
@@ -70,12 +70,12 @@ from agent_gantry.schema.config import EmbedderConfig, VectorStoreConfig
 
 config = AgentGantryConfig(
     embedder=EmbedderConfig(
-        provider="openai",
+        type="openai",
         model="text-embedding-3-large",
-        dimensions=3072
+        dimension=3072
     ),
     vector_store=VectorStoreConfig(
-        provider="qdrant",
+        type="qdrant",
         url="http://localhost:6333",
         collection_name="agent_tools"
     ),
@@ -93,9 +93,9 @@ from agent_gantry.schema.config import RerankerConfig
 
 config = AgentGantryConfig(
     reranker=RerankerConfig(
-        provider="cohere",
+        type="cohere",
         model="rerank-english-v3.0",
-        top_n=3
+        top_k=3
     )
 )
 
@@ -110,18 +110,18 @@ All adapter configuration can be done via YAML for easy environment management:
 **gantry.yaml:**
 ```yaml
 embedder:
-  provider: openai
+  type: openai
   model: text-embedding-3-large
-  dimensions: 3072
+  dimension: 3072
 
 vector_store:
-  provider: lancedb
-  uri: ./gantry.lance
+  type: lancedb
+  db_path: ./gantry.lance
 
 reranker:
-  provider: cohere
+  type: cohere
   model: rerank-english-v3.0
-  top_n: 3
+  top_k: 3
 
 routing:
   weights:
@@ -158,7 +158,7 @@ from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
 
 # Create adapters explicitly
 embedder = NomicEmbedder(model="nomic-embed-text-v1.5")
-vector_store = LanceDBVectorStore(uri="./my_tools.lance")
+vector_store = LanceDBVectorStore(db_path="./my_tools.lance")
 
 # Pass to AgentGantry
 gantry = AgentGantry(

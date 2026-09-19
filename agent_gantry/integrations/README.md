@@ -81,7 +81,7 @@ async def chat_gemini(...):
     pass
 ```
 
-Supported dialects: `openai` (default), `anthropic`, `gemini`
+Supported dialects: `openai` (default), `openai_responses`, `anthropic`, `gemini`, `mistral`, `groq`, `agent_framework`, `auto`
 
 ## Configuration Options
 
@@ -91,7 +91,7 @@ The `@with_semantic_tools` decorator accepts several configuration options:
 |-----------|------|---------|-------------|
 | `gantry` | AgentGantry | (from default) | Gantry instance to use (optional if `set_default_gantry()` was called) |
 | `limit` | int | 5 | Maximum number of tools to retrieve |
-| `dialect` | str | "openai" | Tool schema format ("openai", "anthropic", "gemini") |
+| `dialect` | str | "openai" | Tool schema format ("openai", "openai_responses", "anthropic", "gemini", "mistral", "groq", "agent_framework", "auto") |
 | `score_threshold` | float | 0.5 | Minimum relevance score for tools (lower for SimpleEmbedder) |
 | `auto_sync` | bool | True | Automatically sync tools before retrieval |
 | `prompt_param` | str | "prompt" | Parameter name containing the user prompt |
@@ -334,7 +334,7 @@ For Sequential, Concurrent, Handoff, and Group Chat patterns see `examples/agent
 Create a decorator factory for consistent configuration across multiple functions:
 
 ```python
-from agent_gantry.integrations.decorator import SemanticToolsDecorator
+from agent_gantry.integrations.semantic_tools import SemanticToolsDecorator
 
 # Create factory with default configuration
 decorator = SemanticToolsDecorator(
@@ -361,7 +361,7 @@ async def chat_function_2(prompt: str, *, tools=None):
 For maximum control:
 
 ```python
-from agent_gantry.integrations.decorator import SemanticToolSelector
+from agent_gantry.integrations.semantic_tools import SemanticToolSelector
 
 selector = SemanticToolSelector(
     gantry,
