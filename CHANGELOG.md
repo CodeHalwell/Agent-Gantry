@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-09-19
+
+A maintenance release: the dependency floor moves a long way forward, the
+examples earn their keep, and Jev gets the defect that live testing found.
+
+`agent-framework` goes from 1.5.0 to **1.19.0** — fourteen minor versions the
+lock had been silently pinned behind, for a reason `pyproject.toml` had
+diagnosed months ago and left fixed-but-unapplied. `langchain`, `crewai` and
+`llama-index` also move to current. No library code changed to accommodate any
+of it.
+
+Every one of the 67 examples now runs from a clean checkout **with no API keys
+set**. Twelve used to fail and three looked like hangs.
+
+Two things to know before upgrading:
+
+- **Dependency floors are raised**, most sharply `agent-framework>=1.19.0` (was
+  `>=1.5.0`). If you are pinned below that, the `agent-frameworks` extra will no
+  longer resolve for you. `google-adk` is deliberately *not* raised — see the
+  note under Changed for the measurement behind that.
+- **Jev selection now falls back on a partial response** instead of ranking the
+  subset. If you were relying on a half-answered pass returning something, it
+  now returns nothing and retrieval takes the semantic path. That is the fix;
+  the old behaviour produced confident wrong answers.
+
 ### Changed
 
 - **`agent-framework` moves from 1.5.0 to 1.19.0** — fourteen minor versions,
@@ -30,6 +55,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the original `agent-gantry install-skill`. Both spellings reach the same
   code; a bare `install` now says what it wanted instead of "invalid choice".
 
+- **README.md** now highlights the full capability set: A2A serving and
+  discovery, the complete list of supported LLM provider dialects, batch and
+  streaming tool execution, reranker options, and the observability backends
+  (console, OpenTelemetry, Prometheus) with token-savings metrics.
+
 ### Fixed
 
 - **A partial Jev response no longer produces a confident, wrong selection.**
@@ -45,6 +75,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that distinction is the point: reranking returns the shortlist whole either
   way, so an unscored tool merely keeps its search rank, whereas in selection an
   unanswered candidate vanishes from the result entirely.
+
+- **Documentation accuracy sweep across the repo.** Corrected the public
+  registration API in all 11 framework integration guides on the docs site
+  (`gantry.register_tool(fn, ...)` → the `@gantry.register(...)` decorator),
+  which had shown a non-existent `AgentGantry` method. Fixed configuration
+  field names throughout the adapter and schema READMEs to match the current
+  Pydantic models (`type`/`db_path`/`dimension`/`top_k`, not
+  `provider`/`uri`/`dimensions`/`top_n`), corrected the embedding-adapter
+  interface description (`embed_text`/`embed_batch`/`dimension`), and removed
+  leftover patch artifacts from the embedders and executors READMEs. Updated
+  stale tooling guidance (removed `mypy`, which is neither configured nor a
+  dev dependency, from CONTRIBUTING/PUBLISHING), fixed the version and added
+  the `serve-mcp` subcommand in CLAUDE.md, corrected integration import paths
+  (`semantic_tools`, not `decorator`), the supported tool-spec dialect list,
+  and the framework-adapter count.
+
+### Fixed (examples)
+
+- **All 67 examples run from a clean checkout with no API keys.** Twelve used to
+  fail outright and three looked like hangs. Each now does its Gantry work first
+  — registration, sync, retrieval, conversion — prints what was selected, and
+  only then asks for a key, so you can see what the library does before spending
+  anything.
+
+- `google_adk_example.py` crashed with `AttributeError` before reaching the
+  agent: it read `event.content.parts[0].text` on every final response, but ADK
+  emits control events with `content=None`, and a content event can carry zero
+  parts or a part whose `text` is `None`. It now walks the parts and takes the
+  first with text.
+
+- `agent_framework_harness_example.py` imported `create_harness_agent`, which
+  exists only in `agent-framework >= 1.7.0` — and the extra resolved AF to its
+  1.5.0 floor, so the example could never run against the repo's own lockfile.
+  It now detects the missing symbol and says how to get it. (With this release's
+  AF upgrade it simply works.)
+
+- `project_demo` built its OpenAI client at module scope, which made the file
+  unimportable rather than merely unrunnable without a key. Constructed lazily
+  now.
+
+- The TUI demo blocked forever without a terminal, which reads as a hang under
+  CI or a pipe. It detects a non-TTY, prints what it registered, and exits;
+  `--check` does the same deliberately.
+
+- `strands_example.py` crashed with a raw botocore traceback on a machine
+  holding unrelated AWS credentials. Its guard accepted any of AWS/Anthropic/
+  OpenAI, but the agent it builds defaults to Amazon Bedrock — and no
+  environment check can prove a credential is valid, in the right region and
+  entitled to the model. The live run now catches the provider error and says
+  which half failed.
+
+- Sixteen of the eighteen framework examples registered tools with **no
+  `examples=[...]`**, while this project's own notes call that field the largest
+  lever on retrieval accuracy. Anyone copying an example inherited the worse
+  behaviour. They all carry examples now.
+
+- `score_threshold=0.1` appeared in six places, each commented "lowering
+  threshold for SimpleEmbedder compatibility". It lowers nothing: the adapter
+  default is `0.0`, so every one was *tightening* the filter while claiming to
+  relax it. `project_demo` used `0.6`, high enough to return nothing. All
+  removed.
+
+- Several examples registered a single tool, so "semantic selection" chose 1 of
+  1 and demonstrated nothing. They now carry real catalogues — LangGraph shows
+  two turns selecting different tools, CrewAI gives two crew members different
+  slices of one catalogue.
+
+- No example closed its gantry. All do now.
 
 ### Documentation
 
@@ -63,30 +161,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and tells a reader to check for missing `examples` *before* suggesting a
   different embedder.
 
+- `agent_gantry/integrations/README.md` documented `score_threshold`'s default
+  as `0.5`; it is `0.0`. The same file annotated `score_threshold=0.3` as
+  "lower threshold for more results", which is backwards twice over — `0.3` is
+  higher than the default, and raising an absolute cosine cutoff returns fewer
+  tools, not more. Both corrected, with a note on why the knob behaves as it
+  does.
 
-### Fixed
+- All twelve Astro framework pages now show `examples=[...]`; none did.
 
-- **Documentation accuracy sweep across the repo.** Corrected the public
-  registration API in all 11 framework integration guides on the docs site
-  (`gantry.register_tool(fn, ...)` → the `@gantry.register(...)` decorator),
-  which had shown a non-existent `AgentGantry` method. Fixed configuration
-  field names throughout the adapter and schema READMEs to match the current
-  Pydantic models (`type`/`db_path`/`dimension`/`top_k`, not
-  `provider`/`uri`/`dimensions`/`top_n`), corrected the embedding-adapter
-  interface description (`embed_text`/`embed_batch`/`dimension`), and removed
-  leftover patch artifacts from the embedders and executors READMEs. Updated
-  stale tooling guidance (removed `mypy`, which is neither configured nor a
-  dev dependency, from CONTRIBUTING/PUBLISHING), fixed the version and added
-  the `serve-mcp` subcommand in CLAUDE.md, corrected integration import paths
-  (`semantic_tools`, not `decorator`), the supported tool-spec dialect list,
-  and the framework-adapter count.
-
-### Changed
-
-- **README.md** now highlights the full capability set: A2A serving and
-  discovery, the complete list of supported LLM provider dialects, batch and
-  streaming tool execution, reranker options, and the observability backends
-  (console, OpenTelemetry, Prometheus) with token-savings metrics.
+- `examples/README.md` opens with a framework table rather than burying
+  frameworks mid-page, states up front that everything runs keyless, and
+  explains the genuinely confusing split between `agent_frameworks/` (per
+  framework) and `frameworks/` (framework-neutral plumbing).
 
 ## [0.16.0] - 2026-09-18
 
@@ -4173,7 +4260,8 @@ adapters, and the provider dialects agree with it.
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.13.1...v0.14.0
