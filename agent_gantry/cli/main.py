@@ -308,10 +308,32 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Endpoint path for http/sse (default: /mcp for http, /sse for sse).",
     )
 
-    skill_parser = subparsers.add_parser(
-        "install-skill",
-        help="Install the bundled Agent-Gantry Claude Skill into a target directory",
+    # Two spellings reach the same code: `install-skill` (original) and
+    # `install skill`, which is what people reach for by analogy with every
+    # other CLI that groups verbs. Keeping both costs one parser and avoids an
+    # "invalid choice: 'install'" for a perfectly reasonable guess.
+    install_parser = subparsers.add_parser(
+        "install",
+        help="Install a bundled asset (currently: skill)",
     )
+    install_what = install_parser.add_subparsers(dest="install_target")
+    skill_parsers = [
+        install_what.add_parser(
+            "skill",
+            help="Install the bundled Agent-Gantry Claude Skill into a target directory",
+        ),
+        subparsers.add_parser(
+            "install-skill",
+            help="Alias for `install skill`",
+        ),
+    ]
+    for skill_parser in skill_parsers:
+        _add_skill_arguments(skill_parser)
+    return parser
+
+
+def _add_skill_arguments(skill_parser: argparse.ArgumentParser) -> None:
+    """Attach the skill-install flags, shared by both spellings."""
     skill_dest = skill_parser.add_mutually_exclusive_group()
     skill_dest.add_argument(
         "--target",
@@ -335,7 +357,6 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Just print the path to the bundled skill (no copy).",
     )
-    return parser
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -353,6 +374,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "install-skill":
+        return _run_install_skill(args)
+
+    if args.command == "install":
+        if getattr(args, "install_target", None) != "skill":
+            print("error: nothing to install. Did you mean `install skill`?", file=sys.stderr)
+            return 2
         return _run_install_skill(args)
 
     # One event loop for the whole command: the gantry's backend is built and

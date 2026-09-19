@@ -41,7 +41,18 @@ This skill is the canonical reference for using the library. Read the section th
 
 ## Core concepts (read first)
 
-1. **Tools are functions decorated with `@gantry.register`.** Type hints + docstring become the schema and the embedding text. Tags and `examples=[...]` improve recall.
+1. **Tools are functions decorated with `@gantry.register`.** Type hints + docstring become the schema and the embedding text.
+
+   **`examples=[...]` is the single highest-value thing to add.** It is the text the router embeds and a selector reads. On our own benchmark it moved the default embedder from 1/5 to 5/5 correct — further than switching to a larger embedding model did. If a user reports poor retrieval, check for missing `examples` **before** suggesting a different embedder. Write the phrases a user would actually type, not a paraphrase of the description:
+
+   ```python
+   @gantry.register(
+       tags=["weather"],
+       examples=["what's the weather in London", "is it raining in Leeds"],
+   )
+   def get_weather(location: str) -> str:
+       """Get the current weather in a given location."""
+   ```
 
 2. **`await gantry.sync()` embeds every tool.** Fingerprint-based change detection means only modified tools re-embed on subsequent calls. With paid embedders, wrap the embedder in `CachedEmbedder` to persist across cold starts.
 
@@ -67,6 +78,7 @@ uv add "agent-gantry[nomic]"            # local embeddings (recommended)
 uv add "agent-gantry[openai]"           # OpenAI/Azure embeddings + custom OpenAI-compatible base_url
 uv add "agent-gantry[agent-frameworks]" # Microsoft AF, LangChain, LangGraph, CrewAI, LlamaIndex, Google ADK
 uv add "agent-gantry[lancedb]"          # disk-persistent vector store
+uv add "agent-gantry[jev]"              # selection without embeddings (TypeSafe Jev)
 uv add "agent-gantry[mcp]"              # MCP client/server
 uv add "agent-gantry[a2a]"              # A2A agent
 uv add "agent-gantry[all]"              # everything
@@ -299,6 +311,69 @@ agent = LlamaIndexAdapter(gantry).function_agent(llm)   # re-selects tools each 
 The returned live objects keep their classes (`GantryToolRetriever`, live `GantryToolset`, `GantryWorkbench`, `GantryFunctionProvider`, `GantryAgentSession`) — still importable from each framework's `*_live` module for `isinstance` checks.
 
 Frameworks whose tool list is **fixed at agent construction** (CrewAI, Agno, Haystack, DSPy) can't re-advertise tools mid-run. Build a self-rebuilding agent with `<Adapter>(gantry).agent_builder(...)` (Haystack: `HaystackAdapter(gantry).tool_invoker_builder(...)`; DSPy: `DSPyAdapter(gantry).agent_builder(signature, ...)`, since `dspy.ReAct` needs a task signature); it re-selects and rebuilds on each top-level call. For a one-shot fresh slice of native tools, call `<Adapter>(gantry).live_tools(query)` (async, not available on DSPy — use `.select(query)` instead).
+
+## Selection without embeddings (Jev)
+
+Added in 0.16.0. `JevSelector` replaces embed-then-search entirely: it puts the
+catalogue to TypeSafe's Jev decision model and asks, per entry, whether it is
+relevant. No embedder, no vector store, no `sync()`. `JevReranker` instead
+refines an ordinary semantic shortlist. Both are optional, both are off by
+default, and both live behind the `jev` extra.
+
+```bash
+uv add "agent-gantry[jev]"
+export TYPESAFE_API_KEY=...
+```
+
+```python
+from agent_gantry import AgentGantry, JevSelector
+
+gantry = AgentGantry(selector=JevSelector(threshold=0.4))
+# register tools as usual; no sync() needed on the selector path
+tools = await gantry.retrieve_tools("refund the customer's order", limit=3)
+```
+
+It covers all three catalogues, not just tools: `retrieve_tools`,
+`retrieve_skills` and `retrieve_mcp_servers` all consult the selector first.
+
+As a reranker instead, keeping semantic retrieval:
+
+```python
+from agent_gantry import AgentGantry, JevReranker
+
+gantry = AgentGantry(reranker=JevReranker())
+```
+
+**When each one fits.** A selector sends every candidate on every query, so
+cost grows with catalogue size rather than staying flat. That suits tens to a
+few hundred entries. Above that, keep semantic retrieval and put the reranker
+over its shortlist — only the shortlist is sent, so it works at any catalogue
+size. `SelectorConfig.group_after` handles the middle ground by narrowing to
+the best namespaces before scoring their members.
+
+**What it buys.** Measured against a properly configured embedder, recall is a
+tie. The difference is precision: 1–3 spurious tools against 16 on the same
+set. That is the context-window saving, not "finds better tools". A selector
+can also answer *none of these*, which top-k cannot — with `limit=3` a vector
+search always returns three tools whether or not any of them fit.
+
+**Both fail open.** A provider that is unavailable, rate-limited, slow, or that
+answers for only some of the candidates it was asked about, costs precision and
+never the catalogue: the selector reports a fallback and retrieval takes the
+semantic path; the reranker returns the vector-search order untouched. Neither
+raises into a caller's retrieval path. If you see selection quietly stop
+working, check the logs for `Jev selection failed, falling back:` — that is the
+library declining to guess, not a silent failure.
+
+Query constraints are applied *before* anything is sent — deprecation,
+namespaces, capabilities, sources and circuit-breaker health all go through the
+router's own filter (`SemanticRouter.filter_tools()`), so a selector can never
+surface a tool the semantic path would hide.
+
+**Debugging.** `SelectionResult` carries `scores` for every candidate, not just
+the winners, so you can see exactly what a threshold would keep and cut before
+committing to it — see `examples/routing/jev_threshold_tuning_demo.py`, which
+sweeps thresholds over a labelled query set.
 
 ## Multi-turn re-selection (ToolRefresher)
 
@@ -719,7 +794,15 @@ from agent_gantry import (
 )
 # Skills: gantry.add_skill / add_skills / add_skills_from_directory(path)
 #         gantry.retrieve_skills(query) / retrieve_skills_as_prompt(query)
+# Selection (0.16.0+, needs the `jev` extra):
+#   AgentGantry(selector=JevSelector(threshold=0.4))  -> no embedder/vector store/sync
+#   AgentGantry(reranker=JevReranker())               -> refine a semantic shortlist
+#   SelectionResult.scores                            -> every candidate, not just winners
 # MCP:    gantry.serve_mcp(transport="stdio"|"http"|"sse", mode=..., expose=[...])
+#         reset_sse_shutdown_latch()  -> release sse_starlette's process-global
+#           shutdown latch between servers in one process; without it a second
+#           EventSourceResponse is cancelled between headers and body (hangs).
+#           Needs the `mcp` extra; raises AttributeError without it.
 #         gantry.add_mcp_server(MCPServerConfig(command=[...] | url="https://...", headers=...))
 #         gantry.register_mcp_server(name, command=None, *, url=None, description=...)
 #         gantry.sync(prune=True) drops stored tools that are no longer registered

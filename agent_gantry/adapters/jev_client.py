@@ -97,6 +97,14 @@ def candidate_payload(candidate: SelectionCandidate, max_description_chars: int)
     return payload
 
 
+class JevIncompleteResponseError(RuntimeError):
+    """A pass came back without an answer for every candidate it asked about.
+
+    Treated as a failed pass rather than a partial one, so the caller falls
+    back to its own ordering instead of ranking from a subset.
+    """
+
+
 @dataclass
 class JevVerdict:
     """What one selection pass produced.
@@ -265,12 +273,22 @@ class JevClient:
         state: Any,
         candidates: Sequence[SelectionCandidate],
         question: str,
+        *,
+        require_all: bool = True,
     ) -> JevVerdict:
         """Score every candidate against *state* with one ``Noul`` each.
 
         Args:
             state: Shared state for the request — the user's query.
             candidates: Candidates to score.
+            require_all: When ``True`` (the default), a response that does not
+                answer for every candidate is treated as a failed pass and the
+                verdict falls back. Selection needs this: an unanswered
+                candidate is dropped from the result entirely, so ranking the
+                subset would silently hide tools from the agent. Reranking
+                passes ``False`` — it reorders a shortlist that is returned
+                whole either way, so an unscored tool simply keeps its search
+                rank and nothing is lost.
             question: The yes/no question asked of each candidate, e.g.
                 "Would this tool help answer the request?".
 
@@ -288,7 +306,9 @@ class JevClient:
 
         async def run(batch: Sequence[SelectionCandidate]) -> Any:
             async with semaphore:
-                return await self._score_batch(state, batch, question)
+                return await self._score_batch(
+                    state, batch, question, require_all=require_all
+                )
 
         results = await asyncio.gather(*(run(batch) for batch in batches), return_exceptions=True)
 
@@ -319,6 +339,8 @@ class JevClient:
         state: Any,
         batch: Sequence[SelectionCandidate],
         question: str,
+        *,
+        require_all: bool = True,
     ) -> tuple[dict[str, float], int, int]:
         """Send one request and read its noul answers back."""
         sdk = self._require_sdk()
@@ -341,15 +363,27 @@ class JevClient:
         response = await client.system_one(state=state, questions=questions)
 
         scores: dict[str, float] = {}
+        unanswered: list[str] = []
         for key, candidate in keys.items():
             answer = response.answers.get(key)
             value = getattr(answer, "noul", None) if answer is not None else None
             if value is None:
-                # A missing or non-noul answer is not a failure of the pass;
-                # treat it as "no signal" so the candidate keeps its incoming
-                # order rather than being ranked last on a technicality.
+                unanswered.append(candidate.name)
                 continue
             scores[candidate.id] = float(value)
+
+        if unanswered and require_all:
+            # Same reasoning the gather() branch below applies to a raised
+            # batch: a candidate that was never scored is indistinguishable
+            # from one scored zero, so answering from the subset silently
+            # buries whatever the model did not reply about. Previously this
+            # was skipped as "no signal", which let a half-answered response
+            # produce a confident, wrong selection. Raising routes it through
+            # the existing fail-open path instead.
+            raise JevIncompleteResponseError(
+                f"{len(unanswered)} of {len(keys)} candidates unanswered "
+                f"({', '.join(unanswered[:3])}{'...' if len(unanswered) > 3 else ''})"
+            )
 
         usage = getattr(response, "usage", None)
         return (

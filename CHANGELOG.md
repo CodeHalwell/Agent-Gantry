@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`agent-framework` moves from 1.5.0 to 1.19.0** — fourteen minor versions,
+  no library changes needed. The lock had been held at the *floor* by a
+  pre-release marker on `azure-ai-agents` that the resolver refused as neither
+  "necessary" nor "explicit"; naming it in `[tool.uv].override-dependencies`
+  makes it explicit and the resolver stops backtracking. The fix is the one
+  pyproject's own comment proposed and deferred. `langchain` 1.3.14 → 1.4.2,
+  `crewai` 1.15.0 → 1.15.22 and `llama-index` also move to current, and the
+  floors are raised so the lock's versions are actually guaranteed — uv will
+  not climb past a satisfied floor on its own.
+
+  `google-adk` is deliberately *not* raised. Versions from 2.8.0 cap
+  `opentelemetry-api` at 1.42.1 while the rest of the extra resolves 1.43.0, so
+  letting adk climb backtracks agent-framework to 1.11.0. Measured rather than
+  assumed: floors of 2.8.0, `<2.9` and 2.9.2 were each locked and all three
+  produced AF 1.11.0. Eight minor versions of AF is a worse trade than two of
+  adk.
+
+- The bundled Claude Skill installs as `agent-gantry install skill` as well as
+  the original `agent-gantry install-skill`. Both spellings reach the same
+  code; a bare `install` now says what it wanted instead of "invalid choice".
+
+### Fixed
+
+- **A partial Jev response no longer produces a confident, wrong selection.**
+  `score()` already discarded a whole pass when a batch *raised*, on the
+  grounds that a candidate which was never scored is indistinguishable from one
+  scored zero. A response that simply omitted answers took a different path: the
+  unanswered candidates were skipped as "no signal", could not clear the
+  threshold, and were dropped — so a half-answered pass returned the wrong tool
+  rather than deferring. Selection now treats that as a failed pass and falls
+  back to semantic routing.
+
+  Reranking keeps the old behaviour via `score(..., require_all=False)`, and
+  that distinction is the point: reranking returns the shortlist whole either
+  way, so an unscored tool merely keeps its search rank, whereas in selection an
+  unanswered candidate vanishes from the result entirely.
+
+### Documentation
+
+- The bundled skill covers 0.16.0: it had no mention of `JevSelector`,
+  `JevReranker`, the `jev` extra or `reset_sse_shutdown_latch`. It also
+  understated `examples=[...]` as something that merely "improves recall" — it
+  is the single largest lever on retrieval accuracy, so the skill now says so
+  and tells a reader to check for missing `examples` *before* suggesting a
+  different embedder.
+
+
 ### Fixed
 
 - **Documentation accuracy sweep across the repo.** Corrected the public

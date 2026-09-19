@@ -105,7 +105,13 @@ class JevReranker(RerankerAdapter):
             seen.add(candidate.id)
             candidates.append(candidate)
 
-        verdict = await self._client.score(query, candidates, self._question)
+        # require_all=False: reranking returns the whole shortlist either way,
+        # so an unscored tool keeps its search rank below the scored ones
+        # rather than costing the pass. Selection cannot do that — there an
+        # unanswered candidate would simply vanish.
+        verdict = await self._client.score(
+            query, candidates, self._question, require_all=False
+        )
         if verdict.fallback:
             logger.debug(f"Jev rerank fell back ({verdict.reason}); keeping search order")
             return tools[:top_k]
