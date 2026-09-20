@@ -341,7 +341,7 @@ def _require_af_installed(caller: str) -> None:
     except ImportError as exc:
         raise ImportError(
             f"{caller}() requires the 'agent-framework' package. "
-            "Install with: pip install 'agent-gantry[agent-frameworks]'"
+            "Install with: pip install 'agent-gantry[agent-frameworks]' (or uv add ''agent-gantry[agent-frameworks]'')"
         ) from exc
 
 
@@ -507,7 +507,7 @@ def _maybe_wrap_as_function_tool(
         if as_function_tool is True:
             raise ImportError(
                 "as_function_tool=True requires the 'agent-framework' package. "
-                "Install with: pip install 'agent-gantry[agent-frameworks]'"
+                "Install with: pip install 'agent-gantry[agent-frameworks]' (or uv add ''agent-gantry[agent-frameworks]'')"
             )
         return wrapper
 

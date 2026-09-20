@@ -37,7 +37,7 @@ def _spec_to_pydantic_ai(spec: ToolSpec) -> Any:
         from pydantic_ai.tools import Tool
     except ImportError as exc:  # pragma: no cover - exercised via stub
         raise ImportError(
-            "Pydantic AI support requires `pydantic-ai`. Install it with `pip install pydantic-ai`."
+            "Pydantic AI support requires `pydantic-ai`. Install it with `pip install pydantic-ai` (or `uv add pydantic-ai`)."
         ) from exc
 
     function = spec.callable_for_signature()

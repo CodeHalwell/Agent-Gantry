@@ -82,7 +82,7 @@ from agent_gantry.integrations.frameworks.base import (
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
 
-_INSTALL_HINT = "DSPy support requires `dspy`. Install it with `pip install dspy`."
+_INSTALL_HINT = "DSPy support requires `dspy`. Install it with `pip install dspy` (or `uv add dspy`)."
 
 
 def _spec_to_dspy(spec: ToolSpec) -> Any:

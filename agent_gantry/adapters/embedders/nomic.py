@@ -168,7 +168,7 @@ class NomicEmbedder(EmbeddingAdapter):
         except ImportError as e:
             raise ImportError(
                 "sentence-transformers is required for Nomic embeddings. "
-                "Install with: pip install sentence-transformers"
+                "Install with: pip install sentence-transformers (or uv add sentence-transformers)"
             ) from e
 
         self._model = SentenceTransformer(

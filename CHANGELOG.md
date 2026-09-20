@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Every "install it with `pip install …`" hint in the package now also gives the
+  `uv add …` form, matching the one place (`serve_mcp`) that already did and the skill's
+  Installing section, which tells agents to prefer uv. 62 hints across 36 files; the
+  wording is otherwise unchanged.
+
 ### Fixed
 
 - The bundled skill's "Deep per-turn live providers" section named `GantryWorkbench` and

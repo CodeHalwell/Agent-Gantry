@@ -1021,7 +1021,7 @@ class MCPServer:
         except ImportError as exc:  # pragma: no cover - uvicorn ships with mcp
             raise ImportError(
                 "uvicorn is required for the HTTP MCP transports. Install it with "
-                "'pip install agent-gantry[mcp]'."
+                "'pip install agent-gantry[mcp]' (or 'uv add \"agent-gantry[mcp]\"')."
             ) from exc
 
         config = uvicorn.Config(app, host=host, port=port, log_level=log_level, lifespan="on")

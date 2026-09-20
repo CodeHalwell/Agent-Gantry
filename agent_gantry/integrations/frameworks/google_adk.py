@@ -48,7 +48,7 @@ def _spec_to_google_adk(spec: ToolSpec) -> Any:
         from google.adk.tools import FunctionTool
     except ImportError as exc:  # pragma: no cover - exercised via stub
         raise ImportError(
-            "Google ADK support requires `google-adk`. Install it with `pip install google-adk`."
+            "Google ADK support requires `google-adk`. Install it with `pip install google-adk` (or `uv add google-adk`)."
         ) from exc
 
     # ADK's automatic function calling rejects `T | None` and `None`-typed

@@ -138,7 +138,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
             import pyarrow as pa  # type: ignore[import-untyped]
         except ImportError as e:
             raise ImportError(
-                "lancedb and pyarrow are required. Install with: pip install lancedb pyarrow"
+                "lancedb and pyarrow are required. Install with: pip install lancedb pyarrow (or uv add lancedb pyarrow)"
             ) from e
 
         # Create database directory

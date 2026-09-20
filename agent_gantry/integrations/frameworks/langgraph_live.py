@@ -63,7 +63,7 @@ Usage
 
 The ``langchain`` / ``langgraph`` / ``langchain-core`` imports are lazy so
 ``import agent_gantry`` never requires them; the helpful
-``pip install langchain langgraph langchain-core`` hint is raised only when the
+``pip install langchain langgraph langchain-core` (or `uv add langchain langgraph langchain-core`)` hint is raised only when the
 live agent is actually built.
 """
 
@@ -111,7 +111,7 @@ def _import_create_agent() -> tuple[Any, Any]:
         raise ImportError(
             "LangGraph live support requires `langchain` (>=1.0, for "
             "`langchain.agents.create_agent`) and `langgraph`. Install them with "
-            "`pip install langchain langgraph langchain-core`."
+            "`pip install langchain langgraph langchain-core` (or `uv add langchain langgraph langchain-core`)."
         ) from exc
     return create_agent, AgentMiddleware
 

@@ -84,7 +84,7 @@ def create_a2a_server(gantry: AgentGantry, base_url: str = "http://localhost:808
         from fastapi import FastAPI, HTTPException
     except ImportError as e:
         raise ImportError(
-            "FastAPI is required for A2A server. Install with: pip install fastapi uvicorn"
+            "FastAPI is required for A2A server. Install with: pip install fastapi uvicorn (or uv add fastapi uvicorn)"
         ) from e
 
     app = FastAPI(

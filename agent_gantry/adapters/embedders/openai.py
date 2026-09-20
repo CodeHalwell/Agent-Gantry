@@ -43,7 +43,7 @@ class BaseOpenAIEmbedder:
         except ImportError as exc:
             raise ImportError(
                 "OpenAI package is not installed. Install it with:\n"
-                "  pip install agent-gantry[openai]"
+                "  pip install agent-gantry[openai]  (or: uv add 'agent-gantry[openai]')"
             ) from exc
 
         api_key = config.api_key or os.getenv("OPENAI_API_KEY")
@@ -214,7 +214,7 @@ class OpenAIEmbedder(BaseOpenAIEmbedder):
         except ImportError as exc:
             raise ImportError(
                 "OpenAI package is not installed. Install it with:\n"
-                "  pip install agent-gantry[openai]"
+                "  pip install agent-gantry[openai]  (or: uv add 'agent-gantry[openai]')"
             ) from exc
 
         api_key = config.api_key or os.getenv("OPENAI_API_KEY")
@@ -293,7 +293,7 @@ class AzureOpenAIEmbedder(BaseOpenAIEmbedder):
         except ImportError as exc:
             raise ImportError(
                 "OpenAI package is not installed. Install it with:\n"
-                "  pip install agent-gantry[openai]"
+                "  pip install agent-gantry[openai]  (or: uv add 'agent-gantry[openai]')"
             ) from exc
 
         api_key = config.api_key or os.getenv("AZURE_OPENAI_API_KEY")

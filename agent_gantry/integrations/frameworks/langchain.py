@@ -35,7 +35,7 @@ def _spec_to_langchain(spec: ToolSpec) -> Any:
     except ImportError as exc:  # pragma: no cover - exercised via stub
         raise ImportError(
             "LangChain support requires `langchain-core`. "
-            "Install it with `pip install langchain-core`."
+            "Install it with `pip install langchain-core` (or `uv add langchain-core`)."
         ) from exc
 
     def _sync(**kwargs: Any) -> Any:

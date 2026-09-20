@@ -111,7 +111,7 @@ class CrossEncoderReranker:
         except ImportError as exc:
             raise ImportError(
                 "sentence-transformers is required for CrossEncoderReranker. "
-                "Install it with: pip install sentence-transformers"
+                "Install it with: pip install sentence-transformers (or uv add sentence-transformers)"
             ) from exc
 
         kwargs: dict[str, Any] = {}

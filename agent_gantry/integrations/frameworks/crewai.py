@@ -35,7 +35,7 @@ def _spec_to_crewai(spec: ToolSpec) -> Any:
         from crewai.tools import BaseTool
     except ImportError as exc:  # pragma: no cover - exercised via stub
         raise ImportError(
-            "CrewAI support requires `crewai`. Install it with `pip install crewai`."
+            "CrewAI support requires `crewai`. Install it with `pip install crewai` (or `uv add crewai`)."
         ) from exc
 
     # CrewAI's BaseTool is a Pydantic v2 model: ``name`` / ``description`` are

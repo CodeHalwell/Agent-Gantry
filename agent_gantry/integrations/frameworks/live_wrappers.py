@@ -112,7 +112,7 @@ class GantryLiveCrewAgent:
             from crewai import Agent
         except ImportError as exc:  # pragma: no cover - exercised via importorskip
             raise ImportError(
-                "CrewAI support requires `crewai`. Install it with `pip install crewai`."
+                "CrewAI support requires `crewai`. Install it with `pip install crewai` (or `uv add crewai`)."
             ) from exc
 
         tools = await self.select_tools(query)
@@ -192,7 +192,7 @@ class GantryLiveAgnoAgent:
             from agno.agent import Agent
         except ImportError as exc:  # pragma: no cover - exercised via importorskip
             raise ImportError(
-                "Agno support requires `agno`. Install it with `pip install agno`."
+                "Agno support requires `agno`. Install it with `pip install agno` (or `uv add agno`)."
             ) from exc
 
         tools = await self.select_tools(query)
@@ -286,7 +286,7 @@ class GantryLiveHaystackToolInvoker:
             except ImportError:  # pragma: no cover - exercised via importorskip
                 raise ImportError(
                     "Haystack support requires `haystack-ai`. "
-                    "Install it with `pip install haystack-ai`."
+                    "Install it with `pip install haystack-ai` (or `uv add haystack-ai`)."
                 ) from exc
             return await self._build_haystack3_agent(query, exc)
 
