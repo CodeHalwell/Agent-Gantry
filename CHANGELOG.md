@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-09-20
+
+A documentation and error-message release: the bundled skill named live classes
+that no longer exist, and every install hint now gives the `uv add` form too.
+
 ### Changed
 
 - Every "install it with `pip install …`" hint in the package now also gives the
@@ -4489,7 +4494,8 @@ adapters, and the provider dialects agree with it.
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.18.1...HEAD
+[0.18.1]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.15.0...v0.16.0
