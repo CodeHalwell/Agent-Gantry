@@ -115,7 +115,7 @@ def __getattr__(name: str) -> "Any":
                 raise
             raise AttributeError(
                 f"module {__name__!r} has no attribute {name!r}: it needs the "
-                "MCP server extra (pip install 'agent-gantry[mcp]')"
+                "MCP server extra (pip install 'agent-gantry[mcp]' (or uv add 'agent-gantry[mcp]'))"
             ) from exc
 
         return reset_sse_shutdown_latch

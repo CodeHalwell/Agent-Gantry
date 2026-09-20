@@ -108,7 +108,7 @@ class QdrantVectorStore:
         except ImportError as exc:
             raise ImportError(
                 "qdrant-client is not installed. Install it with:\n"
-                "  pip install agent-gantry[qdrant]"
+                "  pip install agent-gantry[qdrant] (or uv add 'agent-gantry[qdrant]')"
             ) from exc
 
         self._url = url
@@ -596,7 +596,7 @@ class ChromaVectorStore:
             import chromadb
         except ImportError as exc:
             raise ImportError(
-                "chromadb is not installed. Install it with:\n  pip install agent-gantry[chroma]"
+                "chromadb is not installed. Install it with:\n  pip install agent-gantry[chroma] (or uv add 'agent-gantry[chroma]')"
             ) from exc
 
         self._collection_name = collection_name
@@ -981,7 +981,7 @@ class PGVectorStore:
             import asyncpg  # noqa: F401
         except ImportError as exc:
             raise ImportError(
-                "asyncpg is not installed. Install it with:\n  pip install agent-gantry[pgvector]"
+                "asyncpg is not installed. Install it with:\n  pip install agent-gantry[pgvector] (or uv add 'agent-gantry[pgvector]')"
             ) from exc
 
         if not url:

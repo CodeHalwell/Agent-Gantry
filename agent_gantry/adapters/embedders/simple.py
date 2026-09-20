@@ -31,9 +31,9 @@ class SimpleEmbedder(EmbeddingAdapter):
     For meaningful retrieval, use one of the real embedders:
 
     - :class:`agent_gantry.adapters.embedders.NomicEmbedder` (local,
-      ``pip install agent-gantry[nomic]``)
+      ``pip install agent-gantry[nomic]`` (or ``uv add 'agent-gantry[nomic]'``))
     - :class:`agent_gantry.adapters.embedders.SentenceTransformersEmbedder`
-      (local, ``pip install agent-gantry[sentence-transformers]``)
+      (local, ``pip install agent-gantry[sentence-transformers]`` (or ``uv add 'agent-gantry[sentence-transformers]'``))
     - :class:`agent_gantry.adapters.embedders.OpenAIEmbedder` (remote)
     """
 

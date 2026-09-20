@@ -517,7 +517,7 @@ async def _run_serve_mcp(gantry: AgentGantry, args: argparse.Namespace) -> int:
     except ImportError:
         print(
             "error: MCP support is not installed. Install it with "
-            "'pip install agent-gantry[mcp]'.",
+            "'pip install agent-gantry[mcp]' (or 'uv add \"agent-gantry[mcp]\"').",
             file=sys.stderr,
         )
         return 2

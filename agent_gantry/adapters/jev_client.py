@@ -198,7 +198,7 @@ class JevClient:
         except ImportError as exc:  # pragma: no cover - exercised via tests with a stub
             raise ImportError(
                 "The typesafe-sdk package is not installed. Install it with:\n"
-                "  pip install agent-gantry[jev]"
+                "  pip install agent-gantry[jev] (or uv add 'agent-gantry[jev]')"
             ) from exc
         return typesafe_sdk
 

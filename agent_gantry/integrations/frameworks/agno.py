@@ -36,7 +36,7 @@ def _spec_to_agno(spec: ToolSpec) -> Any:
         from agno.tools.function import Function
     except ImportError as exc:  # pragma: no cover - exercised via stub
         raise ImportError(
-            "Agno support requires `agno`. Install it with `pip install agno`."
+            "Agno support requires `agno`. Install it with `pip install agno` (or `uv add agno`)."
         ) from exc
 
     async_fn = spec.callable_for_signature()

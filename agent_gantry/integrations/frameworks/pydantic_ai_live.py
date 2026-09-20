@@ -66,7 +66,7 @@ def _require_pydantic_ai() -> tuple[Any, Any, Any, Any]:
     except ImportError as exc:  # pragma: no cover - exercised via importorskip
         raise ImportError(
             "Pydantic AI live (per-turn) support requires `pydantic-ai`. "
-            "Install it with `pip install pydantic-ai`."
+            "Install it with `pip install pydantic-ai` (or `uv add pydantic-ai`)."
         ) from exc
     return AbstractToolset, ToolsetTool, ToolDefinition, (SchemaValidator, core_schema)
 

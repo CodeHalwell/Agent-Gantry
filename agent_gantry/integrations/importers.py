@@ -264,7 +264,7 @@ async def register_langchain_tools(
     except ImportError as exc:  # pragma: no cover - exercised via stub in tests
         raise ImportError(
             "register_langchain_tools() requires `langchain-core`. "
-            "Install it with `pip install langchain-core`."
+            "Install it with `pip install langchain-core` (or `uv add langchain-core`)."
         ) from exc
 
     registered = 0
@@ -421,7 +421,7 @@ async def register_crewai_tools(
         from crewai.tools import BaseTool
     except ImportError as exc:  # pragma: no cover - exercised via stub in tests
         raise ImportError(
-            "register_crewai_tools() requires `crewai`. Install it with `pip install crewai`."
+            "register_crewai_tools() requires `crewai`. Install it with `pip install crewai` (or `uv add crewai`)."
         ) from exc
 
     registered = 0
@@ -569,7 +569,7 @@ async def register_llamaindex_tools(
     except ImportError as exc:  # pragma: no cover - exercised via stub in tests
         raise ImportError(
             "register_llamaindex_tools() requires `llama-index-core`. "
-            "Install it with `pip install llama-index-core`."
+            "Install it with `pip install llama-index-core` (or `uv add llama-index-core`)."
         ) from exc
 
     registered = 0

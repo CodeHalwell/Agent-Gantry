@@ -85,7 +85,7 @@ def _spec_to_openai_agents(spec: ToolSpec) -> Any:
     except ImportError as exc:  # pragma: no cover - exercised via fake module
         raise ImportError(
             "The OpenAI Agents SDK is required for OpenAIAgentsAdapter; "
-            "install it with `pip install openai-agents`."
+            "install it with `pip install openai-agents` (or `uv add openai-agents`)."
         ) from exc
 
     async def _on_invoke_tool(ctx: Any, args: Any) -> str:

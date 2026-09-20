@@ -37,7 +37,7 @@ def _spec_to_llamaindex(spec: ToolSpec) -> Any:
     except ImportError as exc:  # pragma: no cover - exercised via fake module
         raise ImportError(
             "LlamaIndex is required for LlamaIndexAdapter; "
-            "install it with `pip install llama-index-core`."
+            "install it with `pip install llama-index-core` (or `uv add llama-index-core`)."
         ) from exc
 
     async_fn = spec.callable_for_signature()

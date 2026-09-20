@@ -36,7 +36,7 @@ def _spec_to_haystack(spec: ToolSpec) -> Any:
         from haystack.tools import Tool
     except ImportError as exc:  # pragma: no cover - exercised via stub
         raise ImportError(
-            "Haystack support requires `haystack-ai`. Install it with `pip install haystack-ai`."
+            "Haystack support requires `haystack-ai`. Install it with `pip install haystack-ai` (or `uv add haystack-ai`)."
         ) from exc
 
     def _function(**kwargs: Any) -> Any:

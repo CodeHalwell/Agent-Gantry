@@ -55,7 +55,7 @@ def _import_object_retriever() -> type:
     except ImportError as exc:  # pragma: no cover - exercised when absent
         raise ImportError(
             "LlamaIndex is required for the live per-turn tool provider; "
-            "install it with `pip install llama-index-core`."
+            "install it with `pip install llama-index-core` (or `uv add llama-index-core`)."
         ) from exc
     return ObjectRetriever
 
@@ -244,7 +244,7 @@ def _gantry_function_agent(
     except ImportError as exc:  # pragma: no cover - exercised when absent
         raise ImportError(
             "LlamaIndex is required for LlamaIndexAdapter.function_agent; "
-            "install it with `pip install llama-index-core`."
+            "install it with `pip install llama-index-core` (or `uv add llama-index-core`)."
         ) from exc
 
     return FunctionAgent(

@@ -72,7 +72,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _INSTALL_HINT = (
-    "Google ADK support requires `google-adk`. Install it with `pip install google-adk`."
+    "Google ADK support requires `google-adk`. Install it with `pip install google-adk` (or `uv add google-adk`)."
 )
 
 
