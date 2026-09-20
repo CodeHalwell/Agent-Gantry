@@ -63,7 +63,7 @@ Usage
 
 The ``langchain`` / ``langgraph`` / ``langchain-core`` imports are lazy so
 ``import agent_gantry`` never requires them; the helpful
-``pip install langchain langgraph langchain-core` (or `uv add langchain langgraph langchain-core`)` hint is raised only when the
+``pip install langchain langgraph langchain-core`` (or ``uv add langchain langgraph langchain-core``) hint is raised only when the
 live agent is actually built.
 """
 

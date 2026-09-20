@@ -131,7 +131,7 @@ def _import_context_provider() -> type:
     except ImportError as exc:  # pragma: no cover - depends on install
         raise ImportError(
             "GantryContextProvider requires the 'agent-framework' package. "
-            "Install with: pip install 'agent-gantry[agent-frameworks]' (or uv add ''agent-gantry[agent-frameworks]'')"
+            "Install with: pip install 'agent-gantry[agent-frameworks]' (or uv add 'agent-gantry[agent-frameworks]')"
         ) from exc
     return ContextProvider
 
@@ -144,7 +144,7 @@ def _import_chat_middleware() -> Any:
         raise ImportError(
             "GantryContextProvider.as_chat_middleware() requires the "
             "'agent-framework' package. Install with: "
-            "pip install 'agent-gantry[agent-frameworks]'"
+            "pip install 'agent-gantry[agent-frameworks]' (or uv add 'agent-gantry[agent-frameworks]')"
         ) from exc
     return chat_middleware
 
@@ -156,7 +156,7 @@ def _import_function_middleware() -> Any:
     except ImportError as exc:  # pragma: no cover - depends on install
         raise ImportError(
             "GantryContextProvider.trace() requires the 'agent-framework' "
-            "package. Install with: pip install 'agent-gantry[agent-frameworks]' (or uv add ''agent-gantry[agent-frameworks]'')"
+            "package. Install with: pip install 'agent-gantry[agent-frameworks]' (or uv add 'agent-gantry[agent-frameworks]')"
         ) from exc
     return function_middleware
 

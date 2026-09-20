@@ -60,7 +60,7 @@ def _import_af_chat_middleware() -> Any:
     except ImportError as exc:  # pragma: no cover - depends on install
         raise ImportError(
             "Agent-Framework chat middleware requires the 'agent-framework' "
-            "package. Install with: pip install 'agent-gantry[agent-frameworks]' (or uv add ''agent-gantry[agent-frameworks]'')"
+            "package. Install with: pip install 'agent-gantry[agent-frameworks]' (or uv add 'agent-gantry[agent-frameworks]')"
         ) from exc
     return chat_middleware
 
@@ -88,7 +88,7 @@ def _import_af_middleware_bits() -> tuple[Any, Any]:
     except Exception as exc:  # pragma: no cover - depends on install
         raise ImportError(
             "Agent-Framework middleware requires the 'agent-framework' package. "
-            "Install with: pip install 'agent-gantry[agent-frameworks]' (or uv add ''agent-gantry[agent-frameworks]'')"
+            "Install with: pip install 'agent-gantry[agent-frameworks]' (or uv add 'agent-gantry[agent-frameworks]')"
         ) from exc
     return _MiddlewareBase, MiddlewareTermination
 

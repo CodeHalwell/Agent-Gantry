@@ -24,7 +24,7 @@ native-tool conversion is delegated to the existing ``_for_crewai`` / ``_for_agn
 / ``_for_haystack`` adapters; nothing here re-implements either. Each framework
 import is lazy (performed inside the helper/class), so ``import agent_gantry``
 never requires any of these frameworks to be installed; a missing one raises
-``ImportError`` with the right ``pip install`` hint.
+``ImportError`` naming the package to install.
 """
 
 from __future__ import annotations

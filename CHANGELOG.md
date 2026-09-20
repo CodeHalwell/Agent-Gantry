@@ -11,17 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Every "install it with `pip install …`" hint in the package now also gives the
   `uv add …` form, matching the one place (`serve_mcp`) that already did and the skill's
-  Installing section, which tells agents to prefer uv. 62 hints across 36 files; the
+  Installing section, which tells agents to prefer uv. 58 hints across 35 files; the
   wording is otherwise unchanged.
 
 ### Fixed
 
 - The bundled skill's "Deep per-turn live providers" section named `GantryWorkbench` and
   `GantryFunctionProvider` as importable live classes. Those were AutoGen's and Semantic
-  Kernel's, removed in 0.17.0 with the adapters, and appeared nowhere else in the package;
-  an agent following the skill wrote an import that could not resolve. The sentence also
-  omitted `GantryStrandsToolHook`, added in the same release. It now lists the four live
-  classes with their modules and says which frameworks return plain objects instead.
+  Kernel's, removed with those adapters in 0.13.0, and appeared nowhere else in the
+  package; an agent following the skill wrote an import that could not resolve. The
+  sentence also omitted `GantryStrandsToolHook`, which has shipped with the Strands adapter
+  since 0.10.0. It now lists the four live classes with their modules and says which
+  frameworks return plain objects instead.
 
 ## [0.18.0] - 2026-09-20
 

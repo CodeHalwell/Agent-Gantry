@@ -47,7 +47,7 @@ class CohereReranker(RerankerAdapter):
         except ImportError as exc:
             raise ImportError(
                 "Cohere package is not installed. Install it with:\n"
-                "  pip install agent-gantry[cohere]  (or: uv add 'agent-gantry[cohere]')"
+                "  pip install agent-gantry[cohere] (or uv add 'agent-gantry[cohere]')"
             ) from exc
 
         api_key = api_key or os.getenv("COHERE_API_KEY")

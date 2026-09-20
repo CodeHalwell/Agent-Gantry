@@ -44,7 +44,7 @@ retries, timeouts, circuit breakers, and the security policy still apply.
 
 The ``agents`` import is lazy (only inside the builders / hook), so ``import
 agent_gantry`` never requires the OpenAI Agents SDK to be installed; the helpful
-``pip install openai-agents` (or `uv add openai-agents`)` hint is raised only when the live provider is used.
+``pip install openai-agents`` (or ``uv add openai-agents``) hint is raised only when the live provider is used.
 
 Usage
 -----

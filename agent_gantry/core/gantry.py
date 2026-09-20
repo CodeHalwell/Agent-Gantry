@@ -395,7 +395,7 @@ class AgentGantry:
                 raise ImportError(
                     "Nomic embedder is not available. To enable it, install the optional "
                     "dependencies:\n"
-                    "  pip install agent-gantry[nomic]  (or: uv add 'agent-gantry[nomic]')"
+                    "  pip install agent-gantry[nomic] (or uv add 'agent-gantry[nomic]')"
                 ) from exc
 
             try:
@@ -403,7 +403,7 @@ class AgentGantry:
             except ImportError as exc:
                 raise ImportError(
                     "sentence-transformers is required for the Nomic embedder. Install it with:\n"
-                    "  pip install agent-gantry[nomic]  (or: uv add 'agent-gantry[nomic]')"
+                    "  pip install agent-gantry[nomic] (or uv add 'agent-gantry[nomic]')"
                 ) from exc
 
             embedder_instance = NomicEmbedder(dimension=dimension)
@@ -1896,7 +1896,7 @@ class AgentGantry:
                 inferred from ``command``/``url`` when omitted
 
         Raises:
-            RuntimeError: If MCP support is unavailable (``pip install agent-gantry[mcp]` (or `uv add "agent-gantry[mcp]"`)`)
+            RuntimeError: If MCP support is unavailable (``pip install agent-gantry[mcp]`` (or ``uv add 'agent-gantry[mcp]'``))
 
         Example:
             >>> gantry.register_mcp_server(
@@ -2221,7 +2221,7 @@ class AgentGantry:
         Note:
             This method requires FastAPI and uvicorn to be installed.
             Install with: pip install fastapi uvicorn (or uv add fastapi uvicorn)
-         (or uv add fastapi uvicorn)"""
+        """
         try:
             import uvicorn
         except ImportError as e:
@@ -2835,6 +2835,6 @@ def create_default_gantry(dimension: int = 256) -> AgentGantry:
 
     Note:
         For better semantic search quality, install the Nomic dependencies:
-        `pip install agent-gantry[nomic]` (or `uv add "agent-gantry[nomic]"`)
+        `pip install agent-gantry[nomic]` (or `uv add 'agent-gantry[nomic]'`)
     """
     return AgentGantry.quick_start(embedder="auto", dimension=dimension)
