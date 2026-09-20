@@ -15,31 +15,33 @@ async def main():
         )
     )
     gantry = AgentGantry(config=config)
+    try:
+        # 2. Register a flaky tool
+        @gantry.register(examples=["call the flaky API", "hit the upstream service"])
+        def flaky_api() -> str:
+            """Always fails."""
+            raise ConnectionError("API is down!")
 
-    # 2. Register a flaky tool
-    @gantry.register
-    def flaky_api() -> str:
-        """Always fails."""
-        raise ConnectionError("API is down!")
+        await gantry.sync()
 
-    await gantry.sync()
+        print("--- Circuit Breaker Demo ---")
 
-    print("--- Circuit Breaker Demo ---")
+        call = ToolCall(tool_name="flaky_api", arguments={})
 
-    call = ToolCall(tool_name="flaky_api", arguments={})
+        # 3. Trigger failures to open the circuit
+        for i in range(1, 5):
+            print(f"\nAttempt {i}:")
+            result = await gantry.execute(call)
 
-    # 3. Trigger failures to open the circuit
-    for i in range(1, 5):
-        print(f"\nAttempt {i}:")
-        result = await gantry.execute(call)
+            print(f"Status: {result.status.value}")
+            if result.error:
+                print(f"Error: {result.error}")
 
-        print(f"Status: {result.status.value}")
-        if result.error:
-            print(f"Error: {result.error}")
-
-        if result.status == ExecutionStatus.CIRCUIT_OPEN:
-            print(">>> CIRCUIT BREAKER IS OPEN! Execution blocked to protect system. <<<")
-            break
+            if result.status == ExecutionStatus.CIRCUIT_OPEN:
+                print(">>> CIRCUIT BREAKER IS OPEN! Execution blocked to protect system. <<<")
+                break
+    finally:
+        await gantry.close()
 
 
 if __name__ == "__main__":

@@ -95,8 +95,7 @@ async def main() -> None:
 
         # --- 1. Static tier: select once, get native agno.tools.function.Function #
         query = "what's the weather in Paris?"
-        # Lowering threshold for SimpleEmbedder compatibility in this example.
-        static_tools = await adapter.select(query, limit=2, score_threshold=0.1)
+        static_tools = await adapter.select(query, limit=2)
         print(f"[static] selected {len(static_tools)} tool(s) for {query!r}:")
         for tool in static_tools:
             print(f"  - {tool.name}: {tool.description}")
@@ -108,7 +107,7 @@ async def main() -> None:
         # Agno freezes an agent's tools at construction, so the builder rebuilds a
         # fresh Agent per call. Here we just inspect the re-selected tool set
         # (select_tools) without building a full model-backed Agent.
-        builder = adapter.agent_builder(limit=1, score_threshold=0.1)
+        builder = adapter.agent_builder(limit=1)
 
         weather_tools = await builder.select_tools("what's the weather in Tokyo?")
         print(f"[dynamic] weather query -> {[t.name for t in weather_tools]}")
@@ -121,7 +120,7 @@ async def main() -> None:
             from agno.models.openai import OpenAIChat
 
             live_builder = adapter.agent_builder(
-                model=OpenAIChat(id="gpt-5.5"), limit=2, score_threshold=0.1
+                model=OpenAIChat(id="gpt-5.5"), limit=2
             )
             live_agent = await live_builder.build(query)
             print("[live] running an Agno agent with Gantry-selected tools...")

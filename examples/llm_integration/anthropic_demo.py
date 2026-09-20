@@ -42,111 +42,117 @@ async def main() -> None:
         gantry = AgentGantry()
         print("⚠️  Initialized with Simple Embeddings")
 
-    # 3. Register Tools
-    @gantry.register(tags=["system"])
-    def get_server_status(env: str) -> str:
-        """Check the status of a server environment (prod/staging)."""
-        return f"Environment '{env}' is HEALTHY. CPU: 45%"
+    try:
+        # 3. Register Tools
+        @gantry.register(
+            tags=["system"],
+            examples=["is production healthy right now", "check the staging server status"],
+        )
+        def get_server_status(env: str) -> str:
+            """Check the status of a server environment (prod/staging)."""
+            return f"Environment '{env}' is HEALTHY. CPU: 45%"
 
-    await gantry.sync()
-    print(f"✅ Registered {gantry.tool_count} tools\n")
+        await gantry.sync()
+        print(f"✅ Registered {gantry.tool_count} tools\n")
 
-    # 4. Initialize Anthropic Client
-    from anthropic import AsyncAnthropic
+        # 4. Initialize Anthropic Client
+        from anthropic import AsyncAnthropic
 
-    client = AsyncAnthropic(api_key=api_key)
+        client = AsyncAnthropic(api_key=api_key)
 
-    # --- Scenario A: Dynamic Retrieval with Manual Schema Conversion ---
-    print("--- Scenario A: Dynamic Retrieval with Anthropic Schema ---")
-    query = "Check the production server status"
-    print(f"User Query: '{query}'")
+        # --- Scenario A: Dynamic Retrieval with Manual Schema Conversion ---
+        print("--- Scenario A: Dynamic Retrieval with Anthropic Schema ---")
+        query = "Check the production server status"
+        print(f"User Query: '{query}'")
 
-    # A. Retrieve Tools (Returns RetrievalResult)
-    # We use the lower-level `retrieve` method to get the internal ToolDefinition objects
-    # so we can convert them to Anthropic's format.
-    retrieval_result = await gantry.retrieve(
-        ToolQuery(context=ConversationContext(query=query), limit=1, score_threshold=0.1)
-    )
-
-    # B. Convert to Anthropic Schema
-    anthropic_tools = [t.tool.to_dialect("anthropic") for t in retrieval_result.tools]
-
-    print(f"Gantry retrieved {len(anthropic_tools)} tool(s)")
-    # print(json.dumps(anthropic_tools, indent=2)) # Uncomment to see schema
-
-    # C. Call Claude
-    response = await client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=1024,
-        messages=[{"role": "user", "content": query}],
-        tools=anthropic_tools,
-    )
-
-    # D. Handle Tool Use
-    # Anthropic returns a list of content blocks. We look for 'tool_use'.
-    for block in response.content:
-        if block.type == "tool_use":
-            print(f"Claude decided to call: {block.name}({block.input})")
-
-            # Execute securely via Gantry
-            result = await gantry.execute(ToolCall(tool_name=block.name, arguments=block.input))
-            print(f"Execution Result: {result.result}")
-
-    # --- Scenario B: Using the Decorator (RECOMMENDED) ---
-    print("\n--- Scenario B: Using @with_semantic_tools Decorator (RECOMMENDED) ---")
-
-    # Set default gantry for decorator usage
-    set_default_gantry(gantry)
-
-    # The decorator handles retrieval AND schema conversion (dialect="anthropic")
-    # Note: score_threshold=0.1 is used because we may be using SimpleEmbedder.
-    # With Nomic or OpenAI embeddings, use the default (0.5).
-    @with_semantic_tools(limit=1, dialect="anthropic", score_threshold=0.1)
-    async def chat_with_claude(
-        messages: list[dict[str, str]],
-        tools: list[dict[str, Any]] | None = None,
-    ):
-        print(f"   [Decorator] Injected {len(tools) if tools else 0} tools (Anthropic format)")
-        return await client.messages.create(
-            model="claude-sonnet-4-6", max_tokens=1024, messages=messages, tools=tools
+        # A. Retrieve Tools (Returns RetrievalResult)
+        # We use the lower-level `retrieve` method to get the internal ToolDefinition objects
+        # so we can convert them to Anthropic's format.
+        retrieval_result = await gantry.retrieve(
+            ToolQuery(context=ConversationContext(query=query), limit=1, score_threshold=0.0)
         )
 
-    query_dec = "Check staging status"
-    print(f"User Query: '{query_dec}'")
+        # B. Convert to Anthropic Schema
+        anthropic_tools = [t.tool.to_dialect("anthropic") for t in retrieval_result.tools]
 
-    response_dec = await chat_with_claude(messages=[{"role": "user", "content": query_dec}])
+        print(f"Gantry retrieved {len(anthropic_tools)} tool(s)")
+        # print(json.dumps(anthropic_tools, indent=2)) # Uncomment to see schema
 
-    for block in response_dec.content:
-        if block.type == "tool_use":
-            print(f"Claude decided to call: {block.name}")
+        # C. Call Claude
+        response = await client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": query}],
+            tools=anthropic_tools,
+        )
 
-    # --- Scenario C: Typed AnthropicAdapter (provider-specific convenience) ---
-    # AnthropicAdapter(gantry).tools(query, limit=n) bakes in dialect="anthropic",
-    # so it returns ready-to-send Claude tool schemas in one call — equivalent to
-    # the retrieve + to_dialect("anthropic") dance shown in Scenario A.
-    print("\n--- Scenario C: Typed AnthropicAdapter ---")
-    from agent_gantry.anthropic import AnthropicAdapter
+        # D. Handle Tool Use
+        # Anthropic returns a list of content blocks. We look for 'tool_use'.
+        for block in response.content:
+            if block.type == "tool_use":
+                print(f"Claude decided to call: {block.name}({block.input})")
 
-    query_c = "Check the database server status"
-    print(f"User Query: '{query_c}'")
+                # Execute securely via Gantry
+                result = await gantry.execute(
+                    ToolCall(tool_name=block.name, arguments=block.input)
+                )
+                print(f"Execution Result: {result.result}")
 
-    anthropic_tools_c = await AnthropicAdapter(gantry).tools(
-        query_c, limit=1, score_threshold=0.1
-    )
-    print(f"Gantry retrieved {len(anthropic_tools_c)} tool(s): "
-          f"{[t['name'] for t in anthropic_tools_c]}")
+        # --- Scenario B: Using the Decorator (RECOMMENDED) ---
+        print("\n--- Scenario B: Using @with_semantic_tools Decorator (RECOMMENDED) ---")
 
-    response_c = await client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=1024,
-        messages=[{"role": "user", "content": query_c}],
-        tools=anthropic_tools_c,
-    )
-    for block in response_c.content:
-        if block.type == "tool_use":
-            print(f"Claude decided to call: {block.name}({block.input})")
-            result = await gantry.execute(ToolCall(tool_name=block.name, arguments=block.input))
-            print(f"Execution Result: {result.result}")
+        # Set default gantry for decorator usage
+        set_default_gantry(gantry)
+
+        # The decorator handles retrieval AND schema conversion (dialect="anthropic")
+        @with_semantic_tools(limit=1, dialect="anthropic")
+        async def chat_with_claude(
+            messages: list[dict[str, str]],
+            tools: list[dict[str, Any]] | None = None,
+        ):
+            print(f"   [Decorator] Injected {len(tools) if tools else 0} tools (Anthropic format)")
+            return await client.messages.create(
+                model="claude-sonnet-4-6", max_tokens=1024, messages=messages, tools=tools
+            )
+
+        query_dec = "Check staging status"
+        print(f"User Query: '{query_dec}'")
+
+        response_dec = await chat_with_claude(messages=[{"role": "user", "content": query_dec}])
+
+        for block in response_dec.content:
+            if block.type == "tool_use":
+                print(f"Claude decided to call: {block.name}")
+
+        # --- Scenario C: Typed AnthropicAdapter (provider-specific convenience) ---
+        # AnthropicAdapter(gantry).tools(query, limit=n) bakes in dialect="anthropic",
+        # so it returns ready-to-send Claude tool schemas in one call — equivalent to
+        # the retrieve + to_dialect("anthropic") dance shown in Scenario A.
+        print("\n--- Scenario C: Typed AnthropicAdapter ---")
+        from agent_gantry.anthropic import AnthropicAdapter
+
+        query_c = "Check the database server status"
+        print(f"User Query: '{query_c}'")
+
+        anthropic_tools_c = await AnthropicAdapter(gantry).tools(query_c, limit=1)
+        print(f"Gantry retrieved {len(anthropic_tools_c)} tool(s): "
+              f"{[t['name'] for t in anthropic_tools_c]}")
+
+        response_c = await client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": query_c}],
+            tools=anthropic_tools_c,
+        )
+        for block in response_c.content:
+            if block.type == "tool_use":
+                print(f"Claude decided to call: {block.name}({block.input})")
+                result = await gantry.execute(
+                    ToolCall(tool_name=block.name, arguments=block.input)
+                )
+                print(f"Execution Result: {result.result}")
+    finally:
+        await gantry.close()
 
 
 if __name__ == "__main__":

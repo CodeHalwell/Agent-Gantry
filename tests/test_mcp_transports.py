@@ -1242,3 +1242,61 @@ async def test_serve_mcp_forwards_a_custom_path_to_the_sse_transport() -> None:
         assert run_http.call_args.kwargs["path"] == "/custom"
     finally:
         await gantry.close()
+
+
+@pytest.mark.asyncio
+async def test_run_http_clears_the_latch_so_a_second_run_http_streams() -> None:
+    """#424: the Gantry-owned entry points never reset the latch themselves.
+
+    ``reset_sse_shutdown_latch`` was public, but ``_serve_asgi`` built its
+    uvicorn server locally, never called the reset, and never exposed the
+    handle — so through ``run_http()`` (and ``serve_mcp()``) a host could not
+    perform the documented recovery either, and its second server hung on
+    its first streaming response.
+    """
+    sse = pytest.importorskip("sse_starlette.sse")
+
+    gantry = await _served_gantry()
+    try:
+        for cycle in range(2):
+            server = create_mcp_server(gantry, mode="hybrid", name="e2e", expose=["add_numbers"])
+            port = _free_port()
+            task = asyncio.create_task(
+                server.run_http(host="127.0.0.1", port=port, log_level="warning")
+            )
+            try:
+                for _ in range(200):
+                    running = server._uvicorn_server
+                    if running is not None and running.started:
+                        break
+                    await asyncio.sleep(0.05)
+                else:
+                    raise RuntimeError("run_http() did not start")
+
+                client = MCPClient(
+                    MCPServerConfig(name=f"cycle{cycle}", url=f"http://127.0.0.1:{port}/mcp")
+                )
+                try:
+                    tools = await _bounded(
+                        client.list_tools(), 60, f"client.list_tools() on cycle {cycle}"
+                    )
+                    assert "add_numbers" in {t.name for t in tools}
+                finally:
+                    with contextlib.suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(client.close(), 30)
+                # Latch it as the watcher would on seeing the shutdown (see
+                # the previous test for why this is set by hand).
+                sse.AppStatus.should_exit = True
+                running.should_exit = True
+                await asyncio.wait_for(task, 60)
+            finally:
+                if not task.done():
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                        await asyncio.wait_for(task, 10)
+
+            assert sse.AppStatus.should_exit is False, "run_http() must clear the latch on exit"
+            assert server._uvicorn_server is None
+    finally:
+        sse.AppStatus.should_exit = False
+        await gantry.close()

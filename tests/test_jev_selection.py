@@ -21,6 +21,7 @@ from agent_gantry.adapters.jev_client import (
 )
 from agent_gantry.adapters.rerankers.jev import JevReranker
 from agent_gantry.adapters.selectors.jev import JevSelector
+from agent_gantry.schema.query import ConversationContext, ToolQuery
 from agent_gantry.schema.selection import SelectionCandidate, SelectionResult
 from agent_gantry.schema.tool import ToolDefinition
 
@@ -915,3 +916,280 @@ async def test_a_half_answered_response_falls_back_instead_of_ranking_the_subset
     assert verdict.fallback is True, "a half-answered pass must fall back"
     assert not verdict.scores, "a fallback verdict must carry no scores"
     assert "unanswered" in verdict.reason, f"reason should name the cause, got: {verdict.reason}"
+
+
+# ---------------------------------------------------------------------------
+# Regressions from the #419 review (#422, #423, #426, #428).
+# ---------------------------------------------------------------------------
+
+
+class _RecordingSelector(_StubSelector):
+    """A stub that also keeps the candidates themselves, not only their ids."""
+
+    def __init__(self, scores: dict[str, float] | None = None) -> None:
+        super().__init__(scores)
+        self.candidates: list[list[SelectionCandidate]] = []
+
+    async def select(
+        self, query: str, candidates: Any, limit: int, *, kind: str = "tool"
+    ) -> SelectionResult:
+        self.candidates.append(list(candidates))
+        return await super().select(query, candidates, limit, kind=kind)
+
+
+async def test_lazy_modules_are_loaded_before_selection() -> None:
+    """#422: ``modules=`` used to be imported only by ``sync()``.
+
+    A selector that answers never reaches ``sync()``, so the module tools were
+    permanently absent — on this call and every later one, because the
+    selector kept answering from the directly-registered tools alone.
+    """
+    from agent_gantry import AgentGantry
+
+    selector = _StubSelector({"default.tool_a1": 0.9})
+    gantry = AgentGantry(modules=["tests.test_modules.module_a"], selector=selector)
+    try:
+
+        @gantry.register(tags=["text"])
+        async def shout(text: str) -> str:
+            """Uppercase a string of text for the caller."""
+            return text.upper()
+
+        result = await gantry.retrieve_tools("double this number", limit=3)
+
+        assert [schema["function"]["name"] for schema in result] == ["tool_a1"]
+        assert "default.tool_a1:1.0.0" in selector.seen[0]
+    finally:
+        await gantry.close()
+
+
+async def test_a_pending_update_replaces_the_registered_copy_for_selection() -> None:
+    """#423 §1: an ``add_tool`` without a handler before a sync used to lose.
+
+    The registry kept the stale definition and the pending buffer held the
+    new one under the same qualified name; deduplicating on that name kept
+    the stale copy — the very text the selector decides on.
+    """
+    from agent_gantry import AgentGantry
+    from agent_gantry.schema.config import AgentGantryConfig
+
+    selector = _RecordingSelector({"default.shout": 0.9})
+    gantry = AgentGantry(config=AgentGantryConfig(auto_sync=False), selector=selector)
+    try:
+
+        @gantry.register(tags=["text"])
+        async def shout(text: str) -> str:
+            """Uppercase a string of text for the caller."""
+            return text.upper()
+
+        await gantry.add_tool(
+            ToolDefinition(
+                name="shout",
+                description="Make a sentence LOUD by uppercasing every letter.",
+                parameters_schema={"type": "object", "properties": {}},
+            )
+        )
+        await gantry.retrieve_tools("be loud", limit=3)
+
+        descriptions = [c.description for c in selector.candidates[0] if c.name == "default.shout"]
+        assert descriptions == ["Make a sentence LOUD by uppercasing every letter."]
+    finally:
+        await gantry.close()
+
+
+async def test_a_superseded_version_does_not_survive_alongside_the_current_one() -> None:
+    """#423 §2: two versions of one tool before a sync yielded two candidates.
+
+    ``qualified_name`` carries the version and the registry key does not, so
+    v1 lingered in the pending buffer and was appended back — and the
+    selector could hand the agent v1's schema while ``execute()`` resolved
+    v2's handler.
+    """
+    from agent_gantry import AgentGantry
+    from agent_gantry.schema.config import AgentGantryConfig
+
+    selector = _RecordingSelector({"default.convert": 0.9})
+    gantry = AgentGantry(config=AgentGantryConfig(auto_sync=False), selector=selector)
+    try:
+        for version in ("1.0.0", "2.0.0"):
+            await gantry.add_tool(
+                ToolDefinition(
+                    name="convert",
+                    version=version,
+                    description=f"Convert a value between units (v{version}).",
+                    parameters_schema={"type": "object", "properties": {}},
+                ),
+                lambda **kwargs: kwargs,
+            )
+        await gantry.retrieve_tools("convert this", limit=3)
+
+        ids = [c.id for c in selector.candidates[0]]
+        assert ids == ["default.convert:2.0.0"]
+    finally:
+        await gantry.close()
+
+
+async def test_a_query_that_filters_everything_out_is_an_empty_selection_not_a_fallback() -> None:
+    """#423 §3: every tool being filtered out is a *successful* answer.
+
+    It used to be treated as the selector declining, which sent retrieval
+    through ``ensure_synced()`` and the vector store to learn the same thing —
+    a failure, not a slower path, in a selector-only deployment.
+    """
+    selector = _StubSelector({"default.shout": 0.9})
+    gantry = await _gantry_with(selector)
+    try:
+
+        async def _must_not_sync() -> None:
+            raise AssertionError("the semantic path ran for a question the catalogue answered")
+
+        gantry.ensure_synced = _must_not_sync  # type: ignore[method-assign]
+        result = await gantry.retrieve_tools("be loud", limit=3, namespaces=["nowhere"])
+
+        assert result == []
+        assert selector.seen == [], "nothing eligible, so nothing to put to the model"
+    finally:
+        await gantry.close()
+
+
+async def test_an_empty_catalogue_still_falls_back_to_the_store() -> None:
+    """The one case that *is* a genuine decline: nothing registered in memory.
+
+    A persistent store from an earlier process may hold tools only the
+    semantic path can see, so an empty registry hands over rather than
+    answering "nothing".
+    """
+    from agent_gantry import AgentGantry
+
+    selector = _StubSelector({})
+    gantry = AgentGantry(selector=selector)
+    try:
+        retrieval = await gantry.retrieve(
+            ToolQuery(context=ConversationContext(query="anything"), limit=3, score_threshold=0.0)
+        )
+        assert retrieval.tools == []
+        assert retrieval.selection_time_ms is None, "the semantic path should have run"
+    finally:
+        await gantry.close()
+
+
+def _synthetic_skills(count: int, namespace: str) -> list[Any]:
+    from agent_gantry.schema.skill import Skill
+
+    return [
+        Skill(
+            name=f"skill_{namespace}_{i}",
+            namespace=namespace,
+            description=f"Synthetic skill {i} in {namespace}.",
+            content="Body.",
+        )
+        for i in range(count)
+    ]
+
+
+def _paged_store(store: Any, skills_by_namespace: dict[str, list[Any]]) -> None:
+    """Replace ``store.list_all_skills`` with one serving a synthetic catalogue."""
+
+    async def list_all_skills(
+        namespace: str | None = None, limit: int = 1000, offset: int = 0
+    ) -> list[Any]:
+        if namespace is None:
+            rows = [s for group in skills_by_namespace.values() for s in group]
+        else:
+            rows = skills_by_namespace.get(namespace, [])
+        return rows[offset : offset + limit]
+
+    store.list_all_skills = list_all_skills
+
+
+async def test_the_skill_ceiling_is_measured_against_the_eligible_catalogue() -> None:
+    """#426 §1: a request scoped to a small namespace must reach the selector.
+
+    The paging call passed no filter, so a twelve-skill namespace gave up
+    because some *other* namespace was large.
+    """
+    from agent_gantry import AgentGantry
+
+    selector = _StubSelector({"small.skill_small_0": 0.9})
+    gantry = AgentGantry(selector=selector)
+    try:
+        await gantry._ensure_initialized()
+        _paged_store(
+            gantry._vector_store,
+            {"big": _synthetic_skills(10_500, "big"), "small": _synthetic_skills(12, "small")},
+        )
+        found = await gantry.retrieve_skills("the small one", limit=2, namespace="small")
+
+        assert [r.skill.name for r in found] == ["skill_small_0"]
+        assert len(selector.seen) == 1 and len(selector.seen[0]) == 12
+    finally:
+        await gantry.close()
+
+
+async def test_a_skill_catalogue_just_over_the_ceiling_still_falls_back() -> None:
+    """#426 §2: ``while/else`` skipped the ceiling for totals in (10_000, 11_000).
+
+    The catalogue's end is reached by ``break``, which never runs the
+    ``else`` — so a total that crossed the cap on a short final page was
+    selected over in full.
+    """
+    from agent_gantry import AgentGantry
+
+    selector = _StubSelector({})
+    gantry = AgentGantry(selector=selector)
+    try:
+        await gantry._ensure_initialized()
+        _paged_store(gantry._vector_store, {"default": _synthetic_skills(10_500, "default")})
+        await gantry.retrieve_skills("anything", limit=2)
+
+        assert selector.seen == [], "over the cap: the selector must not be consulted"
+    finally:
+        await gantry.close()
+
+
+async def test_a_list_of_namespaces_pages_each_one() -> None:
+    from agent_gantry import AgentGantry
+
+    selector = _StubSelector({"a.skill_a_0": 0.9, "b.skill_b_0": 0.8})
+    gantry = AgentGantry(selector=selector)
+    try:
+        await gantry._ensure_initialized()
+        _paged_store(
+            gantry._vector_store,
+            {
+                "a": _synthetic_skills(3, "a"),
+                "b": _synthetic_skills(2, "b"),
+                "c": _synthetic_skills(4, "c"),
+            },
+        )
+        found = await gantry.retrieve_skills("either", limit=5, namespace=["a", "b"])
+
+        assert {r.skill.namespace for r in found} == {"a", "b"}
+        assert len(selector.seen[0]) == 5
+    finally:
+        await gantry.close()
+
+
+async def test_the_cosine_threshold_default_does_not_cut_selector_probabilities() -> None:
+    """#428: ``ToolQuery.score_threshold`` defaults to 0.5 and is a cosine cutoff.
+
+    Reused as a minimum probability on the selector path it silently dropped
+    tools for every caller who built a ``ToolQuery`` and left the default —
+    which the schema says is the supported thing to do.
+    """
+    selector = _StubSelector({"default.shout": 0.3})
+    gantry = await _gantry_with(selector)
+    try:
+        retrieval = await gantry.retrieve(
+            ToolQuery(context=ConversationContext(query="be loud"), limit=3)
+        )
+        assert [s.tool.name for s in retrieval.tools] == ["shout"]
+
+        tightened = await gantry.retrieve(
+            ToolQuery(
+                context=ConversationContext(query="be loud"), limit=3, selection_threshold=0.5
+            )
+        )
+        assert tightened.tools == []
+    finally:
+        await gantry.close()

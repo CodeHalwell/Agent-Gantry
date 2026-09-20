@@ -101,8 +101,7 @@ async def main() -> None:
 
         # --- 1. Static tier: select once, get native agents.FunctionTool -------- #
         query = "what's the weather in Paris?"
-        # Lowering threshold for SimpleEmbedder compatibility in this example.
-        static_tools = await adapter.select(query, limit=2, score_threshold=0.1)
+        static_tools = await adapter.select(query, limit=2)
         print(f"[static] selected {len(static_tools)} tool(s) for {query!r}:")
         for tool in static_tools:
             print(f"  - {tool.name}: {tool.description}")
@@ -114,18 +113,18 @@ async def main() -> None:
         agent = Agent(name="assistant", tools=[])
 
         weather_tools = await adapter.refresh(
-            agent, "what's the weather in Tokyo?", limit=1, score_threshold=0.1
+            agent, "what's the weather in Tokyo?", limit=1
         )
         print(f"[dynamic] weather turn -> agent.tools = {[t.name for t in weather_tools]}")
 
         email_tools = await adapter.refresh(
-            agent, "send an email to my manager", limit=1, score_threshold=0.1
+            agent, "send an email to my manager", limit=1
         )
         print(f"[dynamic] email turn   -> agent.tools = {[t.name for t in email_tools]}")
 
         # RunHooks apply that same refresh automatically before every model call —
         # build it here to show it's ready to hand to Runner.run(..., hooks=...).
-        hooks = adapter.run_hooks(agent, limit=1, score_threshold=0.1)
+        hooks = adapter.run_hooks(agent, limit=1)
         print(f"[dynamic] built {type(hooks).__name__} for intra-run per-turn re-selection\n")
 
         # --- 3. Optional: an actual model run (needs a real LLM) ---------------- #
@@ -133,7 +132,7 @@ async def main() -> None:
             run_agent = Agent(name="assistant", tools=[])
             # GantryAgentSession re-selects agent.tools before each run() call and
             # installs the run_hooks above for intra-run dynamism.
-            session = adapter.session(run_agent, limit=2, score_threshold=0.1)
+            session = adapter.session(run_agent, limit=2)
             print("[live] running the OpenAI Agents SDK with Gantry-selected tools...")
             run_result = await session.run(query)
             print(f"[live] final_output: {run_result.final_output}")

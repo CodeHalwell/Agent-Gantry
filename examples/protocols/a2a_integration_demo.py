@@ -19,41 +19,43 @@ async def demo_a2a_client():
 
     # Initialize AgentGantry
     gantry = AgentGantry()
+    try:
+        # Register some local tools
+        @gantry.register(tags=["math"], examples=["add 3 and 4", "what is 10 plus 5"])
+        def calculate_sum(a: int, b: int) -> int:
+            """Calculate the sum of two numbers."""
+            return a + b
 
-    # Register some local tools
-    @gantry.register(tags=["math"])
-    def calculate_sum(a: int, b: int) -> int:
-        """Calculate the sum of two numbers."""
-        return a + b
+        @gantry.register(tags=["math"], examples=["multiply 6 by 7", "what is 12 times 3"])
+        def calculate_product(a: int, b: int) -> int:
+            """Calculate the product of two numbers."""
+            return a * b
 
-    @gantry.register(tags=["math"])
-    def calculate_product(a: int, b: int) -> int:
-        """Calculate the product of two numbers."""
-        return a * b
+        await gantry.sync()
 
-    await gantry.sync()
+        # Configure an external A2A agent
+        # Note: This is a hypothetical external agent - replace with actual agent URL
+        external_agent = A2AAgentConfig(
+            name="translation-agent",
+            url="https://translation-agent.example.com",
+            namespace="external",
+        )
 
-    # Configure an external A2A agent
-    # Note: This is a hypothetical external agent - replace with actual agent URL
-    external_agent = A2AAgentConfig(
-        name="translation-agent",
-        url="https://translation-agent.example.com",
-        namespace="external",
-    )
+        print(f"Configured external A2A agent: {external_agent.name}")
+        print(f"Agent URL: {external_agent.url}")
 
-    print(f"Configured external A2A agent: {external_agent.name}")
-    print(f"Agent URL: {external_agent.url}")
+        # In a real scenario, you would discover and register the agent:
+        # count = await gantry.add_a2a_agent(external_agent)
+        # print(f"Discovered {count} skills from external agent")
 
-    # In a real scenario, you would discover and register the agent:
-    # count = await gantry.add_a2a_agent(external_agent)
-    # print(f"Discovered {count} skills from external agent")
+        # List all tools including external agent skills
+        tools = await gantry.list_tools()
+        print(f"\nTotal tools available: {len(tools)}")
 
-    # List all tools including external agent skills
-    tools = await gantry.list_tools()
-    print(f"\nTotal tools available: {len(tools)}")
-
-    for tool in tools:
-        print(f"  - {tool.name} ({tool.source.value}): {tool.description[:60]}...")
+        for tool in tools:
+            print(f"  - {tool.name} ({tool.source.value}): {tool.description[:60]}...")
+    finally:
+        await gantry.close()
 
 
 async def demo_agent_card():
@@ -64,40 +66,49 @@ async def demo_agent_card():
 
     # Initialize AgentGantry with some tools
     gantry = AgentGantry()
+    try:
 
-    @gantry.register(tags=["data", "query"])
-    def query_database(query: str) -> str:
-        """Query a database and return results."""
-        return f"Results for: {query}"
+        @gantry.register(
+            tags=["data", "query"],
+            examples=["how many orders came in last week", "look up customer 42 in the database"],
+        )
+        def query_database(query: str) -> str:
+            """Query a database and return results."""
+            return f"Results for: {query}"
 
-    @gantry.register(tags=["communication"])
-    def send_notification(message: str, recipient: str) -> str:
-        """Send a notification to a recipient."""
-        return f"Sent '{message}' to {recipient}"
+        @gantry.register(
+            tags=["communication"],
+            examples=["notify Sam that the build is done", "ping the on-call engineer"],
+        )
+        def send_notification(message: str, recipient: str) -> str:
+            """Send a notification to a recipient."""
+            return f"Sent '{message}' to {recipient}"
 
-    await gantry.sync()
+        await gantry.sync()
 
-    # Generate Agent Card
-    agent_card = generate_agent_card(gantry, "http://localhost:8080")
+        # Generate Agent Card
+        agent_card = generate_agent_card(gantry, "http://localhost:8080")
 
-    print(f"Agent Name: {agent_card.name}")
-    print(f"Description: {agent_card.description}")
-    print(f"URL: {agent_card.url}")
-    print(f"Version: {agent_card.version}")
-    print(f"\nSkills ({len(agent_card.skills)}):")
+        print(f"Agent Name: {agent_card.name}")
+        print(f"Description: {agent_card.description}")
+        print(f"URL: {agent_card.url}")
+        print(f"Version: {agent_card.version}")
+        print(f"\nSkills ({len(agent_card.skills)}):")
 
-    for skill in agent_card.skills:
-        print(f"\n  Skill ID: {skill.id}")
-        print(f"  Name: {skill.name}")
-        print(f"  Description: {skill.description}")
-        print(f"  Input Modes: {', '.join(skill.input_modes)}")
-        print(f"  Output Modes: {', '.join(skill.output_modes)}")
+        for skill in agent_card.skills:
+            print(f"\n  Skill ID: {skill.id}")
+            print(f"  Name: {skill.name}")
+            print(f"  Description: {skill.description}")
+            print(f"  Input Modes: {', '.join(skill.input_modes)}")
+            print(f"  Output Modes: {', '.join(skill.output_modes)}")
 
-    # The agent card would be served at /.well-known/agent.json
-    print("\n\nAgent Card JSON:")
-    import json
+        # The agent card would be served at /.well-known/agent.json
+        print("\n\nAgent Card JSON:")
+        import json
 
-    print(json.dumps(agent_card.model_dump(), indent=2))
+        print(json.dumps(agent_card.model_dump(), indent=2))
+    finally:
+        await gantry.close()
 
 
 async def demo_a2a_server():
@@ -108,25 +119,31 @@ async def demo_a2a_server():
     # pip install fastapi uvicorn
 
     gantry = AgentGantry()
+    try:
 
-    @gantry.register(tags=["analysis"])
-    def analyze_data(data: str) -> str:
-        """Analyze provided data and return insights."""
-        return f"Analysis of '{data}': [insights here]"
+        @gantry.register(
+            tags=["analysis"],
+            examples=["analyse this sales data for trends", "what insights are in these numbers"],
+        )
+        def analyze_data(data: str) -> str:
+            """Analyze provided data and return insights."""
+            return f"Analysis of '{data}': [insights here]"
 
-    await gantry.sync()
+        await gantry.sync()
 
-    print("To start the A2A server, use:")
-    print("\n  gantry.serve_a2a(host='0.0.0.0', port=8080)")
-    print("\nThe server will expose:")
-    print("  - Agent Card: http://localhost:8080/.well-known/agent.json")
-    print("  - Task endpoint: http://localhost:8080/tasks/send")
-    print("\nSkills available:")
-    print("  - tool_discovery: Find relevant tools using semantic search")
-    print("  - tool_execution: Execute tools with retries and circuit breakers")
+        print("To start the A2A server, use:")
+        print("\n  gantry.serve_a2a(host='0.0.0.0', port=8080)")
+        print("\nThe server will expose:")
+        print("  - Agent Card: http://localhost:8080/.well-known/agent.json")
+        print("  - Task endpoint: http://localhost:8080/tasks/send")
+        print("\nSkills available:")
+        print("  - tool_discovery: Find relevant tools using semantic search")
+        print("  - tool_execution: Execute tools with retries and circuit breakers")
 
-    # Uncomment to actually run the server:
-    # gantry.serve_a2a(host="0.0.0.0", port=8080)
+        # Uncomment to actually run the server:
+        # gantry.serve_a2a(host="0.0.0.0", port=8080)
+    finally:
+        await gantry.close()
 
 
 async def demo_skill_to_tool_mapping():

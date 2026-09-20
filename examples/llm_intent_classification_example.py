@@ -39,89 +39,92 @@ async def main():
 
     gantry = AgentGantry(config=config)
 
-    # Register tools with different intents
-    @gantry.register
-    def search_users(name: str) -> str:
-        """Search for users by name."""
-        return f"Found user: {name}"
+    try:
+        # Register tools with different intents
+        @gantry.register(examples=["find the user John Doe", "look up someone called Priya"])
+        def search_users(name: str) -> str:
+            """Search for users by name."""
+            return f"Found user: {name}"
 
-    @gantry.register
-    def create_user(name: str, email: str) -> str:
-        """Create a new user account."""
-        return f"Created user {name} with email {email}"
+        @gantry.register(examples=["sign up a new user", "create an account for Sam"])
+        def create_user(name: str, email: str) -> str:
+            """Create a new user account."""
+            return f"Created user {name} with email {email}"
 
-    @gantry.register
-    def analyze_metrics() -> str:
-        """Analyze system performance metrics."""
-        return "CPU: 45%, Memory: 67%, Disk: 23%"
+        @gantry.register(examples=["how is the system performing", "show me CPU and memory usage"])
+        def analyze_metrics() -> str:
+            """Analyze system performance metrics."""
+            return "CPU: 45%, Memory: 67%, Disk: 23%"
 
-    @gantry.register
-    def send_notification(user: str, message: str) -> str:
-        """Send a notification to a user."""
-        return f"Sent to {user}: {message}"
+        @gantry.register(examples=["notify Alex that the build is done", "ping the team"])
+        def send_notification(user: str, message: str) -> str:
+            """Send a notification to a user."""
+            return f"Sent to {user}: {message}"
 
-    @gantry.register
-    def export_data(format: str = "csv") -> str:
-        """Export data to a file."""
-        return f"Exported data to {format}"
+        @gantry.register(examples=["export the report as CSV", "download this data to a file"])
+        def export_data(format: str = "csv") -> str:
+            """Export data to a file."""
+            return f"Exported data to {format}"
 
-    await gantry.sync()
+        await gantry.sync()
 
-    print("=" * 70)
-    print("LLM-Based Intent Classification Demo")
-    print("=" * 70)
-    print()
+        print("=" * 70)
+        print("LLM-Based Intent Classification Demo")
+        print("=" * 70)
+        print()
 
-    # Test queries that work well with keyword matching
-    print("📋 Test 1: Clear keyword-based queries (no LLM needed)")
-    print("-" * 70)
+        # Test queries that work well with keyword matching
+        print("📋 Test 1: Clear keyword-based queries (no LLM needed)")
+        print("-" * 70)
 
-    test_cases_keywords = [
-        "search for John Doe",
-        "create a new account",
-        "send email notification",
-    ]
+        test_cases_keywords = [
+            "search for John Doe",
+            "create a new account",
+            "send email notification",
+        ]
 
-    for query in test_cases_keywords:
-        tools = await gantry.retrieve_tools(query, limit=1)
-        if tools:
-            print(f"Query: '{query}'")
-            print(f"  → Tool: {tools[0]['function']['name']}")
-            print()
+        for query in test_cases_keywords:
+            tools = await gantry.retrieve_tools(query, limit=1)
+            if tools:
+                print(f"Query: '{query}'")
+                print(f"  → Tool: {tools[0]['function']['name']}")
+                print()
 
-    # Test queries that are ambiguous or need LLM understanding
-    print()
-    print("🤖 Test 2: Ambiguous queries (LLM-based classification)")
-    print("-" * 70)
+        # Test queries that are ambiguous or need LLM understanding
+        print()
+        print("🤖 Test 2: Ambiguous queries (LLM-based classification)")
+        print("-" * 70)
 
-    test_cases_llm = [
-        "What's the system status?",  # Could be metrics or query
-        "Show me the trends",  # Analysis intent
-        "Reach out to the team",  # Communication intent
-        "Get me that information",  # Generic query
-    ]
+        test_cases_llm = [
+            "What's the system status?",  # Could be metrics or query
+            "Show me the trends",  # Analysis intent
+            "Reach out to the team",  # Communication intent
+            "Get me that information",  # Generic query
+        ]
 
-    for query in test_cases_llm:
-        tools = await gantry.retrieve_tools(query, limit=1)
-        if tools:
-            print(f"Query: '{query}'")
-            print(f"  → Tool: {tools[0]['function']['name']}")
-            print()
+        for query in test_cases_llm:
+            tools = await gantry.retrieve_tools(query, limit=1)
+            if tools:
+                print(f"Query: '{query}'")
+                print(f"  → Tool: {tools[0]['function']['name']}")
+                print()
 
-    print()
-    print("=" * 70)
-    print("✅ Demo complete!")
-    print()
-    print("How it works:")
-    print("1. First tries keyword-based intent classification (fast)")
-    print("2. Falls back to LLM if no keywords match (accurate)")
-    print("3. Uses intent to boost relevant tool scores")
-    print()
-    print("Benefits:")
-    print("  • More accurate tool selection for ambiguous queries")
-    print("  • No performance impact when keywords match")
-    print("  • Configurable per-provider (OpenAI, Anthropic, etc.)")
-    print("=" * 70)
+        print()
+        print("=" * 70)
+        print("✅ Demo complete!")
+        print()
+        print("How it works:")
+        print("1. First tries keyword-based intent classification (fast)")
+        print("2. Falls back to LLM if no keywords match (accurate)")
+        print("3. Uses intent to boost relevant tool scores")
+        print()
+        print("Benefits:")
+        print("  • More accurate tool selection for ambiguous queries")
+        print("  • No performance impact when keywords match")
+        print("  • Configurable per-provider (OpenAI, Anthropic, etc.)")
+        print("=" * 70)
+    finally:
+        await gantry.close()
 
 
 async def demo_yaml_config():

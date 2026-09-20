@@ -217,6 +217,65 @@ def merge_dictionaries(dict1: dict[str, Any], dict2: dict[str, Any]) -> dict[str
     return {**dict1, **dict2}
 
 
+# Phrases a user would actually type for each tool. This is what the router
+# embeds, so it matters more than the docstring.
+TOOL_EXAMPLES: dict[str, list[str]] = {
+    "calculate_hypotenuse": [
+        "hypotenuse of a triangle with sides 3 and 4",
+        "longest side of a right triangle",
+    ],
+    "calculate_circle_area": ["area of a circle with radius 7", "how big is a circle 10cm across"],
+    "calculate_compound_interest": [
+        "what will 1000 grow to at 5% over 10 years",
+        "compound interest on my savings",
+    ],
+    "convert_celsius_to_fahrenheit": ["30 degrees C in Fahrenheit", "convert 18 celsius to F"],
+    "solve_quadratic": ["solve x^2 - 5x + 6 = 0", "roots of this quadratic"],
+    "reverse_string": ["write 'hello world' backwards", "flip this text around"],
+    "count_vowels": ["how many vowels in 'encyclopedia'", "count the vowels in this sentence"],
+    "to_snake_case": ["turn MyVariableName into snake case", "snake_case this identifier"],
+    "extract_emails": [
+        "pull the email addresses out of this text",
+        "find every email in this message",
+    ],
+    "summarize_text_stats": [
+        "how many words are in this paragraph",
+        "word and character count for this text",
+    ],
+    "get_current_utc_time": ["what time is it in UTC", "current time please"],
+    "days_between_dates": [
+        "how many days from 2024-03-01 to 2024-12-25",
+        "days until Christmas from today",
+    ],
+    "get_day_of_week": ["what day of the week was 2000-01-01", "which weekday is 2025-07-04"],
+    "add_business_days": [
+        "what date is 10 working days from Monday",
+        "add 5 business days to 2024-06-03",
+    ],
+    "is_leap_year": ["was 1900 a leap year", "does 2028 have 29 days in February"],
+    "list_files_in_directory": [
+        "what files are in /var/log",
+        "show me the contents of my downloads folder",
+    ],
+    "read_file_content": [
+        "open config.yaml and show me what's inside",
+        "read the contents of notes.txt",
+    ],
+    "get_file_size": ["how big is report.pdf", "size of the backup file"],
+    "check_file_exists": ["is there a file called .env here", "does /tmp/output.csv exist"],
+    "get_file_extension": ["what type of file is archive.tar.gz", "extension of photo.jpeg"],
+    "ping_host": ["can you reach google.com", "ping the database server"],
+    "get_ip_address": ["what's the IP of example.com", "resolve the hostname to an address"],
+    "check_port_open": ["is port 443 open on the web server", "check whether 8080 is listening"],
+    "validate_url": ["is 'htp:/example' a valid URL", "check this link is well formed"],
+    "get_http_status": ["is the website up", "what status code does the homepage return"],
+    "sort_list_of_numbers": ["put these numbers in order: 9, 3, 7", "sort 42, 1, 100 ascending"],
+    "filter_even_numbers": ["keep only the even numbers from this list", "which of these are even"],
+    "calculate_average": ["average of 4, 8 and 15", "mean of these scores"],
+    "find_max_value": ["biggest number in this list", "what's the highest value here"],
+    "merge_dictionaries": ["combine these two config objects", "merge these two JSON dicts"],
+}
+
 # --- 2. Main Test Logic ---
 
 
@@ -243,130 +302,133 @@ async def main():
         print("   Nomic dependencies missing. Falling back to SimpleEmbedder.")
         gantry = AgentGantry()
 
-    # Register Tools
-    print("2. Registering 30 tangible tools...")
-    tools_to_register = [
-        calculate_hypotenuse,
-        calculate_circle_area,
-        calculate_compound_interest,
-        convert_celsius_to_fahrenheit,
-        solve_quadratic,
-        reverse_string,
-        count_vowels,
-        to_snake_case,
-        extract_emails,
-        summarize_text_stats,
-        get_current_utc_time,
-        days_between_dates,
-        get_day_of_week,
-        add_business_days,
-        is_leap_year,
-        list_files_in_directory,
-        read_file_content,
-        get_file_size,
-        check_file_exists,
-        get_file_extension,
-        ping_host,
-        get_ip_address,
-        check_port_open,
-        validate_url,
-        get_http_status,
-        sort_list_of_numbers,
-        filter_even_numbers,
-        calculate_average,
-        find_max_value,
-        merge_dictionaries,
-    ]
+    try:
+        # Register Tools
+        print("2. Registering 30 tangible tools...")
+        tools_to_register = [
+            calculate_hypotenuse,
+            calculate_circle_area,
+            calculate_compound_interest,
+            convert_celsius_to_fahrenheit,
+            solve_quadratic,
+            reverse_string,
+            count_vowels,
+            to_snake_case,
+            extract_emails,
+            summarize_text_stats,
+            get_current_utc_time,
+            days_between_dates,
+            get_day_of_week,
+            add_business_days,
+            is_leap_year,
+            list_files_in_directory,
+            read_file_content,
+            get_file_size,
+            check_file_exists,
+            get_file_extension,
+            ping_host,
+            get_ip_address,
+            check_port_open,
+            validate_url,
+            get_http_status,
+            sort_list_of_numbers,
+            filter_even_numbers,
+            calculate_average,
+            find_max_value,
+            merge_dictionaries,
+        ]
 
-    for func in tools_to_register:
-        gantry.register(func)
+        for func in tools_to_register:
+            gantry.register(func, examples=TOOL_EXAMPLES[func.__name__])
 
-    await gantry.sync()
-    print(f"   Registered {gantry.tool_count} tools.\n")
+        await gantry.sync()
+        print(f"   Registered {gantry.tool_count} tools.\n")
 
-    # Test Cases
-    test_queries = [
-        ("What is the area of a circle with radius 5?", "calculate_circle_area"),
-        ("How many days are there between 2023-01-01 and 2023-12-31?", "days_between_dates"),
-        ("Reverse the string 'Agent Gantry is awesome'", "reverse_string"),
-        ("Is 2024 a leap year?", "is_leap_year"),
-        ("Sort this list of numbers: 5, 2, 9, 1, 100, 42", "sort_list_of_numbers"),
-        ("Convert 25 degrees Celsius to Fahrenheit", "convert_celsius_to_fahrenheit"),
-        (
-            "Extract emails from: Contact us at support@example.com or sales@example.org",
-            "extract_emails",
-        ),
-    ]
+        # Test Cases
+        test_queries = [
+            ("What is the area of a circle with radius 5?", "calculate_circle_area"),
+            ("How many days are there between 2023-01-01 and 2023-12-31?", "days_between_dates"),
+            ("Reverse the string 'Agent Gantry is awesome'", "reverse_string"),
+            ("Is 2024 a leap year?", "is_leap_year"),
+            ("Sort this list of numbers: 5, 2, 9, 1, 100, 42", "sort_list_of_numbers"),
+            ("Convert 25 degrees Celsius to Fahrenheit", "convert_celsius_to_fahrenheit"),
+            (
+                "Extract emails from: Contact us at support@example.com or sales@example.org",
+                "extract_emails",
+            ),
+        ]
 
-    # Setup OpenAI Client
-    client = None
-    if api_key:
-        from openai import AsyncOpenAI
+        # Setup OpenAI Client
+        client = None
+        if api_key:
+            from openai import AsyncOpenAI
 
-        client = AsyncOpenAI(api_key=api_key)
+            client = AsyncOpenAI(api_key=api_key)
 
-    print("3. Running End-to-End Tests (Retrieval -> LLM -> Execution)\n")
+        print("3. Running End-to-End Tests (Retrieval -> LLM -> Execution)\n")
 
-    for query, expected_tool in test_queries:
-        print(f"🔹 Query: '{query}'")
+        for query, expected_tool in test_queries:
+            print(f"🔹 Query: '{query}'")
 
-        # A. Retrieval
-        retrieved_tools = await gantry.retrieve_tools(query, limit=3)
-        retrieved_names = [t["function"]["name"] for t in retrieved_tools]
+            # A. Retrieval
+            retrieved_tools = await gantry.retrieve_tools(query, limit=3)
+            retrieved_names = [t["function"]["name"] for t in retrieved_tools]
 
-        print(f"   [Retrieval] Top 3: {retrieved_names}")
+            print(f"   [Retrieval] Top 3: {retrieved_names}")
 
-        if expected_tool in retrieved_names:
-            print(f"   ✅ Retrieval Success: Found '{expected_tool}'")
-        else:
-            print(f"   ❌ Retrieval Failed: Expected '{expected_tool}'")
-            print("-" * 60)
-            continue
+            if expected_tool in retrieved_names:
+                print(f"   ✅ Retrieval Success: Found '{expected_tool}'")
+            else:
+                print(f"   ❌ Retrieval Failed: Expected '{expected_tool}'")
+                print("-" * 60)
+                continue
 
-        # B. LLM Call
-        if client:
-            print("   [LLM] Calling GPT-5.5...")
-            try:
-                response = await client.chat.completions.create(
-                    model="gpt-5.5",
-                    messages=[{"role": "user", "content": query}],
-                    tools=retrieved_tools,
-                    tool_choice="auto",
-                )
+            # B. LLM Call
+            if client:
+                print("   [LLM] Calling GPT-5.5...")
+                try:
+                    response = await client.chat.completions.create(
+                        model="gpt-5.5",
+                        messages=[{"role": "user", "content": query}],
+                        tools=retrieved_tools,
+                        tool_choice="auto",
+                    )
 
-                msg = response.choices[0].message
-                tool_calls = msg.tool_calls
+                    msg = response.choices[0].message
+                    tool_calls = msg.tool_calls
 
-                if tool_calls:
-                    for tc in tool_calls:
-                        fn_name = tc.function.name
-                        fn_args = json.loads(tc.function.arguments)
-                        print(f"   [LLM] Selected Tool: {fn_name}")
-                        print(f"   [LLM] Arguments: {fn_args}")
+                    if tool_calls:
+                        for tc in tool_calls:
+                            fn_name = tc.function.name
+                            fn_args = json.loads(tc.function.arguments)
+                            print(f"   [LLM] Selected Tool: {fn_name}")
+                            print(f"   [LLM] Arguments: {fn_args}")
 
-                        if fn_name == expected_tool:
-                            print("   ✅ LLM Selection Success")
-                        else:
-                            print(
-                                f"   ⚠️  LLM selected '{fn_name}' instead of '{expected_tool}' (might be valid)"
+                            if fn_name == expected_tool:
+                                print("   ✅ LLM Selection Success")
+                            else:
+                                print(
+                                    f"   ⚠️  LLM selected '{fn_name}' instead of '{expected_tool}' (might be valid)"
+                                )
+
+                            # C. Execution
+                            print("   [Execution] Running tool...")
+                            result = await gantry.execute(
+                                ToolCall(tool_name=fn_name, arguments=fn_args)
                             )
+                            print(f"   [Result] Output: {result.result}")
+                    else:
+                        print("   ❌ LLM did not call any tool.")
+                        print(f"   [LLM Response] {msg.content}")
 
-                        # C. Execution
-                        print("   [Execution] Running tool...")
-                        result = await gantry.execute(
-                            ToolCall(tool_name=fn_name, arguments=fn_args)
-                        )
-                        print(f"   [Result] Output: {result.result}")
-                else:
-                    print("   ❌ LLM did not call any tool.")
-                    print(f"   [LLM Response] {msg.content}")
+                except Exception as e:
+                    print(f"   ❌ LLM Call Error: {e}")
+            else:
+                print("   [LLM] Skipped (No API Key)")
 
-            except Exception as e:
-                print(f"   ❌ LLM Call Error: {e}")
-        else:
-            print("   [LLM] Skipped (No API Key)")
-
-        print("-" * 60)
+            print("-" * 60)
+    finally:
+        await gantry.close()
 
 
 if __name__ == "__main__":

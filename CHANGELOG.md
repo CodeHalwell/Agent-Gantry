@@ -7,11 +7,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Closes every issue the #419 selector review filed (#420, #422–#424, #426–#428)
+and the examples sweep it exposed (#434). Two things to know before upgrading:
+
+- **`ToolQuery` gains `selection_threshold`**, and `score_threshold` no longer
+  applies on the selector path. If you relied on `score_threshold` cutting
+  selector probabilities, move that value to `selection_threshold`.
+- **`agent-gantry lint` now fails on a tool registered without `examples=`.**
+  Pass them, or read the finding as the retrieval-accuracy advice it is.
+
+### Added
+
+- **`ToolQuery.selection_threshold`** — a minimum selector probability for a
+  single query, on top of `SelectorConfig.threshold`, which the selector has
+  already applied. `None` by default, so nothing is cut that the selector
+  returned. It exists because `score_threshold` is a *cosine* cutoff whose
+  schema default of 0.5 is kept for direct `ToolQuery` callers, and reusing it
+  as a probability cutoff silently tightened selection for exactly those
+  callers (#428).
+
+- **Three lint rules** for the mistakes the examples sweep kept finding (#434):
+  `agent-gantry lint` now reports every tool registered without `examples=`;
+  and `agent-gantry lint --source PATH` scans Python files for a non-zero
+  `score_threshold` literal with no justifying comment — or with one claiming
+  it *lowers* or *relaxes* the filter, which is backwards: the field is an
+  absolute cosine cutoff, so non-zero only ever tightens it — and for a
+  `__main__` script that constructs an `AgentGantry` and never `close()`s it.
+  `--source` on its own builds no gantry. Both rules live in
+  `agent_gantry.utils.source_linter` and `agent_gantry.utils.registry_linter`
+  for CI use.
+
+- **`pytest-timeout` in the `dev` extra, with `timeout = 300`** (#420).
+  `faulthandler_timeout` only *reports* a hung test — pytest calls
+  `dump_traceback_later` without `exit=True` — so a hang still ran to
+  GitHub's six-hour job cap, which three CI jobs did. A test now fails at
+  300 s and the run moves on. `timeout_method = "thread"` because the suite
+  is async and multi-threaded and the signal method is unavailable on
+  Windows, where the hang was also seen.
+
 ### Fixed
+
+- **`AgentGantry(modules=..., selector=...)` now loads the module tools**
+  (#422). Lazy `modules=` were imported only by `sync()`, and a selector that
+  answers never reaches `sync()` — so the module tools were absent on every
+  call, permanently, because the selector kept answering from the directly
+  registered tools alone. They are now imported before selection, which only
+  populates the registry and so costs nothing the selector path was avoiding.
+
+- **The selector's catalogue agrees with what `execute()` will resolve**
+  (#423). It was built registry-first and topped up from the pending buffer by
+  `qualified_name`, which carries a version the registry key does not. Two
+  defects from those two lines: an `add_tool()` *update* before a sync was
+  dropped for the stale registered copy — the very description the selector
+  decides on — and a re-versioned tool survived twice, so the selector could
+  hand the agent v1's schema while `execute()` ran v2's handler. The catalogue
+  is now keyed as the registry is, `namespace.name`, with the pending copy
+  winning. Separately, a query that filters *every* tool out — an empty
+  namespace, a capability nothing has — is now an empty successful selection
+  rather than a decline: it used to send retrieval through `ensure_synced()`
+  and the vector store to learn the same thing, which in a selector-only
+  deployment is a failure, not a slower path. An empty registry still defers,
+  since a persistent store may hold tools only the semantic path can see.
+
+- **`serve_mcp()`, `run_http()` and `run_sse()` clear `sse_starlette`'s
+  shutdown latch on the way out** (#424). `reset_sse_shutdown_latch()` was
+  public but never wired into the path Gantry owns, and the uvicorn server was
+  built locally with no handle exposed, so a host could not perform the
+  documented recovery either: the second server started in one process
+  answered its first streaming request with headers and no body, and the
+  client waited for ever. `_serve_asgi` now resets in a `finally` and keeps the
+  running server on `MCPServer._uvicorn_server` for the duration.
+
+- **Skill selection measures its ceiling against the eligible catalogue and
+  actually enforces it** (#426). The paging loop read the whole store with no
+  filter, so `retrieve_skills(query, namespace="payments")` gave up on a
+  twelve-skill namespace because another namespace was large; it now passes
+  `namespace` (and `category`, where the store accepts it) and pages once per
+  namespace when given a list. And the ceiling was a `while/else`, whose
+  `else` never runs after a `break` — the branch that ends every catalogue —
+  so any total in (10,000, 11,000) crossed the cap on a short final page and
+  was selected over in full. It is now an explicit check on the collected
+  result.
+
+- **`CachedEmbedder` hit/miss counters are updated under the lock** (#427).
+  One embedder is shared across event loops in different threads by design,
+  and `+=` outside `_db_lock` could lose an increment. Statistics only, never a
+  returned vector, but the reported hit rate is what those counters are for.
 
 - `latest_activity` no longer uses opaque tool results such as passwords, bare
   numbers, or IDs as retrieval queries, and Agent Framework trace round numbers
   now advance when tool calls run in fresh contexts.
+
+### Fixed (examples)
+
+- **The whole examples tree now practises what the release notes preach**
+  (#434). 0.17.0 fixed `agent_frameworks/`, `project_demo/` and
+  `tool_vector_db/` and described the result more widely than the work. The
+  remaining files — `fast_track_demo.py`, `basics/`, `frameworks/`,
+  `llm_integration/`, `routing/`, `execution/`, `observability/`,
+  `protocols/`, `testing_limits/` — now register every tool with
+  `examples=[...]`, carry no inverted `score_threshold` override, and close
+  their gantry on every path. The bulk catalogues in `project_demo/tools/` and
+  `tool_vector_db/` have examples too. And the new `lint --source` rule found
+  nineteen `score_threshold=0.1` overrides still in `agent_frameworks/`
+  itself, six of them under the exact "Lowering threshold for SimpleEmbedder
+  compatibility" comment 0.17.0 said it had removed; those are gone as well.
+  `agent-gantry lint --source examples/` is clean, which is the check that
+  stops this recurring.
 
 ## [0.17.0] - 2026-09-19
 

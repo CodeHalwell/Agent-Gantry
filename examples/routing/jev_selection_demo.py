@@ -34,34 +34,48 @@ async def build_gantry(
 ) -> AgentGantry:
     """A small catalogue spanning two namespaces, plus one skill."""
     gantry = AgentGantry(selector=selector, reranker=reranker)
+    try:
 
-    @gantry.register(tags=["math"], namespace="numbers")
-    async def add_numbers(a: float, b: float) -> float:
-        """Add two numbers together and return the sum."""
-        return a + b
-
-    @gantry.register(tags=["math"], namespace="numbers")
-    async def divide_numbers(a: float, b: float) -> float:
-        """Divide the first number by the second and return the quotient."""
-        return a / b
-
-    @gantry.register(tags=["email"], namespace="comms")
-    async def send_email(to: str, subject: str, body: str) -> str:
-        """Send an email message to a named recipient."""
-        return f"sent to {to}"
-
-    @gantry.register(tags=["email"], namespace="comms")
-    async def list_inbox(limit: int = 10) -> list[str]:
-        """List the most recent messages sitting in the inbox."""
-        return ["a message"][:limit]
-
-    await gantry.add_skill(
-        Skill(
-            name="refund_policy",
-            description="How to decide whether a customer qualifies for a refund.",
-            content="Refunds are allowed within 30 days of purchase.",
+        @gantry.register(
+            tags=["math"], namespace="numbers", examples=["add 3 and 4", "what is 10 plus 5"]
         )
-    )
+        async def add_numbers(a: float, b: float) -> float:
+            """Add two numbers together and return the sum."""
+            return a + b
+
+        @gantry.register(
+            tags=["math"], namespace="numbers", examples=["divide 10 by 2", "what is 12 over 4"]
+        )
+        async def divide_numbers(a: float, b: float) -> float:
+            """Divide the first number by the second and return the quotient."""
+            return a / b
+
+        @gantry.register(
+            tags=["email"],
+            namespace="comms",
+            examples=["email Bob about the meeting", "send a note to the team"],
+        )
+        async def send_email(to: str, subject: str, body: str) -> str:
+            """Send an email message to a named recipient."""
+            return f"sent to {to}"
+
+        @gantry.register(
+            tags=["email"], namespace="comms", examples=["show my messages", "any new mail"]
+        )
+        async def list_inbox(limit: int = 10) -> list[str]:
+            """List the most recent messages sitting in the inbox."""
+            return ["a message"][:limit]
+
+        await gantry.add_skill(
+            Skill(
+                name="refund_policy",
+                description="How to decide whether a customer qualifies for a refund.",
+                content="Refunds are allowed within 30 days of purchase.",
+            )
+        )
+    except BaseException:
+        await gantry.close()
+        raise
     return gantry
 
 

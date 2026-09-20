@@ -383,3 +383,39 @@ async def test_cached_embedder_hits_its_own_first_batch(tmp_path: Any) -> None:
     await cached.embed_batch(["one", "two"])
     assert base.calls == 2, "the second call must be served from the cache"
     assert cached.hits == 2
+
+
+def test_cached_embedder_counters_are_exact_across_threads(tmp_path: Any) -> None:
+    """#427: the hit/miss tallies were ``+=``'d outside the lock guarding SQLite.
+
+    One embedder shared across event loops in different threads — the
+    configuration the class is built for — could lose increments. Statistics
+    only, but the reported hit rate is the one thing these exist for.
+    """
+    cached = CachedEmbedder(_CountingEmbedder(), cache_path=str(tmp_path / "cache.sqlite"))
+    # Warm both keys (document and query scopes differ) so every call the
+    # threads make is a hit and the tallies have one right answer.
+    asyncio.run(cached.embed_batch(["shared"]))
+    asyncio.run(cached.embed_query("shared"))
+    rounds, threads = 40, 8
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            for _ in range(rounds):
+                asyncio.run(cached.embed_batch(["shared"]))
+                asyncio.run(cached.embed_query("shared"))
+        except BaseException as exc:  # noqa: BLE001 - reported below
+            errors.append(exc)
+
+    import threading
+
+    pool = [threading.Thread(target=worker) for _ in range(threads)]
+    for t in pool:
+        t.start()
+    for t in pool:
+        t.join()
+
+    assert not errors
+    assert cached.misses == 2, "only the two warm-up calls missed"
+    assert cached.hits == rounds * threads * 2

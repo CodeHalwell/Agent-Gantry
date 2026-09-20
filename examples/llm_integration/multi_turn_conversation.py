@@ -38,12 +38,18 @@ def _mock_tool_calls(text: str, tool_schemas: Sequence[dict[str, Any]]) -> list[
 
 
 async def _ensure_tools(gantry: AgentGantry) -> None:
-    @gantry.register(tags=["orders"])
+    @gantry.register(
+        tags=["orders"],
+        examples=["where is my order 12345", "has my order shipped yet"],
+    )
     def get_order_status(order_id: str) -> dict[str, str]:
         """Look up the latest status for an order."""
         return {"order_id": order_id, "status": "shipped", "carrier": "DHL"}
 
-    @gantry.register(tags=["orders"])
+    @gantry.register(
+        tags=["orders"],
+        examples=["upgrade my order to express shipping", "make that delivery faster"],
+    )
     def upgrade_shipping(order_id: str, speed: str) -> dict[str, str]:
         """Upgrade shipping speed for an order."""
         return {"order_id": order_id, "speed": speed, "status": "upgraded"}
@@ -59,7 +65,7 @@ async def run_turn(
     user_content: str,
 ) -> None:
     messages.append({"role": "user", "content": user_content})
-    tools = await gantry.retrieve_tools(user_content, limit=2, score_threshold=0.2)
+    tools = await gantry.retrieve_tools(user_content, limit=2)
 
     tool_calls: list[Any] = []
     if client is not None:
@@ -128,31 +134,34 @@ async def run_turn(
 
 async def main() -> None:
     gantry = AgentGantry()
-    await _ensure_tools(gantry)
+    try:
+        await _ensure_tools(gantry)
 
-    api_key = os.environ.get("OPENAI_API_KEY")
-    client = AsyncOpenAI(api_key=api_key) if OPENAI_AVAILABLE and api_key else None
+        api_key = os.environ.get("OPENAI_API_KEY")
+        client = AsyncOpenAI(api_key=api_key) if OPENAI_AVAILABLE and api_key else None
 
-    messages: list[dict[str, Any]] = [
-        {
-            "role": "system",
-            "content": "You are a helpful support agent. Use tools when available.",
-        }
-    ]
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "system",
+                "content": "You are a helpful support agent. Use tools when available.",
+            }
+        ]
 
-    print("=== Multi-turn LLM + Gantry demo ===")
-    await run_turn(
-        gantry=gantry,
-        client=client,
-        messages=messages,
-        user_content="My order 12345 seems delayed. Can you check the status?",
-    )
-    await run_turn(
-        gantry=gantry,
-        client=client,
-        messages=messages,
-        user_content="Please upgrade that order to express shipping.",
-    )
+        print("=== Multi-turn LLM + Gantry demo ===")
+        await run_turn(
+            gantry=gantry,
+            client=client,
+            messages=messages,
+            user_content="My order 12345 seems delayed. Can you check the status?",
+        )
+        await run_turn(
+            gantry=gantry,
+            client=client,
+            messages=messages,
+            user_content="Please upgrade that order to express shipping.",
+        )
+    finally:
+        await gantry.close()
 
 
 if __name__ == "__main__":

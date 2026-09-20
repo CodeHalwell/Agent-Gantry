@@ -41,29 +41,32 @@ async def main():
     # 2. Initialize Gantry with the custom embedder
     embedder = RandomEmbedder(dimension=4)
     gantry = AgentGantry(embedder=embedder)
+    try:
 
-    @gantry.register
-    def tool_a() -> str:
-        """Tool A description."""
-        return "A"
+        @gantry.register(examples=["run tool A", "use the first tool"])
+        def tool_a() -> str:
+            """Tool A description."""
+            return "A"
 
-    @gantry.register
-    def tool_b() -> str:
-        """Tool B description."""
-        return "B"
+        @gantry.register(examples=["run tool B", "use the second tool"])
+        def tool_b() -> str:
+            """Tool B description."""
+            return "B"
 
-    await gantry.sync()
+        await gantry.sync()
 
-    print("--- Custom Adapter Demo ---")
-    print(f"Using Embedder: {embedder.model_name}")
+        print("--- Custom Adapter Demo ---")
+        print(f"Using Embedder: {embedder.model_name}")
 
-    # 3. Retrieve tools
-    # Since embeddings are random/length-based, semantic relevance is meaningless here,
-    # but it proves the pipeline works with custom components.
-    tools = await gantry.retrieve_tools("query")
-    print(f"Retrieved {len(tools)} tools using custom embedder.")
-    for t in tools:
-        print(f" - {t['function']['name']}")
+        # 3. Retrieve tools
+        # Since embeddings are random/length-based, semantic relevance is meaningless here,
+        # but it proves the pipeline works with custom components.
+        tools = await gantry.retrieve_tools("query")
+        print(f"Retrieved {len(tools)} tools using custom embedder.")
+        for t in tools:
+            print(f" - {t['function']['name']}")
+    finally:
+        await gantry.close()
 
 
 if __name__ == "__main__":

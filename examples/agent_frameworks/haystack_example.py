@@ -99,8 +99,7 @@ async def main() -> None:
 
         # --- 1. Static tier: select once, get native haystack.tools.Tool -------- #
         query = "what's the weather in Paris?"
-        # Lowering threshold for SimpleEmbedder compatibility in this example.
-        static_tools = await adapter.select(query, limit=2, score_threshold=0.1)
+        static_tools = await adapter.select(query, limit=2)
         print(f"[static] selected {len(static_tools)} tool(s) for {query!r}:")
         for tool in static_tools:
             print(f"  - {tool.name}: {tool.description}")
@@ -110,12 +109,12 @@ async def main() -> None:
 
         # --- 2. Dynamic tier: per-call live_tools + ToolInvoker builder --------- #
         weather_tools = await adapter.live_tools(
-            "what's the weather in Tokyo?", limit=1, score_threshold=0.1
+            "what's the weather in Tokyo?", limit=1
         )
         print(f"[dynamic] weather query -> {[t.name for t in weather_tools]}")
 
         email_tools = await adapter.live_tools(
-            "send an email to my manager", limit=1, score_threshold=0.1
+            "send an email to my manager", limit=1
         )
         print(f"[dynamic] email query   -> {[t.name for t in email_tools]}")
 
@@ -130,7 +129,7 @@ async def main() -> None:
             haystack_has_tool_invoker = False
 
         if haystack_has_tool_invoker:
-            invoker_builder = adapter.tool_invoker_builder(limit=2, score_threshold=0.1)
+            invoker_builder = adapter.tool_invoker_builder(limit=2)
             invoker = await invoker_builder.build(query)
             print(f"[dynamic] built a fresh ToolInvoker with tools: {[t.name for t in invoker.tools]}\n")
         else:
@@ -159,7 +158,7 @@ async def main() -> None:
                 # haystack >= 3.0: the builder constructs a per-call Agent that
                 # both selects and executes the Gantry tools.
                 agent_builder = adapter.tool_invoker_builder(
-                    limit=2, score_threshold=0.1, chat_generator=generator
+                    limit=2, chat_generator=generator
                 )
                 agent = await agent_builder.build(query)
                 print("[live] running a per-call haystack Agent with Gantry-selected tools...")

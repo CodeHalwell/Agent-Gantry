@@ -33,131 +33,146 @@ async def main():
         print("Nomic dependencies missing. Falling back to SimpleEmbedder (less accurate).")
         gantry = AgentGantry()
 
-    # 2. Register a diverse set of tools (The "Universe" of tools)
-    print("2. Registering diverse toolset...")
+    try:
+        # 2. Register a diverse set of tools (The "Universe" of tools)
+        print("2. Registering diverse toolset...")
 
-    @gantry.register(tags=["math"])
-    def add_numbers(a: float, b: float) -> float:
-        """Add two numbers together."""
-        return a + b
+        @gantry.register(tags=["math"], examples=["what is 50 + 20", "add 7 and 12"])
+        def add_numbers(a: float, b: float) -> float:
+            """Add two numbers together."""
+            return a + b
 
-    @gantry.register(tags=["weather"])
-    def get_weather(city: str) -> str:
-        """Get the current weather for a city."""
-        return f"The weather in {city} is sunny and 75°F."
-
-    @gantry.register(tags=["finance"])
-    def get_stock_price(ticker: str) -> str:
-        """Get the current stock price for a ticker symbol."""
-        return f"{ticker} is currently trading at $150.25"
-
-    @gantry.register(tags=["system"])
-    def get_system_time() -> str:
-        """Get the current system time."""
-        return "2023-10-27 10:00:00 UTC"
-
-    @gantry.register(tags=["email"])
-    def send_email(recipient: str, body: str) -> str:
-        """Send an email."""
-        return f"Sent email to {recipient}"
-
-    # Sync to vector store
-    await gantry.sync()
-    print(f"   Registered {gantry.tool_count} tools in the registry.\n")
-
-    # 3. Define the LLM interaction loop
-    async def process_user_query(user_query: str):
-        print(f"--- Processing Query: '{user_query}' ---")
-
-        # A. RETRIEVAL: Get only the most relevant tools
-        # We limit to 2 tools to demonstrate strict context filtering
-        relevant_tools = await gantry.retrieve_tools(user_query, limit=2, score_threshold=0.4)
-
-        print(
-            f"   [Gantry] Context Reduction: {gantry.tool_count} total -> {len(relevant_tools)} relevant"
+        @gantry.register(
+            tags=["weather"],
+            examples=["what's the weather in London", "is it raining in Leeds"],
         )
-        for t in relevant_tools:
-            print(f"   [Gantry] Selected: {t['function']['name']}")
+        def get_weather(city: str) -> str:
+            """Get the current weather for a city."""
+            return f"The weather in {city} is sunny and 75°F."
 
-        if not relevant_tools:
-            print("   [Gantry] No relevant tools found. Asking LLM without tools.")
+        @gantry.register(
+            tags=["finance"],
+            examples=["what is AAPL trading at", "current share price for Tesco"],
+        )
+        def get_stock_price(ticker: str) -> str:
+            """Get the current stock price for a ticker symbol."""
+            return f"{ticker} is currently trading at $150.25"
 
-        # B. LLM CALL: Pass only the retrieved tools
-        api_key = os.environ.get("OPENAI_API_KEY")
+        @gantry.register(
+            tags=["system"],
+            examples=["what time is it right now", "what's the current system time"],
+        )
+        def get_system_time() -> str:
+            """Get the current system time."""
+            return "2023-10-27 10:00:00 UTC"
 
-        if OPENAI_AVAILABLE and api_key:
-            print("   [LLM] Calling OpenAI API...")
-            client = AsyncOpenAI(api_key=api_key)
+        @gantry.register(
+            tags=["email"],
+            examples=["email the team about the outage", "send Sam a note"],
+        )
+        def send_email(recipient: str, body: str) -> str:
+            """Send an email."""
+            return f"Sent email to {recipient}"
 
-            messages = [{"role": "user", "content": user_query}]
+        # Sync to vector store
+        await gantry.sync()
+        print(f"   Registered {gantry.tool_count} tools in the registry.\n")
 
-            # Pass the filtered list of tools to the LLM
-            response = await client.chat.completions.create(
-                model="gpt-5.5",  # or gpt-5.4-mini for a cost-efficient option
-                messages=messages,
-                tools=relevant_tools if relevant_tools else None,
-                tool_choice="auto" if relevant_tools else None,
+        # 3. Define the LLM interaction loop
+        async def process_user_query(user_query: str):
+            print(f"--- Processing Query: '{user_query}' ---")
+
+            # A. RETRIEVAL: Get only the most relevant tools
+            # We limit to 2 tools to demonstrate strict context filtering
+            relevant_tools = await gantry.retrieve_tools(user_query, limit=2)
+
+            print(
+                f"   [Gantry] Context Reduction: {gantry.tool_count} total -> {len(relevant_tools)} relevant"
             )
+            for t in relevant_tools:
+                print(f"   [Gantry] Selected: {t['function']['name']}")
 
-            message = response.choices[0].message
-            tool_calls = message.tool_calls
+            if not relevant_tools:
+                print("   [Gantry] No relevant tools found. Asking LLM without tools.")
 
-        else:
-            print("   [LLM] Mocking LLM response (Set OPENAI_API_KEY to use real LLM)...")
-            # Simple mock logic for demonstration purposes
-            tool_calls = []
-            if "50 + 20" in user_query and any(
-                t["function"]["name"] == "add_numbers" for t in relevant_tools
-            ):
-                # Mock a tool call object structure similar to OpenAI's
-                class MockToolCall:
-                    def __init__(self, name, args):
-                        self.id = "call_123"
-                        self.function = type(
-                            "obj", (object,), {"name": name, "arguments": json.dumps(args)}
-                        )
-                        self.type = "function"
+            # B. LLM CALL: Pass only the retrieved tools
+            api_key = os.environ.get("OPENAI_API_KEY")
 
-                tool_calls = [MockToolCall("add_numbers", {"a": 50, "b": 20})]
-                print("   [LLM] Generated tool call: add_numbers(a=50, b=20)")
-            elif "weather" in user_query.lower() and any(
-                t["function"]["name"] == "get_weather" for t in relevant_tools
-            ):
+            if OPENAI_AVAILABLE and api_key:
+                print("   [LLM] Calling OpenAI API...")
+                client = AsyncOpenAI(api_key=api_key)
 
-                class MockToolCall:
-                    def __init__(self, name, args):
-                        self.id = "call_456"
-                        self.function = type(
-                            "obj", (object,), {"name": name, "arguments": json.dumps(args)}
-                        )
-                        self.type = "function"
+                messages = [{"role": "user", "content": user_query}]
 
-                tool_calls = [MockToolCall("get_weather", {"city": "London"})]
-                print("   [LLM] Generated tool call: get_weather(city='London')")
+                # Pass the filtered list of tools to the LLM
+                response = await client.chat.completions.create(
+                    model="gpt-5.5",  # or gpt-5.4-mini for a cost-efficient option
+                    messages=messages,
+                    tools=relevant_tools if relevant_tools else None,
+                    tool_choice="auto" if relevant_tools else None,
+                )
 
-        # C. EXECUTION: Execute the tool calls securely via Gantry
-        if tool_calls:
-            for tc in tool_calls:
-                fn_name = tc.function.name
-                fn_args = json.loads(tc.function.arguments)
+                message = response.choices[0].message
+                tool_calls = message.tool_calls
 
-                print(f"   [Gantry] Executing tool: {fn_name}")
+            else:
+                print("   [LLM] Mocking LLM response (Set OPENAI_API_KEY to use real LLM)...")
+                # Simple mock logic for demonstration purposes
+                tool_calls = []
+                if "50 + 20" in user_query and any(
+                    t["function"]["name"] == "add_numbers" for t in relevant_tools
+                ):
+                    # Mock a tool call object structure similar to OpenAI's
+                    class MockToolCall:
+                        def __init__(self, name, args):
+                            self.id = "call_123"
+                            self.function = type(
+                                "obj", (object,), {"name": name, "arguments": json.dumps(args)}
+                            )
+                            self.type = "function"
 
-                # Execute using AgentGantry's secure executor
-                result = await gantry.execute(ToolCall(tool_name=fn_name, arguments=fn_args))
+                    tool_calls = [MockToolCall("add_numbers", {"a": 50, "b": 20})]
+                    print("   [LLM] Generated tool call: add_numbers(a=50, b=20)")
+                elif "weather" in user_query.lower() and any(
+                    t["function"]["name"] == "get_weather" for t in relevant_tools
+                ):
 
-                print(f"   [Result] {result.result}")
-        else:
-            print("   [Result] No tool calls made by LLM.")
+                    class MockToolCall:
+                        def __init__(self, name, args):
+                            self.id = "call_456"
+                            self.function = type(
+                                "obj", (object,), {"name": name, "arguments": json.dumps(args)}
+                            )
+                            self.type = "function"
 
-        print("-" * 50 + "\n")
+                    tool_calls = [MockToolCall("get_weather", {"city": "London"})]
+                    print("   [LLM] Generated tool call: get_weather(city='London')")
 
-    # 4. Run scenarios
-    await process_user_query("What is 50 + 20?")
-    await process_user_query("What's the weather in London?")
-    await process_user_query(
-        "Tell me a joke."
-    )  # Should retrieve no tools or irrelevant ones, LLM handles it
+            # C. EXECUTION: Execute the tool calls securely via Gantry
+            if tool_calls:
+                for tc in tool_calls:
+                    fn_name = tc.function.name
+                    fn_args = json.loads(tc.function.arguments)
+
+                    print(f"   [Gantry] Executing tool: {fn_name}")
+
+                    # Execute using AgentGantry's secure executor
+                    result = await gantry.execute(ToolCall(tool_name=fn_name, arguments=fn_args))
+
+                    print(f"   [Result] {result.result}")
+            else:
+                print("   [Result] No tool calls made by LLM.")
+
+            print("-" * 50 + "\n")
+
+        # 4. Run scenarios
+        await process_user_query("What is 50 + 20?")
+        await process_user_query("What's the weather in London?")
+        await process_user_query(
+            "Tell me a joke."
+        )  # Should retrieve no tools or irrelevant ones, LLM handles it
+    finally:
+        await gantry.close()
 
 
 if __name__ == "__main__":

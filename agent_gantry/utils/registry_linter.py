@@ -58,12 +58,26 @@ class OverlappingTagFinding:
 
 
 @dataclass
+class MissingExamplesFinding:
+    """A tool registered with no ``examples``.
+
+    ``examples=[...]`` is the single largest retrieval-accuracy lever this
+    project has measured — on one query set it moved the default embedder
+    from 1/5 to 5/5, more than switching to a larger embedding model — so a
+    tool without them is under-described in the one place that matters (#434).
+    """
+
+    tool: str
+
+
+@dataclass
 class RegistryAnalysis:
     """Aggregated analysis output."""
 
     cross_references: list[CrossReferenceFinding] = field(default_factory=list)
     similar_pairs: list[SimilarPairFinding] = field(default_factory=list)
     overlapping_tags: list[OverlappingTagFinding] = field(default_factory=list)
+    missing_examples: list[MissingExamplesFinding] = field(default_factory=list)
     embedder_used: str | None = None
 
     @property
@@ -72,6 +86,7 @@ class RegistryAnalysis:
             not self.cross_references
             and not self.similar_pairs
             and not self.overlapping_tags
+            and not self.missing_examples
         )
 
     def format_text(self) -> str:
@@ -93,6 +108,11 @@ class RegistryAnalysis:
             lines.append("Overlapping tags (low discriminative value):")
             for f in self.overlapping_tags:
                 lines.append(f"  - {f.tag}: {', '.join(f.tools)}")
+        if self.missing_examples:
+            lines.append("")
+            lines.append("Tools registered without examples=[...] (the largest retrieval lever):")
+            for f in self.missing_examples:
+                lines.append(f"  - {f.tool}")
         return "\n".join(lines)
 
 
@@ -139,6 +159,12 @@ def _detect_cross_references(
         if refs:
             findings.append(CrossReferenceFinding(tool=tool.name, references=refs))
     return findings
+
+
+def _detect_missing_examples(
+    tools: list[ToolDefinition],
+) -> list[MissingExamplesFinding]:
+    return [MissingExamplesFinding(tool=_qualified(t)) for t in tools if not t.examples]
 
 
 def _detect_overlapping_tags(
@@ -229,6 +255,7 @@ async def analyze_registry(
     tools = gantry.list_tools_sync()
     cross_refs = _detect_cross_references(tools)
     tag_overlaps = _detect_overlapping_tags(tools, max_share=tag_overlap_share)
+    missing = _detect_missing_examples(tools)
 
     eff_embedder = embedder if embedder is not None else gantry.embedder
     similar_pairs = await _detect_similar_pairs(
@@ -239,6 +266,7 @@ async def analyze_registry(
         cross_references=cross_refs,
         similar_pairs=similar_pairs,
         overlapping_tags=tag_overlaps,
+        missing_examples=missing,
         embedder_used=str(embedder_id),
     )
 
@@ -281,6 +309,7 @@ async def pairwise_similarity(
 
 __all__ = [
     "CrossReferenceFinding",
+    "MissingExamplesFinding",
     "OverlappingTagFinding",
     "RegistryAnalysis",
     "SimilarPairFinding",

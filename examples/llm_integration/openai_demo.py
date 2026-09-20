@@ -22,7 +22,6 @@ from typing import Any
 from dotenv import load_dotenv
 
 from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 from agent_gantry.schema.execution import ToolCall
 
 load_dotenv()
@@ -49,148 +48,155 @@ async def main() -> None:
             "(Install 'agent-gantry[nomic]' for better results)"
         )
 
-    @gantry.register(tags=["weather"])
-    def get_weather(location: str, unit: str = "celsius") -> str:
-        """Get the current weather for a location."""
-        return f"Weather in {location}: 22°{unit.upper()}, Sunny"
+    try:
+        @gantry.register(
+            tags=["weather"],
+            examples=["what's the weather in Tokyo", "is it cold in Berlin right now"],
+        )
+        def get_weather(location: str, unit: str = "celsius") -> str:
+            """Get the current weather for a location."""
+            return f"Weather in {location}: 22°{unit.upper()}, Sunny"
 
-    @gantry.register(tags=["finance"])
-    def get_stock_price(ticker: str) -> str:
-        """Get the current stock price."""
-        return f"{ticker.upper()}: $150.00"
+        @gantry.register(
+            tags=["finance"],
+            examples=["what is the stock price of AAPL", "how is Tesco stock doing"],
+        )
+        def get_stock_price(ticker: str) -> str:
+            """Get the current stock price."""
+            return f"{ticker.upper()}: $150.00"
 
-    await gantry.sync()
-    print(f"✅ Registered {gantry.tool_count} tools\n")
+        await gantry.sync()
+        print(f"✅ Registered {gantry.tool_count} tools\n")
 
-    from openai import AsyncOpenAI
+        from openai import AsyncOpenAI
 
-    client = AsyncOpenAI(api_key=api_key)
+        client = AsyncOpenAI(api_key=api_key)
 
-    score_threshold = 0.1 if isinstance(gantry._embedder, SimpleEmbedder) else 0.5
+        # --- Scenario A: Responses API (RECOMMENDED for agentic workloads) ---
+        # The Responses API is OpenAI's primary surface for agents. It uses a flat
+        # tool schema and returns output items rather than choices[].message.
+        # Migrate from Assistants API before its August 2026 sunset.
+        print("--- Scenario A: Responses API (recommended for agentic workloads) ---")
+        query_a = "What's the weather in Tokyo?"
+        print(f"User Query: '{query_a}'")
 
-    # --- Scenario A: Responses API (RECOMMENDED for agentic workloads) ---
-    # The Responses API is OpenAI's primary surface for agents. It uses a flat
-    # tool schema and returns output items rather than choices[].message.
-    # Migrate from Assistants API before its August 2026 sunset.
-    print("--- Scenario A: Responses API (recommended for agentic workloads) ---")
-    query_a = "What's the weather in Tokyo?"
-    print(f"User Query: '{query_a}'")
+        # Retrieve tools in openai_responses dialect (flat schema)
+        tools_responses = await gantry.retrieve_tools(
+            query_a, limit=1, dialect="openai_responses"
+        )
+        print(f"Gantry retrieved {len(tools_responses)} tool(s): {[t['name'] for t in tools_responses]}")
 
-    # Retrieve tools in openai_responses dialect (flat schema)
-    tools_responses = await gantry.retrieve_tools(
-        query_a, limit=1, score_threshold=score_threshold, dialect="openai_responses"
-    )
-    print(f"Gantry retrieved {len(tools_responses)} tool(s): {[t['name'] for t in tools_responses]}")
-
-    response_a = await client.responses.create(
-        model="gpt-4.1",
-        input=[{"role": "user", "content": query_a}],
-        tools=tools_responses,
-    )
-
-    function_calls = [item for item in response_a.output if item.type == "function_call"]
-    if not function_calls:
-        # Model answered directly — print the text output
-        print(f"Direct answer: {response_a.output_text}")
-    for item in function_calls:
-        print(f"LLM decided to call: {item.name}({item.arguments})")
-        args = json.loads(item.arguments) if isinstance(item.arguments, str) else item.arguments
-        result = await gantry.execute(ToolCall(tool_name=item.name, arguments=args))
-        print(f"Execution Result: {result.result}")
-
-        # Send tool result back using previous_response_id — avoids resending
-        # the full conversation and reduces token usage.
-        followup = await client.responses.create(
+        response_a = await client.responses.create(
             model="gpt-4.1",
-            previous_response_id=response_a.id,
-            input=[
-                {
-                    "type": "function_call_output",
-                    "call_id": item.call_id,
-                    "output": str(result.result),
-                }
-            ],
+            input=[{"role": "user", "content": query_a}],
+            tools=tools_responses,
         )
-        print(f"Final answer: {followup.output_text}")
 
-    # --- Scenario B: Chat Completions (dynamic retrieval) ---
-    print("\n--- Scenario B: Chat Completions API (dynamic retrieval) ---")
-    query_b = "What's the weather in Tokyo?"
-    print(f"User Query: '{query_b}'")
-
-    tools_cc = await gantry.retrieve_tools(query_b, limit=1, score_threshold=score_threshold)
-    print(f"Gantry retrieved {len(tools_cc)} tool(s): {[t['function']['name'] for t in tools_cc]}")
-
-    response_b = await client.chat.completions.create(
-        model="gpt-5.5",
-        messages=[{"role": "user", "content": query_b}],
-        tools=tools_cc,
-        tool_choice="auto",
-    )
-
-    tool_calls = response_b.choices[0].message.tool_calls
-    if tool_calls:
-        for tc in tool_calls:
-            print(f"LLM decided to call: {tc.function.name}({tc.function.arguments})")
-            result = await gantry.execute(
-                ToolCall(tool_name=tc.function.name, arguments=json.loads(tc.function.arguments))
-            )
+        function_calls = [item for item in response_a.output if item.type == "function_call"]
+        if not function_calls:
+            # Model answered directly — print the text output
+            print(f"Direct answer: {response_a.output_text}")
+        for item in function_calls:
+            print(f"LLM decided to call: {item.name}({item.arguments})")
+            args = json.loads(item.arguments) if isinstance(item.arguments, str) else item.arguments
+            result = await gantry.execute(ToolCall(tool_name=item.name, arguments=args))
             print(f"Execution Result: {result.result}")
-    else:
-        print("LLM did not call any tools.")
 
-    # --- Scenario C: Static Tool List (small toolsets) ---
-    print("\n--- Scenario C: Static Tool List (for small toolsets) ---")
-    all_tools = [t.to_dialect("openai") for t in await gantry.list_tools()]
-    print(f"Passing all {len(all_tools)} tools to LLM...")
+            # Send tool result back using previous_response_id — avoids resending
+            # the full conversation and reduces token usage.
+            followup = await client.responses.create(
+                model="gpt-4.1",
+                previous_response_id=response_a.id,
+                input=[
+                    {
+                        "type": "function_call_output",
+                        "call_id": item.call_id,
+                        "output": str(result.result),
+                    }
+                ],
+            )
+            print(f"Final answer: {followup.output_text}")
 
-    # --- Scenario D: Decorator-based automatic injection (RECOMMENDED for wrappers) ---
-    print("\n--- Scenario D: @with_semantic_tools Decorator (RECOMMENDED) ---")
+        # --- Scenario B: Chat Completions (dynamic retrieval) ---
+        print("\n--- Scenario B: Chat Completions API (dynamic retrieval) ---")
+        query_b = "What's the weather in Tokyo?"
+        print(f"User Query: '{query_b}'")
 
-    set_default_gantry(gantry)
+        tools_cc = await gantry.retrieve_tools(query_b, limit=1)
+        print(f"Gantry retrieved {len(tools_cc)} tool(s): {[t['function']['name'] for t in tools_cc]}")
 
-    @with_semantic_tools(limit=1, score_threshold=0.1, dialect="openai")
-    async def chat_with_tools(
-        messages: list[dict[str, str]], tools: list[dict[str, Any]] | None = None
-    ):
-        print(f"   [Decorator] Injected {len(tools) if tools else 0} tools")
-        return await client.chat.completions.create(
+        response_b = await client.chat.completions.create(
             model="gpt-5.5",
-            messages=messages,
-            tools=tools,
-            tool_choice="auto" if tools else None,
+            messages=[{"role": "user", "content": query_b}],
+            tools=tools_cc,
+            tool_choice="auto",
         )
 
-    query_d = "What is the stock price of AAPL?"
-    print(f"User Query: '{query_d}'")
+        tool_calls = response_b.choices[0].message.tool_calls
+        if tool_calls:
+            for tc in tool_calls:
+                print(f"LLM decided to call: {tc.function.name}({tc.function.arguments})")
+                result = await gantry.execute(
+                    ToolCall(
+                        tool_name=tc.function.name, arguments=json.loads(tc.function.arguments)
+                    )
+                )
+                print(f"Execution Result: {result.result}")
+        else:
+            print("LLM did not call any tools.")
 
-    response_d = await chat_with_tools(messages=[{"role": "user", "content": query_d}])
+        # --- Scenario C: Static Tool List (small toolsets) ---
+        print("\n--- Scenario C: Static Tool List (for small toolsets) ---")
+        all_tools = [t.to_dialect("openai") for t in await gantry.list_tools()]
+        print(f"Passing all {len(all_tools)} tools to LLM...")
 
-    tool_calls_d = response_d.choices[0].message.tool_calls
-    if tool_calls_d:
-        print(f"LLM decided to call: {tool_calls_d[0].function.name}")
-    else:
-        print("LLM did not call any tools.")
+        # --- Scenario D: Decorator-based automatic injection (RECOMMENDED for wrappers) ---
+        print("\n--- Scenario D: @with_semantic_tools Decorator (RECOMMENDED) ---")
 
-    # --- Scenario E: Typed OpenAIAdapter (provider-specific convenience) ---
-    # OpenAIAdapter(gantry).tools(query, limit=n) is exactly equivalent to
-    # gantry.retrieve_tools(query, limit=n, dialect="openai") — the dialect is
-    # baked in, so you get OpenAI chat-completions schemas with no string param.
-    # Use .responses_tools(...) for the flat Responses API schema (Scenario A).
-    print("\n--- Scenario E: Typed OpenAIAdapter ---")
-    from agent_gantry.openai import OpenAIAdapter
+        set_default_gantry(gantry)
 
-    adapter = OpenAIAdapter(gantry)
-    query_e = "What's the weather in Berlin?"
-    print(f"User Query: '{query_e}'")
+        @with_semantic_tools(limit=1, dialect="openai")
+        async def chat_with_tools(
+            messages: list[dict[str, str]], tools: list[dict[str, Any]] | None = None
+        ):
+            print(f"   [Decorator] Injected {len(tools) if tools else 0} tools")
+            return await client.chat.completions.create(
+                model="gpt-5.5",
+                messages=messages,
+                tools=tools,
+                tool_choice="auto" if tools else None,
+            )
 
-    tools_cc_e = await adapter.tools(query_e, limit=1, score_threshold=score_threshold)
-    print(f"  chat-completions schema: {[t['function']['name'] for t in tools_cc_e]}")
+        query_d = "What is the stock price of AAPL?"
+        print(f"User Query: '{query_d}'")
 
-    tools_resp_e = await adapter.responses_tools(
-        query_e, limit=1, score_threshold=score_threshold
-    )
-    print(f"  responses schema:        {[t['name'] for t in tools_resp_e]}")
+        response_d = await chat_with_tools(messages=[{"role": "user", "content": query_d}])
+
+        tool_calls_d = response_d.choices[0].message.tool_calls
+        if tool_calls_d:
+            print(f"LLM decided to call: {tool_calls_d[0].function.name}")
+        else:
+            print("LLM did not call any tools.")
+
+        # --- Scenario E: Typed OpenAIAdapter (provider-specific convenience) ---
+        # OpenAIAdapter(gantry).tools(query, limit=n) is exactly equivalent to
+        # gantry.retrieve_tools(query, limit=n, dialect="openai") — the dialect is
+        # baked in, so you get OpenAI chat-completions schemas with no string param.
+        # Use .responses_tools(...) for the flat Responses API schema (Scenario A).
+        print("\n--- Scenario E: Typed OpenAIAdapter ---")
+        from agent_gantry.openai import OpenAIAdapter
+
+        adapter = OpenAIAdapter(gantry)
+        query_e = "What's the weather in Berlin?"
+        print(f"User Query: '{query_e}'")
+
+        tools_cc_e = await adapter.tools(query_e, limit=1)
+        print(f"  chat-completions schema: {[t['function']['name'] for t in tools_cc_e]}")
+
+        tools_resp_e = await adapter.responses_tools(query_e, limit=1)
+        print(f"  responses schema:        {[t['name'] for t in tools_resp_e]}")
+    finally:
+        await gantry.close()
 
 
 if __name__ == "__main__":

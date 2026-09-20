@@ -109,6 +109,7 @@ async def show(label: str, embedder: PrefixedEmbedder) -> None:
             ToolDefinition(
                 name="send_email",
                 description="Send an email message to a named recipient.",
+                examples=["email Priya about the report", "send a note to the team"],
                 parameters_schema={"type": "object", "properties": {}},
             ),
             lambda: None,

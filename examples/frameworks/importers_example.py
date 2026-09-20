@@ -44,7 +44,10 @@ from agent_gantry.schema.execution import ExecutionStatus, ToolCall
 def build_gantry() -> AgentGantry:
     gantry = AgentGantry(embedder=SimpleEmbedder(dimension=128))
 
-    @gantry.register(tags=["notes"])
+    @gantry.register(
+        tags=["notes"],
+        examples=["jot this down for me", "save a note that the meeting moved to 3pm"],
+    )
     def save_note(text: str) -> str:
         """Save a short text note for later reference."""
         return f"saved: {text}"
@@ -117,45 +120,48 @@ async def import_from_llamaindex(gantry: AgentGantry) -> None:
 async def main() -> None:
     gantry = build_gantry()
 
-    print("Importing native tools from each framework (skips cleanly if not installed):")
-    await import_from_langchain(gantry)
-    await import_from_crewai(gantry)
-    await import_from_llamaindex(gantry)
+    try:
+        print("Importing native tools from each framework (skips cleanly if not installed):")
+        await import_from_langchain(gantry)
+        await import_from_crewai(gantry)
+        await import_from_llamaindex(gantry)
 
-    await gantry.sync()
-    print(f"\nGantry now knows {gantry.tool_count} tool(s) total (native + imported).")
+        await gantry.sync()
+        print(f"\nGantry now knows {gantry.tool_count} tool(s) total (native + imported).")
 
-    # Every imported tool is a first-class registry citizen: retrievable via
-    # semantic search, transcodable to any provider dialect, and executable
-    # through the normal gantry.execute() path (security policy, retries,
-    # circuit breakers, telemetry) exactly like a @gantry.register-ed tool.
-    print("\nRetrieve + execute an imported tool through the normal gantry.execute() path:")
-    for query, tool_name, args in [
-        ("what's the weather like", "get_weather", {"city": "Paris"}),
-        (
-            "convert money between currencies",
-            "convert_currency",
-            {"amount": 100, "frm": "USD", "to": "EUR"},
-        ),
-        ("find me a flight", "search_flights", {"origin": "LHR", "destination": "JFK"}),
-    ]:
-        # limit=10 (not the usual small top-k) so this stays deterministic
-        # under SimpleEmbedder's coarse hash-based similarity -- a real
-        # embedder would rank the right tool near the top with a much
-        # smaller limit. See examples/frameworks/README.md.
-        found = await gantry.retrieve_tools(query, limit=10)
-        names = [t["function"]["name"] for t in found]
-        if tool_name not in names:
-            continue  # that framework wasn't installed, so it was never imported
-        result = await gantry.execute(ToolCall(tool_name=tool_name, arguments=args))
-        status = "OK" if result.status == ExecutionStatus.SUCCESS else result.status.value
-        print(f"  {tool_name:<18} status={status:<8} result={result.result!r}")
+        # Every imported tool is a first-class registry citizen: retrievable via
+        # semantic search, transcodable to any provider dialect, and executable
+        # through the normal gantry.execute() path (security policy, retries,
+        # circuit breakers, telemetry) exactly like a @gantry.register-ed tool.
+        print("\nRetrieve + execute an imported tool through the normal gantry.execute() path:")
+        for query, tool_name, args in [
+            ("what's the weather like", "get_weather", {"city": "Paris"}),
+            (
+                "convert money between currencies",
+                "convert_currency",
+                {"amount": 100, "frm": "USD", "to": "EUR"},
+            ),
+            ("find me a flight", "search_flights", {"origin": "LHR", "destination": "JFK"}),
+        ]:
+            # limit=10 (not the usual small top-k) so this stays deterministic
+            # under SimpleEmbedder's coarse hash-based similarity -- a real
+            # embedder would rank the right tool near the top with a much
+            # smaller limit. See examples/frameworks/README.md.
+            found = await gantry.retrieve_tools(query, limit=10)
+            names = [t["function"]["name"] for t in found]
+            if tool_name not in names:
+                continue  # that framework wasn't installed, so it was never imported
+            result = await gantry.execute(ToolCall(tool_name=tool_name, arguments=args))
+            status = "OK" if result.status == ExecutionStatus.SUCCESS else result.status.value
+            print(f"  {tool_name:<18} status={status:<8} result={result.result!r}")
 
-    print(
-        "\nEvery imported tool also re-exports to any OTHER framework via the "
-        "existing adapters (agent_gantry.integrations.frameworks) -- import "
-        "once, use anywhere."
-    )
+        print(
+            "\nEvery imported tool also re-exports to any OTHER framework via the "
+            "existing adapters (agent_gantry.integrations.frameworks) -- import "
+            "once, use anywhere."
+        )
+    finally:
+        await gantry.close()
 
 
 if __name__ == "__main__":

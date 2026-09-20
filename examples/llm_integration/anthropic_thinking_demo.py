@@ -117,85 +117,90 @@ async def demo_thinking_with_tools():
     # Initialize Agent-Gantry
     gantry = AgentGantry()
 
-    @gantry.register
-    def calculate(expression: str) -> float:
-        """Evaluate a mathematical expression safely."""
-        import ast
-        import operator
+    try:
+        @gantry.register(examples=["calculate 15% tip on $47.50", "what is 12 * 8 + 3"])
+        def calculate(expression: str) -> float:
+            """Evaluate a mathematical expression safely."""
+            import ast
+            import operator
 
-        # Define safe operators
-        ops = {
-            ast.Add: operator.add,
-            ast.Sub: operator.sub,
-            ast.Mult: operator.mul,
-            ast.Div: operator.truediv,
-            ast.USub: operator.neg,
-            ast.UAdd: operator.pos,
-        }
-
-        def safe_eval(node):
-            if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-                return float(node.value)
-            elif isinstance(node, ast.BinOp):
-                return ops[type(node.op)](safe_eval(node.left), safe_eval(node.right))
-            elif isinstance(node, ast.UnaryOp):
-                return ops[type(node.op)](safe_eval(node.operand))
-            raise ValueError("Unsupported expression")
-
-        try:
-            return safe_eval(ast.parse(expression, mode='eval').body)
-        except Exception as e:
-            return f"Error: {str(e)}"
-
-    @gantry.register
-    def get_weather(city: str) -> str:
-        """Get the current weather for a city."""
-        # Mock weather data
-        return f"Weather in {city}: 72°F, Sunny"
-
-    await gantry.sync()
-
-    # Initialize client with thinking and tools
-    client = await create_anthropic_client(
-        gantry=gantry,
-        enable_thinking="interleaved",
-    )
-
-    # Query that benefits from both thinking and tools
-    response, thinking = await client.chat_with_thinking(
-        model="claude-sonnet-4-6",
-        messages=[
-            {
-                "role": "user",
-                "content": "What's the weather in San Francisco, and calculate 15% tip on a $47.50 bill?",
+            # Define safe operators
+            ops = {
+                ast.Add: operator.add,
+                ast.Sub: operator.sub,
+                ast.Mult: operator.mul,
+                ast.Div: operator.truediv,
+                ast.USub: operator.neg,
+                ast.UAdd: operator.pos,
             }
-        ],
-        max_tokens=2048,
-        query="weather calculation math",
-    )
 
-    # Show thinking
-    if thinking:
-        print("🧠 Model's Reasoning:")
-        for thought in thinking:
-            print(f"  {thought[:200]}..." if len(thought) > 200 else f"  {thought}")
+            def safe_eval(node):
+                if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+                    return float(node.value)
+                elif isinstance(node, ast.BinOp):
+                    return ops[type(node.op)](safe_eval(node.left), safe_eval(node.right))
+                elif isinstance(node, ast.UnaryOp):
+                    return ops[type(node.op)](safe_eval(node.operand))
+                raise ValueError("Unsupported expression")
+
+            try:
+                return safe_eval(ast.parse(expression, mode='eval').body)
+            except Exception as e:
+                return f"Error: {str(e)}"
+
+        @gantry.register(
+            examples=["what's the weather in San Francisco", "is it sunny in Leeds today"]
+        )
+        def get_weather(city: str) -> str:
+            """Get the current weather for a city."""
+            # Mock weather data
+            return f"Weather in {city}: 72°F, Sunny"
+
+        await gantry.sync()
+
+        # Initialize client with thinking and tools
+        client = await create_anthropic_client(
+            gantry=gantry,
+            enable_thinking="interleaved",
+        )
+
+        # Query that benefits from both thinking and tools
+        response, thinking = await client.chat_with_thinking(
+            model="claude-sonnet-4-6",
+            messages=[
+                {
+                    "role": "user",
+                    "content": "What's the weather in San Francisco, and calculate 15% tip on a $47.50 bill?",
+                }
+            ],
+            max_tokens=2048,
+            query="weather calculation math",
+        )
+
+        # Show thinking
+        if thinking:
+            print("🧠 Model's Reasoning:")
+            for thought in thinking:
+                print(f"  {thought[:200]}..." if len(thought) > 200 else f"  {thought}")
+            print()
+
+        # Execute tool calls
+        tool_uses = [block for block in response.content if block.type == "tool_use"]
+        if tool_uses:
+            print("🔧 Tool Calls:")
+            for tool_use in tool_uses:
+                print(f"  • {tool_use.name}({tool_use.input})")
+
+            # Execute tools
+            tool_results = await client.execute_tool_calls(response)
+            print()
+            print("📊 Tool Results:")
+            for result in tool_results:
+                print(f"  • {result['content']}")
+
         print()
-
-    # Execute tool calls
-    tool_uses = [block for block in response.content if block.type == "tool_use"]
-    if tool_uses:
-        print("🔧 Tool Calls:")
-        for tool_use in tool_uses:
-            print(f"  • {tool_use.name}({tool_use.input})")
-
-        # Execute tools
-        tool_results = await client.execute_tool_calls(response)
-        print()
-        print("📊 Tool Results:")
-        for result in tool_results:
-            print(f"  • {result['content']}")
-
-    print()
+    finally:
+        await gantry.close()
 
 
 async def demo_comparison():

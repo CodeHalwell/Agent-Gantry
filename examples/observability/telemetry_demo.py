@@ -9,29 +9,32 @@ async def main():
     # This will print detailed logs of retrieval and execution events to the console.
     telemetry = ConsoleTelemetryAdapter()
     gantry = AgentGantry(telemetry=telemetry)
+    try:
 
-    @gantry.register
-    def calculate_tax(amount: float) -> float:
-        """Calculates tax for a given amount."""
-        return amount * 0.15
+        @gantry.register(examples=["calculate tax for $100", "how much tax do I owe on 250 pounds"])
+        def calculate_tax(amount: float) -> float:
+            """Calculates tax for a given amount."""
+            return amount * 0.15
 
-    await gantry.sync()
+        await gantry.sync()
 
-    print("--- Starting Telemetry Demo ---")
-    print("Watch the console for telemetry events...\n")
+        print("--- Starting Telemetry Demo ---")
+        print("Watch the console for telemetry events...\n")
 
-    # 2. Perform Retrieval
-    # This should trigger a 'tool_retrieval' span and record a retrieval event
-    await gantry.retrieve_tools("calculate tax for $100")
+        # 2. Perform Retrieval
+        # This should trigger a 'tool_retrieval' span and record a retrieval event
+        await gantry.retrieve_tools("calculate tax for $100")
 
-    # 3. Perform Execution
-    # This should trigger a 'tool_execution' span and record an execution event
-    from agent_gantry.schema.execution import ToolCall
+        # 3. Perform Execution
+        # This should trigger a 'tool_execution' span and record an execution event
+        from agent_gantry.schema.execution import ToolCall
 
-    call = ToolCall(tool_name="calculate_tax", arguments={"amount": 100.0})
-    await gantry.execute(call)
+        call = ToolCall(tool_name="calculate_tax", arguments={"amount": 100.0})
+        await gantry.execute(call)
 
-    print("\n--- Demo Complete ---")
+        print("\n--- Demo Complete ---")
+    finally:
+        await gantry.close()
 
 
 if __name__ == "__main__":

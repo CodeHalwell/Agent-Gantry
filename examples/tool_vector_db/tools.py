@@ -31,7 +31,10 @@ tools = AgentGantry(embedder=embedder, vector_store=vector_store)
 # =============================================================================
 
 
-@tools.register(tags=["math"])
+@tools.register(
+    tags=["math"],
+    examples=["what's 17 plus 25", "add these two numbers together"],
+)
 def add(a: float, b: float) -> float:
     """Add two numbers together and return their sum.
 
@@ -41,7 +44,10 @@ def add(a: float, b: float) -> float:
     return a + b
 
 
-@tools.register(tags=["math"])
+@tools.register(
+    tags=["math"],
+    examples=["what is 100 minus 37", "take 12 away from 50"],
+)
 def subtract(a: float, b: float) -> float:
     """Subtract the second number from the first and return the difference.
 
@@ -51,7 +57,10 @@ def subtract(a: float, b: float) -> float:
     return a - b
 
 
-@tools.register(tags=["math"])
+@tools.register(
+    tags=["math"],
+    examples=["what's 12 times 8", "multiply 3.5 by 4"],
+)
 def multiply(a: float, b: float) -> float:
     """Multiply two numbers together and return their product.
 
@@ -61,7 +70,10 @@ def multiply(a: float, b: float) -> float:
     return a * b
 
 
-@tools.register(tags=["math"])
+@tools.register(
+    tags=["math"],
+    examples=["what is 144 divided by 12", "split 90 by 4"],
+)
 def divide(a: float, b: float) -> float:
     """Divide the first number by the second and return the quotient.
 
@@ -74,7 +86,10 @@ def divide(a: float, b: float) -> float:
     return a / b
 
 
-@tools.register(tags=["math"])
+@tools.register(
+    tags=["math"],
+    examples=["what's the average of these numbers", "find the mean of 12.5, 14.2, 11.8"],
+)
 def calculate_mean(numbers: list[float]) -> float:
     """Calculate the arithmetic mean (average) of a list of numbers.
 
@@ -85,7 +100,10 @@ def calculate_mean(numbers: list[float]) -> float:
     return statistics.mean(numbers)
 
 
-@tools.register(tags=["math"])
+@tools.register(
+    tags=["math"],
+    examples=["what's the median of this list", "find the middle value of these numbers"],
+)
 def calculate_median(numbers: list[float]) -> float:
     """Calculate the median (middle value) of a list of numbers.
 
@@ -96,7 +114,10 @@ def calculate_median(numbers: list[float]) -> float:
     return statistics.median(numbers)
 
 
-@tools.register(tags=["math"])
+@tools.register(
+    tags=["math"],
+    examples=["what's the standard deviation of this dataset", "how spread out are these numbers"],
+)
 def calculate_stdev(numbers: list[float]) -> float:
     """Calculate the sample standard deviation of a list of numbers.
 
@@ -107,7 +128,10 @@ def calculate_stdev(numbers: list[float]) -> float:
     return statistics.stdev(numbers)
 
 
-@tools.register(tags=["math"])
+@tools.register(
+    tags=["math"],
+    examples=["what is 7 factorial", "compute 10!"],
+)
 def calculate_factorial(n: int) -> int:
     """Calculate the factorial of a non-negative integer (n!).
 
@@ -118,7 +142,10 @@ def calculate_factorial(n: int) -> int:
     return math.factorial(n)
 
 
-@tools.register(tags=["math"])
+@tools.register(
+    tags=["math"],
+    examples=["what's 2 to the power of 10", "raise 3 to the 4th"],
+)
 def calculate_power(base: float, exponent: float) -> float:
     """Calculate base raised to the power of exponent (base^exponent).
 
@@ -129,7 +156,10 @@ def calculate_power(base: float, exponent: float) -> float:
     return math.pow(base, exponent)
 
 
-@tools.register(tags=["math"])
+@tools.register(
+    tags=["math"],
+    examples=["square root of 144", "what's the sqrt of 2"],
+)
 def calculate_sqrt(n: float) -> float:
     """Calculate the square root of a non-negative number.
 
@@ -145,7 +175,10 @@ def calculate_sqrt(n: float) -> float:
 # =============================================================================
 
 
-@tools.register(tags=["text"])
+@tools.register(
+    tags=["text"],
+    examples=["how many words are in this paragraph", "word count of this text"],
+)
 def count_words(text: str) -> int:
     """Count the total number of words in a text string.
 
@@ -155,7 +188,10 @@ def count_words(text: str) -> int:
     return len(text.split())
 
 
-@tools.register(tags=["text"])
+@tools.register(
+    tags=["text"],
+    examples=["how many characters is this string", "character count of this text"],
+)
 def count_characters(text: str) -> int:
     """Count the total number of characters in a text string.
 
@@ -165,7 +201,10 @@ def count_characters(text: str) -> int:
     return len(text)
 
 
-@tools.register(tags=["text"])
+@tools.register(
+    tags=["text"],
+    examples=["reverse the word hello", "write this string backwards"],
+)
 def reverse_string(text: str) -> str:
     """Reverse a string, returning characters in opposite order.
 
@@ -175,7 +214,10 @@ def reverse_string(text: str) -> str:
     return text[::-1]
 
 
-@tools.register(tags=["text"])
+@tools.register(
+    tags=["text"],
+    examples=["make this text all caps", "convert to uppercase"],
+)
 def to_uppercase(text: str) -> str:
     """Convert all characters in a text string to uppercase letters.
 
@@ -185,7 +227,10 @@ def to_uppercase(text: str) -> str:
     return text.upper()
 
 
-@tools.register(tags=["text"])
+@tools.register(
+    tags=["text"],
+    examples=["make this text lowercase", "convert to lower case"],
+)
 def to_lowercase(text: str) -> str:
     """Convert all characters in a text string to lowercase letters.
 
@@ -195,7 +240,10 @@ def to_lowercase(text: str) -> str:
     return text.lower()
 
 
-@tools.register(tags=["text"])
+@tools.register(
+    tags=["text"],
+    examples=["capitalize each word in this title", "convert to title case"],
+)
 def to_title_case(text: str) -> str:
     """Convert text to title case, capitalizing the first letter of each word.
 
@@ -205,7 +253,10 @@ def to_title_case(text: str) -> str:
     return text.title()
 
 
-@tools.register(tags=["text"])
+@tools.register(
+    tags=["text"],
+    examples=["trim the spaces off this string", "remove leading and trailing whitespace"],
+)
 def strip_whitespace(text: str) -> str:
     """Remove leading and trailing whitespace from a text string.
 
@@ -215,7 +266,10 @@ def strip_whitespace(text: str) -> str:
     return text.strip()
 
 
-@tools.register(tags=["text"])
+@tools.register(
+    tags=["text"],
+    examples=["replace foo with bar in this text", "swap every occurrence of a word"],
+)
 def replace_text(text: str, old: str, new: str) -> str:
     """Replace all occurrences of a substring with another string.
 
@@ -225,7 +279,10 @@ def replace_text(text: str, old: str, new: str) -> str:
     return text.replace(old, new)
 
 
-@tools.register(tags=["text"])
+@tools.register(
+    tags=["text"],
+    examples=["split this string on commas", "break this text into parts by delimiter"],
+)
 def split_text(text: str, delimiter: str = " ") -> list[str]:
     """Split a text string into a list of substrings using a delimiter.
 
@@ -235,7 +292,10 @@ def split_text(text: str, delimiter: str = " ") -> list[str]:
     return text.split(delimiter)
 
 
-@tools.register(tags=["text"])
+@tools.register(
+    tags=["text"],
+    examples=["join these words with a comma", "combine this list into one string"],
+)
 def join_text(parts: list[str], delimiter: str = " ") -> str:
     """Join a list of strings into a single string using a delimiter.
 
@@ -250,7 +310,10 @@ def join_text(parts: list[str], delimiter: str = " ") -> str:
 # =============================================================================
 
 
-@tools.register(tags=["datetime"])
+@tools.register(
+    tags=["datetime"],
+    examples=["what's today's date", "what day is it today"],
+)
 def get_current_date() -> str:
     """Get today's date in ISO format (YYYY-MM-DD).
 
@@ -260,7 +323,10 @@ def get_current_date() -> str:
     return datetime.date.today().isoformat()
 
 
-@tools.register(tags=["datetime"])
+@tools.register(
+    tags=["datetime"],
+    examples=["what time is it right now", "current local time"],
+)
 def get_current_time() -> str:
     """Get the current local time in HH:MM:SS format.
 
@@ -270,7 +336,10 @@ def get_current_time() -> str:
     return datetime.datetime.now().strftime("%H:%M:%S")
 
 
-@tools.register(tags=["datetime"])
+@tools.register(
+    tags=["datetime"],
+    examples=["current date and time", "what's the exact time and date now"],
+)
 def get_current_datetime() -> str:
     """Get the current local date and time as an ISO formatted string.
 
@@ -280,7 +349,10 @@ def get_current_datetime() -> str:
     return datetime.datetime.now().isoformat()
 
 
-@tools.register(tags=["datetime"])
+@tools.register(
+    tags=["datetime"],
+    examples=["what day of the week was 2000-01-01", "which weekday is 2025-07-04"],
+)
 def get_weekday(date_str: str) -> str:
     """Get the day of the week (e.g., Monday, Tuesday) for a given date.
 
@@ -291,7 +363,13 @@ def get_weekday(date_str: str) -> str:
     return d.strftime("%A")
 
 
-@tools.register(tags=["datetime"])
+@tools.register(
+    tags=["datetime"],
+    examples=[
+        "how many days between 2024-01-01 and 2024-12-25",
+        "days from March 3rd to June 10th",
+    ],
+)
 def days_between(date1: str, date2: str) -> int:
     """Calculate the number of days between two dates.
 
@@ -303,7 +381,10 @@ def days_between(date1: str, date2: str) -> int:
     return abs((d2 - d1).days)
 
 
-@tools.register(tags=["datetime"])
+@tools.register(
+    tags=["datetime"],
+    examples=["what date is 30 days from 2024-06-01", "add two weeks to this date"],
+)
 def add_days(date_str: str, days: int) -> str:
     """Add a specified number of days to a date and return the new date.
 
@@ -316,7 +397,10 @@ def add_days(date_str: str, days: int) -> str:
     return result.strftime("%Y-%m-%d")
 
 
-@tools.register(tags=["datetime"])
+@tools.register(
+    tags=["datetime"],
+    examples=["is 2024 a leap year", "does 2100 have 366 days"],
+)
 def is_leap_year(year: int) -> bool:
     """Check if a given year is a leap year (has 366 days).
 
@@ -328,7 +412,10 @@ def is_leap_year(year: int) -> bool:
     return calendar.isleap(year)
 
 
-@tools.register(tags=["datetime"])
+@tools.register(
+    tags=["datetime"],
+    examples=["how many days are in February 2024", "days in month 9 of 2025"],
+)
 def get_days_in_month(year: int, month: int) -> int:
     """Get the number of days in a specific month of a given year.
 
@@ -340,7 +427,10 @@ def get_days_in_month(year: int, month: int) -> int:
     return calendar.monthrange(year, month)[1]
 
 
-@tools.register(tags=["datetime"])
+@tools.register(
+    tags=["datetime"],
+    examples=["reformat 2024-03-15 as 15/03/2024", "change this date to DD-MM-YYYY"],
+)
 def format_date(date_str: str, output_format: str) -> str:
     """Format a date string into a different date format.
 
@@ -352,7 +442,13 @@ def format_date(date_str: str, output_format: str) -> str:
     return d.strftime(output_format)
 
 
-@tools.register(tags=["datetime"])
+@tools.register(
+    tags=["datetime"],
+    examples=[
+        "convert unix timestamp 1700000000 to a readable date",
+        "what date is this epoch time",
+    ],
+)
 def parse_timestamp(timestamp: float) -> str:
     """Convert a Unix timestamp (seconds since epoch) to a readable datetime string.
 
@@ -367,7 +463,10 @@ def parse_timestamp(timestamp: float) -> str:
 # =============================================================================
 
 
-@tools.register(tags=["utility"])
+@tools.register(
+    tags=["utility"],
+    examples=["generate a UUID", "give me a unique ID"],
+)
 def generate_uuid() -> str:
     """Generate a random UUID version 4 (universally unique identifier).
 
@@ -378,7 +477,10 @@ def generate_uuid() -> str:
     return str(uuid.uuid4())
 
 
-@tools.register(tags=["utility"])
+@tools.register(
+    tags=["utility"],
+    examples=["give me a random number between 1 and 100", "pick a random integer from 5 to 50"],
+)
 def generate_random_number(min_val: int, max_val: int) -> int:
     """Generate a random integer within a specified range (inclusive).
 
@@ -388,7 +490,10 @@ def generate_random_number(min_val: int, max_val: int) -> int:
     return random.randint(min_val, max_val)
 
 
-@tools.register(tags=["utility"])
+@tools.register(
+    tags=["utility"],
+    examples=["sha256 hash of this string", "compute the md5 of hello"],
+)
 def hash_text(text: str, algorithm: str = "sha256") -> str:
     """Calculate a cryptographic hash of a text string.
 
@@ -401,7 +506,10 @@ def hash_text(text: str, algorithm: str = "sha256") -> str:
     return h.hexdigest()
 
 
-@tools.register(tags=["utility"])
+@tools.register(
+    tags=["utility"],
+    examples=["base64 encode hello world", "encode this string as base64"],
+)
 def base64_encode(text: str) -> str:
     """Encode a text string to Base64 format.
 
@@ -413,7 +521,10 @@ def base64_encode(text: str) -> str:
     return base64.b64encode(text.encode()).decode()
 
 
-@tools.register(tags=["utility"])
+@tools.register(
+    tags=["utility"],
+    examples=["decode this base64 string", "what does aGVsbG8= say"],
+)
 def base64_decode(encoded: str) -> str:
     """Decode a Base64 encoded string back to plain text.
 
@@ -425,7 +536,10 @@ def base64_decode(encoded: str) -> str:
     return base64.b64decode(encoded.encode()).decode()
 
 
-@tools.register(tags=["utility"])
+@tools.register(
+    tags=["utility"],
+    examples=["convert this dictionary to JSON", "pretty-print this data as JSON"],
+)
 def json_stringify(data: dict[str, Any]) -> str:
     """Convert a Python dictionary to a formatted JSON string.
 
@@ -435,7 +549,10 @@ def json_stringify(data: dict[str, Any]) -> str:
     return json.dumps(data, indent=2)
 
 
-@tools.register(tags=["utility"])
+@tools.register(
+    tags=["utility"],
+    examples=["parse this JSON string", "turn this JSON into a dictionary"],
+)
 def json_parse(json_str: str) -> dict[str, Any]:
     """Parse a JSON string into a Python dictionary.
 
@@ -445,7 +562,10 @@ def json_parse(json_str: str) -> dict[str, Any]:
     return json.loads(json_str)
 
 
-@tools.register(tags=["utility"])
+@tools.register(
+    tags=["utility"],
+    examples=["flip a coin", "heads or tails"],
+)
 def flip_coin() -> str:
     """Simulate a coin flip and return either 'Heads' or 'Tails'.
 
@@ -455,7 +575,10 @@ def flip_coin() -> str:
     return random.choice(["Heads", "Tails"])
 
 
-@tools.register(tags=["utility"])
+@tools.register(
+    tags=["utility"],
+    examples=["roll a six-sided die", "roll 2d20"],
+)
 def roll_dice(sides: int = 6) -> int:
     """Simulate rolling a die with a specified number of sides.
 
@@ -465,7 +588,10 @@ def roll_dice(sides: int = 6) -> int:
     return random.randint(1, sides)
 
 
-@tools.register(tags=["utility"])
+@tools.register(
+    tags=["utility"],
+    examples=["what is the value of PATH", "read the HOME environment variable"],
+)
 def get_env_var(name: str) -> str | None:
     """Get the value of an environment variable by name.
 
@@ -480,7 +606,10 @@ def get_env_var(name: str) -> str | None:
 # =============================================================================
 
 
-@tools.register(tags=["conversion"])
+@tools.register(
+    tags=["conversion"],
+    examples=["what's 25 celsius in fahrenheit", "convert 37 degrees C to F"],
+)
 def celsius_to_fahrenheit(celsius: float) -> float:
     """Convert a temperature from Celsius to Fahrenheit scale.
 
@@ -490,7 +619,10 @@ def celsius_to_fahrenheit(celsius: float) -> float:
     return (celsius * 9 / 5) + 32
 
 
-@tools.register(tags=["conversion"])
+@tools.register(
+    tags=["conversion"],
+    examples=["what's 98.6 fahrenheit in celsius", "convert 72 F to C"],
+)
 def fahrenheit_to_celsius(fahrenheit: float) -> float:
     """Convert a temperature from Fahrenheit to Celsius scale.
 
@@ -500,7 +632,10 @@ def fahrenheit_to_celsius(fahrenheit: float) -> float:
     return (fahrenheit - 32) * 5 / 9
 
 
-@tools.register(tags=["conversion"])
+@tools.register(
+    tags=["conversion"],
+    examples=["how many feet is 10 metres", "convert 1.8 m to feet"],
+)
 def meters_to_feet(meters: float) -> float:
     """Convert a distance from meters to feet.
 
@@ -510,7 +645,10 @@ def meters_to_feet(meters: float) -> float:
     return meters * 3.28084
 
 
-@tools.register(tags=["conversion"])
+@tools.register(
+    tags=["conversion"],
+    examples=["how many metres is 6 feet", "convert 100 ft to m"],
+)
 def feet_to_meters(feet: float) -> float:
     """Convert a distance from feet to meters.
 
@@ -520,7 +658,10 @@ def feet_to_meters(feet: float) -> float:
     return feet / 3.28084
 
 
-@tools.register(tags=["conversion"])
+@tools.register(
+    tags=["conversion"],
+    examples=["how many pounds is 70 kg", "convert 5 kilograms to lbs"],
+)
 def kg_to_pounds(kg: float) -> float:
     """Convert a weight from kilograms to pounds.
 
@@ -530,7 +671,10 @@ def kg_to_pounds(kg: float) -> float:
     return kg * 2.20462
 
 
-@tools.register(tags=["conversion"])
+@tools.register(
+    tags=["conversion"],
+    examples=["how many kilos is 150 pounds", "convert 10 lbs to kg"],
+)
 def pounds_to_kg(pounds: float) -> float:
     """Convert a weight from pounds to kilograms.
 
@@ -540,7 +684,10 @@ def pounds_to_kg(pounds: float) -> float:
     return pounds / 2.20462
 
 
-@tools.register(tags=["conversion"])
+@tools.register(
+    tags=["conversion"],
+    examples=["how many miles is 42 km", "convert 100 kilometres to miles"],
+)
 def km_to_miles(km: float) -> float:
     """Convert a distance from kilometers to miles.
 
@@ -550,7 +697,10 @@ def km_to_miles(km: float) -> float:
     return km * 0.621371
 
 
-@tools.register(tags=["conversion"])
+@tools.register(
+    tags=["conversion"],
+    examples=["how many km is 26.2 miles", "convert 60 miles to kilometres"],
+)
 def miles_to_km(miles: float) -> float:
     """Convert a distance from miles to kilometers.
 
@@ -560,7 +710,10 @@ def miles_to_km(miles: float) -> float:
     return miles / 0.621371
 
 
-@tools.register(tags=["conversion"])
+@tools.register(
+    tags=["conversion"],
+    examples=["how many gallons is 50 litres", "convert 3.5 L to gallons"],
+)
 def liters_to_gallons(liters: float) -> float:
     """Convert a volume from liters to US gallons.
 
@@ -570,7 +723,10 @@ def liters_to_gallons(liters: float) -> float:
     return liters * 0.264172
 
 
-@tools.register(tags=["conversion"])
+@tools.register(
+    tags=["conversion"],
+    examples=["how many litres in 10 gallons", "convert 1 gallon to L"],
+)
 def gallons_to_liters(gallons: float) -> float:
     """Convert a volume from US gallons to liters.
 

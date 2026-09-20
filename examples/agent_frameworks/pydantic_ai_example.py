@@ -94,8 +94,7 @@ async def main() -> None:
 
         # --- 1. Static tier: select once, get native pydantic_ai.tools.Tool ----- #
         query = "what's the weather in Paris?"
-        # Lowering threshold for SimpleEmbedder compatibility in this example.
-        static_tools = await adapter.select(query, limit=2, score_threshold=0.1)
+        static_tools = await adapter.select(query, limit=2)
         print(f"[static] selected {len(static_tools)} tool(s) for {query!r}:")
         for tool in static_tools:
             print(f"  - {tool.name}: {tool.description}")
@@ -108,7 +107,7 @@ async def main() -> None:
         # One toolset, reused across two runs with very different intents — the
         # tool surface Pydantic AI sees changes each time, driven purely by the
         # run's prompt (no manual re-selection code on our side).
-        toolset = adapter.toolset(limit=1, score_threshold=0.1)
+        toolset = adapter.toolset(limit=1)
         dynamic_agent = Agent(TestModel(), toolsets=[toolset])
 
         weather_run = await dynamic_agent.run("what's the weather in Tokyo?")
