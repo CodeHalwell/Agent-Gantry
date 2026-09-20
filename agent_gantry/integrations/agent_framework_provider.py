@@ -69,6 +69,7 @@ import inspect
 import logging
 from collections.abc import Callable
 from contextvars import ContextVar
+from itertools import count
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.agent_framework_bridge import (
@@ -253,14 +254,9 @@ def _build_impl_class(base: type) -> type:
             # it only when the context-local value is unset.
             self._last_selection_plain: RetrievalDecision | None = None
             self._selections_plain: tuple[RetrievalDecision, ...] = ()
-            # Trace round counter, allocated once per provider (not per
-            # trace() call) — ContextVars aren't GC'd, so a fresh one per
-            # call would leak in a server that builds the middleware
-            # repeatedly. Context-scoped so concurrent runs count
-            # independently.
-            self._trace_round_var: ContextVar[int] = ContextVar(
-                "gantry_trace_round", default=0
-            )
+            # AF may invoke each tool in a fresh context, so a ContextVar would
+            # reset every call. Keep one monotonic counter per provider.
+            self._trace_rounds = count(1)
             # One-shot warnings: we don't want to spam the log every
             # round even when the misconfiguration persists.
             self._warned_about_missing_chat_middleware = False
@@ -529,16 +525,9 @@ def _build_impl_class(base: type) -> type:
             """
             function_middleware_decorator = _import_function_middleware()
             provider = self
-            # Per-provider round counter (allocated in __init__, not here),
-            # context-scoped so concurrent runs count independently without
-            # a shared closure dict and without leaking a ContextVar per
-            # trace() call.
-            round_var = self._trace_round_var
-
             @function_middleware_decorator
             async def _gantry_trace(context: Any, call_next: Any) -> None:
-                n = round_var.get() + 1
-                round_var.set(n)
+                n = next(provider._trace_rounds)
                 surfaced = ""
                 selection = provider.last_selection
                 if selection is not None:
