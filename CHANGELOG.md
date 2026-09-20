@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-09-20
+
 Closes every issue the #419 selector review filed (#420, #422–#424, #426–#428)
 and the examples sweep it exposed (#434). Two things to know before upgrading:
 
@@ -4470,7 +4472,8 @@ adapters, and the provider dialects agree with it.
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.14.0...v0.15.0
