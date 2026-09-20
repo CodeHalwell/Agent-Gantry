@@ -11,6 +11,7 @@ messages used by other frameworks.
 from __future__ import annotations
 
 import inspect
+import string
 from collections.abc import Callable, Iterable
 from typing import Any, NoReturn
 
@@ -437,7 +438,9 @@ def latest_activity(
     tool-call stub ``assistant`` messages many frameworks emit). User text is
     returned verbatim; a tool result is returned as its raw content snippet
     (capped at ``max_chars``) so the *content* — not the tool's name — drives
-    the next selection. Falls back to the latest assistant text, then empty.
+    the next selection. Opaque result values such as numbers, IDs, and random
+    secrets fall back to the latest user text because they carry no useful
+    retrieval signal. Falls back to the latest assistant text, then empty.
 
     Args:
         messages: Conversation history (most recent message last).
@@ -457,7 +460,11 @@ def latest_activity(
         elif role in ("tool", "function"):
             text = _msg_text(msg)
             if text.strip():
-                return text.strip()[:max_chars]
+                snippet = text.strip()[:max_chars]
+                tokens = (token.strip(string.punctuation) for token in snippet.split())
+                if any(len(token) >= 2 and token.isalpha() for token in tokens):
+                    return snippet
+                return last_user_text(messages) or last_assistant_text(messages)
     # Nothing concrete in the tail — fall back to the model's latest planning.
     return last_assistant_text(messages)
 

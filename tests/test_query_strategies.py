@@ -582,6 +582,29 @@ def test_latest_activity_uses_tool_result_when_it_is_newest():
     assert latest_activity(messages) == "dataset ready to train a model"
 
 
+@pytest.mark.parametrize(
+    "result",
+    [
+        "^IGdF5Opr+n802m#fll78bim 96",
+        "96",
+        "req_01K5R9G4M3Q8T2N7",
+    ],
+)
+def test_latest_activity_falls_back_from_opaque_tool_result(result: str):
+    """Opaque result values must not replace the user's semantic query."""
+    from agent_gantry.query import latest_activity
+
+    messages = [
+        {
+            "role": "user",
+            "content": "Generate a password and count the days until Christmas",
+        },
+        {"role": "tool", "name": "generate_password", "content": result},
+    ]
+
+    assert latest_activity(messages) == messages[0]["content"]
+
+
 def test_latest_activity_skips_empty_assistant_tool_call_stub():
     """An empty assistant tool-call stub must not blank out the query."""
     from agent_gantry.query import latest_activity

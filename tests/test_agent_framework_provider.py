@@ -17,6 +17,9 @@ The provider is the AF-native way to attach Gantry to an
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
+
 import pytest
 
 # ``agent_framework`` is required to construct the provider; skip the entire
@@ -586,6 +589,37 @@ class TestSelectionsAndTrace:
         assert "get_weather" in joined
         assert "Weather: Paris" in joined
         assert "surfaced:" in joined
+
+    @pytest.mark.asyncio
+    async def test_trace_round_advances_across_fresh_contexts(
+        self, gantry_with_tools: AgentGantry
+    ) -> None:
+        """AF invokes each tool in a fresh context, but rounds must still advance."""
+        provider = GantryContextProvider(gantry_with_tools, top_k=2)
+        lines: list[str] = []
+        middleware = provider.trace(render=False, printer=lines.append)
+
+        class _FakeFn:
+            name = "get_weather"
+
+        class _FakeCtx:
+            function = _FakeFn()
+            arguments = {"city": "Paris"}
+            result = "Weather: Paris"
+
+        async def _call_next() -> None:
+            return None
+
+        async def invoke_in_fresh_context() -> None:
+            task = contextvars.Context().run(
+                asyncio.create_task, middleware(_FakeCtx(), _call_next)
+            )
+            await task
+
+        await invoke_in_fresh_context()
+        await invoke_in_fresh_context()
+
+        assert [line.split(":", 1)[0] for line in lines] == [">>> round 1", ">>> round 2"]
 
     @pytest.mark.asyncio
     async def test_trace_render_false_skips_result_line(

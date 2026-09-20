@@ -759,6 +759,7 @@ This catches the headline mistakes: a tool description that names another tool (
 | `per_call` not adapting | `as_chat_middleware()` not attached | Use `provider.attach_to(agent)` or add to `middleware=[...]` |
 | `per_call` set but identical surface each round | An explicit `query_generator=last_user_text` returns the same text every round | The default is `latest_activity` (newest user message *or* tool result); drop the override |
 | `per_call` ignores the user's new message once a tool has run | `fallback_chain(last_tool_result, last_user_text)` prefers a tool result anywhere in the session | Use the `latest_activity` default; keep the chain only for a pipeline with no user turns mid-run |
+| `per_call` drops useful tools after an opaque result | A password, bare number, or ID carries no semantic retrieval signal | `latest_activity` falls back to the latest user text for opaque results; use a custom generator if identifiers should drive routing |
 | Wrong tools selected | Description names another tool ("unrelated to factorial…") | Run `agent-gantry lint`; remove cross-references |
 | `top_k=6` but I see 8 tools | Skills / `always_include` / `static_tools` add on top of dynamic top_k | Expected; subtract those |
 | Cold-start re-embeds every time | Default `InMemoryVectorStore` is ephemeral | Wrap embedder in `CachedEmbedder` or use `[lancedb]` |

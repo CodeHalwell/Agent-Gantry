@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `latest_activity` no longer uses opaque tool results such as passwords, bare
+  numbers, or IDs as retrieval queries, and Agent Framework trace round numbers
+  now advance when tool calls run in fresh contexts.
+
 ## [0.17.0] - 2026-09-19
 
 A maintenance release: the dependency floor moves a long way forward, the
