@@ -46,6 +46,9 @@ dev = [
     # upstream compatibility issue is resolved.
     "pytest-asyncio>=0.21.0,<1.0.0",
     "pytest-cov>=4.0.0",
+    # The per-test abort behind ``timeout = 300`` in [tool.pytest.ini_options];
+    # faulthandler_timeout alone only reports a hang, it does not end it (#420).
+    "pytest-timeout>=2.1.0",
     "ruff>=0.1.0",
     "python-dotenv>=1.0.0",
     # Unlike the other adapter extras (torch, chromadb) this is pure Python
@@ -464,23 +467,26 @@ ignore = ["E501", "E402"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-# Diagnostic only, and worth being precise about: pytest calls
+# Two layers, because they do different jobs:
+#
+# ``faulthandler_timeout`` is diagnostic only. pytest calls
 # ``faulthandler.dump_traceback_later(timeout, file=stderr)`` WITHOUT
-# ``exit=True``, so this prints every thread's stack after 300s and then lets
-# the test carry on hanging. It does not abort the run and it does not fail the
-# test.
+# ``exit=True``, so it prints every thread's stack after 300s and then lets the
+# test carry on hanging. It does not abort the run and it does not fail the
+# test — which is how a hung MCP-over-HTTP test burned three ~6-hour CI jobs
+# before the root cause (a process-global latch in sse_starlette) was found.
 #
-# That is still the difference between a six-hour job whose log ends mid-suite
-# with no traceback -- which is what two runs cost before this -- and one that
-# says where it stopped while it is stopping. The actual bound on the tests
-# that hung is ``_bounded`` in tests/test_mcp_transports.py, which wraps the
-# specific awaits and fails them with the live task stacks attached.
-#
-# Adding pytest-timeout would make the abort real; it is deliberately not here,
-# as a dependency worth choosing on purpose rather than slipping into a fix.
-# No test runs near 300s -- the whole suite is minutes -- so nothing legitimate
-# trips this.
+# ``timeout`` is pytest-timeout's, and it is the actual backstop (#420): a test
+# still running after 300s is failed and the run moves on. ``thread`` rather
+# than ``signal`` because the suite is async and multi-threaded (to_thread
+# workers, uvicorn), and because the signal method is unavailable on Windows,
+# where the hang was also observed. No test runs anywhere near 300s -- the
+# whole suite is minutes -- so nothing legitimate trips either. The specific
+# awaits that hung are additionally wrapped by ``_bounded`` in
+# tests/test_mcp_transports.py, which fails them with live task stacks.
 faulthandler_timeout = 300
+timeout = 300
+timeout_method = "thread"
 
 [tool.uv]
 prerelease = "if-necessary-or-explicit"

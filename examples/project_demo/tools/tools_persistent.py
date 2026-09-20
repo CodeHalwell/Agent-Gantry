@@ -210,7 +210,10 @@ tools = create_persistent_gantry()
 # --- Chemistry Tools (Heavy - uses RDKit and PubChem) ---
 
 
-@tools.register(tags=["chemistry", "molecular"])
+@tools.register(
+    tags=["chemistry", "molecular"],
+    examples=["molecular weight of CCO", "what does this SMILES molecule weigh"],
+)
 def get_molecular_weight(smiles: str) -> float:
     """Calculate the molecular weight of a compound given its SMILES representation."""
     Chem, Descriptors = _get_rdkit()  # noqa: N806
@@ -220,7 +223,10 @@ def get_molecular_weight(smiles: str) -> float:
     return Descriptors.MolWt(mol)
 
 
-@tools.register(tags=["chemistry", "compound"])
+@tools.register(
+    tags=["chemistry", "compound"],
+    examples=["tell me about caffeine from PubChem", "look up the compound aspirin"],
+)
 def get_compound_info(name: str) -> dict[str, Any]:
     """Fetch compound information from PubChem given its name."""
     pcp = _get_pubchempy()
@@ -236,7 +242,10 @@ def get_compound_info(name: str) -> dict[str, Any]:
     }
 
 
-@tools.register(tags=["chemistry"])
+@tools.register(
+    tags=["chemistry"],
+    examples=["what's the SMILES for ibuprofen", "give me the SMILES string of glucose"],
+)
 def get_smiles_from_name(name: str) -> str:
     """Get the SMILES string for a compound name using PubChem."""
     pcp = _get_pubchempy()
@@ -246,7 +255,10 @@ def get_smiles_from_name(name: str) -> str:
     return compounds[0].isomeric_smiles
 
 
-@tools.register(tags=["chemistry"])
+@tools.register(
+    tags=["chemistry"],
+    examples=["logP of this SMILES", "how lipophilic is CC(=O)O"],
+)
 def calculate_logp(smiles: str) -> float:
     """Calculate the Octanol-Water Partition Coefficient (LogP) from SMILES."""
     Chem, Descriptors = _get_rdkit()  # noqa: N806
@@ -256,7 +268,10 @@ def calculate_logp(smiles: str) -> float:
     return Descriptors.MolLogP(mol)
 
 
-@tools.register(tags=["chemistry"])
+@tools.register(
+    tags=["chemistry"],
+    examples=["is C1=CC=CC=C1 a valid SMILES", "check this SMILES string is well-formed"],
+)
 def is_valid_smiles(smiles: str) -> bool:
     """Check if a SMILES string is valid."""
     Chem, _ = _get_rdkit()  # noqa: N806
@@ -266,7 +281,10 @@ def is_valid_smiles(smiles: str) -> bool:
 # --- Unit Conversion (uses Pint) ---
 
 
-@tools.register(tags=["unit_conversion"])
+@tools.register(
+    tags=["unit_conversion"],
+    examples=["convert 5 miles to kilometres", "how many grams in 3 pounds"],
+)
 def convert_units(value: float, from_unit: str, to_unit: str) -> float:
     """Convert a value from one unit to another."""
     pint = _get_pint()
@@ -279,7 +297,10 @@ def convert_units(value: float, from_unit: str, to_unit: str) -> float:
 # --- Math & Algebra (uses SymPy) ---
 
 
-@tools.register(tags=["math", "algebra"])
+@tools.register(
+    tags=["math", "algebra"],
+    examples=["solve 2x + 5 = 15 for x", "what value of y makes 3y - 7 = 11"],
+)
 def solve_equation(equation: str, variable: str) -> Any:
     """Solve a simple algebraic equation for the given variable."""
     solve, symbols, sympify = _get_sympy()
@@ -292,7 +313,13 @@ def solve_equation(equation: str, variable: str) -> Any:
 # --- Date & Time Tools (stdlib only - lightweight) ---
 
 
-@tools.register(tags=["date_calculation"])
+@tools.register(
+    tags=["date_calculation"],
+    examples=[
+        "how many days between 2024-01-01 and 2024-12-25",
+        "days from March 3rd to June 10th",
+    ],
+)
 def calculate_date_difference(date1: str, date2: str) -> int:
     """Calculate the difference in days between two dates (YYYY-MM-DD)."""
     d1 = datetime.datetime.strptime(date1, "%Y-%m-%d")
@@ -300,25 +327,40 @@ def calculate_date_difference(date1: str, date2: str) -> int:
     return abs((d2 - d1).days)
 
 
-@tools.register(tags=["datetime"])
+@tools.register(
+    tags=["datetime"],
+    examples=["what time is it in UTC right now", "current UTC timestamp"],
+)
 def get_current_utc_time() -> str:
     """Get the current UTC time as an ISO formatted string."""
     return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-@tools.register(tags=["time"])
+@tools.register(
+    tags=["time"],
+    examples=["current unix timestamp", "seconds since epoch right now"],
+)
 def get_current_timestamp() -> float:
     """Get the current Unix timestamp."""
     return time.time()
 
 
-@tools.register(tags=["time"])
+@tools.register(
+    tags=["time"],
+    examples=[
+        "convert unix timestamp 1700000000 to a readable date",
+        "what date is this epoch time",
+    ],
+)
 def format_timestamp(timestamp: float, format_str: str = "%Y-%m-%d %H:%M:%S") -> str:
     """Format a Unix timestamp into a human-readable string."""
     return datetime.datetime.fromtimestamp(timestamp).strftime(format_str)
 
 
-@tools.register(tags=["time"])
+@tools.register(
+    tags=["time"],
+    examples=["how many days until Christmas", "days left until 2025-12-31"],
+)
 def get_days_until(target_date: str) -> int:
     """Calculate the number of days from today until the target date (YYYY-MM-DD)."""
     today = datetime.date.today()
@@ -326,7 +368,10 @@ def get_days_until(target_date: str) -> int:
     return (target - today).days
 
 
-@tools.register(tags=["time"])
+@tools.register(
+    tags=["time"],
+    examples=["is 2024 a leap year", "does 2100 have 366 days"],
+)
 def is_leap_year(year: int) -> bool:
     """Check if a year is a leap year."""
     import calendar
@@ -334,7 +379,10 @@ def is_leap_year(year: int) -> bool:
     return calendar.isleap(year)
 
 
-@tools.register(tags=["time"])
+@tools.register(
+    tags=["time"],
+    examples=["what day of the week was 2000-01-01", "which weekday is 2025-07-04"],
+)
 def get_weekday(date_str: str) -> str:
     """Get the day of the week for a given date (YYYY-MM-DD)."""
     d = datetime.datetime.strptime(date_str, "%Y-%m-%d")
@@ -344,20 +392,29 @@ def get_weekday(date_str: str) -> str:
 # --- File System Tools (stdlib only) ---
 
 
-@tools.register(tags=["fs", "file"])
+@tools.register(
+    tags=["fs", "file"],
+    examples=["what files are in this folder", "list the contents of /tmp"],
+)
 def list_directory(path: str = ".") -> list[str]:
     """List the contents of a directory."""
     return os.listdir(path)
 
 
-@tools.register(tags=["fs", "file"])
+@tools.register(
+    tags=["fs", "file"],
+    examples=["read the contents of notes.txt", "show me what's in this file"],
+)
 def read_text_file(path: str) -> str:
     """Read the contents of a text file."""
     with open(path, encoding="utf-8") as f:
         return f.read()
 
 
-@tools.register(tags=["fs", "file"])
+@tools.register(
+    tags=["fs", "file"],
+    examples=["save this text to output.txt", "write these lines to a file"],
+)
 def write_text_file(path: str, content: str) -> str:
     """Write content to a text file."""
     with open(path, "w", encoding="utf-8") as f:
@@ -365,19 +422,28 @@ def write_text_file(path: str, content: str) -> str:
     return f"File written to {path}"
 
 
-@tools.register(tags=["fs", "file"])
+@tools.register(
+    tags=["fs", "file"],
+    examples=["does config.yaml exist", "check if this path exists"],
+)
 def file_exists(path: str) -> bool:
     """Check if a file or directory exists."""
     return os.path.exists(path)
 
 
-@tools.register(tags=["fs", "file"])
+@tools.register(
+    tags=["fs", "file"],
+    examples=["how big is this file", "size of report.pdf in bytes"],
+)
 def get_file_size(path: str) -> int:
     """Get the size of a file in bytes."""
     return os.path.getsize(path)
 
 
-@tools.register(tags=["fs", "search"])
+@tools.register(
+    tags=["fs", "search"],
+    examples=["find all .py files in this directory", "search for files matching *.log"],
+)
 def search_files(pattern: str, root_dir: str = ".") -> list[str]:
     """Search for files matching a glob pattern."""
     return [str(p) for p in pathlib.Path(root_dir).rglob(pattern)]
@@ -386,31 +452,46 @@ def search_files(pattern: str, root_dir: str = ".") -> list[str]:
 # --- Math & Statistics Tools (stdlib) ---
 
 
-@tools.register(tags=["math", "stats"])
+@tools.register(
+    tags=["math", "stats"],
+    examples=["what's the average of these numbers", "find the mean of 12.5, 14.2, 11.8"],
+)
 def calculate_mean(numbers: list[float]) -> float:
     """Calculate the arithmetic mean of a list of numbers."""
     return statistics.mean(numbers)
 
 
-@tools.register(tags=["math", "stats"])
+@tools.register(
+    tags=["math", "stats"],
+    examples=["what's the median of this list", "find the middle value of these numbers"],
+)
 def calculate_median(numbers: list[float]) -> float:
     """Calculate the median of a list of numbers."""
     return statistics.median(numbers)
 
 
-@tools.register(tags=["math", "stats"])
+@tools.register(
+    tags=["math", "stats"],
+    examples=["what's the standard deviation of this dataset", "how spread out are these numbers"],
+)
 def calculate_stdev(numbers: list[float]) -> float:
     """Calculate the standard deviation of a list of numbers."""
     return statistics.stdev(numbers)
 
 
-@tools.register(tags=["math"])
+@tools.register(
+    tags=["math"],
+    examples=["what is 7 factorial", "compute 10!"],
+)
 def calculate_factorial(n: int) -> int:
     """Calculate the factorial of a non-negative integer."""
     return math.factorial(n)
 
 
-@tools.register(tags=["math"])
+@tools.register(
+    tags=["math"],
+    examples=["is 97 a prime number", "check whether 221 is prime"],
+)
 def is_prime(n: int) -> bool:
     """Check if a number is prime."""
     if n < 2:
@@ -421,13 +502,19 @@ def is_prime(n: int) -> bool:
     return True
 
 
-@tools.register(tags=["math", "random"])
+@tools.register(
+    tags=["math", "random"],
+    examples=["give me a random number between 1 and 100", "pick a random integer from 5 to 50"],
+)
 def get_random_int(min_val: int, max_val: int) -> int:
     """Generate a random integer between min_val and max_val (inclusive)."""
     return random.randint(min_val, max_val)
 
 
-@tools.register(tags=["math"])
+@tools.register(
+    tags=["math"],
+    examples=["what percentage is 45 out of 60", "30 is what percent of 200"],
+)
 def calculate_percentage(part: float, whole: float) -> float:
     """Calculate what percentage part is of whole."""
     if whole == 0:
@@ -435,31 +522,49 @@ def calculate_percentage(part: float, whole: float) -> float:
     return (part / whole) * 100
 
 
-@tools.register(tags=["math", "geometry"])
+@tools.register(
+    tags=["math", "geometry"],
+    examples=[
+        "area of a triangle with base 10 and height 5",
+        "how big is a triangle 6 wide and 4 tall",
+    ],
+)
 def calculate_triangle_area(base: float, height: float) -> float:
     """Calculate the area of a triangle."""
     return 0.5 * base * height
 
 
-@tools.register(tags=["math", "geometry"])
+@tools.register(
+    tags=["math", "geometry"],
+    examples=["volume of a sphere with radius 3", "how much space is in a ball of radius 10cm"],
+)
 def calculate_sphere_volume(radius: float) -> float:
     """Calculate the volume of a sphere."""
     return (4 / 3) * math.pi * (radius**3)
 
 
-@tools.register(tags=["math", "geometry"])
+@tools.register(
+    tags=["math", "geometry"],
+    examples=["distance between (0,0) and (3,4)", "how far apart are these two points"],
+)
 def calculate_distance_2d(x1: float, y1: float, x2: float, y2: float) -> float:
     """Calculate the Euclidean distance between two points in 2D space."""
     return math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 
 
-@tools.register(tags=["math"])
+@tools.register(
+    tags=["math"],
+    examples=["greatest common divisor of 48 and 18", "what's the GCD of these two numbers"],
+)
 def get_gcd(a: int, b: int) -> int:
     """Calculate the Greatest Common Divisor of two numbers."""
     return math.gcd(a, b)
 
 
-@tools.register(tags=["math"])
+@tools.register(
+    tags=["math"],
+    examples=["least common multiple of 4 and 6", "what's the LCM of 12 and 15"],
+)
 def get_lcm(a: int, b: int) -> int:
     """Calculate the Least Common Multiple of two numbers."""
     if a == 0 or b == 0:
@@ -470,25 +575,40 @@ def get_lcm(a: int, b: int) -> int:
 # --- Text Tools (stdlib) ---
 
 
-@tools.register(tags=["text", "regex"])
+@tools.register(
+    tags=["text", "regex"],
+    examples=[
+        "find all matches of this regex in the text",
+        "search this text with a regular expression",
+    ],
+)
 def regex_search(pattern: str, text: str) -> list[str]:
     """Search for all occurrences of a regex pattern in text."""
     return re.findall(pattern, text)
 
 
-@tools.register(tags=["text", "regex"])
+@tools.register(
+    tags=["text", "regex"],
+    examples=["replace every match of this pattern", "regex substitute in this string"],
+)
 def regex_replace(pattern: str, replacement: str, text: str) -> str:
     """Replace occurrences of a regex pattern in text."""
     return re.sub(pattern, replacement, text)
 
 
-@tools.register(tags=["text"])
+@tools.register(
+    tags=["text"],
+    examples=["how many words are in this paragraph", "word count of this text"],
+)
 def count_words(text: str) -> int:
     """Count the number of words in a string."""
     return len(text.split())
 
 
-@tools.register(tags=["text"])
+@tools.register(
+    tags=["text"],
+    examples=["how many characters is this string", "character count of this text"],
+)
 def count_characters(text: str, include_whitespace: bool = True) -> int:
     """Count the number of characters in a string."""
     if include_whitespace:
@@ -496,47 +616,68 @@ def count_characters(text: str, include_whitespace: bool = True) -> int:
     return len(text.replace(" ", "").replace("\n", "").replace("\t", ""))
 
 
-@tools.register(tags=["text"])
+@tools.register(
+    tags=["text"],
+    examples=["reverse the word hello", "write this string backwards"],
+)
 def reverse_string(text: str) -> str:
     """Reverse a string."""
     return text[::-1]
 
 
-@tools.register(tags=["text"])
+@tools.register(
+    tags=["text"],
+    examples=["pull out all the email addresses in this text", "find emails in this document"],
+)
 def extract_emails(text: str) -> list[str]:
     """Extract all email addresses from text."""
     email_pattern = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
     return re.findall(email_pattern, text)
 
 
-@tools.register(tags=["text"])
+@tools.register(
+    tags=["text"],
+    examples=["find all the links in this text", "extract URLs from this message"],
+)
 def extract_urls(text: str) -> list[str]:
     """Extract all URLs from text."""
     url_pattern = r"https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+"
     return re.findall(url_pattern, text)
 
 
-@tools.register(tags=["text"])
+@tools.register(
+    tags=["text"],
+    examples=["strip the HTML tags from this", "get plain text out of this HTML"],
+)
 def strip_html_tags(html: str) -> str:
     """Remove HTML tags from a string."""
     return re.sub(r"<[^>]*>", "", html)
 
 
-@tools.register(tags=["text"])
+@tools.register(
+    tags=["text"],
+    examples=["is racecar a palindrome", "does this word read the same backwards"],
+)
 def is_palindrome(text: str) -> bool:
     """Check if a string is a palindrome."""
     clean_text = re.sub(r"[^a-zA-Z0-9]", "", text).lower()
     return clean_text == clean_text[::-1]
 
 
-@tools.register(tags=["text"])
+@tools.register(
+    tags=["text"],
+    examples=["convert myVariableName to snake_case", "camelCase to snake_case"],
+)
 def camel_to_snake(text: str) -> str:
     """Convert CamelCase to snake_case."""
     s1 = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", text)
     return re.sub("([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
 
 
-@tools.register(tags=["text"])
+@tools.register(
+    tags=["text"],
+    examples=["convert my_variable_name to camelCase", "snake_case to camelCase"],
+)
 def snake_to_camel(text: str) -> str:
     """Convert snake_case to CamelCase."""
     return "".join(word.title() for word in text.split("_"))
@@ -545,19 +686,28 @@ def snake_to_camel(text: str) -> str:
 # --- Data & Serialization Tools (stdlib) ---
 
 
-@tools.register(tags=["data", "json"])
+@tools.register(
+    tags=["data", "json"],
+    examples=["parse this JSON string", "turn this JSON into a dictionary"],
+)
 def json_to_dict(json_str: str) -> dict[str, Any]:
     """Convert a JSON string to a dictionary."""
     return json.loads(json_str)
 
 
-@tools.register(tags=["data", "json"])
+@tools.register(
+    tags=["data", "json"],
+    examples=["convert this dictionary to JSON", "serialize this object as a JSON string"],
+)
 def dict_to_json(data: dict[str, Any], indent: int = 4) -> str:
     """Convert a dictionary to a JSON string."""
     return json.dumps(data, indent=indent)
 
 
-@tools.register(tags=["data", "base64"])
+@tools.register(
+    tags=["data", "base64"],
+    examples=["base64 encode hello world", "encode this string as base64"],
+)
 def base64_encode(text: str) -> str:
     """Encode a string to Base64."""
     import base64
@@ -565,7 +715,10 @@ def base64_encode(text: str) -> str:
     return base64.b64encode(text.encode()).decode()
 
 
-@tools.register(tags=["data", "base64"])
+@tools.register(
+    tags=["data", "base64"],
+    examples=["decode this base64 string", "what does aGVsbG8= say"],
+)
 def base64_decode(encoded_str: str) -> str:
     """Decode a Base64 string."""
     import base64
@@ -573,13 +726,19 @@ def base64_decode(encoded_str: str) -> str:
     return base64.b64decode(encoded_str.encode()).decode()
 
 
-@tools.register(tags=["data", "uuid"])
+@tools.register(
+    tags=["data", "uuid"],
+    examples=["generate a UUID", "give me a unique ID"],
+)
 def generate_uuid() -> str:
     """Generate a random UUID (v4)."""
     return str(uuid.uuid4())
 
 
-@tools.register(tags=["data", "hash"])
+@tools.register(
+    tags=["data", "hash"],
+    examples=["sha256 hash of this string", "compute the md5 of hello"],
+)
 def get_hash(text: str, algorithm: str = "sha256") -> str:
     """Calculate the hash of a string."""
     h = hashlib.new(algorithm)
@@ -590,13 +749,19 @@ def get_hash(text: str, algorithm: str = "sha256") -> str:
 # --- Network Tools (stdlib) ---
 
 
-@tools.register(tags=["network", "dns"])
+@tools.register(
+    tags=["network", "dns"],
+    examples=["what IP does google.com resolve to", "DNS lookup for example.org"],
+)
 def resolve_dns(hostname: str) -> str:
     """Resolve a hostname to an IP address."""
     return socket.gethostbyname(hostname)
 
 
-@tools.register(tags=["network", "ip"])
+@tools.register(
+    tags=["network", "ip"],
+    examples=["what's my local IP address", "LAN IP of this machine"],
+)
 def get_local_ip() -> str:
     """Get the local IP address of the machine."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -610,7 +775,10 @@ def get_local_ip() -> str:
     return ip
 
 
-@tools.register(tags=["network", "port"])
+@tools.register(
+    tags=["network", "port"],
+    examples=["is port 443 open on example.com", "check if localhost:8080 is listening"],
+)
 def is_port_open(host: str, port: int, timeout: float = 1.0) -> bool:
     """Check if a specific port is open on a host."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -618,7 +786,10 @@ def is_port_open(host: str, port: int, timeout: float = 1.0) -> bool:
         return s.connect_ex((host, port)) == 0
 
 
-@tools.register(tags=["network"])
+@tools.register(
+    tags=["network"],
+    examples=["is 192.168.1.256 a valid IPv4 address", "validate this IP address"],
+)
 def is_ipv4(ip: str) -> bool:
     """Check if a string is a valid IPv4 address."""
     try:
@@ -631,7 +802,10 @@ def is_ipv4(ip: str) -> bool:
 # --- Security Tools (stdlib) ---
 
 
-@tools.register(tags=["security"])
+@tools.register(
+    tags=["security"],
+    examples=["make me a strong password", "generate a secure random password"],
+)
 def generate_password(length: int = 12, include_special: bool = True) -> str:
     """Generate a random secure password."""
     import secrets
@@ -643,7 +817,10 @@ def generate_password(length: int = 12, include_special: bool = True) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
-@tools.register(tags=["security"])
+@tools.register(
+    tags=["security"],
+    examples=["is hunter2 a strong password", "check the strength of this password"],
+)
 def is_strong_password(password: str) -> bool:
     """Check if a password meets basic strength requirements."""
     if len(password) < 8:
@@ -657,7 +834,10 @@ def is_strong_password(password: str) -> bool:
     return True
 
 
-@tools.register(tags=["security"])
+@tools.register(
+    tags=["security"],
+    examples=["mask this credit card number except the last 4", "hide most of this API key"],
+)
 def mask_sensitive_data(text: str, visible_chars: int = 4) -> str:
     """Mask sensitive data, leaving only the last few characters visible."""
     if len(text) <= visible_chars:
@@ -668,50 +848,74 @@ def mask_sensitive_data(text: str, visible_chars: int = 4) -> str:
 # --- System Tools (stdlib) ---
 
 
-@tools.register(tags=["system", "os"])
+@tools.register(
+    tags=["system", "os"],
+    examples=["what operating system is this", "am I on Windows or Linux"],
+)
 def get_os_name() -> str:
     """Get the name of the operating system."""
     return os.name
 
 
-@tools.register(tags=["system", "os"])
+@tools.register(
+    tags=["system", "os"],
+    examples=["detailed platform information", "tell me about this machine's OS and version"],
+)
 def get_platform_info() -> str:
     """Get detailed platform information."""
     return platform.platform()
 
 
-@tools.register(tags=["system", "cpu"])
+@tools.register(
+    tags=["system", "cpu"],
+    examples=["how many CPU cores do I have", "number of processors on this machine"],
+)
 def get_cpu_count() -> int:
     """Get the number of logical CPUs in the system."""
     return os.cpu_count() or 0
 
 
-@tools.register(tags=["system", "os"])
+@tools.register(
+    tags=["system", "os"],
+    examples=["what folder am I in", "print the current working directory"],
+)
 def get_current_working_directory() -> str:
     """Get the current working directory."""
     return os.getcwd()
 
 
-@tools.register(tags=["system", "network"])
+@tools.register(
+    tags=["system", "network"],
+    examples=["what's this machine's hostname", "computer name"],
+)
 def get_hostname() -> str:
     """Get the hostname of the machine."""
     return socket.gethostname()
 
 
-@tools.register(tags=["system"])
+@tools.register(
+    tags=["system"],
+    examples=["what's the current process ID", "PID of this process"],
+)
 def get_process_id() -> int:
     """Get the current process ID."""
     return os.getpid()
 
 
-@tools.register(tags=["system"])
+@tools.register(
+    tags=["system"],
+    examples=["how much disk space is left", "disk usage for /"],
+)
 def get_disk_usage(path: str = ".") -> dict[str, int]:
     """Get disk usage statistics for a path."""
     usage = shutil.disk_usage(path)
     return {"total": usage.total, "used": usage.used, "free": usage.free}
 
 
-@tools.register(tags=["misc", "system"])
+@tools.register(
+    tags=["misc", "system"],
+    examples=["which python version is running", "python version"],
+)
 def get_python_version() -> str:
     """Get the current Python version."""
     return platform.python_version()
@@ -720,7 +924,10 @@ def get_python_version() -> str:
 # --- Web Tools (lazy loading requests) ---
 
 
-@tools.register(tags=["web"])
+@tools.register(
+    tags=["web"],
+    examples=["fetch the contents of this web page", "download the HTML at this URL"],
+)
 def fetch_web_content(url: str) -> str:
     """Fetch the content of a web page given its URL."""
     requests = _get_requests()
@@ -752,7 +959,10 @@ def fetch_web_content(url: str) -> str:
         raise ValueError(f"Error fetching {url}: {e}")
 
 
-@tools.register(tags=["network", "http"])
+@tools.register(
+    tags=["network", "http"],
+    examples=["is this website up", "what HTTP status does this URL return"],
+)
 def http_get_status(url: str) -> int:
     """Get the HTTP status code of a URL."""
     requests = _get_requests()
@@ -760,7 +970,10 @@ def http_get_status(url: str) -> int:
     return response.status_code
 
 
-@tools.register(tags=["web", "http"])
+@tools.register(
+    tags=["web", "http"],
+    examples=["show me the response headers for this URL", "what headers does this site send"],
+)
 def get_http_headers(url: str) -> dict[str, str]:
     """Get the HTTP headers of a URL."""
     requests = _get_requests()
@@ -771,7 +984,10 @@ def get_http_headers(url: str) -> dict[str, str]:
 # --- URL Tools (stdlib) ---
 
 
-@tools.register(tags=["network", "url"])
+@tools.register(
+    tags=["network", "url"],
+    examples=["URL-encode this string", "percent-encode this query parameter"],
+)
 def url_encode(text: str) -> str:
     """URL-encode a string."""
     import urllib.parse
@@ -779,7 +995,10 @@ def url_encode(text: str) -> str:
     return urllib.parse.quote(text)
 
 
-@tools.register(tags=["network", "url"])
+@tools.register(
+    tags=["network", "url"],
+    examples=["decode this URL-encoded string", "what does %20hello%20 decode to"],
+)
 def url_decode(text: str) -> str:
     """URL-decode a string."""
     import urllib.parse
@@ -787,7 +1006,10 @@ def url_decode(text: str) -> str:
     return urllib.parse.unquote(text)
 
 
-@tools.register(tags=["web"])
+@tools.register(
+    tags=["web"],
+    examples=["what's the domain of this URL", "extract the hostname from this link"],
+)
 def get_domain_from_url(url: str) -> str:
     """Extract the domain name from a URL."""
     from urllib.parse import urlparse
@@ -795,7 +1017,10 @@ def get_domain_from_url(url: str) -> str:
     return urlparse(url).netloc
 
 
-@tools.register(tags=["web"])
+@tools.register(
+    tags=["web"],
+    examples=["is this a valid URL", "check whether this link is well-formed"],
+)
 def is_valid_url(url: str) -> bool:
     """Check if a string is a valid URL."""
     from urllib.parse import urlparse
@@ -810,13 +1035,19 @@ def is_valid_url(url: str) -> bool:
 # --- Misc Tools (stdlib) ---
 
 
-@tools.register(tags=["misc"])
+@tools.register(
+    tags=["misc"],
+    examples=["give me a random hex colour", "pick a random color code"],
+)
 def get_random_color() -> str:
     """Generate a random hex color code."""
     return f"#{random.randint(0, 0xFFFFFF):06x}"
 
 
-@tools.register(tags=["misc", "math"])
+@tools.register(
+    tags=["misc", "math"],
+    examples=["convert 100 fahrenheit to celsius", "what's 300 kelvin in celsius"],
+)
 def convert_temperature(value: float, from_unit: str, to_unit: str) -> float:
     """Convert temperature between Celsius, Fahrenheit, and Kelvin."""
     from_unit = from_unit.upper()[0]
@@ -835,7 +1066,10 @@ def convert_temperature(value: float, from_unit: str, to_unit: str) -> float:
         return c
 
 
-@tools.register(tags=["misc", "health"])
+@tools.register(
+    tags=["misc", "health"],
+    examples=["what's my BMI at 70kg and 175cm", "calculate body mass index"],
+)
 def calculate_bmi(weight_kg: float, height_m: float) -> float:
     """Calculate Body Mass Index (BMI)."""
     if height_m == 0:
@@ -843,19 +1077,28 @@ def calculate_bmi(weight_kg: float, height_m: float) -> float:
     return weight_kg / (height_m**2)
 
 
-@tools.register(tags=["misc", "game"])
+@tools.register(
+    tags=["misc", "game"],
+    examples=["roll a six-sided die", "roll 2d20"],
+)
 def roll_dice(sides: int = 6, count: int = 1) -> list[int]:
     """Roll a specified number of dice with a given number of sides."""
     return [random.randint(1, sides) for _ in range(count)]
 
 
-@tools.register(tags=["misc", "game"])
+@tools.register(
+    tags=["misc", "game"],
+    examples=["flip a coin", "heads or tails"],
+)
 def flip_coin() -> str:
     """Flip a coin and return 'Heads' or 'Tails'."""
     return random.choice(["Heads", "Tails"])
 
 
-@tools.register(tags=["misc"])
+@tools.register(
+    tags=["misc"],
+    examples=["give me an inspirational quote", "motivate me with a quote"],
+)
 def get_random_quote() -> str:
     """Get a random inspirational quote."""
     quotes = [
@@ -868,13 +1111,22 @@ def get_random_quote() -> str:
     return random.choice(quotes)
 
 
-@tools.register(tags=["finance"])
+@tools.register(
+    tags=["finance"],
+    examples=["how much will 1000 grow to at 5% over 10 years", "compound interest on my savings"],
+)
 def calculate_compound_interest(principal: float, rate: float, time: float, n: int = 1) -> float:
     """Calculate compound interest: A = P(1 + r/n)^(nt)."""
     return principal * (1 + rate / n) ** (n * time)
 
 
-@tools.register(tags=["finance"])
+@tools.register(
+    tags=["finance"],
+    examples=[
+        "monthly payment on a 200k mortgage at 4% over 30 years",
+        "what's my car loan repayment",
+    ],
+)
 def calculate_loan_payment(principal: float, annual_rate: float, years: int) -> float:
     """Calculate monthly loan payment."""
     monthly_rate = annual_rate / 12 / 100
@@ -884,7 +1136,10 @@ def calculate_loan_payment(principal: float, annual_rate: float, years: int) -> 
     return (principal * monthly_rate) / (1 - (1 + monthly_rate) ** -n_payments)
 
 
-@tools.register(tags=["finance"])
+@tools.register(
+    tags=["finance"],
+    examples=["return on investment if I put in 500 and got back 750", "what's my ROI percentage"],
+)
 def calculate_roi(gain: float, cost: float) -> float:
     """Calculate Return on Investment (ROI) percentage."""
     if cost == 0:
@@ -895,37 +1150,55 @@ def calculate_roi(gain: float, cost: float) -> float:
 # --- Conversion Tools (stdlib) ---
 
 
-@tools.register(tags=["conversion"])
+@tools.register(
+    tags=["conversion"],
+    examples=["how many feet is 10 metres", "convert 1.8 m to feet"],
+)
 def meters_to_feet(meters: float) -> float:
     """Convert meters to feet."""
     return meters * 3.28084
 
 
-@tools.register(tags=["conversion"])
+@tools.register(
+    tags=["conversion"],
+    examples=["how many metres is 6 feet", "convert 100 ft to m"],
+)
 def feet_to_meters(feet: float) -> float:
     """Convert feet to meters."""
     return feet / 3.28084
 
 
-@tools.register(tags=["conversion"])
+@tools.register(
+    tags=["conversion"],
+    examples=["how many pounds is 70 kg", "convert 5 kilograms to lbs"],
+)
 def kilograms_to_pounds(kg: float) -> float:
     """Convert kilograms to pounds."""
     return kg * 2.20462
 
 
-@tools.register(tags=["conversion"])
+@tools.register(
+    tags=["conversion"],
+    examples=["how many kilos is 150 pounds", "convert 10 lbs to kg"],
+)
 def pounds_to_kilograms(lbs: float) -> float:
     """Convert pounds to kilograms."""
     return lbs / 2.20462
 
 
-@tools.register(tags=["conversion"])
+@tools.register(
+    tags=["conversion"],
+    examples=["how many miles is 42 km", "convert 100 kilometres to miles"],
+)
 def km_to_miles(km: float) -> float:
     """Convert kilometers to miles."""
     return km * 0.621371
 
 
-@tools.register(tags=["conversion"])
+@tools.register(
+    tags=["conversion"],
+    examples=["how many km is 26.2 miles", "convert 60 miles to kilometres"],
+)
 def miles_to_km(miles: float) -> float:
     """Convert miles to kilometers."""
     return miles / 0.621371
@@ -934,7 +1207,13 @@ def miles_to_km(miles: float) -> float:
 # --- Data Science Tools (lazy loading) ---
 
 
-@tools.register(tags=["data", "pandas"])
+@tools.register(
+    tags=["data", "pandas"],
+    examples=[
+        "give me summary statistics for this table of records",
+        "describe this dataset with pandas",
+    ],
+)
 def create_dataframe_summary(data: list[dict[str, Any]]) -> dict[str, Any]:
     """Create a statistical summary of a list of dictionaries using Pandas."""
     pd = _get_pandas()
@@ -942,7 +1221,10 @@ def create_dataframe_summary(data: list[dict[str, Any]]) -> dict[str, Any]:
     return df.describe().to_dict()
 
 
-@tools.register(tags=["data", "numpy"])
+@tools.register(
+    tags=["data", "numpy"],
+    examples=["invert this 2x2 matrix", "what's the inverse of this matrix"],
+)
 def calculate_matrix_inverse(matrix: list[list[float]]) -> list[list[float]]:
     """Calculate the inverse of a square matrix using NumPy."""
     np = _get_numpy()
@@ -951,7 +1233,13 @@ def calculate_matrix_inverse(matrix: list[list[float]]) -> list[list[float]]:
     return inv.tolist()
 
 
-@tools.register(tags=["data", "numpy"])
+@tools.register(
+    tags=["data", "numpy"],
+    examples=[
+        "generate 100 normally distributed samples with mean 0",
+        "give me random numbers from a bell curve",
+    ],
+)
 def generate_normal_distribution(mean: float, std: float, size: int) -> list[float]:
     """Generate a list of numbers following a normal distribution."""
     np = _get_numpy()
@@ -961,14 +1249,20 @@ def generate_normal_distribution(mean: float, std: float, size: int) -> list[flo
 # --- System Monitoring (lazy loading psutil) ---
 
 
-@tools.register(tags=["system", "psutil"])
+@tools.register(
+    tags=["system", "psutil"],
+    examples=["how busy is the CPU right now", "current CPU usage percentage"],
+)
 def get_cpu_usage_percent(interval: float = 1.0) -> float:
     """Get the current CPU usage percentage."""
     psutil = _get_psutil()
     return psutil.cpu_percent(interval=interval)
 
 
-@tools.register(tags=["system", "psutil"])
+@tools.register(
+    tags=["system", "psutil"],
+    examples=["how much RAM is in use", "memory usage statistics"],
+)
 def get_memory_info() -> dict[str, Any]:
     """Get detailed system memory usage statistics."""
     psutil = _get_psutil()

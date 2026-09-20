@@ -116,7 +116,7 @@ async def main() -> None:
         #    The `dspy` package is only imported lazily, right here -- catch that
         #    gracefully so the example is useful to run even without it installed.
         try:
-            dspy_tools = await DSPyAdapter(gantry).select(user_query, limit=1, score_threshold=0.1)
+            dspy_tools = await DSPyAdapter(gantry).select(user_query, limit=1)
         except ImportError as exc:
             print(f"{exc}")
             return
@@ -144,7 +144,7 @@ async def main() -> None:
         #    re-selection hook), so `agent_builder` rebuilds a fresh ReAct per
         #    call, tools re-selected for that call's query -- the deepest tier
         #    DSPy allows (see the adapter module docstring for why).
-        builder = DSPyAdapter(gantry).agent_builder("question -> answer", max_iters=3, limit=1, score_threshold=0.1)
+        builder = DSPyAdapter(gantry).agent_builder("question -> answer", max_iters=3, limit=1)
         finance_react = await builder.build("What's the stock price for AAPL?")
         print(
             f"\nPer-call agent_builder rebuilt a ReAct with tools "

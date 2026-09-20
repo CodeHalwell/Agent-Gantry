@@ -64,7 +64,21 @@ class ToolQuery(BaseModel):
     # this default; the convenience layers set it to ``0.0`` for exactly this
     # reason. Kept at 0.5 here for backward compatibility with existing direct
     # ``ToolQuery`` callers — do not change this without a migration plan.
+    #
+    # This field is a *cosine* cutoff and applies only on the semantic path.
+    # When a selector is configured (``AgentGantryConfig.selector``) retrieval
+    # is a probability, not a cosine, and this field is ignored there; use
+    # ``selection_threshold`` below for that path. The two used to share this
+    # one field, which silently reinterpreted the 0.5 default as a minimum
+    # probability for direct callers (#428).
     score_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+
+    # Minimum selector probability for a tool to be returned when a selector
+    # is configured. ``None`` (the default) applies no per-query cutoff beyond
+    # the selector's own ``SelectorConfig.threshold``, which the selector has
+    # already enforced. Set it to tighten a single query on top of that. It
+    # has no effect on the semantic path, where ``score_threshold`` applies.
+    selection_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
 
     # Filters
     namespaces: list[str] | None = None

@@ -147,11 +147,18 @@ class CachedEmbedder:
 
         cached = await asyncio.to_thread(self._lookup_batch, embedder_id, [key])
         hit = cached.get(key)
+        # Under the same lock as the SQLite work (#427): one embedder is shared
+        # across event loops in different threads (see ``__init__``), and a
+        # bare ``+=`` is a read-modify-write that can lose an increment when
+        # two loops tick at once. Statistics only, but wrong statistics.
+        with self._db_lock:
+            if hit is not None:
+                self.hits += 1
+            else:
+                self.misses += 1
         if hit is not None:
-            self.hits += 1
             return hit
 
-        self.misses += 1
         vector = await embed_query(self._embedder, query)
         await asyncio.to_thread(self._store_batch, embedder_id, [(key, vector)])
         return vector
@@ -179,8 +186,9 @@ class CachedEmbedder:
 
         outputs: list[list[float] | None] = [cached.get(h) for h in hashes]
         miss_indices = [i for i, v in enumerate(outputs) if v is None]
-        self.hits += len(texts) - len(miss_indices)
-        self.misses += len(miss_indices)
+        with self._db_lock:  # see embed_query (#427)
+            self.hits += len(texts) - len(miss_indices)
+            self.misses += len(miss_indices)
 
         if miss_indices:
             # Dedupe miss_indices by hash so duplicate strings inside a

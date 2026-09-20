@@ -973,22 +973,54 @@ class AgentGantry:
             # the whole catalogue to the model at full price.
             return None
 
+        # Lazy ``modules=`` are normally imported by ``sync()``, but a selector
+        # that answers means ``sync()`` is never reached — so without this the
+        # module tools would stay absent on every call, for as long as the
+        # selector keeps answering (#422). Importing only populates the
+        # registry, so it costs nothing that the selector path was avoiding.
+        if self._modules is not None:
+            await self.collect_tools_from_modules(
+                self._modules, module_attr=self._module_attr or "tools"
+            )
+            self._modules = None
+
         # Registry *and* pending buffer. ``add_tool`` without a handler — which
         # is how MCP and A2A discovery add theirs — appends only to
         # ``_pending_tools``, so a registry-only view makes those tools
         # invisible to selection. Worse than invisible: if anything else
         # answers, the semantic fallback never runs and they stay unreachable
         # until something forces a sync.
-        known = list(self._registry.list_tools())
-        seen = {t.qualified_name for t in known}
-        known.extend(t for t in self._pending_tools if t.qualified_name not in seen)
+        #
+        # Keyed the way the registry itself is keyed — ``namespace.name``, no
+        # version — with the pending copy winning (#423). ``qualified_name``
+        # carries the version, so keying on it did two wrong things at once:
+        # an *update* to a registered tool (same version, new description) was
+        # dropped in favour of the stale registered copy, and a *re-versioned*
+        # tool survived twice, so the selector could hand the agent v1's
+        # schema while ``execute()`` resolved v2's handler. ``_pending_tools``
+        # preserves registration order, so the last write is the newest.
+        by_name = {f"{t.namespace}.{t.name}": t for t in self._registry.list_tools()}
+        by_name.update({f"{t.namespace}.{t.name}": t for t in self._pending_tools})
+        known = list(by_name.values())
+        if not known:
+            # Nothing registered in memory at all. The store may still hold
+            # tools from an earlier process, and only the semantic path can
+            # see those, so this is a genuine "cannot answer".
+            return None
 
         # Through the router's own filter, not a second copy of it: a selector
         # surfacing a deprecated or circuit-broken tool that the semantic path
         # hides would quietly widen what the agent can reach.
         tools = self._router.filter_tools(known, query)
         if not tools:
-            return None
+            # Every tool was filtered out — a namespace with nothing in it, a
+            # capability nothing has. That is a *successful* determination that
+            # nothing is eligible, made entirely from the in-memory catalogue,
+            # not a decline. Returning ``None`` here sent retrieval through
+            # ``ensure_synced()`` and the vector store to learn the same thing,
+            # which in a selector-only deployment is a failure rather than a
+            # slower path (#423).
+            return [], 0.0, 0
 
         by_id = {tool.qualified_name: tool for tool in tools}
         candidates = [SelectionCandidate.from_tool(tool) for tool in tools]
@@ -1000,11 +1032,14 @@ class AgentGantry:
             logger.debug(f"Selector declined ({result.reason}); using semantic routing")
             return None
 
-        # The query's own threshold still applies. On this path it reads as a
-        # minimum probability rather than a minimum cosine score — a different
-        # scale, but the same direction, and it keeps a per-query override
-        # available on top of the selector's configured threshold.
-        threshold = query.score_threshold or 0.0
+        # Not ``query.score_threshold``: that is a cosine cutoff, and its
+        # schema default of 0.5 is kept for direct ``ToolQuery`` callers. Read
+        # as a minimum *probability* it silently tightened selection for
+        # exactly those callers (#428). The selector has already applied its
+        # own configured threshold; ``selection_threshold`` is the per-query
+        # override on top of that, on the probability scale, and off by
+        # default.
+        threshold = query.selection_threshold or 0.0
         scored = [
             ScoredTool(
                 tool=by_id[candidate_id],
@@ -1039,23 +1074,60 @@ class AgentGantry:
         # truncated catalogue, report success, and keep the semantic fallback
         # from ever running — the same silent-truncation failure the selector's
         # own candidate ceiling was just fixed for.
+        #
+        # Filtered at the store, not after (#426): the ceiling is a property
+        # of the *eligible* catalogue. Measured against the whole store, a
+        # request scoped to a twelve-skill namespace gave up because some other
+        # namespace was large — and in a selector-only deployment the semantic
+        # fallback is not a slower path but a failure. Both stores take
+        # ``namespace``; LanceDB also takes ``category``, so pass that only
+        # where it is accepted. The facade allows a list of namespaces where
+        # the stores take one, so page once per namespace.
+        list_params = inspect.signature(store.list_all_skills).parameters
+        store_kwargs: dict[str, Any] = {}
+        if category is not None and "category" in list_params:
+            store_kwargs["category"] = category
+        namespaces: list[str | None]
+        if namespace is None:
+            namespaces = [None]
+        elif isinstance(namespace, str):
+            namespaces = [namespace]
+        else:
+            namespaces = list(dict.fromkeys(namespace))
+
         skills: list[Skill] = []
         page_size = 1000
-        while len(skills) <= _MAX_SELECTABLE_SKILLS:
-            page = await store.list_all_skills(limit=page_size, offset=len(skills))
-            skills.extend(page)
-            if len(page) < page_size:
+        over_ceiling = False
+        for ns in namespaces:
+            offset = 0
+            while True:
+                page = await store.list_all_skills(
+                    namespace=ns, limit=page_size, offset=offset, **store_kwargs
+                )
+                skills.extend(page)
+                offset += len(page)
+                if len(skills) > _MAX_SELECTABLE_SKILLS:
+                    over_ceiling = True
+                    break
+                if len(page) < page_size:
+                    break
+            if over_ceiling:
                 break
-        else:
-            # Ran past the bound rather than reaching the end. Selecting over a
-            # prefix here would be the truncation this loop exists to avoid, so
-            # hand it to the semantic path, which has no such ceiling.
+        # An explicit check on the collected result, not ``while/else``: the
+        # ``else`` only ran when the loop condition went false, never after a
+        # ``break`` — and the end of the catalogue is reached by ``break``. A
+        # catalogue that crossed the cap on a short final page (anything in
+        # (10_000, 11_000)) therefore skipped the ceiling entirely.
+        if over_ceiling:
+            # Selecting over a prefix here would be the truncation this loop
+            # exists to avoid, so hand it to the semantic path, which has no
+            # such ceiling.
             logger.warning(
                 f"Skill catalogue exceeds {_MAX_SELECTABLE_SKILLS}; using semantic search."
             )
             return None
 
-
+        # Belt and braces for a store that ignores the kwargs it was given.
         if namespace is not None:
             allowed = {namespace} if isinstance(namespace, str) else set(namespace)
             skills = [skill for skill in skills if skill.namespace in allowed]

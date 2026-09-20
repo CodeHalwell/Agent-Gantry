@@ -26,102 +26,110 @@ async def main():
     gantry = AgentGantry()
     set_default_gantry(gantry)  # Set default for decorator usage
 
-    # 3. Register Tools
-    @gantry.register(tags=["math"])
-    def calculate_factorial(n: int) -> int:
-        """Calculate the factorial of a number."""
-        if n == 0:
-            return 1
-        return n * calculate_factorial(n - 1)
+    try:
+        # 3. Register Tools
+        @gantry.register(
+            tags=["math"],
+            examples=["calculate the factorial of 5", "what is 10 factorial"],
+        )
+        def calculate_factorial(n: int) -> int:
+            """Calculate the factorial of a number."""
+            if n == 0:
+                return 1
+            return n * calculate_factorial(n - 1)
 
-    await gantry.sync()
-    print(f"✅ Registered {gantry.tool_count} tools\n")
+        await gantry.sync()
+        print(f"✅ Registered {gantry.tool_count} tools\n")
 
-    # 4. Initialize Groq Client
-    # Groq uses the OpenAI Python SDK
-    from groq import AsyncGroq
+        # 4. Initialize Groq Client
+        # Groq uses the OpenAI Python SDK
+        from groq import AsyncGroq
 
-    client = AsyncGroq(api_key=api_key)
+        client = AsyncGroq(api_key=api_key)
 
-    # --- Scenario: Dynamic Retrieval ---
-    print("--- Scenario: Dynamic Retrieval (Fast Inference) ---")
-    query = "Calculate the factorial of 5"
-    print(f"User Query: '{query}'")
+        # --- Scenario: Dynamic Retrieval ---
+        print("--- Scenario: Dynamic Retrieval (Fast Inference) ---")
+        query = "Calculate the factorial of 5"
+        print(f"User Query: '{query}'")
 
-    # Retrieve tools
-    tools = await gantry.retrieve_tools(query, limit=1, score_threshold=0.1)
-    print(f"Gantry retrieved {len(tools)} tool(s)")
+        # Retrieve tools
+        tools = await gantry.retrieve_tools(query, limit=1)
+        print(f"Gantry retrieved {len(tools)} tool(s)")
 
-    # Call Groq
-    response = await client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": query}],
-        tools=tools,
-        tool_choice="auto",
-    )
-
-    tool_calls = response.choices[0].message.tool_calls
-    if tool_calls:
-        for tc in tool_calls:
-            print(f"Groq decided to call: {tc.function.name}({tc.function.arguments})")
-
-            # Execute securely via Gantry
-            result = await gantry.execute(
-                ToolCall(tool_name=tc.function.name, arguments=json.loads(tc.function.arguments))
-            )
-            print(f"Execution Result: {result.result}")
-
-    # --- Scenario: Using @with_semantic_tools Decorator (RECOMMENDED) ---
-    print("\n--- Scenario: Using @with_semantic_tools Decorator (RECOMMENDED) ---")
-
-    # The decorator uses the default gantry set above
-    # Groq uses OpenAI-compatible format, so no dialect parameter needed
-    @with_semantic_tools(limit=1, score_threshold=0.1, prompt_param="user_query")
-    async def chat_with_groq(user_query: str, tools: list[dict[str, Any]] = None):
-        """
-        This function automatically gets relevant tools injected into the 'tools' argument
-        based on the user_query.
-        """
-        print(f"Decorator injected {len(tools) if tools else 0} tools")
-
+        # Call Groq
         response = await client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": user_query}],
+            messages=[{"role": "user", "content": query}],
             tools=tools,
             tool_choice="auto",
         )
 
-        if response.choices[0].message.tool_calls:
-            tc = response.choices[0].message.tool_calls[0]
-            print(f"Groq (via decorator) called: {tc.function.name}")
-            return tc.function.name
-        return "No tool called"
+        tool_calls = response.choices[0].message.tool_calls
+        if tool_calls:
+            for tc in tool_calls:
+                print(f"Groq decided to call: {tc.function.name}({tc.function.arguments})")
 
-    # The decorator handles the retrieval logic internally
-    await chat_with_groq("Calculate the factorial of 10")
+                # Execute securely via Gantry
+                result = await gantry.execute(
+                    ToolCall(
+                        tool_name=tc.function.name, arguments=json.loads(tc.function.arguments)
+                    )
+                )
+                print(f"Execution Result: {result.result}")
 
-    # --- Scenario: Typed GroqAdapter (provider-specific convenience) ---
-    # GroqAdapter(gantry).tools(query, limit=n) is equivalent to
-    # gantry.retrieve_tools(query, limit=n, dialect="groq"). Groq is
-    # OpenAI-compatible, so the schemas drop straight into chat.completions.
-    print("\n--- Scenario: Typed GroqAdapter ---")
-    from agent_gantry.groq import GroqAdapter
+        # --- Scenario: Using @with_semantic_tools Decorator (RECOMMENDED) ---
+        print("\n--- Scenario: Using @with_semantic_tools Decorator (RECOMMENDED) ---")
 
-    query_adapter = "Calculate the factorial of 7"
-    print(f"User Query: '{query_adapter}'")
+        # The decorator uses the default gantry set above
+        # Groq uses OpenAI-compatible format, so no dialect parameter needed
+        @with_semantic_tools(limit=1, prompt_param="user_query")
+        async def chat_with_groq(user_query: str, tools: list[dict[str, Any]] = None):
+            """
+            This function automatically gets relevant tools injected into the 'tools' argument
+            based on the user_query.
+            """
+            print(f"Decorator injected {len(tools) if tools else 0} tools")
 
-    tools_adapter = await GroqAdapter(gantry).tools(query_adapter, limit=1, score_threshold=0.1)
-    print(f"Gantry retrieved {len(tools_adapter)} tool(s)")
+            response = await client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": user_query}],
+                tools=tools,
+                tool_choice="auto",
+            )
 
-    response_adapter = await client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": query_adapter}],
-        tools=tools_adapter,
-        tool_choice="auto",
-    )
-    if response_adapter.choices[0].message.tool_calls:
-        tc = response_adapter.choices[0].message.tool_calls[0]
-        print(f"Groq (via adapter) called: {tc.function.name}")
+            if response.choices[0].message.tool_calls:
+                tc = response.choices[0].message.tool_calls[0]
+                print(f"Groq (via decorator) called: {tc.function.name}")
+                return tc.function.name
+            return "No tool called"
+
+        # The decorator handles the retrieval logic internally
+        await chat_with_groq("Calculate the factorial of 10")
+
+        # --- Scenario: Typed GroqAdapter (provider-specific convenience) ---
+        # GroqAdapter(gantry).tools(query, limit=n) is equivalent to
+        # gantry.retrieve_tools(query, limit=n, dialect="groq"). Groq is
+        # OpenAI-compatible, so the schemas drop straight into chat.completions.
+        print("\n--- Scenario: Typed GroqAdapter ---")
+        from agent_gantry.groq import GroqAdapter
+
+        query_adapter = "Calculate the factorial of 7"
+        print(f"User Query: '{query_adapter}'")
+
+        tools_adapter = await GroqAdapter(gantry).tools(query_adapter, limit=1)
+        print(f"Gantry retrieved {len(tools_adapter)} tool(s)")
+
+        response_adapter = await client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": query_adapter}],
+            tools=tools_adapter,
+            tool_choice="auto",
+        )
+        if response_adapter.choices[0].message.tool_calls:
+            tc = response_adapter.choices[0].message.tool_calls[0]
+            print(f"Groq (via adapter) called: {tc.function.name}")
+    finally:
+        await gantry.close()
 
 
 if __name__ == "__main__":

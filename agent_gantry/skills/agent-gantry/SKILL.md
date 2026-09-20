@@ -570,6 +570,7 @@ Every inspection command works on **your** registry: `--module pkg.tools` (or `p
 uv run agent-gantry list --module my_app.tools                     # list registered tools
 uv run agent-gantry search "refund order" --module my_app.tools     # semantic search, --limit 3
 uv run agent-gantry lint --module my_app.tools                      # detect tool-description authoring mistakes
+uv run agent-gantry lint --source src/                              # scan files: inverted score_threshold, unclosed gantries
 uv run agent-gantry sim toolA toolB --module my_app.tools           # cosine similarity between two tools
 uv run agent-gantry sync --dry-run --module my_app.tools            # which tools would (re-)embed and why
 uv run agent-gantry sync --prune --module my_app.tools              # also drop stored tools no longer registered

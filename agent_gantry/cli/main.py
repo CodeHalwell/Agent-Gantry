@@ -243,6 +243,17 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0.5,
         help="Tag flagged when it appears on more than this fraction of tools (default 0.5).",
     )
+    lint_parser.add_argument(
+        "--source",
+        action="append",
+        default=None,
+        metavar="PATH",
+        help="Python file or directory to scan for usage mistakes: non-zero "
+        "score_threshold overrides without a justifying comment (or with one "
+        "claiming they relax the filter), and __main__ scripts that construct an "
+        "AgentGantry and never close() it. Repeatable. With no --module/--config "
+        "the registry checks are skipped and no gantry is built.",
+    )
 
     sim_parser = subparsers.add_parser(
         "sim",
@@ -382,10 +393,23 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         return _run_install_skill(args)
 
+    if args.command == "lint" and args.source and not args.module and not args.config:
+        # Pure file scan; nothing to build and no event loop needed.
+        return _run_source_lint(args.source)
+
     # One event loop for the whole command: the gantry's backend is built and
     # used inside it, so a loop-bound pool (pgvector) is never handed to a
     # second, later loop.
     return asyncio.run(_run_command(args))
+
+
+def _run_source_lint(paths: list[str]) -> int:
+    """Run the source-level lint rules over ``paths`` and print the findings."""
+    from agent_gantry.utils.source_linter import analyze_paths
+
+    analysis = analyze_paths(paths)
+    print(analysis.format_text())
+    return 1 if not analysis.empty else 0
 
 
 async def _run_command(args: argparse.Namespace) -> int:
@@ -434,7 +458,11 @@ async def _run_command(args: argparse.Namespace) -> int:
             tag_overlap_share=args.tag_overlap_share,
         )
         print(analysis.format_text())
-        return 1 if not analysis.empty else 0
+        status = 1 if not analysis.empty else 0
+        if args.source:
+            print()
+            status = max(status, _run_source_lint(args.source))
+        return status
 
     if args.command == "sim":
         try:

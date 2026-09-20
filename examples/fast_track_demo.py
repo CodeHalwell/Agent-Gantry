@@ -53,17 +53,17 @@ gantry = AgentGantry()
 set_default_gantry(gantry)
 
 # 2. Register tools with simple decorators (3 lines)
-@gantry.register
+@gantry.register(examples=["what's the weather in Tokyo", "is it raining in Leeds"])
 def get_weather(city: str) -> str:
     '''Get current weather for a city.'''
     return f"Weather in {city}: Sunny, 72°F"
 
-@gantry.register
+@gantry.register(examples=["what's AAPL trading at", "current share price for MSFT"])
 def get_stock_price(symbol: str) -> str:
     '''Get current stock price for a symbol.'''
     return f"{symbol}: $150.00"
 
-@gantry.register
+@gantry.register(examples=["email john about the meeting", "send a message to Sam"])
 def send_email(to: str, subject: str) -> str:
     '''Send an email.'''
     return f"Email sent to {to}"
@@ -94,62 +94,61 @@ response = await chat("What's the weather in Tokyo?")
     gantry = AgentGantry()
     set_default_gantry(gantry)
 
-    # `examples=[...]` is the text the router embeds — the single
-    # highest-value field on a tool definition.
-    @gantry.register(examples=["what's the weather in Tokyo", "is it raining in Leeds"])
-    def get_weather(city: str) -> str:
-        """Get current weather for a city."""
-        return f"Weather in {city}: Sunny, 72°F"
-
-    @gantry.register(examples=["what's AAPL trading at", "current share price for MSFT"])
-    def get_stock_price(symbol: str) -> str:
-        """Get current stock price for a symbol."""
-        return f"{symbol}: $150.00"
-
-    @gantry.register(examples=["email john about the meeting", "send a message to Sam"])
-    def send_email(to: str, subject: str) -> str:
-        """Send an email."""
-        return f"Email sent to {to}"
-
-    await gantry.sync()
-
-    queries = [
-        "What's the weather in Tokyo?",
-        "What's the price of AAPL stock?",
-        "Send an email to john@example.com with subject 'Meeting'",
-    ]
-
-    print("\n🔍 What Gantry selects for each query (no API key needed):\n")
-    for query in queries:
-        # No score_threshold: it defaults to 0.0, and raising it is a
-        # silent-drop trap on longer queries.
-        selected = await gantry.retrieve_tools(query, limit=1)
-        names = [t["function"]["name"] for t in selected]
-        print(f"   📨 {query}")
-        print(f"      → {names} (1 of 3 tools sent, not all 3)")
-
-    if not os.environ.get("OPENAI_API_KEY"):
-        print("\n⚠️  Set OPENAI_API_KEY to run the same thing against a real model.")
-        print("    Everything above works without one.")
-        await gantry.close()
-        return
-
-    print("\n🚀 Running the same queries against the model...\n")
-
-    from openai import AsyncOpenAI
-
-    client = AsyncOpenAI()
-
-    @with_semantic_tools(limit=3)
-    async def chat(prompt: str, *, tools=None):
-        print(f"   [Agent-Gantry] Injected {len(tools) if tools else 0} relevant tools")
-        if tools:
-            print(f"   [Agent-Gantry] Tools: {[t['function']['name'] for t in tools]}")
-        return await client.chat.completions.create(
-            model="gpt-5.5", messages=[{"role": "user", "content": prompt}], tools=tools
-        )
-
     try:
+        # `examples=[...]` is the text the router embeds — the single
+        # highest-value field on a tool definition.
+        @gantry.register(examples=["what's the weather in Tokyo", "is it raining in Leeds"])
+        def get_weather(city: str) -> str:
+            """Get current weather for a city."""
+            return f"Weather in {city}: Sunny, 72°F"
+
+        @gantry.register(examples=["what's AAPL trading at", "current share price for MSFT"])
+        def get_stock_price(symbol: str) -> str:
+            """Get current stock price for a symbol."""
+            return f"{symbol}: $150.00"
+
+        @gantry.register(examples=["email john about the meeting", "send a message to Sam"])
+        def send_email(to: str, subject: str) -> str:
+            """Send an email."""
+            return f"Email sent to {to}"
+
+        await gantry.sync()
+
+        queries = [
+            "What's the weather in Tokyo?",
+            "What's the price of AAPL stock?",
+            "Send an email to john@example.com with subject 'Meeting'",
+        ]
+
+        print("\n🔍 What Gantry selects for each query (no API key needed):\n")
+        for query in queries:
+            # No score_threshold: it defaults to 0.0, and raising it is a
+            # silent-drop trap on longer queries.
+            selected = await gantry.retrieve_tools(query, limit=1)
+            names = [t["function"]["name"] for t in selected]
+            print(f"   📨 {query}")
+            print(f"      → {names} (1 of 3 tools sent, not all 3)")
+
+        if not os.environ.get("OPENAI_API_KEY"):
+            print("\n⚠️  Set OPENAI_API_KEY to run the same thing against a real model.")
+            print("    Everything above works without one.")
+            return
+
+        print("\n🚀 Running the same queries against the model...\n")
+
+        from openai import AsyncOpenAI
+
+        client = AsyncOpenAI()
+
+        @with_semantic_tools(limit=3)
+        async def chat(prompt: str, *, tools=None):
+            print(f"   [Agent-Gantry] Injected {len(tools) if tools else 0} relevant tools")
+            if tools:
+                print(f"   [Agent-Gantry] Tools: {[t['function']['name'] for t in tools]}")
+            return await client.chat.completions.create(
+                model="gpt-5.5", messages=[{"role": "user", "content": prompt}], tools=tools
+            )
+
         for query in queries:
             print(f"\n📨 Query: '{query}'")
             response = await chat(query)

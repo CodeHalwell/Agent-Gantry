@@ -12,25 +12,37 @@ from agent_gantry import create_default_gantry
 tools = create_default_gantry()
 
 
-@tools.register(tags=["conversion", "travel"], examples=["convert kilometers to miles"])
+@tools.register(
+    tags=["conversion", "travel"],
+    examples=["convert kilometers to miles", "how far is 10 km in miles"],
+)
 def convert_km_to_miles(kilometers: float) -> float:
     """Convert kilometers to miles."""
     return kilometers * 0.621371
 
 
-@tools.register(tags=["time", "datetime"], examples=["what is the current UTC time?"])
+@tools.register(
+    tags=["time", "datetime"],
+    examples=["what is the current UTC time?", "what time is it right now in UTC"],
+)
 def current_utc_time() -> str:
     """Get the current UTC time."""
     return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-@tools.register(tags=["finance", "payments"], examples=["format a $45 invoice"])
+@tools.register(
+    tags=["finance", "payments"],
+    examples=["format a $45 invoice", "show this amount as an invoice total"],
+)
 def format_invoice_amount(amount: float, currency: str = "USD") -> str:
     """Format an amount for an invoice."""
     return f"{currency} {amount:,.2f}"
 
 
-@tools.register(tags=["productivity", "communication"], examples=["draft an email to Maria"])
+@tools.register(
+    tags=["productivity", "communication"],
+    examples=["draft an email to Maria", "write a quick note to the client"],
+)
 def draft_email_summary(recipient: str, subject: str, body: str) -> str:
     """Draft a summary email."""
     return f"To: {recipient}\nSubject: {subject}\n\n{body}"

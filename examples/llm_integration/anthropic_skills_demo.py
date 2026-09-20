@@ -37,87 +37,90 @@ async def demo_basic_skills():
     # Initialize Agent-Gantry with tools
     gantry = AgentGantry()
 
-    @gantry.register
-    def get_order(order_id: str) -> dict:
-        """Get order details by ID."""
-        # Mock order data
-        return {
-            "order_id": order_id,
-            "customer": "John Doe",
-            "items": ["Widget A", "Gadget B"],
-            "total": 49.99,
-            "status": "shipped",
-        }
-
-    @gantry.register
-    def process_refund(order_id: str, amount: float) -> str:
-        """Process a refund for an order."""
-        return f"Refund of ${amount} processed for order {order_id}"
-
-    @gantry.register
-    def send_email(to: str, subject: str, body: str) -> str:
-        """Send an email to a customer."""
-        return f"Email sent to {to}: {subject}"
-
-    await gantry.sync()
-
-    # Create Skills client
-    client = await create_skills_client(gantry=gantry)
-
-    # Register a customer support skill
-    client.skills.register(
-        name="customer_support",
-        description="Handle customer support inquiries including refunds and order tracking",
-        instructions="""
-        You are a customer support assistant. Use the available tools to:
-        1. Look up order details using get_order
-        2. Process refunds using process_refund
-        3. Send confirmation emails using send_email
-
-        Always be polite and helpful. Verify order details before processing refunds.
-        """,
-        tools=["get_order", "process_refund", "send_email"],
-        examples=[
-            {
-                "input": "I need a refund for order #12345",
-                "output": "I'll help you with that refund right away.",
+    try:
+        @gantry.register(examples=["look up order #12345", "what's in my last order"])
+        def get_order(order_id: str) -> dict:
+            """Get order details by ID."""
+            # Mock order data
+            return {
+                "order_id": order_id,
+                "customer": "John Doe",
+                "items": ["Widget A", "Gadget B"],
+                "total": 49.99,
+                "status": "shipped",
             }
-        ],
-    )
 
-    # Use the skill
-    print("🎯 Using customer_support skill:")
-    print()
+        @gantry.register(examples=["I need a refund for order #12345", "give me my money back"])
+        def process_refund(order_id: str, amount: float) -> str:
+            """Process a refund for an order."""
+            return f"Refund of ${amount} processed for order {order_id}"
 
-    response = await client.create_message(
-        model="claude-sonnet-4-6",
-        messages=[
-            {
-                "role": "user",
-                "content": "I need a refund for order #12345. The total was $49.99.",
-            }
-        ],
-        skills=["customer_support"],
-        max_tokens=2048,
-    )
+        @gantry.register(examples=["email the customer a confirmation", "send John a note"])
+        def send_email(to: str, subject: str, body: str) -> str:
+            """Send an email to a customer."""
+            return f"Email sent to {to}: {subject}"
 
-    # Process tool calls
-    for block in response.content:
-        if hasattr(block, "type"):
-            if block.type == "text":
-                print(f"💬 Claude: {block.text}")
-            elif block.type == "tool_use":
-                print(f"🔧 Tool: {block.name}({block.input})")
+        await gantry.sync()
 
-    # Execute tools if needed
-    tool_results = await client.execute_tool_calls(response)
-    if tool_results:
+        # Create Skills client
+        client = await create_skills_client(gantry=gantry)
+
+        # Register a customer support skill
+        client.skills.register(
+            name="customer_support",
+            description="Handle customer support inquiries including refunds and order tracking",
+            instructions="""
+            You are a customer support assistant. Use the available tools to:
+            1. Look up order details using get_order
+            2. Process refunds using process_refund
+            3. Send confirmation emails using send_email
+
+            Always be polite and helpful. Verify order details before processing refunds.
+            """,
+            tools=["get_order", "process_refund", "send_email"],
+            examples=[
+                {
+                    "input": "I need a refund for order #12345",
+                    "output": "I'll help you with that refund right away.",
+                }
+            ],
+        )
+
+        # Use the skill
+        print("🎯 Using customer_support skill:")
         print()
-        print("📊 Tool Results:")
-        for result in tool_results:
-            print(f"  • {result['content']}")
 
-    print()
+        response = await client.create_message(
+            model="claude-sonnet-4-6",
+            messages=[
+                {
+                    "role": "user",
+                    "content": "I need a refund for order #12345. The total was $49.99.",
+                }
+            ],
+            skills=["customer_support"],
+            max_tokens=2048,
+        )
+
+        # Process tool calls
+        for block in response.content:
+            if hasattr(block, "type"):
+                if block.type == "text":
+                    print(f"💬 Claude: {block.text}")
+                elif block.type == "tool_use":
+                    print(f"🔧 Tool: {block.name}({block.input})")
+
+        # Execute tools if needed
+        tool_results = await client.execute_tool_calls(response)
+        if tool_results:
+            print()
+            print("📊 Tool Results:")
+            for result in tool_results:
+                print(f"  • {result['content']}")
+
+        print()
+    finally:
+        await gantry.close()
 
 
 async def demo_multi_skill_workflow():
@@ -129,77 +132,84 @@ async def demo_multi_skill_workflow():
 
     gantry = AgentGantry()
 
-    # Register data analysis tools
-    @gantry.register
-    def query_database(query: str) -> list[dict]:
-        """Query the database and return results."""
-        # Mock data
-        return [
-            {"name": "Product A", "sales": 1500, "revenue": 45000},
-            {"name": "Product B", "sales": 2300, "revenue": 69000},
-            {"name": "Product C", "sales": 800, "revenue": 24000},
-        ]
+    try:
+        # Register data analysis tools
+        @gantry.register(
+            examples=["what are our top performing products", "pull the sales numbers"]
+        )
+        def query_database(query: str) -> list[dict]:
+            """Query the database and return results."""
+            # Mock data
+            return [
+                {"name": "Product A", "sales": 1500, "revenue": 45000},
+                {"name": "Product B", "sales": 2300, "revenue": 69000},
+                {"name": "Product C", "sales": 800, "revenue": 24000},
+            ]
 
-    @gantry.register
-    def calculate_metrics(data: list[dict], metric: str) -> float:
-        """Calculate statistical metrics from data."""
-        if metric == "average_revenue":
-            return sum(d["revenue"] for d in data) / len(data)
-        elif metric == "total_sales":
-            return sum(d["sales"] for d in data)
-        return 0.0
+        @gantry.register(
+            examples=["what's the average revenue per product", "total up the sales"]
+        )
+        def calculate_metrics(data: list[dict], metric: str) -> float:
+            """Calculate statistical metrics from data."""
+            if metric == "average_revenue":
+                return sum(d["revenue"] for d in data) / len(data)
+            elif metric == "total_sales":
+                return sum(d["sales"] for d in data)
+            return 0.0
 
-    @gantry.register
-    def create_chart(data: list[dict], chart_type: str) -> str:
-        """Create a visualization of the data."""
-        return f"Created {chart_type} chart with {len(data)} data points"
+        @gantry.register(examples=["can you create a chart of this", "plot the revenue by product"])
+        def create_chart(data: list[dict], chart_type: str) -> str:
+            """Create a visualization of the data."""
+            return f"Created {chart_type} chart with {len(data)} data points"
 
-    await gantry.sync()
+        await gantry.sync()
 
-    client = await create_skills_client(gantry=gantry)
+        client = await create_skills_client(gantry=gantry)
 
-    # Register multiple skills
-    client.skills.register(
-        name="data_analysis",
-        description="Analyze business data and calculate metrics",
-        instructions="""
-        Use query_database to fetch data, then use calculate_metrics to compute statistics.
-        Always explain the insights from the data.
-        """,
-        tools=["query_database", "calculate_metrics"],
-    )
+        # Register multiple skills
+        client.skills.register(
+            name="data_analysis",
+            description="Analyze business data and calculate metrics",
+            instructions="""
+            Use query_database to fetch data, then use calculate_metrics to compute statistics.
+            Always explain the insights from the data.
+            """,
+            tools=["query_database", "calculate_metrics"],
+        )
 
-    client.skills.register(
-        name="data_visualization",
-        description="Create visual representations of data",
-        instructions="""
-        Use create_chart to generate visualizations based on the data provided.
-        Choose appropriate chart types based on the data and question.
-        """,
-        tools=["create_chart"],
-    )
+        client.skills.register(
+            name="data_visualization",
+            description="Create visual representations of data",
+            instructions="""
+            Use create_chart to generate visualizations based on the data provided.
+            Choose appropriate chart types based on the data and question.
+            """,
+            tools=["create_chart"],
+        )
 
-    # Use multiple skills together
-    print("🎯 Using data_analysis and data_visualization skills:")
-    print()
+        # Use multiple skills together
+        print("🎯 Using data_analysis and data_visualization skills:")
+        print()
 
-    response = await client.create_message(
-        model="claude-sonnet-4-6",
-        messages=[
-            {
-                "role": "user",
-                "content": "What are our top performing products and can you create a chart?",
-            }
-        ],
-        skills=["data_analysis", "data_visualization"],
-        max_tokens=2048,
-    )
+        response = await client.create_message(
+            model="claude-sonnet-4-6",
+            messages=[
+                {
+                    "role": "user",
+                    "content": "What are our top performing products and can you create a chart?",
+                }
+            ],
+            skills=["data_analysis", "data_visualization"],
+            max_tokens=2048,
+        )
 
-    for block in response.content:
-        if hasattr(block, "type") and block.type == "text":
-            print(f"💬 Claude: {block.text}")
+        for block in response.content:
+            if hasattr(block, "type") and block.type == "text":
+                print(f"💬 Claude: {block.text}")
 
-    print()
+        print()
+    finally:
+        await gantry.close()
 
 
 async def demo_skill_from_gantry_tools():
@@ -211,72 +221,79 @@ async def demo_skill_from_gantry_tools():
 
     gantry = AgentGantry()
 
-    # Register tools with semantic tags
-    @gantry.register(tags=["math", "calculation"])
-    def add(a: float, b: float) -> float:
-        """Add two numbers."""
-        return a + b
+    try:
+        # Register tools with semantic tags
+        @gantry.register(tags=["math", "calculation"], examples=["add 15 and 25", "what is 5 plus 3"])
+        def add(a: float, b: float) -> float:
+            """Add two numbers."""
+            return a + b
 
-    @gantry.register(tags=["math", "calculation"])
-    def multiply(a: float, b: float) -> float:
-        """Multiply two numbers."""
-        return a * b
+        @gantry.register(
+            tags=["math", "calculation"], examples=["multiply 8 by 2", "what is 6 times 7"]
+        )
+        def multiply(a: float, b: float) -> float:
+            """Multiply two numbers."""
+            return a * b
 
-    @gantry.register(tags=["math", "calculation"])
-    def divide(a: float, b: float) -> float:
-        """Divide two numbers."""
-        if b == 0:
-            raise ValueError("Cannot divide by zero")
-        return a / b
+        @gantry.register(
+            tags=["math", "calculation"], examples=["divide 80 by 4", "what is 100 over 5"]
+        )
+        def divide(a: float, b: float) -> float:
+            """Divide two numbers."""
+            if b == 0:
+                raise ValueError("Cannot divide by zero")
+            return a / b
 
-    await gantry.sync()
+        await gantry.sync()
 
-    client = await create_skills_client(gantry=gantry)
+        client = await create_skills_client(gantry=gantry)
 
-    # Register skill using Agent-Gantry tool names
-    client.register_skill_from_gantry_tools(
-        skill_name="math_operations",
-        description="Perform mathematical calculations",
-        instructions="""
-        You have access to basic math operations: add, multiply, and divide.
-        Break down complex calculations into simple steps using these tools.
-        Always check for edge cases like division by zero.
-        """,
-        tool_names=["add", "multiply", "divide"],
-        examples=[
-            {
-                "input": "Calculate (5 + 3) * 2",
-                "steps": [
-                    "Use add to get 5 + 3 = 8",
-                    "Use multiply to get 8 * 2 = 16",
-                ],
-            }
-        ],
-    )
+        # Register skill using Agent-Gantry tool names
+        client.register_skill_from_gantry_tools(
+            skill_name="math_operations",
+            description="Perform mathematical calculations",
+            instructions="""
+            You have access to basic math operations: add, multiply, and divide.
+            Break down complex calculations into simple steps using these tools.
+            Always check for edge cases like division by zero.
+            """,
+            tool_names=["add", "multiply", "divide"],
+            examples=[
+                {
+                    "input": "Calculate (5 + 3) * 2",
+                    "steps": [
+                        "Use add to get 5 + 3 = 8",
+                        "Use multiply to get 8 * 2 = 16",
+                    ],
+                }
+            ],
+        )
 
-    print("🎯 Using math_operations skill:")
-    print()
+        print("🎯 Using math_operations skill:")
+        print()
 
-    response = await client.create_message(
-        model="claude-sonnet-4-6",
-        messages=[
-            {
-                "role": "user",
-                "content": "Calculate (15 + 25) * 2 / 4",
-            }
-        ],
-        skills=["math_operations"],
-        max_tokens=1024,
-    )
+        response = await client.create_message(
+            model="claude-sonnet-4-6",
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Calculate (15 + 25) * 2 / 4",
+                }
+            ],
+            skills=["math_operations"],
+            max_tokens=1024,
+        )
 
-    for block in response.content:
-        if hasattr(block, "type"):
-            if block.type == "text":
-                print(f"💬 Claude: {block.text}")
-            elif block.type == "tool_use":
-                print(f"🔧 {block.name}({block.input})")
+        for block in response.content:
+            if hasattr(block, "type"):
+                if block.type == "text":
+                    print(f"💬 Claude: {block.text}")
+                elif block.type == "tool_use":
+                    print(f"🔧 {block.name}({block.input})")
 
-    print()
+        print()
+    finally:
+        await gantry.close()
 
 
 async def demo_skill_registry():

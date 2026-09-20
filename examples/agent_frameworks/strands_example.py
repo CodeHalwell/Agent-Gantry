@@ -90,7 +90,7 @@ async def main() -> None:
         #    gracefully so the example is useful to run even without it installed.
         try:
             strands_tools = await StrandsAdapter(gantry).select(
-                user_query, limit=2, score_threshold=0.1
+                user_query, limit=2
             )
         except ImportError as exc:
             print(f"{exc}")
@@ -104,7 +104,6 @@ async def main() -> None:
         #    model call, so the tool surface tracks the conversation turn by turn.
         live_agent = StrandsAdapter(gantry).agent(
             limit=2,
-            score_threshold=0.1,
             system_prompt="You are a helpful assistant with access to weather and finance tools.",
             callback_handler=None,
         )

@@ -35,17 +35,27 @@ from agent_gantry.schema.execution import ExecutionStatus, ToolCall
 # ---- registry ------------------------------------------------------------- #
 # Ten tools across distinct domains so even the hash-based SimpleEmbedder can
 # route unambiguously when no real embedder is installed.
-TOOLS: list[tuple[str, str, list[str]]] = [
-    ("get_current_weather", "Get the current weather and temperature for a city.", ["weather"]),
-    ("send_email", "Compose and send an email message to a recipient.", ["email"]),
-    ("convert_currency", "Convert an amount of money from one currency to another.", ["finance"]),
-    ("run_sql_query", "Execute a read-only SQL query against the database.", ["database"]),
-    ("create_todo", "Add a task item to the user's to-do list.", ["productivity"]),
-    ("search_flights", "Search for available flights between two airports.", ["travel"]),
-    ("translate_text", "Translate a piece of text from one language to another.", ["language"]),
-    ("get_stock_price", "Look up the latest share price for a stock ticker.", ["finance"]),
-    ("deploy_service", "Deploy an application service to the production cluster.", ["devops"]),
-    ("summarize_text", "Produce a short summary of a long passage of text.", ["nlp"]),
+TOOLS: list[tuple[str, str, list[str], list[str]]] = [
+    ("get_current_weather", "Get the current weather and temperature for a city.", ["weather"],
+     ["what's the weather in Paris", "how cold is it in Oslo right now"]),
+    ("send_email", "Compose and send an email message to a recipient.", ["email"],
+     ["send an email to my manager", "email the forecast to my team"]),
+    ("convert_currency", "Convert an amount of money from one currency to another.", ["finance"],
+     ["convert 100 usd to eur", "how much is 50 dollars in euros"]),
+    ("run_sql_query", "Execute a read-only SQL query against the database.", ["database"],
+     ["query the orders table", "run a select against the database"]),
+    ("create_todo", "Add a task item to the user's to-do list.", ["productivity"],
+     ["add 'pack umbrella' to my todo list", "remind me to call the dentist"]),
+    ("search_flights", "Search for available flights between two airports.", ["travel"],
+     ["find flights from London to New York", "any flights to JFK tomorrow"]),
+    ("translate_text", "Translate a piece of text from one language to another.", ["language"],
+     ["translate this into Spanish", "say 'good morning' in French"]),
+    ("get_stock_price", "Look up the latest share price for a stock ticker.", ["finance"],
+     ["what is AAPL trading at", "current share price for Tesco"]),
+    ("deploy_service", "Deploy an application service to the production cluster.", ["devops"],
+     ["deploy the payments service", "ship the new build to production"]),
+    ("summarize_text", "Produce a short summary of a long passage of text.", ["nlp"],
+     ["give me a summary of this article", "condense this document into a paragraph"]),
 ]
 
 
@@ -88,15 +98,19 @@ async def _build_gantry() -> AgentGantry:
     embedder, label, _is_real = _best_embedder()
     print(f"Embedder: {label}\n")
     gantry = AgentGantry(embedder=embedder)
-    for name, desc, tags in TOOLS:
-        gantry.register(_make_tool(name, desc), tags=tags)
+    for name, desc, tags, examples in TOOLS:
+        gantry.register(_make_tool(name, desc), tags=tags, examples=examples)
 
     # A deliberately **kwargs-only tool to exercise the schema fix.
     def echo_kwargs(**kwargs: Any) -> str:
         "Echo back any keyword arguments supplied to this tool."
         return f"echo:{sorted(kwargs)}"
 
-    gantry.register(echo_kwargs, tags=["debug"])
+    gantry.register(
+        echo_kwargs,
+        tags=["debug"],
+        examples=["echo these arguments back to me", "repeat whatever I pass in"],
+    )
     await gantry.sync()
     return gantry
 
@@ -210,105 +224,117 @@ async def check_autonomous_pipeline() -> tuple[bool, str]:
     if not is_real:
         return None, "SKIP: needs a real embedder (SimpleEmbedder is a hash toy)"  # type: ignore[return-value]
     g = AgentGantry(embedder=embedder)
-    pipeline = [
-        ("fetch_raw_data", "Fetch raw unprocessed data from the source system.", ["data"]),
-        ("clean_dataset", "Clean and normalize a raw dataset, removing nulls and duplicates.", ["data"]),
-        ("train_model", "Train a machine learning model on a cleaned dataset.", ["ml"]),
-        ("evaluate_model", "Evaluate a trained machine learning model's accuracy metrics.", ["ml"]),
-        ("generate_report", "Generate a written report summarizing evaluation results.", ["report"]),
-    ]
-    # A couple of distractor tools so selection isn't trivial.
-    distractors = [
-        ("send_email", "Compose and send an email message to a recipient.", ["email"]),
-        ("get_weather", "Get the current weather for a city.", ["weather"]),
-    ]
-    for name, desc, tags in pipeline + distractors:
-        g.register(_make_tool(name, desc), tags=tags)
-    await g.sync()
+    try:
+        pipeline = [
+            ("fetch_raw_data", "Fetch raw unprocessed data from the source system.", ["data"],
+             ["pull the raw data from the source system", "fetch the unprocessed records"]),
+            ("clean_dataset", "Clean and normalize a raw dataset, removing nulls and duplicates.", ["data"],
+             ["clean up the nulls and duplicates", "normalize this raw dataset"]),
+            ("train_model", "Train a machine learning model on a cleaned dataset.", ["ml"],
+             ["train a model on the prepared data", "fit the model to the training set"]),
+            ("evaluate_model", "Evaluate a trained machine learning model's accuracy metrics.", ["ml"],
+             ["how accurate is the trained model", "evaluate the model's performance metrics"]),
+            ("generate_report", "Generate a written report summarizing evaluation results.", ["report"],
+             ["write up a report of the findings", "summarize the evaluation results"]),
+        ]
+        # A couple of distractor tools so selection isn't trivial.
+        distractors = [
+            ("send_email", "Compose and send an email message to a recipient.", ["email"],
+             ["email the results to the team", "send Sam a message"]),
+            ("get_weather", "Get the current weather for a city.", ["weather"],
+             ["what's the weather in Paris", "is it raining in Leeds"]),
+        ]
+        for name, desc, tags, examples in pipeline + distractors:
+            g.register(_make_tool(name, desc), tags=tags, examples=examples)
+        await g.sync()
 
-    refresher = ToolRefresher(g, limit=3)  # default = latest_activity (recency-aware)
+        refresher = ToolRefresher(g, limit=3)  # default = latest_activity (recency-aware)
 
-    # One user goal, then NO further user messages — only tool results feed back.
-    # The goal is phrased to unambiguously start at the first pipeline step
-    # (data ingestion) so the initial semantic hit is fetch_raw_data, not a
-    # later stage like evaluate_model or generate_report.
-    messages: list[dict[str, Any]] = [
-        {"role": "user", "content": "Fetch the raw unprocessed data from the source system and run it through the pipeline."}
-    ]
-    # Each result points FORWARD at the next stage (describing what is needed
-    # next, not what was just done) — how a real pipeline step hands off.
-    step_results = {
-        "fetch_raw_data": "the records contain missing nulls and duplicate rows that must be cleaned and normalized",
-        "clean_dataset": "the prepared training set is ready to fit and train a machine learning model",
-        "train_model": "the fitted model now needs its accuracy and performance metrics evaluated",
-        "evaluate_model": "please write a summary report describing the evaluation findings",
-    }
-    expected_order = ["fetch_raw_data", "clean_dataset", "train_model", "evaluate_model", "generate_report"]
+        # One user goal, then NO further user messages — only tool results feed back.
+        # The goal is phrased to unambiguously start at the first pipeline step
+        # (data ingestion) so the initial semantic hit is fetch_raw_data, not a
+        # later stage like evaluate_model or generate_report.
+        messages: list[dict[str, Any]] = [
+            {"role": "user", "content": "Fetch the raw unprocessed data from the source system and run it through the pipeline."}
+        ]
+        # Each result points FORWARD at the next stage (describing what is needed
+        # next, not what was just done) — how a real pipeline step hands off.
+        step_results = {
+            "fetch_raw_data": "the records contain missing nulls and duplicate rows that must be cleaned and normalized",
+            "clean_dataset": "the prepared training set is ready to fit and train a machine learning model",
+            "train_model": "the fitted model now needs its accuracy and performance metrics evaluated",
+            "evaluate_model": "please write a summary report describing the evaluation findings",
+        }
+        expected_order = ["fetch_raw_data", "clean_dataset", "train_model", "evaluate_model", "generate_report"]
 
-    picks: list[str] = []
-    for _ in expected_order:
-        schemas = await refresher.refresh(messages)
-        names = [s["function"]["name"] for s in schemas]
-        pick = names[0] if names else None
-        picks.append(pick or "—")
-        if pick is None:
-            break
-        # Autonomously advance: append the assistant call + tool result (NO user msg).
-        result_text = step_results.get(pick, f"{pick} completed")
-        messages.append({"role": "assistant", "content": f"calling {pick}"})
-        messages.append({"role": "tool", "name": pick, "content": result_text})
+        picks: list[str] = []
+        for _ in expected_order:
+            schemas = await refresher.refresh(messages)
+            names = [s["function"]["name"] for s in schemas]
+            pick = names[0] if names else None
+            picks.append(pick or "—")
+            if pick is None:
+                break
+            # Autonomously advance: append the assistant call + tool result (NO user msg).
+            result_text = step_results.get(pick, f"{pick} completed")
+            messages.append({"role": "assistant", "content": f"calling {pick}"})
+            messages.append({"role": "tool", "name": pick, "content": result_text})
 
-    # Result-driven chaining should advance through the pipeline. Require the
-    # first step correct and the run to traverse most of the distinct stages.
-    distinct_stages = len(set(picks) & set(expected_order))
-    ok = picks[0] == "fetch_raw_data" and distinct_stages >= 4
-    return ok, f"picks={picks} distinct_pipeline_stages={distinct_stages}/5"
+        # Result-driven chaining should advance through the pipeline. Require the
+        # first step correct and the run to traverse most of the distinct stages.
+        distinct_stages = len(set(picks) & set(expected_order))
+        ok = picks[0] == "fetch_raw_data" and distinct_stages >= 4
+        return ok, f"picks={picks} distinct_pipeline_stages={distinct_stages}/5"
+    finally:
+        await g.close()
 
 
 async def run() -> dict[str, Any]:
     gantry = await _build_gantry()
+    try:
+        core_checks = [
+            ("P0: **kwargs tool executable", await check_p0_kwargs(gantry)),
+            ("P0: default threshold surfaces tools", await check_default_threshold(gantry)),
+            ("core: GantryToolset select + invoke", await check_toolset_invoke(gantry)),
+            ("multi-turn (conversational) pivots", await check_multi_turn(gantry)),
+            ("multi-turn (autonomous) pipeline chains", await check_autonomous_pipeline()),
+        ]
 
-    core_checks = [
-        ("P0: **kwargs tool executable", await check_p0_kwargs(gantry)),
-        ("P0: default threshold surfaces tools", await check_default_threshold(gantry)),
-        ("core: GantryToolset select + invoke", await check_toolset_invoke(gantry)),
-        ("multi-turn (conversational) pivots", await check_multi_turn(gantry)),
-        ("multi-turn (autonomous) pipeline chains", await check_autonomous_pipeline()),
-    ]
+        print("=== CORE CHECKS ===")
+        all_core_passed = True
+        for label, (ok, detail) in core_checks:
+            # ok is True (pass), False (fail), or None (skipped — not a failure).
+            if ok is False:
+                all_core_passed = False
+            tag = "PASS" if ok else ("SKIP" if ok is None else "FAIL")
+            print(f"  [{tag}] {label:<42} {detail}")
 
-    print("=== CORE CHECKS ===")
-    all_core_passed = True
-    for label, (ok, detail) in core_checks:
-        # ok is True (pass), False (fail), or None (skipped — not a failure).
-        if ok is False:
-            all_core_passed = False
-        tag = "PASS" if ok else ("SKIP" if ok is None else "FAIL")
-        print(f"  [{tag}] {label:<42} {detail}")
+        print("\n=== FRAMEWORK ADAPTERS ===")
+        adapter_rows = await check_adapters(gantry)
+        adapter_failed = False
+        for name, ok, detail in adapter_rows:
+            tag = "OK  " if ok else ("SKIP" if ok is None else "FAIL")
+            if ok is False:
+                adapter_failed = True
+            print(f"  [{tag}] {name:<16} {detail}")
 
-    print("\n=== FRAMEWORK ADAPTERS ===")
-    adapter_rows = await check_adapters(gantry)
-    adapter_failed = False
-    for name, ok, detail in adapter_rows:
-        tag = "OK  " if ok else ("SKIP" if ok is None else "FAIL")
-        if ok is False:
-            adapter_failed = True
-        print(f"  [{tag}] {name:<16} {detail}")
+        ok_count = sum(1 for _, ok, _ in adapter_rows if ok is True)
+        skip_count = sum(1 for _, ok, _ in adapter_rows if ok is None)
+        print(
+            f"\nAdapters: {ok_count} built, {skip_count} skipped (not installed), "
+            f"{'0' if not adapter_failed else 'SOME'} failed."
+        )
+        print(f"Core checks: {'ALL PASSED' if all_core_passed else 'FAILURES PRESENT'}")
 
-    ok_count = sum(1 for _, ok, _ in adapter_rows if ok is True)
-    skip_count = sum(1 for _, ok, _ in adapter_rows if ok is None)
-    print(
-        f"\nAdapters: {ok_count} built, {skip_count} skipped (not installed), "
-        f"{'0' if not adapter_failed else 'SOME'} failed."
-    )
-    print(f"Core checks: {'ALL PASSED' if all_core_passed else 'FAILURES PRESENT'}")
-
-    return {
-        "all_core_passed": all_core_passed,
-        "core_checks": {label: ok for label, (ok, _) in core_checks},
-        "adapters_built": ok_count,
-        "adapters_skipped": skip_count,
-        "adapters_failed": adapter_failed,
-    }
+        return {
+            "all_core_passed": all_core_passed,
+            "core_checks": {label: ok for label, (ok, _) in core_checks},
+            "adapters_built": ok_count,
+            "adapters_skipped": skip_count,
+            "adapters_failed": adapter_failed,
+        }
+    finally:
+        await gantry.close()
 
 
 def main() -> int:

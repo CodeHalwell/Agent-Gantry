@@ -30,17 +30,26 @@ from agent_gantry.integrations.frameworks import GantryToolset
 def build_gantry() -> AgentGantry:
     gantry = AgentGantry(embedder=SimpleEmbedder(dimension=128))
 
-    @gantry.register(tags=["email"])
+    @gantry.register(
+        tags=["email"],
+        examples=["email the report to finance", "send Priya a note about the invoice"],
+    )
     def send_email(to: str, subject: str = "", body: str = "") -> str:
         """Compose and send an email message to a recipient."""
         return f"email sent to {to}"
 
-    @gantry.register(tags=["weather"])
+    @gantry.register(
+        tags=["weather"],
+        examples=["what's the weather in Paris", "is it sunny in Leeds today"],
+    )
     def get_weather(city: str) -> str:
         """Get the current weather for a city."""
         return f"It is 21C and sunny in {city}."
 
-    @gantry.register(tags=["finance"])
+    @gantry.register(
+        tags=["finance"],
+        examples=["convert 100 dollars to euros", "how much is 50 GBP in USD"],
+    )
     def convert_currency(amount: float, frm: str, to: str) -> str:
         """Convert an amount of money from one currency to another."""
         return f"{amount} {frm} = {amount * 1.1:.2f} {to}"
@@ -50,50 +59,53 @@ def build_gantry() -> AgentGantry:
 
 async def main() -> None:
     gantry = build_gantry()
-    await gantry.sync()
+    try:
+        await gantry.sync()
 
-    # 1) Framework-neutral core ------------------------------------------- #
-    toolset = GantryToolset(gantry)
-    specs = await toolset.select("email the report to finance", limit=2)
-    print("Selected (framework-neutral) ToolSpecs:")
-    for s in specs:
-        print(f"  - {s.name}: {s.description!r}  (score={s.score:.3f})")
+        # 1) Framework-neutral core --------------------------------------- #
+        toolset = GantryToolset(gantry)
+        specs = await toolset.select("email the report to finance", limit=2)
+        print("Selected (framework-neutral) ToolSpecs:")
+        for s in specs:
+            print(f"  - {s.name}: {s.description!r}  (score={s.score:.3f})")
 
-    # ToolSpec is callable directly — async or sync — through Gantry.
-    top = specs[0]
-    print("\nInvoke the top spec directly:")
-    print("  ainvoke:", await top.ainvoke(to="finance@acme.com"))
-    print("  invoke :", top.invoke(to="finance@acme.com"))  # safe inside the loop
+        # ToolSpec is callable directly — async or sync — through Gantry.
+        top = specs[0]
+        print("\nInvoke the top spec directly:")
+        print("  ainvoke:", await top.ainvoke(to="finance@acme.com"))
+        print("  invoke :", top.invoke(to="finance@acme.com"))  # safe inside the loop
 
-    # 2) Export to each framework ----------------------------------------- #
-    # One ``<Framework>Adapter`` class per framework; ``adapter.select(query,
-    # limit=...)`` selects and builds the native tool objects in one async call.
-    from agent_gantry.integrations import frameworks
+        # 2) Export to each framework ------------------------------------- #
+        # One ``<Framework>Adapter`` class per framework; ``adapter.select(query,
+        # limit=...)`` selects and builds the native tool objects in one async call.
+        from agent_gantry.integrations import frameworks
 
-    adapters = {
-        "langchain": frameworks.LangChainAdapter,
-        "langgraph": frameworks.LangGraphAdapter,
-        "llamaindex": frameworks.LlamaIndexAdapter,
-        "crewai": frameworks.CrewAIAdapter,
-        "pydantic_ai": frameworks.PydanticAIAdapter,
-        "openai_agents": frameworks.OpenAIAgentsAdapter,
-        "haystack": frameworks.HaystackAdapter,
-        "agno": frameworks.AgnoAdapter,
-    }
+        adapters = {
+            "langchain": frameworks.LangChainAdapter,
+            "langgraph": frameworks.LangGraphAdapter,
+            "llamaindex": frameworks.LlamaIndexAdapter,
+            "crewai": frameworks.CrewAIAdapter,
+            "pydantic_ai": frameworks.PydanticAIAdapter,
+            "openai_agents": frameworks.OpenAIAgentsAdapter,
+            "haystack": frameworks.HaystackAdapter,
+            "agno": frameworks.AgnoAdapter,
+        }
 
-    print("\nExport the selection to each framework's native tool object:")
-    for name, adapter_cls in adapters.items():
-        try:
-            native = await adapter_cls(gantry).select("email the report to finance", limit=2)
-            kind = type(native[0]).__name__ if native else "—"
-            print(f"  [built] {name:<14} -> {len(native)} x {kind}")
-        except ImportError:
-            print(f"  [skip ] {name:<14} -> not installed (pip install it to use)")
+        print("\nExport the selection to each framework's native tool object:")
+        for name, adapter_cls in adapters.items():
+            try:
+                native = await adapter_cls(gantry).select("email the report to finance", limit=2)
+                kind = type(native[0]).__name__ if native else "—"
+                print(f"  [built] {name:<14} -> {len(native)} x {kind}")
+            except ImportError:
+                print(f"  [skip ] {name:<14} -> not installed (pip install it to use)")
 
-    print(
-        "\nEvery built tool calls back through gantry.execute, so retries, "
-        "timeouts,\ncircuit breakers and the security policy all still apply."
-    )
+        print(
+            "\nEvery built tool calls back through gantry.execute, so retries, "
+            "timeouts,\ncircuit breakers and the security policy all still apply."
+        )
+    finally:
+        await gantry.close()
 
 
 if __name__ == "__main__":

@@ -19,45 +19,48 @@ from agent_gantry import AgentGantry, Skill, SkillCategory
 async def main() -> None:
     gantry = AgentGantry()
 
-    await gantry.add_skills(
-        [
-            Skill(
-                name="api_pagination",
-                description="How to implement cursor-based pagination for API endpoints",
-                content=(
-                    "Use cursor-based pagination rather than offset/limit: return an "
-                    "opaque cursor with each page and accept it on the next request. "
-                    "Offsets skew under concurrent writes; cursors do not."
+    try:
+        await gantry.add_skills(
+            [
+                Skill(
+                    name="api_pagination",
+                    description="How to implement cursor-based pagination for API endpoints",
+                    content=(
+                        "Use cursor-based pagination rather than offset/limit: return an "
+                        "opaque cursor with each page and accept it on the next request. "
+                        "Offsets skew under concurrent writes; cursors do not."
+                    ),
+                    category=SkillCategory.HOW_TO,
+                    tags=["api", "pagination", "rest"],
+                    related_tools=["fetch_page"],
                 ),
-                category=SkillCategory.HOW_TO,
-                tags=["api", "pagination", "rest"],
-                related_tools=["fetch_page"],
-            ),
-            Skill(
-                name="retry_backoff",
-                description="Pattern for retrying flaky network calls with exponential backoff",
-                content=(
-                    "Retry transient failures with exponential backoff plus jitter "
-                    "(e.g. 1s, 2s, 4s, 8s). Never retry non-idempotent operations "
-                    "without a dedupe key."
+                Skill(
+                    name="retry_backoff",
+                    description="Pattern for retrying flaky network calls with exponential backoff",
+                    content=(
+                        "Retry transient failures with exponential backoff plus jitter "
+                        "(e.g. 1s, 2s, 4s, 8s). Never retry non-idempotent operations "
+                        "without a dedupe key."
+                    ),
+                    category=SkillCategory.PATTERN,
+                    tags=["network", "retry", "resilience"],
                 ),
-                category=SkillCategory.PATTERN,
-                tags=["network", "retry", "resilience"],
-            ),
-        ]
-    )
+            ]
+        )
 
-    # Retrieve the most relevant skills for a prompt...
-    results = await gantry.retrieve_skills("my HTTP requests keep timing out", limit=1)
-    for result in results:
-        print(f"[{result.score:.2f}] {result.skill.qualified_name}")
+        # Retrieve the most relevant skills for a prompt...
+        results = await gantry.retrieve_skills("my HTTP requests keep timing out", limit=1)
+        for result in results:
+            print(f"[{result.score:.2f}] {result.skill.qualified_name}")
 
-    # ...or get them pre-formatted for system-prompt injection
-    prompt_block = await gantry.retrieve_skills_as_prompt(
-        "my HTTP requests keep timing out", limit=1
-    )
-    print()
-    print(prompt_block)
+        # ...or get them pre-formatted for system-prompt injection
+        prompt_block = await gantry.retrieve_skills_as_prompt(
+            "my HTTP requests keep timing out", limit=1
+        )
+        print()
+        print(prompt_block)
+    finally:
+        await gantry.close()
 
 
 if __name__ == "__main__":

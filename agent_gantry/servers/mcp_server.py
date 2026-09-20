@@ -434,6 +434,9 @@ class MCPServer:
         # list_tools so a tool added after startup is served too.
         self._exposed: dict[str, ToolDefinition] = {}
         self._warned_missing_expose = False
+        # The uvicorn server while one of the HTTP transports is running; see
+        # ``_serve_asgi``. ``None`` otherwise.
+        self._uvicorn_server: Any | None = None
         if _MCP_V2:
             self.server = Server(
                 name,
@@ -1002,9 +1005,17 @@ class MCPServer:
         )
         await self._serve_asgi(app, host, port, log_level)
 
-    @staticmethod
-    async def _serve_asgi(app: Any, host: str, port: int, log_level: str) -> None:
-        """Run ``app`` with uvicorn on the current event loop."""
+    async def _serve_asgi(self, app: Any, host: str, port: int, log_level: str) -> None:
+        """Run ``app`` with uvicorn on the current event loop.
+
+        The running ``uvicorn.Server`` is kept on ``self._uvicorn_server`` for
+        the duration, so a host that needs to stop this server has a handle to
+        set ``should_exit`` on. On the way out — clean shutdown, error or
+        cancellation alike — ``sse_starlette``'s process-global shutdown latch
+        is cleared (#424): this method owns the server that tripped it, and
+        without the reset the *next* server started in this process answered
+        every streaming request with headers and no body.
+        """
         try:
             import uvicorn
         except ImportError as exc:  # pragma: no cover - uvicorn ships with mcp
@@ -1015,7 +1026,12 @@ class MCPServer:
 
         config = uvicorn.Config(app, host=host, port=port, log_level=log_level, lifespan="on")
         server = uvicorn.Server(config)
-        await server.serve()
+        self._uvicorn_server = server
+        try:
+            await server.serve()
+        finally:
+            self._uvicorn_server = None
+            reset_sse_shutdown_latch(server)
 
 
 def create_mcp_server(
