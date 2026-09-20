@@ -122,7 +122,7 @@ def __getattr__(name: str) -> "Any":
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__version__ = "0.18.0"
+__version__ = "0.18.1"
 __all__ = [
     "AgentGantry",
     "StreamingToolCallAccumulator",
