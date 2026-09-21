@@ -55,6 +55,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Every directory README now lists every file it contains with an accurate
     one-line description, and `examples/README.md`'s measured counts are
     re-measured.
+### Changed
+
+- **The semantic router fetches at least 32 candidates per query**
+  (`MIN_CANDIDATE_POOL`), where it used to fetch exactly `limit * 4`.
+  Candidates come back ranked by raw cosine and are then re-scored with
+  intent, conversation, health and cost; intent alone is worth 0.15 against a
+  semantic weight of 0.6, so a tool a quarter of a cosine point behind the
+  leader can still finish first — but only if it was fetched. A `limit=3` query
+  saw twelve candidates, and the project's own 300-tool demo lost
+  `calculate_mean` at cosine rank 13 to three random-number tools that
+  embedded closer. With the floor the same demo returns `calculate_mean`,
+  `calculate_entropy` and `calculate_stdev`. `RetrievalResult.candidate_count`
+  rises accordingly for small limits; larger limits are unaffected.
 
 ## [0.18.1] - 2026-09-20
 
