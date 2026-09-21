@@ -636,7 +636,7 @@ def _union_annotation(
                 None,
             )
         parts, has_empty = _combinator_parts(
-            f"{name}_{key}" if sum(k in prop for k in ("anyOf", "oneOf", "allOf")) > 1 else name,
+            f"{name}_{key}" if sum(1 for k in ("anyOf", "oneOf", "allOf") if k in prop) > 1 else name,
             branches,
             depth,
             branch_type,
