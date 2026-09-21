@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-09-21
+
+The router now fetches at least 32 candidates per query, so a tool that
+re-scoring would put first is actually seen: the project's own 300-tool demo
+goes from one of three right to two of three. And the examples tree was read
+file by file as a new user would read it; the defects that turned up are
+listed below.
+
+One thing to know before upgrading: retrieval results for small `limit` values
+can change, because more candidates now reach the intent, conversation, health
+and cost re-scoring. `RetrievalResult.candidate_count` rises accordingly; larger
+limits are unaffected.
+
+### Changed
+
+- **The semantic router fetches at least 32 candidates per query**
+  (`MIN_CANDIDATE_POOL`), where it used to fetch exactly `limit * 4`.
+  Candidates come back ranked by raw cosine and are then re-scored with
+  intent, conversation, health and cost; intent alone is worth 0.15 against a
+  semantic weight of 0.6, so a tool a quarter of a cosine point behind the
+  leader can still finish first — but only if it was fetched. A `limit=3` query
+  saw twelve candidates, and the project's own 300-tool demo lost
+  `calculate_mean` at cosine rank 13 to three random-number tools that
+  embedded closer. With the floor the same demo returns `calculate_mean`,
+  `calculate_entropy` and `calculate_stdev`. `RetrievalResult.candidate_count`
+  rises accordingly for small limits; larger limits are unaffected.
+
 ### Fixed (examples)
 
 - **Every example read as a new user would, verified against the library, and
@@ -55,19 +82,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Every directory README now lists every file it contains with an accurate
     one-line description, and `examples/README.md`'s measured counts are
     re-measured.
-### Changed
-
-- **The semantic router fetches at least 32 candidates per query**
-  (`MIN_CANDIDATE_POOL`), where it used to fetch exactly `limit * 4`.
-  Candidates come back ranked by raw cosine and are then re-scored with
-  intent, conversation, health and cost; intent alone is worth 0.15 against a
-  semantic weight of 0.6, so a tool a quarter of a cosine point behind the
-  leader can still finish first — but only if it was fetched. A `limit=3` query
-  saw twelve candidates, and the project's own 300-tool demo lost
-  `calculate_mean` at cosine rank 13 to three random-number tools that
-  embedded closer. With the floor the same demo returns `calculate_mean`,
-  `calculate_entropy` and `calculate_stdev`. `RetrievalResult.candidate_count`
-  rises accordingly for small limits; larger limits are unaffected.
 
 ## [0.18.1] - 2026-09-20
 
@@ -4556,7 +4570,8 @@ adapters, and the provider dialects agree with it.
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.18.1...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.16.0...v0.17.0
