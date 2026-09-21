@@ -1,3 +1,21 @@
+"""
+End-to-end check with 30 real tools: retrieve -> LLM -> execute.
+
+Registers 30 working Python functions, retrieves the top 3 for each of seven
+queries with the Nomic embedder, and — when ``OPENAI_API_KEY`` is set — hands
+that slice to ``gpt-5.5``, then executes whatever it calls through
+``gantry.execute``. Without a key the retrieval step still runs and is scored;
+the LLM step is skipped. Needs the ``nomic`` extra (falls back to the hashing
+``SimpleEmbedder`` when sentence-transformers is not installed) and the
+``openai`` extra for the LLM step.
+
+Run with::
+
+    pip install agent-gantry[nomic,openai]
+    export OPENAI_API_KEY=...        # optional; enables the LLM + execution step
+    python examples/testing_limits/real_world_30_tools_test.py
+"""
+
 import asyncio
 import json
 import math
@@ -6,14 +24,16 @@ import re
 from datetime import datetime, timedelta
 from typing import Any
 
-from dotenv import load_dotenv
-
 from agent_gantry import AgentGantry
 from agent_gantry.schema.config import AgentGantryConfig, EmbedderConfig
 from agent_gantry.schema.execution import ToolCall
 
-# Load environment variables for OPENAI_API_KEY
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:  # python-dotenv is optional; the environment variable works too
+    pass
 
 # --- 1. Define 30 Tangible Tools ---
 
@@ -293,13 +313,18 @@ async def main():
 
     # Initialize Gantry
     print("1. Initializing AgentGantry with Nomic Embedder...")
+    # NomicEmbedder imports sentence-transformers lazily (at sync), so probe
+    # for it here rather than at construction.
     try:
+        import sentence_transformers  # noqa: F401
+
         config = AgentGantryConfig(
             embedder=EmbedderConfig(type="nomic", model="nomic-ai/nomic-embed-text-v1.5")
         )
         gantry = AgentGantry(config=config)
     except ImportError:
-        print("   Nomic dependencies missing. Falling back to SimpleEmbedder.")
+        print("   sentence-transformers missing (pip install agent-gantry[nomic]).")
+        print("   Falling back to SimpleEmbedder.")
         gantry = AgentGantry()
 
     try:

@@ -146,7 +146,7 @@ async def main() -> None:
             # limit=10 (not the usual small top-k) so this stays deterministic
             # under SimpleEmbedder's coarse hash-based similarity -- a real
             # embedder would rank the right tool near the top with a much
-            # smaller limit. See examples/frameworks/README.md.
+            # smaller limit.
             found = await gantry.retrieve_tools(query, limit=10)
             names = [t["function"]["name"] for t in found]
             if tool_name not in names:

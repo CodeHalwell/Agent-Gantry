@@ -181,6 +181,18 @@ async def main() -> None:
     try:
         await gantry.sync()
 
+        # What the provider will inject, visible without a client:
+        # `dry_run_retrieve` runs the exact retrieval path `before_run` uses.
+        provider = GantryContextProvider(gantry, top_k=3, score_threshold=0.0)
+        print("Catalogue: 4 tools. What each `agent.run(...)` below would inject:\n")
+        for query in (
+            "What's the weather in Tokyo?",
+            "I want a refund of $42 on order ABC.",
+        ):
+            decision = await provider.dry_run_retrieve(query)
+            print(f"  {query:<40} -> {', '.join(decision.injected)}")
+        print()
+
         # Guard on the real condition — whether a client can be built — rather than
         # on an env var standing in for it. AF resolves its endpoint from several
         # settings (OPENAI_API_KEY, or AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_BASE_URL
@@ -190,11 +202,10 @@ async def main() -> None:
         try:
             OpenAIChatClient()
         except Exception as exc:
-            print("Gantry setup complete: tools registered and synced.\n")
             print(f"No usable Agent Framework chat client ({type(exc).__name__}: {exc}).")
             print("Set OPENAI_API_KEY, or AZURE_OPENAI_ENDPOINT (or")
             print("AZURE_OPENAI_BASE_URL) plus AZURE_OPENAI_API_KEY, to run the")
-            print("Agent Framework half.")
+            print("agents themselves. Everything above works without one.")
             return
 
         await example_bare_agent(gantry)

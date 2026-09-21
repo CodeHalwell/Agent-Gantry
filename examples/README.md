@@ -3,12 +3,14 @@
 Hands-on examples. **Every one of them runs from a clean checkout with no API
 keys set** — nothing crashes and nothing hangs waiting for a credential.
 
-Two different promises there, so to be precise about which you get. Measured by
-running all 64 with every credential unset and recording what each one actually
-called: **51 do real Gantry work without a key**, 13 exit at a credential check
-having demonstrated nothing.
+Two different promises there, so to be precise about which you get. Measured on
+2026-09-21 by running all 63 runnable scripts with every credential unset and
+recording what each one actually called: **53 do real Gantry work without a
+key**, 10 exit at a credential check having demonstrated nothing — the seven
+provider-specific `llm_integration/` demos, `llm_intent_classification_example.py`,
+`observability/token_savings_demo.py` and `routing/jev_threshold_tuning_demo.py`.
 
-The 51 include everything under `agent_frameworks/`, plus `fast_track_demo.py`,
+The 53 include everything under `agent_frameworks/`, plus `fast_track_demo.py`,
 `project_demo/` and `tool_vector_db/`. Those register and sync first, and —
 where the framework itself is installed — retrieve, convert and print what was
 selected before gating the model call. Without the framework installed they
@@ -51,7 +53,9 @@ them standalone alongside `agent-gantry`. See
 [`agent_frameworks/README.md`](agent_frameworks/README.md).
 
 No adapter for your framework? [`agent_frameworks/generic_adapters_example.py`](agent_frameworks/generic_adapters_example.py) shows the
-framework-neutral `GantryToolset` + `spec.to_*` path, which works anywhere.
+framework-neutral path, which works anywhere: `GantryToolset(gantry).select(query, limit=1)`
+returns `ToolSpec`s carrying `spec.name`, `spec.description` and `spec.parameters` — hand those
+to your framework's tool type and point its callback at `spec.ainvoke(...)`.
 
 ## Not using a framework?
 
@@ -100,16 +104,25 @@ with no error.
   harness, the multi-turn `ToolRefresher`, and importing existing framework
   tools *into* Gantry. All offline.
 - `fast_track_demo.py` — vanilla OpenAI to semantic tools in ten lines.
-- `basics/` — registration, async execution, multi-tool routing, plug-and-play imports.
+- `basics/` — registration patterns, async execution, multi-tool routing,
+  plug-and-play imports, and skills (retrieved guidance, never executed).
 - `routing/` — semantic routing, custom adapters, health-aware ranking, asymmetric
   embedders, and the Jev selector.
 - `execution/` — circuit breakers, batch execution, security policy enforcement.
 - `llm_integration/` — end-to-end loops against OpenAI/Anthropic/Google/Groq/Mistral
   using the `@with_semantic_tools` decorator.
-- `observability/` — console telemetry and token-savings analysis.
-- `protocols/` — MCP and A2A demos, including Claude Desktop config.
+- `observability/` — console telemetry and token-savings analysis. The library
+  attaches a `NullHandler`, so console output appears only after
+  `enable_console_logging()`; the demos call it, and yours must too.
+- `protocols/` — MCP and A2A demos. The Python files run offline (nothing is served
+  or connected); `claude_desktop_config.json` launches the real server with
+  `agent-gantry serve-mcp --module your.module`.
 - `project_demo/`, `tool_vector_db/` — fuller applications with persistence.
-- `testing_limits/` — stress tests for token savings and accuracy at 30 and 100 tools.
+  Both build a gitignored LanceDB cache on first run (`project_demo/tools/.tool_cache/`
+  and `gantry_tools.lancedb/` in the repo root), so expect the first run to take
+  roughly 30-70 s and to leave those directories behind; later runs reuse them.
+- `testing_limits/` — retrieval accuracy at 30 and 100 tools; the 30-tool run adds an
+  LLM selection step when a key is set.
 
 ## Installing
 
@@ -122,6 +135,7 @@ pip install -e ".[agent-frameworks]"   # LangChain, LangGraph, CrewAI, LlamaInde
 pip install -e ".[openai,anthropic]"   # LLM provider examples
 pip install -e ".[mcp]"                # MCP / Claude Desktop
 pip install -e ".[a2a]"                # Agent-to-Agent protocol
+pip install -e ".[nomic]"              # routing/nomic_tool_demo.py, testing_limits/ (~550 MB model)
 ```
 
 ## The two integration patterns

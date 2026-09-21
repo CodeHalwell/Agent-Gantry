@@ -1,5 +1,5 @@
 """
-Microsoft Agent Framework 1.4.0 — multi-agent orchestration with Agent-Gantry.
+Microsoft Agent Framework (1.5.0+) — multi-agent orchestration with Agent-Gantry.
 
 Demonstrates three production orchestration patterns, each powered by Gantry's
 semantic tool routing:
@@ -214,6 +214,18 @@ async def main() -> None:
         # on longer queries, so leave it alone unless you have measured.
         bridge = GantryToolBridge(gantry)
 
+        # Selection needs no client, so show each role's slice first — the same
+        # `get_tools` call `build_agent` makes for that role below.
+        print("Catalogue: 4 tools. What each role selects:\n")
+        for role, query, limit in (
+            ("researcher", "research tools (search knowledge base, lookup order)", 3),
+            ("writer", "compose a customer-facing email", 2),
+            ("billing_analyst", "billing and invoices", 2),
+        ):
+            _tools, decision = await bridge.get_tools_with_decision(query, limit=limit)
+            print(f"  {role:<16} -> {', '.join(decision.injected)}")
+        print()
+
         # Guard on the real condition — whether a client can be built — rather than
         # on an env var standing in for it. AF resolves its endpoint from several
         # settings (OPENAI_API_KEY, or AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_BASE_URL
@@ -223,11 +235,10 @@ async def main() -> None:
         try:
             client = OpenAIChatClient()
         except Exception as exc:
-            print("Gantry setup complete: tools registered and synced.\n")
             print(f"No usable Agent Framework chat client ({type(exc).__name__}: {exc}).")
             print("Set OPENAI_API_KEY, or AZURE_OPENAI_ENDPOINT (or")
             print("AZURE_OPENAI_BASE_URL) plus AZURE_OPENAI_API_KEY, to run the")
-            print("Agent Framework half.")
+            print("workflows themselves. Everything above works without one.")
             return
 
         await sequential_pipeline(

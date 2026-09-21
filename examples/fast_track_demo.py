@@ -3,6 +3,10 @@ Fast Track Demo: Upgrade vanilla OpenAI to semantic tools in ~10 lines
 
 This example shows how to take a basic OpenAI chat completion call and
 upgrade it to use Agent-Gantry's semantic tool routing with minimal changes.
+
+Runs without an API key: it registers three tools, syncs, and prints what
+Gantry selects for each query. Set OPENAI_API_KEY (and install
+``agent-gantry[openai]``) to also send the selected tools to a real model.
 """
 
 import asyncio
@@ -69,7 +73,7 @@ def send_email(to: str, subject: str) -> str:
     return f"Email sent to {to}"
 
 # 3. Add decorator to your chat function (1 line)
-@with_semantic_tools(limit=3)
+@with_semantic_tools(limit=1)
 async def chat(prompt: str, *, tools=None):
     return await client.chat.completions.create(
         model="gpt-5.5",
@@ -84,7 +88,7 @@ response = await chat("What's the weather in Tokyo?")
     """)
 
     # ============================================================================
-    # Run actual demo if API key is available
+    # Run it for real: selection needs no key, the model call does
     # ============================================================================
     # None of this needs a key, so it always runs: the selection *is* the
     # thing this demo is about, and printing a code listing instead would be
@@ -140,7 +144,7 @@ response = await chat("What's the weather in Tokyo?")
 
         client = AsyncOpenAI()
 
-        @with_semantic_tools(limit=3)
+        @with_semantic_tools(limit=1)
         async def chat(prompt: str, *, tools=None):
             print(f"   [Agent-Gantry] Injected {len(tools) if tools else 0} relevant tools")
             if tools:
@@ -184,7 +188,7 @@ Total Lines Added: ~10 lines (3 imports, 1 init, 3 tool registrations, 1 decorat
     print(
         "   - Run examples/basics/plug_and_play_semantic_filter.py to import tools from a module with one decorator"
     )
-    print("   - Read docs/semantic_tool_decorator.md for advanced usage")
+    print("   - See examples/llm_integration/decorator_demo.py for the decorator's two call styles")
     print("   - Try examples/agent_frameworks/ for LangChain, CrewAI, LlamaIndex")
 
 

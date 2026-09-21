@@ -40,7 +40,7 @@ async def main() -> None:
         print("✅ Initialized with Nomic Embeddings")
     except ImportError:
         gantry = AgentGantry()
-        print("⚠️  Initialized with Simple Embeddings")
+        print(f"⚠️  Initialized with the default embedder ({type(gantry.embedder).__name__})")
 
     try:
         # 3. Register Tools

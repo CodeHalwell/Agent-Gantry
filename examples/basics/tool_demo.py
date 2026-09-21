@@ -1,3 +1,11 @@
+"""
+Hello world: register one tool, sync, retrieve it by meaning, execute it.
+
+Runs offline with no API key.
+
+Run: python examples/basics/tool_demo.py
+"""
+
 import asyncio
 
 from agent_gantry import AgentGantry
@@ -18,7 +26,8 @@ async def main():
             """Calculates US sales tax (8%) for a given amount."""
             return amount * 0.08
 
-        # 3. Sync to index tools (required for semantic search)
+        # 3. Sync to index tools. retrieve() would do this lazily on first use;
+        #    syncing up front keeps the first query fast and the flow explicit.
         await gantry.sync()
 
         # 4. Retrieve relevant tools for a query

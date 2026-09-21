@@ -1,53 +1,82 @@
-import asyncio
+"""
+No adapter for your framework? Use the framework-neutral ``GantryToolset``.
 
-from dotenv import load_dotenv
+Every ``<Framework>Adapter`` in this directory is a thin layer over the same
+core: ``GantryToolset.select(query, limit=...)`` runs retrieval and returns
+``ToolSpec`` handles. Each spec carries what any framework's tool constructor
+wants — ``name``, ``description`` and a JSON-Schema ``parameters`` dict — plus
+``ainvoke(**kwargs)`` / ``invoke(**kwargs)`` that execute through
+``gantry.execute`` (retries, timeouts, circuit breakers, security policy).
+Hand those three fields to your framework's tool type and point its callback
+at ``spec.ainvoke``; that is all a dedicated adapter does.
+
+This file needs no framework installed and **no API key**.
+
+Run with::
+
+    pip install agent-gantry
+    python examples/agent_frameworks/generic_adapters_example.py
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
 
 from agent_gantry import AgentGantry
-from agent_gantry.integrations.framework_adapters import fetch_framework_tools
+from agent_gantry.integrations.frameworks import GantryToolset
 
-load_dotenv()
+USER_QUERY = "What is the market data for MSFT?"
 
 
-async def main():
-    # 1. Initialize Agent-Gantry
+async def main() -> None:
     gantry = AgentGantry()
     try:
-
+        # `examples=[...]` is the text the router embeds — the single
+        # highest-value field on a tool definition.
         @gantry.register(
-            examples=[
-                "what's AAPL trading at right now",
-                "get me live prices for TSLA",
-            ],
+            tags=["finance"],
+            examples=["what's AAPL trading at right now", "get me live prices for TSLA"],
         )
-        def get_market_data(ticker: str):
+        def get_market_data(ticker: str) -> dict:
             """Get real-time market data for a ticker."""
             return {"ticker": ticker, "price": 250.45, "volume": "1.2M"}
 
+        @gantry.register(
+            tags=["finance"],
+            examples=["convert 100 dollars to euros", "how much is 50 GBP in USD"],
+        )
+        def convert_currency(amount: float, frm: str, to: str) -> str:
+            """Convert an amount of money from one currency to another."""
+            return f"{amount} {frm} = {amount * 1.1:.2f} {to}"
+
+        @gantry.register(
+            tags=["comms"],
+            examples=["email the team", "send Priya a note about the report"],
+        )
+        def send_email(to: str, body: str) -> str:
+            """Send an email message to a named recipient."""
+            return f"Emailed {to}."
+
         await gantry.sync()
 
-        # 2. Define the query
-        user_query = "What is the market data for MSFT?"
+        # No score_threshold: it defaults to 0.0, and raising it is a
+        # silent-drop trap on longer queries.
+        specs = await GantryToolset(gantry).select(USER_QUERY, limit=1)
 
-        # 3. Use the framework adapter
-        # This helper returns the schema shape expected by the framework
-        # (Currently OpenAI-style function calling for all supported frameworks)
-        google_adk_tools = await fetch_framework_tools(
-            gantry, user_query, framework="google_adk", limit=3
-        )
+        print(f"Catalogue: 3 tools. Gantry selected {len(specs)} for this query:")
+        for spec in specs:
+            print(f"  - {spec.name}: {spec.description}")
 
-        strands_tools = await fetch_framework_tools(gantry, user_query, framework="strands", limit=3)
+        # Everything a framework's tool constructor needs is on the spec.
+        spec = specs[0]
+        print("\nJSON-Schema parameters to hand to your framework:")
+        print(json.dumps(spec.parameters, indent=2))
 
-        print(f"Retrieved {len(google_adk_tools)} tools for Google ADK")
-        print(f"Retrieved {len(strands_tools)} tools for Strands")
-
-        # 4. Example of how you would typically use these in a generic framework
-        # Most modern frameworks accept the OpenAI tool schema format.
-        for tool in google_adk_tools:
-            name = tool["function"]["name"]
-            print(f"Integrating tool: {name}")
-
-            # The framework would then call back to Gantry for execution:
-            # result = await gantry.execute(ToolCall(tool_name=name, arguments=args))
+        # The callback you wire in is `spec.ainvoke` (or `spec.invoke` from
+        # sync code). It runs through gantry.execute like every adapter does.
+        print("\nInvoking it through Gantry:")
+        print(f"  {spec.name}(ticker='MSFT') -> {await spec.ainvoke(ticker='MSFT')}")
     finally:
         await gantry.close()
 

@@ -1,8 +1,16 @@
 """
 Dynamic MCP Server Selection Demo for Agent-Gantry.
 
-Demonstrates the new dynamic MCP server selection feature that enables
-semantic routing to MCP servers based on query context.
+Registers four MCP servers by metadata only (``register_mcp_server`` does not
+connect), syncs that metadata into the vector store, and uses
+``retrieve_mcp_servers`` to pick the server a prompt needs. Connecting to the
+chosen server (``discover_tools_from_server``) is shown but not run, since the
+servers here are not installed. No API key; needs ``agent-gantry[mcp]``.
+
+Run with::
+
+    pip install agent-gantry[mcp]
+    python examples/protocols/dynamic_mcp_selection_demo.py
 """
 
 import asyncio
@@ -25,6 +33,11 @@ async def demo_dynamic_mcp_selection():
 
     # Initialize Agent-Gantry
     gantry = AgentGantry()
+    if gantry._mcp_registry is None:
+        print("MCP support is not installed: pip install agent-gantry[mcp]")
+        await gantry.close()
+        return
+
     try:
         # =========================================================================
         # Step 1: Register MCP servers with metadata (no immediate connection)
@@ -36,7 +49,7 @@ async def demo_dynamic_mcp_selection():
             name="filesystem",
             command=["npx", "-y", "@modelcontextprotocol/server-filesystem"],
             description="Provides comprehensive tools for reading and writing files on the local filesystem. Supports file operations, directory listing, and path management.",
-            args=["--path", "/tmp"],
+            args=["/tmp"],  # the directories the server may access, as positionals
             tags=["filesystem", "files", "io", "local"],
             examples=[
                 "read a file",
@@ -111,9 +124,6 @@ async def demo_dynamic_mcp_selection():
         synced_count = await gantry.sync_mcp_servers()
         print(f"✅ Synced {synced_count} servers to vector store")
 
-        # Note: In a complete implementation, this would embed server metadata
-        # to enable semantic search. For this demo, the placeholder returns 0.
-
         # =========================================================================
         # Step 3: Semantic server retrieval based on queries
         # =========================================================================
@@ -129,33 +139,29 @@ async def demo_dynamic_mcp_selection():
         for query in queries:
             print(f"\n🎯 Query: '{query}'")
 
-            # Note: retrieve_mcp_servers requires vector store integration to work
-            # This is a placeholder showing the intended usage
-            print("   → Would search for relevant servers using semantic routing")
-            print("   → Example: filesystem server (high relevance for file operations)")
-
-            # In a complete implementation:
-            # servers = await gantry.retrieve_mcp_servers(query, limit=2)
-            # for server in servers:
-            #     print(f"   ✓ {server.name}: {server.description[:50]}...")
+            # Semantic search over the synced metadata: description, tags,
+            # examples. Nothing is connected yet.
+            servers = await gantry.retrieve_mcp_servers(query, limit=2)
+            for server in servers:
+                print(f"   ✓ {server.name}: {server.description[:50]}...")
 
         # =========================================================================
         # Step 4: On-demand tool discovery from selected servers
         # =========================================================================
         print("\n\n🔧 Step 4: Discovering tools on-demand from selected server...\n")
 
-        # Simulate selecting the filesystem server based on user query
-        print("💭 User needs file operations → Selected: filesystem server")
-        print("🔌 Connecting to server and discovering tools...")
+        # Take the top server for the first query and connect to that one only.
+        chosen = (await gantry.retrieve_mcp_servers(queries[0], limit=1))[0]
+        print(f"💭 '{queries[0]}' → Selected: {chosen.name} server")
 
-        # Normally you would:
-        # 1. Use retrieve_mcp_servers() to find relevant servers
-        # 2. Then discover tools only from the selected server(s)
+        # This is the call that spawns the server process and imports its tools.
+        # It is not run here because `npx @modelcontextprotocol/server-filesystem`
+        # may not be installed; uncomment it on a machine that has it.
         #
-        # count = await gantry.discover_tools_from_server("filesystem")
-        # print(f"✅ Discovered {count} tools from filesystem server")
+        # count = await gantry.discover_tools_from_server(chosen.name)
+        # print(f"✅ Discovered {count} tools from {chosen.name} server")
 
-        print("   (Note: Actual connection requires the MCP server to be running)\n")
+        print("🔌 discover_tools_from_server() would connect to it now (not run in this demo)\n")
 
         # =========================================================================
         # Benefits of Dynamic Selection
@@ -221,13 +227,18 @@ async def demo_workflow_example():
 
     # Create gantry
     gantry = AgentGantry()
+    if gantry._mcp_registry is None:
+        print("MCP support is not installed: pip install agent-gantry[mcp]")
+        await gantry.close()
+        return
+
     try:
         # Register servers with rich metadata
         gantry.register_mcp_server(
             name="files",
             command=["npx", "-y", "@modelcontextprotocol/server-filesystem"],
             description="Local filesystem operations for reading and writing files",
-            args=["--path", "/home/user/documents"],
+            args=["/home/user/documents"],
             tags=["files", "io"],
             examples=["read file", "write file"],
             capabilities=["read_files", "write_files"],
@@ -236,20 +247,16 @@ async def demo_workflow_example():
         # Sync to enable semantic search
         await gantry.sync_mcp_servers()
 
-        # Find relevant servers (when vector store is integrated)
-        # servers = await gantry.retrieve_mcp_servers(
-        #     query="I need to read a log file",
-        #     limit=2
-        # )
+        # Find relevant servers
+        servers = await gantry.retrieve_mcp_servers("I need to read a log file", limit=2)
+        print(f"Selected for 'I need to read a log file': {[s.name for s in servers]}")
 
-        # Discover tools from selected server
-        # count = await gantry.discover_tools_from_server("files")
-
-        # Now use the tools
-        # tools = await gantry.retrieve_tools("read my config.yaml")
+        # The remaining steps need the server installed, so they are shown only:
+        # count = await gantry.discover_tools_from_server("files")   # connect, import tools
+        # tools = await gantry.retrieve_tools("read my config.yaml")  # route as usual
         # result = await gantry.execute(...)
 
-        print("✅ Workflow steps demonstrated in code comments above")
+        print("✅ Remaining steps (connect, route, execute) shown in the comments above")
     finally:
         await gantry.close()
 
@@ -261,8 +268,8 @@ async def main():
 
     print("\n\nFor more examples, see:")
     print("• examples/protocols/mcp_integration_demo.py")
+    print("• examples/protocols/jev_mcp_selection_demo.py  (same selection via a decision model)")
     print("• tests/test_dynamic_mcp_selection.py")
-    print("• docs/phase5_mcp.md")
 
 
 if __name__ == "__main__":

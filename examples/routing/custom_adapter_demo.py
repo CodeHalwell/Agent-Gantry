@@ -1,3 +1,17 @@
+"""
+Plugging a custom embedder into the router.
+
+Implements the ``EmbeddingAdapter`` protocol with a deterministic dummy
+embedder and hands it to ``AgentGantry(embedder=...)``. The vectors carry no
+meaning, so the ranking is arbitrary; the point is that the whole
+register -> sync -> retrieve pipeline runs on your own adapter. No API key,
+no model download.
+
+Run with::
+
+    python examples/routing/custom_adapter_demo.py
+"""
+
 import asyncio
 import random
 
@@ -9,7 +23,7 @@ from agent_gantry.adapters.embedders.base import EmbeddingAdapter
 class RandomEmbedder(EmbeddingAdapter):
     """
     A dummy embedder that returns random vectors.
-    Useful for testing or when no LLM is available.
+    Useful for testing or when no embedding model is available.
     """
 
     def __init__(self, dimension: int = 10):

@@ -113,7 +113,10 @@ async def main() -> None:
             "research papers summarise literature review write report",
             limit=5,
         )
-        print(f"Gantry selected {len(tools)} tool(s) for the harness agent")
+        print(f"Catalogue: 4 tools. Gantry selected {len(tools)} for the harness agent:")
+        for tool in tools:
+            print(f"  - {getattr(tool, 'name', getattr(tool, '__name__', tool))}")
+        print()
 
         # ------------------------------------------------------------------
         # 3. Build the harness agent
@@ -173,7 +176,7 @@ async def main() -> None:
             print(f"No usable Agent Framework chat client ({type(exc).__name__}: {exc}).")
             print("Set OPENAI_API_KEY, or AZURE_OPENAI_ENDPOINT (or")
             print("AZURE_OPENAI_BASE_URL) plus AZURE_OPENAI_API_KEY, to run the")
-            print("harness agent.")
+            print("harness agent itself. Everything above works without one.")
             return
 
         agent = create_harness_agent(

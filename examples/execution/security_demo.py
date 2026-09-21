@@ -1,3 +1,15 @@
+"""
+Gating execution with a ``SecurityPolicy``.
+
+Tools whose names match ``delete_*`` require confirmation: executing one
+returns ``status == "pending_confirmation"`` instead of running it, while an
+unmatched tool executes normally. No API key needed.
+
+Run with::
+
+    python examples/execution/security_demo.py
+"""
+
 import asyncio
 
 from agent_gantry import AgentGantry

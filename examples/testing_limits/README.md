@@ -3,10 +3,11 @@
 Stress tests that measure routing accuracy and token savings with larger tool sets.
 
 ## Files
-- `stress_test_100_tools.py`: Registers 100 synthetic tools to validate retrieval accuracy under
-  load and prints per-query scores.
-- `real_world_30_tools_test.py`: End-to-end test with 30 tangible tools plus GPT-4o to validate tool
-  selection and execution in realistic scenarios.
+- `stress_test_100_tools.py`: Registers 100 synthetic tools (10 services x 10 actions) with the Nomic
+  embedder and reports top-2 retrieval accuracy over ten queries.
+- `real_world_30_tools_test.py`: End-to-end test with 30 working tools: retrieval is scored on its
+  own, and with `OPENAI_API_KEY` set the retrieved slice is handed to `gpt-5.5` and the tool it
+  picks is executed through `gantry.execute`.
 
 ## Run commands
 
@@ -15,6 +16,7 @@ python examples/testing_limits/stress_test_100_tools.py
 python examples/testing_limits/real_world_30_tools_test.py
 ```
 
-These scripts are useful for benchmarking embedding/reranking choices and verifying performance
-before deploying a large catalog. Set provider API keys if you want to run the real-world test with
-actual LLM calls.
+Both use the Nomic embedder, so they need `agent-gantry[nomic]` and download the model on first run
+(they fall back to the hashing `SimpleEmbedder`, with lower accuracy, if sentence-transformers is
+missing). Neither needs an API key; set `OPENAI_API_KEY` to run the real-world test's LLM step.
+Useful for benchmarking embedding/reranking choices before deploying a large catalogue.

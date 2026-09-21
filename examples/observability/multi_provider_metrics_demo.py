@@ -1,11 +1,25 @@
-import asyncio
-import logging
+"""
+Normalising token usage from different providers.
 
+``calculate_token_savings`` accepts the raw ``usage`` dicts that Anthropic
+(``input_tokens``), Google GenAI (``prompt_token_count``) and OpenAI
+(``prompt_tokens``) return, maps them onto one ``ProviderUsage`` shape and
+reports the saving. The numbers here are hard-coded to show the mapping; no
+provider is called and no API key is needed.
+
+Run with::
+
+    python examples/observability/multi_provider_metrics_demo.py
+"""
+
+import asyncio
+
+from agent_gantry import enable_console_logging
 from agent_gantry.metrics.token_usage import calculate_token_savings
 from agent_gantry.observability.console import ConsoleTelemetryAdapter
 
-# Setup logging to see the console telemetry output
-logging.basicConfig(level=logging.INFO)
+# Opt in to console output so record_token_usage() lines are visible.
+enable_console_logging()
 
 
 async def test_multi_provider_metrics():

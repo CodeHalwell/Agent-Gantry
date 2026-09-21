@@ -1,3 +1,13 @@
+"""
+Five ways to register a tool: decorator, direct call, async function,
+bound method, and renaming on registration.
+
+Each pattern is executed afterwards to prove it works, then one is
+retrieved by meaning. Runs offline with no API key.
+
+Run: python examples/basics/tool_creation_patterns.py
+"""
+
 import asyncio
 
 from agent_gantry import AgentGantry

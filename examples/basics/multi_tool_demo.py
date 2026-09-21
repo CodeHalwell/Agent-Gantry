@@ -1,3 +1,13 @@
+"""
+Semantic routing across a ten-tool catalogue.
+
+Registers ten tools from unrelated domains, syncs, then shows which single
+tool Gantry picks for each of ten queries before executing one of them.
+Runs offline with no API key.
+
+Run: python examples/basics/multi_tool_demo.py
+"""
+
 import asyncio
 
 from agent_gantry import AgentGantry
@@ -111,9 +121,12 @@ async def main():
         ]
 
         print("--- Semantic Retrieval Demo ---")
-        print("Note: This demo uses the default 'SimpleEmbedder' which uses deterministic hashing.")
-        print("It is fast and requires no API keys, but has poor semantic understanding.")
-        print("For production accuracy, configure OpenAI or Nomic embeddings.")
+        # AgentGantry() picks its embedder from what is installed: the local
+        # sentence-transformers model when `agent-gantry[embeddings]` is present,
+        # otherwise the hash-based SimpleEmbedder, which needs nothing but has
+        # poor semantic understanding. Neither needs an API key.
+        print(f"Embedder in use: {type(gantry.embedder).__name__}")
+        print("(SimpleEmbedder = hash-based fallback; install agent-gantry[embeddings] for real semantics)")
         print("-" * 40)
 
         for query in test_queries:

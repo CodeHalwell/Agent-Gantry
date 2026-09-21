@@ -4,7 +4,7 @@ Microsoft Agent Framework (1.5.0+) integration example.
 Demonstrates how Agent-Gantry's semantic routing reduces token usage in
 multi-agent systems by surfacing only the relevant tools per query.
 
-The ``agent-framework`` range in ``pyproject.toml`` is ``>=1.5.0,<2.0.0``.
+The ``agent-framework`` range in ``pyproject.toml`` is ``>=1.19.0,<2.0.0``.
 ``GantryToolBridge`` works against any AF release in that range.
 
 **AF 1.6.0 concurrent workflow note:**
@@ -94,6 +94,16 @@ async def main() -> str:
         # cutoff can quietly return no tools at all.
         bridge = GantryToolBridge(gantry)
 
+        # Selection needs no client, so show it first. This is the same
+        # `get_tools` call `build_agent` makes below for Pattern 1's query.
+        support_query = "What plan is user abc123 on?"
+        _tools, decision = await bridge.get_tools_with_decision(support_query, limit=2)
+        print("Catalogue: 5 tools, one of them DELETE_DATA (AF gates it behind approval).")
+        print(f"Gantry selected {len(decision.injected)} for {support_query!r}:")
+        for name in decision.injected:
+            print(f"  - {name}")
+        print()
+
         # Guard on the real condition — whether a client can be built — rather than
         # on an env var standing in for it. AF resolves its endpoint from several
         # settings, so "OPENAI_API_KEY is unset" is not the same question, and a
@@ -102,10 +112,10 @@ async def main() -> str:
         try:
             client = OpenAIChatClient()
         except Exception as exc:
-            print("Registered 5 tools with Gantry, including a DELETE_DATA one")
-            print("that AF will gate behind approval.\n")
             print(f"No usable Agent Framework chat client ({type(exc).__name__}: {exc}).")
-            print("Set OPENAI_API_KEY to run the agent itself.")
+            print("Set OPENAI_API_KEY, or AZURE_OPENAI_ENDPOINT (or")
+            print("AZURE_OPENAI_BASE_URL) plus AZURE_OPENAI_API_KEY, to run the")
+            print("agents themselves. Everything above works without one.")
             return ""
 
         policy = SecurityPolicy(
@@ -125,7 +135,7 @@ async def main() -> str:
         print("=== Pattern 1: build_agent ===")
         agent1 = await bridge.build_agent(
             client,
-            query="What plan is user abc123 on?",
+            query=support_query,
             name="SupportAgent",
             instructions="You are a support assistant. Use tools to fetch customer data.",
             limit=2,

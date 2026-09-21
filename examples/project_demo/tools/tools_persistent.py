@@ -1,7 +1,7 @@
 """
 Persistent tool registry for massive toolsets.
 
-This module demonstrates how to handle 200+ tools efficiently by:
+This module demonstrates how to handle a large (91-tool) catalogue efficiently by:
 1. Using LanceDB for persistent vector storage (embeddings saved to disk)
 2. Using lazy imports for heavy dependencies (only loaded when tool is executed)
 3. Separating one-time sync from runtime retrieval
@@ -1299,11 +1299,17 @@ async def sync_tools() -> int:
 
 async def check_sync_status() -> dict[str, Any]:
     """
-    Check if tools are already synced to the persistent store.
+    Report what is in the persistent store, building it on first use.
+
+    ``AgentGantry.list_tools()`` calls ``ensure_synced()`` first, so on a
+    machine with no cache this call is what embeds the tools and writes the
+    LanceDB tables; ``built_now`` says whether that happened. Afterwards
+    ``needs_sync`` is therefore always False unless the sync itself failed.
 
     Returns:
         Dict with sync status information
     """
+    persisted_before = DB_PATH.exists()
     try:
         stored_tools = await tools.list_tools()
         pending = tools.tool_count
@@ -1311,6 +1317,7 @@ async def check_sync_status() -> dict[str, Any]:
             "stored": len(stored_tools),
             "pending": pending,
             "needs_sync": len(stored_tools) == 0 and pending > 0,
+            "built_now": not persisted_before,
             "db_path": str(DB_PATH),
         }
     except Exception as e:

@@ -89,6 +89,9 @@ async def main() -> None:
             "openai_agents": frameworks.OpenAIAgentsAdapter,
             "haystack": frameworks.HaystackAdapter,
             "agno": frameworks.AgnoAdapter,
+            "strands": frameworks.StrandsAdapter,
+            "dspy": frameworks.DSPyAdapter,
+            "google_adk": frameworks.GoogleADKAdapter,
         }
 
         print("\nExport the selection to each framework's native tool object:")

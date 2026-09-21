@@ -1,3 +1,14 @@
+"""
+Token savings: all 15 tool schemas vs. Gantry's top 2.
+
+Counts the tokens of both tool lists (exactly with tiktoken if installed,
+otherwise a chars/4 estimate) and prints the saving. Runs offline with no
+API key; set OPENAI_API_KEY (and install ``agent-gantry[openai]``) to also
+send both lists to the model and compare real prompt-token usage.
+
+Run: python examples/llm_integration/token_savings_demo.py
+"""
+
 import asyncio
 import json
 import os
@@ -71,7 +82,7 @@ async def main():
         print("   Using Nomic Embeddings (High Accuracy)")
     except ImportError:
         gantry = AgentGantry()
-        print("   Using Simple Embeddings (Low Accuracy - Fallback)")
+        print(f"   Using the default embedder: {type(gantry.embedder).__name__}")
 
     try:
         # 2. Register 15 Diverse Tools

@@ -1,3 +1,15 @@
+"""
+How tool health affects retrieval.
+
+A tool that keeps failing trips its circuit breaker; ``ToolQuery`` then drops
+it from results by default (``exclude_unhealthy=True``) and keeps it only when
+you ask. No API key needed.
+
+Run with::
+
+    python examples/routing/health_aware_routing_demo.py
+"""
+
 import asyncio
 
 from agent_gantry import AgentGantry
@@ -28,14 +40,14 @@ async def main():
 
         print("--- Health-Aware Routing Demo ---")
 
-        # 1. Break the fragile tool until circuit opens
+        # 1. Break the fragile tool until the circuit opens. execute() never
+        #    raises for a tool failure; it reports it in the returned ToolResult.
+        #    Two failures trip the breaker (threshold=2); the third call is
+        #    refused with status CIRCUIT_OPEN and does not count as a failure.
         print("Breaking 'fragile_tool'...")
         call = ToolCall(tool_name="fragile_tool", arguments={})
         for _ in range(3):
-            try:
-                await gantry.execute(call)
-            except Exception:
-                pass
+            await gantry.execute(call)
 
         # 2. Query with exclude_unhealthy=False
         print("\n1. Query (exclude_unhealthy=False):")

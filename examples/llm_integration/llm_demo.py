@@ -1,3 +1,14 @@
+"""
+Provider-agnostic retrieve -> chat -> execute loop.
+
+Registers five tools, then for each query retrieves the top 2, hands them to
+the model, and executes whatever the model calls. Runs offline with no API
+key using a mocked model; set OPENAI_API_KEY (and install
+``agent-gantry[openai]``) to use the real one.
+
+Run: python examples/llm_integration/llm_demo.py
+"""
+
 import asyncio
 import json
 import os
@@ -30,8 +41,11 @@ async def main():
         embedder = NomicEmbedder(dimension=256)
         gantry = AgentGantry(embedder=embedder)
     except ImportError:
-        print("Nomic dependencies missing. Falling back to SimpleEmbedder (less accurate).")
         gantry = AgentGantry()
+        print(
+            "Nomic dependencies missing. Falling back to the default embedder: "
+            f"{type(gantry.embedder).__name__}"
+        )
 
     try:
         # 2. Register a diverse set of tools (The "Universe" of tools)

@@ -16,7 +16,7 @@ TestModel``, which simulates tool calls without hitting a real LLM, so no API
 key is required anywhere in this file.
 
 Pydantic AI is intentionally NOT part of any Agent-Gantry project extra (see
-the comment block in ``pyproject.toml`` around lines 152-160 — it can't
+the comment block in ``pyproject.toml`` below the ``agent-frameworks`` extra — it can't
 co-resolve with the combined ``agent-frameworks`` extra). Install it
 standalone:
 

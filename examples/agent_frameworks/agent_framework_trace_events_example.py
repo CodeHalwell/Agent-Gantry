@@ -157,6 +157,25 @@ async def main() -> None:
     try:
         await gantry.sync()
 
+        # Per-call routing: retrieval re-runs every chat round, so the tool surface
+        # adapts as the agent reasons. The default per_call query generator is driven
+        # by the previous tool's result, which is what makes step 2 (hashing) find
+        # the hash tool after step 1 (password generation) runs.
+        provider = AgentFrameworkAdapter(gantry).context_provider(
+            top_k=3,
+            query_strategy="per_call",
+        )
+
+        task = (
+            "Generate a secure 20-character password, then compute its SHA-256 hash."
+        )
+
+        # Round 1's selection, visible without a client: `dry_run_retrieve` runs
+        # the exact retrieval path the per-call middleware uses. Later rounds
+        # re-select from the previous tool's result, so they need the live run.
+        decision = await provider.dry_run_retrieve(task)
+        print(f"Catalogue: 6 tools. Round 1 would surface: {', '.join(decision.injected)}\n")
+
         # Guard on the real condition — whether a client can be built — rather than
         # on an env var standing in for it. AF resolves its endpoint from several
         # settings (OPENAI_API_KEY, or AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_BASE_URL
@@ -166,13 +185,11 @@ async def main() -> None:
         try:
             OpenAIChatClient()
         except Exception as exc:
-            print("Gantry setup complete: tools registered and synced.\n")
             print(f"No usable Agent Framework chat client ({type(exc).__name__}: {exc}).")
             print("Set OPENAI_API_KEY, or AZURE_OPENAI_ENDPOINT (or")
             print("AZURE_OPENAI_BASE_URL) plus AZURE_OPENAI_API_KEY, to run the")
-            print("Agent Framework half.")
+            print("agent itself. Everything above works without one.")
             return
-
 
         # Framework-agnostic event hook: fires once per tool call at gantry.execute,
         # regardless of which framework drove it. Great for logging/metrics.
@@ -184,15 +201,6 @@ async def main() -> None:
             )
 
         gantry.on_tool_call(log_event)
-
-        # Per-call routing: retrieval re-runs every chat round, so the tool surface
-        # adapts as the agent reasons. The default per_call query generator is driven
-        # by the previous tool's result, which is what makes step 2 (hashing) find
-        # the hash tool after step 1 (password generation) runs.
-        provider = AgentFrameworkAdapter(gantry).context_provider(
-            top_k=3,
-            query_strategy="per_call",
-        )
 
         agent = Agent(
             OpenAIChatClient(),
@@ -207,9 +215,6 @@ async def main() -> None:
         # AND the console trace middleware (trace=True) — no hand-rolled glue.
         provider.attach_to(agent, trace=True)
 
-        task = (
-            "Generate a secure 20-character password, then compute its SHA-256 hash."
-        )
         print(f"=== task: {task} ===\n")
         response = await agent.run(task)
 

@@ -1,14 +1,30 @@
+"""
+Measuring the token saving on a real OpenAI call.
+
+Registers 30 tools, sends one prompt twice — once with every schema attached,
+once with only the two Gantry retrieved — and compares the ``usage`` the API
+reports for each. Needs ``OPENAI_API_KEY`` and the ``openai`` extra; two
+chat completions are billed.
+
+Run with::
+
+    pip install agent-gantry[openai]
+    export OPENAI_API_KEY=...
+    python examples/observability/token_savings_demo.py
+"""
+
 import asyncio
 import os
-
-from dotenv import load_dotenv
-from openai import AsyncOpenAI
 
 from agent_gantry import AgentGantry
 from agent_gantry.metrics import calculate_token_savings
 
-# Load environment variables
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:  # python-dotenv is optional; the environment variable works too
+    pass
 
 
 async def main():
@@ -18,7 +34,14 @@ async def main():
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         print("❌ Error: OPENAI_API_KEY not found in environment.")
-        print("   Please set it in your .env file.")
+        print("   Set it in your shell or a .env file to run this demo.")
+        return
+
+    try:
+        from openai import AsyncOpenAI
+    except ImportError:
+        print("❌ Error: the 'openai' package is not installed.")
+        print("   pip install agent-gantry[openai]")
         return
 
     # Initialize OpenAI Client
