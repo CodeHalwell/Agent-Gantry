@@ -128,6 +128,19 @@ class RoutingSignals:
     deprecated_penalty: float
 
 
+#: Fewest candidates fetched from the vector store per query, whatever the
+#: query's ``limit``. Candidates come back ranked by raw cosine and are then
+#: re-scored with intent, conversation, health and cost, and intent alone is
+#: worth 0.15 against a semantic weight of 0.6 (see :class:`RoutingWeights`):
+#: a tool a quarter of a cosine point behind the leader can still finish first
+#: — but only if it was fetched. ``limit * 4`` alone gave a ``limit=3`` query a
+#: pool of twelve, and the project's own 300-tool demo lost ``calculate_mean``
+#: at cosine rank 13 to three random-number tools that embedded closer. Thirty-
+#: two covers the cosine spread a few-hundred-tool catalogue shows in practice;
+#: fetching them costs a top-k over the same vectors either way.
+MIN_CANDIDATE_POOL = 32
+
+
 @dataclass
 class RoutingWeights:
     """Weights for combining routing signals."""
@@ -310,7 +323,9 @@ class SemanticRouter:
             search_start = perf_counter()
             candidates = await self._vector_store.search(
                 query_vector=query_embedding,
-                limit=query.limit * 4,
+                # Wide enough for re-scoring to change the answer; see
+                # MIN_CANDIDATE_POOL for why ``limit * 4`` alone was not.
+                limit=max(query.limit * 4, MIN_CANDIDATE_POOL),
                 filters=filters,
                 score_threshold=query.score_threshold,
                 include_embeddings=include_embeddings,
