@@ -44,9 +44,9 @@ A reranker also fails open: if the provider is unavailable, the vector-search or
 untouched, so losing it costs precision rather than tools.
 
 Worth knowing before you reach for one: a reranker can only reorder what search handed it. The
-router fetches `limit * 4` candidates, so a small `limit` makes a narrow shortlist, and a tool that
-did not make it cannot be promoted no matter how good the reranker is. Raise `limit` if the reranker
-seems to be missing obvious answers.
+router fetches `max(limit * 4, 32)` candidates, so the shortlist is never narrower than 32, but a
+tool that did not make it cannot be promoted no matter how good the reranker is. Raise `limit` if
+the reranker seems to be missing obvious answers on a very large catalogue.
 
 Worth knowing *first*, though: on the catalogue in `../selectors/README.md`, adding `examples=[...]`
 to the tools improved the default embedder far more than any reranker or model upgrade did. Fix the
