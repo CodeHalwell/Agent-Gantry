@@ -1,3 +1,15 @@
+"""
+Tripping a circuit breaker.
+
+A tool that always fails is called until its breaker opens; the next call is
+refused with ``ExecutionStatus.CIRCUIT_OPEN`` instead of reaching the tool.
+No API key needed.
+
+Run with::
+
+    python examples/execution/circuit_breaker_demo.py
+"""
+
 import asyncio
 
 from agent_gantry import AgentGantry
@@ -11,7 +23,9 @@ async def main():
     config = AgentGantryConfig(
         execution=ExecutionConfig(
             circuit_breaker_threshold=2,
-            circuit_breaker_timeout_s=5,  # Short timeout for demo
+            # Seconds the circuit stays open before a retry is allowed.
+            # This demo stops as soon as the circuit opens, so it never elapses.
+            circuit_breaker_timeout_s=5,
         )
     )
     gantry = AgentGantry(config=config)

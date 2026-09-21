@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (examples)
+
+- **Every example read as a new user would, verified against the library, and
+  run.** All 63 runnable scripts exit 0 with every credential unset; 53 do real
+  routing and 10 stop at a clearly named credential check. What that pass found
+  and fixed, beyond docstrings that were missing or stale:
+  - `protocols/claude_desktop_config.json` launched
+    `python -m agent_gantry.servers.mcp_server` with an `AGENT_GANTRY_MODE`
+    variable; neither exists. It now runs `agent-gantry serve-mcp --transport
+    stdio --mode dynamic --module ...`, verified end to end over stdio.
+  - `protocols/mcp_integration_demo.py` printed invented token counts ("~5000-
+    10000", "~95%") and registered fifty tools with no description (an f-string
+    is not a docstring) that all returned the same value (late-bound loop
+    variable). It now measures the schema text it actually cuts and prints that.
+  - `protocols/dynamic_mcp_selection_demo.py` called `retrieve_mcp_servers` a
+    placeholder that "returns 0" and printed "Would search for…"; the API has
+    worked for some time, so the demo now calls it and shows the results.
+  - `observability/telemetry_demo.py` told you to watch the console and then
+    printed nothing: the package attaches a `NullHandler`, so console telemetry
+    needs `enable_console_logging()`. The demo calls it and says why.
+  - `agent_frameworks/agent_framework_tui_demo.py` crashed after any live run on
+    `asyncio.suppress`, which does not exist (`contextlib.suppress`).
+  - `llm_integration/multi_turn_conversation.py` raised `NameError` instead of
+    running its mocked path when `openai` was absent (annotation evaluated at
+    import; fixed with `from __future__ import annotations`).
+  - `project_demo/main_persistent.py` passed a deprecated `auto_sync=False`,
+    dumped raw schemas from a stray `print(tools)`, and its "first run" branch
+    was dead code because the status check synced before checking; the first
+    run is now reported truthfully.
+  - `agent_frameworks/generic_adapters_example.py` used the legacy schema-dict
+    helper and both READMEs described a `spec.to_*` API that does not exist. It
+    now demonstrates `GantryToolset.select` → `ToolSpec` (`name`,
+    `description`, `parameters`, `ainvoke`), which is what the adapters wrap.
+  - Five files claimed `AgentGantry()` defaults to the hash-based
+    `SimpleEmbedder`. The default is sentence-transformers; `SimpleEmbedder` is
+    the fallback when that is not installed. They now print the embedder in use.
+  - Three files caught `ImportError` around `NomicEmbedder(...)` to print an
+    install hint, but the import is lazy, so a missing extra produced a
+    traceback at `sync()` instead. They probe for `sentence_transformers` first.
+  - The AF bridge, provider, orchestration, trace-events and harness examples
+    printed nothing about selection before gating on a key; all 18 framework
+    examples now show what was selected first, as the README promised.
+  - `llm_intent_classification_example.py` showed `api_key: ${OPENAI_API_KEY}`
+    in YAML that the loader does not expand; leave the key out and the client
+    reads the variable.
+  - Every directory README now lists every file it contains with an accurate
+    one-line description, and `examples/README.md`'s measured counts are
+    re-measured.
+
 ## [0.18.1] - 2026-09-20
 
 A documentation and error-message release: the bundled skill named live classes

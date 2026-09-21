@@ -17,7 +17,7 @@ model and actually running the agent (``agent.arun(...)``) needs a real LLM,
 so that step is gated behind ``OPENAI_API_KEY``.
 
 Agno is intentionally NOT part of any Agent-Gantry project extra (see the
-comment block in ``pyproject.toml`` around lines 152-160 — it can't
+comment block in ``pyproject.toml`` below the ``agent-frameworks`` extra — it can't
 co-resolve with the combined ``agent-frameworks`` extra). Install it
 standalone:
 

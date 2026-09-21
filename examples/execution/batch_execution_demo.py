@@ -1,3 +1,15 @@
+"""
+Running several tool calls at once with ``execute_batch``.
+
+Three one-second calls go through a ``BatchToolCall`` with
+``execution_strategy="parallel"`` and the wall-clock time shows they overlapped.
+No API key needed.
+
+Run with::
+
+    python examples/execution/batch_execution_demo.py
+"""
+
 import asyncio
 import time
 

@@ -1,12 +1,26 @@
+"""
+Seeing retrieval and execution telemetry on the console.
+
+``ConsoleTelemetryAdapter`` emits every span and event as a log record on the
+``agent_gantry`` logger. The package never configures logging itself, so
+nothing appears until you opt in with ``enable_console_logging()`` — without
+that call this demo would print only its own headings. No API key needed.
+
+Run with::
+
+    python examples/observability/telemetry_demo.py
+"""
+
 import asyncio
 
-from agent_gantry import AgentGantry
+from agent_gantry import AgentGantry, enable_console_logging
 from agent_gantry.observability.console import ConsoleTelemetryAdapter
 
 
 async def main():
-    # 1. Initialize with Console Telemetry
-    # This will print detailed logs of retrieval and execution events to the console.
+    # 1. Opt in to console output, then hand Gantry the console adapter.
+    # The adapter only logs; this call is what attaches a handler.
+    enable_console_logging()
     telemetry = ConsoleTelemetryAdapter()
     gantry = AgentGantry(telemetry=telemetry)
     try:

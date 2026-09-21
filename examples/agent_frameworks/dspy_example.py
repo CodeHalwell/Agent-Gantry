@@ -38,7 +38,7 @@ def _run_with_dummy_lm(react, question: str):
     """Drive ``react`` end to end with a scripted, offline DummyLM.
 
     No network access or API key required. The script hard-codes the
-    tool-call DSPy's ReAct loop should make (send_email, then finish) and the
+    tool-call DSPy's ReAct loop should make (get_weather, then finish) and the
     final answer, which is enough to prove the Gantry-sourced tool actually
     executes (through ``gantry.execute``) inside a real ``dspy.ReAct`` run.
     """
@@ -112,7 +112,6 @@ async def main() -> None:
         user_query = "What's the weather in London?"
 
         # 2. Static path: select + convert the top-k relevant tools in one call.
-        #    Lowering the threshold for SimpleEmbedder compatibility in this example.
         #    The `dspy` package is only imported lazily, right here -- catch that
         #    gracefully so the example is useful to run even without it installed.
         try:

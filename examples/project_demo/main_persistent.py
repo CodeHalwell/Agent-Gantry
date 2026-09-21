@@ -1,16 +1,18 @@
 """
 Project Demo - Massive Toolset with Semantic Routing
 
-This demo shows how Agent-Gantry handles 100+ tools efficiently by:
+This demo shows how Agent-Gantry handles a 91-tool catalogue efficiently by:
 1. Using persistent storage (LanceDB) - embeddings computed once, stored on disk
-2. Semantic routing - only relevant tools sent to LLM, not all 100+
+2. Semantic routing - only relevant tools sent to LLM, not all 91
 3. Lazy imports - heavy dependencies loaded only when tool is executed
 
-FIRST RUN:
-    python -m examples.project_demo.tools.tools_persistent --sync
-
-THEN RUN THIS:
+Run (from the repo root):
     python -m examples.project_demo.main_persistent
+
+The first run builds the LanceDB cache under tools/.tool_cache/ (once); later
+runs load it. `python -m examples.project_demo.tools.tools_persistent --sync`
+rebuilds it explicitly. Selection runs without a key; set OPENAI_API_KEY for
+the model call. Needs `agent-gantry[example-tools]` for the tools' lazy imports.
 """
 
 import asyncio
@@ -47,11 +49,9 @@ def client() -> AsyncOpenAI:
     # nothing at all for most embedders once the query gets longer.
     score_threshold=0.0,
     dialect="openai_responses",
-    auto_sync=False,  # Don't re-sync on every call - tools are persisted!
 )
 async def generate_response(prompt: str, tools: list | None = None):
     """LLM call that gets semantic tools injected."""
-    print(tools)
     first = await client().responses.create(
         model="gpt-5.4-mini",
         input=prompt,
@@ -105,18 +105,16 @@ async def main() -> None:
     # The persistence half is the point of this demo and needs no key, so it
     # runs first: build or reuse the on-disk vector store, then retrieve from
     # it. Only the model call below is gated.
-    from examples.project_demo.tools.tools_persistent import check_sync_status, sync_tools
+    from examples.project_demo.tools.tools_persistent import check_sync_status
 
     try:
+        # Builds the store on first use (list_tools() syncs before listing), so
+        # there is no separate "needs sync" step: the first run is the slow one.
         status = await check_sync_status()
-        if status.get("needs_sync"):
-            print("📦 Tools not yet persisted. Creating vector database...")
-            print("   (This only happens once - subsequent runs will be instant)")
+        if status.get("built_now"):
+            print("📦 First run: embedded the tools and created the vector database.")
+            print("   (This only happens once - later runs load it from disk)")
             print()
-            await sync_tools()
-            print()
-            # Refresh status after sync
-            status = await check_sync_status()
 
         print(f"✓ {status['stored']} tools loaded from persistent storage")
         print(f"  Database: {status['db_path']}")

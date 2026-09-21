@@ -22,7 +22,7 @@ Building tools, refreshing ``agent.tools``, and constructing hooks all run
 behind ``OPENAI_API_KEY``.
 
 The OpenAI Agents SDK is intentionally NOT part of any Agent-Gantry project
-extra (see the comment block in ``pyproject.toml`` around lines 152-160 — it
+extra (see the comment block in ``pyproject.toml`` below the ``agent-frameworks`` extra — it
 can't co-resolve with the combined ``agent-frameworks`` extra). Install it
 standalone:
 

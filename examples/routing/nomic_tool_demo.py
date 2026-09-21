@@ -1,3 +1,17 @@
+"""
+Routing ten tools with the Nomic embedder.
+
+Uses ``NomicEmbedder`` (nomic-embed-text-v1.5, run locally through
+sentence-transformers) instead of the default MiniLM model, then checks that
+each of ten queries lands on the right tool. No API key, but it needs the
+``nomic`` extra and downloads the model (~550 MB) on first run.
+
+Run with::
+
+    pip install agent-gantry[nomic]
+    python examples/routing/nomic_tool_demo.py
+"""
+
 import asyncio
 import sys
 
@@ -7,13 +21,12 @@ from agent_gantry import AgentGantry
 async def main():
     print("Initializing AgentGantry with Nomic Embeddings...")
 
+    # NomicEmbedder imports sentence-transformers lazily, on first use, so
+    # probe for it here to fail before any tools are registered.
     try:
-        from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+        import sentence_transformers  # noqa: F401
 
-        # Initialize with Nomic embedder
-        # We use a smaller dimension (256) for speed, but Nomic supports up to 768
-        embedder = NomicEmbedder(dimension=256)
-        gantry = AgentGantry(embedder=embedder)
+        from agent_gantry.adapters.embedders.nomic import NomicEmbedder
     except ImportError:
         print("\nError: 'nomic' extra dependencies not found.")
         print("Please install them using:")
@@ -21,9 +34,10 @@ async def main():
         print("  # or")
         print("  pip install sentence-transformers numpy")
         sys.exit(1)
-    except Exception as e:
-        print(f"\nError initializing Nomic embedder: {e}")
-        sys.exit(1)
+
+    # Matryoshka truncation: 256 dims for speed; Nomic supports up to 768.
+    embedder = NomicEmbedder(dimension=256)
+    gantry = AgentGantry(embedder=embedder)
 
     try:
         # --- Register 10 Different Tools ---

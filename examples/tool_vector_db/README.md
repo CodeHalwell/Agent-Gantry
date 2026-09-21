@@ -13,7 +13,7 @@ Without Agent-Gantry, you'd send all 50 tool definitions to the LLM on every req
 - **Higher costs** from token usage
 
 With Agent-Gantry:
-- Only **~5 relevant tools** are sent (configurable)
+- Only the **top-k relevant tools** are sent (`limit=10` in `main.py`, configurable)
 - **~90% token savings** on tool definitions
 - **Faster, cheaper** LLM calls
 
@@ -28,10 +28,12 @@ With Agent-Gantry:
 # Install dependencies (includes sentence-transformers for Nomic)
 pip install agent-gantry[nomic] openai python-dotenv
 
-# Set your API key
-export OPENAI_API_KEY=your-key-here
+# Run the example. Registration, sync and retrieval need no key: it prints
+# the tools Gantry picked, then stops unless OPENAI_API_KEY is set.
+python main.py
 
-# Run the example
+# Set your API key to run the model call and tool execution too
+export OPENAI_API_KEY=your-key-here
 python main.py
 ```
 
@@ -40,13 +42,13 @@ python main.py
 ```python
 from agent_gantry import AgentGantry
 from agent_gantry.adapters.embedders.nomic import NomicEmbedder
-from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
+from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
 from agent_gantry.integrations.semantic_tools import with_semantic_tools
 from agent_gantry.schema.execution import ToolCall
 
 # 1. Create gantry with Nomic embeddings (high-quality semantic search)
 embedder = NomicEmbedder(dimension=768)  # Matryoshka truncation (64/128/256/512/768)
-vector_store = InMemoryVectorStore()
+vector_store = LanceDBVectorStore(db_path="gantry_tools.lancedb", dimension=768)
 tools = AgentGantry(embedder=embedder, vector_store=vector_store)
 
 # 2. Register tools using decorator

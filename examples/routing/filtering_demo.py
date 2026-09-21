@@ -1,3 +1,15 @@
+"""
+Restricting retrieval to a namespace.
+
+Tools are registered under ``admin`` and ``public`` namespaces, then
+``retrieve_tools(..., namespaces=[...])`` is used to search only one of them.
+No API key needed.
+
+Run with::
+
+    python examples/routing/filtering_demo.py
+"""
+
 import asyncio
 
 from agent_gantry import AgentGantry
@@ -46,8 +58,7 @@ async def main():
             print(f" - {t['function']['name']}")
         # Expected: delete_users, view_audit_log
 
-        # 3. Filter by Tags (requires custom query construction or support in retrieve_tools)
-
+        # 3. Filter by a different namespace
         print("\n2. Query with namespace='public':")
         tools = await gantry.retrieve_tools("products", namespaces=["public"])
         for t in tools:

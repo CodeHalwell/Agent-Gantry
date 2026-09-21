@@ -3,7 +3,12 @@ Plug-and-play demo: load tools from a module and semantically filter them with
 one decorator.
 
 This shows how an existing LLM call can adopt Agent-Gantry without rewriting
-tool code—just import the module and wrap the call.
+tool code—just import the module and wrap the call. The LLM is mocked, so it
+runs offline with no API key.
+
+Run from the repo root (it imports ``examples.basics.toolpack``):
+
+    python examples/basics/plug_and_play_semantic_filter.py
 """
 
 import asyncio
@@ -21,7 +26,8 @@ async def mock_llm(prompt: str, *, tools: list[dict[str, Any]] | None = None) ->
 
 
 async def main() -> None:
-    # Drop-in: load tools that live in a separate module
+    # Drop-in: load tools that live in a separate module. No explicit sync()
+    # here: the decorator's retrieval syncs the index incrementally on first use.
     gantry = await AgentGantry.from_modules(["examples.basics.toolpack"])
     set_default_gantry(gantry)
 

@@ -2,7 +2,9 @@
 Tuning a selector's threshold from its own scores.
 
 ``threshold`` is the one knob on ``JevSelector`` that really matters, and you
-should not have to guess it. Every pass returns a probability for *every*
+should not have to guess it. It is a *probability* ("how likely is this entry
+relevant"), not the cosine ``score_threshold`` of the semantic router, so the
+two are not interchangeable. Every pass returns a probability for *every*
 candidate — not just the ones that won — so you can see exactly what a given
 threshold would keep and what it would cut, on your own catalogue, before you
 commit to a number.
@@ -71,8 +73,9 @@ async def main() -> None:
     selector = JevSelector()
     catalogue = candidates()
 
-    # One pass per query, keeping every score. Threshold 0.0 so nothing is cut
-    # yet: we want the raw distribution to choose from.
+    # One pass per query, keeping every score. The selector's own threshold
+    # does not matter here: ``result.scores`` carries every candidate, kept or
+    # cut, so this is the raw distribution to choose from.
     print("Scoring...\n")
     passes = []
     for query, expected in LABELLED:

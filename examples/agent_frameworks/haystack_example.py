@@ -1,12 +1,12 @@
-"""Haystack 2.x + Agent-Gantry integration example.
+"""Haystack + Agent-Gantry integration example (haystack 2.x and 3.x).
 
 Demonstrates the tiers `HaystackAdapter` exposes:
 
 1. **Static tier** — ``HaystackAdapter.select(query, limit=...)`` runs
    semantic retrieval once and wraps the result as native
-   ``haystack.tools.Tool`` objects, ready to hand to a
-   ``haystack.components.tools.ToolInvoker`` or an ``OpenAIChatGenerator``.
-2. **Dynamic tier** — Haystack fixes a ``ToolInvoker``'s tools at
+   ``haystack.tools.Tool`` objects, ready to hand to an
+   ``OpenAIChatGenerator`` (or a ``ToolInvoker`` on haystack 2.x).
+2. **Dynamic tier** — Haystack fixes a tool-execution component's tools at
    construction time (there is no native per-turn hook), so Gantry offers two
    per-call primitives:
 
@@ -14,14 +14,16 @@ Demonstrates the tiers `HaystackAdapter` exposes:
      ``Tool`` list for a given call — usable standalone.
    - ``HaystackAdapter.tool_invoker_builder(...)`` returns a
      ``GantryLiveHaystackToolInvoker`` that rebuilds a *fresh* ``ToolInvoker``
-     per call via ``await builder.build(query)``.
+     per call via ``await builder.build(query)`` on haystack 2.x. Haystack 3.0
+     removed ``ToolInvoker``, so there ``build`` returns a fresh
+     ``haystack.components.agents.Agent`` and needs ``chat_generator=...``.
 
 Tool selection and native-tool wrapping run with no API key. Actually running
 an ``OpenAIChatGenerator`` (the LLM turn that decides which tool to call)
 needs a real key, so that step is gated behind ``OPENAI_API_KEY``.
 
 Haystack is intentionally NOT part of any Agent-Gantry project extra (see the
-comment block in ``pyproject.toml`` around lines 152-160 — it can't
+comment block in ``pyproject.toml`` below the ``agent-frameworks`` extra — it can't
 co-resolve with the combined ``agent-frameworks`` extra). Install it
 standalone:
 

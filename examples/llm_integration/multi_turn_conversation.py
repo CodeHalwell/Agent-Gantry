@@ -1,3 +1,16 @@
+"""
+Two-turn support conversation with per-turn tool routing.
+
+Each user turn retrieves the top 2 tools for that message only, so the
+follow-up ("upgrade that order") surfaces a different tool from the first.
+Runs offline with no API key using mocked tool calls; set OPENAI_API_KEY
+(and install ``agent-gantry[openai]``) to drive it with the real model.
+
+Run: python examples/llm_integration/multi_turn_conversation.py
+"""
+
+from __future__ import annotations
+
 import asyncio
 import json
 import os

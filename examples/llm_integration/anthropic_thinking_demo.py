@@ -74,7 +74,7 @@ async def demo_interleaved_thinking():
 async def demo_extended_thinking():
     """Demonstrate extended thinking with budget tokens."""
     print("=" * 80)
-    print("Demo 2: Extended Thinking (Skills API)")
+    print("Demo 2: Extended Thinking (budget tokens)")
     print("=" * 80)
     print()
 

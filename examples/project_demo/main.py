@@ -1,3 +1,19 @@
+"""
+Project Demo - a 300-tool catalogue routed through the OpenAI Responses API.
+
+Imports the 300 tools registered in ``tools/tools.py`` (chemistry, maths,
+files, networking, ...; needs ``agent-gantry[example-tools]`` for rdkit, pint,
+pubchempy, sympy and requests), syncs them, and shows Gantry narrowing the
+catalogue to three tools for one query before any model is called.
+
+Run (from the repo root):
+    python -m examples.project_demo.main
+
+Selection runs without a key; set OPENAI_API_KEY to run the model call and
+tool execution. See ``main_persistent.py`` for the same flow with an on-disk
+LanceDB store.
+"""
+
 import asyncio
 import json
 import os

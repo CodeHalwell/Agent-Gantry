@@ -1,3 +1,17 @@
+"""
+Google GenAI (Gemini) + Agent-Gantry integration demo.
+
+Shows three ways to hand Gantry-selected tools to Gemini: manual ``retrieve``
++ ``to_dialect("gemini")`` with the full function-call / function-response
+round trip, the ``@with_semantic_tools(dialect="gemini")`` decorator, and the
+typed ``GeminiAdapter``.
+
+Requires GOOGLE_API_KEY; exits with a message if it is missing.
+
+Install:
+    pip install "agent-gantry[google-genai]"
+"""
+
 import asyncio
 import os
 

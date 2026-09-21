@@ -10,8 +10,13 @@ E. The typed ``OpenAIAdapter`` – a thin, provider-specific wrapper around
    ``gantry.retrieve_tools(..., dialect="openai")``
 
 OpenAI positioned the Responses API as the forward direction for agents and
-published a sunset timeline for the Assistants API (August 2026). Scenario A
-shows the current preferred pattern using client.responses.create().
+retired the Assistants API in August 2026. Scenario A shows the current
+preferred pattern using client.responses.create().
+
+Requires OPENAI_API_KEY; exits with a message if it is missing.
+
+Install:
+    pip install "agent-gantry[openai]"
 """
 
 import asyncio
@@ -44,8 +49,8 @@ async def main() -> None:
     except ImportError:
         gantry = AgentGantry()
         print(
-            "⚠️  Initialized with Simple Embeddings "
-            "(Install 'agent-gantry[nomic]' for better results)"
+            f"⚠️  Initialized with the default embedder ({type(gantry.embedder).__name__}); "
+            "install 'agent-gantry[nomic]' for Nomic"
         )
 
     try:
@@ -75,7 +80,7 @@ async def main() -> None:
         # --- Scenario A: Responses API (RECOMMENDED for agentic workloads) ---
         # The Responses API is OpenAI's primary surface for agents. It uses a flat
         # tool schema and returns output items rather than choices[].message.
-        # Migrate from Assistants API before its August 2026 sunset.
+        # It replaced the Assistants API, which was retired in August 2026.
         print("--- Scenario A: Responses API (recommended for agentic workloads) ---")
         query_a = "What's the weather in Tokyo?"
         print(f"User Query: '{query_a}'")
@@ -148,7 +153,10 @@ async def main() -> None:
         # --- Scenario C: Static Tool List (small toolsets) ---
         print("\n--- Scenario C: Static Tool List (for small toolsets) ---")
         all_tools = [t.to_dialect("openai") for t in await gantry.list_tools()]
-        print(f"Passing all {len(all_tools)} tools to LLM...")
+        print(
+            f"Built schemas for all {len(all_tools)} tools — the static list you would pass "
+            "when the catalogue is small enough to send whole (not sent here)."
+        )
 
         # --- Scenario D: Decorator-based automatic injection (RECOMMENDED for wrappers) ---
         print("\n--- Scenario D: @with_semantic_tools Decorator (RECOMMENDED) ---")

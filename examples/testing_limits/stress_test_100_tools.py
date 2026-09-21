@@ -1,3 +1,18 @@
+"""
+Retrieval accuracy at 100 tools.
+
+Generates 100 tools (10 services x 10 actions), syncs them with the Nomic
+embedder and checks that each of ten queries puts the intended tool in the
+top 2. No API key; needs the ``nomic`` extra (falls back to the hashing
+``SimpleEmbedder``, with lower accuracy, when sentence-transformers is not
+installed).
+
+Run with::
+
+    pip install agent-gantry[nomic]
+    python examples/testing_limits/stress_test_100_tools.py
+"""
+
 import asyncio
 import time
 from collections.abc import Callable
@@ -63,16 +78,21 @@ def generate_tool_factory(name: str, description: str) -> Callable[..., str]:
 async def main():
     print("--- Agent-Gantry Stress Test: 100 Tools ---")
 
-    # 1. Configure Gantry with Nomic Embedder for high accuracy
-    # We use Nomic because SimpleEmbedder (hashing) struggles with 100+ semantically distinct tools
+    # 1. Configure Gantry with Nomic Embedder for high accuracy.
+    # NomicEmbedder imports sentence-transformers lazily (at sync), so probe for
+    # it here; without it the default gantry also drops to the hashing
+    # SimpleEmbedder, which struggles with 100 semantically distinct tools.
     print("Initializing Agent-Gantry with Nomic Embedder...")
     try:
+        import sentence_transformers  # noqa: F401
+
         config = AgentGantryConfig(
             embedder=EmbedderConfig(type="nomic", model="nomic-ai/nomic-embed-text-v1.5")
         )
         gantry = AgentGantry(config=config)
     except ImportError:
-        print("Warning: 'sentence-transformers' not found. Falling back to SimpleEmbedder.")
+        print("Warning: 'sentence-transformers' not found (pip install agent-gantry[nomic]).")
+        print("Falling back to SimpleEmbedder.")
         print(
             "Note: Accuracy will be lower with SimpleEmbedder due to lack of semantic understanding."
         )

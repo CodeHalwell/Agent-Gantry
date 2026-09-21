@@ -43,6 +43,7 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 import argparse
 import asyncio
+import contextlib
 import hashlib
 import secrets
 import string
@@ -62,7 +63,7 @@ from textual.message import Message
 from textual.widgets import Button, DataTable, Footer, Header, RichLog, Static
 from textual.widgets.data_table import ColumnKey, RowKey
 
-from agent_gantry import AgentGantry, ToolCallEvent
+from agent_gantry import AgentGantry, GantryContextProvider, ToolCallEvent
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 from agent_gantry.agent_framework import AgentFrameworkAdapter
 from agent_gantry.integrations.agent_framework_bridge import RetrievalDecision
@@ -232,7 +233,7 @@ def build_gantry(*, embedder_kind: str = "simple") -> AgentGantry:
 
 
 async def prepare_session(*, embedder_kind: str = "simple") -> tuple[
-    AgentGantry, AgentFrameworkAdapter, list[str]
+    AgentGantry, GantryContextProvider, list[str]
 ]:
     """Build Gantry, sync embeddings, and return ready-to-use session state."""
     gantry = build_gantry(embedder_kind=embedder_kind)
@@ -440,7 +441,7 @@ class GantryAgentFrameworkTUI(App[None]):
         self,
         *,
         gantry: AgentGantry,
-        provider: AgentFrameworkAdapter,
+        provider: GantryContextProvider,
         registry_names: list[str],
         demo_on_start: bool = False,
     ) -> None:
@@ -643,7 +644,7 @@ class GantryAgentFrameworkTUI(App[None]):
                 await agent.run(DEMO_TASK)
             finally:
                 poll_task.cancel()
-                with asyncio.suppress(asyncio.CancelledError):
+                with contextlib.suppress(asyncio.CancelledError):
                     await poll_task
 
             self.post_message(

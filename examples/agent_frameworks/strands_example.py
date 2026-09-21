@@ -85,7 +85,6 @@ async def main() -> None:
         user_query = "What's the weather in London and the stock price for AAPL?"
 
         # 2. Static path: select + convert the top-k relevant tools in one call.
-        #    Lowering the threshold for SimpleEmbedder compatibility in this example.
         #    The `strands` package is only imported lazily, right here -- catch that
         #    gracefully so the example is useful to run even without it installed.
         try:

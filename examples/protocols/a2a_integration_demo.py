@@ -1,10 +1,20 @@
 """
 A2A (Agent-to-Agent) Integration Demo.
 
-This example demonstrates:
-1. Consuming external A2A agents as tools
-2. Exposing AgentGantry as an A2A agent
-3. Agent Card generation
+This example demonstrates, without any network access:
+1. Generating the Agent Card AgentGantry would serve at ``/.well-known/agent.json``
+2. Configuring an external A2A agent (``A2AAgentConfig``) for ``add_a2a_agent``
+3. How a remote agent's skills map onto ``ToolDefinition`` entries, using a
+   mocked Agent Card
+4. The call that would start the A2A server (printed, not run)
+
+No API key needed. Nothing connects to a remote agent or binds a port; the
+calls that would (``add_a2a_agent``, ``serve_a2a``) are shown as comments.
+``serve_a2a`` itself needs ``pip install agent-gantry[a2a]`` (FastAPI + uvicorn).
+
+Run with::
+
+    python examples/protocols/a2a_integration_demo.py
 """
 
 import asyncio
@@ -48,7 +58,8 @@ async def demo_a2a_client():
         # count = await gantry.add_a2a_agent(external_agent)
         # print(f"Discovered {count} skills from external agent")
 
-        # List all tools including external agent skills
+        # Only the two local tools are listed: the external agent was
+        # configured above, not connected, so none of its skills are here yet.
         tools = await gantry.list_tools()
         print(f"\nTotal tools available: {len(tools)}")
 

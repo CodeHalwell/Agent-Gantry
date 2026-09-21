@@ -1,14 +1,16 @@
 {
   "mcpServers": {
     "agent-gantry": {
-      "command": "python",
+      "command": "agent-gantry",
       "args": [
-        "-m",
-        "agent_gantry.servers.mcp_server"
-      ],
-      "env": {
-        "AGENT_GANTRY_MODE": "dynamic"
-      }
+        "serve-mcp",
+        "--transport",
+        "stdio",
+        "--mode",
+        "dynamic",
+        "--module",
+        "my_project.tools"
+      ]
     }
   }
 }

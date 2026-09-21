@@ -15,7 +15,8 @@ Requirements:
     pip install agent-gantry[nomic] openai python-dotenv
 
 Usage:
-    export OPENAI_API_KEY=your-key-here
+    python main.py                      # retrieval runs with no key at all
+    export OPENAI_API_KEY=your-key-here # only the model call needs this
     python main.py
 """
 
@@ -76,7 +77,7 @@ async def main():
         async def chat(prompt: str, tools: list | None = None):
             """Chat with the LLM using semantically retrieved tools."""
             if tools:
-                print(f"\nRetrieved {len(tools)} relevant tools (out of {len(tools)}→50):")
+                print(f"\nInjected {len(tools)} relevant tools (out of 50):")
                 for t in tools:
                     print(f"  • {t['name']}")
                 print()

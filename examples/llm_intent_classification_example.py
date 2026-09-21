@@ -141,7 +141,8 @@ routing:
   llm:
     provider: openai  # or anthropic, google, mistral, groq
     model: gpt-5.4-mini
-    api_key: ${OPENAI_API_KEY}  # or set directly
+    # api_key: leave it out and OPENAI_API_KEY is read from the environment
+    # (YAML values are taken literally — ${VAR} is not expanded)
     temperature: 0.0
     max_tokens: 50
 

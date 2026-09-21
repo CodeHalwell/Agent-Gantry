@@ -1,3 +1,13 @@
+"""
+Native async tool execution.
+
+Registers an ``async def`` tool and executes it through ``gantry.execute``,
+which awaits it directly; the timing printed shows the sleep really ran.
+Runs offline with no API key.
+
+Run: python examples/basics/async_demo.py
+"""
+
 import asyncio
 import time
 

@@ -155,6 +155,9 @@ async def check_adapters(gantry: AgentGantry) -> list[tuple[str, bool, str]]:
         ("openai_agents", frameworks.OpenAIAgentsAdapter),
         ("haystack", frameworks.HaystackAdapter),
         ("agno", frameworks.AgnoAdapter),
+        ("strands", frameworks.StrandsAdapter),
+        ("dspy", frameworks.DSPyAdapter),
+        ("google_adk", frameworks.GoogleADKAdapter),
     ]
     rows: list[tuple[str, bool, str]] = []
     for name, adapter_cls in adapters:

@@ -1,3 +1,17 @@
+"""
+Groq + Agent-Gantry integration demo.
+
+Shows three ways to hand Gantry-selected tools to Groq's chat completions:
+manual ``retrieve_tools`` + execute, the ``@with_semantic_tools`` decorator,
+and the typed ``GroqAdapter``. Groq accepts OpenAI-style function schemas,
+so Gantry's default dialect needs no conversion.
+
+Requires GROQ_API_KEY; exits with a message if it is missing.
+
+Install:
+    pip install "agent-gantry[groq]"
+"""
+
 import asyncio
 import json
 import os
@@ -42,7 +56,7 @@ async def main():
         print(f"✅ Registered {gantry.tool_count} tools\n")
 
         # 4. Initialize Groq Client
-        # Groq uses the OpenAI Python SDK
+        # Groq's own SDK mirrors the OpenAI chat-completions interface
         from groq import AsyncGroq
 
         client = AsyncGroq(api_key=api_key)
