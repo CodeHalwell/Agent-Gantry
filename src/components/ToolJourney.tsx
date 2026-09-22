@@ -45,6 +45,7 @@ export default function ToolJourney({ stages }: Props) {
               color: i === active ? '#071018' : 'var(--text)',
               fontWeight: 800,
               cursor: 'pointer',
+              transition: 'all 0.2s ease',
             }}
           >
             {i + 1}. {s.title}

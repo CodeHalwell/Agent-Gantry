@@ -120,3 +120,6 @@
 ## 2026-09-16 - ARIA Tablist Keyboard Navigation
 **Learning:** When implementing ARIA tablists in React, merely updating the active state via click is insufficient for accessibility. You must provide arrow key navigation and manage focus using `tabIndex={0}` for the active tab and `tabIndex={-1}` for inactive tabs. Using refs to programmatically focus tabs ensures focus isn't trapped.
 **Action:** Always implement ArrowRight/ArrowLeft handlers and programmatic focus (e.g., using `useRef`) when building custom tablist components.
+## 2026-09-22 - a.card global link styles inheritance
+**Learning:** Using 'a' tags for structural components (like a.card or a.pill) inadvertently inherits global link styles like text-decoration: underline and color shifts, causing the entire component's text to look like a hyperlink.
+**Action:** Always explicitly set 'color: inherit' and 'text-decoration: none' on clickable structural components, and rely on hover transforms or borders for feedback.
