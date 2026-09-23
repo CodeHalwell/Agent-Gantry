@@ -10,11 +10,14 @@ export default function ToolJourney({ stages }: Props) {
   const tabsRef = useRef<(HTMLButtonElement | null)[]>([]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
-    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft' || e.key === 'Home' || e.key === 'End') {
       e.preventDefault();
-      const newIndex = e.key === 'ArrowRight'
-        ? (index + 1) % stages.length
-        : (index - 1 + stages.length) % stages.length;
+      let newIndex = index;
+      if (e.key === 'ArrowRight') newIndex = (index + 1) % stages.length;
+      else if (e.key === 'ArrowLeft') newIndex = (index - 1 + stages.length) % stages.length;
+      else if (e.key === 'Home') newIndex = 0;
+      else if (e.key === 'End') newIndex = stages.length - 1;
+
       setActive(newIndex);
       tabsRef.current[newIndex]?.focus();
     }

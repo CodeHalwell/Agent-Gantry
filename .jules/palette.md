@@ -120,3 +120,7 @@
 ## 2026-09-16 - ARIA Tablist Keyboard Navigation
 **Learning:** When implementing ARIA tablists in React, merely updating the active state via click is insufficient for accessibility. You must provide arrow key navigation and manage focus using `tabIndex={0}` for the active tab and `tabIndex={-1}` for inactive tabs. Using refs to programmatically focus tabs ensures focus isn't trapped.
 **Action:** Always implement ArrowRight/ArrowLeft handlers and programmatic focus (e.g., using `useRef`) when building custom tablist components.
+
+## 2026-09-21 - [Complete ARIA Tablist Keyboard Navigation]
+**Learning:** While Arrow keys are the minimum requirement for ARIA tablist keyboard navigation, failing to implement Home and End keys breaks established screen reader and power user expectations for list-based widget navigation, slowing down users with motor impairments.
+**Action:** When implementing custom ARIA tablists or complex focus management, always explicitly map the Home and End keys to jump to the first and last items in the group, matching the W3C Authoring Practices.
