@@ -2210,7 +2210,7 @@ class AgentGantry:
 
         return len(tools)
 
-    def serve_a2a(self, host: str = "0.0.0.0", port: int = 8080) -> None:
+    def serve_a2a(self, host: str = "127.0.0.1", port: int = 8080) -> None:
         """
         Start serving as an A2A agent.
 
