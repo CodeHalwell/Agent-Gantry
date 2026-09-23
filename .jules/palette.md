@@ -120,3 +120,7 @@
 ## 2026-09-16 - ARIA Tablist Keyboard Navigation
 **Learning:** When implementing ARIA tablists in React, merely updating the active state via click is insufficient for accessibility. You must provide arrow key navigation and manage focus using `tabIndex={0}` for the active tab and `tabIndex={-1}` for inactive tabs. Using refs to programmatically focus tabs ensures focus isn't trapped.
 **Action:** Always implement ArrowRight/ArrowLeft handlers and programmatic focus (e.g., using `useRef`) when building custom tablist components.
+
+## 2026-09-23 - External Link Indicators
+**Learning:** Users need visual and screen reader cues (target='_blank', rel='noopener noreferrer', aria-label, and an icon) when links open in a new tab to prevent unexpected context switching and improve navigation predictability.
+**Action:** Always include an external link icon and explicit aria-label for links that navigate away from the current domain or open in a new tab.
