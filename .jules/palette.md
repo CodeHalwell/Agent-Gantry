@@ -120,3 +120,6 @@
 ## 2026-09-16 - ARIA Tablist Keyboard Navigation
 **Learning:** When implementing ARIA tablists in React, merely updating the active state via click is insufficient for accessibility. You must provide arrow key navigation and manage focus using `tabIndex={0}` for the active tab and `tabIndex={-1}` for inactive tabs. Using refs to programmatically focus tabs ensures focus isn't trapped.
 **Action:** Always implement ArrowRight/ArrowLeft handlers and programmatic focus (e.g., using `useRef`) when building custom tablist components.
+## 2026-09-24 - [Accessible Section Landmarks]
+**Learning:** Using semantic `<section>` tags is good for document structure, but without an accessible name, screen readers will not announce them as distinct landmarks, making it harder for users to navigate directly to them.
+**Action:** Always provide an accessible name for `<section>` elements by adding an `id` to its heading and referencing it via `aria-labelledby` on the section.
