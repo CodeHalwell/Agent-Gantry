@@ -58,3 +58,6 @@
 ## 2026-08-25 - Avoid row-wise dictionary allocation with LanceDB to_list for single columns
 **Learning:** When retrieving a single column (like JSON strings) from LanceDB, using `.to_list()` allocates a dictionary for every row just to wrap the single field, causing O(N) memory overhead and slower execution on large tables.
 **Action:** Use columnar extraction via `.select(['col']).to_arrow()` and then extract the list of values directly using `table['col'].to_pylist()`. This avoids dictionary allocation per row.
+## 2026-09-27 - Rate Limiter History Counting Optimization
+**Learning:** Counting items in a chronologically ordered collection (like a timestamp deque) using a generator expression with `sum()` incurs O(N) overhead and generator instantiation cost.
+**Action:** Iterate backwards using `reversed()` and `break` early to improve time complexity to O(K).
