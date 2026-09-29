@@ -17,6 +17,15 @@ export default function ToolJourney({ stages }: Props) {
         : (index - 1 + stages.length) % stages.length;
       setActive(newIndex);
       tabsRef.current[newIndex]?.focus();
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      setActive(0);
+      tabsRef.current[0]?.focus();
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      const lastIndex = stages.length - 1;
+      setActive(lastIndex);
+      tabsRef.current[lastIndex]?.focus();
     }
   };
 
