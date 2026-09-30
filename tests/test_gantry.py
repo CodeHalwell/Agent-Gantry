@@ -199,11 +199,11 @@ class TestAgentGantryModuleImport:
 
         # Check that handlers are registered (keyed by namespace-qualified
         # name so same-named tools across namespaces never clobber each other)
-        assert "default.tool_a1" in gantry._tool_handlers
-        assert "default.tool_a2" in gantry._tool_handlers
+        assert gantry._registry.get_handler("default.tool_a1") is not None
+        assert gantry._registry.get_handler("default.tool_a2") is not None
 
         # Verify handlers are callable
-        handler1 = gantry._tool_handlers["default.tool_a1"]
+        handler1 = gantry._registry.get_handler("default.tool_a1")
         assert callable(handler1)
         result = handler1(5)
         assert result == 10
@@ -248,7 +248,7 @@ async def test_delete_tool_purges_registry_and_handlers():
 
     assert all(t.name != "send_email" for t in gantry.list_tools_sync())
     assert gantry.tool_count == count_before - 1, (
-        "tool_count reads the facade handler map, which delete_tool must purge"
+        "tool_count counts registry handlers, which delete_tool must purge"
     )
     result = await gantry.execute(ToolCall(tool_name="send_email", arguments={"to": "x"}))
     assert result.status != ExecutionStatus.SUCCESS

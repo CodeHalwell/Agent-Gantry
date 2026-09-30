@@ -4,16 +4,19 @@ Security policy and permission checking for Agent-Gantry.
 Implements zero-trust security controls including:
 - SecurityPolicy: pattern-based rules for tool access
 - PermissionChecker: capability-based access control
-- Input validation helpers
+- validate_description: a suspicious-pattern check for tool descriptions
 """
 
 from __future__ import annotations
 
 import fnmatch
 import functools
+import inspect
 import re
 import time
 import typing
+import urllib.parse
+import warnings
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -23,39 +26,28 @@ if TYPE_CHECKING:
 class ConfirmationRequiredError(Exception):
     """Raised when a tool requires human confirmation."""
 
-    pass
-
 
 class PermissionDeniedError(Exception):
     """Raised when a tool execution is not permitted."""
 
-    pass
-
 
 # Backwards compatibility aliases (deprecated — will be removed in 1.0)
-import warnings as _warnings
+_DEPRECATED_ALIASES = {
+    "ConfirmationRequired": ConfirmationRequiredError,
+    "PermissionDenied": PermissionDeniedError,
+}
 
 
 def __getattr__(name: str) -> type:
-    _deprecated = {
-        "ConfirmationRequired": ConfirmationRequiredError,
-        "PermissionDenied": PermissionDeniedError,
-    }
-    if name in _deprecated:
-        _warnings.warn(
-            f"{name} is deprecated, use {_deprecated[name].__name__} instead. "
+    if name in _DEPRECATED_ALIASES:
+        warnings.warn(
+            f"{name} is deprecated, use {_DEPRECATED_ALIASES[name].__name__} instead. "
             "This alias will be removed in version 1.0.",
             DeprecationWarning,
             stacklevel=2,
         )
-        return _deprecated[name]
+        return _DEPRECATED_ALIASES[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-class ValidationError(Exception):
-    """Raised when input validation fails."""
-
-    pass
 
 
 @functools.lru_cache(maxsize=256)
@@ -69,8 +61,6 @@ def _declares_keyword(check: typing.Any, keyword: str) -> bool:
     reference, so entries are bounded by ``maxsize`` rather than by policy
     lifetime.
     """
-    import inspect
-
     try:
         parameters = inspect.signature(check).parameters.values()
     except (TypeError, ValueError):  # C callables / exotic doubles
@@ -200,7 +190,7 @@ class SecurityPolicy:
         now: float | None = None
         if self.max_requests_per_minute > 0:
             now = time.time()
-            # ⚡ Bolt: Fast sliding window cleanup using index slice instead of O(N) comprehension
+            # Drop expired timestamps from the front; the list is chronological.
             split_idx = 0
             for t in self._request_timestamps:
                 if now - t < 60:
@@ -285,15 +275,12 @@ class SecurityPolicy:
         elif isinstance(data, dict):
             for value in data.values():
                 yield from self._extract_all_strings(value)
-        elif isinstance(data, list) or isinstance(data, tuple):
+        elif isinstance(data, (list, tuple)):
             for item in data:
                 yield from self._extract_all_strings(item)
 
     def _extract_domains(self, value: str) -> set[str]:
         """Extract potential domains from a string value."""
-        import re
-        import urllib.parse
-
         domains = set()
 
         # Match URLs with explicit protocol schemes (http, https, ftp, ftps)
@@ -397,21 +384,6 @@ class PermissionChecker:
             List of tools the user can access
         """
         return [t for t in tools if self.can_use(t)[0]]
-
-
-def validate_tool_name(name: str) -> tuple[bool, str | None]:
-    """
-    Validate tool name format.
-
-    Args:
-        name: Tool name to validate
-
-    Returns:
-        Tuple of (is_valid, error_message)
-    """
-    if not re.match(r"^[a-z][a-z0-9_]{0,127}\Z", name):
-        return False, "Name must be lowercase alphanumeric with underscores, 1-128 chars"
-    return True, None
 
 
 def validate_description(desc: str) -> tuple[bool, str | None]:

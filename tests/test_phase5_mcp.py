@@ -11,8 +11,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+pytest.importorskip("mcp")
+
 from agent_gantry import AgentGantry
-from agent_gantry.adapters.executors.mcp_client import MCPClient, MCPClientPool
+from agent_gantry.adapters.executors.mcp_client import MCPClient
 from agent_gantry.schema.config import MCPServerConfig
 from agent_gantry.schema.tool import ToolDefinition, ToolSource
 from agent_gantry.servers.mcp_server import MCPServer, create_mcp_server

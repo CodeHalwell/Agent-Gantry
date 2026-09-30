@@ -10,6 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+pytest.importorskip("mcp")
+
 from agent_gantry import AgentGantry
 from agent_gantry.core.mcp_registry import MCPRegistry
 from agent_gantry.core.mcp_router import MCPRouter, MCPRoutingResult

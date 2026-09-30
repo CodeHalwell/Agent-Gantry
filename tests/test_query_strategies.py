@@ -264,7 +264,7 @@ def test_register_accepts_function_tool_like_object():
     assert "doubler" in pending_names
     # The handler under the registered (namespace-qualified) name should be
     # the bare callable.
-    assert g._tool_handlers["default.doubler"] is real_handler
+    assert g._registry.get_handler("default.doubler") is real_handler
 
 
 # ---------------------------------------------------------------------------

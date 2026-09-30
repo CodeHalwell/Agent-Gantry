@@ -11,6 +11,7 @@ import importlib
 import inspect
 import logging
 import uuid
+import warnings
 from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from time import perf_counter
@@ -36,9 +37,17 @@ from agent_gantry.schema.config import (
     EmbedderConfig,
     MCPServerConfig,
 )
+from agent_gantry.schema.execution import (
+    BatchToolCall,
+    BatchToolResult,
+    ExecutionStatus,
+    ToolCall,
+    ToolCallEvent,
+    ToolResult,
+)
 from agent_gantry.schema.introspection import build_parameters_schema
 from agent_gantry.schema.mcp import MCPServerDefinition
-from agent_gantry.schema.query import RetrievalResult, ScoredTool, ToolQuery
+from agent_gantry.schema.query import ConversationContext, RetrievalResult, ScoredTool, ToolQuery
 from agent_gantry.schema.selection import SelectionCandidate
 from agent_gantry.schema.skill import Skill, SkillSearchResult
 from agent_gantry.schema.tool import ToolCapability, ToolDefinition
@@ -50,7 +59,6 @@ if TYPE_CHECKING:
     from agent_gantry.adapters.vector_stores.base import VectorStoreAdapter
     from agent_gantry.core.rate_limiter import RateLimiter
     from agent_gantry.observability.telemetry import TelemetryAdapter
-    from agent_gantry.schema.execution import BatchToolCall, BatchToolResult, ToolCall, ToolResult
 
 
 logger = logging.getLogger(__name__)
@@ -64,6 +72,21 @@ _MAX_SELECTABLE_SKILLS = 10_000
 # The Streamable HTTP endpoint default. Named so ``serve_mcp`` can tell a
 # caller's own path from the default it never asked for.
 _DEFAULT_MCP_PATH = "/mcp"
+
+
+async def _close_adapter(adapter: Any) -> None:
+    """Call an adapter's ``aclose()`` or ``close()`` if it has one, sync or async."""
+    for name in ("aclose", "close"):
+        method = getattr(adapter, name, None)
+        if method is None:
+            continue
+        try:
+            result = method()
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            logger.warning(f"Error closing {type(adapter).__name__}", exc_info=True)
+        return
 
 
 class AgentGantry:
@@ -235,19 +258,19 @@ class AgentGantry:
     def _init_runtime_state(
         self, modules: Sequence[str] | None, module_attr: str
     ) -> None:
-        """Initialise the mutable buffers, handler maps, callbacks, and flags.
+        """Initialise the mutable buffers, callbacks, and flags.
 
         ``modules`` is stored for explicit async initialization later (via
         ``collect_tools_from_modules`` or ``AgentGantry.from_modules``); it is
         not loaded here because import + embedding is async.
         """
         self._pending_tools: list[ToolDefinition] = []
+        # Locks are created lazily, inside a running loop, on first use.
+        self._init_lock: asyncio.Lock | None = None
         # One-shot guard for _ensure_skill_vectors_current (embedder is fixed
-        # for this instance's lifetime); lock created lazily on first use
+        # for this instance's lifetime)
         self._skill_vectors_checked = False
         self._skill_vectors_lock: asyncio.Lock | None = None
-        self._pending_mcp_servers: list[MCPServerDefinition] = []
-        self._tool_handlers: dict[str, Callable[..., Any]] = {}
         # MCP clients created by add_mcp_server (immediate discovery), kept so
         # their persistent connections can be reused by handlers and closed on
         # close(). Keyed by namespace-qualified config name.
@@ -282,32 +305,15 @@ class AgentGantry:
         # Close the execution engine (cached A2A clients, etc.)
         await self._executor.close()
 
-        # Close the selector and reranker, which may hold HTTP clients.
-        for adapter in (self._selector, self._reranker):
-            aclose = getattr(adapter, "aclose", None)
-            if aclose is None:
-                continue
-            try:
-                await aclose()
-            except Exception:
-                logger.debug(f"Error closing {type(adapter).__name__}", exc_info=True)
-
-        # Close vector store if it has a close method
-        close_method = getattr(self._vector_store, "close", None)
-        if close_method:
-            if asyncio.iscoroutinefunction(close_method):
-                await close_method()
-            else:
-                close_method()
-
-        # Close telemetry if it has a close method
-        if self._telemetry:
-            telemetry_close = getattr(self._telemetry, "close", None)
-            if telemetry_close:
-                if asyncio.iscoroutinefunction(telemetry_close):
-                    await telemetry_close()
-                else:
-                    telemetry_close()
+        # Adapters may hold HTTP clients, model threads or file handles.
+        for adapter in (
+            self._selector,
+            self._reranker,
+            self._embedder,
+            self._vector_store,
+            self._telemetry,
+        ):
+            await _close_adapter(adapter)
 
         self._initialized = False
 
@@ -366,8 +372,6 @@ class AgentGantry:
             >>> await gantry.sync()
             >>> tools = await gantry.retrieve_tools("double a number")
         """
-        import warnings
-
         config = AgentGantryConfig()
         embedder_instance: EmbeddingAdapter
 
@@ -390,21 +394,13 @@ class AgentGantry:
                 embedder_instance = SimpleEmbedder()
         elif embedder == "nomic":
             try:
-                from agent_gantry.adapters.embedders.nomic import NomicEmbedder
-            except ImportError as exc:
-                raise ImportError(
-                    "Nomic embedder is not available. To enable it, install the optional "
-                    "dependencies:\n"
-                    "  pip install agent-gantry[nomic] (or uv add 'agent-gantry[nomic]')"
-                ) from exc
-
-            try:
                 import sentence_transformers  # noqa: F401
             except ImportError as exc:
                 raise ImportError(
                     "sentence-transformers is required for the Nomic embedder. Install it with:\n"
                     "  pip install agent-gantry[nomic] (or uv add 'agent-gantry[nomic]')"
                 ) from exc
+            from agent_gantry.adapters.embedders.nomic import NomicEmbedder
 
             embedder_instance = NomicEmbedder(dimension=dimension)
         elif embedder == "openai":
@@ -544,15 +540,9 @@ class AgentGantry:
             )
 
             self._pending_tools.append(tool)
-
-            # Register both tool definition and handler in the registry.
-            # _tool_handlers is keyed by the namespace-qualified name so
-            # same-named tools in different namespaces never clobber each
-            # other (its only consumer is the tool_count property).
-            key = f"{namespace}.{tool_name}"
-            self._tool_handlers[key] = underlying
-            self._registry.register_tool(tool)
-            self._registry.register_handler(key, underlying)
+            # Definition and handler go into the registry right away, so the
+            # tool is executable before the next sync().
+            self._registry.register_tool(tool, underlying)
 
             return original
 
@@ -561,10 +551,15 @@ class AgentGantry:
         return decorator
 
     async def _ensure_initialized(self) -> None:
-        """Initialize backing services once."""
-        if not self._initialized:
-            await self._vector_store.initialize()
-            self._initialized = True
+        """Initialize backing services once, serialising concurrent first calls."""
+        if self._initialized:
+            return
+        if self._init_lock is None:
+            self._init_lock = asyncio.Lock()
+        async with self._init_lock:
+            if not self._initialized:
+                await self._vector_store.initialize()
+                self._initialized = True
 
     async def add_tool(
         self, tool: ToolDefinition, handler: Callable[..., Any] | None = None
@@ -587,23 +582,10 @@ class AgentGantry:
         if handler is not None:
             # Mirror register(): the definition goes into the registry right
             # away (not just _pending_tools) so the tool is executable before
-            # the next sync() even with auto_sync=False, and the handler map
-            # is keyed by the namespace-qualified name to avoid cross-namespace
-            # clobbering.
-            key = f"{tool.namespace}.{tool.name}"
-            self._registry.register_tool(tool)
-            self._registry.register_handler(key, handler)
-            self._tool_handlers[key] = handler
+            # the next sync() even with auto_sync=False.
+            self._registry.register_tool(tool, handler)
         if self._config.auto_sync:
             await self.sync()
-
-    async def _detect_changes(self, all_tools: list[ToolDefinition], force: bool) -> list[ToolDefinition]:
-        """Detect which tools need to be synced. Delegates to SyncManager."""
-        return await self._sync_manager.detect_changes(all_tools, force)
-
-    async def _sync_batches(self, tools_to_sync: list[ToolDefinition], batch_size: int) -> int:
-        """Embed and save tools in batches. Delegates to SyncManager."""
-        return await self._sync_manager.sync_batches(tools_to_sync, batch_size)
 
     async def sync(
         self, batch_size: int = 100, force: bool = False, prune: bool | None = None
@@ -663,7 +645,7 @@ class AgentGantry:
             return 0
 
         # Determine which tools need syncing
-        tools_to_sync = await self._detect_changes(all_tools, force)
+        tools_to_sync = await self._sync_manager.detect_changes(all_tools, force)
 
         # Nothing to sync
         if not tools_to_sync:
@@ -690,7 +672,7 @@ class AgentGantry:
         # even after the backend recovered. ``_synced`` is likewise cleared on
         # the way out, so a first-ever sync that fails is retried too.
         try:
-            total_synced = await self._sync_batches(tools_to_sync, batch_size)
+            total_synced = await self._sync_manager.sync_batches(tools_to_sync, batch_size)
 
             # Update sync metadata (if supported)
             await self._sync_manager.update_metadata()
@@ -783,10 +765,6 @@ class AgentGantry:
         if removed:
             logger.info(f"Pruned {removed} stale tool(s) no longer registered with this gantry")
         return removed
-
-    def _get_embedder_id(self) -> str:
-        """Get a unique identifier for the current embedder configuration."""
-        return self._sync_manager.get_embedder_id()
 
     async def ensure_synced(self) -> None:
         """
@@ -909,14 +887,9 @@ class AgentGantry:
 
                 # Get the tool handler from the source gantry
                 handler = other._registry.get_handler(key)
-
-                # Add to batch for efficient processing
                 tools_to_add.append(tool)
-
-                # Register the handler if available
                 if handler:
                     self._registry.register_handler(key, handler)
-                    self._tool_handlers[key] = handler
                 else:
                     logger.debug(f"No handler found for tool '{key}' in module '{module_path}'")
 
@@ -934,14 +907,7 @@ class AgentGantry:
             self._pending_tools.extend(tools_to_add)
         elif tools_to_add:
             await self._ensure_initialized()
-            batch_size = 100
-            for i in range(0, len(tools_to_add), batch_size):
-                batch = tools_to_add[i : i + batch_size]
-                texts = [t.to_searchable_text() for t in batch]
-                embeddings = await self._embedder.embed_batch(texts)
-                await self._vector_store.add_tools(batch, embeddings, upsert=True)
-                for tool in batch:
-                    self._registry.register_tool(tool)
+            await self._sync_manager.sync_batches(tools_to_add, batch_size=100)
 
         return imported
 
@@ -1079,13 +1045,11 @@ class AgentGantry:
         # of the *eligible* catalogue. Measured against the whole store, a
         # request scoped to a twelve-skill namespace gave up because some other
         # namespace was large — and in a selector-only deployment the semantic
-        # fallback is not a slower path but a failure. Both stores take
-        # ``namespace``; LanceDB also takes ``category``, so pass that only
-        # where it is accepted. The facade allows a list of namespaces where
-        # the stores take one, so page once per namespace.
-        list_params = inspect.signature(store.list_all_skills).parameters
+        # fallback is not a slower path but a failure. The facade allows a
+        # list of namespaces where the stores take one, so page once per
+        # namespace.
         store_kwargs: dict[str, Any] = {}
-        if category is not None and "category" in list_params:
+        if category is not None:
             store_kwargs["category"] = category
         namespaces: list[str | None]
         if namespace is None:
@@ -1225,9 +1189,7 @@ class AgentGantry:
             threshold = getattr(query, "score_threshold", None) or 0.0
             if threshold > 0.0:
                 SimpleEmbedder._warned_about_threshold = True
-                import warnings as _warnings
-
-                _warnings.warn(
+                warnings.warn(
                     "SimpleEmbedder produces hash-based similarity scores with "
                     "no semantic understanding; pairing it with "
                     f"score_threshold={threshold} will likely filter all "
@@ -1253,14 +1215,7 @@ class AgentGantry:
             # it.
             query = query.model_copy(update={"enable_reranking": True})
 
-        # Use telemetry span if available, otherwise use a no-op async context manager
-        from agent_gantry.utils.async_utils import AsyncNoopContext
-
-        span_cm = (
-            self._telemetry.span("tool_retrieval", {"query": query.context.query})
-            if self._telemetry else AsyncNoopContext()
-        )
-        async with span_cm:
+        async with self._telemetry.span("tool_retrieval", {"query": query.context.query}):
             selection = await self._select_tools(query)
             if selection is None:
                 # Only now: syncing embeds every changed tool into the vector
@@ -1287,8 +1242,7 @@ class AgentGantry:
                 filtered_count=len(selected),
                 trace_id=str(uuid.uuid4()),
             )
-            if self._telemetry:
-                await self._telemetry.record_retrieval(query, retrieval)
+            await self._telemetry.record_retrieval(query, retrieval)
             return retrieval
 
         # routing_result.tools is a list of (tool, semantic_score) tuples
@@ -1313,13 +1267,12 @@ class AgentGantry:
             filtered_count=routing_result.filtered_count,
             trace_id=str(uuid.uuid4()),
         )
-        if self._telemetry:
-            await self._telemetry.record_retrieval(query, retrieval)
+        await self._telemetry.record_retrieval(query, retrieval)
         return retrieval
 
     @property
     def telemetry(self) -> Any:
-        """The configured telemetry adapter (``None`` when disabled).
+        """The configured telemetry adapter (a no-op adapter when disabled).
 
         Exposed so the integration layers can report provider-reported token
         usage without reaching into a private attribute.
@@ -1364,8 +1317,6 @@ class AgentGantry:
         Returns:
             List of provider-specific tool schemas
         """
-        from agent_gantry.schema.query import ConversationContext, ToolQuery
-
         # Split retrieval parameters from per-dialect adapter options so that
         # neither silently swallows the other's keywords.
         query_fields = set(ToolQuery.model_fields)
@@ -1396,10 +1347,7 @@ class AgentGantry:
         # Auto-sync to ensure handlers are registered
         await self.ensure_synced()
 
-        if self._telemetry:
-            async with self._telemetry.span("tool_execution", {"tool_name": call.tool_name}):
-                result = await self._executor.execute(call)
-        else:
+        async with self._telemetry.span("tool_execution", {"tool_name": call.tool_name}):
             result = await self._executor.execute(call)
 
         await self._emit_tool_call(call, result)
@@ -1460,12 +1408,6 @@ class AgentGantry:
         """
         if not self._tool_call_callbacks:
             return
-        # Local import: ToolCallEvent isn't imported at module top (the
-        # execution-schema imports there are TYPE_CHECKING-only). Importing it
-        # here — after the early-return guard above — also keeps it off the
-        # path entirely when no listeners are registered.
-        from agent_gantry.schema.execution import ToolCallEvent
-
         event = ToolCallEvent(call=call, result=result)
         for callback in list(self._tool_call_callbacks):
             try:
@@ -1512,9 +1454,6 @@ class AgentGantry:
             >>> print(result.result)
             8.0
         """
-        from agent_gantry.schema.execution import ToolCall
-        from agent_gantry.schema.query import ConversationContext, ToolQuery
-
         # Retrieve best matching tool
         context = ConversationContext(query=query)
         tool_query = ToolQuery(
@@ -1587,7 +1526,6 @@ class AgentGantry:
         from agent_gantry.adapters.tool_spec.base import ToolCallPayload
         from agent_gantry.adapters.tool_spec.registry import get_adapter
         from agent_gantry.adapters.tool_spec.round_trip import extract_tool_calls
-        from agent_gantry.schema.execution import ExecutionStatus
 
         adapter = get_adapter(dialect)
         if isinstance(response, list) and all(
@@ -1634,10 +1572,7 @@ class AgentGantry:
         # Auto-sync to ensure handlers are registered
         await self.ensure_synced()
 
-        if self._telemetry:
-            async with self._telemetry.span("batch_execution", {"count": len(batch.calls)}):
-                batch_result = await self._executor.execute_batch(batch)
-        else:
+        async with self._telemetry.span("batch_execution", {"count": len(batch.calls)}):
             batch_result = await self._executor.execute_batch(batch)
 
         if self._tool_call_callbacks:
@@ -1794,10 +1729,7 @@ class AgentGantry:
             # tool must be executable before the next sync() even with
             # auto_sync=False — a handler alone isn't enough, execute() looks
             # the definition up in the registry.
-            self._registry.register_tool(tool)
-            handler = make_handler(tool)
-            self._registry.register_handler(key, handler)
-            self._tool_handlers[key] = handler
+            self._registry.register_tool(tool, make_handler(tool))
 
     async def _remove_stale_mcp_tools(self, client: Any, tools: list[ToolDefinition]) -> None:
         """Remove this server's previously registered tools that its latest
@@ -1842,7 +1774,6 @@ class AgentGantry:
             )
         for t in stale:
             self._registry.delete_tool(t.name, t.namespace)
-            self._tool_handlers.pop(f"{t.namespace}.{t.name}", None)
             try:
                 await self._vector_store.delete(t.name, t.namespace)
             except Exception:
@@ -2240,8 +2171,8 @@ class AgentGantry:
 
     @property
     def tool_count(self) -> int:
-        """Return the number of registered tools."""
-        return len(self._tool_handlers)
+        """Return the number of registered tools that have an execution handler."""
+        return self._registry.handler_count
 
     @property
     def embedder(self) -> EmbeddingAdapter:
@@ -2375,8 +2306,6 @@ class AgentGantry:
             >>> for name, score in ranked:
             ...     print(f"{score:.3f}  {name}")
         """
-        from agent_gantry.schema.query import ConversationContext, ToolQuery
-
         threshold = 0.0 if score_threshold is None else score_threshold
         context = ConversationContext(query=query)
         tool_query = ToolQuery(
@@ -2431,25 +2360,13 @@ class AgentGantry:
         Export all registered and pending tools.
 
         Useful for importing tools into another AgentGantry instance
-        without accessing private attributes.
+        without accessing private attributes. Same view as
+        :meth:`list_tools_sync` without a namespace filter.
 
         Returns:
             List of all tool definitions (registered + pending)
         """
-        registered = self._registry.list_tools()
-        pending = self._pending_tools.copy()
-
-        # Deduplicate by qualified name
-        seen: set[str] = set()
-        result: list[ToolDefinition] = []
-
-        for tool in registered + pending:
-            key = f"{tool.namespace}.{tool.name}"
-            if key not in seen:
-                seen.add(key)
-                result.append(tool)
-
-        return result
+        return self.list_tools_sync()
 
     # ------------------------------------------------------------------
     # Skills — semantic procedural memory alongside tools: registered
@@ -2746,11 +2663,8 @@ class AgentGantry:
         """
         await self._ensure_initialized()
         deleted_from_store = await self._vector_store.delete(name, namespace)
-        deleted_from_registry = self._registry.delete_tool(name, namespace)
-        # The facade keeps its own handler map (``tool_count`` reads it), so
-        # purge the qualified key here too — the registry only clears its own.
-        removed_handler = self._tool_handlers.pop(f"{namespace}.{name}", None)
-        deleted_handler = removed_handler is not None
+        deleted_from_registry = self._registry.has_tool(name, namespace)
+        removed_handler = self._registry.delete_tool(name, namespace)
         if removed_handler is not None:
             # The executor memoizes per-handler argument coercers keyed by the
             # callable itself, so a deleted tool's handler would stay reachable
@@ -2768,7 +2682,6 @@ class AgentGantry:
         return (
             deleted_from_store
             or deleted_from_registry
-            or deleted_handler
             or len(self._pending_tools) < before
         )
 
@@ -2779,8 +2692,6 @@ class AgentGantry:
         Returns:
             Dictionary of component health status
         """
-        import asyncio
-
         await self._ensure_initialized()
 
         results = {
@@ -2788,18 +2699,17 @@ class AgentGantry:
             "embedder": await self._embedder.health_check(),
         }
 
-        if self._telemetry is not None:
-            try:
-                health_method = getattr(self._telemetry, "health_check", None)
-                if health_method is not None:
-                    if asyncio.iscoroutinefunction(health_method):
-                        results["telemetry"] = await health_method()
-                    else:
-                        results["telemetry"] = bool(health_method())
+        try:
+            health_method = getattr(self._telemetry, "health_check", None)
+            if health_method is not None:
+                if asyncio.iscoroutinefunction(health_method):
+                    results["telemetry"] = await health_method()
                 else:
-                    results["telemetry"] = True
-            except Exception:
-                results["telemetry"] = False
+                    results["telemetry"] = bool(health_method())
+            else:
+                results["telemetry"] = True
+        except Exception:
+            results["telemetry"] = False
 
         return results
 
