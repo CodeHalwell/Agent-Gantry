@@ -487,6 +487,7 @@ class ExecutionEngine:
         # cannot express more than the name the model saw.
         tool = self._resolve_tool(call)
         if not tool:
+            # Not recorded, as before: there is no registered tool to attribute it to.
             return await self._finish(
                 call,
                 ExecutionStatus.FAILURE,
@@ -697,6 +698,7 @@ class ExecutionEngine:
             # Get handler for Python functions
             handler = self._registry.get_handler(f"{tool.namespace}.{tool.name}")
             if not handler:
+                # Not recorded, as before: a definition with nothing to run it is a wiring error.
                 return await self._finish(
                     call,
                     ExecutionStatus.FAILURE,
