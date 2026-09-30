@@ -715,3 +715,39 @@ class TestDisableAFInstrumentation:
         import agent_gantry.integrations.agent_framework_bridge as bridge_mod
 
         assert bridge_mod.disable_af_instrumentation() is False
+
+
+@pytest.mark.asyncio
+async def test_bridge_wraps_nullable_and_boolean_property_schemas() -> None:
+    """A list-typed ``type`` (what Gantry emits for ``int | None = 5``) and a
+    bare boolean property schema both wrap; each used to crash the whole
+    selection round with ``TypeError``/``AttributeError``."""
+    from agent_gantry import AgentGantry
+    from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+    from agent_gantry.schema.tool import ToolDefinition
+
+    gantry = AgentGantry()
+
+    @gantry.register
+    def lookup_user(user_id: str, retries: int | None = 5) -> str:
+        """Look up a user record by id with an optional retry budget."""
+        return f"{user_id}:{retries}"
+
+    imported = ToolDefinition(
+        name="imported_tool",
+        description="An imported tool with a boolean property schema.",
+        parameters_schema={"type": "object", "properties": {"q": True}, "required": []},
+    )
+    await gantry.add_tool(imported, handler=lambda **kwargs: "ok")
+    await gantry.sync()
+
+    bridge = GantryToolBridge(gantry, as_function_tool=False)
+    wrapped = {t.__name__: t for t in bridge.wrap_tools(gantry.export_tools())}
+    assert set(wrapped) == {"lookup_user", "imported_tool"}
+
+    params = inspect.signature(wrapped["lookup_user"]).parameters
+    assert list(params) == ["user_id", "retries"]
+    assert params["retries"].default == 5
+    assert await wrapped["lookup_user"]("abc", 2) == "abc:2"
+    assert await wrapped["lookup_user"](user_id="abc") == "abc:5"
+    assert await wrapped["imported_tool"](q="anything") == "ok"

@@ -30,10 +30,16 @@ so that ``import agent_gantry`` never requires LlamaIndex to be installed.
 
 from __future__ import annotations
 
+import functools
 import logging
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT, GantryToolset
+from agent_gantry.integrations.frameworks.base import (
+    DEFAULT_TOOL_LIMIT,
+    GantryToolset,
+    QueryBoundsError,
+    check_query_bounds,
+)
 from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
 from agent_gantry.integrations.frameworks.llamaindex import _spec_to_llamaindex
 from agent_gantry.query import latest_activity
@@ -82,23 +88,17 @@ def _query_from(str_or_query_bundle: Any) -> str:
     return str(str_or_query_bundle)
 
 
-_RETRIEVER_CLS: type | None = None
-
-
 def _build_retriever_class() -> type:
-    """Build (and cache) the ``GantryToolRetriever`` subclass of ``ObjectRetriever``.
+    """The ``GantryToolRetriever`` subclass of the installed ``ObjectRetriever``.
 
-    Deferred so importing this module never requires ``llama-index`` — the
-    subclass (which needs ``ObjectRetriever`` as a real base) is only
-    constructed when a retriever/agent is actually built. Mirrors the lazy
-    class-build used by the Pydantic AI live provider.
+    Deferred so importing this module never requires ``llama-index``; built
+    once per base class.
     """
-    global _RETRIEVER_CLS
-    if _RETRIEVER_CLS is not None:
-        return _RETRIEVER_CLS
+    return _retriever_class(_import_object_retriever())
 
-    object_retriever = _import_object_retriever()
 
+@functools.cache
+def _retriever_class(object_retriever: type) -> type:
     class GantryToolRetriever(object_retriever):  # type: ignore[valid-type,misc]
         """Per-turn ``ObjectRetriever`` that re-selects gantry tools every step.
 
@@ -124,6 +124,9 @@ def _build_retriever_class() -> type:
             # a static BaseRetriever + BaseObjectNodeMapping over a pre-indexed
             # object set. We override retrieve/aretrieve entirely and select live
             # against the gantry, so that machinery is unused (see module docstring).
+            check_query_bounds(
+                limit=limit, score_threshold=score_threshold, owner="GantryToolRetriever"
+            )
             self._gantry = gantry
             self._toolset = GantryToolset(gantry)
             self._limit = limit
@@ -168,7 +171,7 @@ def _build_retriever_class() -> type:
                     required=self._required,
                     always_include=self._always_include,
                 )
-            except MissingRequiredToolError:
+            except (MissingRequiredToolError, QueryBoundsError):
                 raise
             except Exception:
                 logger.warning(
@@ -185,8 +188,7 @@ def _build_retriever_class() -> type:
 
             return _run_coroutine_sync(self.aretrieve(str_or_query_bundle))
 
-    _RETRIEVER_CLS = GantryToolRetriever
-    return _RETRIEVER_CLS
+    return GantryToolRetriever
 
 
 def _gantry_tool_retriever(

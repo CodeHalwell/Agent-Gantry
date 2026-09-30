@@ -157,39 +157,6 @@ async def build_gantry_async(
     return gantry
 
 
-def build_gantry(
-    modules: Sequence[str] | None,
-    *,
-    attr: str = _DEFAULT_MODULE_ATTR,
-    config: str | None = None,
-    quiet: bool = False,
-    persist: bool = False,
-) -> AgentGantry:
-    """Synchronous :func:`build_gantry_async`, for callers with no loop running.
-
-    The CLI itself does not use this — it builds the gantry inside the one
-    loop its command runs on (see :func:`build_gantry_async`).
-
-    ``persist=True`` is refused here. Persisting initialises the configured
-    backend, and this helper does that inside an ``asyncio.run`` it then
-    closes, so a loop-bound backend (a pgvector pool) would come back holding
-    a closed loop and fail on first use in the caller's own. Await
-    :func:`build_gantry_async` on the loop you will use instead.
-
-    Raises:
-        ValueError: If ``persist`` is True.
-    """
-    if persist:
-        raise ValueError(
-            "build_gantry(persist=True) would initialise the backend on a loop it "
-            "then closes, leaving a loop-bound store (pgvector) unusable. Await "
-            "build_gantry_async(..., persist=True) on the loop you will use."
-        )
-    return asyncio.run(
-        build_gantry_async(modules, attr=attr, config=config, quiet=quiet, persist=persist)
-    )
-
-
 def _build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument(
@@ -407,7 +374,11 @@ def _run_source_lint(paths: list[str]) -> int:
     """Run the source-level lint rules over ``paths`` and print the findings."""
     from agent_gantry.utils.source_linter import analyze_paths
 
-    analysis = analyze_paths(paths)
+    try:
+        analysis = analyze_paths(paths)
+    except FileNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     print(analysis.format_text())
     return 1 if not analysis.empty else 0
 

@@ -782,8 +782,8 @@ async def test_required_qualified_name_resolves_per_request(monkeypatch):
     """A ``namespace.name``-qualified ``required`` pin must resolve at request
     time, not only pass construction-time validation.
 
-    Regression guard: ``_lookup_tool_def`` previously only tried bare-name
-    lookups, so a qualified pin was validated OK at construction and then
+    Regression guard: request-time lookup previously only tried bare names,
+    so a qualified pin was validated OK at construction and then
     warned-and-skipped on every round — inverting the whole point of
     ``required``.
     """
@@ -805,5 +805,11 @@ async def test_required_qualified_name_resolves_per_request(monkeypatch):
     await gantry.sync()
 
     provider = GantryContextProvider(gantry, required=["billing.refund"])
-    tools = provider._wrap_named(["billing.refund"], set(), source="required")
+    tools = provider._pin_tools(["billing.refund"], set(), set())
     assert len(tools) == 1, "qualified required pin must resolve to the tool"
+
+    # A qualified pin is satisfied only by that exact tool: a same-named tool
+    # from another namespace in the dynamic slice does not stand in for it.
+    tools = provider._pin_tools(["billing.refund"], {"default.refund"}, {"refund"})
+    assert len(tools) == 1
+    assert provider._pin_tools(["billing.refund"], {"billing.refund"}, {"refund"}) == []

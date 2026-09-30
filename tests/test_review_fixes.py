@@ -4,7 +4,7 @@ Tests for critical bug fixes identified in the code review.
 Covers:
 - Phase 1: MMR with diversity_factor > 0 (math import fix + numpy migration)
 - Phase 2: Rate limiter wiring, namespace resolution, sliding window fix
-- Phase 3: DRY adapters, lifecycle management, AsyncNoopContext utility
+- Phase 3: DRY adapters, lifecycle management
 - Phase 4: Expanded domain validation
 """
 
@@ -29,7 +29,6 @@ from agent_gantry.schema.config import RateLimitConfig
 from agent_gantry.schema.execution import ToolCall
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 from agent_gantry.schema.tool import ToolDefinition
-from agent_gantry.utils.async_utils import AsyncNoopContext
 
 # ---------------------------------------------------------------------------
 # Phase 1: MMR with diversity_factor > 0
@@ -243,19 +242,6 @@ async def test_close_is_idempotent() -> None:
     gantry = AgentGantry()
     await gantry.close()
     await gantry.close()  # Should not raise
-
-
-# ---------------------------------------------------------------------------
-# Phase 3.5: AsyncNoopContext utility
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_async_noop_context() -> None:
-    """Phase 3.5: AsyncNoopContext should work as an async context manager."""
-    async with AsyncNoopContext() as ctx:
-        assert ctx is not None
-    # Should complete without any error
 
 
 # ---------------------------------------------------------------------------

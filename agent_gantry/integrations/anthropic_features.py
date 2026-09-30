@@ -10,6 +10,9 @@ Provides easy access to Anthropic's beta features including:
 - Adaptive thinking (recommended for Opus 4.6+, Sonnet 4.6+, Opus 4.7: pass
   ``thinking={type: "adaptive", effort: "medium"}`` for the model to self-regulate)
 - Tool use integration with Agent-Gantry
+
+:class:`_AnthropicGantryClient` holds the construction, tool-retrieval and
+tool-execution plumbing shared with :class:`~agent_gantry.integrations.anthropic_skills.SkillsClient`.
 """
 
 from __future__ import annotations
@@ -24,13 +27,11 @@ from agent_gantry.schema.query import ConversationContext, ToolQuery
 
 logger = logging.getLogger(__name__)
 
+
 async def _record_provider_usage(gantry: Any, response: Any, model: str) -> None:
     """Report Anthropic's ``usage`` block to telemetry, best effort.
 
-    Nothing in the library measured the token cost of a call before this:
-    ``record_token_usage`` existed on the telemetry protocol and was never
-    invoked outside tests. Failures here are swallowed -- accounting must never
-    break a user's request.
+    Failures are swallowed -- accounting must never break a user's request.
     """
     telemetry = getattr(gantry, "telemetry", None) if gantry is not None else None
     if telemetry is None:
@@ -58,6 +59,72 @@ async def _record_provider_usage(gantry: Any, response: Any, model: str) -> None
         logger.debug("Token usage recording skipped: %s", exc)
 
 
+class _AnthropicGantryClient:
+    """Construction, tool retrieval and tool execution shared by the Anthropic clients."""
+
+    def __init__(
+        self,
+        api_key: str | None,
+        gantry: AgentGantry | None,
+        *,
+        default_headers: dict[str, str] | None = None,
+    ) -> None:
+        from anthropic import AsyncAnthropic
+
+        self._api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        if not self._api_key:
+            raise ValueError("API key required. Set ANTHROPIC_API_KEY or pass api_key parameter.")
+        self._gantry = gantry
+        self._client = AsyncAnthropic(api_key=self._api_key, default_headers=default_headers)
+
+    @staticmethod
+    def _last_user_query(messages: list[dict[str, Any]]) -> str | None:
+        """The most recent user message with plain-string content, if any."""
+        for msg in reversed(messages):
+            if msg.get("role") == "user" and isinstance(msg.get("content"), str):
+                return msg["content"]
+        return None
+
+    async def _retrieve_tools(self, query: str, limit: int) -> list[dict[str, Any]]:
+        """Top-``limit`` tools for ``query`` as Anthropic tool schemas."""
+        assert self._gantry is not None
+        result = await self._gantry.retrieve(
+            ToolQuery(
+                context=ConversationContext(query=query),
+                limit=limit,
+                # Convenience layers use 0.0: a flat absolute cutoff
+                # silently drops everything on longer queries.
+                score_threshold=0.0,
+            )
+        )
+        return [t.tool.to_dialect("anthropic") for t in result.tools]
+
+    async def _create(self, model: str, **request_kwargs: Any) -> Any:
+        """``messages.create`` plus best-effort token-usage accounting."""
+        response = await self._client.messages.create(model=model, **request_kwargs)
+        await _record_provider_usage(self._gantry, response, model)
+        return response
+
+    async def execute_tool_calls(self, response: Any) -> list[dict[str, Any]]:
+        """
+        Execute the tool calls in an Anthropic response.
+
+        Delegates to :meth:`AgentGantry.execute_tool_calls`, which extracts
+        every ``tool_use`` block (including parallel ones), runs them
+        concurrently through the full protection stack, and formats each result
+        with the Anthropic adapter.
+
+        Args:
+            response: Anthropic message response
+
+        Returns:
+            List of ``tool_result`` blocks in Anthropic format
+        """
+        if not self._gantry:
+            raise ValueError("AgentGantry instance required for tool execution")
+
+        return await self._gantry.execute_tool_calls(response, dialect="anthropic")
+
 
 @dataclass
 class AnthropicFeatures:
@@ -84,7 +151,7 @@ class AnthropicFeatures:
     thinking_display: Literal["summarized", "omitted"] | None = None
 
 
-class AnthropicClient:
+class AnthropicClient(_AnthropicGantryClient):
     """
     Enhanced Anthropic client with Agent-Gantry integration.
 
@@ -119,29 +186,17 @@ class AnthropicClient:
             gantry: AgentGantry instance for tool retrieval
             features: Feature configuration
         """
-        from anthropic import AsyncAnthropic
-
-        self._api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
-        if not self._api_key:
-            raise ValueError("API key required. Set ANTHROPIC_API_KEY or pass api_key parameter.")
-
-        self._gantry = gantry
         self._features = features or AnthropicFeatures()
 
         # The interleaved-thinking beta header is required for Opus 4.5 / Sonnet 4.5.
-        # Note: claude-sonnet-4 and claude-opus-4 retire on 2026-06-15.
         # On Opus 4.6+, Sonnet 4.6+, and Opus 4.7 the header is deprecated and silently
         # ignored — adaptive thinking is automatic on those models.
         # Extended thinking does NOT need a beta header; it is activated via the `thinking`
         # parameter in each create_message() call (see below).
-        extra_headers = {}
+        extra_headers = None
         if self._features.enable_interleaved_thinking:
-            extra_headers["anthropic-beta"] = "interleaved-thinking-2025-05-14"
-
-        self._client = AsyncAnthropic(
-            api_key=self._api_key,
-            default_headers=extra_headers if extra_headers else None,
-        )
+            extra_headers = {"anthropic-beta": "interleaved-thinking-2025-05-14"}
+        super().__init__(api_key, gantry, default_headers=extra_headers)
 
     async def create_message(
         self,
@@ -176,31 +231,14 @@ class AnthropicClient:
         Returns:
             Anthropic message response
         """
-        # Extract query from messages if not provided
         if not query and auto_retrieve_tools:
-            for msg in reversed(messages):
-                if msg.get("role") == "user":
-                    content = msg.get("content", "")
-                    if isinstance(content, str):
-                        query = content
-                        break
+            query = self._last_user_query(messages)
 
-        # Retrieve tools if enabled
         tools = None
         if auto_retrieve_tools and self._gantry and query:
-            retrieval_result = await self._gantry.retrieve(
-                ToolQuery(
-                    context=ConversationContext(query=query),
-                    limit=tool_limit,
-                    # Convenience layers use 0.0: a flat absolute cutoff
-                    # silently drops everything on longer queries.
-                    score_threshold=0.0,
-                )
-            )
-            tools = [t.tool.to_dialect("anthropic") for t in retrieval_result.tools]
+            tools = await self._retrieve_tools(query, tool_limit)
 
         # Build thinking payload — adaptive takes precedence over extended when both are set.
-        # Display key and kwargs assignment happen once after the block is constructed.
         if "thinking" not in kwargs:
             thinking_block: dict[str, Any] | None = None
             if self._features.adaptive_thinking_effort:
@@ -229,52 +267,14 @@ class AnthropicClient:
                 }
             }
 
-        # Build the create() kwargs.  Only include `tools` when the list is
-        # non-empty: passing an empty list is treated by the Anthropic API the
-        # same as specifying tool_choice="none" — it still appends the tool-use
-        # system prompt and consumes tokens (346 extra input tokens for most
-        # Claude 4 models per the pricing table).  Omitting the key entirely
-        # avoids that overhead when no tools were retrieved.
+        # Only include `tools` when the list is non-empty: an empty list is
+        # treated by the Anthropic API like tool_choice="none" — it still
+        # appends the tool-use system prompt and consumes tokens.
         # Source: https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview
-        create_kwargs: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "max_tokens": max_tokens,
-            **kwargs,
-        }
         if tools:
-            create_kwargs["tools"] = tools
+            kwargs["tools"] = tools
 
-        # Create message
-        response = await self._client.messages.create(**create_kwargs)
-        await _record_provider_usage(self._gantry, response, model)
-
-        return response
-
-    async def execute_tool_calls(
-        self,
-        response: Any,
-    ) -> list[dict[str, Any]]:
-        """
-        Execute the tool calls in an Anthropic response.
-
-        Delegates to :meth:`AgentGantry.execute_tool_calls`, which extracts
-        every ``tool_use`` block (including parallel ones), runs them
-        concurrently through the full protection stack, and formats each result
-        with the Anthropic adapter. This used to be hand-rolled here, and in
-        ``SkillsClient`` too, with the two copies having drifted apart on
-        concurrency.
-
-        Args:
-            response: Anthropic message response
-
-        Returns:
-            List of ``tool_result`` blocks in Anthropic format
-        """
-        if not self._gantry:
-            raise ValueError("AgentGantry instance required for tool execution")
-
-        return await self._gantry.execute_tool_calls(response, dialect="anthropic")
+        return await self._create(model, messages=messages, max_tokens=max_tokens, **kwargs)
 
     def extract_thinking(
         self,

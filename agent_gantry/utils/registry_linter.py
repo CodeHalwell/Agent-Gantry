@@ -26,6 +26,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 if TYPE_CHECKING:
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
     from agent_gantry.core.gantry import AgentGantry
@@ -184,22 +186,12 @@ def _detect_overlapping_tags(
     ]
 
 
-def _cosine(a: list[float], b: list[float]) -> float:
-    # ⚡ Bolt: Calculate dot product and norms in a single pass to reduce overhead
-    num = 0.0
-    da_sq = 0.0
-    db_sq = 0.0
-    for x, y in zip(a, b):
-        num += x * y
-        da_sq += x * x
-        db_sq += y * y
-
-    da = math.sqrt(da_sq)
-    db = math.sqrt(db_sq)
-
-    if da == 0.0 or db == 0.0:
-        return 0.0
-    return num / (da * db)
+def _cosine_matrix(embeddings: list[list[float]]) -> np.ndarray:
+    """Pairwise cosine similarities as one ``(n, n)`` array; zero vectors score 0."""
+    matrix = np.asarray(embeddings, dtype=float)
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    unit = np.divide(matrix, norms, out=np.zeros_like(matrix), where=norms != 0)
+    return unit @ unit.T
 
 
 async def _detect_similar_pairs(
@@ -210,12 +202,11 @@ async def _detect_similar_pairs(
 ) -> list[SimilarPairFinding]:
     if len(tools) < 2:
         return []
-    texts = [_searchable_text(t) for t in tools]
-    embeddings = await embedder.embed_batch(texts)
+    similarities = _cosine_matrix(await embedder.embed_batch([_searchable_text(t) for t in tools]))
     findings: list[SimilarPairFinding] = []
     for i in range(len(tools)):
         for j in range(i + 1, len(tools)):
-            score = _cosine(embeddings[i], embeddings[j])
+            score = float(similarities[i, j])
             if score >= similarity_threshold:
                 findings.append(
                     SimilarPairFinding(
@@ -304,7 +295,7 @@ async def pairwise_similarity(
         _searchable_text(lookup[tool_b]),
     ]
     embs = await eff_embedder.embed_batch(texts)
-    return _cosine(embs[0], embs[1])
+    return float(_cosine_matrix(embs)[0, 1])
 
 
 __all__ = [

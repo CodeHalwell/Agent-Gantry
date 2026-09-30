@@ -10,15 +10,19 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from agent_gantry.schema.base import reject_newlines
+from agent_gantry.schema.base import (
+    MCPTransport,
+    check_mcp_endpoint,
+    is_http_url,
+    reject_newlines,
+    resolve_mcp_transport,
+)
 
 
 class VectorStoreConfig(BaseModel):
     """Configuration for vector store backend."""
 
-    type: Literal["memory", "qdrant", "chroma", "pgvector", "pinecone", "weaviate", "lancedb"] = (
-        "memory"
-    )
+    type: Literal["memory", "qdrant", "chroma", "pgvector", "lancedb"] = "memory"
     url: str | None = None
     api_key: str | None = None
     collection_name: str = "agent_gantry"
@@ -30,9 +34,7 @@ class VectorStoreConfig(BaseModel):
 class EmbedderConfig(BaseModel):
     """Configuration for embedding backend."""
 
-    type: Literal[
-        "openai", "azure", "cohere", "huggingface", "sentence_transformers", "ollama", "nomic"
-    ] = "sentence_transformers"
+    type: Literal["openai", "azure", "sentence_transformers", "nomic"] = "sentence_transformers"
     model: str = "all-MiniLM-L6-v2"
     api_key: str | None = None
     api_base: str | None = None
@@ -49,7 +51,7 @@ class RerankerConfig(BaseModel):
     """Configuration for reranker backend."""
 
     enabled: bool = False
-    type: Literal["cohere", "cross_encoder", "jev", "llm"] = "cross_encoder"
+    type: Literal["cohere", "cross_encoder", "jev"] = "cross_encoder"
     model: str | None = None
     top_k: int = 10
 
@@ -173,18 +175,10 @@ class TelemetryConfig(BaseModel):
     """Configuration for observability."""
 
     enabled: bool = True
-    type: Literal["console", "opentelemetry", "datadog", "prometheus"] = "console"
+    type: Literal["console", "opentelemetry", "prometheus"] = "console"
     otlp_endpoint: str | None = None
     service_name: str = "agent_gantry"
-    expose_prometheus: bool = False
     prometheus_port: int = 9090
-
-
-#: Transports an :class:`MCPServerConfig` can name. ``stdio`` spawns a local
-#: subprocess; ``streamable_http`` and ``sse`` connect to a remote server by
-#: URL (Streamable HTTP is the current MCP spec transport, SSE the legacy one
-#: it superseded — many hosted servers still speak it).
-MCPTransport = Literal["stdio", "streamable_http", "sse"]
 
 
 class MCPServerConfig(BaseModel):
@@ -239,34 +233,13 @@ class MCPServerConfig(BaseModel):
 
     @model_validator(mode="after")
     def _check_endpoint(self) -> MCPServerConfig:
-        """Require exactly one endpoint, and a transport that matches it."""
-        has_command = bool(self.command)
-        has_url = bool(self.url)
-        if has_command == has_url:
-            raise ValueError(
-                f"MCP server '{self.name}': give exactly one of 'command' (local stdio "
-                "server) or 'url' (remote HTTP server)."
-            )
-        if self.transport == "stdio" and not has_command:
-            raise ValueError(f"MCP server '{self.name}': transport 'stdio' requires 'command'.")
-        if self.transport in ("streamable_http", "sse") and not has_url:
-            raise ValueError(
-                f"MCP server '{self.name}': transport '{self.transport}' requires 'url'."
-            )
-        if has_url:
-            scheme = self.url.split("://", 1)[0].lower() if "://" in self.url else ""
-            if scheme not in ("http", "https"):
-                raise ValueError(
-                    f"MCP server '{self.name}': 'url' must be an http(s) URL, got {self.url!r}."
-                )
+        check_mcp_endpoint(self.name, self.command, self.url, self.transport)
         return self
 
     @property
     def resolved_transport(self) -> MCPTransport:
         """The transport this config uses, inferring it from the endpoint given."""
-        if self.transport is not None:
-            return self.transport
-        return "stdio" if self.command else "streamable_http"
+        return resolve_mcp_transport(self.command, self.transport)
 
     @property
     def endpoint(self) -> str:
@@ -280,8 +253,6 @@ class MCPConfig(BaseModel):
     """Configuration for MCP integration."""
 
     servers: list[MCPServerConfig] = Field(default_factory=list)
-    serve_mcp: bool = False
-    mcp_mode: Literal["dynamic", "static", "hybrid"] = "dynamic"
 
 
 class A2AAgentConfig(BaseModel):
@@ -295,13 +266,18 @@ class A2AAgentConfig(BaseModel):
 
     _reject_newline_identifiers = field_validator("name", "namespace")(reject_newlines)
 
+    @field_validator("url")
+    @classmethod
+    def _http_url(cls, value: str) -> str:
+        if not is_http_url(value):
+            raise ValueError(f"'url' must be an http(s) URL, got {value!r}.")
+        return value
+
 
 class A2AConfig(BaseModel):
     """Configuration for A2A integration."""
 
     agents: list[A2AAgentConfig] = Field(default_factory=list)
-    serve_a2a: bool = False
-    a2a_port: int = 8080
 
 
 class AgentGantryConfig(BaseModel):

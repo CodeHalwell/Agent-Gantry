@@ -11,7 +11,6 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
 from agent_gantry.core.factories import (
     build_embedder,
@@ -43,9 +42,25 @@ class TestBuildVectorStore:
 
 
 class TestBuildEmbedder:
-    def test_falls_back_to_simple_without_credentials(self) -> None:
-        # "openai" without an api_key falls through every branch to SimpleEmbedder.
-        assert isinstance(build_embedder(EmbedderConfig(type="openai")), SimpleEmbedder)
+    def test_openai_without_a_key_is_an_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        with pytest.raises(ValueError, match="OPENAI_API_KEY"):
+            build_embedder(EmbedderConfig(type="openai"))
+
+
+class TestUnimplementedBackendsAreRejected:
+    @pytest.mark.parametrize(
+        ("model", "value"),
+        [
+            (VectorStoreConfig, "pinecone"),
+            (EmbedderConfig, "cohere"),
+            (RerankerConfig, "llm"),
+            (TelemetryConfig, "datadog"),
+        ],
+    )
+    def test_unknown_type_fails_validation(self, model: type, value: str) -> None:
+        with pytest.raises(ValidationError):
+            model(type=value)
 
 
 class TestBuildReranker:

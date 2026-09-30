@@ -12,17 +12,9 @@ Public entry point: :class:`GoogleADKAdapter`.
 from __future__ import annotations
 
 import copy
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from agent_gantry.integrations.frameworks.base import (
-    DEFAULT_TOOL_LIMIT,
-    BaseFrameworkAdapter,
-    GantryToolset,
-    ToolSpec,
-)
-
-if TYPE_CHECKING:
-    from agent_gantry.core.gantry import AgentGantry
+from agent_gantry.integrations.frameworks.base import BaseFrameworkAdapter, ToolSpec
 
 
 def _spec_to_google_adk(spec: ToolSpec) -> Any:
@@ -91,8 +83,10 @@ def _declaration_from_schema(spec: ToolSpec) -> Any:
     # Deep, not shallow: a ``dict(...)`` leaves every nested ``properties`` /
     # ``items`` subschema aliased to the registry's canonical
     # ``ToolDefinition.parameters_schema``, so anything that adjusts the
-    # declaration corrupts the tool for every other consumer.
-    schema = copy.deepcopy(spec.parameters) if spec.parameters else {}
+    # declaration corrupts the tool for every other consumer. Property names
+    # are the callable's aliases: ADK filters the model's arguments to the
+    # signature's parameter names, so the declaration must use the same ones.
+    schema = copy.deepcopy(spec.aliased_parameters()) if spec.parameters else {}
     schema.setdefault("type", "object")
     schema.setdefault("properties", {})
     try:
@@ -105,61 +99,23 @@ def _declaration_from_schema(spec: ToolSpec) -> Any:
         return None
 
 
-async def _for_google_adk(
-    gantry: AgentGantry,
-    query: str,
-    *,
-    limit: int = DEFAULT_TOOL_LIMIT,
-    **select_kwargs: Any,
-) -> list[Any]:
-    """Select tools for ``query`` and return them as ADK ``FunctionTool``s."""
-    specs = await GantryToolset(gantry).select(query, limit=limit, **select_kwargs)
-    return [_spec_to_google_adk(s) for s in specs]
-
-
 class GoogleADKAdapter(BaseFrameworkAdapter):
     """Route Gantry-selected tools into Google ADK.
 
     Static slice (``google.adk.tools.FunctionTool`` objects) plus deep per-turn
     live wiring (re-selects tools before every model request). Every call routes
-    through ``gantry.execute``.
+    through ``gantry.execute``. :meth:`live` returns the
+    :meth:`before_model_callback` — plug it into
+    ``Agent(tools=[], before_model_callback=<result>)``.
     """
 
     live_tier = "per-turn"
+    _live_delegate = "before_model_callback"
 
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a Google ADK ``FunctionTool``."""
         return _spec_to_google_adk(spec)
-
-    def live(
-        self,
-        *,
-        limit: int | None = None,
-        score_threshold: float = 0.0,
-        namespaces: list[str] | None = None,
-        required: list[str] | None = None,
-        always_include: list[str] | None = None,
-        **framework_kwargs: Any,
-    ) -> Any:
-        """Per-turn uniform entry point: delegates to :meth:`before_model_callback`.
-
-        Returns an ``async (callback_context, llm_request) -> None`` callback
-        — plug it into ``Agent(tools=[], before_model_callback=<result>)``.
-        ``required``/``always_include`` are re-applied on every model request
-        (see
-        :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select`).
-        No other ``framework_kwargs`` are required (unlike LangGraph/OpenAI
-        Agents, this hook is agent-agnostic).
-        """
-        return self.before_model_callback(
-            limit=limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
-            **framework_kwargs,
-        )
 
     def before_model_callback(
         self,
@@ -177,11 +133,7 @@ class GoogleADKAdapter(BaseFrameworkAdapter):
 
         return _gantry_before_model_callback(
             self._gantry,
-            limit=self._default_limit if limit is None else limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
+            **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
         )
 
     def agent(
@@ -207,10 +159,6 @@ class GoogleADKAdapter(BaseFrameworkAdapter):
             model=model,
             name=name,
             instruction=instruction,
-            limit=self._default_limit if limit is None else limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
+            **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
             **agent_kwargs,
         )

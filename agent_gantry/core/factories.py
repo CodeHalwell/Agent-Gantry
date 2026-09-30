@@ -98,9 +98,9 @@ def build_vector_store(config: VectorStoreConfig) -> VectorStoreAdapter:
 
 def build_embedder(config: EmbedderConfig) -> EmbeddingAdapter:
     """Construct an embedder from configuration."""
-    if config.type == "openai" and config.api_key:
+    if config.type == "openai":
         return OpenAIEmbedder(config)
-    if config.type == "azure" and config.api_key:
+    if config.type == "azure":
         return AzureOpenAIEmbedder(config)
     if config.type == "nomic":
         from agent_gantry.adapters.embedders.nomic import NomicEmbedder
@@ -141,11 +141,9 @@ def build_reranker(config: RerankerConfig) -> RerankerAdapter | None:
         return CrossEncoderReranker(
             model=config.model or "cross-encoder/ms-marco-MiniLM-L-6-v2",
         )
-    if config.type == "jev":
-        from agent_gantry.adapters.rerankers.jev import JevReranker
+    from agent_gantry.adapters.rerankers.jev import JevReranker
 
-        return JevReranker(model=config.model)
-    return None
+    return JevReranker(model=config.model)
 
 
 def build_selector(config: SelectorConfig) -> SelectorAdapter | None:

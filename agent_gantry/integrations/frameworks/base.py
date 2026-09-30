@@ -20,7 +20,7 @@ policy all still apply):
 
 - :meth:`ToolSpec.ainvoke` — async, ``**kwargs`` or a single dict.
 - :meth:`ToolSpec.invoke`  — sync wrapper, safe to call even from inside a
-  running event loop (it offloads to a shared worker thread and blocks).
+  running event loop (it runs the coroutine on a shared bridge loop and blocks).
 
 The adapters are intentionally dependency-free at import time: the third-party
 framework is imported lazily inside the ``to_*`` builder, so ``import
@@ -34,7 +34,6 @@ import datetime
 import inspect
 import keyword
 import logging
-import os
 import re
 import threading
 import uuid
@@ -92,10 +91,13 @@ class ToolExecutionError(RuntimeError):
     it). Catching :class:`ToolExecutionError` still catches every outcome.
     """
 
-    def __init__(self, tool_name: str, status: str, error: str | None) -> None:
+    def __init__(
+        self, tool_name: str, status: str, error: str | None, error_type: str | None = None
+    ) -> None:
         self.tool_name = tool_name
         self.status = status
         self.error = error
+        self.error_type = error_type
         super().__init__(f"Tool {tool_name!r} failed (status={status}): {error or 'no detail'}")
 
 
@@ -118,6 +120,7 @@ class ToolSpec:
         parameters: JSON-Schema object describing the arguments.
         requires_confirmation: Whether the underlying tool is high-risk.
         score: The semantic score from selection (0.0 if unknown).
+        tool: The registry definition this spec was built from, when known.
     """
 
     name: str
@@ -128,6 +131,7 @@ class ToolSpec:
     score: float
     _gantry: AgentGantry
     _namespace: str
+    tool: ToolDefinition | None = None
 
     # -- invocation -------------------------------------------------------- #
     async def ainvoke(self, *args: Any, **kwargs: Any) -> Any:
@@ -178,7 +182,10 @@ class ToolSpec:
             elif result.status == ExecutionStatus.PERMISSION_DENIED:
                 exc_cls = ToolPermissionDeniedError
             raise exc_cls(
-                self.name, getattr(result.status, "value", str(result.status)), result.error
+                self.name,
+                getattr(result.status, "value", str(result.status)),
+                result.error,
+                result.error_type,
             )
         return result.result
 
@@ -283,6 +290,8 @@ class ToolSpec:
                     # rejected tool is worse than an under-specified one.
                     annotation = annotation | None
             else:
+                if not type_matched_defaults and schema_declares_null(prop):
+                    annotation = annotation | None
                 schema_default = prop.get("default")
                 if schema_default is not None and _matches_json_type(
                     schema_default, json_type
@@ -326,6 +335,25 @@ class ToolSpec:
         that are already valid names are absent from the map.
         """
         return {alias: name for alias, name in self._signature_names() if alias != name}
+
+    def aliased_parameters(self) -> dict[str, Any]:
+        """:attr:`parameters` with each renamed property under its signature alias.
+
+        For frameworks that advertise a JSON schema verbatim *and* validate or
+        filter the model's arguments against the callable's signature (Google
+        ADK, Strands): both must use the alias names, or a renamed property
+        can never be supplied. Returns :attr:`parameters` itself when nothing
+        is renamed.
+        """
+        renames = {name: alias for alias, name in self.parameter_aliases().items()}
+        if not renames:
+            return self.parameters
+        schema = dict(self.parameters)
+        properties = self.parameters.get("properties") or {}
+        schema["properties"] = {renames.get(k, k): v for k, v in properties.items()}
+        if isinstance(schema.get("required"), list):
+            schema["required"] = [renames.get(n, n) for n in schema["required"]]
+        return schema
 
     def _signature_names(self) -> list[tuple[str, str]]:
         """``(python_name, property_name)`` pairs in schema order.
@@ -815,92 +843,70 @@ def _matches_json_type(value: Any, json_type: Any) -> bool:
     return True
 
 
-# Shared worker threads for running coroutines from sync framework callbacks
-# while an event loop is active on the calling thread. Reused across
-# invocations so we don't pay the spawn/teardown cost of a fresh pool each call.
-_SYNC_BRIDGE_POOL: Any = None
-
-#: Guards lazy pool construction: without it two threads racing through the
-#: ``is None`` check each build a pool and one is silently discarded.
-_SYNC_BRIDGE_POOL_LOCK = threading.Lock()
-
-#: Set on threads owned by the bridge pool, so a nested sync invocation can
-#: tell it is about to wait on the very pool it is occupying.
-_BRIDGE_THREAD = threading.local()
-
-#: The bridge fans out concurrent sync tool calls, so it must not be a single
-#: worker: every sync tool call in the process shares this pool, and one slow
-#: tool (default timeout: 30s) would otherwise block all the others — a
-#: multi-agent CrewAI run serializes completely. Threads here are almost always
-#: parked waiting on a coroutine, so they are cheap; the cap mirrors
-#: ThreadPoolExecutor's own default.
-_SYNC_BRIDGE_MAX_WORKERS = min(32, (os.cpu_count() or 1) + 4)
+#: One long-lived event loop, on a daemon thread, that every sync bridge call
+#: runs on. A fresh ``asyncio.run`` per call would close its loop on return,
+#: so loop-affine state (an MCP session, an HTTP client pool) had to be torn
+#: down and rebuilt on every sync tool call.
+_BRIDGE_LOOP: asyncio.AbstractEventLoop | None = None
+_BRIDGE_LOOP_LOCK = threading.Lock()
 
 
-def _bridge_pool() -> Any:
-    """Return the shared bridge pool, constructing it once."""
-    global _SYNC_BRIDGE_POOL
-    if _SYNC_BRIDGE_POOL is None:
-        with _SYNC_BRIDGE_POOL_LOCK:
-            if _SYNC_BRIDGE_POOL is None:
-                import concurrent.futures
-
-                _SYNC_BRIDGE_POOL = concurrent.futures.ThreadPoolExecutor(
-                    max_workers=_SYNC_BRIDGE_MAX_WORKERS,
-                    thread_name_prefix="gantry-sync-bridge",
-                )
-    return _SYNC_BRIDGE_POOL
-
-
-def _run_on_bridge_thread(coro: Any) -> Any:
-    """Run ``coro`` in a fresh event loop, marking the thread as the bridge's."""
-    _BRIDGE_THREAD.active = True
-    try:
-        return asyncio.run(coro)
-    finally:
-        _BRIDGE_THREAD.active = False
+def _bridge_loop() -> asyncio.AbstractEventLoop:
+    """Return the shared bridge loop, starting it once."""
+    global _BRIDGE_LOOP
+    if _BRIDGE_LOOP is None:
+        with _BRIDGE_LOOP_LOCK:
+            if _BRIDGE_LOOP is None:
+                loop = asyncio.new_event_loop()
+                threading.Thread(
+                    target=loop.run_forever, name="gantry-sync-bridge", daemon=True
+                ).start()
+                _BRIDGE_LOOP = loop
+    return _BRIDGE_LOOP
 
 
 def _run_coroutine_sync(coro: Any) -> Any:
-    """Run an awaitable to completion from synchronous code, loop-or-not.
+    """Run an awaitable to completion from synchronous code and block for it.
 
-    If no event loop runs on the current thread, use :func:`asyncio.run`.
-    Otherwise (we're inside a running loop — e.g. a framework invoked our sync
-    tool from within its async agent loop), run the coroutine on a bridge
-    worker thread with its own loop and block for the result. This avoids the
-    "coroutine attached to a different loop" / "loop already running" errors
-    that a naive ``asyncio.run`` would raise.
+    The coroutine runs on the shared bridge loop (:func:`_bridge_loop`)
+    whether or not a loop is running on the calling thread, so a framework
+    that calls a sync tool from inside its async agent loop never hits
+    "loop already running", and resources a tool call opens survive across
+    calls. A gantry that is *also* driven directly from another loop switches
+    loops once per direction — an MCP session reconnects on each switch, not
+    on each call.
 
-    A *nested* call — a tool handler that itself calls ``ToolSpec.invoke`` —
-    gets its own throwaway thread rather than a pool slot. Submitting it to the
-    pool would make the occupied worker wait on the pool it is occupying, which
-    deadlocks outright at one worker and can still exhaust a larger pool at
-    depth. Nesting is rare, so paying for a thread there is the right trade.
+    A call made *from* the bridge loop itself (a tool handler that calls
+    ``ToolSpec.invoke``) cannot wait on that loop, so it runs the coroutine on
+    a throwaway thread with its own loop instead.
     """
     try:
-        asyncio.get_running_loop()
+        running: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(coro)
-
-    if getattr(_BRIDGE_THREAD, "active", False):
+        running = None
+    if running is not None and running is _BRIDGE_LOOP:
         result: dict[str, Any] = {}
 
         def _runner() -> None:
             try:
-                result["value"] = _run_on_bridge_thread(coro)
+                result["value"] = asyncio.run(coro)
             except BaseException as exc:  # re-raised on the calling thread
                 result["error"] = exc
 
-        thread = threading.Thread(
-            target=_runner, name="gantry-sync-bridge-nested", daemon=True
-        )
+        thread = threading.Thread(target=_runner, name="gantry-sync-bridge-nested", daemon=True)
         thread.start()
         thread.join()
         if "error" in result:
             raise result["error"]
         return result.get("value")
+    return asyncio.run_coroutine_threadsafe(coro, _bridge_loop()).result()
 
-    return _bridge_pool().submit(_run_on_bridge_thread, coro).result()
+
+async def _maybe_await(value: Any) -> Any:
+    """Await ``value`` when it is awaitable, otherwise return it unchanged."""
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 
 def _coerce_arguments(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -928,6 +934,7 @@ def spec_from_tool(gantry: AgentGantry, tool: ToolDefinition, score: float = 0.0
         score=float(score),
         _gantry=gantry,
         _namespace=tool.namespace,
+        tool=tool,
     )
 
 
@@ -1087,17 +1094,20 @@ def _resolve_pins(
     return pinned
 
 
-def check_query_bounds(*, limit: int, score_threshold: float, owner: str) -> None:
-    """Raise ``ValueError`` if ``limit``/``score_threshold`` fall outside ``ToolQuery``'s bounds.
+class QueryBoundsError(ValueError):
+    """``limit``/``score_threshold`` fall outside ``ToolQuery``'s bounds.
 
-    The selection entry points take these as plain numbers and only build the
-    :class:`~agent_gantry.schema.query.ToolQuery` on their first call, so
-    ``limit=60`` (the schema caps it at 50) surfaced as a raw pydantic error
-    from inside the first turn — or, in ``with_semantic_tools``, was swallowed
-    by the retrieval-failure handler and the model was silently called with
-    no tools on every request. Validating through a throwaway query keeps the
-    accepted range defined in exactly one place; ``owner`` names the API in
-    the message.
+    A configuration error, not a retrieval failure: the per-turn live hooks
+    let it propagate instead of degrading to "no tools this turn".
+    """
+
+
+def check_query_bounds(*, limit: int, score_threshold: float, owner: str) -> None:
+    """Raise :class:`QueryBoundsError` if ``limit``/``score_threshold`` are out of bounds.
+
+    Validating through a throwaway :class:`~agent_gantry.schema.query.ToolQuery`
+    keeps the accepted range defined in exactly one place; ``owner`` names the
+    API in the message.
     """
     try:
         ToolQuery(
@@ -1111,7 +1121,7 @@ def check_query_bounds(*, limit: int, score_threshold: float, owner: str) -> Non
             f"{err['msg']}"
             for err in exc.errors()
         )
-        raise ValueError(f"{owner}: {problems}") from exc
+        raise QueryBoundsError(f"{owner}: {problems}") from exc
 
 
 class GantryToolset:
@@ -1254,25 +1264,10 @@ class BaseFrameworkAdapter:
     """Shared base for native per-framework tool adapters.
 
     Subclasses implement the :meth:`convert` staticmethod (one ``ToolSpec`` →
-    one framework-native tool object). This base supplies the parts every
-    adapter shares — construction and the ``select`` → ``convert`` pipeline —
-    so each concrete adapter only declares ``convert`` plus any
-    framework-specific helpers (agent builders, live retrievers, …).
-
-    Uniform live entry point
-    -------------------------
-    Every adapter's *dynamic* re-selection surface is named differently
-    per framework (``react_agent``, ``toolset``, ``tool_hook``,
-    ``function_provider``, ``agent_builder``, …) because each framework
-    exposes a different native hook. :attr:`live_tier` and :meth:`live`
-    give callers a single, framework-agnostic way to ask "how deep does
-    this adapter's dynamic tier go, and how do I get the live object for
-    it?" without knowing which bespoke method to call. The bespoke methods
-    themselves are never removed or renamed — they remain the documented,
-    framework-idiomatic path; ``live()`` is a thin uniform layer that
-    delegates to one of them. See ``integrations/frameworks/README.md``
-    for the full per-framework table (tier, delegate, return type, where
-    to plug it in).
+    one framework-native tool object) and declare :attr:`live_tier` plus
+    :attr:`_live_delegate`, the bespoke method :meth:`live` forwards to. See
+    ``integrations/frameworks/README.md`` for the per-framework table (tier,
+    delegate, return type, where to plug it in).
     """
 
     def __init__(self, gantry: AgentGantry, *, default_limit: int = DEFAULT_TOOL_LIMIT) -> None:
@@ -1281,8 +1276,14 @@ class BaseFrameworkAdapter:
 
     #: The deepest dynamic re-selection tier this adapter's framework
     #: supports — ``"per-turn"`` or ``"per-call"`` (see :data:`LiveTier`).
-    #: Every concrete subclass MUST set this.
     live_tier: ClassVar[LiveTier]
+
+    #: Name of the bespoke method :meth:`live` delegates to.
+    _live_delegate: ClassVar[str]
+
+    #: ``framework_kwargs`` :meth:`live` requires and passes positionally to
+    #: the delegate, in order (a chat model, an already-built agent, …).
+    _live_required_kwargs: ClassVar[tuple[str, ...]] = ()
 
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
@@ -1293,6 +1294,23 @@ class BaseFrameworkAdapter:
         instance — and :meth:`select` dispatches through ``self.convert``).
         """
         raise NotImplementedError
+
+    def _selection_kwargs(
+        self,
+        limit: int | None,
+        score_threshold: float,
+        namespaces: list[str] | None,
+        required: list[str] | None,
+        always_include: list[str] | None,
+    ) -> dict[str, Any]:
+        """The selection keywords every live/bespoke method forwards, with the default limit applied."""
+        return {
+            "limit": self._default_limit if limit is None else limit,
+            "score_threshold": score_threshold,
+            "namespaces": namespaces,
+            "required": required,
+            "always_include": always_include,
+        }
 
     def live(
         self,
@@ -1306,28 +1324,30 @@ class BaseFrameworkAdapter:
     ) -> Any:
         """Return this framework's live/dynamic tool object (uniform entry point).
 
-        Every adapter's ``live()`` accepts the same five explicit keywords —
-        ``limit``, ``score_threshold``, ``namespaces``, ``required``,
-        ``always_include`` — plus ``**framework_kwargs`` forwarded verbatim to
-        whichever framework-idiomatic bespoke method it delegates to
-        (``react_agent``, ``toolset``, ``tool_hook``, ``agent_builder``, …).
-        Some frameworks' native hooks are inherently tied to an external
-        object the caller must supply (a chat model, an already-built agent,
-        a kernel); those adapters require it as a named ``framework_kwargs``
-        entry and raise a ``TypeError`` if it's missing — see the concrete
-        override's docstring for exactly what is returned, which
-        ``framework_kwargs`` are required, and where to plug the result in.
-        :attr:`live_tier` tells you how deep the re-selection goes before you
-        call this. ``required``/``always_include`` follow
-        :meth:`GantryToolset.select`'s semantics (pinned tools, not counted
-        against ``limit``; see that method for the full contract) and are
-        re-applied on every dynamic re-selection round, not just the first.
-
-        Subclasses MUST override this. The bespoke method(s) it wraps remain
-        the documented, framework-native path and are never removed —
-        ``live()`` is only a uniform layer on top of them.
+        Forwards the five selection keywords to the adapter's bespoke method
+        (:attr:`_live_delegate`: ``react_agent``, ``toolset``, ``tool_hook``,
+        ``agent_builder``, …) together with ``**framework_kwargs``. Frameworks
+        whose hook is bound to an external object (a chat model, an agent)
+        require it as a named entry of ``framework_kwargs`` and raise
+        ``TypeError`` when it is missing. ``required``/``always_include``
+        follow :meth:`GantryToolset.select`'s pinning contract and are
+        re-applied on every re-selection round. :attr:`live_tier` says how
+        deep the re-selection goes.
         """
-        raise NotImplementedError
+        kwargs = self._selection_kwargs(
+            limit, score_threshold, namespaces, required, always_include
+        )
+        check_query_bounds(
+            limit=kwargs["limit"],
+            score_threshold=score_threshold,
+            owner=f"{type(self).__name__}.live",
+        )
+        positional = []
+        for name in self._live_required_kwargs:
+            if name not in framework_kwargs:
+                raise TypeError(f"{type(self).__name__}.live() requires {name}=...")
+            positional.append(framework_kwargs.pop(name))
+        return getattr(self, self._live_delegate)(*positional, **kwargs, **framework_kwargs)
 
     async def select(
         self,
@@ -1342,22 +1362,17 @@ class BaseFrameworkAdapter:
     ) -> list[Any]:
         """Select tools for ``query`` as the framework's native tool objects.
 
-        ``limit`` defaults to the adapter's ``default_limit``. ``score_threshold``,
-        ``namespaces``, ``tools_already_used``, ``required``, and
-        ``always_include`` are explicit, first-class keyword arguments — not
-        buried in ``**kwargs`` — and are forwarded verbatim to
-        :meth:`GantryToolset.select` (see its docstring for the
-        ``required``/``always_include`` pinning contract). Each call still
-        routes through ``gantry.execute`` so retries, timeouts, circuit
-        breakers, and the security policy apply.
+        ``limit`` defaults to the adapter's ``default_limit``; the other
+        keywords are forwarded verbatim to :meth:`GantryToolset.select` (see
+        its docstring for the ``required``/``always_include`` pinning
+        contract). Each call still routes through ``gantry.execute`` so
+        retries, timeouts, circuit breakers, and the security policy apply.
         """
         specs = await GantryToolset(self._gantry).select(
             query,
-            limit=self._default_limit if limit is None else limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
             tools_already_used=tools_already_used,
-            required=required,
-            always_include=always_include,
+            **self._selection_kwargs(
+                limit, score_threshold, namespaces, required, always_include
+            ),
         )
         return [self.convert(s) for s in specs]

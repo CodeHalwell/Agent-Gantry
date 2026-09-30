@@ -20,17 +20,9 @@ of Google ADK's ``before_model_callback``.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from agent_gantry.integrations.frameworks.base import (
-    DEFAULT_TOOL_LIMIT,
-    BaseFrameworkAdapter,
-    GantryToolset,
-    ToolSpec,
-)
-
-if TYPE_CHECKING:
-    from agent_gantry.core.gantry import AgentGantry
+from agent_gantry.integrations.frameworks.base import BaseFrameworkAdapter, ToolSpec
 
 
 def _spec_to_strands(spec: ToolSpec) -> Any:
@@ -44,7 +36,9 @@ def _spec_to_strands(spec: ToolSpec) -> Any:
     supported directly by ``strands.tool()`` — so Gantry's own metadata,
     including per-parameter descriptions, wins over whatever the decorator
     would otherwise infer from the wrapper's docstring and its own
-    Pydantic-derived schema.
+    Pydantic-derived schema. The advertised schema uses the signature's
+    parameter aliases, since Strands validates the model's input against a
+    model built from that signature.
 
     The ``strands`` import happens here, lazily, so callers without Strands
     Agents installed only hit the error when they actually export a tool.
@@ -64,20 +58,8 @@ def _spec_to_strands(spec: ToolSpec) -> Any:
     return strands_tool(
         name=spec.name,
         description=spec.description,
-        inputSchema={"json": spec.parameters},
+        inputSchema={"json": spec.aliased_parameters()},
     )(async_fn)
-
-
-async def _for_strands(
-    gantry: AgentGantry,
-    query: str,
-    *,
-    limit: int = DEFAULT_TOOL_LIMIT,
-    **select_kwargs: Any,
-) -> list[Any]:
-    """Select tools for ``query`` and return them as Strands ``DecoratedFunctionTool``s."""
-    specs = await GantryToolset(gantry).select(query, limit=limit, **select_kwargs)
-    return [_spec_to_strands(s) for s in specs]
 
 
 class StrandsAdapter(BaseFrameworkAdapter):
@@ -101,42 +83,18 @@ class StrandsAdapter(BaseFrameworkAdapter):
 
         tools = await StrandsAdapter(gantry).select("email the quarterly report", limit=3)
         agent = Agent(tools=tools)
+
+    :meth:`live` returns the :meth:`tool_hook` — plug it into
+    ``Agent(tools=[], hooks=[<result>])`` or ``agent.add_hook(<result>)``.
     """
 
     live_tier = "per-turn"
+    _live_delegate = "tool_hook"
 
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a Strands ``DecoratedFunctionTool``."""
         return _spec_to_strands(spec)
-
-    def live(
-        self,
-        *,
-        limit: int | None = None,
-        score_threshold: float = 0.0,
-        namespaces: list[str] | None = None,
-        required: list[str] | None = None,
-        always_include: list[str] | None = None,
-        **framework_kwargs: Any,
-    ) -> Any:
-        """Per-turn uniform entry point: delegates to :meth:`tool_hook`.
-
-        Returns a ``GantryStrandsToolHook`` (a structural ``HookProvider``)
-        — plug it into ``Agent(tools=[], hooks=[<result>])`` or
-        ``agent.add_hook(<result>)``. ``required``/``always_include`` are
-        re-applied on every model call (see
-        :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select`).
-        No other ``framework_kwargs`` are required.
-        """
-        return self.tool_hook(
-            limit=limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
-            **framework_kwargs,
-        )
 
     def tool_hook(
         self,
@@ -161,11 +119,7 @@ class StrandsAdapter(BaseFrameworkAdapter):
 
         return GantryStrandsToolHook(
             self._gantry,
-            limit=self._default_limit if limit is None else limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
+            **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
         )
 
     def agent(
@@ -191,10 +145,6 @@ class StrandsAdapter(BaseFrameworkAdapter):
 
         return _gantry_strands_agent(
             self._gantry,
-            limit=self._default_limit if limit is None else limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
+            **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
             **agent_kwargs,
         )

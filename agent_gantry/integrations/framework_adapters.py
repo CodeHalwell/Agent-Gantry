@@ -122,4 +122,4 @@ async def fetch_framework_tools(
 
     # Every other supported framework accepts OpenAI-style tool/function
     # schemas today, so default to that shape.
-    return result.to_openai_tools()
+    return result.to_dialect("openai")

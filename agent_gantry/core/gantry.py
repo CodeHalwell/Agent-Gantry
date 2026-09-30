@@ -202,8 +202,7 @@ class AgentGantry:
                 vector_store=self._vector_store,
                 embedder=self._embedder,
                 registry=self._mcp_registry,
-                router=self._mcp_router,
-                get_embedder_id=self._sync_manager.get_embedder_id,
+                sync_manager=self._sync_manager,
             )
         except Exception:
             logger.warning("MCP components failed to initialize; MCP disabled.", exc_info=True)

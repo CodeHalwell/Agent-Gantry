@@ -4,8 +4,13 @@ Tests for tool definition models.
 
 from __future__ import annotations
 
-import pytest
+import logging
+from typing import Annotated, NewType
 
+import pytest
+from pydantic import Field
+
+from agent_gantry.schema.introspection import build_parameters_schema
 from agent_gantry.schema.tool import (
     SchemaDialect,
     ToolCapability,
@@ -62,34 +67,6 @@ class TestToolDefinition:
             parameters_schema={"type": "object", "properties": {}},
         )
         assert tool.qualified_name == "my_namespace.my_tool:1.2.3"
-
-    def test_content_hash_consistency(self) -> None:
-        """Test that content hash is consistent."""
-        tool1 = ToolDefinition(
-            name="test_tool",
-            description="A test tool description.",
-            parameters_schema={"type": "object", "properties": {}},
-        )
-        tool2 = ToolDefinition(
-            name="test_tool",
-            description="A test tool description.",
-            parameters_schema={"type": "object", "properties": {}},
-        )
-        assert tool1.content_hash == tool2.content_hash
-
-    def test_content_hash_changes_on_modification(self) -> None:
-        """Test that content hash changes when tool is modified."""
-        tool1 = ToolDefinition(
-            name="test_tool",
-            description="Original description for the test.",
-            parameters_schema={"type": "object", "properties": {}},
-        )
-        tool2 = ToolDefinition(
-            name="test_tool",
-            description="Modified description for the test.",
-            parameters_schema={"type": "object", "properties": {}},
-        )
-        assert tool1.content_hash != tool2.content_hash
 
     def test_reserved_name_validation(self) -> None:
         """Test that reserved names are rejected."""
@@ -205,3 +182,53 @@ class TestToolHealth:
         assert health.success_rate == 1.0
         assert health.total_calls == 0
         assert health.circuit_breaker_open is False
+
+
+UserId = NewType("UserId", int)
+
+
+class TestBuildParametersSchema:
+    """Annotation shapes the manual type mapping used to lose."""
+
+    def test_annotated_constraints_are_emitted(self) -> None:
+        def f(
+            a: Annotated[int, Field(ge=1, le=10, description="bounded")],
+            b: Annotated[str, Field(min_length=2)] = "ab",
+        ) -> None: ...
+
+        schema = build_parameters_schema(f)
+        assert schema["properties"]["a"] == {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "bounded",
+        }
+        assert schema["properties"]["b"] == {"type": "string", "minLength": 2, "default": "ab"}
+        assert schema["required"] == ["a"]
+
+    def test_optional_annotated_constraint_stays_bare(self) -> None:
+        def f(a: Annotated[int | None, Field(ge=1)] = None) -> None: ...
+
+        assert build_parameters_schema(f)["properties"]["a"] == {"type": "integer", "minimum": 1}
+
+    def test_one_unresolvable_forward_reference_degrades_only_itself(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        def f(a: NotDefinedAnywhere, b: list[str], c: int | None = None) -> None: ...  # noqa: F821
+
+        with caplog.at_level(logging.WARNING):
+            schema = build_parameters_schema(f)
+        assert schema["properties"]["a"] == {"type": "string"}
+        assert schema["properties"]["b"] == {"type": "array", "items": {"type": "string"}}
+        assert schema["properties"]["c"] == {"type": "integer"}
+        assert "parameter 'a'" in caplog.text
+        assert "parameter 'b'" not in caplog.text
+
+    def test_newtype_and_unannotated_defaults(self) -> None:
+        def f(uid: UserId, count=2, label="x", flag=True) -> None: ...
+
+        props = build_parameters_schema(f)["properties"]
+        assert props["uid"] == {"type": "integer"}
+        assert props["count"] == {"type": "integer", "default": 2}
+        assert props["label"] == {"type": "string", "default": "x"}
+        assert props["flag"] == {"type": "boolean", "default": True}

@@ -53,13 +53,6 @@ class TestSkillSchema:
         """Test qualified name generation."""
         assert sample_skill.qualified_name == "default.api_pagination"
 
-    def test_skill_content_hash(self, sample_skill: Skill) -> None:
-        """Test content hash is deterministic."""
-        hash1 = sample_skill.content_hash
-        hash2 = sample_skill.content_hash
-        assert hash1 == hash2
-        assert len(hash1) == 16
-
     def test_skill_to_prompt_text(self, sample_skill: Skill) -> None:
         """Test formatting for system prompt."""
         text = sample_skill.to_prompt_text()

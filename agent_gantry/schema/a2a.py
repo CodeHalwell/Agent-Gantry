@@ -23,8 +23,12 @@ class AgentSkill(BaseModel):
     id: str = Field(..., description="Unique identifier for the skill")
     name: str = Field(..., description="Human-readable name")
     description: str = Field(..., description="Detailed description of what the skill does")
-    input_modes: list[str] = Field(default=["text"], description="Supported input types")
-    output_modes: list[str] = Field(default=["text"], description="Supported output types")
+    input_modes: list[str] = Field(
+        default_factory=lambda: ["text"], description="Supported input types"
+    )
+    output_modes: list[str] = Field(
+        default_factory=lambda: ["text"], description="Supported output types"
+    )
 
     model_config = ConfigDict(extra="ignore", validate_assignment=True)
 

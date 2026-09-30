@@ -251,7 +251,7 @@ def _build_middleware_classes() -> tuple[type, type]:
             name = getattr(
                 context.function, "name", getattr(context.function, "__name__", "?")
             )
-            telemetry = getattr(self._gantry, "_telemetry", None)
+            telemetry = getattr(self._gantry, "telemetry", None)
             if telemetry is None:
                 await call_next()
                 return

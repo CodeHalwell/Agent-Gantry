@@ -10,18 +10,16 @@ Public entry point: :class:`LangChainAdapter`.
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from agent_gantry.integrations.frameworks.base import (
-    DEFAULT_TOOL_LIMIT,
-    BaseFrameworkAdapter,
-    GantryToolset,
-    ToolSpec,
+from agent_gantry.integrations.frameworks.base import BaseFrameworkAdapter, ToolSpec
+
+_INSTALL_HINT = (
+    "LangChain support requires `langchain-core`. "
+    "Install it with `pip install langchain-core` (or `uv add langchain-core`)."
 )
-
-if TYPE_CHECKING:
-    from agent_gantry.core.gantry import AgentGantry
 
 
 def _spec_to_langchain(spec: ToolSpec) -> Any:
@@ -33,10 +31,7 @@ def _spec_to_langchain(spec: ToolSpec) -> Any:
     try:
         from langchain_core.tools import StructuredTool
     except ImportError as exc:  # pragma: no cover - exercised via stub
-        raise ImportError(
-            "LangChain support requires `langchain-core`. "
-            "Install it with `pip install langchain-core` (or `uv add langchain-core`)."
-        ) from exc
+        raise ImportError(_INSTALL_HINT) from exc
 
     def _sync(**kwargs: Any) -> Any:
         return spec.invoke(**kwargs)
@@ -48,18 +43,6 @@ def _spec_to_langchain(spec: ToolSpec) -> Any:
         description=spec.description,
         args_schema=spec.parameters,
     )
-
-
-async def _for_langchain(
-    gantry: AgentGantry,
-    query: str,
-    *,
-    limit: int = DEFAULT_TOOL_LIMIT,
-    **select_kwargs: Any,
-) -> list[Any]:
-    """Select tools for ``query`` and return them as LangChain ``StructuredTool``s."""
-    specs = await GantryToolset(gantry).select(query, limit=limit, **select_kwargs)
-    return [_spec_to_langchain(s) for s in specs]
 
 
 class LangChainAdapter(BaseFrameworkAdapter):
@@ -75,54 +58,22 @@ class LangChainAdapter(BaseFrameworkAdapter):
         adapter = LangChainAdapter(gantry)
         tools = await adapter.select("email the quarterly report", limit=3)
         llm = ChatOpenAI(model="gpt-5.5").bind_tools(tools)
+
+    LangChain's ``AgentExecutor`` / ``.bind_tools()`` fixes its tool list at
+    construction and has no mid-run hook (that lives one layer up, in
+    :class:`~agent_gantry.langgraph.LangGraphAdapter`), so :meth:`live` returns
+    a bound async ``query -> list[StructuredTool]``: re-run it for each new
+    top-level call's query and rebind the result.
     """
 
     live_tier = "per-call"
+    _live_delegate = "_bound_select"
 
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a LangChain ``StructuredTool``."""
         return _spec_to_langchain(spec)
 
-    def live(
-        self,
-        *,
-        limit: int | None = None,
-        score_threshold: float = 0.0,
-        namespaces: list[str] | None = None,
-        required: list[str] | None = None,
-        always_include: list[str] | None = None,
-        **framework_kwargs: Any,
-    ) -> Callable[[str], Awaitable[list[Any]]]:
-        """Per-call uniform entry point: a bound alias of :meth:`select`.
-
-        LangChain's ``AgentExecutor`` / ``.bind_tools()`` fixes its tool list
-        at construction with no framework-native per-turn or per-call hook of
-        its own — that hook lives one layer up, in :class:`LangGraphAdapter`
-        (``live_tier`` = ``"per-turn"``), which plugs Gantry into
-        ``langchain.agents.create_agent`` middleware. Without LangGraph, the
-        deepest re-selection LangChain permits is: re-run selection for each
-        new top-level call's query and rebind the result to a fresh
-        ``AgentExecutor`` / ``.bind_tools()`` call.
-
-        Returns a bound async callable ``query -> list[StructuredTool]`` —
-        call it with the new call's query before each such rebuild; it *is*
-        :meth:`select`, aliased so every adapter's ``live()`` has the same
-        uniform ``limit``/``score_threshold``/``namespaces``/``required``/
-        ``always_include`` signature. ``framework_kwargs`` are forwarded to
-        :meth:`select` verbatim (e.g. ``tools_already_used``).
-        """
-        eff_limit = self._default_limit if limit is None else limit
-
-        async def _select(query: str) -> list[Any]:
-            return await self.select(
-                query,
-                limit=eff_limit,
-                score_threshold=score_threshold,
-                namespaces=namespaces,
-                required=required,
-                always_include=always_include,
-                **framework_kwargs,
-            )
-
-        return _select
+    def _bound_select(self, **select_kwargs: Any) -> Callable[[str], Awaitable[list[Any]]]:
+        """The per-call live object: :meth:`select` bound to the selection keywords."""
+        return functools.partial(self.select, **select_kwargs)

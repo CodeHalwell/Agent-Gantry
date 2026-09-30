@@ -6,10 +6,12 @@ Exposes AgentGantry as an A2A agent with tool discovery and execution skills.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.schema.a2a import AgentCard, AgentSkill, TaskResponse
+from agent_gantry.schema.execution import ToolCall
 
 if TYPE_CHECKING:
     from agent_gantry import AgentGantry
@@ -66,6 +68,27 @@ def generate_agent_card(gantry: AgentGantry, base_url: str) -> AgentCard:
     )
 
 
+def _invalid_params(request_id: Any, message: str) -> dict[str, Any]:
+    return {"jsonrpc": "2.0", "error": {"code": -32602, "message": message}, "id": request_id}
+
+
+def _first_text(messages: Any) -> str:
+    """The first non-empty text part in ``messages``; ``ValueError`` on a malformed shape."""
+    if not isinstance(messages, list):
+        raise ValueError("'messages' must be a list")
+    for message in messages:
+        parts = message.get("parts", []) if isinstance(message, dict) else None
+        if not isinstance(parts, list):
+            raise ValueError("each message must be an object with a 'parts' list")
+        for part in parts:
+            if not isinstance(part, dict):
+                raise ValueError("each part must be an object")
+            text = part.get("text")
+            if part.get("type") == "text" and isinstance(text, str) and text:
+                return text
+    raise ValueError("no text part found; expected at least one message with a text part")
+
+
 def create_a2a_server(gantry: AgentGantry, base_url: str = "http://localhost:8080") -> Any:
     """
     Create a FastAPI application serving the A2A protocol.
@@ -103,110 +126,55 @@ def create_a2a_server(gantry: AgentGantry, base_url: str = "http://localhost:808
 
     @app.post("/tasks/send")
     async def send_task(request: dict[str, Any]) -> dict[str, Any]:
-        """
-        Handle JSON-RPC task requests.
+        """Handle a JSON-RPC 2.0 ``tasks/send`` request."""
+        request_id = request.get("id")
+        if request.get("jsonrpc") != "2.0":
+            raise HTTPException(status_code=400, detail="Invalid JSON-RPC version")
+        if request.get("method") != "tasks/send":
+            raise HTTPException(status_code=400, detail="Invalid method")
 
-        Expects JSON-RPC 2.0 format with method="tasks/send".
-        """
+        params = request.get("params")
+        if not isinstance(params, dict):
+            return _invalid_params(request_id, "'params' must be an object")
+        skill_id = params.get("skill_id")
+        if not skill_id:
+            return _invalid_params(request_id, "Missing skill_id")
         try:
-            # Validate JSON-RPC structure
-            if request.get("jsonrpc") != "2.0":
-                raise HTTPException(status_code=400, detail="Invalid JSON-RPC version")
+            query_text = _first_text(params.get("messages", []))
+        except ValueError as exc:
+            return _invalid_params(request_id, str(exc))
 
-            if request.get("method") != "tasks/send":
-                raise HTTPException(status_code=400, detail="Invalid method")
-
-            params = request.get("params", {})
-            skill_id = params.get("skill_id")
-            messages = params.get("messages", [])
-
-            if not skill_id:
-                raise HTTPException(status_code=400, detail="Missing skill_id")
-
-            # Extract text from messages
-            query_text = ""
-            for message in messages:
-                for part in message.get("parts", []):
-                    if part.get("type") == "text" and part.get("text"):
-                        query_text = part["text"]
-                        break
-                if query_text:
-                    break
-
-            if not query_text:
-                raise HTTPException(
-                    status_code=400,
-                    detail="No text content found in message parts. Expected at least one message with a text part.",
-                )
-
-            # Route to appropriate skill
+        try:
             if skill_id == "tool_discovery":
-                # Use semantic retrieval to find relevant tools
                 result = await handle_tool_discovery(gantry, query_text)
             elif skill_id == "tool_execution":
-                # Parse and execute tool
                 result = await handle_tool_execution(gantry, query_text)
             else:
                 raise HTTPException(status_code=404, detail=f"Unknown skill: {skill_id}")
-
-            # Return JSON-RPC response
-            return {
-                "jsonrpc": "2.0",
-                "result": TaskResponse(
-                    status="success",
-                    result=result,
-                ).model_dump(),
-                "id": request.get("id"),
-            }
-
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"Error handling A2A task: {e}")
             return {
                 "jsonrpc": "2.0",
-                "error": {
-                    "code": -32603,
-                    "message": "Internal error",
-                    "data": str(e),
-                },
-                "id": request.get("id"),
+                "error": {"code": -32603, "message": "Internal error", "data": str(e)},
+                "id": request_id,
             }
+
+        # A failed execution is a completed task whose status says so; the
+        # inner status and error travel up into the envelope.
+        response = TaskResponse(
+            status=result.get("status", "success"), result=result, error=result.get("error")
+        )
+        return {"jsonrpc": "2.0", "result": response.model_dump(), "id": request_id}
 
     return app
 
 
 async def handle_tool_discovery(gantry: AgentGantry, query: str) -> dict[str, Any]:
-    """
-    Handle tool_discovery skill.
-
-    Args:
-        gantry: AgentGantry instance
-        query: Search query
-
-    Returns:
-        Dictionary with discovered tools (serialized as dicts)
-    """
-    # Retrieve relevant tools using semantic search
-    tools_raw = await gantry.retrieve_tools(query, limit=5)
-
-    # Convert to serializable format (ensure all are dicts)
-    tools = [
-        tool
-        if isinstance(tool, dict)
-        else tool.model_dump()
-        if hasattr(tool, "model_dump")
-        else dict(tool)
-        if hasattr(tool, "__dict__")
-        else tool
-        for tool in tools_raw
-    ]
-
-    return {
-        "query": query,
-        "tools_found": len(tools),
-        "tools": tools,
-    }
+    """Semantic search for tools relevant to ``query``, as OpenAI-style schemas."""
+    tools = await gantry.retrieve_tools(query, limit=5)
+    return {"query": query, "tools_found": len(tools), "tools": tools}
 
 
 async def handle_tool_execution(gantry: AgentGantry, query: str) -> dict[str, Any]:
@@ -215,27 +183,18 @@ async def handle_tool_execution(gantry: AgentGantry, query: str) -> dict[str, An
 
     Args:
         gantry: AgentGantry instance
-        query: Query containing tool name and arguments (parsed from text)
+        query: JSON text carrying ``tool_name`` and ``arguments``
 
     Returns:
         Dictionary with execution result
     """
-    import json
-
-    from agent_gantry.schema.execution import ToolCall
-
     try:
-        # Try to parse query as JSON
         data = json.loads(query)
 
         if not isinstance(data, dict):
             raise ValueError("Input must be a JSON object")
 
-        tool_name = data.get("tool_name")
-        if not tool_name:
-            # Fallback to older format or name if present
-            tool_name = data.get("name")
-
+        tool_name = data.get("tool_name") or data.get("name")
         if not tool_name:
             raise ValueError("Missing 'tool_name' in JSON input")
 
@@ -243,12 +202,7 @@ async def handle_tool_execution(gantry: AgentGantry, query: str) -> dict[str, An
         if not isinstance(arguments, dict):
             raise ValueError("'arguments' must be a JSON object")
 
-        call = ToolCall(
-            tool_name=tool_name,
-            arguments=arguments
-        )
-
-        result = await gantry.execute(call)
+        result = await gantry.execute(ToolCall(tool_name=tool_name, arguments=arguments))
 
         return {
             "status": result.status.value,
@@ -259,9 +213,6 @@ async def handle_tool_execution(gantry: AgentGantry, query: str) -> dict[str, An
         }
 
     except json.JSONDecodeError:
-        # Simple parsing fallback: expect format like "tool_name with arg1=value1, arg2=value2"
-        # Since this is tricky to parse safely and correctly for all cases,
-        # we'll return an error indicating structured JSON is required.
         return {
             "status": "error",
             "error": "Invalid input format. Expected JSON object with 'tool_name' and 'arguments'.",
@@ -277,4 +228,3 @@ async def handle_tool_execution(gantry: AgentGantry, query: str) -> dict[str, An
             "error": str(e),
             "query": query,
         }
-

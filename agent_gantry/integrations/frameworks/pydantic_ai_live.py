@@ -1,11 +1,9 @@
 """Deep, per-turn dynamic-tool provider for Pydantic AI (pydantic-ai).
 
-This is the *live* Pydantic AI integration — the deep counterpart to the
-schema/wrapping helpers in
-:mod:`agent_gantry.integrations.frameworks.pydantic_ai`
-(``_for_pydantic_ai`` / ``_spec_to_pydantic_ai``). Where ``_for_pydantic_ai``
-selects a tool slice **once** and hands Pydantic AI a static list of ``Tool``
-objects, this module plugs Gantry directly into Pydantic AI's native
+This is the *live* Pydantic AI integration — the deep counterpart to
+:meth:`~agent_gantry.integrations.frameworks.pydantic_ai.PydanticAIAdapter.select`,
+which selects a tool slice **once** and hands Pydantic AI a static list of
+``Tool`` objects. This module plugs Gantry directly into Pydantic AI's native
 dynamic-tool hook so the tool set is re-selected from the registry on **every
 run/step**.
 
@@ -18,10 +16,10 @@ overrides those: ``get_tools`` derives the current query from the
 a fresh Gantry selection, and returns a dict of
 :class:`~pydantic_ai.toolsets.abstract.ToolsetTool` keyed by tool name — each
 tool's ``ToolDefinition.parameters_json_schema`` set from the Gantry tool's JSON
-schema; ``call_tool`` resolves the matching
-:class:`~agent_gantry.integrations.frameworks.base.ToolSpec` and routes
-execution through ``gantry.execute`` (preserving retries, timeouts, circuit
-breakers and the security policy).
+schema and the selected :class:`~agent_gantry.integrations.frameworks.base.ToolSpec`
+attached as ``gantry_spec``; ``call_tool`` routes that spec's execution through
+``gantry.execute`` (preserving retries, timeouts, circuit breakers and the
+security policy).
 
 The per-turn query is derived from the run context, so the tools an agent sees
 change run-to-run as the conversation focus shifts — no manual ``set_query``
@@ -37,10 +35,16 @@ The ``pydantic_ai`` import is lazy (only inside the class/factory), so
 
 from __future__ import annotations
 
+import functools
 import logging
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT, ToolSpec
+from agent_gantry.integrations.frameworks.base import (
+    DEFAULT_TOOL_LIMIT,
+    QueryBoundsError,
+    ToolSpec,
+    check_query_bounds,
+)
 from agent_gantry.integrations.frameworks.base import GantryToolset as _BaseToolset
 from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
 from agent_gantry.query import latest_activity
@@ -137,13 +141,16 @@ def _content_text(content: Any) -> str:
 
 
 def _build_toolset_class() -> type:
-    """Build the ``GantryToolset`` subclass against the installed toolset base.
+    """The ``GantryToolset`` subclass of the installed ``AbstractToolset``.
 
     The base class only exists once ``pydantic_ai`` is importable, so the
-    concrete subclass is constructed lazily on first use and cached. This keeps
-    ``import agent_gantry`` dependency-free while still yielding a real
-    ``AbstractToolset`` subclass that an ``Agent`` accepts.
+    subclass is built on first use and cached per base class.
     """
+    return _toolset_class(_require_pydantic_ai()[0])
+
+
+@functools.cache
+def _toolset_class(abstract_toolset: type) -> type:
     AbstractToolset, ToolsetTool, ToolDefinition, (SchemaValidator, core_schema) = (  # noqa: N806
         _require_pydantic_ai()
     )
@@ -173,6 +180,7 @@ def _build_toolset_class() -> type:
             required: list[str] | None = None,
             always_include: list[str] | None = None,
         ) -> None:
+            check_query_bounds(limit=limit, score_threshold=score_threshold, owner="GantryToolset")
             self._toolset = _BaseToolset(gantry)
             self._limit = limit
             self._score_threshold = score_threshold
@@ -183,9 +191,6 @@ def _build_toolset_class() -> type:
             # full RunContext (tests, manual selection). When set it takes
             # precedence over the context-derived query.
             self._query: str | None = None
-            # Specs from the most recent ``get_tools`` selection, keyed by the
-            # tool name the model calls. ``call_tool`` resolves against this.
-            self._selected: dict[str, ToolSpec] = {}
 
         # -- identity (required abstract member) ----------------------------- #
         @property
@@ -223,14 +228,14 @@ def _build_toolset_class() -> type:
 
             Called by the agent on every run/step. The query is derived from
             ``ctx`` (latest user prompt / messages) unless an explicit override
-            was set via :meth:`set_query`. The freshly selected specs are cached
-            so :meth:`call_tool` can resolve and invoke them.
+            was set via :meth:`set_query`. Each returned ``ToolsetTool`` carries
+            its :class:`ToolSpec` as ``gantry_spec`` for :meth:`call_tool`, so
+            concurrent runs sharing this toolset never resolve against each
+            other's selection.
 
             Never raises on selection failure — a broken retrieval must not
-            break the agent's run. ``self._selected`` persists across runs
-            (``call_tool`` resolves against it), so on failure this logs a
-            WARNING and leaves the previous run's selection in place rather
-            than wiping it — see "Per-turn selection-failure policy" in
+            break the agent's run; it logs a WARNING and returns no tools for
+            this step — see "Per-turn selection-failure policy" in
             ``integrations/frameworks/README.md``.
             """
             query = self._query if self._query is not None else _query_from_ctx(ctx)
@@ -243,18 +248,15 @@ def _build_toolset_class() -> type:
                     required=self._required,
                     always_include=self._always_include,
                 )
-            except MissingRequiredToolError:
+            except (MissingRequiredToolError, QueryBoundsError):
                 raise
             except Exception:
                 logger.warning(
                     "GantryToolset.get_tools: semantic retrieval failed; "
-                    "continuing with the previous run's tools.",
+                    "continuing with no tools this step.",
                     exc_info=True,
                 )
-                return {
-                    name: self._spec_to_tool(ctx, spec) for name, spec in self._selected.items()
-                }
-            self._selected = {spec.name: spec for spec in specs}
+                return {}
             return {spec.name: self._spec_to_tool(ctx, spec) for spec in specs}
 
         def _spec_to_tool(self, ctx: Any, spec: ToolSpec) -> Any:
@@ -268,12 +270,14 @@ def _build_toolset_class() -> type:
                 description=spec.description,
                 parameters_json_schema=spec.parameters or {"type": "object", "properties": {}},
             )
-            return ToolsetTool(
+            tool = ToolsetTool(
                 toolset=self,
                 tool_def=tool_def,
                 max_retries=getattr(ctx, "max_retries", 1) or 1,
                 args_validator=_passthrough_validator,
             )
+            tool.gantry_spec = spec
+            return tool
 
         # -- execution ------------------------------------------------------- #
         async def call_tool(
@@ -285,30 +289,18 @@ def _build_toolset_class() -> type:
         ) -> Any:
             """Execute a selected tool through Gantry and return its result.
 
-            Resolves ``name`` against the specs cached by the last
-            :meth:`get_tools` call. If the tool was never selected (e.g. a
-            direct ``call_tool`` with no prior ``get_tools``), a fresh selection
-            for the current context is run first.
+            Uses the spec attached to ``tool`` by :meth:`get_tools`. Without one
+            (a direct ``call_tool`` with no prior ``get_tools``), a fresh
+            selection for the current context is run first.
             """
-            spec = self._selected.get(name)
+            spec = getattr(tool, "gantry_spec", None)
             if spec is None:
-                await self.get_tools(ctx)
-                spec = self._selected.get(name)
+                spec = getattr((await self.get_tools(ctx)).get(name), "gantry_spec", None)
             if spec is None:
                 raise KeyError(f"Tool {name!r} is not available in this toolset.")
             return await spec.ainvoke(**(dict(tool_args) if tool_args else {}))
 
     return GantryToolset
-
-
-_GANTRY_TOOLSET_CLASS: type | None = None
-
-
-def _get_class() -> type:
-    global _GANTRY_TOOLSET_CLASS
-    if _GANTRY_TOOLSET_CLASS is None:
-        _GANTRY_TOOLSET_CLASS = _build_toolset_class()
-    return _GANTRY_TOOLSET_CLASS
 
 
 def _gantry_toolset(
@@ -330,8 +322,7 @@ def _gantry_toolset(
     Raises:
         ImportError: If ``pydantic-ai`` is not installed.
     """
-    cls = _get_class()
-    return cls(
+    return _build_toolset_class()(
         gantry,
         limit=limit,
         score_threshold=score_threshold,
@@ -349,5 +340,5 @@ def __getattr__(name: str) -> Any:
     ``isinstance`` checks); the public entry point is ``PydanticAIAdapter.toolset(...)``.
     """
     if name == "GantryToolset":
-        return _get_class()
+        return _build_toolset_class()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

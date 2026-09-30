@@ -14,7 +14,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from agent_gantry import AgentGantry
-from agent_gantry.cli.main import build_gantry, main
+from agent_gantry.cli.main import build_gantry_async, main
+
+
+def build_gantry(modules: list[str] | None, **kwargs: Any) -> AgentGantry:
+    """Build on a throwaway loop, as the removed synchronous CLI helper did."""
+    return asyncio.run(build_gantry_async(modules, **kwargs))
 
 
 def test_single_module_uses_the_instance_itself() -> None:
@@ -221,21 +226,6 @@ def test_serve_mcp_advertises_the_endpoint_it_will_serve(
     # the raw argument gave the unusable ``http://127.0.0.1:8000custom``.
     assert "http://127.0.0.1:8000/custom" in _serve("--transport", "http", "--path", "custom")
     assert "http://127.0.0.1:8000/custom" in _serve("--transport", "sse", "--path", "custom/")
-
-
-def test_the_sync_builder_refuses_to_persist(tmp_path: Path) -> None:
-    """``build_gantry`` initialises inside an ``asyncio.run`` it then closes,
-    so persisting there would hand back a loop-bound backend (a pgvector pool)
-    holding a closed loop, to fail on first use in the caller's own."""
-    config = tmp_path / "gantry.yaml"
-    config.write_text("auto_sync: false\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="build_gantry_async"):
-        build_gantry(
-            ["tests.test_modules.module_a"], config=str(config), persist=True
-        )
-    # the read-only default still works
-    gantry = build_gantry(["tests.test_modules.module_a"], config=str(config))
-    assert gantry.tool_count == 2
 
 
 def test_a_duplicate_under_a_different_attribute_is_still_caught(

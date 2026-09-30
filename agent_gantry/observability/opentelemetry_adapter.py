@@ -1,13 +1,15 @@
 """
-OpenTelemetry-compatible telemetry adapters.
+In-memory telemetry adapters.
 
-These adapters provide tracing spans and in-memory metrics suitable for tests
-without requiring external collectors.
+Both adapters record spans and counters on the instance and export nothing:
+``otlp_endpoint`` and ``prometheus_port`` are stored, not served. Suitable for
+tests and for reading metrics out of a process, not as a collector integration.
 """
 
 from __future__ import annotations
 
 import re
+from collections import deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -23,12 +25,12 @@ if TYPE_CHECKING:
 
 
 class OpenTelemetryAdapter(TelemetryAdapter):
-    """Minimal OpenTelemetry-style adapter."""
+    """Records the last 1000 spans and metric counters in memory; exports nothing."""
 
     def __init__(self, service_name: str, otlp_endpoint: str | None = None) -> None:
         self.service_name = service_name
         self.otlp_endpoint = otlp_endpoint
-        self.spans: list[dict[str, Any]] = []
+        self.spans: deque[dict[str, Any]] = deque(maxlen=1000)
         self.metrics: dict[str, float] = {}
 
     @asynccontextmanager
@@ -111,7 +113,7 @@ class OpenTelemetryAdapter(TelemetryAdapter):
 
 
 class PrometheusTelemetryAdapter(OpenTelemetryAdapter):
-    """Prometheus-flavoured adapter that can export metrics text."""
+    """In-memory adapter whose :meth:`export_metrics` renders Prometheus text; nothing is served."""
 
     def __init__(self, service_name: str, prometheus_port: int = 9100) -> None:
         super().__init__(service_name, otlp_endpoint=None)

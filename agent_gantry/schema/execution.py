@@ -25,7 +25,6 @@ class ExecutionStatus(str, Enum):
     PERMISSION_DENIED = "permission_denied"
     CIRCUIT_OPEN = "circuit_open"
     PENDING_CONFIRMATION = "pending_confirmation"
-    CANCELLED = "cancelled"
 
 
 class ToolCall(BaseModel):

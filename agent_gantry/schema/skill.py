@@ -8,7 +8,6 @@ skills are not directly executed but provide contextual knowledge.
 
 from __future__ import annotations
 
-import hashlib
 import re
 from datetime import datetime, timezone
 from enum import Enum
@@ -90,17 +89,6 @@ class Skill(BaseModel):
         """Return namespace.name identifier."""
         return f"{self.namespace}.{self.name}"
 
-    @property
-    def content_hash(self) -> str:
-        """
-        Deterministic hash for change detection.
-
-        This hash includes all fields that influence the embedding text, as well
-        as the full content, so that any semantic change will invalidate it.
-        """
-        hash_input = f"{self.to_embedding_text()}::{self.content}"
-        return hashlib.sha256(hash_input.encode()).hexdigest()[:16]
-
     def to_prompt_text(self) -> str:
         """
         Format skill for system prompt injection.
@@ -143,32 +131,3 @@ class SkillSearchResult(BaseModel):
 
     skill: Skill
     score: float = Field(..., ge=0.0, le=1.0)
-
-
-class SkillRetrievalResult(BaseModel):
-    """Aggregated result from skill retrieval."""
-
-    skills: list[SkillSearchResult]
-    total_count: int
-    query_time_ms: float
-    trace_id: str | None = None
-
-    def to_prompt_injection(self, max_skills: int = 3) -> str:
-        """
-        Format top skills for system prompt injection.
-
-        Args:
-            max_skills: Maximum number of skills to include
-
-        Returns:
-            Formatted text for system prompt
-        """
-        if not self.skills:
-            return ""
-
-        lines = ["# Relevant Knowledge", ""]
-        for result in self.skills[:max_skills]:
-            lines.append(result.skill.to_prompt_text())
-            lines.append("")
-
-        return "\n".join(lines)

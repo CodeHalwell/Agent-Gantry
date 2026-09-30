@@ -1,7 +1,7 @@
 """Provider-reported token usage must actually reach telemetry.
 
 The library's headline claim is a smaller prompt, but nothing measured it:
-``TokenUsageEvent`` was defined and never constructed, and
+a ``TokenUsageEvent`` model was defined and never constructed (since removed), and
 ``record_token_usage`` existed on the telemetry protocol and both adapters yet
 was never called by library code — only by examples and tests. Every provider
 these layers target returns a ``usage`` block, so the actual cost of each call

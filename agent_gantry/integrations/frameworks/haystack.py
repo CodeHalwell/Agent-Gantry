@@ -11,17 +11,14 @@ Public entry point: :class:`HaystackAdapter`.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from agent_gantry.integrations.frameworks.base import (
-    DEFAULT_TOOL_LIMIT,
-    BaseFrameworkAdapter,
-    GantryToolset,
-    ToolSpec,
+from agent_gantry.integrations.frameworks.base import BaseFrameworkAdapter, ToolSpec
+
+_INSTALL_HINT = (
+    "Haystack support requires `haystack-ai`. "
+    "Install it with `pip install haystack-ai` (or `uv add haystack-ai`)."
 )
-
-if TYPE_CHECKING:
-    from agent_gantry.core.gantry import AgentGantry
 
 
 def _spec_to_haystack(spec: ToolSpec) -> Any:
@@ -35,9 +32,7 @@ def _spec_to_haystack(spec: ToolSpec) -> Any:
     try:
         from haystack.tools import Tool
     except ImportError as exc:  # pragma: no cover - exercised via stub
-        raise ImportError(
-            "Haystack support requires `haystack-ai`. Install it with `pip install haystack-ai` (or `uv add haystack-ai`)."
-        ) from exc
+        raise ImportError(_INSTALL_HINT) from exc
 
     def _function(**kwargs: Any) -> Any:
         return spec.invoke(**kwargs)
@@ -50,18 +45,6 @@ def _spec_to_haystack(spec: ToolSpec) -> Any:
     )
 
 
-async def _for_haystack(
-    gantry: AgentGantry,
-    query: str,
-    *,
-    limit: int = DEFAULT_TOOL_LIMIT,
-    **select_kwargs: Any,
-) -> list[Any]:
-    """Select tools for ``query`` and return them as Haystack ``Tool``s."""
-    specs = await GantryToolset(gantry).select(query, limit=limit, **select_kwargs)
-    return [_spec_to_haystack(s) for s in specs]
-
-
 class HaystackAdapter(BaseFrameworkAdapter):
     """Route Gantry-selected tools into Haystack.
 
@@ -69,63 +52,23 @@ class HaystackAdapter(BaseFrameworkAdapter):
     (Haystack fixes a component's tools at construction). Every call routes
     through ``gantry.execute``. Works with haystack 2.x (``ToolInvoker``) and
     haystack >= 3.0 (``Agent`` owns tool execution — see
-    :meth:`tool_invoker_builder`).
+    :meth:`tool_invoker_builder`). :meth:`live` returns that builder; call
+    ``await builder.build(query)`` before each new call.
     """
 
     live_tier = "per-call"
+    _live_delegate = "tool_invoker_builder"
 
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a Haystack ``Tool``."""
         return _spec_to_haystack(spec)
 
-    def live(
-        self,
-        *,
-        limit: int | None = None,
-        score_threshold: float = 0.0,
-        namespaces: list[str] | None = None,
-        required: list[str] | None = None,
-        always_include: list[str] | None = None,
-        **framework_kwargs: Any,
-    ) -> Any:
-        """Per-call uniform entry point: delegates to :meth:`tool_invoker_builder`.
-
-        Haystack fixes a component's tools at construction (no mid-run
-        hook), so the live object here is a builder, not a hook — the
-        deepest Haystack allows. Returns a
-        ``GantryLiveHaystackToolInvoker``; call ``await builder.build(query)``
-        before each new call to get a fresh component with tools re-selected
-        for that query — a ``ToolInvoker`` on haystack 2.x, or an ``Agent``
-        on haystack >= 3.0 (pass ``chat_generator=...`` there).
-        ``required``/``always_include`` are re-applied on every rebuild (see
-        :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select`).
-        ``framework_kwargs`` are forwarded to the built component on every
-        rebuild.
-        """
-        return self.tool_invoker_builder(
-            limit=limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
-            **framework_kwargs,
-        )
-
     async def live_tools(
         self, query: str, *, limit: int | None = None, **select_kwargs: Any
     ) -> list[Any]:
-        """Re-select Haystack ``Tool``s for THIS call's ``query`` (per-call selection).
-
-        Same selection surface as :meth:`select` (``score_threshold``,
-        ``namespaces``, ``tools_already_used`` via ``**select_kwargs``).
-        """
-        return await _for_haystack(
-            self._gantry,
-            query,
-            limit=self._default_limit if limit is None else limit,
-            **select_kwargs,
-        )
+        """Re-select Haystack ``Tool``s for THIS call's ``query`` (per-call selection)."""
+        return await self.select(query, limit=limit, **select_kwargs)
 
     def tool_invoker_builder(
         self,
@@ -151,10 +94,6 @@ class HaystackAdapter(BaseFrameworkAdapter):
 
         return GantryLiveHaystackToolInvoker(
             self._gantry,
-            limit=self._default_limit if limit is None else limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
+            **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
             **invoker_kwargs,
         )

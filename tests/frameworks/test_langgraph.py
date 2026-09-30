@@ -58,13 +58,6 @@ async def gantry():
     return g
 
 
-def test_spec_to_langgraph_is_langchain_wrapper():
-    from agent_gantry.integrations.frameworks.langchain import _spec_to_langchain
-    from agent_gantry.integrations.frameworks.langgraph import _spec_to_langgraph
-
-    assert _spec_to_langgraph is _spec_to_langchain
-
-
 async def test_spec_to_langgraph_builds_native_tool(fake_langchain, gantry):
     from agent_gantry.integrations.frameworks.base import GantryToolset
     from agent_gantry.langgraph import LangGraphAdapter

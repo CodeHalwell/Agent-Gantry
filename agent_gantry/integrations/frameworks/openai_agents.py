@@ -23,14 +23,9 @@ from agent_gantry.adapters.tool_spec.schema_utils import (
     strict_json_schema,
     unsupported_strict_paths,
 )
-from agent_gantry.integrations.frameworks.base import (
-    DEFAULT_TOOL_LIMIT,
-    BaseFrameworkAdapter,
-    GantryToolset,
-)
+from agent_gantry.integrations.frameworks.base import BaseFrameworkAdapter
 
 if TYPE_CHECKING:
-    from agent_gantry.core.gantry import AgentGantry
     from agent_gantry.integrations.frameworks.base import ToolSpec
 
 _logger = logging.getLogger(__name__)
@@ -106,63 +101,24 @@ def _spec_to_openai_agents(spec: ToolSpec) -> Any:
     )
 
 
-async def _for_openai_agents(
-    gantry: AgentGantry,
-    query: str,
-    *,
-    limit: int = DEFAULT_TOOL_LIMIT,
-    **select_kwargs: Any,
-) -> list:
-    """Select tools for ``query`` and return them as OpenAI Agents ``FunctionTool``s."""
-    specs = await GantryToolset(gantry).select(query, limit=limit, **select_kwargs)
-    return [_spec_to_openai_agents(spec) for spec in specs]
-
-
 class OpenAIAgentsAdapter(BaseFrameworkAdapter):
     """Route Gantry-selected tools into the OpenAI Agents SDK.
 
     Static slice (``agents.FunctionTool`` objects) plus deep live re-selection as
     the conversation progresses. Every tool call routes through ``gantry.execute``.
+    :meth:`live` requires ``agent=<agents.Agent>`` (the SDK's refresh hook
+    rewrites a specific agent's ``.tools``) and returns the :meth:`session`;
+    call ``await session.run(run_input)`` per conversational turn.
     """
 
     live_tier = "per-turn"
+    _live_delegate = "session"
+    _live_required_kwargs = ("agent",)
 
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as an OpenAI Agents ``FunctionTool``."""
         return _spec_to_openai_agents(spec)
-
-    def live(
-        self,
-        *,
-        limit: int | None = None,
-        score_threshold: float = 0.0,
-        namespaces: list[str] | None = None,
-        required: list[str] | None = None,
-        always_include: list[str] | None = None,
-        **framework_kwargs: Any,
-    ) -> Any:
-        """Per-turn uniform entry point: delegates to :meth:`session`.
-
-        Requires ``agent=<agents.Agent>`` in ``framework_kwargs`` — the SDK's
-        tool-refresh hook rewrites a *specific* agent's ``.tools`` list, so
-        there is no agent-agnostic standalone hook to return. Returns a
-        :class:`~agent_gantry.integrations.frameworks.openai_agents_live.GantryAgentSession`;
-        call ``await session.run(run_input)`` per conversational turn (it
-        re-selects and applies tools before the run, and installs
-        :meth:`run_hooks` for intra-run dynamism). ``required``/
-        ``always_include`` are re-applied on every re-selection (see
-        :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select`).
-        """
-        agent = framework_kwargs.pop("agent")
-        return self.session(
-            agent,
-            limit=limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
-        )
 
     async def run(
         self,
@@ -185,11 +141,7 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
             agent,
             self._gantry,
             run_input,
-            limit=self._default_limit if limit is None else limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
+            **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
             **run_kwargs,
         )
 
@@ -211,11 +163,7 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
         return GantryAgentSession(
             agent,
             self._gantry,
-            limit=self._default_limit if limit is None else limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
+            **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
         )
 
     def run_hooks(
@@ -236,11 +184,7 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
         return _gantry_run_hooks(
             self._gantry,
             agent,
-            limit=self._default_limit if limit is None else limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
+            **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
         )
 
     async def refresh(
@@ -263,11 +207,7 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
             agent,
             self._gantry,
             query_or_input,
-            limit=self._default_limit if limit is None else limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
+            **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
         )
 
     async def select_function_tools(
@@ -288,9 +228,5 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
         return await _select_function_tools(
             self._gantry,
             query_or_input,
-            limit=self._default_limit if limit is None else limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
+            **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
         )

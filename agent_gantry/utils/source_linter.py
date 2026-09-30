@@ -223,6 +223,8 @@ def _iter_python_files(paths: list[str | Path]) -> list[Path]:
     files: list[Path] = []
     for raw in paths:
         p = Path(raw)
+        if not p.exists():
+            raise FileNotFoundError(f"no such file or directory: {p}")
         if p.is_dir():
             files.extend(
                 f for f in sorted(p.rglob("*.py")) if "__pycache__" not in f.parts
@@ -240,6 +242,9 @@ def analyze_paths(paths: list[str | Path]) -> SourceAnalysis:
 
     Returns:
         A :class:`SourceAnalysis` aggregating every file's findings.
+
+    Raises:
+        FileNotFoundError: If a path does not exist.
     """
     total = SourceAnalysis()
     for file in _iter_python_files(paths):

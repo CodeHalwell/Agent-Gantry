@@ -3,8 +3,7 @@
 LangGraph does not define its own tool object: a LangGraph graph (e.g. a
 ``ToolNode`` or a prebuilt ReAct agent) consumes plain LangChain ``BaseTool``
 objects — the same ``StructuredTool`` instances produced by the LangChain
-adapter. So this module reuses the LangChain wrappers verbatim rather than
-duplicating them.
+adapter, so this module reuses that wrapper.
 
 Public entry point: :class:`LangGraphAdapter` (static slice + a deep per-turn
 live ReAct agent that re-selects tools every model turn).
@@ -14,30 +13,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT, BaseFrameworkAdapter
-from agent_gantry.integrations.frameworks.langchain import (
-    _for_langchain,
-    _spec_to_langchain,
-)
+from agent_gantry.integrations.frameworks.base import BaseFrameworkAdapter
+from agent_gantry.integrations.frameworks.langchain import _spec_to_langchain
 
 if TYPE_CHECKING:
-    from agent_gantry.core.gantry import AgentGantry
     from agent_gantry.integrations.frameworks.base import ToolSpec
-
-# A LangGraph node accepts LangChain BaseTool objects, so the per-spec wrapper
-# is identical to the LangChain one.
-_spec_to_langgraph = _spec_to_langchain
-
-
-async def _for_langgraph(
-    gantry: AgentGantry,
-    query: str,
-    *,
-    limit: int = DEFAULT_TOOL_LIMIT,
-    **select_kwargs: Any,
-) -> list[Any]:
-    """Select tools for ``query`` as LangChain ``BaseTool``s for a LangGraph node."""
-    return await _for_langchain(gantry, query, limit=limit, **select_kwargs)
 
 
 class LangGraphAdapter(BaseFrameworkAdapter):
@@ -52,52 +32,21 @@ class LangGraphAdapter(BaseFrameworkAdapter):
         adapter = LangGraphAdapter(gantry)
         tools = await adapter.select("summarise the incident", limit=3)   # static
         agent = await adapter.areact_agent(chat_model, limit=5)           # live
+
+    :meth:`live` requires ``model=<BaseChatModel>`` and returns the compiled
+    agent from :meth:`react_agent`; any other keyword (``system_prompt``,
+    ``checkpointer``, ``middleware``, …) is forwarded to ``create_agent``.
     """
 
     live_tier = "per-turn"
+    _live_delegate = "react_agent"
+    _live_required_kwargs = ("model",)
 
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a LangChain ``StructuredTool``."""
-        return _spec_to_langgraph(spec)
+        return _spec_to_langchain(spec)
 
-    def live(
-        self,
-        *,
-        limit: int | None = None,
-        score_threshold: float = 0.0,
-        namespaces: list[str] | None = None,
-        required: list[str] | None = None,
-        always_include: list[str] | None = None,
-        **framework_kwargs: Any,
-    ) -> Any:
-        """Per-turn uniform entry point: delegates to :meth:`react_agent`.
-
-        Requires ``model=<langchain_core.language_models.BaseChatModel>`` in
-        ``framework_kwargs`` (LangGraph's per-turn hook is a middleware bound
-        into the compiled agent, so there is no lower-level standalone hook to
-        return — the compiled agent *is* the live object here). Returns the
-        compiled LangGraph agent (a ``Pregel`` graph); call ``.ainvoke`` /
-        ``.invoke`` on it directly — no further plumbing needed.
-        ``required``/``always_include`` are re-applied on every model turn
-        (see
-        :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select`).
-        Any other ``framework_kwargs`` (``system_prompt``, ``checkpointer``,
-        ``state_schema``, ``middleware``, …) are forwarded to
-        ``create_agent``.
-        """
-        model = framework_kwargs.pop("model")
-        return self.react_agent(
-            model,
-            limit=limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
-            **framework_kwargs,
-        )
-
-    # -- deep per-turn (live) -------------------------------------------- #
     def react_agent(
         self,
         model: Any,
@@ -111,7 +60,7 @@ class LangGraphAdapter(BaseFrameworkAdapter):
     ) -> Any:
         """Build a ReAct agent that re-selects tools every model turn (sync).
 
-        Resolves the tool superset on a worker thread; safe from a running loop
+        Resolves the tool superset on the sync bridge; safe from a running loop
         but blocking. In an already-async context prefer :meth:`areact_agent`.
         """
         from agent_gantry.integrations.frameworks.langgraph_live import (
@@ -121,11 +70,7 @@ class LangGraphAdapter(BaseFrameworkAdapter):
         return _create_gantry_react_agent(
             model,
             self._gantry,
-            limit=self._default_limit if limit is None else limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
+            **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
             **agent_kwargs,
         )
 
@@ -148,11 +93,7 @@ class LangGraphAdapter(BaseFrameworkAdapter):
         return await _acreate_gantry_react_agent(
             model,
             self._gantry,
-            limit=self._default_limit if limit is None else limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
+            **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
             **agent_kwargs,
         )
 
@@ -174,9 +115,5 @@ class LangGraphAdapter(BaseFrameworkAdapter):
         return await _select_tools_for_state(
             self._gantry,
             state,
-            limit=self._default_limit if limit is None else limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
+            **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
         )
