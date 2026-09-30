@@ -11,6 +11,17 @@ A review of the whole library for correctness, dead code and duplication.
 The public API loses only members nothing called; the behaviour changes are
 listed under Fixed. The package is about 3,000 lines shorter.
 
+**Upgrade notes.** The names under Removed are gone without a deprecation
+period; none had a caller in the library, tests, examples or docs, but check
+your own code for them. Configuration is stricter: a backend name with no
+implementation, or an OpenAI/Azure embedder with no key in config or
+environment, now raises instead of silently using a default, and an Azure
+embedder needs its deployment name in `EmbedderConfig.model`.
+`EmbedderConfig.model` defaults to `None` (each backend's own default) rather
+than the sentence-transformers model name, which OpenAI could never use. A
+persistent store re-embeds its MCP servers once, because their pseudo-tool
+names changed. `AgentGantry.tool_count` counts tools with a handler.
+
 ### Fixed
 
 - **The five vector stores now honour one contract.** Qdrant and Chroma
@@ -72,6 +83,13 @@ listed under Fixed. The package is about 3,000 lines shorter.
   `A2AAgentConfig.url` gets the same http(s) check as MCP endpoints.
 - `agent-gantry lint --source` with a non-existent path is an error, not
   "0 files scanned".
+- A2A tool executions are recorded to telemetry like every other terminal
+  result; they returned straight from the A2A executor without
+  `record_execution`.
+- `EmbedderConfig(type="openai")` without a model used the config's shared
+  `all-MiniLM-L6-v2` default and failed on the first request; the OpenAI
+  embedder now defaults to `text-embedding-3-small` and Azure requires an
+  explicit deployment name.
 - Token usage from google-genai responses (`usage_metadata`) is recorded;
   `from_provider_payload` tolerates `"function": null`; an A2A tool missing
   `a2a_url` reports a clear error; `AgentGantry.close()` closes the embedder

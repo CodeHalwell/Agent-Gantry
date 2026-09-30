@@ -108,6 +108,12 @@ class TestNomicEmbedder:
         embedder = NomicEmbedder(task_type="search_query")
         assert embedder.get_embedder_id() == "nomic-ai/nomic-embed-text-v1.5:768:search_query"
 
+    async def test_nomic_embedder_empty_batch_needs_no_model(self) -> None:
+        """The empty-input guard lives in the parent and runs before any model load."""
+        from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+
+        assert await NomicEmbedder(dimension=64).embed_batch([]) == []
+
     def test_nomic_embedder_matryoshka_dims(self) -> None:
         """Test Matryoshka dimension constants."""
         from agent_gantry.adapters.embedders.nomic import NomicEmbedder

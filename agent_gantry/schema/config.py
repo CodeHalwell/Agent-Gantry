@@ -35,7 +35,13 @@ class EmbedderConfig(BaseModel):
     """Configuration for embedding backend."""
 
     type: Literal["openai", "azure", "sentence_transformers", "nomic"] = "sentence_transformers"
-    model: str = "all-MiniLM-L6-v2"
+    model: str | None = Field(
+        default=None,
+        description=(
+            "Model name; unset means the backend's own default. Azure OpenAI has none: "
+            "give the deployment name."
+        ),
+    )
     api_key: str | None = None
     api_base: str | None = None
     api_version: str | None = Field(default=None, description="API version (for Azure OpenAI)")

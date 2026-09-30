@@ -691,7 +691,9 @@ class ExecutionEngine:
             from agent_gantry.schema.tool import ToolSource
 
             if tool.source == ToolSource.A2A_AGENT:
-                return await self._get_a2a_executor().execute(tool, call, None)
+                result = await self._get_a2a_executor().execute(tool, call, None)
+                await self._record(call, result)
+                return result
 
             # Get handler for Python functions
             handler = self._registry.get_handler(f"{tool.namespace}.{tool.name}")

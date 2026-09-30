@@ -198,6 +198,24 @@ def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
     return schema
 
 
+def _hoist_annotated(hint: Any) -> Any:
+    """``Optional[Annotated[T, m]]`` → ``Annotated[Optional[T], m]``.
+
+    Python 3.10's ``get_type_hints`` wraps a ``None``-defaulted parameter in
+    ``Optional`` on the outside, which hides the ``Annotated`` metadata one
+    level down; later versions leave the annotation as written.
+    """
+    import typing
+
+    if typing.get_origin(hint) is typing.Annotated or not _admits_none(hint):
+        return hint
+    members = [a for a in typing.get_args(hint) if a is not type(None)]
+    if len(members) != 1 or typing.get_origin(members[0]) is not typing.Annotated:
+        return hint
+    base, *metadata = typing.get_args(members[0])
+    return typing.Annotated[(base | None, *metadata)]
+
+
 def _function_hints(func: Callable[..., Any]) -> tuple[dict[str, Any], list[str]]:
     """Resolved annotations of ``func``, plus the parameter names that failed to resolve.
 
@@ -206,24 +224,23 @@ def _function_hints(func: Callable[..., Any]) -> tuple[dict[str, Any], list[str]
     """
     import typing
 
-    try:
-        return typing.get_type_hints(func, include_extras=True), []
-    except Exception:  # noqa: BLE001 - retried one annotation at a time
-        pass
-    target = inspect.unwrap(func)
-    hints: dict[str, Any] = {}
     unresolved: list[str] = []
-    for name, annotation in getattr(target, "__annotations__", {}).items():
-        one = types.SimpleNamespace(
-            __annotations__={name: annotation},
-            __globals__=getattr(target, "__globals__", {}),
-        )
-        try:
-            hints[name] = typing.get_type_hints(one, include_extras=True)[name]
-        except Exception:  # noqa: BLE001
-            if name != "return":
-                unresolved.append(name)
-    return hints, unresolved
+    try:
+        hints = typing.get_type_hints(func, include_extras=True)
+    except Exception:  # noqa: BLE001 - retried one annotation at a time
+        target = inspect.unwrap(func)
+        hints = {}
+        for name, annotation in getattr(target, "__annotations__", {}).items():
+            one = types.SimpleNamespace(
+                __annotations__={name: annotation},
+                __globals__=getattr(target, "__globals__", {}),
+            )
+            try:
+                hints[name] = typing.get_type_hints(one, include_extras=True)[name]
+            except Exception:  # noqa: BLE001
+                if name != "return":
+                    unresolved.append(name)
+    return {name: _hoist_annotated(hint) for name, hint in hints.items()}, unresolved
 
 
 def _constrained_schema(annotation: Any) -> dict[str, Any] | None:

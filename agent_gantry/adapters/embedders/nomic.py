@@ -93,5 +93,7 @@ class NomicEmbedder(SentenceTransformersEmbedder):
 
     async def embed_query(self, query: str) -> list[float]:
         """Embed a search query with the ``search_query`` prefix, whatever the configured task_type."""
+        # The parent's embed_batch on purpose: this class's override adds the
+        # document prefix, and a query takes the search_query one instead.
         batch = await SentenceTransformersEmbedder.embed_batch(self, [f"search_query: {query}"])
         return batch[0]

@@ -47,6 +47,23 @@ class TestBuildEmbedder:
         with pytest.raises(ValueError, match="OPENAI_API_KEY"):
             build_embedder(EmbedderConfig(type="openai"))
 
+    def test_openai_with_only_the_env_key_uses_its_own_default_model(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The shared config default used to be the sentence-transformers model name."""
+        pytest.importorskip("openai")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        embedder = build_embedder(EmbedderConfig(type="openai"))
+        assert "text-embedding-3-small" in embedder.get_embedder_id()
+
+    def test_azure_needs_an_explicit_deployment(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        pytest.importorskip("openai")
+        monkeypatch.setenv("AZURE_OPENAI_API_KEY", "azure-test")
+        with pytest.raises(ValueError, match="deployment name"):
+            build_embedder(
+                EmbedderConfig(type="azure", api_base="https://example.openai.azure.com")
+            )
+
 
 class TestUnimplementedBackendsAreRejected:
     @pytest.mark.parametrize(

@@ -211,6 +211,18 @@ class TestBuildParametersSchema:
 
         assert build_parameters_schema(f)["properties"]["a"] == {"type": "integer", "minimum": 1}
 
+    def test_annotated_nested_in_optional_keeps_metadata(self) -> None:
+        # The shape Python 3.10's get_type_hints produces for a None default:
+        # the Optional wraps the Annotated rather than the other way round.
+        def f(
+            a: Annotated[int, Field(ge=1)] | None = None,
+            b: Annotated[str, "the label"] | None = None,
+        ) -> None: ...
+
+        props = build_parameters_schema(f)["properties"]
+        assert props["a"] == {"type": "integer", "minimum": 1}
+        assert props["b"] == {"type": "string", "description": "the label"}
+
     def test_one_unresolvable_forward_reference_degrades_only_itself(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:

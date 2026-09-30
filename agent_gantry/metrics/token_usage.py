@@ -15,7 +15,12 @@ from typing import Any
 
 # Provider spellings of each usage figure: OpenAI, Anthropic, Google.
 _PROMPT_KEYS = ("prompt_tokens", "input_tokens", "prompt_token_count")
-_COMPLETION_KEYS = ("completion_tokens", "output_tokens", "candidates_token_count")
+_COMPLETION_KEYS = (
+    "completion_tokens",
+    "output_tokens",
+    "candidates_token_count",
+    "completion_token_count",
+)
 _CACHE_KEYS = ("cache_creation_input_tokens", "cache_read_input_tokens")
 _TOTAL_KEYS = ("total_tokens", "total_token_count")
 _USAGE_KEYS = _PROMPT_KEYS + _COMPLETION_KEYS + _CACHE_KEYS + _TOTAL_KEYS

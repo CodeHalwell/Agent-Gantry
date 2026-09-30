@@ -95,6 +95,12 @@ class TestCacheTokenAccounting:
         assert usage.prompt_tokens == 500
         assert usage.cached_prompt_tokens == 0
 
+    def test_every_completion_spelling_is_recognised(self) -> None:
+        usage = ProviderUsage.from_usage({"prompt_token_count": 3, "completion_token_count": 2})
+
+        assert usage.completion_tokens == 2
+        assert usage.total_tokens == 5
+
     def test_ignoring_cache_tokens_inflated_savings(self) -> None:
         """Regression: a cached run must not look nearly free next to a baseline."""
         savings = calculate_token_savings(

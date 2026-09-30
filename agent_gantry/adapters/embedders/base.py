@@ -158,6 +158,10 @@ class LazyModelMixin:
             with self._load_lock:
                 if self._model is None:
                     self._load_model()
+                    if self._model is None:
+                        raise RuntimeError(
+                            f"{type(self).__name__}._load_model() left _model unset"
+                        )
 
     async def _aensure_initialized(self) -> None:
         """Load off the event loop: construction can take seconds on a cold cache."""

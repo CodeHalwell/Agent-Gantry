@@ -278,6 +278,10 @@ class AzureOpenAIEmbedder(BaseOpenAIEmbedder):
                 "  pip install agent-gantry[openai] (or uv add 'agent-gantry[openai]')"
             ) from exc
 
+        if not config.model:
+            raise ValueError(
+                "Azure OpenAI embeddings need the deployment name in EmbedderConfig.model."
+            )
         api_key = config.api_key or os.getenv("AZURE_OPENAI_API_KEY")
         if not api_key:
             raise ValueError(
