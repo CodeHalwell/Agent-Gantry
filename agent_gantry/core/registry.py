@@ -165,11 +165,6 @@ class ToolRegistry:
         return f"{namespace}.{name}" in self._tools
 
     @property
-    def tool_count(self) -> int:
-        """Return the number of registered tools."""
-        return len(self._tools)
-
-    @property
     def handler_count(self) -> int:
         """Return the number of tools with an execution handler."""
         return len(self._handlers)

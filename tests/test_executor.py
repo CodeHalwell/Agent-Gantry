@@ -3268,3 +3268,17 @@ async def test_each_terminal_result_is_recorded_once() -> None:
         ExecutionStatus.FAILURE,
         ExecutionStatus.FAILURE,
     ]
+
+    # A call that never resolves to a tool, or to a handler, is answered but
+    # not recorded: there is no tool to attribute it to.
+    missing = await engine.execute(ToolCall(tool_name="nope", arguments={}))
+    registry.register_tool(
+        ToolDefinition(
+            name="orphan",
+            description="Registered without any handler",
+            parameters_schema={"type": "object", "properties": {}},
+        )
+    )
+    orphan = await engine.execute(ToolCall(tool_name="orphan", arguments={}))
+    assert (missing.error_type, orphan.error_type) == ("ToolNotFound", "HandlerNotFound")
+    assert len(telemetry.records) == 3

@@ -306,3 +306,26 @@ async def test_disabled_telemetry_still_retrieves_and_executes() -> None:
     assert await gantry.retrieve_tools("double a number", score_threshold=0.0)
     result = await gantry.execute(ToolCall(tool_name="double", arguments={"x": 2}))
     assert result.status is ExecutionStatus.SUCCESS and result.result == 4
+
+
+@pytest.mark.asyncio
+async def test_delete_tool_leaves_the_registry_alone_when_the_store_fails() -> None:
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
+
+    class FailingDeleteStore(InMemoryVectorStore):
+        async def delete(self, name: str, namespace: str = "default") -> bool:
+            raise RuntimeError("store unavailable")
+
+    gantry = AgentGantry(vector_store=FailingDeleteStore(), embedder=SimpleEmbedder(dimension=64))
+
+    @gantry.register
+    def keep_me(x: int) -> int:
+        """Keep this tool around."""
+        return x
+
+    with pytest.raises(RuntimeError, match="store unavailable"):
+        await gantry.delete_tool("keep_me")
+    # The store is asked first, so a store failure leaves the tool executable.
+    assert gantry._registry.has_tool("keep_me")
+    assert gantry.tool_count == 1
