@@ -22,6 +22,8 @@ works regardless of whether ``X`` lives behind an optional dep:
     )
 """
 
+from __future__ import annotations
+
 from agent_gantry.adapters.embedders.base import EmbeddingAdapter
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 

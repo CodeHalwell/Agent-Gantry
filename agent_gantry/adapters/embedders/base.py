@@ -4,7 +4,9 @@ Base embedding adapter protocol.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
+import threading
 from abc import abstractmethod
 from typing import Any, Protocol
 
@@ -134,3 +136,30 @@ async def embed_query(embedder: Any, query: str) -> list[float]:
     if method is None or not inspect.iscoroutinefunction(method):
         return await embedder.embed_text(query)
     return await method(query)
+
+
+class LazyModelMixin:
+    """Load a heavy model once, on first use, in a worker thread.
+
+    Subclasses set ``self._model = None`` and ``self._load_lock =
+    threading.Lock()`` in ``__init__`` and implement ``_load_model()``, which
+    assigns ``self._model``.
+    """
+
+    _model: Any
+    _load_lock: threading.Lock
+
+    def _load_model(self) -> None:
+        raise NotImplementedError
+
+    def _ensure_initialized(self) -> None:
+        """Load synchronously, blocking the caller (for sync properties)."""
+        if self._model is None:
+            with self._load_lock:
+                if self._model is None:
+                    self._load_model()
+
+    async def _aensure_initialized(self) -> None:
+        """Load off the event loop: construction can take seconds on a cold cache."""
+        if self._model is None:
+            await asyncio.to_thread(self._ensure_initialized)

@@ -13,10 +13,13 @@ import json
 import logging
 import re
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agent_gantry.schema.tool import ToolDefinition
 from agent_gantry.utils.fingerprint import compute_tool_fingerprint
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +69,37 @@ def _selects_nothing(namespace: Any) -> bool:
     return isinstance(namespace, (list, tuple, set)) and not namespace
 
 
+def _required_tags(filters: dict[str, Any] | None) -> set[str]:
+    """Tags a result must share at least one of; empty when there is no tag filter."""
+    return set(filters.get("tags") or ()) if filters else set()
+
+
+def _result(
+    tool_json: str, score: float, embedding: Any, include_embeddings: bool
+) -> tuple[Any, ...]:
+    """One search result in the shape the router expects."""
+    tool = ToolDefinition.model_validate_json(tool_json)
+    return (tool, score, embedding) if include_embeddings else (tool, score)
+
+
+async def _search_with_tags(
+    fetch: Callable[[int], Awaitable[list[Any]]], limit: int, required_tags: set[str]
+) -> list[Any]:
+    """Run ``fetch(size)`` and post-filter on tags, widening the window until
+    ``limit`` results match or the backend runs out of rows.
+
+    Tags live inside ``tool_json``, so none of the remote backends can apply
+    the filter in the query itself.
+    """
+    size = limit * 4 if required_tags else limit
+    while True:
+        rows = await fetch(size)
+        matches = [r for r in rows if not required_tags or not required_tags.isdisjoint(r[0].tags)]
+        if not required_tags or len(matches) >= limit or len(rows) < size:
+            return matches[:limit]
+        size *= 2
+
+
 class QdrantVectorStore:
     """
     Production Qdrant vector store adapter.
@@ -104,15 +138,13 @@ class QdrantVectorStore:
         """
         try:
             from qdrant_client import AsyncQdrantClient
-            from qdrant_client.models import Distance, VectorParams
+            from qdrant_client.models import Distance
         except ImportError as exc:
             raise ImportError(
                 "qdrant-client is not installed. Install it with:\n"
                 "  pip install agent-gantry[qdrant] (or uv add 'agent-gantry[qdrant]')"
             ) from exc
 
-        self._url = url
-        self._api_key = api_key
         self._collection_name = collection_name
         if quantization not in (None, "scalar", "binary"):
             raise ValueError(
@@ -120,7 +152,6 @@ class QdrantVectorStore:
                 f"(expected 'scalar', 'binary', or None)"
             )
         self._dimension = dimension
-        self._prefer_grpc = prefer_grpc
         self._quantization = quantization
         self._initialized = False
 
@@ -137,7 +168,6 @@ class QdrantVectorStore:
             api_key=api_key,
             prefer_grpc=prefer_grpc,
         )
-        self._VectorParams = VectorParams
 
         logger.info(f"Initialized QdrantVectorStore with url={url}, collection={collection_name}")
 
@@ -145,6 +175,11 @@ class QdrantVectorStore:
     def dimension(self) -> int:
         """Return the vector dimension."""
         return self._dimension
+
+    @staticmethod
+    def _point_id(namespace: str, name: str) -> str:
+        """Deterministic point id for ``namespace.name``."""
+        return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{namespace}.{name}"))
 
     @staticmethod
     def _build_namespace_filter(namespace: Any) -> Any:
@@ -250,14 +285,27 @@ class QdrantVectorStore:
         if not tools or not embeddings:
             return 0
 
+        # Without upsert, ids already stored (or repeated within the batch)
+        # are skipped and only the rows actually inserted are counted.
+        skip: set[str] | None = None
+        if not upsert:
+            existing = await self._client.retrieve(
+                collection_name=self._collection_name,
+                ids=[self._point_id(t.namespace, t.name) for t in tools],
+                with_payload=False,
+                with_vectors=False,
+            )
+            skip = {str(record.id) for record in existing}
+
         points = []
         for tool, embedding in zip(tools, embeddings):
-            # Generate deterministic ID
-            point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{tool.namespace}.{tool.name}"))
-
-            # Create payload with tool data. The fingerprint enables
-            # incremental sync: SyncManager.detect_changes compares it against
-            # compute_tool_fingerprint so unchanged tools skip re-embedding.
+            point_id = self._point_id(tool.namespace, tool.name)
+            if skip is not None:
+                if point_id in skip:
+                    continue
+                skip.add(point_id)
+            # The fingerprint enables incremental sync: SyncManager.detect_changes
+            # compares it against compute_tool_fingerprint.
             payload = {
                 "name": tool.name,
                 "namespace": tool.namespace,
@@ -265,21 +313,10 @@ class QdrantVectorStore:
                 "tool_json": tool.model_dump_json(),
                 "fingerprint": compute_tool_fingerprint(tool),
             }
+            points.append(PointStruct(id=point_id, vector=embedding, payload=payload))
 
-            points.append(
-                PointStruct(
-                    id=point_id,
-                    vector=embedding,
-                    payload=payload,
-                )
-            )
-
-        # Upsert points
-        await self._client.upsert(
-            collection_name=self._collection_name,
-            points=points,
-        )
-
+        if points:
+            await self._client.upsert(collection_name=self._collection_name, points=points)
         return len(points)
 
     async def search(
@@ -298,9 +335,8 @@ class QdrantVectorStore:
         if filters and "namespace" in filters:
             query_filter = self._build_namespace_filter(filters["namespace"])
 
-        # Search with optional vector retrieval. On a quantized collection,
-        # oversample candidates from the compressed index and rescore them
-        # against the original vectors so returned scores stay exact.
+        # On a quantized collection, oversample from the compressed index and
+        # rescore against the original vectors so returned scores stay exact.
         search_params = None
         if self._quantization:
             try:
@@ -310,63 +346,54 @@ class QdrantVectorStore:
                     quantization=QuantizationSearchParams(rescore=True, oversampling=2.0)
                 )
             except ImportError:
-                # A client old enough to lack these couldn't have created the
-                # quantized collection either, but degrade gracefully: the
-                # server still searches, just with its default rescoring.
+                # A client this old could not have created the quantized
+                # collection either; the server falls back to default rescoring.
                 logger.debug("qdrant-client lacks QuantizationSearchParams; using defaults")
 
-        # ``search`` was removed from AsyncQdrantClient (1.19 only has
-        # ``query_points``, which returns a QueryResponse wrapping the same
-        # ScoredPoints). Fall back to ``search`` on clients that predate
-        # ``query_points`` so the qdrant-client>=1.7 floor still works.
+        # ``search`` was removed from AsyncQdrantClient in 1.19 (``query_points``
+        # only); clients that predate ``query_points`` still have ``search``.
         query_points = getattr(self._client, "query_points", None)
-        if query_points is not None:
-            response = await query_points(
-                collection_name=self._collection_name,
-                query=query_vector,
-                limit=limit,
-                query_filter=query_filter,
-                score_threshold=score_threshold,
-                with_vectors=include_embeddings,  # Request vectors if needed
-                search_params=search_params,
-            )
-            results = response.points
-        else:
-            results = await self._client.search(
-                collection_name=self._collection_name,
-                query_vector=query_vector,
-                limit=limit,
-                query_filter=query_filter,
-                score_threshold=score_threshold,
-                with_vectors=include_embeddings,
-                search_params=search_params,
-            )
 
-        # Convert results to tools
-        if include_embeddings:
-            tools_with_embeddings: list[tuple[ToolDefinition, float, list[float]]] = []
-            for result in results:
-                tool_json = result.payload.get("tool_json", "{}")
-                tool = ToolDefinition.model_validate_json(tool_json)
-                # Extract vector from result
-                embedding = list(result.vector) if result.vector else []
-                tools_with_embeddings.append((tool, float(result.score), embedding))
-            return tools_with_embeddings
-        else:
-            tools_without_embeddings: list[tuple[ToolDefinition, float]] = []
-            for result in results:
-                tool_json = result.payload.get("tool_json", "{}")
-                tool = ToolDefinition.model_validate_json(tool_json)
-                tools_without_embeddings.append((tool, float(result.score)))
-            return tools_without_embeddings
+        async def fetch(size: int) -> list[Any]:
+            if query_points is not None:
+                response = await query_points(
+                    collection_name=self._collection_name,
+                    query=query_vector,
+                    limit=size,
+                    query_filter=query_filter,
+                    score_threshold=score_threshold,
+                    with_vectors=include_embeddings,
+                    search_params=search_params,
+                )
+                points = response.points
+            else:
+                points = await self._client.search(
+                    collection_name=self._collection_name,
+                    query_vector=query_vector,
+                    limit=size,
+                    query_filter=query_filter,
+                    score_threshold=score_threshold,
+                    with_vectors=include_embeddings,
+                    search_params=search_params,
+                )
+            return [
+                _result(
+                    point.payload.get("tool_json", "{}"),
+                    float(point.score),
+                    list(point.vector or []),
+                    include_embeddings,
+                )
+                for point in points
+            ]
+
+        return await _search_with_tags(fetch, limit, _required_tags(filters))
 
     async def get_by_name(self, name: str, namespace: str = "default") -> ToolDefinition | None:
         """Get a tool by name."""
 
         await self.initialize()
 
-        # Generate the same deterministic ID
-        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{namespace}.{name}"))
+        point_id = self._point_id(namespace, name)
 
         try:
             result = await self._client.retrieve(
@@ -383,14 +410,23 @@ class QdrantVectorStore:
         return None
 
     async def delete(self, name: str, namespace: str = "default") -> bool:
-        """Delete a tool."""
+        """Delete a tool. Returns False if it was not stored."""
         await self.initialize()
 
-        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{namespace}.{name}"))
+        point_id = self._point_id(namespace, name)
 
         try:
             from qdrant_client.models import PointIdsList
 
+            # Qdrant's delete is a silent no-op on a miss, so check first.
+            existing = await self._client.retrieve(
+                collection_name=self._collection_name,
+                ids=[point_id],
+                with_payload=False,
+                with_vectors=False,
+            )
+            if not existing:
+                return False
             await self._client.delete(
                 collection_name=self._collection_name,
                 points_selector=PointIdsList(points=[point_id]),
@@ -564,6 +600,10 @@ class QdrantVectorStore:
         await self.set_metadata("embedder_id", embedder_id)
         await self.set_metadata("dimension", str(dimension))
 
+    async def close(self) -> None:
+        """Close the underlying client (``AgentGantry.close()`` calls this)."""
+        await self._client.close()
+
 
 class ChromaVectorStore:
     """
@@ -675,21 +715,30 @@ class ChromaVectorStore:
         if not tools or not embeddings:
             return 0
 
-        ids = []
-        documents = []
-        metadatas = []
-        vectors = []
+        # Without upsert, ids already stored (or repeated within the batch)
+        # are skipped and only the rows actually inserted are counted.
+        skip: set[str] | None = None
+        if not upsert:
+            existing = await asyncio.to_thread(
+                self._collection.get,
+                ids=[f"{t.namespace}.{t.name}" for t in tools],
+                include=[],
+            )
+            skip = set(existing.get("ids") or [])
 
+        ids: list[str] = []
+        documents: list[str] = []
+        metadatas: list[dict[str, Any]] = []
+        vectors: list[list[float]] = []
         for tool, embedding in zip(tools, embeddings):
-            # Generate deterministic ID
             tool_id = f"{tool.namespace}.{tool.name}"
+            if skip is not None:
+                if tool_id in skip:
+                    continue
+                skip.add(tool_id)
             ids.append(tool_id)
-
-            # Document is the searchable text
             documents.append(tool.description)
-
-            # Metadata includes full tool JSON and the sync fingerprint
-            # (compared by SyncManager.detect_changes for incremental sync)
+            # Full tool JSON plus the sync fingerprint SyncManager.detect_changes compares
             metadatas.append(
                 {
                     "name": tool.name,
@@ -698,12 +747,9 @@ class ChromaVectorStore:
                     "fingerprint": compute_tool_fingerprint(tool),
                 }
             )
-
             vectors.append(embedding)
 
-        # Upsert to collection
-        # Wrap synchronous operations to avoid blocking event loop
-        if upsert:
+        if ids:
             await asyncio.to_thread(
                 self._collection.upsert,
                 ids=ids,
@@ -711,15 +757,6 @@ class ChromaVectorStore:
                 documents=documents,
                 metadatas=metadatas,
             )
-        else:
-            await asyncio.to_thread(
-                self._collection.add,
-                ids=ids,
-                embeddings=vectors,
-                documents=documents,
-                metadatas=metadatas,
-            )
-
         return len(ids)
 
     async def search(
@@ -740,53 +777,31 @@ class ChromaVectorStore:
             if where is None:
                 return []  # empty namespace list matches nothing
 
-        # Query collection with optional embeddings
-        # Wrap synchronous operation to avoid blocking event loop
-        results = await asyncio.to_thread(
-            self._collection.query,
-            query_embeddings=[query_vector],
-            n_results=limit,
-            where=where,
-            include=["metadatas", "distances", "embeddings"]
-            if include_embeddings
-            else ["metadatas", "distances"],
-        )
+        include = ["metadatas", "distances"] + (["embeddings"] if include_embeddings else [])
 
-        # Convert results to tools
-        if include_embeddings:
-            tools_with_embeddings: list[tuple[ToolDefinition, float, list[float]]] = []
+        async def fetch(size: int) -> list[Any]:
+            results = await asyncio.to_thread(
+                self._collection.query,
+                query_embeddings=[query_vector],
+                n_results=size,
+                where=where,
+                include=include,
+            )
+            metadatas = (results.get("metadatas") or [[]])[0]
+            distances = (results.get("distances") or [[]])[0]
+            embeddings = (results.get("embeddings") or [[]])[0] if include_embeddings else []
+            out: list[Any] = []
+            for index, (metadata, distance) in enumerate(zip(metadatas, distances)):
+                score = 1.0 - float(distance)  # cosine distance -> similarity
+                if score_threshold is not None and score < score_threshold:
+                    continue
+                embedding = list(embeddings[index]) if include_embeddings else None
+                out.append(
+                    _result(metadata.get("tool_json", "{}"), score, embedding, include_embeddings)
+                )
+            return out
 
-            if results["metadatas"] and results["distances"] and results.get("embeddings"):
-                for metadata, distance, embedding in zip(
-                    results["metadatas"][0], results["distances"][0], results["embeddings"][0]
-                ):
-                    tool_json = metadata.get("tool_json", "{}")
-                    tool = ToolDefinition.model_validate_json(tool_json)
-
-                    # Convert distance to similarity score (1 - distance for cosine)
-                    score = 1.0 - float(distance)
-
-                    # Apply score threshold if specified
-                    if score_threshold is None or score >= score_threshold:
-                        tools_with_embeddings.append((tool, score, list(embedding)))
-
-            return tools_with_embeddings
-        else:
-            tools_without_embeddings: list[tuple[ToolDefinition, float]] = []
-
-            if results["metadatas"] and results["distances"]:
-                for metadata, distance in zip(results["metadatas"][0], results["distances"][0]):
-                    tool_json = metadata.get("tool_json", "{}")
-                    tool = ToolDefinition.model_validate_json(tool_json)
-
-                    # Convert distance to similarity score (1 - distance for cosine)
-                    score = 1.0 - float(distance)
-
-                    # Apply score threshold if specified
-                    if score_threshold is None or score >= score_threshold:
-                        tools_without_embeddings.append((tool, score))
-
-            return tools_without_embeddings
+        return await _search_with_tags(fetch, limit, _required_tags(filters))
 
     async def get_by_name(self, name: str, namespace: str = "default") -> ToolDefinition | None:
         """Get a tool by name."""
@@ -807,13 +822,16 @@ class ChromaVectorStore:
         return None
 
     async def delete(self, name: str, namespace: str = "default") -> bool:
-        """Delete a tool."""
+        """Delete a tool. Returns False if it was not stored."""
         await self.initialize()
 
         tool_id = f"{namespace}.{name}"
 
         try:
-            # Wrap synchronous operation to avoid blocking event loop
+            # Chroma's delete is a silent no-op on a miss, so check first.
+            existing = await asyncio.to_thread(self._collection.get, ids=[tool_id], include=[])
+            if not existing.get("ids"):
+                return False
             await asyncio.to_thread(self._collection.delete, ids=[tool_id])
             return True
         except Exception:
@@ -1087,29 +1105,29 @@ class PGVectorStore:
         if not tools or not embeddings:
             return 0
 
-        async with self._pool.acquire() as conn:
-            records = []
-            for tool, embedding in zip(tools, embeddings):
-                tool_id = f"{tool.namespace}.{tool.name}"
-                embedding_str = json.dumps(embedding)
-                records.append(
-                    (
-                        tool_id,
-                        tool.name,
-                        tool.namespace,
-                        tool.description,
-                        tool.model_dump_json(),
-                        compute_tool_fingerprint(tool),
-                        embedding_str,
-                    )
-                )
+        records = [
+            (
+                f"{tool.namespace}.{tool.name}",
+                tool.name,
+                tool.namespace,
+                tool.description,
+                tool.model_dump_json(),
+                compute_tool_fingerprint(tool),
+                json.dumps(embedding),
+            )
+            for tool, embedding in zip(tools, embeddings)
+        ]
+        insert = (
+            f'INSERT INTO "{self._table_name}" '
+            "(id, name, namespace, description, tool_json, fingerprint, embedding) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7)"
+        )
 
+        async with self._pool.acquire() as conn:
             if upsert:
                 await conn.executemany(
                     f"""
-                    INSERT INTO "{self._table_name}"
-                    (id, name, namespace, description, tool_json, fingerprint, embedding, updated_at)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+                    {insert}
                     ON CONFLICT (id) DO UPDATE SET
                         name = EXCLUDED.name,
                         namespace = EXCLUDED.namespace,
@@ -1121,17 +1139,18 @@ class PGVectorStore:
                     """,
                     records,
                 )
-            else:
-                await conn.executemany(
-                    f"""
-                    INSERT INTO "{self._table_name}"
-                    (id, name, namespace, description, tool_json, fingerprint, embedding)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
-                    """,
-                    records,
-                )
+                return len(records)
 
-        return len(tools)
+            # Without upsert, ids already stored are skipped and only the rows
+            # actually inserted are counted.
+            inserted = 0
+            async with conn.transaction():
+                for record in records:
+                    row = await conn.fetchrow(
+                        f"{insert} ON CONFLICT (id) DO NOTHING RETURNING id", *record
+                    )
+                    inserted += row is not None
+            return inserted
 
     async def search(
         self,
@@ -1144,20 +1163,15 @@ class PGVectorStore:
         """Search for similar tools."""
         await self.initialize()
 
-        embedding_str = json.dumps(query_vector)
-
-        # Build query with optional namespace filter
         namespace_clause = ""
-        params = [embedding_str, limit]
-
+        namespace_params: list[Any] = []
         if filters and "namespace" in filters:
             namespace_clause, ns_param = _pg_namespace_clause(filters["namespace"], 3)
-            params.append(ns_param)
+            namespace_params.append(ns_param)
 
         select_cols = "tool_json, 1 - (embedding <=> $1::vector) AS similarity"
         if include_embeddings:
             select_cols += ", embedding"
-
         query = f"""
             SELECT {select_cols}
             FROM "{self._table_name}"
@@ -1165,42 +1179,25 @@ class PGVectorStore:
             ORDER BY embedding <=> $1::vector
             LIMIT $2
         """
+        embedding_str = json.dumps(query_vector)
 
-        async with self._pool.acquire() as conn:
-            rows = await conn.fetch(query, *params)
+        async def fetch(size: int) -> list[Any]:
+            async with self._pool.acquire() as conn:
+                rows = await conn.fetch(query, embedding_str, size, *namespace_params)
+            out: list[Any] = []
+            for row in rows:
+                score = float(row["similarity"])
+                if score_threshold is not None and score < score_threshold:
+                    continue
+                embedding = None
+                if include_embeddings:
+                    # asyncpg returns the pgvector value as text unless a codec is registered
+                    raw = row["embedding"]
+                    embedding = json.loads(raw) if isinstance(raw, str) else list(raw)
+                out.append(_result(row["tool_json"], score, embedding, include_embeddings))
+            return out
 
-            if include_embeddings:
-                tools_with_embeddings: list[tuple[ToolDefinition, float, list[float]]] = []
-                for row in rows:
-                    score = float(row["similarity"])
-
-                    # Apply score threshold if specified
-                    if score_threshold is None or score >= score_threshold:
-                        tool = ToolDefinition.model_validate_json(row["tool_json"])
-                        # Parse embedding depending on asyncpg return type
-                        # It may be returned as a list-like type or a string, depending on type setup
-                        embedding_val = row["embedding"]
-                        if isinstance(embedding_val, str):
-                            # It's a string like "[1.0, 2.0, ...]"
-                            parsed_embedding = json.loads(embedding_val)
-                        else:
-                            # Try to coerce it to list (pgvector type returned by asyncpg/pgvector)
-                            parsed_embedding = list(embedding_val)
-
-                        tools_with_embeddings.append((tool, score, parsed_embedding))
-
-                return tools_with_embeddings
-            else:
-                tools: list[tuple[ToolDefinition, float]] = []
-                for row in rows:
-                    score = float(row["similarity"])
-
-                    # Apply score threshold if specified
-                    if score_threshold is None or score >= score_threshold:
-                        tool = ToolDefinition.model_validate_json(row["tool_json"])
-                        tools.append((tool, score))
-
-                return tools
+        return await _search_with_tags(fetch, limit, _required_tags(filters))
 
     async def get_by_name(self, name: str, namespace: str = "default") -> ToolDefinition | None:
         """Get a tool by name."""
@@ -1257,7 +1254,7 @@ class PGVectorStore:
         query = f"""
             SELECT tool_json FROM "{self._table_name}"
             {namespace_clause}
-            ORDER BY created_at DESC
+            ORDER BY created_at DESC, id
             LIMIT $1 OFFSET $2
         """
 

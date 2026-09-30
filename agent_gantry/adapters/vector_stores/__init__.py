@@ -2,6 +2,8 @@
 Vector store adapters for Agent-Gantry.
 """
 
+from __future__ import annotations
+
 from agent_gantry.adapters.vector_stores.base import VectorStoreAdapter
 from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
 

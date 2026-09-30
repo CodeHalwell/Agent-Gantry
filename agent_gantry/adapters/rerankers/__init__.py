@@ -7,6 +7,8 @@ cross-encoders, typesafe-sdk) are lazy-loaded via ``__getattr__`` so importing t
 does not require optional installs.
 """
 
+from __future__ import annotations
+
 from agent_gantry.adapters.rerankers.base import RerankerAdapter
 
 __all__ = [

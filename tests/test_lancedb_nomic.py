@@ -109,18 +109,11 @@ class TestNomicEmbedder:
         assert embedder.model_name == "nomic-ai/nomic-embed-text-v1.5"
 
     def test_nomic_embedder_task_prefixes(self) -> None:
-        """Test task type configuration via the public API."""
+        """The task type is fixed at construction and part of the embedder id."""
         from agent_gantry.adapters.embedders.nomic import NomicEmbedder
 
-        # Ensure the embedder accepts a task_type at initialization
         embedder = NomicEmbedder(task_type="search_query")
-
-        # Ensure the embedder exposes a public method to change the task type
-        assert hasattr(embedder, "set_task_type")
-        assert callable(embedder.set_task_type)
-
-        # Setting the same task type should not raise
-        embedder.set_task_type("search_query")
+        assert embedder.get_embedder_id() == "nomic-ai/nomic-embed-text-v1.5:768:search_query"
 
     def test_nomic_embedder_matryoshka_dims(self) -> None:
         """Test Matryoshka dimension constants."""

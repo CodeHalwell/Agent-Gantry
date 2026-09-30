@@ -1,14 +1,8 @@
 """
 Mixins and SQL-safety helpers for the LanceDB vector store.
 
-Historical note: these mixins once carried full duplicate implementations of
-``add_tools`` / ``search`` / ``add_skills`` / etc. Those copies were shadowed
-by the identical method definitions in ``LanceDBVectorStore``'s class body
-(MRO: class body wins), so they were dead code that silently diverged from
-the live implementations whenever only one copy was fixed. They were removed
-in the 2026-08-03 consolidation — the single source of truth for tools and
-skills operations is ``lancedb.py``. What remains here is code that is
-actually inherited: the tools schema migration and the sync-metadata API.
+The tools/skills operations live in ``lancedb.py``; this module holds what is
+inherited from it: the tools schema migration and the sync-metadata API.
 """
 
 from __future__ import annotations
@@ -22,8 +16,7 @@ from typing import Any
 from agent_gantry.schema.tool import ToolDefinition
 from agent_gantry.utils.fingerprint import compute_tool_fingerprint
 
-# Pre-compile regex for control character checking
-# Benchmark: ~5x faster than generator expression (any(ord(c) < 32...))
+# Pre-compiled: ~5x faster than a generator over ord(c) < 32
 _CTRL_CHAR_RE = re.compile(r"[\x00-\x1f]")
 
 logger = logging.getLogger(__name__)
@@ -31,54 +24,28 @@ logger = logging.getLogger(__name__)
 
 def _escape_sql_string(value: str) -> str:
     """
-    Escape a string for inclusion in a LanceDB (DataFusion) SQL literal.
+    Escape a string for a LanceDB (DataFusion) SQL literal.
 
-    Single quotes are doubled — the SQL-standard escape and the only one
-    DataFusion string literals recognise. Backslashes are deliberately left
-    untouched: DataFusion has no backslash escapes, so ``'a\\\\b'`` is the
-    two-backslash literal and never matches a stored ``a\\b``. Doubling them
-    made any value containing a backslash un-findable, so upsert's delete
-    never matched and ``sync()`` duplicated such rows on every run.
+    Single quotes are doubled — the only escape DataFusion string literals
+    recognise. Backslashes are left alone: DataFusion has no backslash escapes,
+    so doubling them produced literals that never matched the stored value.
 
-    Note: This is used in conjunction with _validate_identifier() which rejects
-    control characters and enforces length limits. LanceDB does not currently
-    support parameterized queries for WHERE clauses, so string escaping is
-    necessary. All user-provided values go through validation before escaping.
-
-    Security considerations:
-    - Only used for metadata key lookups (not arbitrary user input)
-    - Keys are validated by _validate_identifier() before escaping
-    - All test cases in test suite verify SQL injection attempts are blocked
-
-    Args:
-        value: The string value to escape
-
-    Returns:
-        Escaped string safe for SQL inclusion
+    LanceDB has no parameterised WHERE clauses, so this is the escaping layer;
+    caller-supplied identifiers additionally go through ``_validate_identifier``.
     """
     return value.replace("'", "''")
 
 
 def _validate_identifier(value: str, field_name: str) -> None:
     """
-    Validate that a value is safe to use in SQL queries.
-
-    This provides the first line of defense against SQL injection by:
-    1. Enforcing length limits (1-256 characters)
-    2. Rejecting null bytes and control characters (ASCII < 32)
-
-    This validation occurs before any SQL escaping is applied.
-
-    Args:
-        value: The value to validate
-        field_name: Name of the field (for error messages)
+    Reject a value unsafe for a SQL predicate: empty, over 256 characters, or
+    containing control characters.
 
     Raises:
         ValueError: If validation fails
     """
     if not value or len(value) > 256:
         raise ValueError(f"{field_name} must be 1-256 characters")
-    # Reject null bytes and other control characters
     if _CTRL_CHAR_RE.search(value):
         raise ValueError(f"{field_name} contains invalid characters")
 
@@ -88,94 +55,55 @@ class LanceDBToolsMixin:
 
     async def _migrate_tools_schema(self, target_schema: Any) -> None:
         """
-        Migrate tools table schema if needed.
+        Add columns missing from an existing tools table (e.g. ``fingerprint``).
 
-        This handles adding missing columns to existing databases to support
-        new features like fingerprinting without losing data.
-
-        Args:
-            target_schema: The target PyArrow schema
+        LanceDB has no ALTER TABLE, so the rows are copied into
+        ``<table>__migrating`` first and the tools table is only dropped once
+        that copy exists; a failure leaves the data there and raises.
         """
-        try:
-            # Get current schema
-            current_schema = self._tools_table.schema  # type: ignore
-            current_field_names = {field.name for field in current_schema}
-            target_field_names = {field.name for field in target_schema}
+        current_fields = {field.name for field in self._tools_table.schema}  # type: ignore
+        missing_fields = {field.name for field in target_schema} - current_fields
+        if not missing_fields:
+            return
+        logger.info(f"Migrating tools table schema. Adding fields: {missing_fields}")
 
-            # Check if migration is needed
-            missing_fields = target_field_names - current_field_names
-            if not missing_fields:
-                return  # Schema is up to date
+        records = await asyncio.to_thread(
+            lambda: self._tools_table.to_arrow().to_pylist()  # type: ignore
+        )
+        now = datetime.now(timezone.utc).isoformat()
+        for record in records:
+            if "fingerprint" in missing_fields:
+                try:
+                    tool = ToolDefinition.model_validate_json(record["tool_json"])
+                    record["fingerprint"] = compute_tool_fingerprint(tool)
+                except Exception as e:
+                    logger.warning(f"Failed to compute fingerprint during migration: {e}")
+                    record["fingerprint"] = ""
+            for field in ("created_at", "updated_at"):
+                if field in missing_fields:
+                    record[field] = now
 
-            logger.info(f"Migrating tools table schema. Adding fields: {missing_fields}")
-
-            # LanceDB doesn't support ALTER TABLE, so we need to:
-            # 1. Read all existing data
-            # 2. Add missing columns with default values
-            # 3. Re-insert data
-
-            # Read existing data (blocking file I/O — keep off the event loop)
-            table = await asyncio.to_thread(self._tools_table.to_arrow)  # type: ignore
-            records = table.to_pylist()
-
+        def recreate() -> Any:
+            db, name = self._db, self._tools_table_name  # type: ignore
             if not records:
-                # Empty table, just recreate with new schema
-                await asyncio.to_thread(self._db.drop_table, self._tools_table_name)  # type: ignore
-                self._tools_table = await asyncio.to_thread(
-                    self._db.create_table,  # type: ignore
-                    self._tools_table_name,  # type: ignore
-                    schema=target_schema,
-                )
-                return
+                db.drop_table(name)
+                return db.create_table(name, schema=target_schema)
+            backup = f"{name}__migrating"
+            db.create_table(backup, data=records, schema=target_schema, mode="overwrite")
+            db.drop_table(name)
+            table = db.create_table(name, data=records, schema=target_schema)
+            db.drop_table(backup)
+            return table
 
-            # Add missing fields with default values
-            now = datetime.now(timezone.utc).isoformat()
-            for record in records:
-                if "fingerprint" not in record and "fingerprint" in missing_fields:
-                    # Compute fingerprint for existing tools
-                    try:
-                        tool = ToolDefinition.model_validate_json(record["tool_json"])
-                        record["fingerprint"] = compute_tool_fingerprint(tool)
-                    except Exception as e:
-                        # Fallback to empty fingerprint if tool JSON is invalid
-                        logger.warning(f"Failed to compute fingerprint during migration: {e}")
-                        record["fingerprint"] = ""
-                if "created_at" not in record and "created_at" in missing_fields:
-                    record["created_at"] = now
-                if "updated_at" not in record and "updated_at" in missing_fields:
-                    record["updated_at"] = now
-
-            # Drop and recreate table with new schema
-            await asyncio.to_thread(self._db.drop_table, self._tools_table_name)  # type: ignore
-            self._tools_table = await asyncio.to_thread(
-                self._db.create_table,  # type: ignore
-                self._tools_table_name,  # type: ignore
-                schema=target_schema,
-            )
-
-            # Re-insert data
-            await asyncio.to_thread(self._tools_table.add, records)  # type: ignore
-            logger.info(f"Successfully migrated {len(records)} tools to new schema")
-
-        except Exception as e:
-            logger.error(f"Schema migration failed: {e}")
-            # Don't raise - allow system to continue with current schema
-            # This makes the migration non-breaking
+        self._tools_table = await asyncio.to_thread(recreate)
+        logger.info(f"Migrated {len(records)} tools to new schema")
 
 
 class LanceDBMetadataMixin:
     """Mixin for LanceDB metadata operations."""
 
     async def get_metadata(self, key: str) -> str | None:
-        """
-        Get a metadata value by key.
-
-        Args:
-            key: The metadata key
-
-        Returns:
-            The value if found, None otherwise
-        """
+        """Get a metadata value by key, or None if absent."""
         await self._ensure_initialized()  # type: ignore
 
         try:
@@ -190,47 +118,26 @@ class LanceDBMetadataMixin:
         return None
 
     async def set_metadata(self, key: str, value: str) -> None:
-        """
-        Set a metadata value.
-
-        Args:
-            key: The metadata key
-            value: The value to store
-        """
+        """Set a metadata value (replacing any existing one)."""
         await self._ensure_initialized()  # type: ignore
 
         now = datetime.now(timezone.utc).isoformat()
 
-        # Delete existing record if present
         try:
             escaped_key = _escape_sql_string(key)
             await asyncio.to_thread(self._metadata_table.delete, f"key = '{escaped_key}'")  # type: ignore
         except RuntimeError:
-            # LanceDB raises RuntimeError when attempting to delete non-existent records
-            pass
+            pass  # LanceDB raises when nothing matches
         except Exception as e:
             logger.warning(f"Unexpected error deleting metadata key '{key}': {e}")
-            # Continue anyway - we'll try to add the new record
 
-        # Add new record
         await asyncio.to_thread(
             self._metadata_table.add,  # type: ignore
-            [
-                {
-                    "key": key,
-                    "value": value,
-                    "updated_at": now,
-                }
-            ],
+            [{"key": key, "value": value, "updated_at": now}],
         )
 
     async def get_stored_fingerprints(self) -> dict[str, str]:
-        """
-        Get all stored tool fingerprints.
-
-        Returns:
-            Dictionary mapping tool_id to fingerprint
-        """
+        """Get all stored tool fingerprints, keyed by ``namespace.name``."""
         await self._ensure_initialized()  # type: ignore
 
         try:
@@ -243,97 +150,7 @@ class LanceDBMetadataMixin:
             logger.debug(f"get_stored_fingerprints failed: {e}")
             return {}
 
-    async def get_sync_status(self) -> dict[str, Any]:
-        """
-        Get the current sync status including metadata.
-
-        Returns:
-            Dictionary with sync status info:
-            - tool_count: Number of tools in database
-            - embedder_id: Identifier of embedder used
-            - dimension: Vector dimension
-            - last_sync: ISO timestamp of last sync
-        """
-        await self._ensure_initialized()  # type: ignore
-
-        status: dict[str, Any] = {
-            "tool_count": await self.count(),  # type: ignore
-            "dimension": self._dimension,  # type: ignore
-        }
-
-        # Get metadata values
-        embedder_id = await self.get_metadata("embedder_id")
-        if embedder_id:
-            status["embedder_id"] = embedder_id
-
-        last_sync = await self.get_metadata("last_sync")
-        if last_sync:
-            status["last_sync"] = last_sync
-
-        stored_dimension = await self.get_metadata("dimension")
-        if stored_dimension:
-            status["stored_dimension"] = int(stored_dimension)
-
-        return status
-
-    async def update_sync_metadata(
-        self,
-        embedder_id: str,
-        dimension: int,
-    ) -> None:
-        """
-        Update sync metadata after a successful sync.
-
-        This method provides transaction-like semantics by updating all
-        metadata fields together. If any update fails, the entire operation
-        is considered failed and an attempt is made to rollback to previous state.
-
-        Rollback Limitations:
-            Due to LanceDB's lack of native transaction support, rollback is
-            best-effort only and may fail if:
-
-            - The metadata table becomes corrupted during updates
-            - A second concurrent process modifies metadata simultaneously
-            - The database connection is lost during rollback
-
-            If rollback fails, the metadata may be left in an inconsistent state
-            with some fields updated and others not. In this case:
-
-            - Check logs for "Rollback failed" error messages
-            - Manually verify metadata consistency with get_sync_status()
-            - Consider re-syncing all tools to restore consistency
-            - Use external locks (e.g., file locks) to prevent concurrent writes
-
-        Args:
-            embedder_id: Identifier for the embedder used
-            dimension: Vector dimension used
-
-        Raises:
-            Exception: If metadata update fails (with rollback attempted)
-        """
-        now = datetime.now(timezone.utc).isoformat()
-
-        # Store old values for rollback
-        old_embedder_id = await self.get_metadata("embedder_id")
-        old_dimension = await self.get_metadata("dimension")
-        old_last_sync = await self.get_metadata("last_sync")
-
-        try:
-            # Update all metadata fields
-            await self.set_metadata("embedder_id", embedder_id)
-            await self.set_metadata("dimension", str(dimension))
-            await self.set_metadata("last_sync", now)
-        except Exception as e:
-            # Attempt rollback on failure
-            logger.error(f"Sync metadata update failed: {e}. Attempting rollback...")
-            try:
-                if old_embedder_id is not None:
-                    await self.set_metadata("embedder_id", old_embedder_id)
-                if old_dimension is not None:
-                    await self.set_metadata("dimension", old_dimension)
-                if old_last_sync is not None:
-                    await self.set_metadata("last_sync", old_last_sync)
-                logger.info("Rollback completed successfully")
-            except Exception as rollback_error:
-                logger.error(f"Rollback failed: {rollback_error}")
-            raise  # Re-raise original exception
+    async def update_sync_metadata(self, embedder_id: str, dimension: int) -> None:
+        """Record the embedder and dimension used by the last sync."""
+        await self.set_metadata("embedder_id", embedder_id)
+        await self.set_metadata("dimension", str(dimension))

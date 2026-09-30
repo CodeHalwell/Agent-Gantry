@@ -60,6 +60,17 @@ async def test_qdrant_basic_flow(qdrant_url: str) -> None:
     results = await store.search(query_vector=query_embedding, limit=2)
     assert len(results) > 0
 
+    # Tags live in tool_json and are post-filtered on the stored definition
+    tagged = await store.search(
+        query_vector=query_embedding, limit=2, filters={"tags": ["tag_1"]}
+    )
+    assert [t.name for t, _ in tagged] == ["tool_1"]
+
+    # Without upsert, stored ids are skipped; a delete miss is reported
+    assert await store.add_tools(tools[:1], embeddings[:1], upsert=False) == 0
+    assert await store.delete("not_there") is False
+    assert await store.delete(tools[0].name) is True
+
     assert await store.health_check()
 
 
@@ -90,6 +101,17 @@ async def test_pgvector_basic_flow(pgvector_url: str) -> None:
     query_embedding = await embedder.embed_text("test tool 1")
     results = await store.search(query_vector=query_embedding, limit=2)
     assert len(results) > 0
+
+    # Tags live in tool_json and are post-filtered on the stored definition
+    tagged = await store.search(
+        query_vector=query_embedding, limit=2, filters={"tags": ["tag_1"]}
+    )
+    assert [t.name for t, _ in tagged] == ["tool_1"]
+
+    # Without upsert, stored ids are skipped; a delete miss is reported
+    assert await store.add_tools(tools[:1], embeddings[:1], upsert=False) == 0
+    assert await store.delete("not_there") is False
+    assert await store.delete(tools[0].name) is True
 
     assert await store.health_check()
 

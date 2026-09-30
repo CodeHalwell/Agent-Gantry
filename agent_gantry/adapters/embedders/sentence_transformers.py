@@ -8,16 +8,13 @@ configurable models and dimensions.
 from __future__ import annotations
 
 import asyncio
-import logging
 import threading
 import warnings
 from typing import Any
 
 import numpy as np
 
-from agent_gantry.adapters.embedders.base import EmbeddingAdapter
-
-logger = logging.getLogger(__name__)
+from agent_gantry.adapters.embedders.base import EmbeddingAdapter, LazyModelMixin
 
 
 def _l2_normalize(vector: list[float]) -> list[float]:
@@ -29,19 +26,21 @@ def _l2_normalize(vector: list[float]) -> list[float]:
     return (arr / norm).tolist()
 
 
-class SentenceTransformersEmbedder(EmbeddingAdapter):
+class SentenceTransformersEmbedder(LazyModelMixin, EmbeddingAdapter):
     """
     Generic sentence-transformers embedder.
 
     Wraps any sentence-transformers model for use as an embedding adapter.
-    Unlike the NomicEmbedder, this supports arbitrary models without
-    task-specific prefixing.
+    The model is loaded on first use, in a worker thread.
 
     Example:
         >>> embedder = SentenceTransformersEmbedder(model="all-MiniLM-L6-v2")
         >>> vector = await embedder.embed_text("Hello world")
         >>> assert len(vector) == 384
     """
+
+    #: Extra keyword arguments passed to ``SentenceTransformer(...)``.
+    _model_kwargs: dict[str, Any] = {}
 
     def __init__(
         self,
@@ -50,73 +49,39 @@ class SentenceTransformersEmbedder(EmbeddingAdapter):
         device: str | None = None,
     ) -> None:
         """
-        Initialize the SentenceTransformers embedder.
-
         Args:
             model: Hugging Face model identifier or path
-            dimension: Output dimension (truncates if smaller than model's native dim).
-                       If None, uses the model's full dimension.
-            device: Device to run on (e.g., "cpu", "cuda"). Auto-detected if None.
+            dimension: Output dimension (truncates if smaller than the model's
+                native dimension). None uses the model's full dimension.
+            device: Device to run on (e.g. "cpu", "cuda"). Auto-detected if None.
         """
         self._model_name = model
         self._requested_dimension = dimension
-        # Kept as given: _requested_dimension is clamped to the native size
-        # on load, and the embedder id must not change when the model loads.
+        # Kept as given: _requested_dimension is clamped to the native size on
+        # load, and the embedder id must not change when the model loads.
         self._configured_dimension = dimension
         self._device = device
         self._model: Any = None
         self._native_dimension: int | None = None
         self._load_lock = threading.Lock()
 
-    def _ensure_initialized(self) -> None:
-        """Load the model on first use, blocking the caller.
-
-        Prefer :meth:`_aensure_initialized` from async code. This stays sync
-        because it is also reached from sync properties.
-        """
-        if self._model is not None:
-            return
-        with self._load_lock:
-            if self._model is not None:
-                return
-            self._load_model()
-
-    async def _aensure_initialized(self) -> None:
-        """Load the model without stalling the event loop.
-
-        Construction downloads weights on first use and takes seconds (minutes
-        on a cold cache). Running it inline in a coroutine freezes every other
-        task on the loop. The ``encode``/``predict`` calls were already
-        offloaded; only construction was not. The guard is a
-        ``threading.Lock`` rather than an ``asyncio.Lock`` because the work
-        runs in a worker thread and the adapter may outlive one event loop.
-        """
-        if self._model is not None:
-            return
-        await asyncio.to_thread(self._ensure_initialized)
-
     def _load_model(self) -> None:
         """Construct the model. Caller holds ``_load_lock``."""
-        if self._model is not None:
-            return
-
         try:
             from sentence_transformers import SentenceTransformer
         except ImportError as exc:
             raise ImportError(
-                "sentence-transformers is required for SentenceTransformersEmbedder. "
+                f"sentence-transformers is required for {type(self).__name__}. "
                 "Install it with: pip install sentence-transformers (or uv add sentence-transformers)"
             ) from exc
 
-        kwargs: dict[str, Any] = {}
+        kwargs: dict[str, Any] = dict(self._model_kwargs)
         if self._device:
             kwargs["device"] = self._device
 
         self._model = SentenceTransformer(self._model_name, **kwargs)
         # ``get_sentence_embedding_dimension`` was renamed to
-        # ``get_embedding_dimension`` in newer sentence-transformers releases;
-        # call the new name when available and fall back to the old one
-        # silently to remain compatible across versions.
+        # ``get_embedding_dimension`` in newer sentence-transformers releases.
         get_dim = (
             getattr(self._model, "get_embedding_dimension", None)
             or self._model.get_sentence_embedding_dimension
@@ -146,51 +111,28 @@ class SentenceTransformersEmbedder(EmbeddingAdapter):
         """Return the model identifier."""
         return self._model_name
 
+    def _truncate(self, embeddings: list[list[float]]) -> list[list[float]]:
+        """Slice to the requested dimension and re-normalise.
+
+        A sliced prefix of a unit vector is no longer unit length, and cosine
+        scoring downstream (LanceDB's ``1 - d/2`` conversion, dot products)
+        is only exact for unit vectors.
+        """
+        dim = self._requested_dimension
+        if not dim:
+            return embeddings
+        return [_l2_normalize(emb[:dim]) if len(emb) > dim else emb for emb in embeddings]
+
     async def embed_text(self, text: str) -> list[float]:
-        """
-        Embed a single text string.
-
-        Args:
-            text: Text to embed
-
-        Returns:
-            Embedding vector as a list of floats
-        """
-        await self._aensure_initialized()
-
-        # Run in thread pool to avoid blocking the event loop
-        embedding = await asyncio.to_thread(
-            self._model.encode,
-            text,
-            normalize_embeddings=True,
-        )
-
-        result = embedding.tolist()
-
-        # Truncate if a smaller dimension was requested. A sliced prefix of a
-        # unit vector is no longer unit length, so re-normalise: LanceDB's
-        # ``1 - d/2`` cosine conversion (and dot-product scoring generally)
-        # is only exact for unit vectors.
-        if self._requested_dimension and len(result) > self._requested_dimension:
-            result = _l2_normalize(result[: self._requested_dimension])
-
-        return result
+        """Embed a single text string."""
+        return (await self.embed_batch([text]))[0]
 
     async def embed_batch(
         self,
         texts: list[str],
         batch_size: int | None = None,
     ) -> list[list[float]]:
-        """
-        Embed a batch of texts.
-
-        Args:
-            texts: List of texts to embed
-            batch_size: Batch size for encoding (default: model's default)
-
-        Returns:
-            List of embedding vectors
-        """
+        """Embed a batch of texts (``batch_size`` defaults to the model's)."""
         if not texts:
             return []
 
@@ -200,25 +142,9 @@ class SentenceTransformersEmbedder(EmbeddingAdapter):
         if batch_size:
             kwargs["batch_size"] = batch_size
 
-        embeddings = await asyncio.to_thread(
-            self._model.encode,
-            texts,
-            **kwargs,
-        )
-
-        results = embeddings.tolist()
-
-        # Truncate if a smaller dimension was requested, re-normalising the
-        # sliced prefix (see embed_text).
-        if self._requested_dimension:
-            results = [
-                _l2_normalize(emb[: self._requested_dimension])
-                if len(emb) > self._requested_dimension
-                else emb
-                for emb in results
-            ]
-
-        return results
+        # Encode in a thread to avoid blocking the event loop
+        embeddings = await asyncio.to_thread(self._model.encode, texts, **kwargs)
+        return self._truncate(embeddings.tolist())
 
     async def health_check(self) -> bool:
         """Check if the embedder is operational."""
@@ -231,15 +157,10 @@ class SentenceTransformersEmbedder(EmbeddingAdapter):
     def get_embedder_id(self) -> str:
         """Return a unique identifier for this embedder configuration.
 
-        The id must not depend on whether the model has loaded yet: the sync
-        manager compares it with the store's recorded id *before* the first
-        embed call, so an id that changed after loading ("dimauto" ->
-        "dim384") forced a full re-embed on every process start and made
-        ``CachedEmbedder`` miss its own first batch. The configured dimension
-        is known up front, and with none requested the output size is a fixed
-        property of the model name, so the name alone identifies the
-        configuration. Resolving the native dimension here instead would
-        block the caller's event loop on a model load.
+        Must not depend on whether the model has loaded: the sync manager
+        compares it with the store's recorded id before the first embed call,
+        so it uses the configured dimension (or "auto") rather than the
+        native one, which would block on a model load.
         """
         dim = self._configured_dimension or "auto"
         return f"SentenceTransformersEmbedder-{self._model_name}-dim{dim}"

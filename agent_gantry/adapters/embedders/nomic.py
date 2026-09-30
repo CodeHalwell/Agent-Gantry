@@ -1,42 +1,23 @@
 """
 Nomic Embed Text embedder with Matryoshka support.
 
-Uses Nomic's nomic-embed-text-v1.5 model via sentence-transformers for
-local, on-device embedding generation. Supports Matryoshka truncation
-for efficient retrieval at various embedding dimensions.
+Runs nomic-embed-text-v1.5 through sentence-transformers with Nomic's task
+prefixes and Matryoshka truncation (64-768 dimensions).
 """
 
 from __future__ import annotations
 
-import asyncio
-import threading
-from typing import Any
+import warnings
 
-import numpy as np
-
-from agent_gantry.adapters.embedders.base import EmbeddingAdapter
+from agent_gantry.adapters.embedders.sentence_transformers import SentenceTransformersEmbedder
 
 
-def _l2_normalize(vector: list[float]) -> list[float]:
-    """Rescale ``vector`` to unit length; a zero vector is returned unchanged."""
-    arr = np.asarray(vector, dtype=np.float64)
-    norm = float(np.linalg.norm(arr))
-    if norm == 0.0:
-        return list(vector)
-    return (arr / norm).tolist()
-
-
-class NomicEmbedder(EmbeddingAdapter):
+class NomicEmbedder(SentenceTransformersEmbedder):
     """
     Nomic Embed Text embedder with Matryoshka truncation support.
 
-    Uses sentence-transformers to load and run the nomic-embed-text-v1.5 model
-    locally. Supports Matryoshka embedding truncation for efficient retrieval.
-
-    Attributes:
-        model_name: The Hugging Face model identifier
-        dimension: Output embedding dimension (supports Matryoshka truncation)
-        task_prefix: Prefix to add to texts for task-specific embeddings
+    Documents are embedded with the configured ``task_type`` prefix;
+    :meth:`embed_query` always uses the ``search_query`` prefix.
 
     Example:
         >>> embedder = NomicEmbedder(dimension=256)
@@ -58,6 +39,8 @@ class NomicEmbedder(EmbeddingAdapter):
     # Recommended Matryoshka dimensions for efficient truncation
     MATRYOSHKA_DIMS = [768, 512, 256, 128, 64]
 
+    _model_kwargs = {"trust_remote_code": True}
+
     def __init__(
         self,
         model: str = "nomic-ai/nomic-embed-text-v1.5",
@@ -66,281 +49,49 @@ class NomicEmbedder(EmbeddingAdapter):
         device: str | None = None,
     ) -> None:
         """
-        Initialize the Nomic embedder.
-
         Args:
             model: Hugging Face model identifier
             dimension: Output dimension (default is full 768, can truncate to 64-768)
             task_type: Task type for prefix ('search_document', 'search_query',
-                      'clustering', 'classification')
+                'clustering', 'classification')
             device: Device to run model on ('cpu', 'cuda', etc). Auto-detected if None.
 
         Raises:
             ValueError: If dimension is invalid or task_type is unsupported.
         """
-        self._model_name = model
         dim = self.FULL_DIMENSION if dimension is None else dimension
-
-        # Validate dimension
         if dim < 1 or dim > self.FULL_DIMENSION:
             raise ValueError(f"dimension must be between 1 and {self.FULL_DIMENSION}, got {dim}")
         if dim not in self.MATRYOSHKA_DIMS:
-            import warnings
-
             warnings.warn(
                 f"dimension {dim} is not a recommended Matryoshka dimension. "
                 f"Recommended values: {self.MATRYOSHKA_DIMS}",
                 UserWarning,
                 stacklevel=2,
             )
-
-        # Validate task_type
         if task_type not in self.TASK_PREFIXES:
             raise ValueError(
                 f"Unsupported task_type '{task_type}'. "
                 f"Supported types: {', '.join(self.TASK_PREFIXES.keys())}"
             )
 
-        self._dimension = dim
+        super().__init__(model=model, dimension=dim, device=device)
         self._task_type = task_type
         self._task_prefix = self.TASK_PREFIXES[task_type]
-        self._device = device
-        self._model: Any = None
-        self._initialized = False
-        self._load_lock = threading.Lock()
-
-    @property
-    def dimension(self) -> int:
-        """Return the embedding dimension."""
-        return self._dimension
-
-    @property
-    def model_name(self) -> str:
-        """Return the model name."""
-        return self._model_name
 
     def get_embedder_id(self) -> str:
-        """
-        Return a unique identifier for this embedder configuration.
-
-        Includes model name, dimension, and task type to ensure proper
-        invalidation when any of these change.
-
-        Returns:
-            Unique identifier (e.g., "nomic-ai/nomic-embed-text-v1.5:768:search_document")
-        """
-        return f"{self._model_name}:{self._dimension}:{self._task_type}"
-
-    def _ensure_initialized(self) -> None:
-        """Load the model on first use, blocking the caller.
-
-        Prefer :meth:`_aensure_initialized` from async code. This stays sync
-        because it is also reached from sync properties.
-        """
-        if self._initialized:
-            return
-        with self._load_lock:
-            if self._initialized:
-                return
-            self._load_model()
-
-    async def _aensure_initialized(self) -> None:
-        """Load the model without stalling the event loop.
-
-        Construction downloads weights on first use and takes seconds (minutes
-        on a cold cache). Running it inline in a coroutine freezes every other
-        task on the loop. The ``encode``/``predict`` calls were already
-        offloaded; only construction was not. The guard is a
-        ``threading.Lock`` rather than an ``asyncio.Lock`` because the work
-        runs in a worker thread and the adapter may outlive one event loop.
-        """
-        if self._initialized:
-            return
-        await asyncio.to_thread(self._ensure_initialized)
-
-    def _load_model(self) -> None:
-        """Construct the model. Caller holds ``_load_lock``."""
-        if self._initialized:
-            return
-
-        try:
-            from sentence_transformers import SentenceTransformer
-        except ImportError as e:
-            raise ImportError(
-                "sentence-transformers is required for Nomic embeddings. "
-                "Install with: pip install sentence-transformers (or uv add sentence-transformers)"
-            ) from e
-
-        self._model = SentenceTransformer(
-            self._model_name,
-            trust_remote_code=True,
-            device=self._device,
-        )
-        self._initialized = True
-
-    def _apply_matryoshka_truncation(self, embeddings: list[list[float]]) -> list[list[float]]:
-        """
-        Apply Matryoshka truncation to embeddings.
-
-        The underlying sentence-transformers model is called with
-        ``normalize_embeddings=True``, so the full embeddings are unit
-        vectors — but a sliced prefix of a unit vector is not. Nomic's own
-        Matryoshka recipe re-normalises after truncation, and downstream
-        scoring assumes unit vectors (LanceDB's ``1 - d/2`` cosine
-        conversion is only exact for them), so re-normalise here.
-        """
-        if self._dimension >= self.FULL_DIMENSION:
-            return embeddings
-
-        return [_l2_normalize(emb[: self._dimension]) for emb in embeddings]
-
-    async def embed_text(self, text: str) -> list[float]:
-        """
-        Embed a single text.
-
-        Args:
-            text: Text to embed (prefix will be added automatically)
-
-        Returns:
-            Embedding vector of configured dimension
-        """
-        import asyncio
-
-        await self._aensure_initialized()
-
-        # Add task prefix
-        prefixed_text = f"{self._task_prefix}{text}"
-
-        # Generate embedding (run in thread pool to avoid blocking event loop)
-        embedding = await asyncio.to_thread(
-            lambda: self._model.encode([prefixed_text], normalize_embeddings=True)
-        )
-        result = embedding.tolist()
-
-        # Apply Matryoshka truncation if needed
-        truncated = self._apply_matryoshka_truncation(result)
-        return truncated[0]
+        """Model, dimension and task type: a change to any of them invalidates stored vectors."""
+        return f"{self._model_name}:{self._configured_dimension}:{self._task_type}"
 
     async def embed_batch(
         self,
         texts: list[str],
         batch_size: int | None = None,
     ) -> list[list[float]]:
-        """
-        Embed multiple texts efficiently.
-
-        Args:
-            texts: List of texts to embed
-            batch_size: Batch size for processing (default uses model default)
-
-        Returns:
-            List of embedding vectors
-        """
-        import asyncio
-
-        if not texts:
-            return []
-
-        await self._aensure_initialized()
-
-        # Add task prefix to all texts
-        prefixed_texts = [f"{self._task_prefix}{text}" for text in texts]
-
-        # Generate embeddings (run in thread pool to avoid blocking event loop)
-        kwargs: dict[str, Any] = {"normalize_embeddings": True}
-        if batch_size is not None:
-            kwargs["batch_size"] = batch_size
-
-        embeddings = await asyncio.to_thread(
-            lambda: self._model.encode(prefixed_texts, **kwargs)
-        )
-        result = embeddings.tolist()
-
-        # Apply Matryoshka truncation if needed
-        return self._apply_matryoshka_truncation(result)
+        """Embed texts with the configured task prefix."""
+        return await super().embed_batch([f"{self._task_prefix}{t}" for t in texts], batch_size)
 
     async def embed_query(self, query: str) -> list[float]:
-        """
-        Embed a search query with the appropriate prefix.
-
-        This method always uses 'search_query' prefix regardless of the
-        instance's task_type setting, as this is optimal for retrieval.
-        Use embed_text() if you want to use the configured task_type prefix.
-
-        Args:
-            query: Search query text
-
-        Returns:
-            Query embedding vector
-        """
-        import asyncio
-
-        await self._aensure_initialized()
-
-        # Always use search_query prefix for queries (optimal for retrieval)
-        prefixed_query = f"search_query: {query}"
-
-        # Generate embedding (run in thread pool to avoid blocking event loop)
-        embedding = await asyncio.to_thread(
-            lambda: self._model.encode([prefixed_query], normalize_embeddings=True)
-        )
-        result = embedding.tolist()
-
-        truncated = self._apply_matryoshka_truncation(result)
-        return truncated[0]
-
-    async def health_check(self) -> bool:
-        """
-        Check health of the embedder.
-
-        Returns:
-            True if the model can be loaded and used
-        """
-        import asyncio
-
-        try:
-            await self._aensure_initialized()
-            # Quick sanity check (run in thread pool to avoid blocking event loop)
-            test_embedding = await asyncio.to_thread(
-                lambda: self._model.encode(["test"], normalize_embeddings=True)
-            )
-            return len(test_embedding[0]) > 0
-        except Exception:
-            return False
-
-    def set_task_type(self, task_type: str) -> None:
-        """
-        Set the task type for embeddings.
-
-        This can be used to configure the embedder before generating any embeddings.
-        Changing the task type after embeddings have been created can lead to
-        inconsistent prefixes between stored embeddings and new queries, which
-        degrades retrieval quality. For that reason, changing the task type to a
-        different value after it has been set is not allowed.
-
-        Args:
-            task_type: New task type ('search_document', 'search_query',
-                'clustering', 'classification')
-
-        Raises:
-            ValueError: If an unknown task type is provided.
-            RuntimeError: If attempting to change the task type after it was
-                already set to a different value.
-        """
-        if task_type not in self.TASK_PREFIXES:
-            raise ValueError(
-                f"Unsupported task_type '{task_type}'. "
-                f"Supported types: {', '.join(self.TASK_PREFIXES.keys())}"
-            )
-
-        # Disallow changing task type once it has been set to a different value.
-        # This avoids mixing embeddings generated with different task prefixes.
-        if getattr(self, "_task_type", None) is not None and self._task_type != task_type:
-            raise RuntimeError(
-                "Changing task_type after initialization is not supported, as it can "
-                "lead to inconsistent embeddings. Create a new NomicEmbedder "
-                "instance with the desired task_type instead."
-            )
-
-        self._task_type = task_type
-        self._task_prefix = self.TASK_PREFIXES[task_type]
+        """Embed a search query with the ``search_query`` prefix, whatever the configured task_type."""
+        batch = await SentenceTransformersEmbedder.embed_batch(self, [f"search_query: {query}"])
+        return batch[0]
