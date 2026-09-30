@@ -247,3 +247,45 @@ class TestModelNameExtraction:
         await generate("hello")
 
         assert gantry.telemetry.usages[0][1] == "openai"
+
+
+class _GeminiUsage:
+    prompt_token_count = 30
+    candidates_token_count = 5
+    total_token_count = 35
+
+
+class TestResponseUsageLookup:
+    """``from_response_usage`` finds the block wherever the SDK puts it:
+    ``usage`` (OpenAI, Anthropic) or ``usage_metadata`` (google-genai)."""
+
+    def test_google_genai_usage_metadata_attribute(self) -> None:
+        response = type("R", (), {"usage_metadata": _GeminiUsage()})()
+        usage = ProviderUsage.from_response_usage(response)
+        assert usage is not None
+        assert (usage.prompt_tokens, usage.completion_tokens, usage.total_tokens) == (30, 5, 35)
+
+    def test_google_genai_usage_metadata_key(self) -> None:
+        usage = ProviderUsage.from_response_usage({"usage_metadata": {"prompt_token_count": 3}})
+        assert usage is not None
+        assert usage.prompt_tokens == 3
+
+    def test_no_usage_block_is_none(self) -> None:
+        assert ProviderUsage.from_response_usage("plain text") is None
+        assert ProviderUsage.from_response_usage({"model": "x"}) is None
+        assert ProviderUsage.from_response_usage(type("R", (), {"usage": object()})()) is None
+
+    async def test_decorator_records_gemini_usage(self) -> None:
+        from agent_gantry.integrations.semantic_tools import with_semantic_tools
+
+        gantry = AgentGantry(telemetry=_RecordingTelemetry())
+
+        @with_semantic_tools(gantry, dialect="gemini")
+        async def generate(prompt: str, *, tools: list[Any] | None = None) -> Any:
+            return type("R", (), {"usage_metadata": _GeminiUsage()})()
+
+        await generate("hello")
+
+        usage, model = gantry.telemetry.usages[0]
+        assert usage.prompt_tokens == 30
+        assert model == "gemini"

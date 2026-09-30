@@ -14,8 +14,6 @@ Guide to the pytest suite. Tests mirror the roadmap phases and the primary user 
   and Mistral SDKs (ensures optional deps do not regress schema compatibility).
 - `test_phase5_mcp.py`: MCP server/client discovery and dynamic mode behaviors.
 - `test_phase6_a2a.py`: A2A agent serving and client discovery flows.
-- `test_decorator.py`: Ensures the semantic tool injection decorator wires tool schemas correctly for
-  OpenAI/Anthropic/Google SDKs.
 - `test_lancedb_nomic.py`: LanceDB + Nomic integration and skill storage.
 - `test_token_savings_and_accuracy.py`: Validates token savings math and retrieval accuracy on
   synthetic workloads.

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from agent_gantry.schema.execution import ToolCall, ToolResult
-    from agent_gantry.schema.tool import ToolDefinition, ToolSource
+    from agent_gantry.schema.tool import ToolDefinition
 
 
 class ExecutorAdapter(Protocol):
@@ -38,36 +38,5 @@ class ExecutorAdapter(Protocol):
 
         Returns:
             Result of the execution
-        """
-        ...
-
-    @abstractmethod
-    async def validate_arguments(
-        self,
-        tool: ToolDefinition,
-        arguments: dict[str, Any],
-    ) -> tuple[bool, str | None]:
-        """
-        Validate arguments for a tool call.
-
-        Args:
-            tool: The tool definition
-            arguments: Arguments to validate
-
-        Returns:
-            Tuple of (is_valid, error_message)
-        """
-        ...
-
-    @abstractmethod
-    def supports_source(self, source: ToolSource) -> bool:
-        """
-        Check if this executor supports a tool source.
-
-        Args:
-            source: The tool source type
-
-        Returns:
-            True if supported
         """
         ...

@@ -526,7 +526,10 @@ def _collect_open_maps(
 
 
 def unsupported_strict_paths(
-    schema: dict[str, Any] | None, *, inlines_refs: bool = True
+    schema: dict[str, Any] | None,
+    *,
+    inlines_refs: bool = True,
+    strict_schema: dict[str, Any] | None = None,
 ) -> list[str]:
     """Locations in ``schema`` that a provider's strict mode cannot express.
 
@@ -554,6 +557,8 @@ def unsupported_strict_paths(
 
     Args:
         schema: The tool's JSON-Schema ``parameters`` object.
+        strict_schema: ``strict_json_schema(schema)`` when the caller already
+            has it, so the transform is not run a second time here.
 
     Returns:
         Dotted paths (``"counts"``, ``"payload.tags"``) of the offending
@@ -564,27 +569,11 @@ def unsupported_strict_paths(
     found: list[str] = []
     _collect_open_maps(schema, "", found, schema)
     if inlines_refs:
-        found.extend(_residual_decorated_refs(schema))
-    return found
-
-
-def _residual_decorated_refs(schema: dict[str, Any]) -> list[str]:
-    """Paths where a ``$ref`` with sibling keys survives the strict transform.
-
-    ``_strict_in_place`` inlines a decorated ``$ref`` because OpenAI rejects
-    one that carries siblings, but it stops at ``_MAX_INLINE_DEPTH`` — a
-    self-referential model whose recursive field also has a description has no
-    finite inlined spelling. The node left at the limit is exactly the shape
-    the inlining exists to remove, and reporting nothing meant the tool went
-    out ``strict: true`` for the provider to reject. Asking the transform
-    itself keeps this honest however the depth rule changes.
-    """
-    try:
-        transformed = strict_json_schema(schema)
-    except Exception:  # pragma: no cover - the caller re-raises on its own path
-        return []
-    found: list[str] = []
-    _collect_decorated_refs(transformed, "", found)
+        # ``_strict_in_place`` inlines a decorated ``$ref`` but gives up at
+        # ``_MAX_INLINE_DEPTH``; one that survives the transform is exactly
+        # the shape OpenAI rejects.
+        transformed = strict_schema if strict_schema is not None else strict_json_schema(schema)
+        _collect_decorated_refs(transformed, "", found)
     return found
 
 

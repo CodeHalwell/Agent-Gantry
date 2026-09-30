@@ -78,16 +78,6 @@ def set_default_gantry(gantry: AgentGantry) -> None:
     _gantry_context.set(gantry)
 
 
-def get_default_gantry() -> AgentGantry | None:
-    """
-    Get the default AgentGantry instance for the current context.
-
-    Returns:
-        The default gantry or None if not set
-    """
-    return _gantry_context.get()
-
-
 class SemanticToolSelector:
     """
     A wrapper that provides semantic tool selection for LLM generate functions.
@@ -151,7 +141,6 @@ class SemanticToolSelector:
         self._tools_param = tools_param
         self._limit = limit
         self._dialect = dialect
-        self._auto_sync = auto_sync
         self._score_threshold = score_threshold
         self._dialect_options = dialect_options or {}
         if not auto_sync:
@@ -221,42 +210,24 @@ class SemanticToolSelector:
         Returns:
             The extracted prompt string, or None if not found.
         """
-        # Build a mapping of parameter names to values
         bound = sig.bind_partial(*args, **kwargs)
         bound.apply_defaults()
         params = bound.arguments
 
-        # Helper to extract user message from messages list
-        def extract_from_messages(messages: Any) -> str | None:
-            if not isinstance(messages, (list, tuple)) or not messages:
-                return None
-            # The canonical strategy reads every message shape the library
-            # routes on: role/content dicts, multimodal ``text`` parts,
-            # Responses-API ``input_text`` parts and SDK message *objects*
-            # (``.role`` / ``.content``), which a dict-only walk skipped.
-            return last_user_text(messages) or None
-
-        # Try direct prompt parameter
         if self._prompt_param in params:
             value = params[self._prompt_param]
             if value is None:
                 return None
             if isinstance(value, (list, tuple)):
-                # A messages list yields its last user text or *no* prompt:
-                # falling through to ``str(value)`` ran retrieval on ``"[]"``
-                # or the repr of a list of message objects.
-                return extract_from_messages(value)
-            # Only scalars are stringified
-            if isinstance(value, str):
-                return value
-            return str(value)
+                # A messages list yields its last user text or no prompt at
+                # all; stringifying it would run retrieval on ``"[]"``.
+                return last_user_text(value) or None
+            return value if isinstance(value, str) else str(value)
 
-        # Try OpenAI/Anthropic-style messages if not already handled
-        if "messages" in params and self._prompt_param != "messages":
-            extracted = extract_from_messages(params["messages"])
-            if extracted:
-                return extracted
-
+        # OpenAI/Anthropic-style ``messages`` when the prompt parameter is absent
+        messages = params.get("messages")
+        if self._prompt_param != "messages" and isinstance(messages, (list, tuple)):
+            return last_user_text(messages) or None
         return None
 
     def _tools_param_kind(self, sig: inspect.Signature) -> inspect.Parameter | None:
@@ -339,64 +310,26 @@ class SemanticToolSelector:
             _logger.debug("Token usage recording skipped: %s", exc)
 
     async def _record_usage(self, response: Any) -> None:
-        """Report provider token usage for ``response``, best effort.
+        """Report provider token usage for ``response`` to telemetry, best effort.
 
-        The flagship claim of semantic tool selection is a smaller prompt, but
-        nothing in the library measured it: ``TokenUsageEvent`` was defined and
-        never constructed, and ``record_token_usage`` was never called outside
-        tests. Every provider this decorator targets returns a ``usage`` block,
-        so the *actual* cost of each call is recorded here.
-
-        Savings are deliberately not inferred: computing them needs a real
-        baseline (the same prompt with every tool injected), and
-        ``agent_gantry.metrics.token_usage`` refuses approximate estimators so
-        reported numbers stay auditable. Callers who run a baseline can pass
-        both usages to ``calculate_token_savings`` and report it themselves.
+        Savings are not inferred: that needs a real baseline (the same prompt
+        with every tool injected) — see ``calculate_token_savings``.
         """
         telemetry = getattr(self._gantry, "telemetry", None)
         if telemetry is None:
             return
-
-        usage = getattr(response, "usage", None)
-        if usage is None and isinstance(response, dict):
-            usage = response.get("usage")
-        if usage is None:
-            return
-
-        if not isinstance(usage, Mapping):
-            # SDK usage objects are plain attribute holders; pull the fields
-            # the normalizer knows about rather than guessing at a dump method.
-            usage = {
-                field: value
-                for field in (
-                    "prompt_tokens",
-                    "completion_tokens",
-                    "total_tokens",
-                    "input_tokens",
-                    "output_tokens",
-                    "cache_creation_input_tokens",
-                    "cache_read_input_tokens",
-                    "prompt_token_count",
-                    "candidates_token_count",
-                    "total_token_count",
-                )
-                if isinstance(value := getattr(usage, field, None), (int, float))
-            }
-        if not usage:
-            return
-
         try:
             from agent_gantry.metrics.token_usage import ProviderUsage
 
-            provider_usage = ProviderUsage.from_usage(usage)
+            usage = ProviderUsage.from_response_usage(response)
+            if usage is None:
+                return
             # Dict-shaped responses (replayed fixtures, SDK dumps) carry the
-            # model under a key, not an attribute; falling straight through to
-            # the dialect recorded "openai" in place of the real model name.
+            # model under a key, not an attribute.
             model_name = getattr(response, "model", None)
             if model_name is None and isinstance(response, Mapping):
                 model_name = response.get("model")
-            model_name = model_name or self._dialect
-            await telemetry.record_token_usage(provider_usage, model_name=str(model_name))
+            await telemetry.record_token_usage(usage, model_name=str(model_name or self._dialect))
         except Exception as exc:  # never fail a user's call over accounting
             _logger.debug("Token usage recording skipped: %s", exc)
 
@@ -647,64 +580,41 @@ def with_semantic_tools(
     """
     from agent_gantry.core.gantry import AgentGantry
 
-    # If gantry_or_func is None, use the default gantry
-    if gantry_or_func is None:
-        default_gantry = _gantry_context.get()
-        if default_gantry is None:
-            raise ValueError(
-                "No gantry provided and no default set. Use one of:\n"
-                "  1. @with_semantic_tools(gantry, ...)\n"
-                "  2. set_default_gantry(gantry) then @with_semantic_tools(...)"
-            )
-        return SemanticToolSelector(
-            default_gantry,
-            prompt_param=prompt_param,
-            tools_param=tools_param,
-            limit=limit,
-            dialect=dialect,
-            auto_sync=auto_sync,
-            score_threshold=score_threshold,
-            dialect_options=dialect_options,
-        )
-
-    # If gantry_or_func is an AgentGantry instance, return a selector
     if isinstance(gantry_or_func, AgentGantry):
-        return SemanticToolSelector(
-            gantry_or_func,
-            prompt_param=prompt_param,
-            tools_param=tools_param,
-            limit=limit,
-            dialect=dialect,
-            auto_sync=auto_sync,
-            score_threshold=score_threshold,
-            dialect_options=dialect_options,
-        )
-
-    # Otherwise, assume it's a function and use default gantry
-    if callable(gantry_or_func):
-        default_gantry = _gantry_context.get()
-        if default_gantry is None:
+        gantry, func = gantry_or_func, None
+    elif gantry_or_func is None or callable(gantry_or_func):
+        # A bare function (or nothing) uses the context default
+        gantry, func = _gantry_context.get(), gantry_or_func
+        if gantry is None:
             raise ValueError(
-                "No default gantry set. Use set_default_gantry(gantry) first "
-                "or pass gantry explicitly: @with_semantic_tools(gantry)"
+                (
+                    "No default gantry set. Use set_default_gantry(gantry) first "
+                    "or pass gantry explicitly: @with_semantic_tools(gantry)"
+                )
+                if func is not None
+                else (
+                    "No gantry provided and no default set. Use one of:\n"
+                    "  1. @with_semantic_tools(gantry, ...)\n"
+                    "  2. set_default_gantry(gantry) then @with_semantic_tools(...)"
+                )
             )
-        selector = SemanticToolSelector(
-            default_gantry,
-            prompt_param=prompt_param,
-            tools_param=tools_param,
-            limit=limit,
-            dialect=dialect,
-            auto_sync=auto_sync,
-            score_threshold=score_threshold,
-            dialect_options=dialect_options,
+    else:
+        raise TypeError(
+            f"Invalid argument type: {type(gantry_or_func).__name__}. "
+            "Expected AgentGantry instance, callable, or None."
         )
-        return selector(gantry_or_func)
 
-    # Invalid argument
-    raise TypeError(
-        f"Invalid argument type: {type(gantry_or_func).__name__}. "
-        "Expected AgentGantry instance, callable, or None."
+    selector = SemanticToolSelector(
+        gantry,
+        prompt_param=prompt_param,
+        tools_param=tools_param,
+        limit=limit,
+        dialect=dialect,
+        auto_sync=auto_sync,
+        score_threshold=score_threshold,
+        dialect_options=dialect_options,
     )
+    return selector if func is None else selector(func)
 
 
 # Convenience class for method-style usage
@@ -717,7 +627,7 @@ class SemanticToolsDecorator:
 
     Example:
         from agent_gantry import AgentGantry
-        from agent_gantry.integrations.decorator import SemanticToolsDecorator
+        from agent_gantry.integrations.semantic_tools import SemanticToolsDecorator
 
         gantry = AgentGantry()
         # ... register tools ...
@@ -778,37 +688,27 @@ class SemanticToolsDecorator:
         tools_param: str | None = None,
         limit: int | None = None,
         dialect: str | None = None,
+        score_threshold: float | None = None,
+        dialect_options: dict[str, Any] | None = None,
     ) -> Any:
         """
         Wrap a function with semantic tool selection.
 
-        Can be used as @decorator.wrap or @decorator.wrap(limit=3).
-
-        Args:
-            func: The function to wrap (when used without parentheses).
-            prompt_param: Override prompt parameter name.
-            tools_param: Override tools parameter name.
-            limit: Override tool limit.
-            dialect: Override schema dialect.
+        Can be used as @decorator.wrap or @decorator.wrap(limit=3); an unset
+        override falls back to the factory default.
 
         Returns:
-            Wrapped function or decorator.
+            The wrapped function, or a selector to apply when called without
+            ``func``.
         """
         selector = SemanticToolSelector(
             self._gantry,
             prompt_param=prompt_param or self._prompt_param,
             tools_param=tools_param or self._tools_param,
-            limit=limit if limit is not None else self._limit,
+            limit=self._limit if limit is None else limit,
             dialect=dialect or self._dialect,
             auto_sync=self._auto_sync,
-            score_threshold=self._score_threshold,
-            dialect_options=self._dialect_options,
+            score_threshold=self._score_threshold if score_threshold is None else score_threshold,
+            dialect_options=self._dialect_options if dialect_options is None else dialect_options,
         )
-
-        if func is not None:
-            return selector(func)
-
-        def decorator(fn: Callable[P, R]) -> Any:
-            return selector(fn)
-
-        return decorator
+        return selector if func is None else selector(func)

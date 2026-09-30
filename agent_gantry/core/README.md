@@ -19,15 +19,15 @@ framework integrations) ultimately flows through these building blocks.
 - `registry.py`: A simple registry that maps tool names to callables and `ToolDefinition` metadata.
   It is kept separate from the router to allow dynamic providers (e.g., MCP/A2A) to populate tools
   without reconfiguring routing logic.
-- `context.py`: Utilities for building a `ToolQuery` out of conversation state and summarizing past
-  tool calls. These helpers keep retrieval deterministic for the LLM integration decorators.
-- `security.py`: Implements the capability-based `SecurityPolicy` and enforcement hooks (`require` /
-  `confirm`). The executor checks these policies before invoking tools to implement zero-trust
-  semantics.
+- `context.py`: `ConversationContextManager`, a small tracker of recent messages and of tools used
+  or failed, which builds the `ConversationContext` a `ToolQuery` carries.
+- `security.py`: `SecurityPolicy` (confirmation patterns, allowed domains, a per-minute request
+  window) and `PermissionChecker` (capability checks). The executor consults the policy before
+  invoking a tool.
 
 ## How the Decorator Works Behind the Scenes
 
-When you use the `@with_semantic_tools` decorator from `agent_gantry.integrations.decorator`, here's what happens:
+When you use the `@with_semantic_tools` decorator from `agent_gantry.integrations.semantic_tools`, here's what happens:
 
 ```
 User's LLM Function Call

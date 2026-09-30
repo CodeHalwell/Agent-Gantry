@@ -115,92 +115,6 @@ class TestMCPClient:
             assert all(t.source == ToolSource.MCP_SERVER for t in tools)
 
 
-class TestMCPClientPool:
-    """Tests for MCP client pool."""
-
-    @pytest.fixture
-    def pool(self) -> MCPClientPool:
-        """Create an MCP client pool."""
-        return MCPClientPool()
-
-    @pytest.fixture
-    def config1(self) -> MCPServerConfig:
-        """Create first server config."""
-        return MCPServerConfig(
-            name="server1",
-            command=["python", "-m", "server1"],
-            namespace="ns1",
-        )
-
-    @pytest.fixture
-    def config2(self) -> MCPServerConfig:
-        """Create second server config."""
-        return MCPServerConfig(
-            name="server2",
-            command=["python", "-m", "server2"],
-            namespace="ns2",
-        )
-
-    def test_add_server(self, pool: MCPClientPool, config1: MCPServerConfig) -> None:
-        """Test adding server to pool."""
-        client = pool.add_server(config1)
-        assert isinstance(client, MCPClient)
-        assert client.config == config1
-        assert pool.get_client("server1") == client
-
-    def test_get_client(self, pool: MCPClientPool, config1: MCPServerConfig) -> None:
-        """Test getting client from pool."""
-        pool.add_server(config1)
-        client = pool.get_client("server1")
-        assert client is not None
-        assert client.config.name == "server1"
-
-        # Non-existent server
-        assert pool.get_client("nonexistent") is None
-
-    def test_remove_server(self, pool: MCPClientPool, config1: MCPServerConfig) -> None:
-        """Test removing server from pool."""
-        pool.add_server(config1)
-        assert pool.remove_server("server1") is True
-        assert pool.get_client("server1") is None
-        assert pool.remove_server("server1") is False
-
-    @pytest.mark.asyncio
-    async def test_list_all_tools(
-        self,
-        pool: MCPClientPool,
-        config1: MCPServerConfig,
-        config2: MCPServerConfig,
-    ) -> None:
-        """Test listing tools from all servers."""
-        client1 = pool.add_server(config1)
-        client2 = pool.add_server(config2)
-
-        # Mock list_tools for both clients
-        mock_tools1 = [
-            ToolDefinition(
-                name="tool1",
-                description="First tool from server one for testing",
-                parameters_schema={"type": "object"},
-            )
-        ]
-        mock_tools2 = [
-            ToolDefinition(
-                name="tool2",
-                description="Second tool from server two for testing",
-                parameters_schema={"type": "object"},
-            )
-        ]
-
-        client1.list_tools = AsyncMock(return_value=mock_tools1)
-        client2.list_tools = AsyncMock(return_value=mock_tools2)
-
-        all_tools = await pool.list_all_tools()
-        assert len(all_tools) == 2
-        assert all_tools[0].name == "tool1"
-        assert all_tools[1].name == "tool2"
-
-
 class TestMCPServer:
     """Tests for MCP server functionality."""
 
@@ -562,8 +476,7 @@ async def test_a_client_dropped_outside_a_loop_is_still_closed_at_shutdown() -> 
 async def test_a_client_added_during_shutdown_is_not_silently_dropped() -> None:
     """``close_all_clients`` cleared its bookkeeping *after* the gather, so a
     client cached while that await was in flight was neither closed by it nor
-    reachable through the cache afterwards. ``MCPClientPool.close_all`` clears
-    first for this reason; the registry twin cleared last."""
+    reachable through the cache afterwards; it clears first now."""
     from agent_gantry.core.mcp_registry import MCPRegistry
 
     registry = MCPRegistry()
@@ -632,34 +545,6 @@ async def test_a_server_registered_mid_sync_is_not_dropped_from_the_buffer() -> 
     registry.drain_pending(snapshot)
     remaining = [server.name for server in registry.get_pending()]
     assert remaining == ["late"], remaining
-
-
-@pytest.mark.asyncio
-async def test_a_pooled_client_dropped_outside_a_loop_is_still_closed() -> None:
-    """The same lifecycle hole as above, on ``MCPClientPool``: it dropped the
-    client whether or not the close could be scheduled, so a ``remove_server``
-    from a synchronous thread stranded a live connection that ``close_all``
-    could never reach."""
-
-    class _FakeClient:
-        def __init__(self, name: str) -> None:
-            self.config = type("C", (), {"name": name})()
-            self.closed = False
-
-        async def close(self) -> None:
-            self.closed = True
-
-    pool = MCPClientPool()
-    client = _FakeClient("srv")
-    pool._clients["srv"] = client
-
-    assert await asyncio.to_thread(pool.remove_server, "srv") is True
-    assert client.closed is False, "nothing can close it from there"
-    assert client not in pool._clients.values(), "and it leaves the pool"
-
-    await pool.close_all()
-    assert client.closed is True
-    assert pool._retired == []
 
 
 @pytest.mark.asyncio

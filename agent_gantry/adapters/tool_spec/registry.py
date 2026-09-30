@@ -8,7 +8,7 @@ dynamic dispatch of tool specifications based on the target LLM provider.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from agent_gantry.adapters.tool_spec.base import ToolSpecAdapter
@@ -99,7 +99,7 @@ class DialectRegistry:
         """
         if dialect == "auto":
             # Default to OpenAI for 'auto' dialect
-            return self._adapters.get("openai", self._get_fallback_adapter())
+            return self._adapters.get("openai") or self._get_fallback_adapter()
         if dialect not in self._adapters:
             raise KeyError(
                 f"No adapter registered for dialect '{dialect}'. "
@@ -165,23 +165,3 @@ def get_adapter(dialect: str = "auto") -> ToolSpecAdapter:
         The registered adapter
     """
     return DialectRegistry.default().get(dialect)
-
-
-def to_dialect(
-    tool: Any,  # ToolDefinition
-    dialect: str = "auto",
-    **options: Any,
-) -> dict[str, Any]:
-    """
-    Convenience function to convert a tool to provider format.
-
-    Args:
-        tool: The ToolDefinition to convert
-        dialect: Target dialect/provider name
-        **options: Provider-specific options
-
-    Returns:
-        Provider-specific tool schema
-    """
-    adapter = get_adapter(dialect)
-    return adapter.to_provider_schema(tool, **options)

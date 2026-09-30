@@ -38,13 +38,10 @@ def _emitted_schema(schema: dict[str, Any]) -> dict[str, Any]:
     """A caller-owned deep copy of a tool's parameter schema.
 
     The registry holds one canonical ``ToolDefinition.parameters_schema``
-    per tool, so a payload that aliases it lets any caller that augments
-    the emitted schema corrupt every later conversion of that tool — and
-    the executor's own validation, which reads the same object.
-    :func:`strict_json_schema` and :func:`sanitize_gemini_schema` already
-    deep-copy their input; every pass-through path has to do it here.
+    per tool, so nothing emitted may alias it. An empty schema becomes the
+    no-argument object schema, the only spelling every provider accepts.
     """
-    return copy.deepcopy(schema)
+    return copy.deepcopy(schema) if schema else {"type": "object", "properties": {}}
 
 
 def _jsonable(obj: Any) -> Any:
@@ -66,25 +63,19 @@ def _jsonable(obj: Any) -> Any:
         return obj.value
     if isinstance(obj, (uuid.UUID, decimal.Decimal, pathlib.PurePath)):
         return str(obj)
-    if isinstance(obj, (set, frozenset, tuple)):
+    if isinstance(obj, (set, frozenset)):
         return list(obj)
     if isinstance(obj, (bytes, bytearray)):
         return obj.decode("utf-8", errors="replace")
     return str(obj)
 
 
-def _json_text(result: Any) -> str:
-    """``result`` as the JSON text the OpenAI-shaped and Anthropic replies carry."""
-    return json.dumps(result, default=_jsonable)
-
-
 def _json_keys(value: Any) -> Any:
     """``value`` with every mapping key JSON can name.
 
     ``default=`` reaches values, never keys, so a dict keyed by an enum or a
-    tuple still raised ``TypeError`` out of :func:`json.dumps` — a result that
-    used to pass through untouched. ``str``/``int``/``float``/``bool``/``None``
-    keys are left alone, since ``json`` already renders them itself.
+    tuple has to be rebuilt before ``json.dumps`` sees it. ``str``/``int``/
+    ``float``/``bool``/``None`` keys are left alone.
     """
     if isinstance(value, dict):
         return {
@@ -98,6 +89,16 @@ def _json_keys(value: Any) -> Any:
     return value
 
 
+def _json_text(result: Any) -> str:
+    """``result`` as the JSON text the OpenAI-shaped and Anthropic replies carry."""
+    return json.dumps(_json_keys(result), default=_jsonable)
+
+
+def _result_text(result: Any) -> str:
+    """``result`` as reply text: strings verbatim, anything else as JSON."""
+    return result if isinstance(result, str) else _json_text(result)
+
+
 def _json_native(result: Any) -> Any:
     """``result`` rebuilt from JSON-native values only.
 
@@ -106,19 +107,27 @@ def _json_native(result: Any) -> Any:
     :func:`_jsonable` covers, anywhere in the structure. A round trip through
     the text form converts every nested leaf in one pass.
     """
-    return json.loads(_json_text(_json_keys(result)))
+    return json.loads(_json_text(result))
 
 
-def _arguments_dict(arguments: Any, tool_name: str, adapter: str) -> dict[str, Any]:
+def _decode_arguments(arguments: Any, tool_name: str, adapter: str) -> dict[str, Any]:
     """``arguments`` as the object ``ToolCallPayload`` requires, or ``{}``.
 
-    A model can emit ``"null"``, ``"[]"`` or ``"1"`` as its arguments string;
-    those decode without error and then failed ``ToolCallPayload`` validation
-    with a ``ValidationError``, taking down the whole turn. Treated like
-    malformed JSON instead — a warning and empty arguments — which is what
-    the Anthropic and Gemini adapters and the streaming accumulator already
-    do for a non-object payload.
+    A JSON string is decoded first. Malformed JSON, or JSON that is not an
+    object (``"null"``, ``"[]"``, ``"1"``), is logged and treated as no
+    arguments rather than failing the whole turn.
     """
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            _logger.warning(
+                "%s: malformed JSON in tool arguments for '%s', defaulting to empty dict: %s",
+                adapter,
+                tool_name,
+                arguments[:200],
+            )
+            return {}
     if isinstance(arguments, dict):
         return arguments
     _logger.warning(
@@ -180,7 +189,8 @@ def _strict_parameters(tool: ToolDefinition, dialect: str) -> tuple[dict[str, An
     where honouring the caller's ``strict=True`` verbatim would take down
     every request the tool appears in.
     """
-    unsupported = unsupported_strict_paths(tool.parameters_schema)
+    strict = strict_json_schema(tool.parameters_schema)
+    unsupported = unsupported_strict_paths(tool.parameters_schema, strict_schema=strict)
     if unsupported:
         _logger.warning(
             "Tool %r cannot use %s strict mode: %s describes an object with "
@@ -192,10 +202,44 @@ def _strict_parameters(tool: ToolDefinition, dialect: str) -> tuple[dict[str, An
             ", ".join(unsupported),
         )
         return _emitted_schema(tool.parameters_schema), False
-    return strict_json_schema(tool.parameters_schema), True
+    return strict, True
 
 
-class OpenAIAdapter:
+def _openai_function(tool: ToolDefinition, strict: bool, dialect: str) -> dict[str, Any]:
+    """The ``name``/``description``/``parameters`` fields both OpenAI APIs share."""
+    if strict:
+        parameters, use_strict = _strict_parameters(tool, dialect)
+    else:
+        parameters, use_strict = _emitted_schema(tool.parameters_schema), False
+    function: dict[str, Any] = {
+        "name": tool.name,
+        "description": tool.description,
+        "parameters": parameters,
+    }
+    if use_strict:
+        function["strict"] = True
+    return function
+
+
+class _ToolCallMixin:
+    """``to_tool_call`` is dialect-independent: the payload is already unified."""
+
+    def to_tool_call(
+        self,
+        payload: ToolCallPayload,
+        timeout_ms: int = 30000,
+        retry_count: int = 0,
+    ) -> ToolCall:
+        return ToolCall(
+            tool_name=payload.tool_name,
+            arguments=payload.arguments,
+            timeout_ms=timeout_ms,
+            retry_count=retry_count,
+            trace_id=payload.tool_call_id,
+        )
+
+
+class OpenAIAdapter(_ToolCallMixin):
     """
     Tool specification adapter for OpenAI Chat Completions API.
 
@@ -246,23 +290,7 @@ class OpenAIAdapter:
         Returns:
             OpenAI-compatible tool schema
         """
-        # ``_strict_parameters`` returns its own copy on both branches, so
-        # only the non-strict path needs one made here.
-        if strict:
-            parameters, use_strict = _strict_parameters(tool, self.dialect_name)
-        else:
-            parameters, use_strict = _emitted_schema(tool.parameters_schema), False
-        schema: dict[str, Any] = {
-            "type": "function",
-            "function": {
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": parameters,
-            },
-        }
-        if use_strict:
-            schema["function"]["strict"] = True
-        return schema
+        return {"type": "function", "function": _openai_function(tool, strict, self.dialect_name)}
 
     def from_provider_payload(
         self,
@@ -281,44 +309,15 @@ class OpenAIAdapter:
             }
         }
         """
-        tool_call_id = payload.get("id")
-        function_data = payload.get("function", {})
+        function_data = payload.get("function") or {}
         tool_name = function_data.get("name", "")
-
-        # Arguments may be a JSON string or already parsed
-        arguments = function_data.get("arguments", {})
-        if isinstance(arguments, str):
-            try:
-                arguments = json.loads(arguments)
-            except json.JSONDecodeError:
-                _logger.warning(
-                    "OpenAIAdapter: malformed JSON in tool arguments "
-                    "for '%s', defaulting to empty dict: %s",
-                    tool_name,
-                    arguments[:200],
-                )
-                arguments = {}
-        arguments = _arguments_dict(arguments, tool_name, "OpenAIAdapter")
-
         return ToolCallPayload(
             tool_name=tool_name,
-            tool_call_id=tool_call_id,
-            arguments=arguments,
+            tool_call_id=payload.get("id"),
+            arguments=_decode_arguments(
+                function_data.get("arguments", {}), tool_name, "OpenAIAdapter"
+            ),
             raw_payload=payload,
-        )
-
-    def to_tool_call(
-        self,
-        payload: ToolCallPayload,
-        timeout_ms: int = 30000,
-        retry_count: int = 0,
-    ) -> ToolCall:
-        return ToolCall(
-            tool_name=payload.tool_name,
-            arguments=payload.arguments,
-            timeout_ms=timeout_ms,
-            retry_count=retry_count,
-            trace_id=payload.tool_call_id,
         )
 
     def format_tool_result(
@@ -330,10 +329,9 @@ class OpenAIAdapter:
         is_error: bool = False,
     ) -> dict[str, Any]:
         """Format result for OpenAI tool_outputs."""
-        content = result if isinstance(result, str) else _json_text(result)
         response: dict[str, Any] = {
             "role": "tool",
-            "content": content,
+            "content": _result_text(result),
             "name": tool_name,
         }
         if tool_call_id:
@@ -341,7 +339,7 @@ class OpenAIAdapter:
         return response
 
 
-class OpenAIResponsesAdapter:
+class OpenAIResponsesAdapter(_ToolCallMixin):
     """
     Tool specification adapter for OpenAI Responses API.
 
@@ -385,42 +383,13 @@ class OpenAIResponsesAdapter:
         strict: bool = False,
         **options: Any,
     ) -> dict[str, Any]:
-        """
-        Convert ToolDefinition to OpenAI Responses API function format.
+        """Convert ToolDefinition to the Responses API shape.
 
-        Args:
-            tool: The tool definition to convert
-            strict: Enable strict mode. The parameter schema is rewritten to
-                satisfy it (``additionalProperties: false``, every property in
-                ``required``, formerly-optional properties widened to admit
-                ``null``); the flag alone would make the API reject any tool
-                with an optional parameter. The ToolDefinition's own schema is
-                never mutated. Defaults to False. A tool whose schema contains
-                an object with arbitrary keys (a ``dict[str, int]`` parameter,
-                an untyped ``dict``) has no strict-mode representation; it is
-                emitted unmodified and *without* ``strict: true``, with a
-                warning, since claiming strict there makes the API reject the
-                entire request.
-            **options: Additional provider-specific options
-
-        Returns:
-            OpenAI Responses API compatible tool schema
+        The same fields (and ``strict`` semantics) as
+        :meth:`OpenAIAdapter.to_provider_schema`, flat rather than nested
+        under ``function``.
         """
-        # ``_strict_parameters`` returns its own copy on both branches, so
-        # only the non-strict path needs one made here.
-        if strict:
-            parameters, use_strict = _strict_parameters(tool, self.dialect_name)
-        else:
-            parameters, use_strict = _emitted_schema(tool.parameters_schema), False
-        schema: dict[str, Any] = {
-            "type": "function",
-            "name": tool.name,
-            "description": tool.description,
-            "parameters": parameters,
-        }
-        if use_strict:
-            schema["strict"] = True
-        return schema
+        return {"type": "function", **_openai_function(tool, strict, self.dialect_name)}
 
     def from_provider_payload(
         self,
@@ -437,43 +406,14 @@ class OpenAIResponsesAdapter:
             "arguments": "{\"arg\": \"value\"}"
         }
         """
-        tool_call_id = payload.get("call_id")
         tool_name = payload.get("name", "")
-
-        # Arguments may be a JSON string or already parsed
-        arguments = payload.get("arguments", {})
-        if isinstance(arguments, str):
-            try:
-                arguments = json.loads(arguments)
-            except json.JSONDecodeError:
-                _logger.warning(
-                    "OpenAIResponsesAdapter: malformed JSON in tool arguments "
-                    "for '%s', defaulting to empty dict: %s",
-                    tool_name,
-                    arguments[:200],
-                )
-                arguments = {}
-        arguments = _arguments_dict(arguments, tool_name, "OpenAIResponsesAdapter")
-
         return ToolCallPayload(
             tool_name=tool_name,
-            tool_call_id=tool_call_id,
-            arguments=arguments,
+            tool_call_id=payload.get("call_id"),
+            arguments=_decode_arguments(
+                payload.get("arguments", {}), tool_name, "OpenAIResponsesAdapter"
+            ),
             raw_payload=payload,
-        )
-
-    def to_tool_call(
-        self,
-        payload: ToolCallPayload,
-        timeout_ms: int = 30000,
-        retry_count: int = 0,
-    ) -> ToolCall:
-        return ToolCall(
-            tool_name=payload.tool_name,
-            arguments=payload.arguments,
-            timeout_ms=timeout_ms,
-            retry_count=retry_count,
-            trace_id=payload.tool_call_id,
         )
 
     def format_tool_result(
@@ -494,17 +434,16 @@ class OpenAIResponsesAdapter:
             "output": "result string"
         }
         """
-        output = result if isinstance(result, str) else _json_text(result)
         response: dict[str, Any] = {
             "type": "function_call_output",
-            "output": output,
+            "output": _result_text(result),
         }
         if tool_call_id:
             response["call_id"] = tool_call_id
         return response
 
 
-class AnthropicAdapter:
+class AnthropicAdapter(_ToolCallMixin):
     """
     Tool specification adapter for Anthropic (Claude).
 
@@ -545,10 +484,6 @@ class AnthropicAdapter:
         Returns:
             Anthropic-compatible tool schema
         """
-        # Always emit a deep copy: a ``{**schema}`` spread would leave every
-        # nested property dict aliasing the shared
-        # ToolDefinition.parameters_schema, so a caller adjusting one nested
-        # subschema on the payload would still corrupt the registered tool.
         input_schema: dict[str, Any] = _emitted_schema(tool.parameters_schema)
         use_strict = False
         if strict:
@@ -577,10 +512,6 @@ class AnthropicAdapter:
                 )
             else:
                 use_strict = True
-                # Anthropic requires additionalProperties: false on every
-                # object for strict mode to take effect — the root alone left
-                # nested objects open and the API rejected the tool.
-                input_schema["additionalProperties"] = False
                 _close_objects_in_place(input_schema)
 
         schema: dict[str, Any] = {
@@ -607,29 +538,12 @@ class AnthropicAdapter:
             "input": {"arg": "value"}
         }
         """
-        tool_call_id = payload.get("id")
         tool_name = payload.get("name", "")
-        arguments = payload.get("input", {})
-
         return ToolCallPayload(
             tool_name=tool_name,
-            tool_call_id=tool_call_id,
-            arguments=arguments if isinstance(arguments, dict) else {},
+            tool_call_id=payload.get("id"),
+            arguments=_decode_arguments(payload.get("input", {}), tool_name, "AnthropicAdapter"),
             raw_payload=payload,
-        )
-
-    def to_tool_call(
-        self,
-        payload: ToolCallPayload,
-        timeout_ms: int = 30000,
-        retry_count: int = 0,
-    ) -> ToolCall:
-        return ToolCall(
-            tool_name=payload.tool_name,
-            arguments=payload.arguments,
-            timeout_ms=timeout_ms,
-            retry_count=retry_count,
-            trace_id=payload.tool_call_id,
         )
 
     def format_tool_result(
@@ -646,10 +560,9 @@ class AnthropicAdapter:
         distinguish error content from normal tool output.
         Source: https://platform.claude.com/docs/en/api/messages (tool_result block)
         """
-        content = result if isinstance(result, str) else _json_text(result)
         response: dict[str, Any] = {
             "type": "tool_result",
-            "content": content,
+            "content": _result_text(result),
         }
         if is_error:
             response["is_error"] = True
@@ -658,7 +571,7 @@ class AnthropicAdapter:
         return response
 
 
-class GeminiAdapter:
+class GeminiAdapter(_ToolCallMixin):
     """
     Tool specification adapter for Google Gemini.
 
@@ -727,29 +640,12 @@ class GeminiAdapter:
         }
         """
         tool_name = payload.get("name", "")
-        arguments = payload.get("args", {})
-        # google-genai >= 1.x includes an "id" on parallel function calls
-        tool_call_id = payload.get("id")
-
         return ToolCallPayload(
             tool_name=tool_name,
-            tool_call_id=tool_call_id,
-            arguments=arguments if isinstance(arguments, dict) else {},
+            # google-genai >= 1.x includes an "id" on parallel function calls
+            tool_call_id=payload.get("id"),
+            arguments=_decode_arguments(payload.get("args", {}), tool_name, "GeminiAdapter"),
             raw_payload=payload,
-        )
-
-    def to_tool_call(
-        self,
-        payload: ToolCallPayload,
-        timeout_ms: int = 30000,
-        retry_count: int = 0,
-    ) -> ToolCall:
-        return ToolCall(
-            tool_name=payload.tool_name,
-            arguments=payload.arguments,
-            timeout_ms=timeout_ms,
-            retry_count=retry_count,
-            trace_id=payload.tool_call_id,
         )
 
     def format_tool_result(
@@ -865,26 +761,12 @@ class AgentFrameworkAdapter(OpenAIAdapter):
             return super().from_provider_payload(payload)
 
         # Simplified AF internal format
-        tool_call_id = payload.get("id") or payload.get("call_id")
         tool_name = payload.get("name", "")
-        arguments = payload.get("arguments", {})
-
-        if isinstance(arguments, str):
-            try:
-                arguments = json.loads(arguments)
-            except json.JSONDecodeError:
-                _logger.warning(
-                    "AgentFrameworkAdapter: malformed JSON in tool arguments "
-                    "for '%s', defaulting to empty dict: %s",
-                    tool_name,
-                    arguments[:200] if isinstance(arguments, str) else arguments,
-                )
-                arguments = {}
-        arguments = _arguments_dict(arguments, tool_name, "AgentFrameworkAdapter")
-
         return ToolCallPayload(
             tool_name=tool_name,
-            tool_call_id=tool_call_id,
-            arguments=arguments,
+            tool_call_id=payload.get("id") or payload.get("call_id"),
+            arguments=_decode_arguments(
+                payload.get("arguments", {}), tool_name, "AgentFrameworkAdapter"
+            ),
             raw_payload=payload,
         )

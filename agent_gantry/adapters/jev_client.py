@@ -60,11 +60,6 @@ DEFAULT_MAX_CONCURRENCY = 8
 # single verbose tool from consuming a batch on its own.
 DEFAULT_MAX_DESCRIPTION_CHARS = 500
 
-# The documented ceiling on `Choice` options. Not used for selection (which is
-# one Noul per candidate) but exported so callers that want a single-pick
-# question can check before building one.
-CHOICE_MAX_CARDINALITY = 255
-
 
 def candidate_payload(candidate: SelectionCandidate, max_description_chars: int) -> dict[str, Any]:
     """Render a candidate as the JSON body of a question's instructions.

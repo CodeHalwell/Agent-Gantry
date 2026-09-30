@@ -139,8 +139,9 @@ User query: {query}{context}
 Respond with ONLY the intent category name (e.g., "data_query"), nothing else."""
 
         # Call the appropriate provider using async methods
-        if self._provider in ("openai", "groq"):
-            # AsyncOpenAI and AsyncGroq have native async support
+        if self._provider in ("openai", "groq", "mistral"):
+            # AsyncOpenAI (also Mistral's OpenAI-compatible endpoint) and
+            # AsyncGroq share the chat.completions interface.
             params: dict[str, Any] = {
                 "model": self._model,
                 "messages": [{"role": "user", "content": prompt}],
@@ -178,32 +179,12 @@ Respond with ONLY the intent category name (e.g., "data_query"), nothing else.""
                 contents=prompt,
             )
             result = response.text.strip()
-        elif self._provider == "mistral":
-            # Mistral's API is OpenAI-compatible; self._client is AsyncOpenAI
-            # with base_url="https://api.mistral.ai/v1" (set in _initialize_client).
-            response = await self._client.chat.completions.create(
-                model=self._model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=self._config.max_tokens,
-                temperature=self._config.temperature,
-            )
-            result = response.choices[0].message.content.strip()
         else:
             raise ValueError(f"Unsupported provider: {self._provider}")
 
         # Clean up the result (remove quotes, lowercase)
         result = result.strip("\"'").lower().strip()
-
-        # Validate result is in available intents
-        if result not in intents_list:
-            # Try to find an exact substring match
-            for intent in intents_list:
-                if intent == result:
-                    return intent
-            # Default to unknown if no match
-            return "unknown"
-
-        return str(result)
+        return result if result in intents_list else "unknown"
 
     async def health_check(self) -> bool:
         """

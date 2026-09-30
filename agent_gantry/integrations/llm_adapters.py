@@ -38,6 +38,22 @@ class _LLMToolAdapter:
         self._gantry = gantry
         self._default_limit = default_limit
 
+    async def _select(
+        self,
+        query: str,
+        dialect: str,
+        limit: int | None,
+        score_threshold: float,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        return await self._gantry.retrieve_tools(
+            query,
+            limit=self._default_limit if limit is None else limit,
+            dialect=dialect,
+            score_threshold=score_threshold,
+            **kwargs,
+        )
+
     async def tools(
         self,
         query: str,
@@ -53,13 +69,7 @@ class _LLMToolAdapter:
         dialect adapter — so ``tools(q, strict=True)`` reaches OpenAI's strict
         mode, and ``namespaces=[...]`` still filters the query.
         """
-        return await self._gantry.retrieve_tools(
-            query,
-            limit=self._default_limit if limit is None else limit,
-            dialect=self.dialect,
-            score_threshold=score_threshold,
-            **kwargs,
-        )
+        return await self._select(query, self.dialect, limit, score_threshold, **kwargs)
 
 
 class OpenAIAdapter(_LLMToolAdapter):
@@ -76,13 +86,7 @@ class OpenAIAdapter(_LLMToolAdapter):
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """Select tools in the OpenAI **Responses API** shape (flattened schema)."""
-        return await self._gantry.retrieve_tools(
-            query,
-            limit=self._default_limit if limit is None else limit,
-            dialect="openai_responses",
-            score_threshold=score_threshold,
-            **kwargs,
-        )
+        return await self._select(query, "openai_responses", limit, score_threshold, **kwargs)
 
 
 class AnthropicAdapter(_LLMToolAdapter):
