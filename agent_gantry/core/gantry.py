@@ -286,8 +286,11 @@ class AgentGantry:
         """
         Release all resources held by this AgentGantry instance.
 
-        Closes vector store connections, MCP clients, and any other resources.
-        Safe to call multiple times.
+        Closes the MCP clients, the executor's A2A clients, and every adapter
+        with a ``close``/``aclose`` (store, embedder, selector, reranker,
+        telemetry), whether injected or built from config. Share one adapter
+        between gantries only if you close the gantries last. Safe to call
+        more than once; the instance can be used again afterwards.
         """
         # Close MCP clients (persistent server connections)
         for client in list(self._direct_mcp_clients.values()):
@@ -315,6 +318,10 @@ class AgentGantry:
             await _close_adapter(adapter)
 
         self._initialized = False
+        # Locks bind to the loop that first used them; a gantry reused under a
+        # new loop (repeated asyncio.run) must not meet a stale one.
+        self._init_lock = None
+        self._skill_vectors_lock = None
 
     async def __aenter__(self) -> AgentGantry:
         """Enter async context manager."""

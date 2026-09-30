@@ -11,7 +11,7 @@ A review of the whole library for correctness, dead code and duplication.
 The public API loses only members nothing called; the behaviour changes are
 listed under Fixed. The package is about 3,000 lines shorter.
 
-**Upgrade notes.** The names under Removed are gone without a deprecation
+**Breaking changes.** The names under Removed are gone without a deprecation
 period; none had a caller in the library, tests, examples or docs, but check
 your own code for them. Configuration is stricter: a backend name with no
 implementation, or an OpenAI/Azure embedder with no key in config or
@@ -21,6 +21,9 @@ embedder needs its deployment name in `EmbedderConfig.model`.
 than the sentence-transformers model name, which OpenAI could never use. A
 persistent store re-embeds its MCP servers once, because their pseudo-tool
 names changed. `AgentGantry.tool_count` counts tools with a handler.
+`AgentGantry.close()` now closes the embedder as well as the store, selector,
+reranker and telemetry adapter, injected or not; share one embedder between
+gantries only if you close the gantries last.
 
 ### Fixed
 
