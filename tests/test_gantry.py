@@ -258,19 +258,34 @@ async def test_delete_tool_purges_registry_and_handlers():
 async def test_concurrent_first_use_initialises_the_store_once() -> None:
     import asyncio
 
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
     from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
 
     class CountingStore(InMemoryVectorStore):
-        calls = 0
+        def __init__(self) -> None:
+            super().__init__()
+            self.initialisations = 0
 
         async def initialize(self) -> None:
-            CountingStore.calls += 1
+            self.initialisations += 1
             await asyncio.sleep(0)  # yield, so a second caller can race in
             await super().initialize()
 
-    gantry = AgentGantry(vector_store=CountingStore())
-    await asyncio.gather(gantry._ensure_initialized(), gantry._ensure_initialized())
-    assert CountingStore.calls == 1
+    store = CountingStore()
+    gantry = AgentGantry(vector_store=store, embedder=SimpleEmbedder(dimension=64))
+
+    @gantry.register(tags=["math"])
+    def double(x: int) -> int:
+        """Double a number."""
+        return x * 2
+
+    # Two retrieves before any sync, through the public path.
+    first, second = await asyncio.gather(
+        gantry.retrieve_tools("double a number", score_threshold=0.0),
+        gantry.retrieve_tools("double a number", score_threshold=0.0),
+    )
+    assert first and second
+    assert store.initialisations == 1
 
 
 @pytest.mark.asyncio
