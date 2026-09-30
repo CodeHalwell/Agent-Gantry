@@ -98,8 +98,9 @@ gantries only if you close the gantries last.
   `a2a_url` reports a clear error; `AgentGantry.close()` closes the embedder
   (a `CachedEmbedder` held an open sqlite connection); concurrent first use no
   longer initialises the vector store twice; a retrieve after `close()`
-  reopens the vector store instead of searching one nobody reopened; the
-  in-memory telemetry adapters bound their span list.
+  asks the vector store to initialise again instead of searching one nobody
+  reopened (an adapter that closed a connection for good stays closed; see
+  `close()`); the in-memory telemetry adapters bound their span list.
 
 ### Changed
 

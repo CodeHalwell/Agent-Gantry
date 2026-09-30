@@ -290,7 +290,10 @@ class AgentGantry:
         with a ``close``/``aclose`` (store, embedder, selector, reranker,
         telemetry), whether injected or built from config. Share one adapter
         between gantries only if you close the gantries last. Safe to call
-        more than once; the instance can be used again afterwards.
+        more than once. Do not count on using the instance afterwards: an
+        adapter that closed a connection (a ``CachedEmbedder``, a Qdrant or
+        pgvector store) stays closed, and only the connectionless ones come
+        back on the next call.
         """
         # Close MCP clients (persistent server connections)
         for client in list(self._direct_mcp_clients.values()):
