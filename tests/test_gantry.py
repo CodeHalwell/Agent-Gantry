@@ -329,3 +329,54 @@ async def test_delete_tool_leaves_the_registry_alone_when_the_store_fails() -> N
     # The store is asked first, so a store failure leaves the tool executable.
     assert gantry._registry.has_tool("keep_me")
     assert gantry.tool_count == 1
+
+
+@pytest.mark.asyncio
+async def test_reuse_after_close_initialises_the_store_again() -> None:
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
+
+    class CountingStore(InMemoryVectorStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.initialisations = 0
+
+        async def initialize(self) -> None:
+            self.initialisations += 1
+            await super().initialize()
+
+    store = CountingStore()
+    gantry = AgentGantry(vector_store=store, embedder=SimpleEmbedder(dimension=64))
+
+    @gantry.register(tags=["math"])
+    def double(x: int) -> int:
+        """Double a number."""
+        return x * 2
+
+    assert await gantry.retrieve_tools("double a number", score_threshold=0.0)
+    await gantry.close()
+    # close() drops the initialised flag and the lock, so the next call
+    # starts the store again instead of assuming it is still open.
+    assert await gantry.retrieve_tools("double a number", score_threshold=0.0)
+    assert store.initialisations == 2
+
+
+@pytest.mark.asyncio
+async def test_delete_tool_forgets_the_handlers_coercers() -> None:
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from agent_gantry.core import executor as executor_module
+    from agent_gantry.schema.execution import ExecutionStatus, ToolCall
+
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @gantry.register
+    def shout(text: str) -> str:
+        """Upper-case some text."""
+        return text.upper()
+
+    result = await gantry.execute(ToolCall(tool_name="shout", arguments={"text": "hi"}))
+    assert result.status is ExecutionStatus.SUCCESS and result.result == "HI"
+    assert shout in executor_module._COERCER_CACHE  # memoised by the first call
+
+    assert await gantry.delete_tool("shout") is True
+    assert shout not in executor_module._COERCER_CACHE

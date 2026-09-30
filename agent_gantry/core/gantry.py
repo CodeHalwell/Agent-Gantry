@@ -1174,11 +1174,11 @@ class AgentGantry:
         Returns:
             RetrievalResult with scored tools
         """
-        # Deliberately no ``_ensure_initialized()`` here: it opens the vector
-        # store, which the selector path never reads. Both fallback routes
-        # below (``ensure_synced`` and the skills/MCP paths) initialise it
-        # themselves, so a selector-only deployment can run without a store
-        # being reachable at all — which is the point of having one.
+        # Deliberately no ``_ensure_initialized()`` up here: it opens the
+        # vector store, which the selector path never reads. The router
+        # fallback below opens it itself, as the skills/MCP paths do, so a
+        # selector-only deployment can run without a store being reachable
+        # at all — which is the point of having one.
 
         # SimpleEmbedder produces hash-based scores that cluster tightly
         # regardless of semantic relevance. Pairing it with a non-zero
@@ -1230,6 +1230,10 @@ class AgentGantry:
                 # ``add_tool`` populates it directly, and the pending list it
                 # also appends to is purely the vector store's backlog — so
                 # deferring the sync cannot hide a tool from selection.
+                # Opened here, not only inside ``sync()``: after ``close()``
+                # the registry is still synced, so a retrieve would otherwise
+                # search a store nobody reopened.
+                await self._ensure_initialized()
                 await self.ensure_synced()
                 routing_result = await self._router.route(query)
             else:

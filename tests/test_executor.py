@@ -3282,3 +3282,48 @@ async def test_each_terminal_result_is_recorded_once() -> None:
     orphan = await engine.execute(ToolCall(tool_name="orphan", arguments={}))
     assert (missing.error_type, orphan.error_type) == ("ToolNotFound", "HandlerNotFound")
     assert len(telemetry.records) == 3
+
+
+@pytest.mark.asyncio
+async def test_retried_and_timed_out_calls_report_attempts_and_timestamps() -> None:
+    """The attempt count and timestamps survive the retry loop's exits."""
+    import asyncio
+
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.schema.execution import ExecutionStatus, ToolCall
+
+    seen: list[int] = []
+
+    def flaky() -> str:
+        seen.append(1)
+        if len(seen) < 2:
+            raise ValueError("not yet")
+        return "done"
+
+    async def slow() -> str:
+        await asyncio.sleep(1)
+        return "never"
+
+    registry = ToolRegistry()
+    empty = {"type": "object", "properties": {}}
+    registry.register_tool(
+        ToolDefinition(name="flaky", description="Fails once", parameters_schema=empty), flaky
+    )
+    registry.register_tool(
+        ToolDefinition(name="slow", description="Never returns in time", parameters_schema=empty),
+        slow,
+    )
+    engine = ExecutionEngine(registry=registry)
+
+    ok = await engine.execute(ToolCall(tool_name="flaky", arguments={}, retry_count=1))
+    assert ok.status is ExecutionStatus.SUCCESS and ok.result == "done"
+    assert ok.attempt_number == 2
+    assert ok.started_at is not None and ok.completed_at >= ok.started_at >= ok.queued_at
+
+    timed_out = await engine.execute(
+        ToolCall(tool_name="slow", arguments={}, retry_count=1, timeout_ms=100)
+    )
+    assert timed_out.status is ExecutionStatus.TIMEOUT
+    assert timed_out.error_type == "TimeoutError"
+    assert timed_out.attempt_number == 2  # every attempt was spent
+    assert timed_out.completed_at >= timed_out.queued_at

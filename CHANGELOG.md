@@ -97,8 +97,9 @@ gantries only if you close the gantries last.
   `from_provider_payload` tolerates `"function": null`; an A2A tool missing
   `a2a_url` reports a clear error; `AgentGantry.close()` closes the embedder
   (a `CachedEmbedder` held an open sqlite connection); concurrent first use no
-  longer initialises the vector store twice; the in-memory telemetry adapters
-  bound their span list.
+  longer initialises the vector store twice; a retrieve after `close()`
+  reopens the vector store instead of searching one nobody reopened; the
+  in-memory telemetry adapters bound their span list.
 
 ### Changed
 

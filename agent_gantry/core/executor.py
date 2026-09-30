@@ -42,13 +42,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Assertions a tool's *root* schema can carry that ``_validate_arguments``'
-#: own top-level walk does not implement — it reads ``required``,
-#: ``properties``, ``patternProperties`` and ``additionalProperties`` and
-#: nothing else. Each is applied by ``_validate_value``, which is handed a
-#: schema of just these keys so ownership of the structural keywords stays
-#: with the walk. Keep this to keywords ``_validate_value`` actually
-#: implements: one it ignores would be listed as enforced without being so.
 #: Keywords this validator actually evaluates — ``_validate_value``'s own,
 #: plus the constraint family ``check_json_constraints`` implements.
 _EVALUATED_KEYWORDS = frozenset(
@@ -209,7 +202,6 @@ def _fully_evaluable(schema: Any, _depth: int = 0) -> bool:
     return True
 
 
-
 def _branch_declared_names(node: Any, _depth: int = 0) -> set[str]:
     """Property names a schema's combinator branches declare.
 
@@ -242,6 +234,13 @@ def _branch_declared_names(node: Any, _depth: int = 0) -> set[str]:
     return names
 
 
+#: Assertions a tool's *root* schema can carry that ``_validate_arguments``'
+#: own top-level walk does not implement — it reads ``required``,
+#: ``properties``, ``patternProperties`` and ``additionalProperties`` and
+#: nothing else. Each is applied by ``_validate_value``, which is handed a
+#: schema of just these keys so ownership of the structural keywords stays
+#: with the walk. Keep this to keywords ``_validate_value`` actually
+#: implements: one it ignores would be listed as enforced without being so.
 _ROOT_ASSERTIONS = (
     "allOf",
     "anyOf",
