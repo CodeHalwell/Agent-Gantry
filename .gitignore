@@ -91,7 +91,9 @@ Thumbs.db
 # Project specific
 *.log
 Claude.md
-.claude
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
 code_review/
 
 # JavaScript / Astro docs

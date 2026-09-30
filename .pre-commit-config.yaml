@@ -1,0 +1,30 @@
+# Same checks as CI, run before they reach it.
+#   uvx pre-commit install --hook-type pre-commit --hook-type pre-push
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: [--maxkb=500]
+      - id: check-merge-conflict
+      - id: detect-private-key
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.0
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^(agent_gantry|tests)/
+      - id: ruff-format
+        files: ^(agent_gantry|tests)/
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest (pre-push)
+        entry: uv run pytest --ignore=tests/test_phase5_mcp.py --ignore=tests/test_phase6_a2a.py -q -x
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
