@@ -131,3 +131,23 @@ class TestHealthMetrics:
     def test_success_rate_is_bounded(self, bad_rate: float) -> None:
         with pytest.raises(ValidationError):
             HealthMetrics(success_rate=bad_rate)
+
+
+class TestUnsetModelDefaults:
+    def test_nomic_uses_its_own_default_model(self) -> None:
+        from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+
+        embedder = build_embedder(EmbedderConfig(type="nomic"))
+        assert isinstance(embedder, NomicEmbedder)
+        assert embedder.model_name == "nomic-ai/nomic-embed-text-v1.5"
+
+    def test_sentence_transformers_uses_its_own_default_model(self) -> None:
+        pytest.importorskip("sentence_transformers")
+        embedder = build_embedder(EmbedderConfig(type="sentence_transformers"))
+        assert "all-MiniLM-L6-v2" in embedder.get_embedder_id()
+
+    def test_unknown_reranker_type_raises(self) -> None:
+        from types import SimpleNamespace
+
+        with pytest.raises(ValueError, match="Unsupported reranker type"):
+            build_reranker(SimpleNamespace(enabled=True, type="nope", model=None))  # type: ignore[arg-type]

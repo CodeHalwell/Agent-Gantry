@@ -3209,3 +3209,62 @@ async def test_a2a_execution_is_recorded_exactly_once() -> None:
     result = await engine.execute(ToolCall(tool_name="remote_skill", arguments={}))
     assert result.result == "remote"
     assert CountingTelemetry.records == 1
+
+
+@pytest.mark.asyncio
+async def test_each_terminal_result_is_recorded_once() -> None:
+    """Every outcome the caller sees reaches telemetry exactly once."""
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.schema.execution import ExecutionStatus, ToolCall, ToolResult
+
+    class CountingTelemetry:
+        def __init__(self) -> None:
+            self.records: list[ToolResult] = []
+
+        async def record_execution(self, call: ToolCall, result: ToolResult) -> None:
+            self.records.append(result)
+
+        async def record_health_change(self, *args: object, **kwargs: object) -> None:
+            pass
+
+    registry = ToolRegistry()
+    registry.register_tool(
+        ToolDefinition(
+            name="greet",
+            description="Greet someone by name",
+            parameters_schema={
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
+            },
+        ),
+        lambda name: f"hi {name}",
+    )
+    registry.register_tool(
+        ToolDefinition(
+            name="wipe",
+            description="Wipe something, after confirmation",
+            parameters_schema={
+                "type": "object",
+                "properties": {"target": {"type": "string"}},
+                "required": ["target"],
+            },
+            requires_confirmation=True,
+        ),
+        lambda target: "wiped",
+    )
+    telemetry = CountingTelemetry()
+    engine = ExecutionEngine(registry=registry, telemetry=telemetry)
+
+    ok = await engine.execute(ToolCall(tool_name="greet", arguments={"name": "x"}))
+    invalid = await engine.execute(ToolCall(tool_name="greet", arguments={"name": 1}))
+    gated_invalid = await engine.execute(ToolCall(tool_name="wipe", arguments={}))
+
+    assert ok.status is ExecutionStatus.SUCCESS
+    assert invalid.status is ExecutionStatus.FAILURE and invalid.error_type == "ValidationError"
+    assert gated_invalid.status is ExecutionStatus.FAILURE  # malformed beats the gate
+    assert [r.status for r in telemetry.records] == [
+        ExecutionStatus.SUCCESS,
+        ExecutionStatus.FAILURE,
+        ExecutionStatus.FAILURE,
+    ]

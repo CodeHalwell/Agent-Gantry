@@ -837,6 +837,7 @@ class ExecutionEngine:
                     attempt=attempt,
                 )
             except PermissionDeniedError as e:
+                completed_at = datetime.now(timezone.utc)
                 await self._record_failure(tool)
                 return await self._finish(
                     call,
@@ -846,6 +847,7 @@ class ExecutionEngine:
                     span_id,
                     error=str(e),
                     error_type="PermissionDeniedError",
+                    completed_at=completed_at,
                     attempt=attempt,
                 )
             except asyncio.TimeoutError:
@@ -858,6 +860,7 @@ class ExecutionEngine:
             if attempt < max_attempts:
                 await asyncio.sleep(2**attempt * 0.1)
 
+        completed_at = datetime.now(timezone.utc)
         await self._record_failure(tool)
         status = (
             ExecutionStatus.TIMEOUT
@@ -872,6 +875,7 @@ class ExecutionEngine:
             span_id,
             error=last_error,
             error_type=last_error_type,
+            completed_at=completed_at,
             attempt=max_attempts,
         )
 

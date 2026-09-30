@@ -285,3 +285,24 @@ async def test_close_closes_the_embedder() -> None:
 
     await AgentGantry(embedder=ClosableEmbedder()).close()
     assert ClosableEmbedder.closed
+
+
+@pytest.mark.asyncio
+async def test_disabled_telemetry_still_retrieves_and_executes() -> None:
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from agent_gantry.schema.config import AgentGantryConfig, TelemetryConfig
+    from agent_gantry.schema.execution import ExecutionStatus, ToolCall
+
+    gantry = AgentGantry(
+        config=AgentGantryConfig(telemetry=TelemetryConfig(enabled=False)),
+        embedder=SimpleEmbedder(dimension=64),
+    )
+
+    @gantry.register(tags=["math"])
+    def double(x: int) -> int:
+        """Double a number."""
+        return x * 2
+
+    assert await gantry.retrieve_tools("double a number", score_threshold=0.0)
+    result = await gantry.execute(ToolCall(tool_name="double", arguments={"x": 2}))
+    assert result.status is ExecutionStatus.SUCCESS and result.result == 4
