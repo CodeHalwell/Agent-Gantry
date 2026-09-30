@@ -252,3 +252,36 @@ async def test_delete_tool_purges_registry_and_handlers():
     )
     result = await gantry.execute(ToolCall(tool_name="send_email", arguments={"to": "x"}))
     assert result.status != ExecutionStatus.SUCCESS
+
+
+@pytest.mark.asyncio
+async def test_concurrent_first_use_initialises_the_store_once() -> None:
+    import asyncio
+
+    from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
+
+    class CountingStore(InMemoryVectorStore):
+        calls = 0
+
+        async def initialize(self) -> None:
+            CountingStore.calls += 1
+            await asyncio.sleep(0)  # yield, so a second caller can race in
+            await super().initialize()
+
+    gantry = AgentGantry(vector_store=CountingStore())
+    await asyncio.gather(gantry._ensure_initialized(), gantry._ensure_initialized())
+    assert CountingStore.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_close_closes_the_embedder() -> None:
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+
+    class ClosableEmbedder(SimpleEmbedder):
+        closed = False
+
+        def close(self) -> None:
+            ClosableEmbedder.closed = True
+
+    await AgentGantry(embedder=ClosableEmbedder()).close()
+    assert ClosableEmbedder.closed

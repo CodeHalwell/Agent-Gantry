@@ -141,9 +141,11 @@ def build_reranker(config: RerankerConfig) -> RerankerAdapter | None:
         return CrossEncoderReranker(
             model=config.model or "cross-encoder/ms-marco-MiniLM-L-6-v2",
         )
-    from agent_gantry.adapters.rerankers.jev import JevReranker
+    if config.type == "jev":
+        from agent_gantry.adapters.rerankers.jev import JevReranker
 
-    return JevReranker(model=config.model)
+        return JevReranker(model=config.model)
+    raise ValueError(f"Unsupported reranker type: {config.type!r}")
 
 
 def build_selector(config: SelectorConfig) -> SelectorAdapter | None:

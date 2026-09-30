@@ -531,3 +531,12 @@ class TestMCPWorkflow:
             name="c_a", namespace="b", description="Second server here", command=["x"]
         )
         assert _pseudo_tool_name(first) != _pseudo_tool_name(second)
+
+    def test_pseudo_tool_names_are_stable(self) -> None:
+        """The scheme is part of what a persistent store holds, so it must not drift."""
+        from agent_gantry.core.mcp_manager import _pseudo_tool_name
+
+        server = MCPServerDefinition(
+            name="MyServer", namespace="Team-A", description="Pinned naming scheme", command=["x"]
+        )
+        assert _pseudo_tool_name(server) == "mcp_server_team_a_myserver_430dec89"
