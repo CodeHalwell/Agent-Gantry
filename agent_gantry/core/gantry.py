@@ -85,7 +85,7 @@ async def _close_adapter(adapter: Any) -> None:
             if inspect.isawaitable(result):
                 await result
         except Exception:
-            logger.warning(f"Error closing {type(adapter).__name__}", exc_info=True)
+            logger.debug(f"Error closing {type(adapter).__name__}", exc_info=True)
         return
 
 
@@ -2401,7 +2401,11 @@ class AgentGantry:
 
         Checks the full skill API surface up front so a partially
         implemented adapter fails with this clear message instead of an
-        AttributeError from deep inside a later call.
+        AttributeError from deep inside a later call. ``list_all_skills``
+        must take ``namespace``, ``category``, ``limit`` and ``offset``:
+        the facade passes a requested category through, so a store that
+        cannot filter by it fails loudly rather than handing the selector
+        skills outside it.
         """
         store = self._vector_store
         missing = [m for m in self._SKILL_STORE_METHODS if not hasattr(store, m)]

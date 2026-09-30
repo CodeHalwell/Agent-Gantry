@@ -231,6 +231,7 @@ async def test_add_mcp_server_tools_are_executable(server_config: MCPServerConfi
     try:
         count = await gantry.add_mcp_server(server_config)
         assert count == 3
+        assert gantry.tool_count == count  # each discovered tool got a handler
 
         result = await gantry.execute(
             ToolCall(tool_name="add_numbers", arguments={"a": 20, "b": 22})
