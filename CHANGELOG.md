@@ -20,7 +20,9 @@ embedder needs its deployment name in `EmbedderConfig.model`.
 `EmbedderConfig.model` defaults to `None` (each backend's own default) rather
 than the sentence-transformers model name, which OpenAI could never use. A
 persistent store re-embeds its MCP servers once, because their pseudo-tool
-names changed, and the first sync drops the rows under the old names. `AgentGantry.tool_count` counts tools with a handler.
+names changed, and the first sync drops that gantry's rows under the old
+names; rows of servers it no longer registers go only with `prune_on_sync`,
+as for tools. `AgentGantry.tool_count` counts tools with a handler.
 `AgentGantry.close()` now closes the embedder as well as the store, selector,
 reranker and telemetry adapter, injected or not; share one embedder between
 gantries only if you close the gantries last.

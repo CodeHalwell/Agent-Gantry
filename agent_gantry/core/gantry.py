@@ -803,7 +803,9 @@ class AgentGantry:
         if not self._mcp_synced or pending:
             await self.sync_mcp_servers()
 
-    async def sync_mcp_servers(self, batch_size: int = 100, force: bool = False) -> int:
+    async def sync_mcp_servers(
+        self, batch_size: int = 100, force: bool = False, prune: bool | None = None
+    ) -> int:
         """
         Sync pending MCP server registrations to vector store.
 
@@ -814,6 +816,9 @@ class AgentGantry:
         Args:
             batch_size: Number of servers to embed and sync in each batch
             force: If True, re-embed all servers regardless of fingerprints
+            prune: Also delete pseudo-tool rows of servers this gantry no
+                longer registers; defaults to ``config.prune_on_sync`` (off,
+                because gantries sharing a store register different servers)
 
         Returns:
             Number of servers synced
@@ -824,7 +829,11 @@ class AgentGantry:
             self._mcp_synced = True
             return 0
 
-        count = await self._mcp_manager.sync_servers(batch_size=batch_size, force=force)
+        count = await self._mcp_manager.sync_servers(
+            batch_size=batch_size,
+            force=force,
+            prune=prune if prune is not None else self._config.prune_on_sync,
+        )
         self._mcp_synced = True
         return count
 

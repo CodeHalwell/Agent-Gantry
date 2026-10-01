@@ -42,6 +42,11 @@ def _pseudo_tool_name(server: MCPServerDefinition) -> str:
     return f"mcp_server_{stem}_{digest}"
 
 
+def _legacy_pseudo_tool_name(server: MCPServerDefinition) -> str:
+    """Name ``server`` was embedded under before the digest scheme (releases up to 0.19)."""
+    return f"mcp_server_{server.namespace}_{server.name}".replace("-", "_")
+
+
 def _pseudo_tool(server: MCPServerDefinition) -> ToolDefinition:
     """The ``ToolDefinition`` that stands in for ``server`` in the vector store."""
     return ToolDefinition(
@@ -122,7 +127,9 @@ class MCPManager:
         self._registry.add_pending(server_def)
         logger.info(f"Registered MCP server: {server_def.qualified_name}")
 
-    async def sync_servers(self, batch_size: int = 100, force: bool = False) -> int:
+    async def sync_servers(
+        self, batch_size: int = 100, force: bool = False, prune: bool = False
+    ) -> int:
         """Embed new or changed servers into the vector store.
 
         Change detection is the tool sync's: fingerprints, plus a full re-sync
@@ -131,6 +138,9 @@ class MCPManager:
         Args:
             batch_size: Number of servers per batch
             force: If True, re-embed all servers
+            prune: Also delete pseudo-tool rows of servers this gantry no
+                longer registers. Off by default, as for tools: gantries
+                sharing one store would delete each other's servers.
 
         Returns:
             Number of servers synced
@@ -155,22 +165,30 @@ class MCPManager:
                 total_synced += await self._vector_store.add_tools(batch, embeddings, upsert=True)
             await self._sync_manager.update_metadata()
             logger.info(f"Synced {total_synced} MCP servers")
+            # A store written by a release before the digest scheme still
+            # holds these servers under their old names. Only this gantry's
+            # own servers are touched, so a shared store is safe, and only
+            # after the upsert, so a renamed server is never briefly absent.
+            current = {tool.name for tool in pseudo_tools}
+            for server in all_servers:
+                legacy = _legacy_pseudo_tool_name(server)
+                if legacy not in current:
+                    await self._vector_store.delete(legacy, PSEUDO_NAMESPACE)
         else:
             logger.debug(f"All {len(all_servers)} MCP servers up-to-date, skipping sync")
-        # After the upsert, so a renamed server is never briefly absent.
-        await self._prune_pseudo_tools({tool.name for tool in pseudo_tools})
+        if prune:
+            await self._prune_pseudo_tools({tool.name for tool in pseudo_tools})
         return total_synced
 
     async def _prune_pseudo_tools(self, wanted: set[str]) -> int:
         """Delete pseudo-tool rows that no registered server owns.
 
         Sync only ever upserts, so a persistent store kept the row of a
-        server removed from the registry, and after the digest-based rename
-        it kept every row under the old name beside the new one. The router
-        fetches a bounded candidate window, so such duplicates could crowd
-        other servers out. As with ``AgentGantry.prune_stale_tools``, a store
-        shared between gantries is pruned to *this* gantry's servers; a
-        gantry with no servers never gets here.
+        server removed from the registry, and the router fetches a bounded
+        candidate window, so stale rows can crowd live servers out. Opt-in
+        through ``prune_on_sync``, exactly like ``prune_stale_tools``: on a
+        store shared between gantries this deletes the *other* gantries'
+        servers, which stay missing until they next sync with changes.
         """
         stored: list[ToolDefinition] = []
         offset = 0

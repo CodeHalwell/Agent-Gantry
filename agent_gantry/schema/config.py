@@ -308,9 +308,10 @@ class AgentGantryConfig(BaseModel):
     prune_on_sync: bool = Field(
         default=False,
         description=(
-            "Delete tools from the vector store that are no longer registered with this "
-            "gantry when sync() runs. Off by default: several gantries may legitimately "
-            "share one persistent store and register different subsets."
+            "Delete tools, and MCP server entries, from the vector store that are no "
+            "longer registered with this gantry when sync() or sync_mcp_servers() runs. "
+            "Off by default: several gantries may legitimately share one persistent "
+            "store and register different subsets."
         ),
     )
 

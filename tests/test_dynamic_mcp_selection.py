@@ -552,13 +552,24 @@ async def test_sync_removes_pseudo_tools_no_server_owns() -> None:
 
     store = InMemoryVectorStore()
     embedder = SimpleEmbedder(dimension=64)
+    empty = {"type": "object", "properties": {}}
     legacy = ToolDefinition(
         name="mcp_server_default_fs",  # the naming scheme before the digest suffix
         namespace=PSEUDO_NAMESPACE,
         description="Row left behind by an older release",
-        parameters_schema={"type": "object", "properties": {}},
+        parameters_schema=empty,
     )
-    await store.add_tools([legacy], [await embedder.embed_text(legacy.description)])
+    # Registered by another gantry sharing this store: not ours to delete.
+    foreign = ToolDefinition(
+        name="mcp_server_default_other_0badcafe",
+        namespace=PSEUDO_NAMESPACE,
+        description="Server another gantry registered",
+        parameters_schema=empty,
+    )
+    await store.add_tools(
+        [legacy, foreign],
+        [await embedder.embed_text(legacy.description), await embedder.embed_text(foreign.description)],
+    )
 
     gantry = AgentGantry(vector_store=store, embedder=embedder)
     try:
@@ -573,8 +584,41 @@ async def test_sync_removes_pseudo_tools_no_server_owns() -> None:
         assert await gantry.sync_mcp_servers() == 1
         names = {tool.name for tool in await store.list_all(namespace=PSEUDO_NAMESPACE)}
         assert "mcp_server_default_fs" not in names
-        assert len(names) == 1  # the one registered server, under its current name
-        # The prune is confined to its namespace: a real tool is untouched.
+        assert "mcp_server_default_other_0badcafe" in names  # another gantry's, kept by default
+        assert len(names) == 2  # that, plus our server under its current name
+        # Confined to its namespace: a real tool is untouched.
         assert await store.get_by_name("double") is not None
+    finally:
+        await gantry.close()
+
+
+@pytest.mark.asyncio
+async def test_prune_on_sync_also_drops_unregistered_servers() -> None:
+    """With the opt-in set, a row for a server this gantry does not register goes too."""
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
+    from agent_gantry.core.mcp_manager import PSEUDO_NAMESPACE
+    from agent_gantry.schema.config import AgentGantryConfig
+    from agent_gantry.schema.tool import ToolDefinition
+
+    store = InMemoryVectorStore()
+    embedder = SimpleEmbedder(dimension=64)
+    foreign = ToolDefinition(
+        name="mcp_server_default_other_0badcafe",
+        namespace=PSEUDO_NAMESPACE,
+        description="Server no longer registered anywhere",
+        parameters_schema={"type": "object", "properties": {}},
+    )
+    await store.add_tools([foreign], [await embedder.embed_text(foreign.description)])
+
+    gantry = AgentGantry(
+        config=AgentGantryConfig(prune_on_sync=True), vector_store=store, embedder=embedder
+    )
+    try:
+        gantry.register_mcp_server(name="fs", command=["echo"], description="File system server")
+        assert await gantry.sync_mcp_servers() == 1
+        names = {tool.name for tool in await store.list_all(namespace=PSEUDO_NAMESPACE)}
+        assert foreign.name not in names
+        assert len(names) == 1  # our server under its current name
     finally:
         await gantry.close()
