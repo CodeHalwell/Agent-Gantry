@@ -20,7 +20,7 @@ embedder needs its deployment name in `EmbedderConfig.model`.
 `EmbedderConfig.model` defaults to `None` (each backend's own default) rather
 than the sentence-transformers model name, which OpenAI could never use. A
 persistent store re-embeds its MCP servers once, because their pseudo-tool
-names changed. `AgentGantry.tool_count` counts tools with a handler.
+names changed, and the first sync drops the rows under the old names. `AgentGantry.tool_count` counts tools with a handler.
 `AgentGantry.close()` now closes the embedder as well as the store, selector,
 reranker and telemetry adapter, injected or not; share one embedder between
 gantries only if you close the gantries last.
@@ -95,7 +95,8 @@ gantries only if you close the gantries last.
   explicit deployment name.
 - Token usage from google-genai responses (`usage_metadata`) is recorded;
   `from_provider_payload` tolerates `"function": null`; an A2A tool missing
-  `a2a_url` reports a clear error; `AgentGantry.close()` closes the embedder
+  `a2a_url` reports a clear error; `SentenceTransformersEmbedder.health_check`
+  encodes a probe string rather than only loading the model; `AgentGantry.close()` closes the embedder
   (a `CachedEmbedder` held an open sqlite connection); concurrent first use no
   longer initialises the vector store twice; a retrieve after `close()`
   asks the vector store to initialise again instead of searching one nobody

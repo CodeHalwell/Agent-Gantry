@@ -26,6 +26,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: Namespace of the pseudo-tools that stand in for MCP servers in the store.
+PSEUDO_NAMESPACE = "__mcp_servers__"
+
 
 def _pseudo_tool_name(server: MCPServerDefinition) -> str:
     """Name of the pseudo-tool ``server`` is embedded as.
@@ -43,7 +46,7 @@ def _pseudo_tool(server: MCPServerDefinition) -> ToolDefinition:
     """The ``ToolDefinition`` that stands in for ``server`` in the vector store."""
     return ToolDefinition(
         name=_pseudo_tool_name(server),
-        namespace="__mcp_servers__",
+        namespace=PSEUDO_NAMESPACE,
         description=server.to_searchable_text(),
         parameters_schema={"type": "object", "properties": {}},
         metadata={
@@ -142,18 +145,51 @@ class MCPManager:
         pseudo_tools = [_pseudo_tool(server) for server in all_servers]
         to_sync = await self._sync_manager.detect_changes(pseudo_tools, force)
         self._registry.drain_pending(pending_snapshot)
-        if not to_sync:
-            logger.debug(f"All {len(all_servers)} MCP servers up-to-date, skipping sync")
-            return 0
-
-        logger.info(f"Syncing {len(to_sync)}/{len(all_servers)} MCP servers...")
         total_synced = 0
-        for i in range(0, len(to_sync), batch_size):
-            batch = to_sync[i : i + batch_size]
-            # A pseudo-tool's description is the server's searchable text.
-            embeddings = await self._embedder.embed_batch([tool.description for tool in batch])
-            total_synced += await self._vector_store.add_tools(batch, embeddings, upsert=True)
-
-        await self._sync_manager.update_metadata()
-        logger.info(f"Synced {total_synced} MCP servers")
+        if to_sync:
+            logger.info(f"Syncing {len(to_sync)}/{len(all_servers)} MCP servers...")
+            for i in range(0, len(to_sync), batch_size):
+                batch = to_sync[i : i + batch_size]
+                # A pseudo-tool's description is the server's searchable text.
+                embeddings = await self._embedder.embed_batch([tool.description for tool in batch])
+                total_synced += await self._vector_store.add_tools(batch, embeddings, upsert=True)
+            await self._sync_manager.update_metadata()
+            logger.info(f"Synced {total_synced} MCP servers")
+        else:
+            logger.debug(f"All {len(all_servers)} MCP servers up-to-date, skipping sync")
+        # After the upsert, so a renamed server is never briefly absent.
+        await self._prune_pseudo_tools({tool.name for tool in pseudo_tools})
         return total_synced
+
+    async def _prune_pseudo_tools(self, wanted: set[str]) -> int:
+        """Delete pseudo-tool rows that no registered server owns.
+
+        Sync only ever upserts, so a persistent store kept the row of a
+        server removed from the registry, and after the digest-based rename
+        it kept every row under the old name beside the new one. The router
+        fetches a bounded candidate window, so such duplicates could crowd
+        other servers out. As with ``AgentGantry.prune_stale_tools``, a store
+        shared between gantries is pruned to *this* gantry's servers; a
+        gantry with no servers never gets here.
+        """
+        stored: list[ToolDefinition] = []
+        offset = 0
+        while True:
+            page = list(
+                await self._vector_store.list_all(
+                    namespace=PSEUDO_NAMESPACE, limit=1000, offset=offset
+                )
+            )
+            stored.extend(page)
+            if len(page) < 1000:
+                break
+            offset += 1000
+        removed = 0
+        for tool in stored:
+            if tool.name in wanted:
+                continue
+            if await self._vector_store.delete(tool.name, PSEUDO_NAMESPACE):
+                removed += 1
+        if removed:
+            logger.info(f"Pruned {removed} MCP server pseudo-tool(s) no registered server owns")
+        return removed

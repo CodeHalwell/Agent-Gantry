@@ -152,10 +152,9 @@ class SentenceTransformersEmbedder(LazyModelMixin, EmbeddingAdapter):
         return self._truncate(embeddings.tolist())
 
     async def health_check(self) -> bool:
-        """Check if the embedder is operational."""
+        """Load the model and encode one string: loading alone misses a model that cannot encode."""
         try:
-            await self._aensure_initialized()
-            return self._model is not None
+            return len(await self.embed_text("health check")) > 0
         except Exception:
             return False
 

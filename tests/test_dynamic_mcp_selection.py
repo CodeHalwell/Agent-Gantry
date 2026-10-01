@@ -540,3 +540,32 @@ class TestMCPWorkflow:
             name="MyServer", namespace="Team-A", description="Pinned naming scheme", command=["x"]
         )
         assert _pseudo_tool_name(server) == "mcp_server_team_a_myserver_430dec89"
+
+
+@pytest.mark.asyncio
+async def test_sync_removes_pseudo_tools_no_server_owns() -> None:
+    """A row under the pre-digest name, or for a server since removed, goes on the next sync."""
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
+    from agent_gantry.core.mcp_manager import PSEUDO_NAMESPACE
+    from agent_gantry.schema.tool import ToolDefinition
+
+    store = InMemoryVectorStore()
+    embedder = SimpleEmbedder(dimension=64)
+    legacy = ToolDefinition(
+        name="mcp_server_default_fs",  # the naming scheme before the digest suffix
+        namespace=PSEUDO_NAMESPACE,
+        description="Row left behind by an older release",
+        parameters_schema={"type": "object", "properties": {}},
+    )
+    await store.add_tools([legacy], [await embedder.embed_text(legacy.description)])
+
+    gantry = AgentGantry(vector_store=store, embedder=embedder)
+    try:
+        gantry.register_mcp_server(name="fs", command=["echo"], description="File system server")
+        assert await gantry.sync_mcp_servers() == 1
+        names = {tool.name for tool in await store.list_all(namespace=PSEUDO_NAMESPACE)}
+        assert "mcp_server_default_fs" not in names
+        assert len(names) == 1  # the one registered server, under its current name
+    finally:
+        await gantry.close()

@@ -775,3 +775,60 @@ async def test_pgvector_search_honours_the_tag_filter() -> None:
     assert [(tool.name, score) for tool, score in hits] == [("tagged", 0.2)]
     above = await store.search([1.0], limit=2, score_threshold=0.5)
     assert [tool.name for tool, _ in above] == ["plain_0", "plain_1"]
+
+
+class TestLazyModelMixin:
+    def test_load_model_leaving_model_unset_is_an_error(self) -> None:
+        from agent_gantry.adapters.embedders.base import LazyModelMixin
+
+        class Forgetful(LazyModelMixin):
+            def __init__(self) -> None:
+                self._model = None
+                self._load_lock = threading.Lock()
+
+            def _load_model(self) -> None:
+                pass  # never assigns self._model
+
+        with pytest.raises(RuntimeError, match="left _model unset"):
+            Forgetful()._ensure_initialized()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_first_use_loads_once(self) -> None:
+        import time
+
+        from agent_gantry.adapters.embedders.base import LazyModelMixin
+
+        class Slow(LazyModelMixin):
+            loads = 0
+
+            def __init__(self) -> None:
+                self._model = None
+                self._load_lock = threading.Lock()
+
+            def _load_model(self) -> None:
+                time.sleep(0.05)  # long enough for the second caller to contend
+                Slow.loads += 1
+                self._model = object()
+
+        lazy = Slow()
+        await asyncio.gather(lazy._aensure_initialized(), lazy._aensure_initialized())
+        assert Slow.loads == 1 and lazy._model is not None
+
+
+class TestEmbedderHealthCheck:
+    @pytest.mark.asyncio
+    async def test_health_check_encodes_rather_than_only_loading(self) -> None:
+        from agent_gantry.adapters.embedders.sentence_transformers import (
+            SentenceTransformersEmbedder,
+        )
+
+        healthy = SentenceTransformersEmbedder(model="stub-model")
+        _stub_model(healthy)
+        assert await healthy.health_check()
+
+        def cannot_encode(*args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("model loaded but cannot encode")
+
+        broken = SentenceTransformersEmbedder(model="stub-model")
+        broken._model = types.SimpleNamespace(encode=cannot_encode)
+        assert not await broken.health_check()
