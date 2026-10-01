@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 #: the spec spells it this way).
 SKILL_FILE_NAME = "SKILL.md"
 
-_FRONTMATTER = re.compile(r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*\r?\n?", re.DOTALL)
+_FRONTMATTER = re.compile(r"\A---[ \t]*\r?\n(?:(.*?)\r?\n)?---[ \t]*\r?\n?", re.DOTALL)
 # The opening delimiter alone — used to tell a document with no frontmatter
 # from one whose block was never closed.
 _FRONTMATTER_OPEN = re.compile(r"\A---[ \t]*\r?\n")
@@ -99,7 +99,7 @@ def parse_skill_markdown(text: str) -> tuple[dict[str, Any], str]:
     import yaml  # type: ignore[import-untyped]  # a core dependency, imported lazily
 
     try:
-        data = yaml.safe_load(match.group(1))
+        data = yaml.safe_load(match.group(1) or "")
     except yaml.YAMLError as exc:
         raise SkillParseError(f"invalid YAML frontmatter: {exc}") from exc
     if data is None:

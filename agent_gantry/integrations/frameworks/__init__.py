@@ -16,6 +16,7 @@ from __future__ import annotations
 from agent_gantry.integrations.frameworks.agno import AgnoAdapter
 from agent_gantry.integrations.frameworks.base import (
     GantryToolset,
+    QueryBoundsError,
     ToolConfirmationRequiredError,
     ToolExecutionError,
     ToolPermissionDeniedError,
@@ -38,6 +39,7 @@ __all__ = [
     # shared selection core
     "GantryToolset",
     "MissingRequiredToolError",
+    "QueryBoundsError",
     "ToolConfirmationRequiredError",
     "ToolExecutionError",
     "ToolPermissionDeniedError",

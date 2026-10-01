@@ -1,9 +1,9 @@
 """Per-turn dynamic-tool provider for Google ADK (the *deep* integration).
 
-Where :mod:`agent_gantry.integrations.frameworks.google_adk` exposes the
-*static* path — ``_for_google_adk`` selects a fixed slice of tools once and you
-hand them to ``Agent(tools=[...])`` — this module wires Agent-Gantry into ADK's
-native per-request hook so the tool surface is re-selected **before every model
+Where :meth:`~agent_gantry.integrations.frameworks.google_adk.GoogleADKAdapter.select`
+is the *static* path — a fixed slice of tools selected once and handed to
+``Agent(tools=[...])`` — this module wires Agent-Gantry into ADK's native
+per-request hook so the tool surface is re-selected **before every model
 request**. Each reasoning turn, the latest user content is matched against
 Gantry's semantic router and only the top-k relevant tools are injected into the
 ``LlmRequest`` the model sees. This minimises the tool-definition payload sent to
@@ -62,7 +62,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT, GantryToolset
+from agent_gantry.integrations.frameworks.base import (
+    DEFAULT_TOOL_LIMIT,
+    GantryToolset,
+    QueryBoundsError,
+    check_query_bounds,
+)
 from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
 from agent_gantry.integrations.frameworks.google_adk import _spec_to_google_adk
 
@@ -159,11 +164,10 @@ async def _inject_selected_tools(
 
     Returns the names of the tools whose declarations were injected (useful for
     logging and tests). Never raises on a *transient* selection failure —
-    retrieval must not break the agent run. The one deliberate exception is
-    :class:`~agent_gantry.integrations.frameworks.errors.MissingRequiredToolError`:
-    an unresolvable ``required`` name is a configuration error (typo, dropped
-    registration), not a transient retrieval failure, so it propagates rather
-    than degrading to "silently never inject the required tool."
+    retrieval must not break the agent run. Configuration errors
+    (:class:`~agent_gantry.integrations.frameworks.errors.MissingRequiredToolError`,
+    :class:`~agent_gantry.integrations.frameworks.base.QueryBoundsError`) do
+    propagate rather than degrading to "silently never inject the tool."
     """
     try:
         specs = await GantryToolset(gantry).select_or_empty(
@@ -174,7 +178,7 @@ async def _inject_selected_tools(
             required=required,
             always_include=always_include,
         )
-    except MissingRequiredToolError:
+    except (MissingRequiredToolError, QueryBoundsError):
         raise
     except Exception:
         # Selection failure must not kill the agent's model call: log a
@@ -245,6 +249,7 @@ def _gantry_before_model_callback(
     Returns:
         An ``async`` callback ``(callback_context, llm_request) -> None``.
     """
+    check_query_bounds(limit=limit, score_threshold=score_threshold, owner="GoogleADKAdapter")
 
     async def _callback(callback_context: Any, llm_request: Any) -> None:
         query = _query_from_callback_context(callback_context)

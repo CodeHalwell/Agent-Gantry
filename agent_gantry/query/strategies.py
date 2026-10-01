@@ -11,9 +11,17 @@ messages used by other frameworks.
 from __future__ import annotations
 
 import inspect
+import re
 import string
 from collections.abc import Callable, Iterable
 from typing import Any, NoReturn
+
+
+def _field(msg: Any, name: str) -> Any:
+    """``msg[name]`` for a dict-shaped message, else ``msg.name``; ``None`` if absent."""
+    if isinstance(msg, dict):
+        return msg.get(name)
+    return getattr(msg, name, None)
 
 
 def _blocks_text(value: Any) -> str:
@@ -70,19 +78,10 @@ def _is_tool_result_message(msg: Any) -> bool:
     that is a tool message: it carries no new request from the user, and its
     text is what the agent just learned.
     """
-    content = getattr(msg, "content", None)
-    if content is None and isinstance(msg, dict):
-        content = msg.get("content")
+    content = _field(msg, "content")
     if not isinstance(content, (list, tuple)) or not content:
         return False
-    return all(_block_type(block) == "tool_result" for block in content)
-
-
-def _block_type(block: Any) -> Any:
-    """A content block's ``type``, whether it is a dict or an SDK object."""
-    if isinstance(block, dict):
-        return block.get("type")
-    return getattr(block, "type", None)
+    return all(_field(block, "type") == "tool_result" for block in content)
 
 
 def _msg_text(msg: Any) -> str:
@@ -104,26 +103,17 @@ def _msg_text(msg: Any) -> str:
 
     Returns the empty string if no non-empty string content is found.
     """
-    text = getattr(msg, "text", None)
+    text = _field(msg, "text")
     if isinstance(text, str) and text.strip():
         return text
-    content = getattr(msg, "content", None)
+    content = _field(msg, "content")
     if isinstance(content, str) and content.strip():
         return content
-    if isinstance(msg, dict):
-        for key in ("text", "content"):
-            value = msg.get(key)
-            if isinstance(value, str) and value.strip():
-                return value
 
-    kind = msg.get("type") if isinstance(msg, dict) else getattr(msg, "type", None)
-    if kind == "function_call_output":
+    if _field(msg, "type") == "function_call_output":
         # OpenAI Responses API / Agents SDK: a tool's output is a top-level
-        # input item carrying ``output`` rather than ``content`` — a plain
-        # dict from a caller building input by hand, or an SDK response
-        # object (e.g. ``ResponseFunctionToolCallOutputItem``) exposing the
-        # same field as an attribute.
-        output = msg.get("output") if isinstance(msg, dict) else getattr(msg, "output", None)
+        # input item carrying ``output`` rather than ``content``.
+        output = _field(msg, "output")
         if isinstance(output, str) and output.strip():
             return output
         block_text = _blocks_text(output)
@@ -135,14 +125,8 @@ def _msg_text(msg: Any) -> str:
     block_text = _blocks_text(content)
     if block_text:
         return block_text
-    if isinstance(msg, dict):
-        block_text = _blocks_text(msg.get("content"))
-        if block_text:
-            return block_text
 
-    contents = getattr(msg, "contents", None)
-    if contents is None and isinstance(msg, dict):
-        contents = msg.get("contents")
+    contents = _field(msg, "contents")
     if contents:
         parts: list[str] = []
         for c in contents:
@@ -196,9 +180,7 @@ def _msg_role(msg: Any) -> str:
     ``tool_result`` blocks, or an OpenAI Responses ``function_call_output``
     item (which has no role at all).
     """
-    role = getattr(msg, "role", None)
-    if role is None and isinstance(msg, dict):
-        role = msg.get("role")
+    role = _field(msg, "role")
     if role is not None:
         # Unwrap enum roles first: a ``(str, Enum)`` member (LlamaIndex
         # ``MessageRole``, Haystack ``ChatRole``) stringifies to
@@ -208,9 +190,7 @@ def _msg_role(msg: Any) -> str:
             return "tool"
         return role
 
-    kind = getattr(msg, "type", None)
-    if kind is None and isinstance(msg, dict):
-        kind = msg.get("type")
+    kind = _field(msg, "type")
     if isinstance(kind, str):
         kind = kind.lower()
         # OpenAI Responses API input items carry a ``type`` and no role.
@@ -227,14 +207,9 @@ def _msg_role(msg: Any) -> str:
 def _msg_name(msg: Any) -> str:
     """Best-effort tool/author name for a tool-role message."""
     for attr in ("author_name", "name", "tool_name"):
-        value = getattr(msg, attr, None)
+        value = _field(msg, attr)
         if isinstance(value, str) and value:
             return value
-    if isinstance(msg, dict):
-        for key in ("author_name", "name", "tool_name"):
-            value = msg.get(key)
-            if isinstance(value, str) and value:
-                return value
     return ""
 
 
@@ -245,61 +220,33 @@ def _called_tool_names(msg: Any) -> list[str]:
     # OpenAI Chat Completions assistant ``tool_calls`` (dicts or SDK objects
     # with ``.function.name``) and LangChain ``AIMessage.tool_calls``
     # (``{"name": ..., "args": ...}`` dicts).
-    tool_calls = getattr(msg, "tool_calls", None)
-    if tool_calls is None and isinstance(msg, dict):
-        tool_calls = msg.get("tool_calls")
+    tool_calls = _field(msg, "tool_calls")
     if isinstance(tool_calls, (list, tuple)):
         for call in tool_calls:
-            function = (
-                call.get("function") if isinstance(call, dict) else getattr(call, "function", None)
-            )
-            name = None
-            if function is not None:
-                name = (
-                    function.get("name")
-                    if isinstance(function, dict)
-                    else getattr(function, "name", None)
-                )
-            if name is None:
-                name = call.get("name") if isinstance(call, dict) else getattr(call, "name", None)
-            found.append(name)
+            function = _field(call, "function")
+            name = _field(function, "name") if function is not None else None
+            found.append(name if name is not None else _field(call, "name"))
 
     # OpenAI Responses API / Agents SDK ``function_call`` item.
-    kind = getattr(msg, "type", None)
-    if kind is None and isinstance(msg, dict):
-        kind = msg.get("type")
-    if kind == "function_call":
-        found.append(msg.get("name") if isinstance(msg, dict) else getattr(msg, "name", None))
+    if _field(msg, "type") == "function_call":
+        found.append(_field(msg, "name"))
 
     # Anthropic ``tool_use`` blocks and Strands ``toolUse`` blocks in a content list.
-    content = getattr(msg, "content", None)
-    if content is None and isinstance(msg, dict):
-        content = msg.get("content")
+    content = _field(msg, "content")
     if isinstance(content, (list, tuple)):
         for block in content:
-            if isinstance(block, dict):
-                if block.get("type") == "tool_use":
-                    found.append(block.get("name"))
-                tool_use = block.get("toolUse")
-                if isinstance(tool_use, dict):
-                    found.append(tool_use.get("name"))
-            elif getattr(block, "type", None) == "tool_use":
-                found.append(getattr(block, "name", None))
+            if _field(block, "type") == "tool_use":
+                found.append(_field(block, "name"))
+            tool_use = _field(block, "toolUse")
+            if isinstance(tool_use, dict):
+                found.append(tool_use.get("name"))
 
-    # Microsoft Agent Framework ``function_call`` contents. A serialized/
-    # dict-shaped history (round-tripped through ``.to_dict()`` or built by
-    # hand for a test) carries each content as a plain dict, not the native
-    # Content object, so this has to read both shapes like the blocks above.
-    contents = getattr(msg, "contents", None)
-    if contents is None and isinstance(msg, dict):
-        contents = msg.get("contents")
+    # Microsoft Agent Framework ``function_call`` contents, native or dict-shaped.
+    contents = _field(msg, "contents")
     if isinstance(contents, (list, tuple)):
         for c in contents:
-            if isinstance(c, dict):
-                if c.get("type") == "function_call":
-                    found.append(c.get("name"))
-            elif getattr(c, "type", None) == "function_call":
-                found.append(getattr(c, "name", None))
+            if _field(c, "type") == "function_call":
+                found.append(_field(c, "name"))
 
     # Pydantic AI ``ModelMessage`` parts.
     parts = getattr(msg, "parts", None)
@@ -517,16 +464,11 @@ _SCAFFOLD_TOKENS: frozenset[str] = frozenset(
 )
 
 
-_KEYWORD_TOKEN_RE = None  # type: ignore[var-annotated]
+_KEYWORD_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
 
 
 def _tokenize_for_keywords(text: str) -> list[str]:
     """Split into alpha/numeric tokens, lowercase."""
-    import re
-
-    global _KEYWORD_TOKEN_RE
-    if _KEYWORD_TOKEN_RE is None:
-        _KEYWORD_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
     return [m.group(0).lower() for m in _KEYWORD_TOKEN_RE.finditer(text)]
 
 

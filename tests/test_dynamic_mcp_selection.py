@@ -10,6 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+pytest.importorskip("mcp")
+
 from agent_gantry import AgentGantry
 from agent_gantry.core.mcp_registry import MCPRegistry
 from agent_gantry.core.mcp_router import MCPRouter, MCPRoutingResult
@@ -72,30 +74,6 @@ class TestMCPServerDefinition:
         assert config["args"] == ["--port", "3000"]
         assert config["env"] == {"API_KEY": "test"}
         assert config["namespace"] == "remote"
-
-    def test_content_hash(self) -> None:
-        """Test content hash generation for change detection."""
-        server1 = MCPServerDefinition(
-            name="test",
-            description="Test server",
-            command=["test"],
-        )
-        server2 = MCPServerDefinition(
-            name="test",
-            description="Test server",
-            command=["test"],
-        )
-        server3 = MCPServerDefinition(
-            name="test",
-            description="Different description",
-            command=["test"],
-        )
-
-        # Same content should produce same hash
-        assert server1.content_hash == server2.content_hash
-
-        # Different content should produce different hash
-        assert server1.content_hash != server3.content_hash
 
 
 class TestMCPRegistry:
@@ -197,9 +175,9 @@ class TestMCPRegistry:
         internal_pending = registry.get_pending()
         assert len(internal_pending) == 2
 
-        # Test explicit clearing
-        registry.clear_pending()
-        assert len(registry.get_pending()) == 0
+        # Draining only what a sync covered keeps a later registration pending
+        registry.drain_pending([sample_server])
+        assert [s.name for s in registry.get_pending()] == ["database"]
 
     def test_update_health(self, registry: MCPRegistry, sample_server: MCPServerDefinition) -> None:
         """Test updating server health."""
@@ -225,7 +203,6 @@ class TestMCPRegistry:
         # First call should create client
         client1 = registry.get_client("filesystem")
         assert client1 is not None
-        assert registry.active_client_count == 1
 
         # Second call should return same client
         client2 = registry.get_client("filesystem")
@@ -297,63 +274,6 @@ class TestMCPRouter:
 
         assert await router._get_server_from_registry("test", "default") == mock_server
         mock_registry.get_server.assert_called_once_with("test", "default")
-
-    @pytest.mark.asyncio
-    async def test_filter_by_capabilities(self, router: MCPRouter) -> None:
-        """Test filtering servers by capabilities."""
-        servers = [
-            MCPServerDefinition(
-                name="server1",
-                description="Server 1 with read and write capabilities",
-                command=["cmd1"],
-                capabilities=["read", "write"],
-            ),
-            MCPServerDefinition(
-                name="server2",
-                description="Server 2 with only read capability",
-                command=["cmd2"],
-                capabilities=["read"],
-            ),
-        ]
-
-        # Filter for servers with both read and write
-        filtered = await router.filter_by_capabilities(servers, ["read", "write"])
-        assert len(filtered) == 1
-        assert filtered[0].name == "server1"
-
-        # Filter for servers with just read
-        filtered = await router.filter_by_capabilities(servers, ["read"])
-        assert len(filtered) == 2
-
-        # Filter with empty required capabilities
-        filtered = await router.filter_by_capabilities(servers, [])
-        assert len(filtered) == 2
-
-    @pytest.mark.asyncio
-    async def test_filter_by_health(self, router: MCPRouter) -> None:
-        """Test filtering servers by health."""
-        servers = [
-            MCPServerDefinition(
-                name="healthy",
-                description="Healthy server",
-                command=["cmd1"],
-            ),
-            MCPServerDefinition(
-                name="unhealthy",
-                description="Unhealthy server",
-                command=["cmd2"],
-            ),
-        ]
-        servers[1].health.available = False
-
-        # Filter out unavailable servers
-        filtered = await router.filter_by_health(servers, exclude_unavailable=True)
-        assert len(filtered) == 1
-        assert filtered[0].name == "healthy"
-
-        # Don't filter
-        filtered = await router.filter_by_health(servers, exclude_unavailable=False)
-        assert len(filtered) == 2
 
 
 class TestAgentGantryMCPIntegration:
@@ -582,3 +502,79 @@ class TestMCPWorkflow:
         assert count3 == 1
         assert mock_embedder.embed_batch.call_count == 2
         assert mock_vector_store.add_tools.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_unconventional_server_names_sync(self) -> None:
+        """Names outside ToolDefinition's pattern are sanitised, not rejected."""
+        gantry = AgentGantry()
+        try:
+            for name, namespace in (("MyServer", "default"), ("my.server", "default"), ("fs", "Team-A")):
+                gantry.register_mcp_server(
+                    name=name,
+                    namespace=namespace,
+                    command=["echo"],
+                    description=f"Server {name} registered under an unconventional name",
+                )
+            assert await gantry.sync_mcp_servers() == 3
+            servers = await gantry.retrieve_mcp_servers("unconventional name", limit=3)
+            assert {s.name for s in servers} == {"MyServer", "my.server", "fs"}
+        finally:
+            await gantry.close()
+
+    def test_pseudo_tool_names_do_not_collide_after_sanitising(self) -> None:
+        from agent_gantry.core.mcp_manager import _pseudo_tool_name
+
+        first = MCPServerDefinition(
+            name="a", namespace="b_c", description="First server here", command=["x"]
+        )
+        second = MCPServerDefinition(
+            name="c_a", namespace="b", description="Second server here", command=["x"]
+        )
+        assert _pseudo_tool_name(first) != _pseudo_tool_name(second)
+
+    def test_pseudo_tool_names_are_stable(self) -> None:
+        """The scheme is part of what a persistent store holds, so it must not drift."""
+        from agent_gantry.core.mcp_manager import _pseudo_tool_name
+
+        server = MCPServerDefinition(
+            name="MyServer", namespace="Team-A", description="Pinned naming scheme", command=["x"]
+        )
+        assert _pseudo_tool_name(server) == "mcp_server_team_a_myserver_430dec89"
+
+
+@pytest.mark.asyncio
+async def test_sync_removes_pseudo_tools_no_server_owns() -> None:
+    """A row under the pre-digest name, or for a server since removed, goes on the next sync."""
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
+    from agent_gantry.core.mcp_manager import PSEUDO_NAMESPACE
+    from agent_gantry.schema.tool import ToolDefinition
+
+    store = InMemoryVectorStore()
+    embedder = SimpleEmbedder(dimension=64)
+    legacy = ToolDefinition(
+        name="mcp_server_default_fs",  # the naming scheme before the digest suffix
+        namespace=PSEUDO_NAMESPACE,
+        description="Row left behind by an older release",
+        parameters_schema={"type": "object", "properties": {}},
+    )
+    await store.add_tools([legacy], [await embedder.embed_text(legacy.description)])
+
+    gantry = AgentGantry(vector_store=store, embedder=embedder)
+    try:
+
+        @gantry.register(tags=["math"])
+        def double(x: int) -> int:
+            """Double a number."""
+            return x * 2
+
+        await gantry.sync()
+        gantry.register_mcp_server(name="fs", command=["echo"], description="File system server")
+        assert await gantry.sync_mcp_servers() == 1
+        names = {tool.name for tool in await store.list_all(namespace=PSEUDO_NAMESPACE)}
+        assert "mcp_server_default_fs" not in names
+        assert len(names) == 1  # the one registered server, under its current name
+        # The prune is confined to its namespace: a real tool is untouched.
+        assert await store.get_by_name("double") is not None
+    finally:
+        await gantry.close()

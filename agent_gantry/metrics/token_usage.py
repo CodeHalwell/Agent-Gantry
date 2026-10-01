@@ -11,6 +11,19 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
+
+# Provider spellings of each usage figure: OpenAI, Anthropic, Google.
+_PROMPT_KEYS = ("prompt_tokens", "input_tokens", "prompt_token_count")
+_COMPLETION_KEYS = (
+    "completion_tokens",
+    "output_tokens",
+    "candidates_token_count",
+    "completion_token_count",
+)
+_CACHE_KEYS = ("cache_creation_input_tokens", "cache_read_input_tokens")
+_TOTAL_KEYS = ("total_tokens", "total_token_count")
+_USAGE_KEYS = _PROMPT_KEYS + _COMPLETION_KEYS + _CACHE_KEYS + _TOTAL_KEYS
 
 
 @dataclass(frozen=True)
@@ -64,61 +77,58 @@ class ProviderUsage:
         Checks each provider convention in order and uses the first present field,
         even if its value is 0. This ensures we don't skip valid zero token counts.
         """
-        # Check for prompt tokens (OpenAI, Anthropic, or Google naming)
-        prompt_raw: int | float | None = None
-        for key in ("prompt_tokens", "input_tokens", "prompt_token_count"):
-            if key in usage:
-                prompt_raw = usage[key]
-                break
-
-        # Check for completion/output tokens (OpenAI, Anthropic, or Google naming)
-        completion_raw: int | float | None = None
-        for key in (
-            "completion_tokens",
-            "output_tokens",
-            "candidates_token_count",
-            "completion_token_count",
-        ):
-            if key in usage:
-                completion_raw = usage[key]
-                break
-
+        prompt_raw = next((usage[key] for key in _PROMPT_KEYS if key in usage), None)
+        completion_raw = next((usage[key] for key in _COMPLETION_KEYS if key in usage), None)
+        total_raw = next((usage[key] for key in _TOTAL_KEYS if key in usage), None)
         # Anthropic reports cached prompt tokens separately from
         # ``input_tokens``; both were processed, so both count as prompt tokens.
-        cached = 0
-        for key in ("cache_creation_input_tokens", "cache_read_input_tokens"):
-            if key in usage:
-                cached += cls._coerce_token_value(usage[key], key)
+        cached = sum(cls._coerce_token_value(usage[key], key) for key in _CACHE_KEYS if key in usage)
 
         prompt = (
             cls._coerce_token_value(prompt_raw, "prompt_tokens") if prompt_raw is not None else 0
-        )
-        prompt += cached
+        ) + cached
         completion = (
             cls._coerce_token_value(completion_raw, "completion_tokens")
             if completion_raw is not None
             else 0
         )
-
-        if "total_tokens" in usage:
-            total_raw = usage["total_tokens"]
-        elif "total_token_count" in usage:
-            total_raw = usage["total_token_count"]
-        else:
-            total_raw = None
-
-        if total_raw is not None:
-            total = cls._coerce_token_value(total_raw, "total_tokens")
-        else:
-            total = prompt + completion
-
-        # If total is missing we derive it; if explicitly provided as 0 we preserve that
+        # A missing total is derived; an explicit one (even 0) is preserved.
+        total = (
+            cls._coerce_token_value(total_raw, "total_tokens")
+            if total_raw is not None
+            else prompt + completion
+        )
         return cls(
             prompt_tokens=prompt,
             completion_tokens=completion,
             total_tokens=total,
             cached_prompt_tokens=cached,
         )
+
+    @classmethod
+    def from_response_usage(cls, response: Any) -> ProviderUsage | None:
+        """Build from a provider *response*, or ``None`` when it carries no usage.
+
+        The block is ``usage`` on OpenAI and Anthropic responses and
+        ``usage_metadata`` on google-genai ones, as an attribute or a key. SDK
+        usage objects are attribute holders, so the known fields are read off
+        them into a mapping first.
+        """
+        is_mapping = isinstance(response, Mapping)
+        usage = None
+        for key in ("usage", "usage_metadata"):
+            usage = response.get(key) if is_mapping else getattr(response, key, None)
+            if usage is not None:
+                break
+        if usage is None:
+            return None
+        if not isinstance(usage, Mapping):
+            usage = {
+                key: value
+                for key in _USAGE_KEYS
+                if isinstance(value := getattr(usage, key, None), (int, float))
+            }
+        return cls.from_usage(usage) if usage else None
 
 
 @dataclass(frozen=True)

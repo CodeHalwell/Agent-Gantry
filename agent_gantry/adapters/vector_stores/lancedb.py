@@ -28,6 +28,46 @@ __all__ = ["LanceDBVectorStore", "_escape_sql_string", "_validate_identifier"]
 logger = logging.getLogger(__name__)
 
 
+def _tool_record(tool: ToolDefinition, embedding: list[float], now: str) -> dict[str, Any]:
+    return {
+        "id": f"{tool.namespace}.{tool.name}",
+        "name": tool.name,
+        "namespace": tool.namespace,
+        "description": tool.description,
+        "tool_json": tool.model_dump_json(),
+        "fingerprint": compute_tool_fingerprint(tool),
+        "vector": embedding,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def _skill_record(skill: Skill, embedding: list[float], now: str) -> dict[str, Any]:
+    return {
+        "id": f"{skill.namespace}.{skill.name}",
+        "name": skill.name,
+        "namespace": skill.namespace,
+        "description": skill.description,
+        "category": skill.category.value,
+        "skill_json": skill.model_dump_json(),
+        "vector": embedding,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def _namespace_predicate(ns_filter: Any) -> str | None:
+    """SQL predicate for a namespace filter; None for an empty collection (matches nothing)."""
+    if not isinstance(ns_filter, (list, tuple, set)):
+        return f"namespace = '{_escape_sql_string(ns_filter)}'"
+    values = list(ns_filter)
+    if not values:
+        return None
+    if len(values) == 1:
+        return f"namespace = '{_escape_sql_string(values[0])}'"
+    return "namespace IN ({})".format(", ".join(f"'{_escape_sql_string(v)}'" for v in values))
+
+
 class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
     """
     LanceDB vector store for on-device semantic indexing.
@@ -187,76 +227,59 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
             ]
         )
 
-        # Create or open tables
-        # Note: list_tables() returns a TableListResult object with a 'tables' attribute
-        table_list_result = self._db.list_tables()
-        existing_tables = (
-            table_list_result.tables
-            if hasattr(table_list_result, "tables")
-            else list(table_list_result)
-        )
+        # Open or create the tables off the event loop (file I/O)
+        def open_tables() -> tuple[Any, Any, Any, bool]:
+            # list_tables() returns a TableListResult (with .tables) on newer versions
+            listed = self._db.list_tables()
+            existing = set(getattr(listed, "tables", listed))
 
-        if self._tools_table_name in existing_tables:
-            self._tools_table = self._db.open_table(self._tools_table_name)
-            # Migrate schema if needed
+            def open_or_create(name: str, schema: Any) -> Any:
+                if name in existing:
+                    return self._db.open_table(name)
+                return self._db.create_table(name, schema=schema)
+
+            return (
+                open_or_create(self._tools_table_name, tools_schema),
+                open_or_create(self._skills_table_name, skills_schema),
+                open_or_create(self._metadata_table_name, metadata_schema),
+                self._tools_table_name in existing,
+            )
+
+        (
+            self._tools_table,
+            self._skills_table,
+            self._metadata_table,
+            tools_existed,
+        ) = await asyncio.to_thread(open_tables)
+        if tools_existed:
             await self._migrate_tools_schema(tools_schema)
-        else:
-            self._tools_table = self._db.create_table(
-                self._tools_table_name,
-                schema=tools_schema,
-            )
-
-        if self._skills_table_name in existing_tables:
-            self._skills_table = self._db.open_table(self._skills_table_name)
-        else:
-            self._skills_table = self._db.create_table(
-                self._skills_table_name,
-                schema=skills_schema,
-            )
-
-        if self._metadata_table_name in existing_tables:
-            self._metadata_table = self._db.open_table(self._metadata_table_name)
-        else:
-            self._metadata_table = self._db.create_table(
-                self._metadata_table_name,
-                schema=metadata_schema,
-            )
 
         self._initialized = True
+
+    def _collection(self, skills: bool) -> tuple[Any, str, Any]:
+        """(table, JSON column, model) of the skills or the tools collection."""
+        if skills:
+            return self._skills_table, "skill_json", Skill
+        return self._tools_table, "tool_json", ToolDefinition
 
     async def _add_items(
         self,
         items: list[Any],
         embeddings: list[list[float]],
         upsert: bool,
-        table: Any,
-        item_type_name: str,
-        to_record: Any,
+        *,
+        skills: bool,
     ) -> int:
-        """
-        Generic method to add items with their embeddings.
-
-        Args:
-            items: List of items (tools or skills)
-            embeddings: List of embedding vectors
-            upsert: Whether to update existing items
-            table: The LanceDB table to add to
-            item_type_name: Name of the item type for error messages (e.g., "Tools")
-            to_record: Callable that converts an item and its embedding into a dictionary record
-
-        Returns:
-            Number of items added/updated
-        """
+        """Add tools or skills with their embeddings; returns the number written."""
         if not items:
             return 0
 
-        # Validate inputs
+        kind = "Skills" if skills else "Tools"
         if len(items) != len(embeddings):
             raise ValueError(
-                f"{item_type_name} and embeddings must have same length: "
-                f"got {len(items)} {item_type_name.lower()} and {len(embeddings)} embeddings"
+                f"{kind} and embeddings must have same length: "
+                f"got {len(items)} {kind.lower()} and {len(embeddings)} embeddings"
             )
-
         for i, emb in enumerate(embeddings):
             if len(emb) != self._dimension:
                 raise ValueError(
@@ -264,8 +287,10 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
                 )
 
         await self._ensure_initialized()
+        table, _, _ = self._collection(skills)
 
         now = datetime.now(timezone.utc).isoformat()
+        to_record = _skill_record if skills else _tool_record
         records = [to_record(item, embedding, now) for item, embedding in zip(items, embeddings)]
 
         # Predicate over the batch's ids (escape for SQL safety)
@@ -276,29 +301,18 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
             id_predicate = f"id = '{ids[0]}'"
 
         if upsert:
-            # Delete existing records with same IDs
             try:
                 await asyncio.to_thread(table.delete, id_predicate)
             except RuntimeError as e:
-                # LanceDB raises RuntimeError when attempting to delete non-existent records
-                # This is expected during upsert when records don't exist yet
+                # LanceDB raises RuntimeError when nothing matches
                 logger.debug(f"Delete during upsert (expected if records don't exist): {e}")
-            except Exception as e:
-                # Unexpected error during deletion
-                logger.warning(f"Unexpected error during upsert delete: {e}")
-                raise
         else:
-            # Without upsert, ids already present are skipped rather than
-            # inserted again as duplicate rows (mirrors the in-memory store),
-            # and only the rows actually inserted are counted.
+            # Without upsert, ids already present (in the table or earlier in
+            # this batch) are skipped and only the inserted rows are counted.
             existing = await asyncio.to_thread(
                 table.search().select(["id"]).where(id_predicate).limit(None).to_list
             )
             seen_ids = {row["id"] for row in existing}
-            # Each accepted record joins the set, so an id repeated *within*
-            # this batch is skipped too — the in-memory store's behaviour,
-            # which checked only the table and let a duplicated batch entry
-            # through.
             deduped = []
             for record in records:
                 if record["id"] in seen_ids:
@@ -321,40 +335,11 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
         """
         Add tools with their embeddings.
 
-        Args:
-            tools: List of tool definitions
-            embeddings: List of embedding vectors
-            upsert: Whether to update existing tools (default True)
-
-        Returns:
-            Number of tools added/updated
-
         Raises:
-            ValueError: If tools and embeddings have different lengths or
-                       if embedding dimensions don't match configured dimension
+            ValueError: If tools and embeddings differ in length or an
+                embedding does not match the configured dimension
         """
-
-        def to_record(tool: ToolDefinition, embedding: list[float], now: str) -> dict[str, Any]:
-            return {
-                "id": f"{tool.namespace}.{tool.name}",
-                "name": tool.name,
-                "namespace": tool.namespace,
-                "description": tool.description,
-                "tool_json": tool.model_dump_json(),
-                "fingerprint": compute_tool_fingerprint(tool),
-                "vector": embedding,
-                "created_at": now,
-                "updated_at": now,
-            }
-
-        return await self._add_items(
-            items=tools,
-            embeddings=embeddings,
-            upsert=upsert,
-            table=self._tools_table,
-            item_type_name="Tools",
-            to_record=to_record,
-        )
+        return await self._add_items(tools, embeddings, upsert, skills=False)
 
     async def add_skills(
         self,
@@ -362,43 +347,8 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
         embeddings: list[list[float]],
         upsert: bool = True,
     ) -> int:
-        """
-        Add skills with their embeddings.
-
-        Args:
-            skills: List of skill definitions
-            embeddings: List of embedding vectors
-            upsert: Whether to update existing skills (default True)
-
-        Returns:
-            Number of skills added/updated
-
-        Raises:
-            ValueError: If skills and embeddings have different lengths or
-                       if embedding dimensions don't match configured dimension
-        """
-
-        def to_record(skill: Skill, embedding: list[float], now: str) -> dict[str, Any]:
-            return {
-                "id": f"{skill.namespace}.{skill.name}",
-                "name": skill.name,
-                "namespace": skill.namespace,
-                "description": skill.description,
-                "category": skill.category.value,
-                "skill_json": skill.model_dump_json(),
-                "vector": embedding,
-                "created_at": now,
-                "updated_at": now,
-            }
-
-        return await self._add_items(
-            items=skills,
-            embeddings=embeddings,
-            upsert=upsert,
-            table=self._skills_table,
-            item_type_name="Skills",
-            to_record=to_record,
-        )
+        """Add skills with their embeddings (same contract as :meth:`add_tools`)."""
+        return await self._add_items(skills, embeddings, upsert, skills=True)
 
     async def search(
         self,
@@ -434,25 +384,13 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
             if include_embeddings
             else ["tool_json", "_distance"]
         )
-        # Build the namespace predicate first (escape for SQL safety); it is
-        # needed both for the query and to size the tag over-fetch below.
+        # The namespace predicate is needed both for the query and to size the
+        # tag over-fetch below.
         where_clause: str | None = None
         if filters and "namespace" in filters:
-            ns_filter = filters["namespace"]
-            if isinstance(ns_filter, (list, tuple, set)):
-                ns_list = list(ns_filter)
-                if not ns_list:
-                    # Empty list matches nothing; "IN ()" is invalid SQL
-                    return []
-                if len(ns_list) == 1:
-                    escaped_ns = _escape_sql_string(ns_list[0])
-                    where_clause = f"namespace = '{escaped_ns}'"
-                else:
-                    escaped_values = ", ".join(f"'{_escape_sql_string(ns)}'" for ns in ns_list)
-                    where_clause = f"namespace IN ({escaped_values})"
-            else:
-                escaped_ns = _escape_sql_string(ns_filter)
-                where_clause = f"namespace = '{escaped_ns}'"
+            where_clause = _namespace_predicate(filters["namespace"])
+            if where_clause is None:
+                return []  # empty namespace list matches nothing
 
         # Pre-calculate required tags for faster set operations
         required_tags: set[str] = set()
@@ -470,6 +408,8 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
         max_rows = fetch_limit
         if required_tags:
             max_rows = int(await asyncio.to_thread(self._tools_table.count_rows, where_clause))
+            if max_rows == 0:
+                return []  # LanceDB rejects limit(0) on a vector query
             fetch_limit = min(max(limit * 4, 1), max_rows)
 
         def _build_search(size: int) -> Any:
@@ -567,27 +507,14 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
             .limit(limit * 2)
         )
 
-        # Build ONE combined predicate: LanceDB's .where() is a setter, not
-        # an accumulator — a second call replaces the first, which silently
-        # dropped the namespace constraint when both filters were supplied.
+        # ONE combined predicate: LanceDB's .where() is a setter, not an
+        # accumulator, so a second call would drop the first constraint.
         where_clauses: list[str] = []
         if filters and "namespace" in filters:
-            ns_filter = filters["namespace"]
-            if isinstance(ns_filter, (list, tuple, set)):
-                ns_list = list(ns_filter)
-                if not ns_list:
-                    # An empty namespace list matches nothing (mirrors the
-                    # in-memory store); "IN ()" is invalid SQL in LanceDB
-                    return []
-                if len(ns_list) == 1:
-                    escaped_ns = _escape_sql_string(ns_list[0])
-                    where_clauses.append(f"namespace = '{escaped_ns}'")
-                else:
-                    escaped_values = ", ".join(f"'{_escape_sql_string(ns)}'" for ns in ns_list)
-                    where_clauses.append(f"namespace IN ({escaped_values})")
-            else:
-                escaped_ns = _escape_sql_string(ns_filter)
-                where_clauses.append(f"namespace = '{escaped_ns}'")
+            predicate = _namespace_predicate(filters["namespace"])
+            if predicate is None:
+                return []  # empty namespace list matches nothing
+            where_clauses.append(predicate)
         if filters and "category" in filters:
             escaped_cat = _escape_sql_string(filters["category"])
             where_clauses.append(f"category = '{escaped_cat}'")
@@ -623,132 +550,94 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
 
         return output
 
-    async def get_by_name(self, name: str, namespace: str = "default") -> ToolDefinition | None:
-        """
-        Get a tool by name.
-
-        Args:
-            name: Tool name
-            namespace: Tool namespace
-
-        Returns:
-            Tool definition if found, None otherwise
-        """
+    async def _get_item(self, name: str, namespace: str, *, skills: bool) -> Any:
         await self._ensure_initialized()
-
-        # Validate inputs for SQL safety
         _validate_identifier(name, "name")
         _validate_identifier(namespace, "namespace")
+        table, json_field, model = self._collection(skills)
+        item_id = _escape_sql_string(f"{namespace}.{name}")
+        rows = await asyncio.to_thread(
+            table.search().select([json_field]).where(f"id = '{item_id}'").limit(1).to_list
+        )
+        if not rows:
+            return None
+        raw = rows[0].get(json_field)
+        if not raw:
+            logger.warning(f"{namespace}.{name} has missing {json_field} field")
+            return None
+        return model.model_validate_json(raw)
 
-        # Escape ID for SQL safety
-        tool_id = _escape_sql_string(f"{namespace}.{name}")
-        try:
-            results = await asyncio.to_thread(
-                self._tools_table.search().where(f"id = '{tool_id}'").limit(1).to_list
-            )
-            if results:
-                tool_json_str = results[0].get("tool_json")
-                if tool_json_str:
-                    return ToolDefinition.model_validate_json(tool_json_str)
-                else:
-                    logger.warning(f"Tool {namespace}.{name} has missing tool_json field")
-        except Exception as e:
-            # Record may not exist - log at debug level
-            logger.debug(f"get_by_name lookup failed for {namespace}.{name}: {e}")
-        return None
+    async def _delete_item(self, name: str, namespace: str, *, skills: bool) -> bool:
+        await self._ensure_initialized()
+        _validate_identifier(name, "name")
+        _validate_identifier(namespace, "namespace")
+        table, _, _ = self._collection(skills)
+        predicate = f"id = '{_escape_sql_string(f'{namespace}.{name}')}'"
+        # LanceDB's delete is a silent no-op on a miss, so count first.
+        if not await asyncio.to_thread(table.count_rows, predicate):
+            return False
+        await asyncio.to_thread(table.delete, predicate)
+        return True
+
+    async def _count_items(self, namespace: str | None, *, skills: bool) -> int:
+        await self._ensure_initialized()
+        table, _, _ = self._collection(skills)
+        if namespace is None:
+            return int(await asyncio.to_thread(table.count_rows))
+        _validate_identifier(namespace, "namespace")
+        predicate = f"namespace = '{_escape_sql_string(namespace)}'"
+        return int(await asyncio.to_thread(table.count_rows, predicate))
+
+    async def _list_items(
+        self,
+        namespace: str | None,
+        category: str | None,
+        limit: int,
+        offset: int,
+        *,
+        skills: bool,
+    ) -> list[Any]:
+        """List rows; table errors propagate, malformed rows are skipped."""
+        await self._ensure_initialized()
+        table, json_field, model = self._collection(skills)
+        where_clauses = []
+        if namespace is not None:
+            _validate_identifier(namespace, "namespace")
+            where_clauses.append(f"namespace = '{_escape_sql_string(namespace)}'")
+        if category is not None:
+            _validate_identifier(category, "category")
+            where_clauses.append(f"category = '{_escape_sql_string(category)}'")
+        # Only the JSON column is read; projecting it keeps the vector out of the scan.
+        query = table.search().select([json_field])
+        if where_clauses:
+            query = query.where(" AND ".join(where_clauses))
+        result = await asyncio.to_thread(query.limit(limit).offset(offset).to_arrow)
+
+        items: list[Any] = []
+        for raw in result[json_field].to_pylist():
+            if not raw:
+                continue
+            try:
+                items.append(model.model_validate_json(raw))
+            except Exception as e:
+                logger.warning(f"Skipping malformed {json_field} record: {e}")
+        return items
+
+    async def get_by_name(self, name: str, namespace: str = "default") -> ToolDefinition | None:
+        """Get a tool by name, or None if not found."""
+        return await self._get_item(name, namespace, skills=False)
 
     async def get_skill_by_name(self, name: str, namespace: str = "default") -> Skill | None:
-        """
-        Get a skill by name.
-
-        Args:
-            name: Skill name
-            namespace: Skill namespace
-
-        Returns:
-            Skill definition if found, None otherwise
-        """
-        await self._ensure_initialized()
-
-        # Validate inputs for SQL safety
-        _validate_identifier(name, "name")
-        _validate_identifier(namespace, "namespace")
-
-        # Escape ID for SQL safety
-        skill_id = _escape_sql_string(f"{namespace}.{name}")
-        try:
-            results = await asyncio.to_thread(
-                self._skills_table.search().where(f"id = '{skill_id}'").limit(1).to_list
-            )
-            if results:
-                skill_json_str = results[0].get("skill_json")
-                if skill_json_str:
-                    return Skill.model_validate_json(skill_json_str)
-                else:
-                    logger.warning(f"Skill {namespace}.{name} has missing skill_json field")
-        except Exception as e:
-            # Record may not exist - log at debug level
-            logger.debug(f"get_skill_by_name lookup failed for {namespace}.{name}: {e}")
-        return None
+        """Get a skill by name, or None if not found."""
+        return await self._get_item(name, namespace, skills=True)
 
     async def delete(self, name: str, namespace: str = "default") -> bool:
-        """
-        Delete a tool.
-
-        Args:
-            name: Tool name
-            namespace: Tool namespace
-
-        Returns:
-            True if deleted, False if not found
-        """
-        await self._ensure_initialized()
-
-        # Validate inputs for SQL safety
-        _validate_identifier(name, "name")
-        _validate_identifier(namespace, "namespace")
-
-        # Escape ID for SQL safety
-        tool_id = _escape_sql_string(f"{namespace}.{name}")
-        predicate = f"id = '{tool_id}'"
-        try:
-            # LanceDB's delete is a silent no-op on a miss; count first so the
-            # documented contract ("False if not found") actually holds.
-            if not await asyncio.to_thread(self._tools_table.count_rows, predicate):
-                return False
-            await asyncio.to_thread(self._tools_table.delete, predicate)
-            return True
-        except Exception:
-            return False
+        """Delete a tool; False if it was not found."""
+        return await self._delete_item(name, namespace, skills=False)
 
     async def delete_skill(self, name: str, namespace: str = "default") -> bool:
-        """
-        Delete a skill.
-
-        Args:
-            name: Skill name
-            namespace: Skill namespace
-
-        Returns:
-            True if deleted, False if not found
-        """
-        await self._ensure_initialized()
-
-        # Validate inputs for SQL safety
-        _validate_identifier(name, "name")
-        _validate_identifier(namespace, "namespace")
-
-        # Escape ID for SQL safety
-        skill_id = _escape_sql_string(f"{namespace}.{name}")
-        predicate = f"id = '{skill_id}'"
-        try:
-            # Same miss-is-a-no-op semantics as delete(): count first.
-            if not await asyncio.to_thread(self._skills_table.count_rows, predicate):
-                return False
-            await asyncio.to_thread(self._skills_table.delete, predicate)
-            return True
-        except Exception:
-            return False
+        """Delete a skill; False if it was not found."""
+        return await self._delete_item(name, namespace, skills=True)
 
     async def list_all(
         self,
@@ -756,40 +645,8 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
         limit: int = 1000,
         offset: int = 0,
     ) -> list[ToolDefinition]:
-        """
-        List all tools.
-
-        Args:
-            namespace: Filter by namespace (None for all)
-            limit: Maximum results
-            offset: Pagination offset
-
-        Returns:
-            List of tool definitions
-        """
-        await self._ensure_initialized()
-
-        # Validate namespace if provided
-        if namespace is not None:
-            _validate_identifier(namespace, "namespace")
-
-        try:
-            # Only tool_json is read below; projecting it keeps the embedding
-            # vector out of the scan. Filtering still works on unprojected
-            # columns -- the predicate is applied by the engine first.
-            query = self._tools_table.search().select(["tool_json"])
-            if namespace:
-                query = query.where(f"namespace = '{_escape_sql_string(namespace)}'")
-            table = await asyncio.to_thread(query.limit(limit).offset(offset).to_arrow)
-
-            return [
-                ToolDefinition.model_validate_json(tj)
-                for tj in table["tool_json"].to_pylist()
-                if tj  # Skip records with missing tool_json
-            ]
-        except Exception as e:
-            logger.warning(f"Error listing tools: {e}")
-            return []
+        """List tools, optionally filtered by namespace."""
+        return await self._list_items(namespace, None, limit, offset, skills=False)
 
     async def list_all_skills(
         self,
@@ -798,113 +655,16 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
         limit: int = 1000,
         offset: int = 0,
     ) -> list[Skill]:
-        """
-        List all skills.
-
-        Args:
-            namespace: Filter by namespace
-            category: Filter by category
-            limit: Maximum results
-            offset: Pagination offset
-
-        Returns:
-            List of skill definitions
-        """
-        await self._ensure_initialized()
-
-        # Validate inputs if provided
-        if namespace is not None:
-            _validate_identifier(namespace, "namespace")
-        if category is not None:
-            _validate_identifier(category, "category")
-
-        # Table-level errors propagate: swallowing them into an empty list is
-        # indistinguishable from "no skills stored", which let callers (e.g.
-        # the facade's embedder-migration check) record success after having
-        # listed nothing. Only malformed individual rows are skipped.
-        # Only skill_json is read below. This path is also called with a very
-        # large limit by the facade's embedder-migration check, so scanning the
-        # vector column here is the most expensive instance of the omission.
-        query = self._skills_table.search().select(["skill_json"])
-        where_clauses = []
-        if namespace:
-            where_clauses.append(f"namespace = '{_escape_sql_string(namespace)}'")
-        if category:
-            where_clauses.append(f"category = '{_escape_sql_string(category)}'")
-
-        if where_clauses:
-            query = query.where(" AND ".join(where_clauses))
-
-        table = await asyncio.to_thread(query.limit(limit).offset(offset).to_arrow)
-
-        skills: list[Skill] = []
-        for raw in table["skill_json"].to_pylist():
-            if not raw:
-                continue
-            try:
-                skills.append(Skill.model_validate_json(raw))
-            except Exception as e:
-                logger.warning(f"Skipping malformed skill record: {e}")
-        return skills
+        """List skills, optionally filtered by namespace and category."""
+        return await self._list_items(namespace, category, limit, offset, skills=True)
 
     async def count(self, namespace: str | None = None) -> int:
-        """
-        Count tools.
-
-        Args:
-            namespace: Filter by namespace
-
-        Returns:
-            Number of tools
-        """
-        await self._ensure_initialized()
-
-        # Validate namespace if provided
-        if namespace is not None:
-            _validate_identifier(namespace, "namespace")
-
-        try:
-            if namespace:
-                return int(
-                    await asyncio.to_thread(
-                        self._tools_table.count_rows,
-                        f"namespace = '{_escape_sql_string(namespace)}'",
-                    )
-                )
-            # Use count_rows() for efficient counting when no filter
-            return int(await asyncio.to_thread(self._tools_table.count_rows))
-        except Exception as e:
-            logger.warning(f"Error counting tools: {e}")
-            return 0
+        """Count tools, optionally within a namespace."""
+        return await self._count_items(namespace, skills=False)
 
     async def count_skills(self, namespace: str | None = None) -> int:
-        """
-        Count skills.
-
-        Args:
-            namespace: Filter by namespace
-
-        Returns:
-            Number of skills
-        """
-        await self._ensure_initialized()
-
-        # Validate namespace if provided
-        if namespace is not None:
-            _validate_identifier(namespace, "namespace")
-
-        try:
-            if namespace:
-                return int(
-                    await asyncio.to_thread(
-                        self._skills_table.count_rows,
-                        f"namespace = '{_escape_sql_string(namespace)}'",
-                    )
-                )
-            return int(await asyncio.to_thread(self._skills_table.count_rows))
-        except Exception as e:
-            logger.warning(f"Error counting skills: {e}")
-            return 0
+        """Count skills, optionally within a namespace."""
+        return await self._count_items(namespace, skills=True)
 
     async def health_check(self) -> bool:
         """

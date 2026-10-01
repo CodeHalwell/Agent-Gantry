@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -230,6 +231,7 @@ async def test_add_mcp_server_tools_are_executable(server_config: MCPServerConfi
     try:
         count = await gantry.add_mcp_server(server_config)
         assert count == 3
+        assert gantry.tool_count == count  # each discovered tool got a handler
 
         result = await gantry.execute(
             ToolCall(tool_name="add_numbers", arguments={"a": 20, "b": 22})
@@ -495,3 +497,54 @@ def test_a_long_server_tool_name_does_not_abort_discovery() -> None:
         description=description,
         parameters_schema={"type": "object", "properties": {}},
     )
+
+
+@pytest.mark.asyncio
+async def test_list_tools_follows_pagination_cursors() -> None:
+    """``tools/list`` is paginated and only the first page used to be read.
+    The cursor is sent as ``PaginatedRequestParams`` (the spelling both SDK
+    majors accept); the result spells it ``nextCursor`` on mcp 1.x and
+    ``next_cursor`` on 2.x."""
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    from mcp.types import PaginatedRequestParams
+
+    def page(names: list[str], **cursor: str | None) -> SimpleNamespace:
+        tools = [
+            SimpleNamespace(
+                name=name,
+                description=f"Tool {name} for the pagination check.",
+                inputSchema={"type": "object", "properties": {}},
+                annotations=None,
+            )
+            for name in names
+        ]
+        return SimpleNamespace(tools=tools, **cursor)
+
+    pages = {
+        None: page(["one"], nextCursor="p2"),
+        "p2": page(["two"], next_cursor="p3"),
+        "p3": page(["three"], nextCursor=None),
+    }
+    requested: list[str | None] = []
+
+    class _Session:
+        async def list_tools(self, *, params: PaginatedRequestParams | None = None) -> Any:
+            cursor = params.cursor if params is not None else None
+            requested.append(cursor)
+            return pages[cursor]
+
+    @asynccontextmanager
+    async def fake_connect():
+        yield _Session()
+
+    client = MCPClient(MCPServerConfig(name="paged", command=["fake"], namespace="paged"))
+    client.connect = fake_connect  # type: ignore[method-assign]
+    try:
+        tools = await client.list_tools()
+    finally:
+        await client.close()
+
+    assert [t.name for t in tools] == ["one", "two", "three"]
+    assert requested == [None, "p2", "p3"]

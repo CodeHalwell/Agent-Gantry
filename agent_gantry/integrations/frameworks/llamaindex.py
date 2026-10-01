@@ -15,14 +15,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import (
-    DEFAULT_TOOL_LIMIT,
-    BaseFrameworkAdapter,
-    GantryToolset,
-)
+from agent_gantry.integrations.frameworks.base import BaseFrameworkAdapter
 
 if TYPE_CHECKING:
-    from agent_gantry.core.gantry import AgentGantry
     from agent_gantry.integrations.frameworks.base import ToolSpec
 
 
@@ -114,60 +109,22 @@ def _spec_to_llamaindex(spec: ToolSpec) -> Any:
     )
 
 
-async def _for_llamaindex(
-    gantry: AgentGantry,
-    query: str,
-    *,
-    limit: int = DEFAULT_TOOL_LIMIT,
-    **select_kwargs: Any,
-) -> list:
-    """Select tools for ``query`` and return them as LlamaIndex ``FunctionTool``s."""
-    specs = await GantryToolset(gantry).select(query, limit=limit, **select_kwargs)
-    return [_spec_to_llamaindex(spec) for spec in specs]
-
-
 class LlamaIndexAdapter(BaseFrameworkAdapter):
     """Route Gantry-selected tools into LlamaIndex.
 
     Static slice (``FunctionTool`` objects) plus deep per-turn live wiring
     (re-selects tools every reasoning step), both routed through ``gantry.execute``.
+    :meth:`live` returns the :meth:`tool_retriever` — plug it into
+    ``FunctionAgent(tool_retriever=<result>)``.
     """
 
     live_tier = "per-turn"
+    _live_delegate = "tool_retriever"
 
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a LlamaIndex ``FunctionTool``."""
         return _spec_to_llamaindex(spec)
-
-    def live(
-        self,
-        *,
-        limit: int | None = None,
-        score_threshold: float = 0.0,
-        namespaces: list[str] | None = None,
-        required: list[str] | None = None,
-        always_include: list[str] | None = None,
-        **framework_kwargs: Any,
-    ) -> Any:
-        """Per-turn uniform entry point: delegates to :meth:`tool_retriever`.
-
-        Returns a ``GantryToolRetriever`` (an ``llama_index.core.objects.
-        ObjectRetriever`` subclass) — plug it into
-        ``FunctionAgent(tool_retriever=<result>)``. ``required``/
-        ``always_include`` are re-applied on every reasoning step (see
-        :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select`).
-        No other ``framework_kwargs`` are required; any supplied are
-        forwarded to the underlying retriever constructor.
-        """
-        return self.tool_retriever(
-            limit=limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
-            **framework_kwargs,
-        )
 
     def tool_retriever(
         self,
@@ -185,11 +142,7 @@ class LlamaIndexAdapter(BaseFrameworkAdapter):
 
         return _gantry_tool_retriever(
             self._gantry,
-            limit=self._default_limit if limit is None else limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
+            **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
         )
 
     def function_agent(
@@ -213,10 +166,6 @@ class LlamaIndexAdapter(BaseFrameworkAdapter):
             self._gantry,
             llm,
             name=name,
-            limit=self._default_limit if limit is None else limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
+            **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
             **agent_kwargs,
         )

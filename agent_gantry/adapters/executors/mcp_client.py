@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.types import PaginatedRequestParams
 
 from agent_gantry.schema.config import MCPServerConfig
 from agent_gantry.schema.tool import ToolDefinition, ToolSource
@@ -450,16 +451,28 @@ class MCPClient:
         discover must close() the client to release the connection.
 
         Returns:
-            List of ToolDefinition objects
+            List of ToolDefinition objects, from every page of ``tools/list``
         """
         session = await self._ensure_session()
+        mcp_tools: list[Any] = []
+        cursor: str | None = None
+        seen: set[str] = set()
         try:
-            result = await session.list_tools()
+            while True:
+                params = PaginatedRequestParams(cursor=cursor) if cursor else None
+                page = await session.list_tools(params=params)
+                mcp_tools.extend(page.tools)
+                # ``nextCursor`` on mcp 1.x, ``next_cursor`` on 2.x; anything
+                # but a fresh string ends the walk.
+                cursor = getattr(page, "nextCursor", None) or getattr(page, "next_cursor", None)
+                if not isinstance(cursor, str) or not cursor or cursor in seen:
+                    break
+                seen.add(cursor)
         except Exception:
             await self._invalidate_session()
             raise
-        raw_names = [str(tool.name) for tool in result.tools]
-        tools = [self._convert_tool(tool) for tool in result.tools]
+        raw_names = [str(tool.name) for tool in mcp_tools]
+        tools = [self._convert_tool(tool) for tool in mcp_tools]
         # Two raw names can normalise to one identifier (``getUser`` and
         # ``get_user``); keep both rather than letting the second overwrite
         # the first in the registry. The suffix is purely local, so the
@@ -584,106 +597,6 @@ class MCPClient:
             if isinstance(text := getattr(item, "text", None), str)
         ]
         return "; ".join(texts) if texts else f"MCP tool call failed: {result!r}"
-
-
-class MCPClientPool:
-    """
-    Pool of MCP clients for managing multiple server connections.
-    """
-
-    def __init__(self) -> None:
-        """Initialize the client pool."""
-        self._clients: dict[str, MCPClient] = {}
-        # Clients dropped from the pool that could not be closed at the time
-        # (no running loop). ``close_all`` still owns them; see
-        # ``remove_server``. ``MCPRegistry`` keeps the same list for the same
-        # reason.
-        self._retired: list[MCPClient] = []
-
-    def add_server(self, config: MCPServerConfig) -> MCPClient:
-        """
-        Add an MCP server to the pool.
-
-        Args:
-            config: Configuration for the MCP server
-
-        Returns:
-            MCPClient instance
-        """
-        client = MCPClient(config)
-        self._clients[config.name] = client
-        return client
-
-    def get_client(self, name: str) -> MCPClient | None:
-        """
-        Get an MCP client by name.
-
-        Args:
-            name: Server name
-
-        Returns:
-            MCPClient instance or None
-        """
-        return self._clients.get(name)
-
-    async def list_all_tools(self) -> list[ToolDefinition]:
-        """
-        List tools from all connected servers.
-
-        Returns:
-            List of all ToolDefinition objects from all servers
-        """
-        all_tools = []
-        for client in self._clients.values():
-            try:
-                tools = await client.list_tools()
-                all_tools.extend(tools)
-            except Exception as e:
-                # Log error but continue with other servers
-                logger.error(f"Error listing tools from {client.config.name}: {e}")
-        return all_tools
-
-    def remove_server(self, name: str) -> bool:
-        """
-        Remove an MCP server from the pool.
-
-        Best-effort closes the client's persistent connection (scheduled on
-        the running loop when there is one). Called without one — from a
-        plain thread, say — the close cannot be scheduled, so the client is
-        retained for ``close_all`` instead of being dropped: forgetting it
-        there stranded a live HTTP connection or stdio subprocess that
-        nothing could reach again, surviving to process teardown.
-
-        Args:
-            name: Server name
-
-        Returns:
-            True if server was removed
-        """
-        client = self._clients.pop(name, None)
-        if client is None:
-            return False
-        if not _schedule_client_close(client):
-            self._retired.append(client)
-        return True
-
-    async def close_all(self) -> None:
-        """Close all pooled clients' persistent connections.
-
-        Closes run concurrently so shutdown is bounded by the slowest single
-        client (each close can wait up to 5s on a stuck owner task), not the
-        sum across servers.
-        """
-        # ``_retired`` holds clients dropped by ``remove_server`` with no loop
-        # to close them on; this is the next async shutdown it was waiting for.
-        clients = list(self._clients.values()) + self._retired
-        self._retired = []
-        results = await asyncio.gather(
-            *(client.close() for client in clients), return_exceptions=True
-        )
-        for result in results:
-            if isinstance(result, BaseException):
-                logger.debug("Error closing MCP client", exc_info=result)
 
 
 # Strong references to in-flight fire-and-forget close tasks: the event loop

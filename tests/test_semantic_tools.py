@@ -45,21 +45,21 @@ class TestWithSemanticToolsDecorator:
     def test_decorator_accepts_configuration_options(self) -> None:
         """Test that decorator accepts all configuration options."""
         gantry = AgentGantry()
-        selector = with_semantic_tools(
-            gantry,
-            prompt_param="question",
-            tools_param="functions",
-            limit=3,
-            dialect="anthropic",
-            auto_sync=False,
-            score_threshold=0.7,
-        )
+        with pytest.warns(DeprecationWarning, match="auto_sync=False has no effect"):
+            selector = with_semantic_tools(
+                gantry,
+                prompt_param="question",
+                tools_param="functions",
+                limit=3,
+                dialect="anthropic",
+                auto_sync=False,
+                score_threshold=0.7,
+            )
         assert isinstance(selector, SemanticToolSelector)
         assert selector._prompt_param == "question"
         assert selector._tools_param == "functions"
         assert selector._limit == 3
         assert selector._dialect == "anthropic"
-        assert selector._auto_sync is False
         assert selector._score_threshold == 0.7
 
 
@@ -323,6 +323,15 @@ class TestSemanticToolsDecoratorFactory:
         # Should use the override limit of 2
         result = await generate("search query")
         assert "Tools count:" in result
+
+    def test_factory_wrap_honours_every_override(self) -> None:
+        """``wrap`` used to accept only four of the factory's settings as
+        overrides; ``score_threshold``/``dialect_options`` were silently fixed."""
+        factory = SemanticToolsDecorator(AgentGantry(), score_threshold=0.2)
+        selector = factory.wrap(score_threshold=0.4, dialect_options={"strict": True})
+        assert isinstance(selector, SemanticToolSelector)
+        assert selector._score_threshold == 0.4
+        assert selector._dialect_options == {"strict": True}
 
 
 class TestPromptExtraction:

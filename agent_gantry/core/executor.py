@@ -42,13 +42,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Assertions a tool's *root* schema can carry that ``_validate_arguments``'
-#: own top-level walk does not implement — it reads ``required``,
-#: ``properties``, ``patternProperties`` and ``additionalProperties`` and
-#: nothing else. Each is applied by ``_validate_value``, which is handed a
-#: schema of just these keys so ownership of the structural keywords stays
-#: with the walk. Keep this to keywords ``_validate_value`` actually
-#: implements: one it ignores would be listed as enforced without being so.
 #: Keywords this validator actually evaluates — ``_validate_value``'s own,
 #: plus the constraint family ``check_json_constraints`` implements.
 _EVALUATED_KEYWORDS = frozenset(
@@ -209,7 +202,6 @@ def _fully_evaluable(schema: Any, _depth: int = 0) -> bool:
     return True
 
 
-
 def _branch_declared_names(node: Any, _depth: int = 0) -> set[str]:
     """Property names a schema's combinator branches declare.
 
@@ -242,6 +234,13 @@ def _branch_declared_names(node: Any, _depth: int = 0) -> set[str]:
     return names
 
 
+#: Assertions a tool's *root* schema can carry that ``_validate_arguments``'
+#: own top-level walk does not implement — it reads ``required``,
+#: ``properties``, ``patternProperties`` and ``additionalProperties`` and
+#: nothing else. Each is applied by ``_validate_value``, which is handed a
+#: schema of just these keys so ownership of the structural keywords stays
+#: with the walk. Keep this to keywords ``_validate_value`` actually
+#: implements: one it ignores would be listed as enforced without being so.
 _ROOT_ASSERTIONS = (
     "allOf",
     "anyOf",
@@ -426,6 +425,45 @@ class ExecutionEngine:
             await self._a2a_executor.close()
             self._a2a_executor = None
 
+    async def _record(self, call: ToolCall, result: ToolResult) -> None:
+        """Report a terminal result to telemetry, if any is configured."""
+        if self._telemetry:
+            await self._telemetry.record_execution(call, result)
+
+    async def _finish(
+        self,
+        call: ToolCall,
+        status: ExecutionStatus,
+        queued_at: datetime,
+        trace_id: str,
+        span_id: str,
+        *,
+        error: str | None = None,
+        error_type: str | None = None,
+        result: Any = None,
+        started_at: datetime | None = None,
+        completed_at: datetime | None = None,
+        attempt: int = 1,
+        record: bool = True,
+    ) -> ToolResult:
+        """Build the terminal ``ToolResult`` for ``call`` and record it."""
+        outcome = ToolResult(
+            tool_name=call.tool_name,
+            status=status,
+            result=result,
+            error=error,
+            error_type=error_type,
+            queued_at=queued_at,
+            started_at=started_at,
+            completed_at=completed_at or datetime.now(timezone.utc),
+            attempt_number=attempt,
+            trace_id=trace_id,
+            span_id=span_id,
+        )
+        if record:
+            await self._record(call, outcome)
+        return outcome
+
     async def execute(self, call: ToolCall) -> ToolResult:
         """
         Execute a tool call.
@@ -449,15 +487,16 @@ class ExecutionEngine:
         # cannot express more than the name the model saw.
         tool = self._resolve_tool(call)
         if not tool:
-            return ToolResult(
-                tool_name=call.tool_name,
-                status=ExecutionStatus.FAILURE,
+            # Not recorded, as before: there is no registered tool to attribute it to.
+            return await self._finish(
+                call,
+                ExecutionStatus.FAILURE,
+                queued_at,
+                trace_id,
+                span_id,
                 error=f"Tool '{call.tool_name}' not found",
                 error_type="ToolNotFound",
-                queued_at=queued_at,
-                completed_at=datetime.now(timezone.utc),
-                trace_id=trace_id,
-                span_id=span_id,
+                record=False,
             )
 
         # Normalize away explicit ``None``s for optional parameters before any
@@ -581,19 +620,15 @@ class ExecutionEngine:
                 return gate_result
         if admission_denial is not None:
             denial_reason, denial_status, denial_type, _ = admission_denial
-            result = ToolResult(
-                tool_name=call.tool_name,
-                status=denial_status,
+            return await self._finish(
+                call,
+                denial_status,
+                queued_at,
+                trace_id,
+                span_id,
                 error=denial_reason,
                 error_type=denial_type,
-                queued_at=queued_at,
-                completed_at=datetime.now(timezone.utc),
-                trace_id=trace_id,
-                span_id=span_id,
             )
-            if self._telemetry:
-                await self._telemetry.record_execution(call, result)
-            return result
 
         val_result = await self._validate_call_arguments(
             tool, call, queued_at, trace_id, span_id
@@ -635,8 +670,7 @@ class ExecutionEngine:
                 # Recorded here rather than where it was built: this is the
                 # first point at which it is known to be the outcome the
                 # caller sees.
-                if self._telemetry:
-                    await self._telemetry.record_execution(call, val_result)
+                await self._record(call, val_result)
                 return val_result
 
             # Check confirmation requirement *before* dispatching by any
@@ -657,20 +691,23 @@ class ExecutionEngine:
             from agent_gantry.schema.tool import ToolSource
 
             if tool.source == ToolSource.A2A_AGENT:
-                return await self._get_a2a_executor().execute(tool, call, None)
+                result = await self._get_a2a_executor().execute(tool, call, None)
+                await self._record(call, result)
+                return result
 
             # Get handler for Python functions
             handler = self._registry.get_handler(f"{tool.namespace}.{tool.name}")
             if not handler:
-                return ToolResult(
-                    tool_name=call.tool_name,
-                    status=ExecutionStatus.FAILURE,
+                # Not recorded, as before: a definition with nothing to run it is a wiring error.
+                return await self._finish(
+                    call,
+                    ExecutionStatus.FAILURE,
+                    queued_at,
+                    trace_id,
+                    span_id,
                     error=f"No handler found for tool '{call.tool_name}'",
                     error_type="HandlerNotFound",
-                    queued_at=queued_at,
-                    completed_at=datetime.now(timezone.utc),
-                    trace_id=trace_id,
-                    span_id=span_id,
+                    record=False,
                 )
 
             return await self._execute_handler_with_retries(
@@ -709,10 +746,7 @@ class ExecutionEngine:
         end_time = datetime.now(timezone.utc)
         total_time_ms = (end_time - start_time).total_seconds() * 1000
 
-        successful = 0
-        for r in results:
-            if r.status == ExecutionStatus.SUCCESS:
-                successful += 1
+        successful = sum(1 for r in results if r.status == ExecutionStatus.SUCCESS)
         failed = len(results) - successful
 
         return BatchToolResult(
@@ -774,70 +808,49 @@ class ExecutionEngine:
                 )
                 completed_at = datetime.now(timezone.utc)
                 await self._record_success(tool, (completed_at - started_at).total_seconds() * 1000)
-                result = ToolResult(
-                    tool_name=call.tool_name,
-                    status=ExecutionStatus.SUCCESS,
+                return await self._finish(
+                    call,
+                    ExecutionStatus.SUCCESS,
+                    queued_at,
+                    trace_id,
+                    span_id,
                     result=result_value,
-                    queued_at=queued_at,
                     started_at=started_at,
                     completed_at=completed_at,
-                    attempt_number=attempt,
-                    trace_id=trace_id,
-                    span_id=span_id,
+                    attempt=attempt,
                 )
-                if self._telemetry:
-                    await self._telemetry.record_execution(call, result)
-                return result
             except ArgumentReconstructionError as e:
-                # Deterministic — retrying re-runs the same rejected parse —
-                # and reported as a validation failure because that is what it
-                # is: the value satisfied the JSON Schema but not the handler's
-                # own declared type, an invariant the schema could not express.
-                #
-                # Health is deliberately *not* recorded, matching the schema
-                # validation path above: a rejected argument says nothing about
-                # whether the tool works, and the arguments are caller-supplied.
-                # Counting them opened the circuit breaker after five malformed
-                # calls, so a caller could disable a perfectly healthy tool for
-                # everyone — the valid call that followed came back CIRCUIT_OPEN.
-                completed_at = datetime.now(timezone.utc)
-                result = ToolResult(
-                    tool_name=call.tool_name,
-                    status=ExecutionStatus.FAILURE,
+                # Deterministic (retrying re-runs the same rejected parse) and
+                # reported as a validation failure: the value satisfied the JSON
+                # Schema but not the handler's declared type. Health is not
+                # recorded, as for schema validation: caller-supplied arguments
+                # say nothing about the tool, and counting them would let a
+                # caller open the circuit breaker for everyone.
+                return await self._finish(
+                    call,
+                    ExecutionStatus.FAILURE,
+                    queued_at,
+                    trace_id,
+                    span_id,
                     error=str(e),
                     error_type="ValidationError",
-                    queued_at=queued_at,
                     started_at=started_at,
-                    completed_at=completed_at,
-                    attempt_number=attempt,
-                    trace_id=trace_id,
-                    span_id=span_id,
+                    attempt=attempt,
                 )
-                if self._telemetry:
-                    await self._telemetry.record_execution(call, result)
-                return result
             except PermissionDeniedError as e:
                 completed_at = datetime.now(timezone.utc)
                 await self._record_failure(tool)
-                result = ToolResult(
-                    tool_name=call.tool_name,
-                    # The rate-limit path below already reports this exception as
-                    # PERMISSION_DENIED; flattening it to FAILURE here made a
-                    # permission failure distinguishable or not depending on
-                    # which code path raised it. (Carried from PR #316, which
-                    # could not merge cleanly once .jules/sentinel.md moved.)
-                    status=ExecutionStatus.PERMISSION_DENIED,
+                return await self._finish(
+                    call,
+                    ExecutionStatus.PERMISSION_DENIED,
+                    queued_at,
+                    trace_id,
+                    span_id,
                     error=str(e),
                     error_type="PermissionDeniedError",
-                    queued_at=queued_at,
                     completed_at=completed_at,
-                    attempt_number=attempt,
-                    trace_id=trace_id,
-                    span_id=span_id,
+                    attempt=attempt,
                 )
-                if self._telemetry:
-                    await self._telemetry.record_execution(call, result)
-                return result
             except asyncio.TimeoutError:
                 last_error = "Execution timed out"
                 last_error_type = "TimeoutError"
@@ -850,27 +863,22 @@ class ExecutionEngine:
 
         completed_at = datetime.now(timezone.utc)
         await self._record_failure(tool)
-
         status = (
             ExecutionStatus.TIMEOUT
             if last_error_type == "TimeoutError"
             else ExecutionStatus.FAILURE
         )
-
-        result = ToolResult(
-            tool_name=call.tool_name,
-            status=status,
+        return await self._finish(
+            call,
+            status,
+            queued_at,
+            trace_id,
+            span_id,
             error=last_error,
             error_type=last_error_type,
-            queued_at=queued_at,
             completed_at=completed_at,
-            attempt_number=max_attempts,
-            trace_id=trace_id,
-            span_id=span_id,
+            attempt=max_attempts,
         )
-        if self._telemetry:
-            await self._telemetry.record_execution(call, result)
-        return result
 
     def _should_attempt_recovery(self, tool: ToolDefinition) -> bool:
         """Check if we should attempt circuit breaker recovery."""
@@ -889,18 +897,14 @@ class ExecutionEngine:
     ) -> ToolResult | None:
         """Check if circuit breaker is open."""
         if tool.health.circuit_breaker_open and not self._should_attempt_recovery(tool):
-            result = ToolResult(
-                tool_name=call.tool_name,
-                status=ExecutionStatus.CIRCUIT_OPEN,
+            return await self._finish(
+                call,
+                ExecutionStatus.CIRCUIT_OPEN,
+                queued_at,
+                trace_id,
+                span_id,
                 error="Circuit breaker is open due to repeated failures",
-                queued_at=queued_at,
-                completed_at=datetime.now(timezone.utc),
-                trace_id=trace_id,
-                span_id=span_id,
             )
-            if self._telemetry:
-                await self._telemetry.record_execution(call, result)
-            return result
         return None
 
     async def _check_security_policy(
@@ -964,46 +968,34 @@ class ExecutionEngine:
                     kwargs["arguments_valid"] = arguments_valid
                 self._security_policy.check_permission(tool.name, call.arguments, **kwargs)
             except ConfirmationRequiredError as e:
-                result = ToolResult(
-                    tool_name=call.tool_name,
-                    status=ExecutionStatus.PENDING_CONFIRMATION,
-                    # Relay the policy's own reason (it names the matched
-                    # tool/pattern) so callers that only surface (status,
-                    # error) report why nothing ran, plus the approve/resume
-                    # hint (require_confirmation=False clears this gate too).
+                # Relay the policy's own reason plus the approve/resume hint.
+                # Recorded only when this is the outcome the caller will see:
+                # with invalid arguments ``execute`` returns the ValidationError
+                # instead, and recording this too would count one call twice.
+                return await self._finish(
+                    call,
+                    ExecutionStatus.PENDING_CONFIRMATION,
+                    queued_at,
+                    trace_id,
+                    span_id,
                     error=(
                         f"{e} It was not run. Re-issue the call with "
                         "require_confirmation=False once approved."
                         if str(e)
                         else "Tool requires human confirmation"
                     ),
-                    queued_at=queued_at,
-                    completed_at=datetime.now(timezone.utc),
-                    trace_id=trace_id,
-                    span_id=span_id,
+                    record=arguments_valid,
                 )
-                # Only when this is the outcome the caller will see. When the
-                # arguments already failed validation, ``execute`` discards
-                # this pending result in favour of the ValidationError, and
-                # recording it would report a status that never happened and
-                # count one call twice.
-                if self._telemetry and arguments_valid:
-                    await self._telemetry.record_execution(call, result)
-                return result
             except PermissionDeniedError as e:
-                result = ToolResult(
-                    tool_name=call.tool_name,
-                    status=ExecutionStatus.PERMISSION_DENIED,
+                return await self._finish(
+                    call,
+                    ExecutionStatus.PERMISSION_DENIED,
+                    queued_at,
+                    trace_id,
+                    span_id,
                     error=str(e),
                     error_type="PermissionDeniedError",
-                    queued_at=queued_at,
-                    completed_at=datetime.now(timezone.utc),
-                    trace_id=trace_id,
-                    span_id=span_id,
                 )
-                if self._telemetry:
-                    await self._telemetry.record_execution(call, result)
-                return result
         return None
 
     async def _check_rate_limit(
@@ -1027,19 +1019,15 @@ class ExecutionEngine:
                 # by alternating styles.
                 await self._rate_limiter.acquire(tool.name, tool.namespace)
             except RateLimitExceeded as e:
-                result = ToolResult(
-                    tool_name=call.tool_name,
-                    status=ExecutionStatus.FAILURE,
+                return await self._finish(
+                    call,
+                    ExecutionStatus.FAILURE,
+                    queued_at,
+                    trace_id,
+                    span_id,
                     error=str(e),
                     error_type="RateLimitExceeded",
-                    queued_at=queued_at,
-                    completed_at=datetime.now(timezone.utc),
-                    trace_id=trace_id,
-                    span_id=span_id,
                 )
-                if self._telemetry:
-                    await self._telemetry.record_execution(call, result)
-                return result
         return None
 
     def _admission_denial(
@@ -1103,24 +1091,19 @@ class ExecutionEngine:
         """Validate arguments and return ToolResult if invalid."""
         is_valid, validation_error = await self._validate_arguments(tool, call.arguments)
         if not is_valid:
-            result = ToolResult(
-                tool_name=call.tool_name,
-                status=ExecutionStatus.FAILURE,
+            # Not recorded here: this result is computed before the security
+            # policy runs and does not always win (a denial outranks it).
+            # ``execute`` records whichever result it actually returns.
+            return await self._finish(
+                call,
+                ExecutionStatus.FAILURE,
+                queued_at,
+                trace_id,
+                span_id,
                 error=validation_error,
                 error_type="ValidationError",
-                queued_at=queued_at,
-                completed_at=datetime.now(timezone.utc),
-                trace_id=trace_id,
-                span_id=span_id,
+                record=False,
             )
-            # Telemetry is *not* emitted here. This result is computed before
-            # the security policy runs (so the rate-limit exemption decision is
-            # accurate) but it does not always win: a denial outranks it, and a
-            # rate-limit rejection can be returned instead. Recording here
-            # produced two executions for one call, one of them an outcome that
-            # was never returned. ``execute`` records whichever result it
-            # actually returns.
-            return result
         return None
 
     @staticmethod
@@ -1147,25 +1130,20 @@ class ExecutionEngine:
     ) -> ToolResult | None:
         """Check if tool requires confirmation."""
         if self._needs_confirmation(tool, call):
-            result = ToolResult(
-                tool_name=call.tool_name,
-                status=ExecutionStatus.PENDING_CONFIRMATION,
-                # Populate error so callers that only surface (status, error) —
-                # e.g. framework adapters raising ToolExecutionError — report
-                # why nothing ran instead of "no detail". Approve by re-issuing
-                # the call with ``ToolCall(require_confirmation=False)``.
+            # The error text says why nothing ran and how to approve, for
+            # callers that only surface (status, error).
+            result = await self._finish(
+                call,
+                ExecutionStatus.PENDING_CONFIRMATION,
+                queued_at,
+                trace_id,
+                span_id,
                 error=(
                     f"Tool '{tool.name}' requires human confirmation before "
                     "execution; it was not run. Re-issue the call with "
                     "require_confirmation=False once approved."
                 ),
-                queued_at=queued_at,
-                completed_at=datetime.now(timezone.utc),
-                trace_id=trace_id,
-                span_id=span_id,
             )
-            if self._telemetry:
-                await self._telemetry.record_execution(call, result)
             return result
         return None
 

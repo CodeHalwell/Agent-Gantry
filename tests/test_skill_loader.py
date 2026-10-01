@@ -291,3 +291,9 @@ def test_a_short_description_is_enriched_rather_than_padded() -> None:
     assert skill.description.startswith("PDF tools")
     assert "merges and splits" in skill.description
     assert "(skill 'pdf-helper')" not in skill.description
+
+
+def test_an_empty_frontmatter_block_is_accepted() -> None:
+    """``---`` immediately followed by ``---`` is an empty mapping, not an
+    unterminated block."""
+    assert parse_skill_markdown("---\n---\nbody") == ({}, "body")

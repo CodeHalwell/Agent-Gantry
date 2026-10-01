@@ -65,7 +65,6 @@ primitive (``WorkflowBuilder``, ``SequentialBuilder``, ``HandoffBuilder``,
 from __future__ import annotations
 
 import functools
-import inspect
 import logging
 from collections.abc import Callable
 from contextvars import ContextVar
@@ -75,6 +74,12 @@ from typing import TYPE_CHECKING, Any
 from agent_gantry.integrations.agent_framework_bridge import (
     GantryToolBridge,
     RetrievalDecision,
+)
+from agent_gantry.integrations.agent_framework_middleware import _import_af_chat_middleware
+from agent_gantry.integrations.frameworks.base import (
+    _maybe_await,
+    _pin_specs,
+    _resolve_tool_names,
 )
 from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
 from agent_gantry.query import last_user_text, latest_activity
@@ -86,37 +91,14 @@ _MAX_SELECTION_HISTORY = 200
 # Max kept tools shown in a single trace line before eliding the remainder.
 _TRACE_SURFACED_CAP = 5
 
-_DEFAULT_PER_RUN_QUERY = last_user_text
-
-
-def _default_per_call_query() -> Any:
-    """Recommended ``per_call`` default — :func:`~agent_gantry.query.latest_activity`.
-
-    Recency-aware: whichever is newer of the latest user message and the
-    latest tool result drives the round's retrieval, the same generator every
-    other per-turn provider and ``ToolRefresher`` use. The previous default,
-    ``fallback_chain(last_tool_result, last_user_text)``, preferred a tool
-    result wherever one existed in the history — so once a session carried an
-    earlier run's tool result, a fresh user request never drove selection and
-    the surface stayed on the previous task. It also prefixed the query with
-    the tool's own name, pulling retrieval back toward the tool just used.
-    """
-    return latest_activity
-
-
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
     from agent_gantry.integrations.anthropic_skills import SkillRegistry
-    from agent_gantry.schema.tool import ToolDefinition
 
 logger = logging.getLogger(__name__)
 
-# ``MissingRequiredToolError`` now lives in
-# ``agent_gantry.integrations.frameworks.errors`` (shared with
-# ``GantryToolset.select(required=...)``); imported above and re-exported from
-# this module's ``__all__`` below so the historical import path —
-# ``from agent_gantry.integrations.agent_framework_provider import
-# MissingRequiredToolError`` — keeps working unchanged.
+# ``MissingRequiredToolError`` is re-exported from ``__all__`` so the
+# historical import path from this module keeps working.
 
 
 def _import_context_provider() -> type:
@@ -134,19 +116,6 @@ def _import_context_provider() -> type:
             "Install with: pip install 'agent-gantry[agent-frameworks]' (or uv add 'agent-gantry[agent-frameworks]')"
         ) from exc
     return ContextProvider
-
-
-def _import_chat_middleware() -> Any:
-    """Lazily import :func:`agent_framework.chat_middleware`."""
-    try:
-        from agent_framework import chat_middleware
-    except ImportError as exc:  # pragma: no cover - depends on install
-        raise ImportError(
-            "GantryContextProvider.as_chat_middleware() requires the "
-            "'agent-framework' package. Install with: "
-            "pip install 'agent-gantry[agent-frameworks]' (or uv add 'agent-gantry[agent-frameworks]')"
-        ) from exc
-    return chat_middleware
 
 
 def _import_function_middleware() -> Any:
@@ -167,13 +136,6 @@ def _tool_name(tool: Any) -> str:
         or getattr(tool, "__name__", None)
         or ""
     )
-
-
-async def _maybe_await(value: Any) -> Any:
-    """Await ``value`` if it's awaitable, else return it as-is."""
-    if inspect.isawaitable(value):
-        return await value
-    return value
 
 
 @functools.cache
@@ -261,11 +223,6 @@ def _build_impl_class(base: type) -> type:
             # round even when the misconfiguration persists.
             self._warned_about_missing_chat_middleware = False
             self._logged_top_k_math = False
-            if verbose:
-                # Don't override a user-configured level; only nudge
-                # when the logger has no explicit level set.
-                if logger.level == logging.NOTSET:
-                    logger.setLevel(logging.INFO)
 
         # ----- Public, read-only configuration accessors --------------
         @property
@@ -390,7 +347,7 @@ def _build_impl_class(base: type) -> type:
             # retrieval per LLM round; we still inject always_include /
             # skill tools at run-start so they are present even if the
             # middleware is not attached.
-            tools, _ = await self._collect_tools(
+            tools = await self._collect_tools(
                 context.input_messages,
                 include_dynamic=(self._query_strategy == "per_run"),
             )
@@ -606,7 +563,7 @@ def _build_impl_class(base: type) -> type:
             fails it logs the exception and leaves the existing tools
             unchanged — retrieval must never break the agent run.
             """
-            chat_middleware_decorator = _import_chat_middleware()
+            chat_middleware_decorator = _import_af_chat_middleware()
             provider = self
 
             @chat_middleware_decorator
@@ -664,9 +621,7 @@ def _build_impl_class(base: type) -> type:
                 or getattr(context, "input_messages", None)
                 or []
             )
-            fresh, _ = await self._collect_tools(
-                messages, include_dynamic=True
-            )
+            fresh = await self._collect_tools(messages, include_dynamic=True)
             # _collect_tools updates the last-selection / selections
             # ContextVars on every dynamic refresh, so the per-call
             # middleware path automatically exposes the latest decision via
@@ -752,21 +707,15 @@ def _build_impl_class(base: type) -> type:
             )
 
         def _all_known_tool_names(self) -> set[str]:
-            """Return every tool name registered in the gantry.
+            """Every tool name registered in the gantry.
 
             Used to identify which entries in ``context.options['tools']``
             were produced by this gantry (or any other provider sharing
             it) so they can be dropped before re-injecting the fresh
             per-round selection.
             """
-            registry = getattr(self._gantry, "_registry", None)
-            if registry is None:
-                return set()
-            lister = getattr(registry, "list_tools", None)
-            if not callable(lister):
-                return set()
             try:
-                return {t.name for t in lister() if getattr(t, "name", None)}
+                return {t.name for t in self._gantry.list_tools_sync()}
             except Exception:
                 return set()
 
@@ -776,9 +725,10 @@ def _build_impl_class(base: type) -> type:
             messages: Any,
             *,
             include_dynamic: bool,
-        ) -> tuple[list[Any], set[str]]:
+        ) -> list[Any]:
             tools: list[Any] = []
-            seen: set[str] = set()
+            seen_bare: set[str] = set()
+            seen_qualified: set[str] = set()
             decision: RetrievalDecision | None = None
 
             if include_dynamic:
@@ -801,26 +751,30 @@ def _build_impl_class(base: type) -> type:
                         retrieved = []
                     for t in retrieved:
                         name = _tool_name(t)
-                        if name and name in seen:
+                        if name and name in seen_bare:
                             continue
                         if name:
-                            seen.add(name)
+                            seen_bare.add(name)
                         tools.append(t)
+                    if decision is not None:
+                        # The injected slice is the kept candidates cut at top_k.
+                        seen_qualified.update(
+                            c.qualified_name for c in decision.kept[: self._top_k]
+                        )
 
             # Skills: always-on tools bound to registered Gantry skills.
             skill_count = 0
             if self._skills_enabled:
-                skill_tool_names = self._collect_skill_tool_names()
-                extra = self._wrap_named(skill_tool_names, seen, source="skill")
+                extra = self._pin_tools(
+                    self._collect_skill_tool_names(), seen_qualified, seen_bare
+                )
                 tools.extend(extra)
                 skill_count = len(extra)
 
             # Explicit always_include / required pins.
             always_count = 0
             if self._always_include:
-                extra = self._wrap_named(
-                    self._always_include, seen, source="always_include"
-                )
+                extra = self._pin_tools(self._always_include, seen_qualified, seen_bare)
                 tools.extend(extra)
                 always_count = len(extra)
 
@@ -828,10 +782,10 @@ def _build_impl_class(base: type) -> type:
             static_count = 0
             for t in self._static_tools:
                 name = _tool_name(t)
-                if name and name in seen:
+                if name and name in seen_bare:
                     continue
                 if name:
-                    seen.add(name)
+                    seen_bare.add(name)
                 tools.append(t)
                 static_count += 1
 
@@ -872,7 +826,7 @@ def _build_impl_class(base: type) -> type:
                     static_count,
                 )
 
-            return tools, seen
+            return tools
 
         async def dry_run_retrieve(
             self,
@@ -921,83 +875,29 @@ def _build_impl_class(base: type) -> type:
                 )
                 return last_user_text(messages)
 
-        def _resolve_skill_registry(self) -> SkillRegistry | None:
-            if self._skill_registry is not None:
-                return self._skill_registry
-            # Best-effort: pick up a registry attached to the gantry
-            # instance (e.g. via SkillsClient).
-            return getattr(self._gantry, "_skill_registry", None) or getattr(
-                self._gantry, "skill_registry", None
-            )
-
         def _collect_skill_tool_names(self) -> list[str]:
-            registry = self._resolve_skill_registry()
-            if registry is None:
-                logger.debug(
-                    "GantryContextProvider: skills=True but no SkillRegistry "
-                    "available on gantry — no skill tools injected."
-                )
+            if self._skill_registry is None:
                 return []
             names: list[str] = []
-            seen_names: set[str] = set()
-            for skill in registry.list_skills():
+            for skill in self._skill_registry.list_skills():
                 for tool_name in skill.tools or []:
-                    if tool_name not in seen_names:
-                        seen_names.add(tool_name)
+                    if tool_name not in names:
                         names.append(tool_name)
             return names
 
-        def _wrap_named(
-            self, names: list[str], seen: set[str], *, source: str
+        def _pin_tools(
+            self, names: list[str], seen_qualified: set[str], seen_bare: set[str]
         ) -> list[Any]:
-            wrapped: list[Any] = []
-            missing: list[str] = []
-            for name in names:
-                if name in seen:
-                    continue
-                tool_def = self._lookup_tool_def(name)
-                if tool_def is None:
-                    missing.append(name)
-                    continue
-                wrapped.append(self._bridge.wrap_single(tool_def))
-                seen.add(name)
-            if missing:
-                logger.warning(
-                    "GantryContextProvider: %s tool(s) not found in registry "
-                    "and will be skipped: %s",
-                    source,
-                    missing,
-                )
-            return wrapped
+            """Wrap the pinned ``names`` not already surfaced (bare or ``namespace.name``).
 
-        def _lookup_tool_def(self, name: str) -> ToolDefinition | None:
-            registry = getattr(self._gantry, "_registry", None)
-            if registry is None:
-                return None
-            get_tool = getattr(registry, "get_tool", None)
-            # Qualified "namespace.name" form first: construction-time
-            # validation accepts it (``{t.namespace}.{t.name}``), so
-            # request-time resolution must resolve it too — previously a
-            # qualified ``required``/``always_include`` pin passed validation
-            # and was then warned-and-skipped on every round. Mirrors
-            # ``ExecutionEngine._resolve_tool``: tool names cannot contain a
-            # dot, so ``rpartition`` is unambiguous.
-            if "." in name and callable(get_tool):
-                namespace, _, bare = name.rpartition(".")
-                try:
-                    found = get_tool(bare, namespace)
-                except TypeError:  # registry double without a namespace arg
-                    found = None
-                if found is not None:
-                    return found
-            lookup = getattr(registry, "get_tool_by_name", None)
-            if callable(lookup):
-                found = lookup(name)
-                if found is not None:
-                    return found
-            if callable(get_tool):
-                return get_tool(name)
-            return None
+            Resolution, dedup and the missing-name warning are
+            :func:`~agent_gantry.integrations.frameworks.base._pin_specs`'s —
+            the same rules ``GantryToolset.select(always_include=...)`` applies.
+            """
+            specs = _pin_specs(
+                self._gantry, names, seen_qualified, seen_bare, kind="always_include"
+            )
+            return [self._bridge.wrap_single(spec.tool) for spec in specs]
 
     return _GantryContextProviderImpl
 
@@ -1049,9 +949,8 @@ class GantryContextProvider:
             to ``False``.
         skill_registry: Optional explicit
             :class:`~agent_gantry.integrations.anthropic_skills.SkillRegistry`.
-            When ``None`` and ``skills=True``, the provider attempts to use
-            ``gantry._skill_registry`` if present; otherwise it logs a
-            warning and skips skill tools.
+            When ``None`` and ``skills=True``, a warning is logged and no
+            skill tools are injected.
         always_include: Optional list of Gantry tool names to inject on
             every invocation (in addition to the dynamic top-k). Useful
             for pinning utility tools the LLM should always see. Missing
@@ -1081,8 +980,7 @@ class GantryContextProvider:
             filtered by the per-call refresh.
         verbose: When ``True`` (default ``False``), the provider logs a
             one-line INFO summary of every retrieval round:
-            ``gantry: query="…" → top5: [name:0.61, …]``. Sets the
-            ``agent_gantry`` logger to INFO if it has no level set.
+            ``gantry: query="…" → top5: [name:0.61, …]``.
         **query_kwargs: Additional keyword arguments forwarded to
             :meth:`GantryToolBridge.get_tools` (e.g. ``namespaces``,
             ``required_capabilities``, ``enable_reranking``).
@@ -1169,10 +1067,7 @@ class GantryContextProvider:
         # default (which returns the same string every round) would
         # silently disable the very thing per_call enables.
         if query_generator is None:
-            if query_strategy == "per_call":
-                query_generator = _default_per_call_query()
-            else:
-                query_generator = _DEFAULT_PER_RUN_QUERY
+            query_generator = latest_activity if query_strategy == "per_call" else last_user_text
         elif (
             query_strategy == "per_call"
             and query_generator is last_user_text
@@ -1185,16 +1080,18 @@ class GantryContextProvider:
             )
 
         if required:
-            known = gantry.list_tools_sync()
-            available = {t.name for t in known} | {
-                f"{t.namespace}.{t.name}" for t in known
-            }
-            missing = [name for name in required if name not in available]
+            _, missing = _resolve_tool_names(gantry, required)
             if missing:
                 raise MissingRequiredToolError(
                     f"GantryContextProvider: required tool(s) not found in gantry: "
                     f"{missing}. Did you forget to register them, or is there a typo?"
                 )
+
+        if skills and skill_registry is None:
+            logger.warning(
+                "GantryContextProvider: skills=True but no skill_registry was given; "
+                "no skill tools will be injected."
+            )
 
         # Combine for "always inject" set; required is a strict superset.
         always_include_effective: list[str] = []

@@ -13,6 +13,8 @@ import math
 import threading
 from typing import TYPE_CHECKING, Any
 
+from agent_gantry.adapters.embedders.base import LazyModelMixin
+
 if TYPE_CHECKING:
     from agent_gantry.schema.tool import ToolDefinition
 
@@ -44,7 +46,7 @@ def _bounded_scores(scores: list[float]) -> list[float]:
     return scores
 
 
-class CrossEncoderReranker:
+class CrossEncoderReranker(LazyModelMixin):
     """
     Reranker using sentence-transformers cross-encoder models.
 
@@ -74,38 +76,8 @@ class CrossEncoderReranker:
         self._model: Any = None
         self._load_lock = threading.Lock()
 
-    def _ensure_initialized(self) -> None:
-        """Load the model on first use, blocking the caller.
-
-        Prefer :meth:`_aensure_initialized` from async code. This stays sync
-        because it is also reached from sync properties.
-        """
-        if self._model is not None:
-            return
-        with self._load_lock:
-            if self._model is not None:
-                return
-            self._load_model()
-
-    async def _aensure_initialized(self) -> None:
-        """Load the model without stalling the event loop.
-
-        Construction downloads weights on first use and takes seconds (minutes
-        on a cold cache). Running it inline in a coroutine freezes every other
-        task on the loop. The ``encode``/``predict`` calls were already
-        offloaded; only construction was not. The guard is a
-        ``threading.Lock`` rather than an ``asyncio.Lock`` because the work
-        runs in a worker thread and the adapter may outlive one event loop.
-        """
-        if self._model is not None:
-            return
-        await asyncio.to_thread(self._ensure_initialized)
-
     def _load_model(self) -> None:
         """Construct the cross-encoder. Caller holds ``_load_lock``."""
-        if self._model is not None:
-            return
-
         try:
             from sentence_transformers import CrossEncoder
         except ImportError as exc:

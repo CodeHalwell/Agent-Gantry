@@ -11,7 +11,6 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
 from agent_gantry.core.factories import (
     build_embedder,
@@ -43,9 +42,42 @@ class TestBuildVectorStore:
 
 
 class TestBuildEmbedder:
-    def test_falls_back_to_simple_without_credentials(self) -> None:
-        # "openai" without an api_key falls through every branch to SimpleEmbedder.
-        assert isinstance(build_embedder(EmbedderConfig(type="openai")), SimpleEmbedder)
+    def test_openai_without_a_key_is_an_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        with pytest.raises(ValueError, match="OPENAI_API_KEY"):
+            build_embedder(EmbedderConfig(type="openai"))
+
+    def test_openai_with_only_the_env_key_uses_its_own_default_model(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The shared config default used to be the sentence-transformers model name."""
+        pytest.importorskip("openai")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        embedder = build_embedder(EmbedderConfig(type="openai"))
+        assert "text-embedding-3-small" in embedder.get_embedder_id()
+
+    def test_azure_needs_an_explicit_deployment(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        pytest.importorskip("openai")
+        monkeypatch.setenv("AZURE_OPENAI_API_KEY", "azure-test")
+        with pytest.raises(ValueError, match="deployment name"):
+            build_embedder(
+                EmbedderConfig(type="azure", api_base="https://example.openai.azure.com")
+            )
+
+
+class TestUnimplementedBackendsAreRejected:
+    @pytest.mark.parametrize(
+        ("model", "value"),
+        [
+            (VectorStoreConfig, "pinecone"),
+            (EmbedderConfig, "cohere"),
+            (RerankerConfig, "llm"),
+            (TelemetryConfig, "datadog"),
+        ],
+    )
+    def test_unknown_type_fails_validation(self, model: type, value: str) -> None:
+        with pytest.raises(ValidationError):
+            model(type=value)
 
 
 class TestBuildReranker:
@@ -99,3 +131,37 @@ class TestHealthMetrics:
     def test_success_rate_is_bounded(self, bad_rate: float) -> None:
         with pytest.raises(ValidationError):
             HealthMetrics(success_rate=bad_rate)
+
+
+class TestUnsetModelDefaults:
+    def test_nomic_uses_its_own_default_model(self) -> None:
+        from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+
+        embedder = build_embedder(EmbedderConfig(type="nomic"))
+        assert isinstance(embedder, NomicEmbedder)
+        assert embedder.model_name == "nomic-ai/nomic-embed-text-v1.5"
+
+    def test_sentence_transformers_uses_its_own_default_model(self) -> None:
+        pytest.importorskip("sentence_transformers")
+        embedder = build_embedder(EmbedderConfig(type="sentence_transformers"))
+        assert "all-MiniLM-L6-v2" in embedder.get_embedder_id()
+
+    def test_unknown_reranker_type_raises(self) -> None:
+        from types import SimpleNamespace
+
+        with pytest.raises(ValueError, match="Unsupported reranker type"):
+            build_reranker(SimpleNamespace(enabled=True, type="nope", model=None))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("kind", ["cohere", "cross_encoder", "jev"])
+def test_every_schema_allowed_reranker_type_reaches_a_builder(kind: str) -> None:
+    """A type the schema accepts must not fall through to the unsupported-type raise."""
+    from typing import get_args
+
+    assert kind in get_args(RerankerConfig.model_fields["type"].annotation)
+    try:
+        build_reranker(RerankerConfig(type=kind))  # type: ignore[arg-type]
+    except ImportError:
+        pass  # optional backend absent: its branch was still the one reached
+    except ValueError as exc:
+        assert "Unsupported reranker type" not in str(exc)

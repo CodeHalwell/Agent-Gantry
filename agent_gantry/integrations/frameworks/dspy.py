@@ -72,12 +72,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import (
-    DEFAULT_TOOL_LIMIT,
-    BaseFrameworkAdapter,
-    GantryToolset,
-    ToolSpec,
-)
+from agent_gantry.integrations.frameworks.base import BaseFrameworkAdapter, ToolSpec
+from agent_gantry.integrations.frameworks.live_wrappers import _PerCallBuilder
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
@@ -135,90 +131,6 @@ def _spec_to_dspy(spec: ToolSpec) -> Any:
     )
 
 
-async def _for_dspy(
-    gantry: AgentGantry,
-    query: str,
-    *,
-    limit: int = DEFAULT_TOOL_LIMIT,
-    **select_kwargs: Any,
-) -> list[Any]:
-    """Select tools for ``query`` and return them as ``dspy.Tool``s."""
-    specs = await GantryToolset(gantry).select(query, limit=limit, **select_kwargs)
-    return [_spec_to_dspy(s) for s in specs]
-
-
-class GantryLiveDSPyReAct:
-    """Rebuild a fresh ``dspy.ReAct`` per call, tools re-selected by Gantry.
-
-    ``dspy.ReAct`` fixes its tool list at construction (see the module
-    docstring for why), so this builder constructs a *new* ``dspy.ReAct`` for
-    every call via :meth:`build`, each time wiring in the tools Gantry selects
-    for that call's query. The task ``signature`` (and ``max_iters``/any extra
-    ``dspy.ReAct`` kwargs) are configured once on the constructor and reused
-    for every rebuild.
-
-    Obtain one via ``DSPyAdapter(gantry).agent_builder(signature, ...)``.
-
-    Args:
-        gantry: The :class:`~agent_gantry.core.gantry.AgentGantry` to select from.
-        signature: DSPy task signature — an ``"input -> output"`` string or a
-            ``dspy.Signature`` subclass, forwarded to ``dspy.ReAct``.
-        max_iters: Max reasoning/tool-call iterations per ``dspy.ReAct`` run.
-        limit: Max tools to surface per call. Defaults to ``DEFAULT_TOOL_LIMIT``.
-        score_threshold: Minimum semantic relevance score. Defaults to ``0.0``.
-        **react_kwargs: Extra kwargs forwarded to ``dspy.ReAct``.
-    """
-
-    def __init__(
-        self,
-        gantry: AgentGantry,
-        signature: Any,
-        *,
-        max_iters: int = 20,
-        limit: int = DEFAULT_TOOL_LIMIT,
-        score_threshold: float = 0.0,
-        namespaces: list[str] | None = None,
-        required: list[str] | None = None,
-        always_include: list[str] | None = None,
-        **react_kwargs: Any,
-    ) -> None:
-        self._gantry = gantry
-        self._signature = signature
-        self._max_iters = max_iters
-        self._limit = limit
-        self._score_threshold = score_threshold
-        self._namespaces = namespaces
-        self._required = required
-        self._always_include = always_include
-        self._react_kwargs = react_kwargs
-
-    async def select_tools(self, query: str) -> list[Any]:
-        """Re-select this call's ``dspy.Tool`` list for ``query``."""
-        return await _for_dspy(
-            self._gantry,
-            query,
-            limit=self._limit,
-            score_threshold=self._score_threshold,
-            namespaces=self._namespaces,
-            required=self._required,
-            always_include=self._always_include,
-        )
-
-    async def build(self, query: str) -> Any:
-        """Build a fresh ``dspy.ReAct`` whose tools are selected for ``query``.
-
-        Raises:
-            ImportError: If ``dspy`` is not installed.
-        """
-        try:
-            from dspy import ReAct
-        except ImportError as exc:  # pragma: no cover - exercised via importorskip
-            raise ImportError(_INSTALL_HINT) from exc
-
-        tools = await self.select_tools(query)
-        return ReAct(self._signature, tools=tools, max_iters=self._max_iters, **self._react_kwargs)
-
-
 class DSPyAdapter(BaseFrameworkAdapter):
     """Route Gantry-selected tools into DSPy.
 
@@ -241,45 +153,20 @@ class DSPyAdapter(BaseFrameworkAdapter):
         tools = await DSPyAdapter(gantry).select("what's the weather in Tokyo?", limit=3)
         react = dspy.ReAct("question -> answer", tools=tools)
         pred = react(question="what's the weather in Tokyo?")
+
+    :meth:`live` requires ``signature=`` (the DSPy task signature) and returns
+    the :meth:`agent_builder` builder; call ``await builder.build(query)`` per
+    task.
     """
 
     live_tier = "per-call"
+    _live_delegate = "agent_builder"
+    _live_required_kwargs = ("signature",)
 
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a ``dspy.Tool``."""
         return _spec_to_dspy(spec)
-
-    def live(
-        self,
-        *,
-        limit: int | None = None,
-        score_threshold: float = 0.0,
-        namespaces: list[str] | None = None,
-        required: list[str] | None = None,
-        always_include: list[str] | None = None,
-        **framework_kwargs: Any,
-    ) -> Any:
-        """Per-call uniform entry point: delegates to :meth:`agent_builder`.
-
-        ``dspy.ReAct`` fixes its tools at construction (no mid-run hook), so
-        the live object is a builder — the deepest DSPy allows. Requires
-        ``signature=`` (the DSPy task signature) in ``framework_kwargs``;
-        ``max_iters`` and any other ``dspy.ReAct`` kwargs pass through too.
-        ``required``/``always_include`` are re-applied on every rebuild (see
-        :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select`).
-        Returns a :class:`GantryLiveDSPyReAct`; call ``await builder.build(query)``
-        per task to get a fresh ``dspy.ReAct`` with tools re-selected for that
-        query.
-        """
-        return self.agent_builder(
-            limit=limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
-            **framework_kwargs,
-        )
 
     def agent_builder(
         self,
@@ -308,13 +195,45 @@ class DSPyAdapter(BaseFrameworkAdapter):
             self._gantry,
             signature,
             max_iters=max_iters,
-            limit=self._default_limit if limit is None else limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
+            **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
             **react_kwargs,
         )
+
+
+class GantryLiveDSPyReAct(_PerCallBuilder):
+    """Rebuild a fresh ``dspy.ReAct`` per call, tools re-selected by Gantry.
+
+    ``dspy.ReAct`` fixes its tool list at construction (see the module
+    docstring for why), so :meth:`build` constructs a *new* ``dspy.ReAct``
+    for every call, wiring in the tools Gantry selects for that call's query.
+
+    Obtain one via ``DSPyAdapter(gantry).agent_builder(signature, ...)``.
+
+    Args:
+        gantry: The :class:`~agent_gantry.core.gantry.AgentGantry` to select from.
+        signature: DSPy task signature — an ``"input -> output"`` string or a
+            ``dspy.Signature`` subclass, forwarded to ``dspy.ReAct``.
+        max_iters: Max reasoning/tool-call iterations per ``dspy.ReAct`` run.
+        limit: Max tools to surface per call. Defaults to ``DEFAULT_TOOL_LIMIT``.
+        score_threshold: Minimum semantic relevance score. Defaults to ``0.0``.
+        **react_kwargs: Extra kwargs forwarded to ``dspy.ReAct``.
+    """
+
+    _adapter_cls = DSPyAdapter
+
+    def __init__(
+        self, gantry: AgentGantry, signature: Any, *, max_iters: int = 20, **kwargs: Any
+    ) -> None:
+        super().__init__(gantry, **kwargs)
+        self._signature = signature
+        self._framework_kwargs["max_iters"] = max_iters
+
+    def _construct(self, tools: list[Any]) -> Any:
+        try:
+            from dspy import ReAct
+        except ImportError as exc:  # pragma: no cover - exercised via importorskip
+            raise ImportError(_INSTALL_HINT) from exc
+        return ReAct(self._signature, tools=tools, **self._framework_kwargs)
 
 
 __all__ = ["DSPyAdapter", "GantryLiveDSPyReAct"]

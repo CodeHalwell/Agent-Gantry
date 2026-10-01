@@ -20,8 +20,8 @@ class TelemetryAdapter(Protocol):
     """
     Observability backend for Agent-Gantry.
 
-    Implementations: OpenTelemetryAdapter, DatadogAdapter, PrometheusAdapter,
-                     ConsoleAdapter, NoOpAdapter.
+    Implementations: ConsoleTelemetryAdapter, NoopTelemetryAdapter, and the
+    in-memory OpenTelemetryAdapter / PrometheusTelemetryAdapter.
     """
 
     @abstractmethod

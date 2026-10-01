@@ -1,7 +1,10 @@
 """
 Tool registry for Agent-Gantry.
 
-Manages tool registration and lifecycle.
+In-memory map of tool definitions and their execution handlers, keyed by
+``namespace.name``. Registration itself (decorators, introspection, pending
+buffers) lives in :class:`~agent_gantry.core.gantry.AgentGantry`; this class
+only stores what the executor needs to look up.
 """
 
 from __future__ import annotations
@@ -9,25 +12,16 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from agent_gantry.schema.introspection import build_parameters_schema
-from agent_gantry.schema.tool import ToolCapability, ToolDefinition
+from agent_gantry.schema.tool import ToolDefinition
 
 
 class ToolRegistry:
-    """
-    Registry for managing tool definitions and handlers.
-
-    Handles:
-    - Python function registration via decorators
-    - Tool lifecycle management
-    - Handler lookup for execution
-    """
+    """Registry of tool definitions and handlers for execution lookup."""
 
     def __init__(self) -> None:
         """Initialize the registry."""
         self._tools: dict[str, ToolDefinition] = {}
         self._handlers: dict[str, Callable[..., Any]] = {}
-        self._pending: list[ToolDefinition] = []
         # Secondary index: bare tool name -> first registered qualified key.
         # Keeps get_tool_by_name O(1); executed on every ExecutionEngine call.
         self._name_index: dict[str, str] = {}
@@ -45,75 +39,6 @@ class ToolRegistry:
             if other_tool.name == name:
                 self._name_index[name] = other_key
                 break
-
-    def register(
-        self,
-        func: Callable[..., Any] | None = None,
-        *,
-        name: str | None = None,
-        namespace: str = "default",
-        capabilities: list[ToolCapability] | None = None,
-        requires_confirmation: bool = False,
-        tags: list[str] | None = None,
-        examples: list[str] | None = None,
-    ) -> Callable[..., Any]:
-        """
-        Decorator to register a Python function as a tool.
-
-        Args:
-            func: The function to register
-            name: Custom name for the tool
-            namespace: Namespace for organizing tools
-            capabilities: Tool capabilities for permission checks
-            requires_confirmation: Whether to require human confirmation
-            tags: Tags for categorizing the tool
-            examples: Example queries for the tool
-
-        Returns:
-            The decorated function
-        """
-
-        def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
-            tool_name = name or fn.__name__
-            tool_description = fn.__doc__ or f"Tool: {tool_name}"
-            parameters_schema = build_parameters_schema(fn)
-
-            tool = ToolDefinition(
-                name=tool_name,
-                namespace=namespace,
-                description=tool_description.strip(),
-                parameters_schema=parameters_schema,
-                capabilities=capabilities or [],
-                requires_confirmation=requires_confirmation,
-                tags=tags or [],
-                examples=examples or [],
-            )
-
-            key = f"{namespace}.{tool_name}"
-            self._tools[key] = tool
-            self._handlers[key] = fn
-            self._pending.append(tool)
-            self._index_tool(key, tool)
-
-            return fn
-
-        if func is not None:
-            return decorator(func)
-        return decorator
-
-    def add_tool(self, tool: ToolDefinition, handler: Callable[..., Any]) -> None:
-        """
-        Add a tool directly with its handler.
-
-        Args:
-            tool: The tool definition
-            handler: The callable to execute
-        """
-        key = f"{tool.namespace}.{tool.name}"
-        self._tools[key] = tool
-        self._handlers[key] = handler
-        self._pending.append(tool)
-        self._index_tool(key, tool)
 
     def get_tool(self, name: str, namespace: str = "default") -> ToolDefinition | None:
         """
@@ -173,16 +98,23 @@ class ToolRegistry:
         """
         return self._handlers.get(key)
 
-    def register_tool(self, tool: ToolDefinition) -> None:
+    def register_tool(
+        self, tool: ToolDefinition, handler: Callable[..., Any] | None = None
+    ) -> None:
         """
-        Register a tool definition.
+        Register a tool definition, optionally with its execution handler.
 
         Args:
             tool: The tool definition to register
+            handler: The callable that executes the tool. ``None`` leaves any
+                existing handler untouched, which is what a re-registration
+                from a sync wants.
         """
         key = f"{tool.namespace}.{tool.name}"
         self._tools[key] = tool
         self._index_tool(key, tool)
+        if handler is not None:
+            self._handlers[key] = handler
 
     def register_handler(self, key: str, handler: Callable[..., Any]) -> None:
         """
@@ -209,39 +141,30 @@ class ToolRegistry:
             tools = [t for t in tools if t.namespace == namespace]
         return tools
 
-    def delete_tool(self, name: str, namespace: str = "default") -> bool:
+    def delete_tool(self, name: str, namespace: str = "default") -> Callable[..., Any] | None:
         """
-        Delete a tool from the registry.
+        Delete a tool and its handler from the registry.
 
         Args:
             name: Tool name
             namespace: Tool namespace
 
         Returns:
-            True if the tool was deleted
+            The handler that was registered for the tool, or ``None`` when the
+            tool was unknown or had no handler.
         """
         key = f"{namespace}.{name}"
-        if key in self._tools:
-            del self._tools[key]
-            self._handlers.pop(key, None)
-            self._unindex_tool(key, name)
-            return True
-        return False
+        if key not in self._tools:
+            return None
+        del self._tools[key]
+        self._unindex_tool(key, name)
+        return self._handlers.pop(key, None)
 
-    def get_pending(self) -> list[ToolDefinition]:
-        """
-        Get tools pending sync to vector store.
-
-        Returns:
-            List of pending tool definitions
-        """
-        return self._pending.copy()
-
-    def clear_pending(self) -> None:
-        """Clear the pending tools list."""
-        self._pending = []
+    def has_tool(self, name: str, namespace: str = "default") -> bool:
+        """Whether a tool is registered under ``namespace.name``."""
+        return f"{namespace}.{name}" in self._tools
 
     @property
-    def tool_count(self) -> int:
-        """Return the number of registered tools."""
-        return len(self._tools)
+    def handler_count(self) -> int:
+        """Return the number of tools with an execution handler."""
+        return len(self._handlers)

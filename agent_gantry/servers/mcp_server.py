@@ -433,6 +433,7 @@ class MCPServer:
         # Wire name -> definition for tools listed directly, rebuilt on every
         # list_tools so a tool added after startup is served too.
         self._exposed: dict[str, ToolDefinition] = {}
+        self._listed = False
         self._warned_missing_expose = False
         # The uvicorn server while one of the HTTP transports is running; see
         # ``_serve_asgi``. ``None`` otherwise.
@@ -549,6 +550,7 @@ class MCPServer:
 
         # Emitted in listing order, so only the *allocation* is sorted.
         self._exposed = {}
+        self._listed = True
         wire_tools: list[Tool] = []
         for index, tool in enumerate(definitions):
             wire_name = assigned.get(index, tool.name)
@@ -572,14 +574,10 @@ class MCPServer:
             if name == "execute_tool":
                 return await self._handle_execute_tool(arguments)
         exposed = self._exposed.get(name)
-        if exposed is None and self.mode != "dynamic" and not self._exposed:
-            # ``_exposed`` is built by ``_list_tools``, so a client calling a
-            # tool it cached from an earlier process found nothing here: a bare
-            # name might still resolve through the fallback below, but a
-            # generated alias (``alpha_add_numbers``, ``default_execute_tool``)
-            # is not a registry name and failed as unknown. Build the mapping
-            # on demand. Only once — it is non-empty afterwards — and not in
-            # dynamic mode, which has no direct tools to map.
+        if exposed is None and self.mode != "dynamic" and not self._listed:
+            # ``_exposed`` is built by ``_list_tools``; a client calling a
+            # generated alias it cached from an earlier process needs the
+            # mapping built on demand, once.
             await self._list_tools()
             exposed = self._exposed.get(name)
         if exposed is not None:

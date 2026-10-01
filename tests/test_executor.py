@@ -3164,3 +3164,166 @@ async def test_a_constraint_that_does_not_bind_cannot_forbid(engine):
         {"type": "object", "properties": {"x": {"pattern": ecma_only}}},
     ):
         assert _fully_evaluable(silent) is False, silent
+
+
+@pytest.mark.asyncio
+async def test_a2a_execution_is_recorded_exactly_once() -> None:
+    """The A2A branch returns the adapter's result; the engine records it, the adapter does not."""
+    from datetime import datetime, timezone
+
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.schema.execution import ExecutionStatus, ToolCall, ToolResult
+    from agent_gantry.schema.tool import ToolSource
+
+    class CountingTelemetry:
+        records = 0
+
+        async def record_execution(self, call: ToolCall, result: ToolResult) -> None:
+            CountingTelemetry.records += 1
+
+    class StubA2A:
+        async def execute(self, tool: ToolDefinition, call: ToolCall, _: object) -> ToolResult:
+            now = datetime.now(timezone.utc)
+            return ToolResult(
+                tool_name=call.tool_name,
+                status=ExecutionStatus.SUCCESS,
+                result="remote",
+                queued_at=now,
+                completed_at=now,
+                trace_id="t",
+                span_id="s",
+            )
+
+    registry = ToolRegistry()
+    registry.register_tool(
+        ToolDefinition(
+            name="remote_skill",
+            description="A skill served by a remote A2A agent",
+            parameters_schema={"type": "object", "properties": {}},
+            source=ToolSource.A2A_AGENT,
+        )
+    )
+    engine = ExecutionEngine(registry=registry, telemetry=CountingTelemetry())
+    engine._a2a_executor = StubA2A()
+
+    result = await engine.execute(ToolCall(tool_name="remote_skill", arguments={}))
+    assert result.result == "remote"
+    assert CountingTelemetry.records == 1
+
+
+@pytest.mark.asyncio
+async def test_each_terminal_result_is_recorded_once() -> None:
+    """Every outcome the caller sees reaches telemetry exactly once."""
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.schema.execution import ExecutionStatus, ToolCall, ToolResult
+
+    class CountingTelemetry:
+        def __init__(self) -> None:
+            self.records: list[ToolResult] = []
+
+        async def record_execution(self, call: ToolCall, result: ToolResult) -> None:
+            self.records.append(result)
+
+        async def record_health_change(self, *args: object, **kwargs: object) -> None:
+            pass
+
+    registry = ToolRegistry()
+    registry.register_tool(
+        ToolDefinition(
+            name="greet",
+            description="Greet someone by name",
+            parameters_schema={
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
+            },
+        ),
+        lambda name: f"hi {name}",
+    )
+    registry.register_tool(
+        ToolDefinition(
+            name="wipe",
+            description="Wipe something, after confirmation",
+            parameters_schema={
+                "type": "object",
+                "properties": {"target": {"type": "string"}},
+                "required": ["target"],
+            },
+            requires_confirmation=True,
+        ),
+        lambda target: "wiped",
+    )
+    telemetry = CountingTelemetry()
+    engine = ExecutionEngine(registry=registry, telemetry=telemetry)
+
+    ok = await engine.execute(ToolCall(tool_name="greet", arguments={"name": "x"}))
+    invalid = await engine.execute(ToolCall(tool_name="greet", arguments={"name": 1}))
+    gated_invalid = await engine.execute(ToolCall(tool_name="wipe", arguments={}))
+
+    assert ok.status is ExecutionStatus.SUCCESS
+    assert invalid.status is ExecutionStatus.FAILURE and invalid.error_type == "ValidationError"
+    assert gated_invalid.status is ExecutionStatus.FAILURE  # malformed beats the gate
+    assert [r.status for r in telemetry.records] == [
+        ExecutionStatus.SUCCESS,
+        ExecutionStatus.FAILURE,
+        ExecutionStatus.FAILURE,
+    ]
+
+    # A call that never resolves to a tool, or to a handler, is answered but
+    # not recorded: there is no tool to attribute it to.
+    missing = await engine.execute(ToolCall(tool_name="nope", arguments={}))
+    registry.register_tool(
+        ToolDefinition(
+            name="orphan",
+            description="Registered without any handler",
+            parameters_schema={"type": "object", "properties": {}},
+        )
+    )
+    orphan = await engine.execute(ToolCall(tool_name="orphan", arguments={}))
+    assert (missing.error_type, orphan.error_type) == ("ToolNotFound", "HandlerNotFound")
+    assert len(telemetry.records) == 3
+
+
+@pytest.mark.asyncio
+async def test_retried_and_timed_out_calls_report_attempts_and_timestamps() -> None:
+    """The attempt count and timestamps survive the retry loop's exits."""
+    import asyncio
+
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.schema.execution import ExecutionStatus, ToolCall
+
+    seen: list[int] = []
+
+    def flaky() -> str:
+        seen.append(1)
+        if len(seen) < 2:
+            raise ValueError("not yet")
+        return "done"
+
+    async def slow() -> str:
+        await asyncio.sleep(1)
+        return "never"
+
+    registry = ToolRegistry()
+    empty = {"type": "object", "properties": {}}
+    registry.register_tool(
+        ToolDefinition(name="flaky", description="Fails once", parameters_schema=empty), flaky
+    )
+    registry.register_tool(
+        ToolDefinition(name="slow", description="Never returns in time", parameters_schema=empty),
+        slow,
+    )
+    engine = ExecutionEngine(registry=registry)
+
+    ok = await engine.execute(ToolCall(tool_name="flaky", arguments={}, retry_count=1))
+    assert ok.status is ExecutionStatus.SUCCESS and ok.result == "done"
+    assert ok.attempt_number == 2
+    assert ok.started_at is not None and ok.completed_at >= ok.started_at >= ok.queued_at
+
+    timed_out = await engine.execute(
+        ToolCall(tool_name="slow", arguments={}, retry_count=1, timeout_ms=100)
+    )
+    assert timed_out.status is ExecutionStatus.TIMEOUT
+    assert timed_out.error_type == "TimeoutError"
+    assert timed_out.attempt_number == 2  # every attempt was spent
+    assert timed_out.completed_at >= timed_out.queued_at

@@ -15,6 +15,7 @@ import copy
 import dataclasses
 import datetime
 import decimal
+import enum
 import json
 import logging
 import pathlib
@@ -480,6 +481,10 @@ class _Opaque:
         return "opaque!"
 
 
+class _Kind(enum.Enum):
+    PRIMARY = "primary"
+
+
 _TEXT_ADAPTERS = [OpenAIAdapter(), OpenAIResponsesAdapter(), AnthropicAdapter()]
 _STAMP = datetime.datetime(2024, 1, 2, 3, 4, 5)
 _RESULT_CASES = [
@@ -495,6 +500,8 @@ _RESULT_CASES = [
     (_Point(x=1, when=_STAMP), {"x": 1, "when": "2024-01-02T03:04:05"}),
     ({"nested": [_STAMP, {"deep": decimal.Decimal(3)}]}, {"nested": ["2024-01-02T03:04:05", {"deep": "3"}]}),
     (_Opaque(), "opaque!"),
+    # Keys JSON cannot name: ``default=`` never reaches them, so they are rebuilt.
+    ({_Kind.PRIMARY: 1, ("a", "b"): 2}, {"_Kind.PRIMARY": 1, "('a', 'b')": 2}),
 ]
 
 
@@ -1238,3 +1245,23 @@ def test_a_typeless_nested_subschema_is_reported_too() -> None:
         )
         == []
     )
+
+
+def test_an_empty_parameters_schema_is_emitted_as_the_no_argument_object() -> None:
+    """``ToolDefinition`` accepts ``parameters_schema={}``; Anthropic requires
+    ``input_schema.type == "object"``, so the pass-through paths emit the same
+    no-argument object schema the strict and Gemini transforms already did."""
+    tool = _tool({})
+    empty = {"type": "object", "properties": {}}
+    assert AnthropicAdapter().to_provider_schema(tool)["input_schema"] == empty
+    assert OpenAIAdapter().to_provider_schema(tool)["function"]["parameters"] == empty
+    strict = AnthropicAdapter().to_provider_schema(tool, strict=True)
+    assert strict["strict"] is True
+    assert strict["input_schema"] == {**empty, "additionalProperties": False}
+
+
+def test_a_null_function_block_is_an_empty_call_not_a_crash() -> None:
+    """``payload.get("function", {})`` returned ``None`` for an explicit null."""
+    payload = OpenAIAdapter().from_provider_payload({"id": "c1", "function": None})
+    assert payload.tool_name == ""
+    assert payload.arguments == {}

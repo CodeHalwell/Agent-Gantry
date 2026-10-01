@@ -12,7 +12,7 @@ import re
 import uuid
 from datetime import date, datetime, time
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -20,10 +20,14 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "HealthMetrics",
+    "MCPTransport",
     "check_json_constraints",
+    "check_mcp_endpoint",
     "describe_path",
+    "is_http_url",
     "json_identity_key",
     "reject_newlines",
+    "resolve_mcp_transport",
     "resolve_numeric_bounds",
     "schema_declares_null",
 ]
@@ -369,6 +373,43 @@ def reject_newlines(value: str | None) -> str | None:
     if isinstance(value, str) and ("\n" in value or "\r" in value):
         raise ValueError("Value cannot contain newline characters")
     return value
+
+
+#: Transports an MCP server config can name: ``stdio`` spawns a local
+#: subprocess; ``streamable_http`` (current spec) and ``sse`` (legacy) connect
+#: to a remote server by URL.
+MCPTransport = Literal["stdio", "streamable_http", "sse"]
+
+
+def is_http_url(url: str) -> bool:
+    """Whether ``url`` has an ``http`` or ``https`` scheme."""
+    scheme = url.split("://", 1)[0].lower() if "://" in url else ""
+    return scheme in ("http", "https")
+
+
+def check_mcp_endpoint(
+    name: str, command: list[str], url: str | None, transport: str | None
+) -> None:
+    """Raise ``ValueError`` unless exactly one endpoint is set and ``transport`` fits it."""
+    has_command, has_url = bool(command), bool(url)
+    if has_command == has_url:
+        raise ValueError(
+            f"MCP server '{name}': give exactly one of 'command' (local stdio "
+            "server) or 'url' (remote HTTP server)."
+        )
+    if transport == "stdio" and not has_command:
+        raise ValueError(f"MCP server '{name}': transport 'stdio' requires 'command'.")
+    if transport in ("streamable_http", "sse") and not has_url:
+        raise ValueError(f"MCP server '{name}': transport '{transport}' requires 'url'.")
+    if has_url and not is_http_url(url or ""):
+        raise ValueError(f"MCP server '{name}': 'url' must be an http(s) URL, got {url!r}.")
+
+
+def resolve_mcp_transport(command: list[str], transport: MCPTransport | None) -> MCPTransport:
+    """The transport an MCP server uses, inferred from its endpoint when unset."""
+    if transport is not None:
+        return transport
+    return "stdio" if command else "streamable_http"
 
 
 class HealthMetrics(BaseModel):

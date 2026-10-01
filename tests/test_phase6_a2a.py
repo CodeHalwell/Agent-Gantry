@@ -6,6 +6,7 @@ Tests A2A client, server, agent card, and protocol compliance.
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -461,3 +462,52 @@ class TestA2AIntegration:
         data = card.model_dump()
         assert "authentication" in data
         assert data["authentication"]["type"] == "bearer"
+
+
+def _task_request(skill_id: str, text: str, request_id: int = 7) -> dict:
+    return {
+        "jsonrpc": "2.0",
+        "method": "tasks/send",
+        "params": {
+            "skill_id": skill_id,
+            "messages": [{"role": "user", "parts": [{"type": "text", "text": text}]}],
+        },
+        "id": request_id,
+    }
+
+
+class TestA2AServerEnvelope:
+    """The JSON-RPC envelope reports execution failures and malformed params."""
+
+    @pytest.mark.asyncio
+    async def test_tasks_send_reports_execution_failures(self, gantry: AgentGantry) -> None:
+        testclient = pytest.importorskip("fastapi.testclient")
+
+        @gantry.register
+        def boom(x: int) -> int:
+            """Raise an error, to test the A2A envelope."""
+            raise RuntimeError("kaboom")
+
+        await gantry.sync()
+        client = testclient.TestClient(create_a2a_server(gantry))
+        text = json.dumps({"tool_name": "boom", "arguments": {"x": 1}})
+        data = client.post("/tasks/send", json=_task_request("tool_execution", text)).json()
+        assert data["id"] == 7
+        assert data["result"]["status"] == "failure"
+        assert "kaboom" in data["result"]["error"]
+
+    @pytest.mark.asyncio
+    async def test_tasks_send_rejects_malformed_params(self, gantry: AgentGantry) -> None:
+        testclient = pytest.importorskip("fastapi.testclient")
+        client = testclient.TestClient(create_a2a_server(gantry))
+        for params in (
+            "not-an-object",
+            {"messages": []},
+            {"skill_id": "tool_discovery", "messages": "nope"},
+            {"skill_id": "tool_discovery", "messages": [{"parts": "nope"}]},
+            {"skill_id": "tool_discovery", "messages": [{"parts": [{"type": "image"}]}]},
+        ):
+            request = {"jsonrpc": "2.0", "method": "tasks/send", "params": params, "id": 7}
+            data = client.post("/tasks/send", json=request).json()
+            assert data["error"]["code"] == -32602, params
+            assert data["id"] == 7

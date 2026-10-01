@@ -1,12 +1,11 @@
 """DEEP per-turn dynamic-tool provider for LangGraph.
 
-Where :mod:`agent_gantry.integrations.frameworks.langgraph` exposes the *static*
-helpers (``for_langgraph`` / ``spec_to_langgraph``) — you select a slice of tools
-once and hand the resulting LangChain ``StructuredTool`` list to a graph at
-construction time — this module wires Agent-Gantry into LangGraph as a **live,
-per-turn** tool source, matching the depth of the Microsoft Agent Framework
-``GantryContextProvider``: the set of tools the model can call is **re-selected by
-Gantry on every model turn**.
+Where :meth:`~agent_gantry.integrations.frameworks.langgraph.LangGraphAdapter.select`
+is the *static* path — you select a slice of tools once and hand the resulting
+LangChain ``StructuredTool`` list to a graph at construction time — this module
+wires Agent-Gantry into LangGraph as a **live, per-turn** tool source, matching
+the depth of the Microsoft Agent Framework ``GantryContextProvider``: the set of
+tools the model can call is **re-selected by Gantry on every model turn**.
 
 The native hook
 ---------------
@@ -75,6 +74,8 @@ from typing import TYPE_CHECKING, Any
 from agent_gantry.integrations.frameworks.base import (
     DEFAULT_TOOL_LIMIT,
     GantryToolset,
+    QueryBoundsError,
+    check_query_bounds,
     spec_from_tool,
 )
 from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
@@ -162,6 +163,7 @@ async def _select_tools_for_state(
     unbound, mirroring the empty-selection branch above) — see "Per-turn
     selection-failure policy" in ``integrations/frameworks/README.md``.
     A :class:`~agent_gantry.integrations.frameworks.errors.MissingRequiredToolError`
+    or :class:`~agent_gantry.integrations.frameworks.base.QueryBoundsError`
     is configuration, not a transient fault, and always propagates.
     """
     query = _query_from_state(state)
@@ -174,7 +176,7 @@ async def _select_tools_for_state(
             required=required,
             always_include=always_include,
         )
-    except MissingRequiredToolError:
+    except (MissingRequiredToolError, QueryBoundsError):
         raise
     except Exception:
         logger.warning(
@@ -211,7 +213,7 @@ def _create_gantry_react_agent(
 ) -> Any:
     """Build a LangGraph agent whose tools are re-selected every turn.
 
-    Unlike the static :func:`~agent_gantry.integrations.frameworks.langgraph.for_langgraph`
+    Unlike the static :meth:`~agent_gantry.integrations.frameworks.langgraph.LangGraphAdapter.select`
     (tools fixed at construction), this wires Gantry in as a **live per-turn**
     provider via a ``create_agent`` ``wrap_model_call`` middleware hook. On each
     model turn the agent:
@@ -312,6 +314,7 @@ def _build_react_agent(
     **agent_kwargs: Any,
 ) -> Any:
     """Compile the per-turn tool-selecting agent given a pre-resolved superset."""
+    check_query_bounds(limit=limit, score_threshold=score_threshold, owner="LangGraphAdapter")
     create_agent, AgentMiddleware = _import_create_agent()  # noqa: N806
 
     class _GantryToolSelectionMiddleware(AgentMiddleware):  # type: ignore[misc, valid-type]

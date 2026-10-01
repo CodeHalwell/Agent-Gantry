@@ -364,11 +364,7 @@ class SemanticRouter:
 
         if query.diversity_factor > 0 and len(scored_tools) > 1:
             scored_tools = await self._apply_mmr(
-                scored_tools,
-                query_embedding,
-                query.diversity_factor,
-                query.limit,
-                tool_embeddings,
+                scored_tools, query.diversity_factor, query.limit, tool_embeddings
             )
 
         final_tools = scored_tools[: query.limit]
@@ -550,7 +546,6 @@ class SemanticRouter:
     async def _apply_mmr(
         self,
         scored_tools: list[tuple[ToolDefinition, float]],
-        query_embedding: list[float],
         diversity_factor: float,
         limit: int,
         cached_embeddings: dict[str, list[float]] | None = None,
@@ -559,38 +554,22 @@ class SemanticRouter:
         if not scored_tools:
             return []
 
-        _ = query_embedding  # kept for signature consistency; not used in relevance scoring
         lambda_param = 1.0 - diversity_factor
         relevance_scores = [score for _, score in scored_tools]
 
-        # Use cached embeddings if available, otherwise re-embed (fallback)
-        embeddings: list[list[float]] = []
-        if cached_embeddings:
-            # Need to collect embeddings in order of scored_tools
-            missing_indices: list[int] = []
-            missing_texts: list[str] = []
-
-            # Initialize with placeholders
-            embeddings = [[] for _ in scored_tools]
-
-            for i, (tool, _) in enumerate(scored_tools):
-                tool_key = f"{tool.namespace}.{tool.name}"
-                embedding = cached_embeddings.get(tool_key)
-                if embedding is not None:
-                    embeddings[i] = embedding
-                else:
-                    missing_indices.append(i)
-                    missing_texts.append(tool.to_searchable_text())
-
-            # Batch embed missing
-            if missing_texts:
-                new_embeddings = await self._embedder.embed_batch(missing_texts)
-                for idx, emb in zip(missing_indices, new_embeddings):
-                    embeddings[idx] = emb
-        else:
-            # Fallback: re-embed all tools (old behavior for backward compatibility)
-            tool_texts = [tool.to_searchable_text() for tool, _ in scored_tools]
-            embeddings = await self._embedder.embed_batch(tool_texts)
+        # Embeddings the store returned with the candidates are reused; only
+        # tools missing from that cache are embedded again, in one batch.
+        cached = cached_embeddings or {}
+        embeddings: list[list[float]] = [
+            cached.get(f"{tool.namespace}.{tool.name}", []) for tool, _ in scored_tools
+        ]
+        missing = [i for i, emb in enumerate(embeddings) if len(emb) == 0]
+        if missing:
+            fresh = await self._embedder.embed_batch(
+                [scored_tools[i][0].to_searchable_text() for i in missing]
+            )
+            for idx, emb in zip(missing, fresh):
+                embeddings[idx] = emb
 
         # Convert to numpy matrix for vectorized cosine similarity
         emb_matrix = np.array(embeddings, dtype=np.float64)

@@ -43,7 +43,6 @@ class ConversationContext(BaseModel):
     user_capabilities: list[ToolCapability] = Field(
         default_factory=lambda: [cap for cap in ToolCapability]
     )
-    require_confirmation_for: list[ToolCapability] = Field(default_factory=list)
 
 
 class ToolQuery(BaseModel):
@@ -93,7 +92,6 @@ class ToolQuery(BaseModel):
     # turns it on when a reranker is configured. Set it explicitly to
     # ``True``/``False`` to force the behaviour regardless of config.
     enable_reranking: bool | None = None
-    include_dependencies: bool = True
     diversity_factor: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
@@ -103,14 +101,11 @@ class ScoredTool(BaseModel):
     tool: ToolDefinition
     semantic_score: float = Field(ge=0.0, le=1.0)
     rerank_score: float | None = None
-    context_score: float = 0.0
-    health_penalty: float = 0.0
 
     @property
     def final_score(self) -> float:
-        """Calculate the final composite score."""
-        base = self.rerank_score if self.rerank_score is not None else self.semantic_score
-        return max(0.0, base + self.context_score - self.health_penalty)
+        """The rerank score when one was computed, else the semantic score."""
+        return self.rerank_score if self.rerank_score is not None else self.semantic_score
 
 
 class RetrievalResult(BaseModel):
@@ -135,22 +130,6 @@ class RetrievalResult(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     _reject_newline_identifiers = field_validator("trace_id")(reject_newlines)
-
-    def to_openai_tools(self) -> list[dict[str, Any]]:
-        """
-        Convert retrieved tools to OpenAI format.
-
-        Deprecated: Use `to_dialect("openai")` instead.
-        """
-        return [t.tool.to_dialect("openai") for t in self.tools]
-
-    def to_anthropic_tools(self) -> list[dict[str, Any]]:
-        """
-        Convert retrieved tools to Anthropic format.
-
-        Deprecated: Use `to_dialect("anthropic")` instead.
-        """
-        return [t.tool.to_dialect("anthropic") for t in self.tools]
 
     def to_dialect(self, dialect: str = "auto", **options: Any) -> list[dict[str, Any]]:
         """

@@ -6,14 +6,18 @@ Represents MCP server metadata for semantic routing and dynamic selection.
 
 from __future__ import annotations
 
-import hashlib
 from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from agent_gantry.schema.base import HealthMetrics, reject_newlines
-from agent_gantry.schema.config import MCPTransport
+from agent_gantry.schema.base import (
+    HealthMetrics,
+    MCPTransport,
+    check_mcp_endpoint,
+    reject_newlines,
+    resolve_mcp_transport,
+)
 
 
 class MCPServerHealth(HealthMetrics):
@@ -120,31 +124,7 @@ class MCPServerDefinition(BaseModel):
 
     @model_validator(mode="after")
     def _check_endpoint(self) -> MCPServerDefinition:
-        """Require exactly one endpoint, and a transport that matches it."""
-        has_command = bool(self.command)
-        has_url = bool(self.url)
-        if has_command == has_url:
-            raise ValueError(
-                f"MCP server '{self.name}': give exactly one of 'command' (local stdio "
-                "server) or 'url' (remote HTTP server)."
-            )
-        if self.transport == "stdio" and not has_command:
-            raise ValueError(f"MCP server '{self.name}': transport 'stdio' requires 'command'.")
-        if self.transport in ("streamable_http", "sse") and not has_url:
-            raise ValueError(
-                f"MCP server '{self.name}': transport '{self.transport}' requires 'url'."
-            )
-        if has_url:
-            # The same check ``MCPServerConfig`` applies. Without it,
-            # ``register_mcp_server`` (which builds a definition directly)
-            # accepted an ``ftp://`` endpoint and only failed much later, when
-            # a client was finally constructed from it — registration and
-            # retrieval having appeared to succeed in between.
-            scheme = self.url.split("://", 1)[0].lower() if "://" in self.url else ""
-            if scheme not in ("http", "https"):
-                raise ValueError(
-                    f"MCP server '{self.name}': 'url' must be an http(s) URL, got {self.url!r}."
-                )
+        check_mcp_endpoint(self.name, self.command, self.url, self.transport)
         return self
 
     @property
@@ -155,19 +135,7 @@ class MCPServerDefinition(BaseModel):
     @property
     def resolved_transport(self) -> MCPTransport:
         """The transport this server uses, inferring it from the endpoint given."""
-        if self.transport is not None:
-            return self.transport
-        return "stdio" if self.command else "streamable_http"
-
-    @property
-    def content_hash(self) -> str:
-        """
-        Deterministic hash for change detection.
-
-        Used to avoid re-embedding when server metadata hasn't changed.
-        """
-        content = f"{self.name}:{self.description}:{','.join(self.tags)}:{','.join(self.examples)}"
-        return hashlib.sha256(content.encode()).hexdigest()[:16]
+        return resolve_mcp_transport(self.command, self.transport)
 
     def to_searchable_text(self) -> str:
         """

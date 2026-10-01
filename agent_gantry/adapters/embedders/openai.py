@@ -35,27 +35,9 @@ class BaseOpenAIEmbedder:
         Initialize the base OpenAI embedder.
 
         Args:
-            config: Embedder configuration
+            config: Embedder configuration (subclasses resolve the API key)
             dimension: Optional output dimension for Matryoshka truncation
         """
-        try:
-            from openai import AsyncOpenAI  # noqa: F401 - availability probe for optional extra
-        except ImportError as exc:
-            raise ImportError(
-                "OpenAI package is not installed. Install it with:\n"
-                "  pip install agent-gantry[openai] (or uv add 'agent-gantry[openai]')"
-            ) from exc
-
-        api_key = config.api_key or os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError(
-
-                    "OpenAI API key is required. Set it in config or "
-                    "OPENAI_API_KEY environment variable."
-
-            )
-
-        self._config = config
         self._model = config.model or "text-embedding-3-small"
         self._batch_size = config.batch_size
         self._max_retries = config.max_retries
@@ -220,7 +202,7 @@ class OpenAIEmbedder(BaseOpenAIEmbedder):
         api_key = config.api_key or os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError(
-                "OpenAI API key is required. Set it in config or "
+                "OpenAI API key is required. Set EmbedderConfig.api_key or the "
                 "OPENAI_API_KEY environment variable."
             )
 
@@ -296,10 +278,14 @@ class AzureOpenAIEmbedder(BaseOpenAIEmbedder):
                 "  pip install agent-gantry[openai] (or uv add 'agent-gantry[openai]')"
             ) from exc
 
+        if not config.model:
+            raise ValueError(
+                "Azure OpenAI embeddings need the deployment name in EmbedderConfig.model."
+            )
         api_key = config.api_key or os.getenv("AZURE_OPENAI_API_KEY")
         if not api_key:
             raise ValueError(
-                "Azure OpenAI API key is required. Set it in config or "
+                "Azure OpenAI API key is required. Set EmbedderConfig.api_key or the "
                 "AZURE_OPENAI_API_KEY environment variable."
             )
 

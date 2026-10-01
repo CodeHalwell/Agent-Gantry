@@ -74,7 +74,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT, GantryToolset
+from agent_gantry.integrations.frameworks.base import (
+    DEFAULT_TOOL_LIMIT,
+    GantryToolset,
+    QueryBoundsError,
+    check_query_bounds,
+)
 from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
 from agent_gantry.integrations.frameworks.openai_agents import _spec_to_openai_agents
 from agent_gantry.query import latest_activity
@@ -193,10 +198,9 @@ async def _refresh_agent_tools(
             required=required,
             always_include=always_include,
         )
-    except (ImportError, MissingRequiredToolError):
-        # Missing `openai-agents` is a static install-time problem and a
-        # missing required tool is a configuration error, not a transient
-        # retrieval failure — keep failing fast/loudly for both.
+    except (ImportError, MissingRequiredToolError, QueryBoundsError):
+        # Install-time and configuration errors, not transient retrieval
+        # failures — keep failing fast/loudly.
         raise
     except Exception:
         logger.warning(
@@ -238,6 +242,7 @@ def _gantry_run_hooks(
         ImportError: If ``openai-agents`` is not installed.
     """
     agents = _require_agents()
+    check_query_bounds(limit=limit, score_threshold=score_threshold, owner="OpenAIAgentsAdapter")
 
     class _GantryRunHooks(agents.RunHooks):  # type: ignore[misc, valid-type]
         """Re-selects ``agent.tools`` from the live input before each model call."""
@@ -249,10 +254,14 @@ def _gantry_run_hooks(
             system_prompt: str | None,
             input_items: list[Any],
         ) -> None:
+            # Run hooks fire for every agent in the run (handoff targets too);
+            # only the bound agent's tools are Gantry's to rewrite.
+            if hook_agent is not None and hook_agent is not agent:
+                return
             # ``input_items`` is the model input for the upcoming call: the full
             # running conversation. Derive the query from its latest activity.
             await _refresh_agent_tools(
-                hook_agent if hook_agent is not None else agent,
+                agent,
                 gantry,
                 input_items,
                 limit=limit,
@@ -303,6 +312,7 @@ class GantryAgentSession:
         always_include: list[str] | None = None,
     ) -> None:
         _require_agents()  # fail fast with the pip hint at construction
+        check_query_bounds(limit=limit, score_threshold=score_threshold, owner="GantryAgentSession")
         self._agent = agent
         self._gantry = gantry
         self._limit = limit

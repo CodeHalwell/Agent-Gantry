@@ -10,15 +10,13 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import TYPE_CHECKING
 
+from agent_gantry.adapters.embedders.base import embed_query
+
 if TYPE_CHECKING:
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
     from agent_gantry.adapters.vector_stores.base import VectorStoreAdapter
+    from agent_gantry.core.mcp_registry import MCPRegistry
     from agent_gantry.schema.mcp import MCPServerDefinition
-
-
-# Import for registry access
-from agent_gantry.adapters.embedders.base import embed_query
-from agent_gantry.core.mcp_registry import MCPRegistry
 
 
 @dataclass
@@ -106,38 +104,30 @@ class MCPRouter:
         )
         search_time_ms = (perf_counter() - search_start) * 1000
 
-        # Convert pseudo-tool results back to MCPServerScore
+        # Map pseudo-tools back to registered servers. A stale pseudo-tool
+        # (an older naming scheme, a deregistered server) either resolves to
+        # nothing or to a server already seen, and is skipped either way.
         scored_servers: list[MCPServerScore] = []
-
-        # Process candidates - they are pseudo-tools representing MCP servers
-        for candidate in candidates:
+        seen: set[tuple[str, str]] = set()
+        for pseudo_tool, score, *_ in candidates:
             if len(scored_servers) >= limit:
                 break
-
-            # Extract tool and score from the tuple
-            if len(candidate) >= 2:
-                pseudo_tool, score = candidate[0], candidate[1]
-
-                # Verify this is an MCP server pseudo-tool
-                if (
-                    pseudo_tool.metadata.get("entity_type") == "mcp_server"
-                    and pseudo_tool.namespace == "__mcp_servers__"
-                ):
-                    # Reconstruct MCPServerDefinition from metadata
-                    server_name = pseudo_tool.metadata.get("server_name")
-                    if not server_name:
-                        continue
-
-                    server_namespace = pseudo_tool.metadata.get("server_namespace", "default")
-
-                    # Apply user namespace filter
-                    if namespaces and server_namespace not in namespaces:
-                        continue
-
-                    # Get the full server definition from the registry
-                    server = await self._get_server_from_registry(server_name, server_namespace)
-                    if server:
-                        scored_servers.append(MCPServerScore(server=server, score=score))
+            if (
+                pseudo_tool.metadata.get("entity_type") != "mcp_server"
+                or pseudo_tool.namespace != "__mcp_servers__"
+            ):
+                continue
+            server_name = pseudo_tool.metadata.get("server_name")
+            server_namespace = pseudo_tool.metadata.get("server_namespace", "default")
+            if not server_name or (namespaces and server_namespace not in namespaces):
+                continue
+            key = (server_namespace, server_name)
+            if key in seen:
+                continue
+            seen.add(key)
+            server = await self._get_server_from_registry(server_name, server_namespace)
+            if server:
+                scored_servers.append(MCPServerScore(server=server, score=score))
 
         total_time_ms = (perf_counter() - start_time) * 1000
 
@@ -147,51 +137,6 @@ class MCPRouter:
             search_time_ms=search_time_ms,
             total_time_ms=total_time_ms,
         )
-
-    async def filter_by_capabilities(
-        self,
-        servers: list[MCPServerDefinition],
-        required_capabilities: list[str],
-    ) -> list[MCPServerDefinition]:
-        """
-        Filter servers by required capabilities.
-
-        Args:
-            servers: List of server definitions
-            required_capabilities: Capabilities that must be present
-
-        Returns:
-            Filtered list of servers
-        """
-        if not required_capabilities:
-            return servers
-
-        req_caps = set(required_capabilities)
-        return [
-            server
-            for server in servers
-            if req_caps.issubset(server.capabilities)
-        ]
-
-    async def filter_by_health(
-        self,
-        servers: list[MCPServerDefinition],
-        exclude_unavailable: bool = True,
-    ) -> list[MCPServerDefinition]:
-        """
-        Filter servers by health status.
-
-        Args:
-            servers: List of server definitions
-            exclude_unavailable: Whether to exclude unavailable servers
-
-        Returns:
-            Filtered list of servers
-        """
-        if not exclude_unavailable:
-            return servers
-
-        return [server for server in servers if server.health.available]
 
     async def _get_server_from_registry(
         self,

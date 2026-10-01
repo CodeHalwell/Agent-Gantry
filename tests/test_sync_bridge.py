@@ -1,14 +1,11 @@
-"""The sync bridge must fan out, and must survive a nested invocation.
+"""The sync bridge must fan out, survive a nested invocation, and keep one loop.
 
 ``ToolSpec.invoke`` runs a coroutine from synchronous framework code (CrewAI
-``_run``, Haystack ``function``, Agno ``entrypoint``,
-DSPy ``_fn``). When a loop is already running on the calling thread it hands
-the coroutine to a worker thread instead.
-
-That worker pool was ``max_workers=1`` and process-wide, so every sync tool
-call in the process queued behind every other — one slow tool stalled a whole
-multi-agent run — and a handler that itself called ``invoke`` waited on the
-single worker it was occupying, deadlocking outright.
+``_run``, Haystack ``function``, Agno ``entrypoint``, DSPy ``_fn``) on a
+single long-lived bridge loop, whether or not a loop is already running on the
+calling thread — so concurrent calls overlap, a handler that itself calls
+``invoke`` does not wait on itself, and loop-affine state a tool opens (an MCP
+session) survives from one sync call to the next.
 """
 
 from __future__ import annotations
@@ -120,13 +117,32 @@ def test_nested_invocation_does_not_deadlock() -> None:
     assert _run_in_thread(scenario) == "outer+inner"
 
 
-def test_no_running_loop_uses_asyncio_run() -> None:
-    """The common case — no loop on this thread — needs no bridge at all."""
+def test_no_running_loop_runs_to_completion() -> None:
+    """The common case — no loop on this thread — returns the coroutine's result."""
 
     async def work() -> int:
         return 42
 
     assert fw_base._run_coroutine_sync(work()) == 42
+
+
+def test_both_entry_paths_share_the_bridge_loop() -> None:
+    """With or without a running loop on the caller's thread, the coroutine
+    runs on the one bridge loop, so resources a tool call opens survive across
+    sync calls instead of dying with a per-call loop."""
+
+    async def which_loop() -> asyncio.AbstractEventLoop:
+        return asyncio.get_running_loop()
+
+    direct = fw_base._run_coroutine_sync(which_loop())
+
+    def from_inside_a_loop() -> object:
+        async def driver() -> object:
+            return fw_base._run_coroutine_sync(which_loop())
+
+        return asyncio.run(driver())
+
+    assert direct is _run_in_thread(from_inside_a_loop) is fw_base._bridge_loop()
 
 
 def test_exceptions_propagate_through_the_bridge() -> None:
@@ -145,15 +161,16 @@ def test_exceptions_propagate_through_the_bridge() -> None:
         _run_in_thread(scenario)
 
 
-def test_pool_is_built_once_under_concurrency() -> None:
-    """The lazy construction must not race two pools into existence."""
-    fw_base._SYNC_BRIDGE_POOL = None
+def test_bridge_loop_is_built_once_under_concurrency() -> None:
+    """The lazy construction must not race two loops into existence."""
+    previous = fw_base._BRIDGE_LOOP
+    fw_base._BRIDGE_LOOP = None
     seen: list[object] = []
     barrier = threading.Barrier(8)
 
     def grab() -> None:
         barrier.wait()
-        seen.append(fw_base._bridge_pool())
+        seen.append(fw_base._bridge_loop())
 
     threads = [threading.Thread(target=grab) for _ in range(8)]
     for t in threads:
@@ -161,9 +178,6 @@ def test_pool_is_built_once_under_concurrency() -> None:
     for t in threads:
         t.join()
 
-    assert len({id(pool) for pool in seen}) == 1
-
-
-def test_pool_has_more_than_one_worker() -> None:
-    fw_base._SYNC_BRIDGE_POOL = None
-    assert fw_base._bridge_pool()._max_workers > 1
+    assert len({id(loop) for loop in seen}) == 1
+    if previous is not None:  # the replaced loop's thread is idle; let it exit
+        previous.call_soon_threadsafe(previous.stop)

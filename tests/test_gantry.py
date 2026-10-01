@@ -199,11 +199,11 @@ class TestAgentGantryModuleImport:
 
         # Check that handlers are registered (keyed by namespace-qualified
         # name so same-named tools across namespaces never clobber each other)
-        assert "default.tool_a1" in gantry._tool_handlers
-        assert "default.tool_a2" in gantry._tool_handlers
+        assert gantry._registry.get_handler("default.tool_a1") is not None
+        assert gantry._registry.get_handler("default.tool_a2") is not None
 
         # Verify handlers are callable
-        handler1 = gantry._tool_handlers["default.tool_a1"]
+        handler1 = gantry._registry.get_handler("default.tool_a1")
         assert callable(handler1)
         result = handler1(5)
         assert result == 10
@@ -248,7 +248,150 @@ async def test_delete_tool_purges_registry_and_handlers():
 
     assert all(t.name != "send_email" for t in gantry.list_tools_sync())
     assert gantry.tool_count == count_before - 1, (
-        "tool_count reads the facade handler map, which delete_tool must purge"
+        "tool_count counts registry handlers, which delete_tool must purge"
     )
     result = await gantry.execute(ToolCall(tool_name="send_email", arguments={"to": "x"}))
     assert result.status != ExecutionStatus.SUCCESS
+
+
+@pytest.mark.asyncio
+async def test_concurrent_first_use_initialises_the_store_once() -> None:
+    import asyncio
+
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
+
+    class CountingStore(InMemoryVectorStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.initialisations = 0
+
+        async def initialize(self) -> None:
+            self.initialisations += 1
+            await asyncio.sleep(0)  # yield, so a second caller can race in
+            await super().initialize()
+
+    store = CountingStore()
+    gantry = AgentGantry(vector_store=store, embedder=SimpleEmbedder(dimension=64))
+
+    @gantry.register(tags=["math"])
+    def double(x: int) -> int:
+        """Double a number."""
+        return x * 2
+
+    # Two retrieves before any sync, through the public path.
+    first, second = await asyncio.gather(
+        gantry.retrieve_tools("double a number", score_threshold=0.0),
+        gantry.retrieve_tools("double a number", score_threshold=0.0),
+    )
+    assert first and second
+    assert store.initialisations == 1
+
+
+@pytest.mark.asyncio
+async def test_close_closes_the_embedder() -> None:
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+
+    class ClosableEmbedder(SimpleEmbedder):
+        closed = False
+
+        def close(self) -> None:
+            ClosableEmbedder.closed = True
+
+    await AgentGantry(embedder=ClosableEmbedder()).close()
+    assert ClosableEmbedder.closed
+
+
+@pytest.mark.asyncio
+async def test_disabled_telemetry_still_retrieves_and_executes() -> None:
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from agent_gantry.schema.config import AgentGantryConfig, TelemetryConfig
+    from agent_gantry.schema.execution import ExecutionStatus, ToolCall
+
+    gantry = AgentGantry(
+        config=AgentGantryConfig(telemetry=TelemetryConfig(enabled=False)),
+        embedder=SimpleEmbedder(dimension=64),
+    )
+
+    @gantry.register(tags=["math"])
+    def double(x: int) -> int:
+        """Double a number."""
+        return x * 2
+
+    assert await gantry.retrieve_tools("double a number", score_threshold=0.0)
+    result = await gantry.execute(ToolCall(tool_name="double", arguments={"x": 2}))
+    assert result.status is ExecutionStatus.SUCCESS and result.result == 4
+
+
+@pytest.mark.asyncio
+async def test_delete_tool_leaves_the_registry_alone_when_the_store_fails() -> None:
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
+
+    class FailingDeleteStore(InMemoryVectorStore):
+        async def delete(self, name: str, namespace: str = "default") -> bool:
+            raise RuntimeError("store unavailable")
+
+    gantry = AgentGantry(vector_store=FailingDeleteStore(), embedder=SimpleEmbedder(dimension=64))
+
+    @gantry.register
+    def keep_me(x: int) -> int:
+        """Keep this tool around."""
+        return x
+
+    with pytest.raises(RuntimeError, match="store unavailable"):
+        await gantry.delete_tool("keep_me")
+    # The store is asked first, so a store failure leaves the tool executable.
+    assert gantry._registry.has_tool("keep_me")
+    assert gantry.tool_count == 1
+
+
+@pytest.mark.asyncio
+async def test_reuse_after_close_initialises_the_store_again() -> None:
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
+
+    class CountingStore(InMemoryVectorStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.initialisations = 0
+
+        async def initialize(self) -> None:
+            self.initialisations += 1
+            await super().initialize()
+
+    store = CountingStore()
+    gantry = AgentGantry(vector_store=store, embedder=SimpleEmbedder(dimension=64))
+
+    @gantry.register(tags=["math"])
+    def double(x: int) -> int:
+        """Double a number."""
+        return x * 2
+
+    assert await gantry.retrieve_tools("double a number", score_threshold=0.0)
+    await gantry.close()
+    # close() drops the initialised flag and the lock, so the next call
+    # starts the store again instead of assuming it is still open.
+    assert await gantry.retrieve_tools("double a number", score_threshold=0.0)
+    assert store.initialisations == 2
+
+
+@pytest.mark.asyncio
+async def test_delete_tool_forgets_the_handlers_coercers() -> None:
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from agent_gantry.core import executor as executor_module
+    from agent_gantry.schema.execution import ExecutionStatus, ToolCall
+
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+
+    @gantry.register
+    def shout(text: str) -> str:
+        """Upper-case some text."""
+        return text.upper()
+
+    result = await gantry.execute(ToolCall(tool_name="shout", arguments={"text": "hi"}))
+    assert result.status is ExecutionStatus.SUCCESS and result.result == "HI"
+    assert shout in executor_module._COERCER_CACHE  # memoised by the first call
+
+    assert await gantry.delete_tool("shout") is True
+    assert shout not in executor_module._COERCER_CACHE

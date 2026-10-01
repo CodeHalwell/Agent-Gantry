@@ -98,9 +98,9 @@ def build_vector_store(config: VectorStoreConfig) -> VectorStoreAdapter:
 
 def build_embedder(config: EmbedderConfig) -> EmbeddingAdapter:
     """Construct an embedder from configuration."""
-    if config.type == "openai" and config.api_key:
+    if config.type == "openai":
         return OpenAIEmbedder(config)
-    if config.type == "azure" and config.api_key:
+    if config.type == "azure":
         return AzureOpenAIEmbedder(config)
     if config.type == "nomic":
         from agent_gantry.adapters.embedders.nomic import NomicEmbedder
@@ -145,7 +145,7 @@ def build_reranker(config: RerankerConfig) -> RerankerAdapter | None:
         from agent_gantry.adapters.rerankers.jev import JevReranker
 
         return JevReranker(model=config.model)
-    return None
+    raise ValueError(f"Unsupported reranker type: {config.type!r}")
 
 
 def build_selector(config: SelectorConfig) -> SelectorAdapter | None:

@@ -317,3 +317,60 @@ def test_a_materialized_tuple_is_normalized_back_to_a_json_array():
     # combinator fallback relies on to tell "no branch applied" apart.
     already = [1, "a"]
     assert _json_native(already, positional) is already
+
+
+def test_an_optional_nullable_keeps_null_in_its_annotation():
+    """Optional properties get the same ``| None`` as required ones: a
+    framework that validates the model's input against a model built from
+    the signature (Strands) rejected the null a ``["integer", "null"]``
+    schema permits when the parameter was annotated a bare ``int``."""
+    from agent_gantry.integrations.frameworks.base import ToolSpec
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "x": {"type": ["integer", "null"], "default": 5},
+            "y": {"type": "string"},
+        },
+        "required": [],
+    }
+    spec = ToolSpec.__new__(ToolSpec)
+    object.__setattr__(spec, "parameters", schema)
+
+    params = ToolSpec.python_signature(spec).parameters
+    assert params["x"].annotation == (int | None)
+    assert params["x"].default == 5
+    assert params["y"].annotation is str
+    assert params["y"].default is None
+    # Google ADK's fallback path rejects union annotations outright.
+    adk = ToolSpec.python_signature(spec, type_matched_defaults=True).parameters
+    assert adk["x"].annotation is int
+
+
+def test_aliased_parameters_renames_properties_and_required():
+    """ADK filters and Strands validates the model's arguments against the
+    signature's parameter names, so the schema they advertise must carry the
+    same aliases as :meth:`ToolSpec.parameter_aliases`."""
+    from agent_gantry.integrations.frameworks.base import ToolSpec
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "user-id": {"type": "string"},
+            "from": {"type": "string"},
+            "ok": {"type": "boolean"},
+        },
+        "required": ["user-id", "ok"],
+    }
+    spec = ToolSpec.__new__(ToolSpec)
+    object.__setattr__(spec, "parameters", schema)
+
+    aliased = ToolSpec.aliased_parameters(spec)
+    assert list(aliased["properties"]) == ["user_id", "from_", "ok"]
+    assert aliased["required"] == ["user_id", "ok"]
+    assert aliased["properties"]["user_id"] is schema["properties"]["user-id"]
+    assert schema["required"] == ["user-id", "ok"]  # the original is untouched
+
+    plain = {"type": "object", "properties": {"ok": {"type": "boolean"}}}
+    object.__setattr__(spec, "parameters", plain)
+    assert ToolSpec.aliased_parameters(spec) is plain

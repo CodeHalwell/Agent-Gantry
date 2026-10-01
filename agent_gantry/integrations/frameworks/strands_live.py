@@ -1,8 +1,8 @@
 """Per-turn dynamic-tool hook for AWS Strands Agents (the *deep* integration).
 
-Where :mod:`agent_gantry.integrations.frameworks.strands` exposes the *static*
-path — ``_for_strands`` selects a fixed slice of tools once and you hand them
-to ``Agent(tools=[...])`` — this module wires Agent-Gantry into Strands' native
+Where :meth:`~agent_gantry.integrations.frameworks.strands.StrandsAdapter.select`
+is the *static* path — a fixed slice of tools selected once and handed to
+``Agent(tools=[...])`` — this module wires Agent-Gantry into Strands' native
 per-turn hook so the tool surface is re-selected **before every model call**.
 
 Strands fires a ``BeforeModelCallEvent`` immediately before each model
@@ -53,7 +53,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT, GantryToolset
+from agent_gantry.integrations.frameworks.base import (
+    DEFAULT_TOOL_LIMIT,
+    GantryToolset,
+    QueryBoundsError,
+    check_query_bounds,
+)
 from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
 from agent_gantry.integrations.frameworks.strands import _spec_to_strands
 
@@ -139,6 +144,9 @@ class GantryStrandsToolHook:
         required: list[str] | None = None,
         always_include: list[str] | None = None,
     ) -> None:
+        check_query_bounds(
+            limit=limit, score_threshold=score_threshold, owner="GantryStrandsToolHook"
+        )
         self._gantry = gantry
         self._limit = limit
         self._score_threshold = score_threshold
@@ -172,13 +180,11 @@ class GantryStrandsToolHook:
         for the same carve-out and its rationale).
 
         Uses :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select_or_empty`
-        directly (rather than :func:`_for_strands`, which uses ``.select()``)
         so ``required``/``always_include`` pins still resolve on a turn with
         no extractable user text — matching every other live provider's
         blank-query behaviour. A blank query with no pins deliberately falls
         through with an empty selection so tools selected on a previous turn
-        are *retracted* (Strands' tool_registry is stateful; compare Semantic
-        Kernel's provider, which clears its plugin on a blank query).
+        are *retracted* (Strands' tool_registry is stateful).
         """
         query = _query_from_messages(getattr(event.agent, "messages", None))
         try:
@@ -190,7 +196,7 @@ class GantryStrandsToolHook:
                 required=self._required,
                 always_include=self._always_include,
             )
-        except MissingRequiredToolError:
+        except (MissingRequiredToolError, QueryBoundsError):
             raise
         except Exception:
             # Selection failure must not kill the agent's model call: log a

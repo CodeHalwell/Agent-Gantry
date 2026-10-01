@@ -8,6 +8,8 @@ that pull in optional dependencies (typesafe-sdk) are lazy-loaded via
 ``__getattr__`` so importing this module does not require optional installs.
 """
 
+from __future__ import annotations
+
 from agent_gantry.adapters.selectors.base import SelectorAdapter
 
 __all__ = [

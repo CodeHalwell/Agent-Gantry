@@ -1,9 +1,7 @@
 from datetime import datetime, timezone
 
-import pytest
-
 from agent_gantry.schema.tool import ToolCapability, ToolDefinition
-from agent_gantry.utils.fingerprint import compute_tool_fingerprint, parse_fingerprint
+from agent_gantry.utils.fingerprint import compute_tool_fingerprint
 
 
 def test_compute_tool_fingerprint_valid():
@@ -16,28 +14,6 @@ def test_compute_tool_fingerprint_valid():
     fp = compute_tool_fingerprint(tool)
     assert fp.startswith("v1.1:")
     assert len(fp.split(":")[1]) == 16
-
-
-def test_compute_tool_fingerprint_unsupported_version():
-    tool = ToolDefinition(
-        name="test_tool",
-        description="A test tool",
-        parameters_schema={"type": "object", "properties": {}},
-    )
-    with pytest.raises(ValueError, match="Unsupported fingerprint version: v9.9"):
-        compute_tool_fingerprint(tool, version="v9.9")
-
-
-def test_parse_fingerprint_valid():
-    version, hash_val = parse_fingerprint("v1.0:a1b2c3d4e5f67890")
-    assert version == "v1.0"
-    assert hash_val == "a1b2c3d4e5f67890"
-
-
-def test_parse_fingerprint_legacy():
-    version, hash_val = parse_fingerprint("a1b2c3d4e5f67890")
-    assert version == "v1.0"
-    assert hash_val == "a1b2c3d4e5f67890"
 
 
 def test_compute_tool_fingerprint_determinism():
@@ -60,10 +36,7 @@ def test_compute_tool_fingerprint_determinism():
         capabilities=[ToolCapability.WRITE_DATA, ToolCapability.READ_DATA],
     )
 
-    fp1 = compute_tool_fingerprint(tool1)
-    fp2 = compute_tool_fingerprint(tool2)
-
-    assert fp1 == fp2
+    assert compute_tool_fingerprint(tool1) == compute_tool_fingerprint(tool2)
 
 
 def test_compute_tool_fingerprint_sensitivity():
@@ -93,9 +66,9 @@ def test_compute_tool_fingerprint_sensitivity():
     tool_diff_req = base_tool.model_copy(update={"requires_confirmation": True})
     assert compute_tool_fingerprint(tool_diff_req) != base_fp
 
-    # v1.1: persisted routing/lifecycle fields are covered too — stores serve
-    # the stored ToolDefinition back to the router, so definition-only
-    # changes must re-sync the stored copy
+    # Persisted routing/lifecycle fields are covered too — stores serve the
+    # stored ToolDefinition back to the router, so definition-only changes
+    # must re-sync the stored copy
     tool_diff_source = base_tool.model_copy(update={"source_uri": "http://example.com/tool"})
     assert compute_tool_fingerprint(tool_diff_source) != base_fp
 
@@ -109,21 +82,3 @@ def test_compute_tool_fingerprint_sensitivity():
     # or health would defeat incremental sync entirely
     tool_same_created = base_tool.model_copy(update={"created_at": datetime.now(timezone.utc)})
     assert compute_tool_fingerprint(tool_same_created) == base_fp
-
-
-def test_parse_fingerprint_edge_cases():
-    # Test valid formats
-    assert parse_fingerprint("v1.0:123456") == ("v1.0", "123456")
-    assert parse_fingerprint("legacyhash123") == ("v1.0", "legacyhash123")
-
-    # Empty string should be considered legacy hash
-    assert parse_fingerprint("") == ("v1.0", "")
-
-    # Colon at start
-    assert parse_fingerprint(":hash123") == ("", "hash123")
-
-    # Colon at end
-    assert parse_fingerprint("v1.0:") == ("v1.0", "")
-
-    # Multiple colons (split on first colon only)
-    assert parse_fingerprint("v1.0:hash:extra") == ("v1.0", "hash:extra")

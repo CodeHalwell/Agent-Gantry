@@ -55,7 +55,8 @@ class A2AExecutor:
             A2A client instance
 
         Raises:
-            ValueError: If tool is not from an A2A agent
+            ValueError: If the tool is not from an A2A agent or lacks its
+                ``a2a_agent``/``a2a_url`` metadata
         """
         if tool.source != ToolSource.A2A_AGENT:
             raise ValueError(f"Tool {tool.name} is not from an A2A agent")
@@ -72,7 +73,9 @@ class A2AExecutor:
         # executor shared across calls, a bare-name key would conflate two
         # agents that share a name but live at different URLs, silently
         # dispatching one agent's tasks to the other's endpoint.
-        url = tool.metadata["a2a_url"]
+        url = tool.metadata.get("a2a_url")
+        if not url:
+            raise ValueError(f"Tool {tool.name} missing a2a_url metadata")
         client_key = f"{tool.namespace}.{agent_name}@{url}"
 
         # Return cached client or create new one
@@ -157,39 +160,3 @@ class A2AExecutor:
                 trace_id=trace_id,
                 span_id=span_id,
             )
-
-    async def validate_arguments(
-        self,
-        tool: ToolDefinition,
-        arguments: dict[str, Any],
-    ) -> tuple[bool, str | None]:
-        """
-        Validate arguments for an A2A tool.
-
-        Args:
-            tool: Tool definition
-            arguments: Arguments to validate
-
-        Returns:
-            Tuple of (is_valid, error_message)
-        """
-        # Basic validation: check for required query parameter
-        if "query" not in arguments:
-            return False, "Missing required argument: query"
-
-        if not isinstance(arguments["query"], str):
-            return False, "Argument 'query' must be a string"
-
-        return True, None
-
-    def supports_source(self, source: ToolSource) -> bool:
-        """
-        Check if this executor supports the given source.
-
-        Args:
-            source: Tool source type
-
-        Returns:
-            True if A2A_AGENT source
-        """
-        return source == ToolSource.A2A_AGENT

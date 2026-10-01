@@ -7,6 +7,157 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+A review of the whole library for correctness, dead code and duplication.
+The public API loses only members nothing called; the behaviour changes are
+listed under Fixed. The package is about 3,000 lines shorter.
+
+**Breaking changes.** The names under Removed are gone without a deprecation
+period; none had a caller in the library, tests, examples or docs, but check
+your own code for them. Configuration is stricter: a backend name with no
+implementation, or an OpenAI/Azure embedder with no key in config or
+environment, now raises instead of silently using a default, and an Azure
+embedder needs its deployment name in `EmbedderConfig.model`.
+`EmbedderConfig.model` defaults to `None` (each backend's own default) rather
+than the sentence-transformers model name, which OpenAI could never use. A
+persistent store re-embeds its MCP servers once, because their pseudo-tool
+names changed, and the first sync drops the rows under the old names. `AgentGantry.tool_count` counts tools with a handler.
+`AgentGantry.close()` now closes the embedder as well as the store, selector,
+reranker and telemetry adapter, injected or not; share one embedder between
+gantries only if you close the gantries last.
+
+### Fixed
+
+- **The five vector stores now honour one contract.** Qdrant and Chroma
+  `delete()` report a missing tool as `False`; Qdrant, Chroma and PGVector
+  honour the `tags` filter and, with `upsert=False`, skip stored ids and count
+  only inserted rows (PGVector used a plain INSERT that raised on a repeat);
+  PGVector pages `list_all` with a stable tiebreaker; `QdrantVectorStore` can be
+  closed. LanceDB no longer raises `ValueError` on a tags-filtered search of an
+  empty table, propagates table errors instead of reporting an empty registry,
+  sets its tables up off the event loop, migrates a legacy table through a
+  backup copy rather than dropping the only one, and accepts `add_tools`
+  before `initialize()`.
+- **Tool results with enum- or tuple-keyed dicts** no longer raise `TypeError`
+  out of `format_tool_result` for the OpenAI, Responses, Anthropic, Mistral,
+  Groq and Agent Framework adapters (only Gemini had the fix), so one such
+  result cannot lose a whole `execute_tool_calls` turn.
+- **An empty `parameters_schema`** is emitted as
+  `{"type": "object", "properties": {}}` by every adapter; Anthropic's
+  `input_schema` lacked `type`.
+- **`MCPClient.list_tools` follows `tools/list` pagination**; tools past the
+  first page were silently dropped.
+- **MCP server names the pseudo-tool could not carry** (`MyServer`,
+  `my.server`, namespace `Team-A`) registered fine and then failed in
+  `sync_mcp_servers`. Pseudo-tool names are now sanitised with a short digest,
+  so a persistent store re-embeds its MCP servers once on upgrade; the MCP
+  router de-duplicates hits that resolve to the same server.
+- **Configuration that silently degraded now fails loudly.** `type: openai`
+  (or `azure`) with the key only in the environment built the hash-based
+  `SimpleEmbedder`; backend names with no implementation (`pinecone`,
+  `weaviate`, `cohere`, `huggingface`, `ollama`, an `llm` reranker, `datadog`)
+  fell through to the in-memory/console defaults. The embedders resolve their
+  own environment variables and raise when there is none, and the unimplemented
+  literals are rejected at validation.
+- **`AzureOpenAIEmbedder` builds from `AZURE_OPENAI_API_KEY` alone**; the base
+  class demanded `OPENAI_API_KEY` first.
+- **Introspection**: `Annotated[T, Field(ge=..., min_length=..., pattern=...)]`
+  constraints reach the schema; one unresolvable forward reference degrades
+  only that parameter (with a warning naming it) rather than every parameter to
+  `string`; `NewType` unwraps; an unannotated parameter with a scalar default
+  takes the default's type.
+- **The Agent Framework bridge crashed on nullable or boolean property
+  schemas** (`type: ["integer", "null"]` is what Gantry emits for
+  `int | None = 5`), which through `GantryContextProvider` silently emptied the
+  selection. The bridge now builds its callables from the shared `ToolSpec`.
+- **Live framework hooks swallowed an out-of-range `limit`/`score_threshold`**
+  and ran the agent with no tools; bounds are checked eagerly and raise
+  `QueryBoundsError`.
+- **The sync bridge ran every sync tool call on a throwaway event loop**, so
+  MCP-backed tools reconnected on each call from CrewAI, Agno, Haystack, DSPy or
+  a sync LangChain/LlamaIndex path. One long-lived bridge loop serves them.
+- The OpenAI Agents live hook no longer rewrites a handoff target's tool list;
+  the Pydantic AI toolset no longer shares selection state across concurrent
+  runs; ADK and Strands advertise renamed parameters under the names their
+  signatures validate; optional nullable parameters keep `| None` in generated
+  signatures; an empty `SKILL.md` frontmatter block parses; `skills=True`
+  without a registry warns instead of silently doing nothing.
+- A2A server envelopes carry the inner execution status and error (failed
+  tools were reported as `success`) and malformed params return `-32602`;
+  `A2AAgentConfig.url` gets the same http(s) check as MCP endpoints.
+- `agent-gantry lint --source` with a non-existent path is an error, not
+  "0 files scanned".
+- A2A tool executions are recorded to telemetry like every other terminal
+  result; they returned straight from the A2A executor without
+  `record_execution`.
+- `EmbedderConfig(type="openai")` without a model used the config's shared
+  `all-MiniLM-L6-v2` default and failed on the first request; the OpenAI
+  embedder now defaults to `text-embedding-3-small` and Azure requires an
+  explicit deployment name.
+- Token usage from google-genai responses (`usage_metadata`) is recorded;
+  `from_provider_payload` tolerates `"function": null`; an A2A tool missing
+  `a2a_url` reports a clear error; `SentenceTransformersEmbedder.health_check`
+  encodes a probe string rather than only loading the model; `AgentGantry.close()` closes the embedder
+  (a `CachedEmbedder` held an open sqlite connection); concurrent first use no
+  longer initialises the vector store twice; a retrieve after `close()`
+  asks the vector store to initialise again instead of searching one nobody
+  reopened (an adapter that closed a connection for good stays closed; see
+  `close()`); the in-memory telemetry adapters bound their span list.
+
+### Changed
+
+- `jsonschema` moved from the core dependencies to the `example-tools` extra;
+  the library never imported it.
+- A skills-capable vector store's `list_all_skills` must accept `category`:
+  the facade passes a requested category straight through instead of
+  silently dropping it for stores whose signature lacked it. Both in-tree
+  stores accept it.
+- `ToolRegistry.register_tool(tool, handler=None)` takes the handler,
+  `delete_tool()` returns the removed handler, and `has_tool()` /
+  `handler_count` were added; `AgentGantry.tool_count` counts registry
+  handlers.
+- Duplicated implementations collapsed, with no behaviour change: the
+  executor's fourteen result-building blocks; the four provider adapters'
+  `to_tool_call`, argument decoding and result text; the six LanceDB tool/skill
+  method pairs; the sentence-transformers, Nomic and cross-encoder lazy loading
+  (`NomicEmbedder` is now a subclass of `SentenceTransformersEmbedder`); the
+  ten per-adapter `live()` overrides and four per-call builders in the
+  framework integrations; the two Anthropic clients; the MCP endpoint
+  validation shared by `MCPServerConfig` and `MCPServerDefinition`; MCP server
+  change detection, which now runs through `SyncManager`; and the provider
+  usage field names, which `ProviderUsage` owns (`from_response_usage()`
+  added).
+- `ToolSpec` carries its `ToolDefinition`; `ToolSpec.aliased_parameters()`
+  added; `QueryBoundsError` exported from `agent_gantry.integrations.frameworks`.
+- The `integration` pytest marker is registered; two MCP-only test modules
+  import-skip without the extra; the examples verification test skips when no
+  agent framework is installed.
+
+### Removed
+
+Nothing below had a caller in the library, the tests, the examples or the docs.
+
+- `ToolRegistry.register()`, `add_tool()`, `get_pending()`, `clear_pending()`.
+- `RetrievalResult.to_openai_tools()` / `to_anthropic_tools()` (use
+  `to_dialect(...)`), `ToolDependency`, `SkillRetrievalResult`, the
+  `content_hash` properties of `ToolDefinition`, `MCPServerDefinition` and
+  `Skill` (fingerprints do that job), `ToolQuery.include_dependencies`,
+  `ConversationContext.require_confirmation_for`,
+  `ScoredTool.context_score` / `health_penalty`, `ExecutionStatus.CANCELLED`,
+  the never-constructed `schema/events.py` models, and the never-read config
+  fields `MCPConfig.serve_mcp` / `mcp_mode`, `A2AConfig.serve_a2a` / `a2a_port`
+  and `TelemetryConfig.expose_prometheus` (an old YAML still loads).
+- `MCPClientPool` (use `MCPRegistry`), `MCPManager.ensure_synced()` /
+  `retrieve_servers()`, `MCPRouter.filter_by_capabilities()` /
+  `filter_by_health()`, `MCPRegistry.clear_pending()` / `active_client_count`.
+- `get_default_gantry()`, `GantryToolBridge.as_tool_list()`, the framework
+  `_for_*` helpers, `agent_gantry.cli.main.build_gantry`, the tool_spec
+  registry's module-level `to_dialect()`, `CHOICE_MAX_CARDINALITY`,
+  `ExecutorAdapter.validate_arguments` / `supports_source`,
+  `NomicEmbedder.set_task_type()` (it could never change anything), LanceDB
+  `get_sync_status()`, `parse_fingerprint()` and the fingerprint `version`
+  parameter (hashes unchanged), `core.security.ValidationError`,
+  `validate_tool_name()`, and `agent_gantry.utils.async_utils`.
+
 ## [0.19.0] - 2026-09-21
 
 The router now fetches at least 32 candidates per query, so a tool that

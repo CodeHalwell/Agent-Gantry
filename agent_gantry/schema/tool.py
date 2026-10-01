@@ -7,10 +7,9 @@ OpenAPI operation, or A2A agent skill).
 
 from __future__ import annotations
 
-import hashlib
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -148,16 +147,6 @@ class ToolDefinition(BaseModel):
         """Return namespace.name:version."""
         return f"{self.namespace}.{self.name}:{self.version}"
 
-    @property
-    def content_hash(self) -> str:
-        """
-        Deterministic hash for change detection and efficient syncing.
-
-        Used to avoid re-embedding / re-indexing when nothing changed.
-        """
-        content = f"{self.name}:{self.version}:{self.description}:{self.parameters_schema}"
-        return hashlib.sha256(content.encode()).hexdigest()[:16]
-
     def to_dialect(self, dialect: SchemaDialect | str, **options: Any) -> dict[str, Any]:
         """
         Just-in-Time transcoding for specific LLMs or protocols.
@@ -204,11 +193,3 @@ class ToolDefinition(BaseModel):
         tags = " ".join(self.tags)
         examples = " ".join(self.examples)
         return f"{self.name} {self.namespace} {self.description} {tags} {examples}"
-
-
-class ToolDependency(BaseModel):
-    """Dependency relationship between tools."""
-
-    tool_name: str
-    dependency_type: Literal["requires", "suggests", "conflicts"]
-    reason: str | None = None

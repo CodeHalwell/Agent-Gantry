@@ -13,6 +13,8 @@ can express:
 - **Descriptions** from ``Annotated[T, "..."]`` metadata (preferred) or the
   function docstring's parameter section (Google ``Args:``, NumPy
   ``Parameters``, or Sphinx ``:param name:`` styles).
+- **Constraints** from ``Annotated[T, Field(ge=..., min_length=...)]``
+  metadata, via Pydantic's own schema generation.
 - **Enums** from ``Literal[...]`` and :class:`enum.Enum` subclasses.
 - **Defaults** for optional parameters (when JSON-serializable).
 - **Container types**: ``list[T]``/``set[T]``/``tuple`` → ``array`` (with
@@ -109,23 +111,14 @@ def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
         >>> schema["properties"]["y"]["default"]
         'default'
     """
-    import typing
-
     sig = inspect.signature(func)
-
-    # Use get_type_hints to resolve string annotations (from __future__ import
-    # annotations). include_extras keeps Annotated metadata — the conventional
-    # home of per-parameter descriptions.
-    try:
-        type_hints = typing.get_type_hints(func, include_extras=True)
-    except (NameError, TypeError):
-        # Fall back to raw annotations if get_type_hints fails
-        # NameError: forward references that can't be resolved
-        # TypeError: invalid type annotations
-        try:
-            type_hints = func.__annotations__
-        except AttributeError:
-            type_hints = {}
+    type_hints, unresolved = _function_hints(func)
+    for name in unresolved:
+        logger.warning(
+            "Cannot resolve the annotation of parameter %r of %s; it is advertised as a string.",
+            name,
+            getattr(func, "__qualname__", func),
+        )
 
     param_docs = _parse_param_docs(inspect.getdoc(func) or "")
 
@@ -150,9 +143,14 @@ def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
         if param.kind is inspect.Parameter.VAR_POSITIONAL:
             continue
 
-        param_type = type_hints.get(param_name, str)
-        param_type, annotated_desc = _split_annotated(param_type)
-        param_schema = _type_to_json_schema(param_type)
+        if param_name in type_hints:
+            annotation = type_hints[param_name]
+        elif isinstance(param.default, (bool, int, float, str)):
+            annotation = type(param.default)
+        else:
+            annotation = str
+        param_type, annotated_desc = _split_annotated(annotation)
+        param_schema = _constrained_schema(annotation) or _type_to_json_schema(param_type)
 
         description = annotated_desc or param_docs.get(param_name)
         if description and "description" not in param_schema:
@@ -198,6 +196,83 @@ def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
     if allow_additional:
         schema["additionalProperties"] = True
     return schema
+
+
+def _hoist_annotated(hint: Any) -> Any:
+    """``Optional[Annotated[T, m]]`` → ``Annotated[Optional[T], m]``.
+
+    Python 3.10's ``get_type_hints`` wraps a ``None``-defaulted parameter in
+    ``Optional`` on the outside, which hides the ``Annotated`` metadata one
+    level down; later versions leave the annotation as written.
+    """
+    import typing
+
+    if typing.get_origin(hint) is typing.Annotated or not _admits_none(hint):
+        return hint
+    members = [a for a in typing.get_args(hint) if a is not type(None)]
+    if len(members) != 1 or typing.get_origin(members[0]) is not typing.Annotated:
+        return hint
+    base, *metadata = typing.get_args(members[0])
+    return typing.Annotated[(base | None, *metadata)]
+
+
+def _function_hints(func: Callable[..., Any]) -> tuple[dict[str, Any], list[str]]:
+    """Resolved annotations of ``func``, plus the parameter names that failed to resolve.
+
+    ``get_type_hints`` is all-or-nothing, so one unresolvable forward reference
+    would otherwise degrade every parameter; failing that, each is resolved alone.
+    """
+    import typing
+
+    unresolved: list[str] = []
+    try:
+        hints = typing.get_type_hints(func, include_extras=True)
+    except Exception:  # noqa: BLE001 - retried one annotation at a time
+        target = inspect.unwrap(func)
+        hints = {}
+        for name, annotation in getattr(target, "__annotations__", {}).items():
+            one = types.SimpleNamespace(
+                __annotations__={name: annotation},
+                __globals__=getattr(target, "__globals__", {}),
+            )
+            try:
+                hints[name] = typing.get_type_hints(one, include_extras=True)[name]
+            except Exception:  # noqa: BLE001
+                if name != "return":
+                    unresolved.append(name)
+    return {name: _hoist_annotated(hint) for name, hint in hints.items()}, unresolved
+
+
+def _constrained_schema(annotation: Any) -> dict[str, Any] | None:
+    """Pydantic's schema for an ``Annotated`` type carrying constraints, else ``None``.
+
+    The manual mapping reads only a description out of ``Annotated`` metadata,
+    so ``Field(ge=1)``-style bounds, lengths and patterns need Pydantic.
+    """
+    import typing
+
+    if typing.get_origin(annotation) is not typing.Annotated:
+        return None
+    base, *metadata = typing.get_args(annotation)
+    from annotated_types import BaseMetadata
+    from pydantic.fields import FieldInfo
+
+    if not any(
+        isinstance(m, BaseMetadata) or (isinstance(m, FieldInfo) and m.metadata) for m in metadata
+    ):
+        return None
+    if _admits_none(base):
+        # Optionality is carried by ``required``, as for every other parameter.
+        members = [a for a in typing.get_args(base) if a is not type(None)]
+        if len(members) != 1:
+            return None
+        base = members[0]
+    try:
+        from pydantic import TypeAdapter
+
+        return _inline_local_refs(TypeAdapter(typing.Annotated[(base, *metadata)]).json_schema())
+    except Exception:  # noqa: BLE001 - the manual mapping still applies
+        return None
 
 
 def _needs_reconstruction(param_type: Any) -> bool:
@@ -423,15 +498,9 @@ def build_argument_coercers(func: Callable[..., Any]) -> dict[str, Any]:
     attribute 'x'" on every schema-valid call. Empty when nothing needs it,
     which is the overwhelmingly common case.
     """
-    import typing
-
     from pydantic import TypeAdapter
 
-    try:
-        hints = typing.get_type_hints(func, include_extras=True)
-    except Exception:  # noqa: BLE001 - unresolvable annotations: coerce nothing
-        return {}
-
+    hints, _ = _function_hints(func)
     coercers: dict[str, Any] = {}
     for name, annotation in hints.items():
         if name == "return" or not _needs_reconstruction(annotation):
@@ -456,7 +525,7 @@ def build_argument_coercers(func: Callable[..., Any]) -> dict[str, Any]:
 
 
 def _split_annotated(param_type: Any) -> tuple[Any, str | None]:
-    """Unwrap ``Annotated[T, ...]``, returning ``(T, description)``.
+    """Unwrap ``Annotated[T, ...]`` and ``NewType``, returning ``(T, description)``.
 
     The description is the first ``str`` metadata item, mirroring how
     Pydantic AI and Google ADK's fallback path read parameter descriptions from
@@ -464,22 +533,24 @@ def _split_annotated(param_type: Any) -> tuple[Any, str | None]:
     """
     import typing
 
-    if typing.get_origin(param_type) is not typing.Annotated:
-        return param_type, None
-    args = typing.get_args(param_type)
-    base = args[0] if args else param_type
-    description = next((a for a in args[1:] if isinstance(a, str)), None)
-    # Pydantic FieldInfo metadata also carries a description attribute.
-    if description is None:
-        description = next(
-            (
-                getattr(a, "description")
-                for a in args[1:]
-                if isinstance(getattr(a, "description", None), str)
-            ),
-            None,
-        )
-    return base, description
+    description = None
+    if typing.get_origin(param_type) is typing.Annotated:
+        param_type, *metadata = typing.get_args(param_type)
+        description = next((a for a in metadata if isinstance(a, str)), None)
+        # Pydantic FieldInfo metadata also carries a description attribute.
+        if description is None:
+            description = next(
+                (
+                    getattr(a, "description")
+                    for a in metadata
+                    if isinstance(getattr(a, "description", None), str)
+                ),
+                None,
+            )
+    # ``NewType("UserId", int)`` is not a class; the schema and coercers want ``int``.
+    while hasattr(param_type, "__supertype__"):
+        param_type = param_type.__supertype__
+    return param_type, description
 
 
 def _fixed_tuple_args(args: tuple[Any, ...]) -> tuple[Any, ...] | None:

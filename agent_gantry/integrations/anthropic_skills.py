@@ -13,48 +13,13 @@ that Claude can reason about and use effectively.
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from agent_gantry import AgentGantry
-from agent_gantry.schema.query import ConversationContext, ToolQuery
+from agent_gantry.integrations.anthropic_features import _AnthropicGantryClient
 
 logger = logging.getLogger(__name__)
-
-async def _record_provider_usage(gantry: Any, response: Any, model: str) -> None:
-    """Report Anthropic's ``usage`` block to telemetry, best effort.
-
-    Nothing in the library measured the token cost of a call before this:
-    ``record_token_usage`` existed on the telemetry protocol and was never
-    invoked outside tests. Failures here are swallowed -- accounting must never
-    break a user's request.
-    """
-    telemetry = getattr(gantry, "telemetry", None) if gantry is not None else None
-    if telemetry is None:
-        return
-    usage = getattr(response, "usage", None)
-    if usage is None:
-        return
-    fields = {
-        name: value
-        for name in (
-            "input_tokens",
-            "output_tokens",
-            "cache_creation_input_tokens",
-            "cache_read_input_tokens",
-        )
-        if isinstance(value := getattr(usage, name, None), (int, float))
-    }
-    if not fields:
-        return
-    try:
-        from agent_gantry.metrics.token_usage import ProviderUsage
-
-        await telemetry.record_token_usage(ProviderUsage.from_usage(fields), model_name=model)
-    except Exception as exc:
-        logger.debug("Token usage recording skipped: %s", exc)
-
 
 
 @dataclass
@@ -159,7 +124,7 @@ class SkillRegistry:
         self._skills.clear()
 
 
-class SkillsClient:
+class SkillsClient(_AnthropicGantryClient):
     """
     Anthropic client with Skills support.
 
@@ -182,17 +147,8 @@ class SkillsClient:
             gantry: AgentGantry instance for tool execution
             skill_registry: Optional skill registry (creates new if not provided)
         """
-        from anthropic import AsyncAnthropic
-
-        self._api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
-        if not self._api_key:
-            raise ValueError("API key required. Set ANTHROPIC_API_KEY or pass api_key parameter.")
-
-        self._gantry = gantry
+        super().__init__(api_key, gantry)
         self._skills = skill_registry or SkillRegistry()
-
-        # Initialize client
-        self._client = AsyncAnthropic(api_key=self._api_key)
 
     @property
     def skills(self) -> SkillRegistry:
@@ -278,82 +234,30 @@ class SkillsClient:
 
         final_system = "\n".join(system_parts) if system_parts else None
 
-        # Extract query from messages if not provided
         if not query and auto_retrieve_tools:
-            for msg in reversed(messages):
-                if msg.get("role") == "user":
-                    content = msg.get("content", "")
-                    if isinstance(content, str):
-                        query = content
-                        break
+            query = self._last_user_query(messages)
 
         # Retrieve tools if enabled and gantry available
         tools: list[dict[str, Any]] = []
         if self._gantry:
             # If skills define specific tools, get those
             if skill_tool_names:
-                # Get all registered tools from gantry that match skill tool names
                 all_tools = await self._gantry.list_tools()
-                for tool_def in all_tools:
-                    if tool_def.name in skill_tool_names:
-                        tools.append(tool_def.to_dialect("anthropic"))
+                tools = [
+                    tool_def.to_dialect("anthropic")
+                    for tool_def in all_tools
+                    if tool_def.name in skill_tool_names
+                ]
             elif auto_retrieve_tools and query:
-                # Fall back to semantic retrieval
-                retrieval_result = await self._gantry.retrieve(
-                    ToolQuery(
-                        context=ConversationContext(query=query),
-                        limit=tool_limit,
-                        # Convenience layers use 0.0: a flat absolute cutoff
-                        # silently drops everything on longer queries.
-                        score_threshold=0.0,
-                    )
-                )
-                tools = [t.tool.to_dialect("anthropic") for t in retrieval_result.tools]
-
-        # Build the request kwargs
-        request_kwargs: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "max_tokens": max_tokens,
-            **kwargs,
-        }
+                tools = await self._retrieve_tools(query, tool_limit)
 
         if final_system:
-            request_kwargs["system"] = final_system
+            kwargs["system"] = final_system
 
         if tools:
-            request_kwargs["tools"] = tools
+            kwargs["tools"] = tools
 
-        # Create message
-        response = await self._client.messages.create(**request_kwargs)
-        await _record_provider_usage(self._gantry, response, model)
-
-        return response
-
-    async def execute_tool_calls(
-        self,
-        response: Any,
-    ) -> list[dict[str, Any]]:
-        """
-        Execute the tool calls in an Anthropic response.
-
-        Delegates to :meth:`AgentGantry.execute_tool_calls`, which extracts
-        every ``tool_use`` block (including parallel ones), runs them
-        concurrently through the full protection stack, and formats each result
-        with the Anthropic adapter. This used to be hand-rolled here, and in
-        ``SkillsClient`` too, with the two copies having drifted apart on
-        concurrency.
-
-        Args:
-            response: Anthropic message response
-
-        Returns:
-            List of ``tool_result`` blocks in Anthropic format
-        """
-        if not self._gantry:
-            raise ValueError("AgentGantry instance required for tool execution")
-
-        return await self._gantry.execute_tool_calls(response, dialect="anthropic")
+        return await self._create(model, messages=messages, max_tokens=max_tokens, **kwargs)
 
     def register_skill_from_gantry_tools(
         self,

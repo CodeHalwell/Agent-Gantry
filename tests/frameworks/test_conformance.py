@@ -636,7 +636,7 @@ async def test_for_each_framework_select_with_required(
 #
 #   Three deliberate deviations exist one layer *below* convert()/select()
 #   (i.e. not exercised by this matrix — see their own tests): MAF's
-#   `_build_tool_execute` returns a JSON `{"error": ...}` string to the model;
+#   `_build_callable_for_tool` returns a JSON `{"error": ...}` string to the model;
 #   The *live* workbench-style providers return an error
 #   `ToolResult(is_error=True)`; Strands' real `Agent` tool-execution loop
 #   (`DecoratedFunctionTool.stream`) converts any exception into an error
@@ -770,10 +770,8 @@ async def test_llamaindex_live_selection_failure_degrades_gracefully(
     monkeypatch.setitem(sys.modules, "llama_index", types.ModuleType("llama_index"))
     monkeypatch.setitem(sys.modules, "llama_index.core", types.ModuleType("llama_index.core"))
     monkeypatch.setitem(sys.modules, "llama_index.core.objects", stub_objects)
-    # Force a rebuild against the stub base class; monkeypatch restores the
-    # real cached class (if any) after this test.
-    monkeypatch.setattr(li_live, "_RETRIEVER_CLS", None)
 
+    # The subclass is cached per base class, so the stub gets its own build.
     retriever = li_live._gantry_tool_retriever(gantry, limit=3)
     with caplog.at_level("WARNING"):
         tools = await retriever.aretrieve("weather forecast")
@@ -810,16 +808,13 @@ async def test_pydantic_ai_live_selection_failure_degrades_gracefully(
     monkeypatch.setitem(sys.modules, "pydantic_ai.tools", pa_tools)
     monkeypatch.setitem(sys.modules, "pydantic_ai.toolsets", pa_toolsets)
     monkeypatch.setitem(sys.modules, "pydantic_ai.toolsets.abstract", pa_toolsets_abstract)
-    monkeypatch.setattr(pai_live, "_GANTRY_TOOLSET_CLASS", None)
 
     toolset = pai_live._gantry_toolset(gantry, limit=3)
     toolset.set_query("weather forecast")
     with caplog.at_level("WARNING"):
         tools = await toolset.get_tools(types.SimpleNamespace(max_retries=1))
 
-    # stateful (`self._selected` persists across runs): nothing was ever
-    # selected successfully yet, so degrading to "leave prior state" is `{}`.
-    assert tools == {}
+    assert tools == {}  # stateless per-step: degrades to "no tools this step"
     assert any("semantic retrieval failed" in r.message for r in caplog.records)
 
 
@@ -998,3 +993,73 @@ async def test_agent_framework_adapter_select_and_convert_smoke(gantry) -> None:
     tools = await bridge.get_tools("send an email to my boss", limit=2)
     assert tools, "agent_framework: tool_bridge().get_tools() returned no tools"
     assert all(callable(t) for t in tools)
+
+
+# --------------------------------------------------------------------------- #
+# Configuration errors never degrade to a tool-less agent
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("case", ADAPTERS, ids=[c.name for c in ADAPTERS])
+def test_adapter_live_rejects_out_of_bounds_limit(case: AdapterCase) -> None:
+    """``live(limit=60)`` raises at once instead of building an agent that
+    silently runs with no tools (the per-turn hooks used to swallow it)."""
+    from agent_gantry.integrations.frameworks.base import QueryBoundsError
+
+    adapter = case.adapter_cls(gantry=None)  # type: ignore[arg-type]
+    extra = case.live_extra_kwargs() if case.live_extra_kwargs is not None else {}
+    with pytest.raises(QueryBoundsError, match="limit=60"):
+        adapter.live(limit=60, **extra)
+
+
+@pytest.mark.parametrize(
+    "case", [c for c in ADAPTERS if c.live_extra_kwargs is not None], ids=lambda c: c.name
+)
+def test_adapter_live_missing_required_kwarg_is_a_type_error(case: AdapterCase) -> None:
+    adapter = case.adapter_cls(gantry=None)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="requires"):
+        adapter.live()
+
+
+async def test_live_hooks_and_builders_propagate_bounds_errors(gantry: AgentGantry) -> None:
+    """Per-turn hooks re-raise ``QueryBoundsError`` (unlike a transient
+    retrieval failure) and per-call builders reject it at construction."""
+    from agent_gantry.integrations.frameworks.base import QueryBoundsError
+    from agent_gantry.integrations.frameworks.google_adk_live import _inject_selected_tools
+    from agent_gantry.integrations.frameworks.langgraph_live import _select_tools_for_state
+    from agent_gantry.integrations.frameworks.live_wrappers import GantryLiveCrewAgent
+    from agent_gantry.integrations.frameworks.strands_live import GantryStrandsToolHook
+
+    state = {"messages": [{"role": "user", "content": "send an email"}]}
+    with pytest.raises(QueryBoundsError):
+        await _select_tools_for_state(gantry, state, limit=60)
+    with pytest.raises(QueryBoundsError):
+        await _inject_selected_tools(
+            gantry, "send an email", types.SimpleNamespace(), limit=60, score_threshold=0.0
+        )
+    with pytest.raises(QueryBoundsError):
+        GantryStrandsToolHook(gantry, limit=60)
+    with pytest.raises(QueryBoundsError):
+        GantryLiveCrewAgent(gantry, limit=60)
+
+
+async def test_openai_agents_hook_leaves_other_agents_alone(
+    gantry: AgentGantry, monkeypatch
+) -> None:
+    """Run hooks fire for every agent in a run (handoff targets included);
+    only the bound agent's ``tools`` are Gantry's to rewrite."""
+    stub = types.ModuleType("agents")
+    stub.RunHooks = type("RunHooks", (), {})
+    stub.FunctionTool = _echo
+    monkeypatch.setitem(sys.modules, "agents", stub)
+    from agent_gantry.integrations.frameworks.openai_agents_live import _gantry_run_hooks
+
+    bound = types.SimpleNamespace(tools=[])
+    other = types.SimpleNamespace(tools=["theirs"])
+    hooks = _gantry_run_hooks(gantry, bound, limit=1)
+    turn = [{"role": "user", "content": "send an email message to a recipient"}]
+
+    await hooks.on_llm_start(None, other, None, turn)
+    assert other.tools == ["theirs"]
+    await hooks.on_llm_start(None, bound, None, turn)
+    assert bound.tools and other.tools == ["theirs"]

@@ -10,7 +10,7 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
-from agent_gantry.adapters.executors.mcp_client import MCPClient
+from agent_gantry.adapters.executors.mcp_client import MCPClient, _schedule_client_close
 from agent_gantry.schema.mcp import MCPServerDefinition
 
 logger = logging.getLogger(__name__)
@@ -108,22 +108,23 @@ class MCPRegistry:
 
         return client
 
-    def forget_client(self, name: str, namespace: str = "default") -> bool:
-        """Drop a cached client, closing its connection, keeping the server.
+    def _retire_client(self, key: str) -> bool:
+        """Drop the cached client for ``key``, closing it now or in ``close_all_clients``."""
+        client = self._clients.pop(key, None)
+        if client is None:
+            return False
+        if not _schedule_client_close(client):
+            self._retired.append(client)
+        return True
 
-        Used when a server is re-registered with a different endpoint: the
-        cached client still points at the old one.
+    def forget_client(self, name: str, namespace: str = "default") -> bool:
+        """Drop a cached client, keeping the server (it now points elsewhere).
 
         Returns:
             True if a cached client was dropped.
         """
-        client = self._clients.pop(f"{namespace}.{name}", None)
-        if client is None:
+        if not self._retire_client(f"{namespace}.{name}"):
             return False
-        from agent_gantry.adapters.executors.mcp_client import _schedule_client_close
-
-        if not _schedule_client_close(client):
-            self._retired.append(client)
         logger.debug(f"Dropped cached MCP client for: {namespace}.{name}")
         return True
 
@@ -154,19 +155,12 @@ class MCPRegistry:
             True if the server was deleted
         """
         key = f"{namespace}.{name}"
-        if key in self._servers:
-            del self._servers[key]
-            # Also remove client if it exists (best-effort close of its
-            # persistent connection)
-            client = self._clients.pop(key, None)
-            if client is not None:
-                from agent_gantry.adapters.executors.mcp_client import _schedule_client_close
-
-                if not _schedule_client_close(client):
-                    self._retired.append(client)
-            logger.debug(f"Deleted MCP server: {key}")
-            return True
-        return False
+        if key not in self._servers:
+            return False
+        del self._servers[key]
+        self._retire_client(key)
+        logger.debug(f"Deleted MCP server: {key}")
+        return True
 
     async def close_all_clients(self) -> None:
         """Close all cached clients' persistent connections.
@@ -180,10 +174,8 @@ class MCPRegistry:
         # Retired clients included: one dropped outside a running loop had no
         # way to be closed then, and is unreachable through the cache now.
         clients = list(self._clients.values()) + self._retired
-        # Cleared *before* the await, as ``MCPClientPool.close_all`` does:
-        # clearing afterwards discarded any client registered or retired while
-        # the gather was in flight, so it was neither closed here nor
-        # reachable through the cache again.
+        # Cleared *before* the await: a client registered or retired while the
+        # gather is in flight must stay reachable through the cache.
         self._clients.clear()
         self._retired.clear()
         results = await asyncio.gather(
@@ -202,18 +194,11 @@ class MCPRegistry:
         """
         return self._pending.copy()
 
-    def clear_pending(self) -> None:
-        """Clear the pending servers list."""
-        self._pending = []
-
     def drain_pending(self, covered: Sequence[MCPServerDefinition]) -> None:
         """Drop only the pending entries ``covered`` accounts for.
 
-        A blanket :meth:`clear_pending` discarded a ``register_mcp_server()``
-        that landed while a sync was awaiting, so the server was never
-        embedded and ``_synced`` stayed ``True`` — the same late-registration
-        loss the tool-side buffer had. Identity, not equality: two
-        registrations of the same definition are distinct buffer entries.
+        A registration landing while a sync is awaiting stays pending. Identity,
+        not equality: two registrations of one definition are distinct entries.
         """
         done = {id(server) for server in covered}
         self._pending = [server for server in self._pending if id(server) not in done]
@@ -249,8 +234,3 @@ class MCPRegistry:
     def server_count(self) -> int:
         """Return the number of registered servers."""
         return len(self._servers)
-
-    @property
-    def active_client_count(self) -> int:
-        """Return the number of active clients."""
-        return len(self._clients)

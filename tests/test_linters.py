@@ -160,3 +160,10 @@ def test_lint_source_scans_files_without_building_a_gantry(
     good.write_text("x = 1\n")
     assert main(["lint", "--source", str(good)]) == 0
     assert "No issues found" in capsys.readouterr().out
+
+
+def test_lint_source_with_a_missing_path_is_an_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["lint", "--source", str(tmp_path / "nope.py")]) == 2
+    assert "nope.py" in capsys.readouterr().err

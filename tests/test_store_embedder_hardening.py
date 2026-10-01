@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import types
 from typing import Any
 
 import pytest
@@ -299,9 +300,74 @@ class TestSentenceTransformersEmbedder:
         embedder = NomicEmbedder(dimension=64)
         full = np.zeros(embedder.FULL_DIMENSION)
         full[:96] = np.linspace(1.0, 0.1, 96)
-        truncated = embedder._apply_matryoshka_truncation([(full / np.linalg.norm(full)).tolist()])
+        truncated = embedder._truncate([(full / np.linalg.norm(full)).tolist()])
         assert len(truncated[0]) == 64
         assert np.linalg.norm(truncated[0]) == pytest.approx(1.0)
+
+    @pytest.mark.asyncio
+    async def test_nomic_prefixes_documents_and_queries(self) -> None:
+        """Documents get the configured task prefix; queries always ``search_query``."""
+        import numpy as np
+
+        from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+
+        class RecordingModel(_FakeModel):
+            def __init__(self) -> None:
+                super().__init__(dimension=768)
+                self.calls: list[list[str]] = []
+
+            def encode(self, texts: Any, **kwargs: Any) -> Any:
+                self.calls.append(list(texts))
+                return super().encode(texts, **kwargs)
+
+        embedder = NomicEmbedder(dimension=64, task_type="clustering")
+        model = RecordingModel()
+        embedder._model = model
+        embedder._native_dimension = 768
+
+        document = await embedder.embed_text("alpha")
+        query = await embedder.embed_query("beta")
+        await embedder.embed_batch(["c", "d"])
+        assert model.calls == [
+            ["clustering: alpha"],
+            ["search_query: beta"],
+            ["clustering: c", "clustering: d"],
+        ]
+        assert len(document) == len(query) == 64
+        assert np.linalg.norm(document) == pytest.approx(1.0)
+        assert embedder.get_embedder_id() == "nomic-ai/nomic-embed-text-v1.5:64:clustering"
+
+
+class TestOpenAIEmbedders:
+    def test_azure_builds_from_its_own_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The base class checked OPENAI_API_KEY first, so the documented
+        AZURE_OPENAI_API_KEY alone raised the OpenAI error."""
+        pytest.importorskip("openai")
+        from agent_gantry.adapters.embedders.openai import AzureOpenAIEmbedder
+        from agent_gantry.schema.config import EmbedderConfig
+
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.setenv("AZURE_OPENAI_API_KEY", "azure-test-key")
+        embedder = AzureOpenAIEmbedder(
+            EmbedderConfig(
+                type="azure",
+                model="text-embedding-3-small",
+                api_base="https://example.openai.azure.com",
+            )
+        )
+        assert (
+            embedder.get_embedder_id()
+            == "azure:text-embedding-3-small:1536@https://example.openai.azure.com"
+        )
+
+    def test_openai_still_requires_its_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        pytest.importorskip("openai")
+        from agent_gantry.adapters.embedders.openai import OpenAIEmbedder
+        from agent_gantry.schema.config import EmbedderConfig
+
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        with pytest.raises(ValueError, match="OPENAI_API_KEY"):
+            OpenAIEmbedder(EmbedderConfig(model="text-embedding-3-small"))
 
 
 class _CountingEmbedder:
@@ -419,3 +485,350 @@ def test_cached_embedder_counters_are_exact_across_threads(tmp_path: Any) -> Non
     assert not errors
     assert cached.misses == 2, "only the two warm-up calls missed"
     assert cached.hits == rounds * threads * 2
+
+
+# --------------------------------------------------------------------------- #
+# LanceDB: zero-row tag filters, error propagation, schema migration
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_lancedb_tag_filter_with_no_rows_returns_nothing(lancedb_store: Any) -> None:
+    """A zero row count sized the fetch window at 0, and LanceDB rejects
+    ``limit(0)`` on a vector query."""
+    await lancedb_store.initialize()
+    query = [1.0, 0.0, 0.0, 0.0]
+    assert await lancedb_store.search(query, limit=3, filters={"tags": ["x"]}) == []
+    await lancedb_store.add_tools([_tool("a", tags=["x"])], [query])
+    scoped = await lancedb_store.search(
+        query, limit=3, filters={"tags": ["x"], "namespace": ["other"]}
+    )
+    assert scoped == []
+    assert len(await lancedb_store.search(query, limit=3, filters={"tags": ["x"]})) == 1
+
+
+@pytest.mark.asyncio
+async def test_lancedb_table_errors_propagate(lancedb_store: Any) -> None:
+    """``list_all``/``count``/``delete`` swallowed table errors into ``[]``/``0``/
+    ``False``, which is indistinguishable from an empty store."""
+    await lancedb_store.initialize()
+
+    class BrokenTable:
+        def search(self) -> Any:
+            raise RuntimeError("table exploded")
+
+        def count_rows(self, *args: Any) -> int:
+            raise RuntimeError("table exploded")
+
+    lancedb_store._tools_table = BrokenTable()
+    for call in (lancedb_store.list_all(), lancedb_store.count(), lancedb_store.delete("x")):
+        with pytest.raises(RuntimeError, match="table exploded"):
+            await call
+
+
+@pytest.mark.asyncio
+async def test_lancedb_schema_migration_keeps_rows(tmp_path: Any) -> None:
+    """A pre-fingerprint table is migrated without losing its rows."""
+    lancedb = pytest.importorskip("lancedb")
+    pa = pytest.importorskip("pyarrow")
+    from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+    from agent_gantry.utils.fingerprint import compute_tool_fingerprint
+
+    tool = _tool("legacy_tool")
+    legacy_schema = pa.schema(
+        [
+            pa.field("id", pa.string()),
+            pa.field("name", pa.string()),
+            pa.field("namespace", pa.string()),
+            pa.field("description", pa.string()),
+            pa.field("tool_json", pa.string()),
+            pa.field("vector", pa.list_(pa.float32(), 4)),
+        ]
+    )
+    db_path = str(tmp_path / "db")
+    lancedb.connect(db_path).create_table(
+        "tools",
+        data=[
+            {
+                "id": "default.legacy_tool",
+                "name": "legacy_tool",
+                "namespace": "default",
+                "description": tool.description,
+                "tool_json": tool.model_dump_json(),
+                "vector": [1.0, 0.0, 0.0, 0.0],
+            }
+        ],
+        schema=legacy_schema,
+    )
+
+    store = LanceDBVectorStore(db_path=db_path, dimension=4)
+    await store.initialize()
+    assert await store.count() == 1
+    assert await store.get_stored_fingerprints() == {
+        "default.legacy_tool": compute_tool_fingerprint(tool)
+    }
+    listed = store._db.list_tables()
+    assert "tools__migrating" not in set(getattr(listed, "tables", listed))
+
+
+# --------------------------------------------------------------------------- #
+# Remote adapters: tag filter, upsert=False and delete contracts (fake clients)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_search_with_tags_widens_until_enough_match() -> None:
+    from agent_gantry.adapters.vector_stores.remote import _required_tags, _search_with_tags
+
+    rows: list[Any] = [(_tool(f"plain_{i}"), 1.0 - i / 100) for i in range(10)]
+    rows.append((_tool("tagged", tags=["special"]), 0.5))
+    sizes: list[int] = []
+
+    async def fetch(size: int) -> list[Any]:
+        sizes.append(size)
+        return rows[:size]
+
+    assert _required_tags({"tags": ["special"]}) == {"special"}
+    assert _required_tags(None) == set() and _required_tags({"namespace": ["a"]}) == set()
+
+    hits = await _search_with_tags(fetch, 2, {"special"})
+    assert [tool.name for tool, _ in hits] == ["tagged"]
+    assert sizes == [8, 16]  # limit * 4, then doubled until the backend ran out
+
+    assert await _search_with_tags(fetch, 3, set()) == rows[:3]
+
+
+class _FakeChromaCollection:
+    """Enough of ``chromadb.Collection`` for add/get/delete/query/count."""
+
+    def __init__(self) -> None:
+        self.rows: dict[str, dict[str, Any]] = {}
+
+    def upsert(self, ids: list[str], embeddings: Any, documents: Any, metadatas: Any) -> None:
+        for tool_id, embedding, metadata in zip(ids, embeddings, metadatas):
+            self.rows[tool_id] = {"embedding": embedding, "metadata": metadata}
+
+    def get(self, ids: list[str] | None = None, **_: Any) -> dict[str, Any]:
+        found = [i for i in (ids or self.rows) if i in self.rows]
+        return {"ids": found, "metadatas": [self.rows[i]["metadata"] for i in found]}
+
+    def delete(self, ids: list[str]) -> None:
+        for tool_id in ids:
+            self.rows.pop(tool_id, None)
+
+    def count(self) -> int:
+        return len(self.rows)
+
+    def query(
+        self, query_embeddings: Any, n_results: int, where: Any, include: list[str]
+    ) -> dict[str, Any]:
+        rows = list(self.rows.values())[:n_results]
+        out: dict[str, Any] = {
+            "metadatas": [[r["metadata"] for r in rows]],
+            "distances": [[0.1 * i for i in range(len(rows))]],
+        }
+        if "embeddings" in include:
+            out["embeddings"] = [[r["embedding"] for r in rows]]
+        return out
+
+
+async def _ready() -> None:
+    """Stand-in for ``initialize`` on a store built without its client."""
+
+
+def _chroma_store() -> Any:
+    from agent_gantry.adapters.vector_stores.remote import ChromaVectorStore
+
+    store = ChromaVectorStore.__new__(ChromaVectorStore)
+    store._collection = _FakeChromaCollection()
+    store.initialize = _ready  # type: ignore[method-assign]
+    return store
+
+
+@pytest.mark.asyncio
+async def test_chroma_upsert_false_skips_stored_ids_and_delete_reports_a_miss() -> None:
+    store = _chroma_store()
+    tool, other = _tool("a"), _tool("b")
+    assert await store.add_tools([tool], [[1.0, 0.0]]) == 1
+    # The stored id and an in-batch repeat are skipped; only the new row counts
+    assert await store.add_tools([tool, other, other], [[1.0, 0.0]] * 3, upsert=False) == 1
+    assert await store.count() == 2
+    assert await store.delete("missing") is False
+    assert await store.delete("a") is True
+    assert await store.delete("a") is False
+
+
+@pytest.mark.asyncio
+async def test_chroma_search_honours_the_tag_filter() -> None:
+    store = _chroma_store()
+    tools = [_tool(f"plain_{i}") for i in range(6)] + [_tool("tagged", tags=["special"])]
+    await store.add_tools(tools, [[1.0, 0.0]] * len(tools))
+    hits = await store.search([1.0, 0.0], limit=1, filters={"tags": ["special"]})
+    assert [tool.name for tool, _ in hits] == ["tagged"]
+    with_vectors = await store.search([1.0, 0.0], limit=2, include_embeddings=True)
+    assert [(t.name, e) for t, _, e in with_vectors] == [
+        ("plain_0", [1.0, 0.0]),
+        ("plain_1", [1.0, 0.0]),
+    ]
+
+
+class _FakeQdrantClient:
+    def __init__(self, points: list[Any]) -> None:
+        self.points = points
+        self.closed = False
+
+    async def query_points(self, *, limit: int, **_: Any) -> Any:
+        return types.SimpleNamespace(points=self.points[:limit])
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_qdrant_search_honours_the_tag_filter_and_close_releases_the_client() -> None:
+    from agent_gantry.adapters.vector_stores.remote import QdrantVectorStore
+
+    def point(tool: ToolDefinition, score: float) -> Any:
+        return types.SimpleNamespace(
+            payload={"tool_json": tool.model_dump_json()}, score=score, vector=None
+        )
+
+    points = [point(_tool(f"plain_{i}"), 0.9) for i in range(5)]
+    points.append(point(_tool("tagged", tags=["special"]), 0.1))
+    store = QdrantVectorStore.__new__(QdrantVectorStore)
+    store._collection_name = "c"
+    store._quantization = None
+    store._client = _FakeQdrantClient(points)
+    store.initialize = _ready  # type: ignore[method-assign]
+
+    hits = await store.search([1.0], limit=1, filters={"tags": ["special"]})
+    assert [(tool.name, score) for tool, score in hits] == [("tagged", 0.1)]
+    await store.close()
+    assert store._client.closed
+
+
+class _AsyncCM:
+    def __init__(self, value: Any = None) -> None:
+        self.value = value
+
+    async def __aenter__(self) -> Any:
+        return self.value
+
+    async def __aexit__(self, *exc: Any) -> bool:
+        return False
+
+
+class _FakePGConn:
+    """``fetchrow`` applies ON CONFLICT DO NOTHING; ``fetch`` serves an ordered table."""
+
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self.rows = rows
+        self.ids = {row["id"] for row in rows}
+
+    def transaction(self) -> _AsyncCM:
+        return _AsyncCM()
+
+    async def fetchrow(self, sql: str, *params: Any) -> dict[str, Any] | None:
+        assert "ON CONFLICT (id) DO NOTHING RETURNING id" in sql
+        if params[0] in self.ids:
+            return None
+        self.ids.add(params[0])
+        return {"id": params[0]}
+
+    async def fetch(self, sql: str, embedding: str, size: int, *rest: Any) -> list[dict[str, Any]]:
+        return self.rows[:size]
+
+
+def _pg_store(conn: _FakePGConn) -> Any:
+    from agent_gantry.adapters.vector_stores.remote import PGVectorStore
+
+    store = PGVectorStore.__new__(PGVectorStore)
+    store._table_name = "tools"
+    store._pool = types.SimpleNamespace(acquire=lambda: _AsyncCM(conn))
+    store.initialize = _ready  # type: ignore[method-assign]
+    return store
+
+
+@pytest.mark.asyncio
+async def test_pgvector_upsert_false_counts_only_inserted_rows() -> None:
+    conn = _FakePGConn([{"id": "default.a"}])
+    store = _pg_store(conn)
+    assert (
+        await store.add_tools([_tool("a"), _tool("b"), _tool("b")], [[1.0]] * 3, upsert=False) == 1
+    )
+    assert conn.ids == {"default.a", "default.b"}
+
+
+@pytest.mark.asyncio
+async def test_pgvector_search_honours_the_tag_filter() -> None:
+    def row(tool: ToolDefinition, similarity: float) -> dict[str, Any]:
+        return {
+            "id": tool.qualified_name,
+            "tool_json": tool.model_dump_json(),
+            "similarity": similarity,
+        }
+
+    rows = [row(_tool(f"plain_{i}"), 0.9) for i in range(5)]
+    rows.append(row(_tool("tagged", tags=["special"]), 0.2))
+    store = _pg_store(_FakePGConn(rows))
+    hits = await store.search([1.0], limit=1, filters={"tags": ["special"]})
+    assert [(tool.name, score) for tool, score in hits] == [("tagged", 0.2)]
+    above = await store.search([1.0], limit=2, score_threshold=0.5)
+    assert [tool.name for tool, _ in above] == ["plain_0", "plain_1"]
+
+
+class TestLazyModelMixin:
+    def test_load_model_leaving_model_unset_is_an_error(self) -> None:
+        from agent_gantry.adapters.embedders.base import LazyModelMixin
+
+        class Forgetful(LazyModelMixin):
+            def __init__(self) -> None:
+                self._model = None
+                self._load_lock = threading.Lock()
+
+            def _load_model(self) -> None:
+                pass  # never assigns self._model
+
+        with pytest.raises(RuntimeError, match="left _model unset"):
+            Forgetful()._ensure_initialized()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_first_use_loads_once(self) -> None:
+        import time
+
+        from agent_gantry.adapters.embedders.base import LazyModelMixin
+
+        class Slow(LazyModelMixin):
+            loads = 0
+
+            def __init__(self) -> None:
+                self._model = None
+                self._load_lock = threading.Lock()
+
+            def _load_model(self) -> None:
+                time.sleep(0.05)  # long enough for the second caller to contend
+                Slow.loads += 1
+                self._model = object()
+
+        lazy = Slow()
+        await asyncio.gather(lazy._aensure_initialized(), lazy._aensure_initialized())
+        assert Slow.loads == 1 and lazy._model is not None
+
+
+class TestEmbedderHealthCheck:
+    @pytest.mark.asyncio
+    async def test_health_check_encodes_rather_than_only_loading(self) -> None:
+        from agent_gantry.adapters.embedders.sentence_transformers import (
+            SentenceTransformersEmbedder,
+        )
+
+        healthy = SentenceTransformersEmbedder(model="stub-model")
+        _stub_model(healthy)
+        assert await healthy.health_check()
+
+        def cannot_encode(*args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("model loaded but cannot encode")
+
+        broken = SentenceTransformersEmbedder(model="stub-model")
+        broken._model = types.SimpleNamespace(encode=cannot_encode)
+        assert not await broken.health_check()

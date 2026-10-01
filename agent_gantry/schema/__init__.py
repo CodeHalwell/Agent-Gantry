@@ -1,7 +1,7 @@
 """
 Schema modules for Agent-Gantry.
 
-Contains data models for tools, queries, events, configuration, and A2A protocol.
+Contains data models for tools, queries, configuration, and the MCP/A2A protocols.
 """
 
 from agent_gantry.schema.a2a import (
@@ -13,11 +13,6 @@ from agent_gantry.schema.a2a import (
     TaskResponse,
 )
 from agent_gantry.schema.config import A2AAgentConfig, A2AConfig, AgentGantryConfig
-from agent_gantry.schema.events import (
-    ExecutionEvent,
-    HealthChangeEvent,
-    RetrievalEvent,
-)
 from agent_gantry.schema.mcp import MCPServerCost, MCPServerDefinition, MCPServerHealth
 from agent_gantry.schema.query import (
     ConversationContext,
@@ -25,18 +20,12 @@ from agent_gantry.schema.query import (
     ScoredTool,
     ToolQuery,
 )
-from agent_gantry.schema.skill import (
-    Skill,
-    SkillCategory,
-    SkillRetrievalResult,
-    SkillSearchResult,
-)
+from agent_gantry.schema.skill import Skill, SkillCategory, SkillSearchResult
 from agent_gantry.schema.tool import (
     SchemaDialect,
     ToolCapability,
     ToolCost,
     ToolDefinition,
-    ToolDependency,
     ToolHealth,
     ToolSource,
 )
@@ -47,23 +36,17 @@ __all__ = [
     "ToolCapability",
     "ToolCost",
     "ToolDefinition",
-    "ToolDependency",
     "ToolHealth",
     "ToolSource",
     # Skill models
     "Skill",
     "SkillCategory",
-    "SkillRetrievalResult",
     "SkillSearchResult",
     # Query models
     "ConversationContext",
     "RetrievalResult",
     "ScoredTool",
     "ToolQuery",
-    # Event models
-    "ExecutionEvent",
-    "HealthChangeEvent",
-    "RetrievalEvent",
     # Config
     "AgentGantryConfig",
     "A2AAgentConfig",

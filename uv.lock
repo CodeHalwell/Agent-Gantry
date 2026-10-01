@@ -550,7 +550,6 @@ name = "agent-gantry"
 version = "0.19.0"
 source = { editable = "." }
 dependencies = [
-    { name = "jsonschema" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pydantic" },
@@ -590,6 +589,7 @@ all = [
     { name = "groq" },
     { name = "httpx" },
     { name = "huggingface-hub", extra = ["hf-xet"] },
+    { name = "jsonschema" },
     { name = "lancedb" },
     { name = "langchain" },
     { name = "langchain-openai" },
@@ -659,6 +659,7 @@ example-tools = [
     { name = "cryptography" },
     { name = "einops" },
     { name = "huggingface-hub", extra = ["hf-xet"] },
+    { name = "jsonschema" },
     { name = "matplotlib" },
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pandas", version = "3.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -754,7 +755,7 @@ requires-dist = [
     { name = "groq", marker = "extra == 'groq'", specifier = ">=1.6.0" },
     { name = "httpx", marker = "extra == 'a2a'", specifier = ">=0.24.0" },
     { name = "huggingface-hub", extras = ["hf-xet"], marker = "extra == 'example-tools'", specifier = ">=0.36.0" },
-    { name = "jsonschema", specifier = ">=4.18.0" },
+    { name = "jsonschema", marker = "extra == 'example-tools'", specifier = ">=4.18.0" },
     { name = "lancedb", marker = "extra == 'lancedb'", specifier = ">=0.4.0" },
     { name = "langchain", marker = "extra == 'agent-frameworks'", specifier = ">=1.4.2" },
     { name = "langchain-openai", marker = "extra == 'agent-frameworks'", specifier = ">=1.4.1" },

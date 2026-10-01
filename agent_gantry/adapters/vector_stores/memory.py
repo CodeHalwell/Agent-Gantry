@@ -5,7 +5,6 @@ In-memory vector store implementation.
 from __future__ import annotations
 
 import logging
-import math
 from typing import Any
 
 import numpy as np
@@ -327,13 +326,17 @@ class InMemoryVectorStore:
     async def list_all_skills(
         self,
         namespace: str | None = None,
+        category: str | None = None,
         limit: int = 1000,
         offset: int = 0,
     ) -> list[Skill]:
-        """List all skills."""
-        skills = list(self._skills.values())
-        if namespace:
-            skills = [s for s in skills if s.namespace == namespace]
+        """List skills, optionally filtered by namespace and category (string value)."""
+        skills = [
+            s
+            for s in self._skills.values()
+            if (not namespace or s.namespace == namespace)
+            and (category is None or s.category.value == category)
+        ]
         return skills[offset : offset + limit]
 
     async def count_skills(self, namespace: str | None = None) -> int:
@@ -371,28 +374,6 @@ class InMemoryVectorStore:
     def supports_metadata(self) -> bool:
         """Return True as in-memory store supports metadata storage."""
         return True
-
-    def _cosine_similarity(self, a: list[float], b: list[float]) -> float:
-        """Calculate cosine similarity between two vectors."""
-        if len(a) != len(b):
-            return 0.0
-
-        # ⚡ Bolt: Calculate dot product and norms in a single pass to reduce overhead
-        dot_product = 0.0
-        norm_a_sq = 0.0
-        norm_b_sq = 0.0
-        for x, y in zip(a, b):
-            dot_product += x * y
-            norm_a_sq += x * x
-            norm_b_sq += y * y
-
-        norm_a = math.sqrt(norm_a_sq)
-        norm_b = math.sqrt(norm_b_sq)
-
-        if norm_a == 0 or norm_b == 0:
-            return 0.0
-
-        return dot_product / (norm_a * norm_b)
 
     async def get_stored_fingerprints(self) -> dict[str, str]:
         """

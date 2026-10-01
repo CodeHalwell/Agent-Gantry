@@ -458,3 +458,13 @@ async def test_blank_query_retrieves_nothing():
     assert await gantry.retrieve_skills("") == []
     assert await gantry.retrieve_skills("   ") == []
     assert await gantry.retrieve_skills_as_prompt("") == ""
+
+
+@pytest.mark.asyncio
+async def test_memory_store_list_all_skills_filters_by_category():
+    store = InMemoryVectorStore()
+    await store.add_skills(_make_skills(), [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+    assert {s.name for s in await store.list_all_skills(category="pattern")} == {"retry_backoff"}
+    assert {
+        s.name for s in await store.list_all_skills(namespace="default", category="how_to")
+    } == {"api_pagination"}

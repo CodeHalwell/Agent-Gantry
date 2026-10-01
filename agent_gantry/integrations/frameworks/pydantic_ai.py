@@ -10,17 +10,14 @@ Public entry point: :class:`PydanticAIAdapter`.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from agent_gantry.integrations.frameworks.base import (
-    DEFAULT_TOOL_LIMIT,
-    BaseFrameworkAdapter,
-    GantryToolset,
-    ToolSpec,
+from agent_gantry.integrations.frameworks.base import BaseFrameworkAdapter, ToolSpec
+
+_INSTALL_HINT = (
+    "Pydantic AI support requires `pydantic-ai`. "
+    "Install it with `pip install pydantic-ai` (or `uv add pydantic-ai`)."
 )
-
-if TYPE_CHECKING:
-    from agent_gantry.core.gantry import AgentGantry
 
 
 def _spec_to_pydantic_ai(spec: ToolSpec) -> Any:
@@ -36,9 +33,7 @@ def _spec_to_pydantic_ai(spec: ToolSpec) -> Any:
     try:
         from pydantic_ai.tools import Tool
     except ImportError as exc:  # pragma: no cover - exercised via stub
-        raise ImportError(
-            "Pydantic AI support requires `pydantic-ai`. Install it with `pip install pydantic-ai` (or `uv add pydantic-ai`)."
-        ) from exc
+        raise ImportError(_INSTALL_HINT) from exc
 
     function = spec.callable_for_signature()
     try:
@@ -57,58 +52,22 @@ def _spec_to_pydantic_ai(spec: ToolSpec) -> Any:
         )
 
 
-async def _for_pydantic_ai(
-    gantry: AgentGantry,
-    query: str,
-    *,
-    limit: int = DEFAULT_TOOL_LIMIT,
-    **select_kwargs: Any,
-) -> list[Any]:
-    """Select tools for ``query`` and return them as Pydantic AI ``Tool``s."""
-    specs = await GantryToolset(gantry).select(query, limit=limit, **select_kwargs)
-    return [_spec_to_pydantic_ai(s) for s in specs]
-
-
 class PydanticAIAdapter(BaseFrameworkAdapter):
     """Route Gantry-selected tools into Pydantic AI.
 
     Static slice (``pydantic_ai.tools.Tool`` objects) plus a deep per-turn live
-    toolset that re-selects tools on every run/step. Both route through ``gantry.execute``.
+    toolset that re-selects tools on every run/step. Both route through
+    ``gantry.execute``. :meth:`live` returns the :meth:`toolset` — plug it into
+    ``Agent(model, toolsets=[<result>])``.
     """
 
     live_tier = "per-turn"
+    _live_delegate = "toolset"
 
     @staticmethod
     def convert(spec: ToolSpec) -> Any:
         """Wrap a single :class:`ToolSpec` as a Pydantic AI ``Tool``."""
         return _spec_to_pydantic_ai(spec)
-
-    def live(
-        self,
-        *,
-        limit: int | None = None,
-        score_threshold: float = 0.0,
-        namespaces: list[str] | None = None,
-        required: list[str] | None = None,
-        always_include: list[str] | None = None,
-        **framework_kwargs: Any,
-    ) -> Any:
-        """Per-turn uniform entry point: delegates to :meth:`toolset`.
-
-        Returns a ``pydantic_ai.toolsets.AbstractToolset`` — plug it into
-        ``Agent(model, toolsets=[<result>])``. ``required``/``always_include``
-        are re-applied on every run/step (see
-        :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select`).
-        No other ``framework_kwargs`` are required.
-        """
-        return self.toolset(
-            limit=limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
-            **framework_kwargs,
-        )
 
     def toolset(
         self,
@@ -126,9 +85,5 @@ class PydanticAIAdapter(BaseFrameworkAdapter):
 
         return _gantry_toolset(
             self._gantry,
-            limit=self._default_limit if limit is None else limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
+            **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
         )

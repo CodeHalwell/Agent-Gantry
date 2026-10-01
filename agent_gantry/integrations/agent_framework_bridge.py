@@ -37,13 +37,12 @@ import copy
 import inspect
 import json
 import logging
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, NamedTuple
 
 from pydantic import Field
 
-from agent_gantry.schema.execution import ToolCall
+from agent_gantry.integrations.frameworks.base import ToolExecutionError, spec_from_tool
 from agent_gantry.schema.tool import ToolCapability
 
 if TYPE_CHECKING:
@@ -182,6 +181,22 @@ def _parse_threshold(
     raise TypeError(
         f"score_threshold must be float, str, or None; got {type(threshold).__name__}."
     )
+
+
+class _Threshold(NamedTuple):
+    """A ``score_threshold`` parsed once: the raw value, its mode and numeric part."""
+
+    raw: float | str | None
+    mode: str
+    numeric: float | None
+
+    @classmethod
+    def parse(cls, threshold: float | str | None) -> _Threshold:
+        return cls(threshold, *_parse_threshold(threshold))
+
+    @property
+    def label(self) -> str:
+        return self.mode if self.mode == "absolute" else f"relative:{self.numeric}"
 
 
 # Mirror of the ``le`` constraint on ``ToolQuery.limit`` (see
@@ -376,117 +391,8 @@ def _tool_approval_mode(tool_def: ToolDefinition) -> str | None:
     return None
 
 
-def _build_tool_execute(
-    tool_name: str, gantry: AgentGantry, namespace: str | None = None
-) -> Callable[..., Awaitable[str]]:
-    """Build the async callable that runs ``tool_name`` through ``gantry.execute``.
-
-    Any exception or failed ToolResult is converted into a JSON ``{"error": ...}``
-    string so the real root cause survives Agent Framework's tool runner — which
-    otherwise replaces an uncaught error with the opaque ``"Error: Function
-    failed."`` string when ``include_detailed_errors`` is off (the default).
-
-    ``namespace`` pins execution to the tool this wrapper was built for; without
-    it a same-named tool in another namespace could be run instead.
-    """
-
-    async def _execute(**kwargs: Any) -> str:
-        try:
-            result = await gantry.execute(
-                ToolCall(tool_name=tool_name, namespace=namespace, arguments=kwargs)
-            )
-        except Exception as exc:
-            return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
-        if result.status.value == "success":
-            val = result.result
-            return val if isinstance(val, str) else json.dumps(val)
-        # Failed ToolResult: prefer the recorded error/error_type, otherwise
-        # fall back to a clear default — never an ambiguous message with no context.
-        error_text = result.error or "tool execution failed (no error message)"
-        if result.error_type and result.error_type not in error_text:
-            error_text = f"{result.error_type}: {error_text}"
-        return json.dumps({"error": error_text})
-
-    return _execute
-
-
-def _build_typed_wrapper(
-    tool_name: str,
-    tool_desc: str,
-    properties: dict[str, Any],
-    required_params: set[str],
-    execute: Callable[..., Awaitable[str]],
-) -> Callable[..., Awaitable[str]]:
-    """Wrap ``execute`` in a callable that carries AF-introspectable metadata.
-
-    AF reads ``__name__`` / ``__doc__`` / ``__annotations__`` (via the synthesized
-    ``__signature__``) to build the LLM function schema, so the wrapper exposes the
-    tool's real parameters (annotated with ``Annotated[type, Field(...)]``) instead
-    of a bare ``**kwargs``. Parameterless tools use a zero-arg variant to avoid
-    surfacing a spurious ``**kwargs``. Two separately named inner functions avoid
-    the mypy "conditional function variant" error from assigning incompatible
-    signatures to one name.
-    """
-
-    # Required parameters first (stable within each group): JSON-Schema
-    # ``properties`` carries no ordering guarantee — MCP servers, OpenAPI
-    # imports and round-tripped schemas routinely list an optional property
-    # before a required one, and ``inspect.Signature`` rejects a non-default
-    # parameter after a defaulted one (``ValueError``), which previously
-    # killed the whole run inside ``before_run``.
-    ordered_names = sorted(properties, key=lambda name: name not in required_params)
-
-    async def _wrapper_no_args() -> str:
-        return await execute()
-
-    async def _wrapper_with_args(*args: Any, **kwargs: Any) -> str:
-        # Positional args map onto the same required-first order the
-        # synthesized signature advertises.
-        if args:
-            if len(args) > len(ordered_names):
-                raise TypeError(
-                    f"{tool_name}() takes at most {len(ordered_names)} positional "
-                    f"arguments but {len(args)} were given"
-                )
-            for idx, value in enumerate(args):
-                p_name = ordered_names[idx]
-                if p_name not in kwargs:
-                    kwargs[p_name] = value
-        return await execute(**kwargs)
-
-    wrapper: Callable[..., Awaitable[str]]
-    if len(properties) == 0:
-        wrapper = _wrapper_no_args
-    else:
-        wrapper = _wrapper_with_args
-        new_params = []
-        for p_name in ordered_names:
-            p_info = properties[p_name]
-            p_desc = p_info.get("description", f"Parameter: {p_name}")
-            p_type = _json_type_to_python(p_info.get("type", "string"))
-            default = (
-                inspect.Parameter.empty
-                if p_name in required_params
-                else p_info.get("default")
-            )
-            new_params.append(
-                inspect.Parameter(
-                    p_name,
-                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                    annotation=Annotated[p_type, Field(description=p_desc)],
-                    default=default,
-                )
-            )
-        wrapper.__signature__ = inspect.Signature(parameters=new_params)  # type: ignore[attr-defined]
-
-    wrapper.__name__ = tool_name
-    wrapper.__qualname__ = tool_name
-    wrapper.__doc__ = tool_desc
-    return wrapper
-
-
 def _maybe_wrap_as_function_tool(
-    wrapper: Callable[..., Awaitable[str]],
+    wrapper: Any,
     tool_def: ToolDefinition,
     as_function_tool: bool | None,
 ) -> Any:
@@ -544,12 +450,17 @@ def _build_callable_for_tool(
     """
     Build a Python callable wrapping a Gantry tool for Microsoft Agent Framework.
 
-    The callable carries proper type annotations (via ``Annotated`` + Pydantic
-    ``Field``) so AF auto-generates the correct function schema for the LLM
-    instead of receiving a raw JSON schema. When ``agent-framework`` is
-    importable and ``as_function_tool`` is not ``False`` the callable is wrapped
-    as a real ``FunctionTool``; otherwise a plain typed async callable is
-    returned (AF 1.0 auto-wraps those at agent construction time).
+    The callable is :meth:`ToolSpec.callable_for_signature` — a real signature
+    derived from the tool's JSON schema — re-declared positional-or-keyword
+    (required parameters first, so positional calls map by order) with each
+    parameter's description attached as ``Annotated[type, Field(...)]``, which
+    is what AF introspects for bare callables. Any exception or failed
+    ``ToolResult`` becomes a JSON ``{"error": ...}`` string so the root cause
+    survives AF's tool runner, which otherwise reports an opaque
+    ``"Error: Function failed."``. When ``agent-framework`` is importable and
+    ``as_function_tool`` is not ``False`` the callable is wrapped as a real
+    ``FunctionTool``; otherwise the bare typed async callable is returned (AF
+    1.0 auto-wraps those at agent construction time).
 
     Args:
         tool_def: The Gantry ToolDefinition to wrap.
@@ -562,28 +473,48 @@ def _build_callable_for_tool(
         Either an ``agent_framework.FunctionTool`` or a bare async callable,
         both accepted by ``Agent(tools=[...])``.
     """
-    params_schema = tool_def.parameters_schema
-    properties = params_schema.get("properties", {})
-    required_params = set(params_schema.get("required", []))
+    spec = spec_from_tool(gantry, tool_def)
+    fn = spec.callable_for_signature()
+    properties = tool_def.parameters_schema.get("properties") or {}
+    aliases = spec.parameter_aliases()
+    params = []
+    for p in sorted(
+        fn.__signature__.parameters.values(),
+        key=lambda p: p.default is not inspect.Parameter.empty,
+    ):
+        prop = properties.get(aliases.get(p.name, p.name))
+        description = (prop.get("description") if isinstance(prop, dict) else None) or (
+            f"Parameter: {p.name}"
+        )
+        params.append(
+            p.replace(
+                kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=Annotated[p.annotation, Field(description=description)],
+            )
+        )
+    names = [p.name for p in params]
 
-    execute = _build_tool_execute(tool_def.name, gantry, tool_def.namespace)
-    wrapper = _build_typed_wrapper(
-        tool_def.name, tool_def.description, properties, required_params, execute
-    )
-    return _maybe_wrap_as_function_tool(wrapper, tool_def, as_function_tool)
+    async def _wrapper(*args: Any, **kwargs: Any) -> str:
+        if len(args) > len(names):
+            raise TypeError(
+                f"{tool_def.name}() takes at most {len(names)} positional "
+                f"arguments but {len(args)} were given"
+            )
+        try:
+            result = await fn(**{**dict(zip(names, args)), **kwargs})
+        except ToolExecutionError as exc:
+            error_text = exc.error or "tool execution failed (no error message)"
+            if exc.error_type and exc.error_type not in error_text:
+                error_text = f"{exc.error_type}: {error_text}"
+            return json.dumps({"error": error_text})
+        except Exception as exc:
+            return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+        return result if isinstance(result, str) else json.dumps(result)
 
-
-def _json_type_to_python(json_type: str) -> type:
-    """Map JSON Schema type strings to Python types."""
-    mapping: dict[str, type] = {
-        "string": str,
-        "integer": int,
-        "number": float,
-        "boolean": bool,
-        "array": list,
-        "object": dict,
-    }
-    return mapping.get(json_type, str)
+    _wrapper.__signature__ = inspect.Signature(params)  # type: ignore[attr-defined]
+    _wrapper.__name__ = _wrapper.__qualname__ = tool_def.name
+    _wrapper.__doc__ = tool_def.description
+    return _maybe_wrap_as_function_tool(_wrapper, tool_def, as_function_tool)
 
 
 def _cache_key(tool_def: ToolDefinition) -> str:
@@ -662,25 +593,30 @@ class GantryToolBridge:
                 Sequential single-agent flows are unaffected and do NOT need
                 this flag. Defaults to ``False``.
         """
-        # Validate the threshold eagerly so misconfiguration surfaces at
-        # construction time rather than on the first retrieval round.
-        _parse_threshold(score_threshold)
+        # Parsed once; a misconfigured threshold fails at construction time
+        # rather than on the first retrieval round.
+        self._threshold = _Threshold.parse(score_threshold)
         self._gantry = gantry
-        self._score_threshold = score_threshold
         self._as_function_tool = as_function_tool
         self._tool_cache: dict[str, Any] = {}
         if disable_af_instrumentation:
             _disable_af_instrumentation()
 
+    def _effective_threshold(self, score_threshold: float | str | None) -> _Threshold:
+        """A per-call override parsed, else the bridge default."""
+        if score_threshold is None:
+            return self._threshold
+        return _Threshold.parse(score_threshold)
+
     async def _retrieve(
         self,
         query: str,
         *,
-        limit: int = 5,
-        score_threshold: float | str | None = None,
+        limit: int,
+        threshold: _Threshold,
         **query_kwargs: Any,
     ) -> RetrievalResult:
-        """Shared retrieval logic for get_tools and get_tools_with_scores.
+        """Retrieval for :meth:`get_tools_with_decision`.
 
         The relative threshold mode (``"relative:<frac>"``) cannot be
         applied at the vector-store level (the cutoff is data-dependent),
@@ -688,11 +624,6 @@ class GantryToolBridge:
         and apply the filter post-hoc in :meth:`_apply_threshold`.
         """
         from agent_gantry.schema.query import ConversationContext, ToolQuery
-
-        threshold = (
-            score_threshold if score_threshold is not None else self._score_threshold
-        )
-        mode, _numeric = _parse_threshold(threshold)
 
         # Separate context-level kwargs from query-level kwargs
         context_fields = set(ConversationContext.model_fields.keys()) - {"query"}
@@ -725,7 +656,7 @@ class GantryToolBridge:
         # callers using ``limit >= 13`` with a relative threshold hit a
         # Pydantic validation error on the ``ToolQuery`` construction
         # below.
-        if mode == "relative":
+        if threshold.mode == "relative":
             store_limit = min(_TOOL_QUERY_MAX_LIMIT, max(limit * 4, limit))
         else:
             store_limit = limit
@@ -739,11 +670,11 @@ class GantryToolBridge:
             )
         )
 
+    @staticmethod
     def _apply_threshold(
-        self,
         scored: list[Any],
         *,
-        threshold: float | str | None,
+        threshold: _Threshold,
         limit: int,
     ) -> tuple[list[Any], RetrievalDecision]:
         """Filter scored tools by threshold and return a decision record.
@@ -752,19 +683,15 @@ class GantryToolBridge:
         :class:`RetrievalResult.tools`. The returned tuple is
         ``(kept_top_K, decision)`` where ``kept_top_K`` honours ``limit``.
         """
-        effective = threshold if threshold is not None else self._score_threshold
-        mode, numeric = _parse_threshold(effective)
-
         if not scored:
             return [], RetrievalDecision(
-                threshold=effective,
-                threshold_mode=mode
-                if mode == "absolute"
-                else f"relative:{numeric}",
+                threshold=threshold.raw,
+                threshold_mode=threshold.label,
                 effective_threshold=None,
             )
 
-        if mode == "relative" and numeric is not None:
+        numeric = threshold.numeric
+        if threshold.mode == "relative" and numeric is not None:
             top_score = max(st.semantic_score for st in scored)
             # ``ScoredTool.semantic_score`` is Pydantic-clamped to ``[0, 1]``
             # so this is the common path. Guard against the degenerate
@@ -797,10 +724,8 @@ class GantryToolBridge:
         kept_top = kept[:limit]
         decision = RetrievalDecision(
             candidates=candidates,
-            threshold=effective,
-            threshold_mode=mode
-            if mode == "absolute"
-            else f"relative:{numeric}",
+            threshold=threshold.raw,
+            threshold_mode=threshold.label,
             effective_threshold=cutoff,
         )
         return kept_top, decision
@@ -916,34 +841,31 @@ class GantryToolBridge:
         OpenTelemetry consumers see the ranked decision in their
         tracing backend.
         """
-        from agent_gantry.utils.async_utils import AsyncNoopContext
+        from contextlib import nullcontext
 
-        telemetry = getattr(self._gantry, "_telemetry", None)
+        threshold = self._effective_threshold(score_threshold)
+        telemetry = getattr(self._gantry, "telemetry", None)
         span_attrs: dict[str, Any] = {
             "query": query,
             "limit": limit,
-            "score_threshold": (
-                score_threshold
-                if score_threshold is not None
-                else self._score_threshold
-            ),
+            "score_threshold": threshold.raw,
         }
         span_cm = (
             telemetry.span("gantry.bridge_retrieval", span_attrs)
             if telemetry
-            else AsyncNoopContext()
+            else nullcontext()
         )
 
         async with span_cm:
             result = await self._retrieve(
-                query, limit=limit, score_threshold=score_threshold, **query_kwargs
+                query, limit=limit, threshold=threshold, **query_kwargs
             )
 
             # Threshold filtering happens post-hoc so the decision record can
             # see both kept and dropped candidates regardless of whether the
             # threshold was relative or absolute.
             kept_top, decision = self._apply_threshold(
-                list(result.tools), threshold=score_threshold, limit=limit
+                list(result.tools), threshold=threshold, limit=limit
             )
             decision.query = query
             tools = [self._get_or_build(st.tool, cache) for st in kept_top]
@@ -1033,20 +955,16 @@ class GantryToolBridge:
                 ``ToolQuery`` and ``ConversationContext``.
 
         Returns:
-            List of (callable, score) tuples.
+            List of (callable, semantic score) tuples.
         """
-        result = await self._retrieve(
-            query, limit=limit, score_threshold=score_threshold, **query_kwargs
+        tools, decision = await self.get_tools_with_decision(
+            query,
+            limit=limit,
+            score_threshold=score_threshold,
+            cache=cache,
+            **query_kwargs,
         )
-
-        kept_top, _ = self._apply_threshold(
-            list(result.tools), threshold=score_threshold, limit=limit
-        )
-
-        return [
-            (self._get_or_build(st.tool, cache), st.final_score)
-            for st in kept_top
-        ]
+        return list(zip(tools, (candidate.score for candidate in decision.kept)))
 
     # ------------------------------------------------------------------
     # Agent construction helpers
@@ -1093,26 +1011,18 @@ class GantryToolBridge:
         Returns:
             An ``agent_framework.Agent`` instance.
         """
-        _require_af_installed("build_agent")
-        from agent_framework import Agent
-
-        tools = await self.get_tools(
+        return await self.as_agent(
+            client,
             query,
+            name=name,
+            instructions=instructions,
             limit=limit,
             score_threshold=score_threshold,
+            middleware=middleware,
             cache=cache,
-            **query_kwargs,
+            extra_tools=extra_tools,
+            query_kwargs=query_kwargs,
         )
-        if extra_tools:
-            tools = tools + list(extra_tools)
-
-        agent_kwargs: dict[str, Any] = {
-            "name": name,
-            "tools": tools,
-        }
-        if middleware is not None:
-            agent_kwargs["middleware"] = middleware
-        return Agent(client, instructions, **agent_kwargs)
 
     async def as_agent(
         self,
@@ -1471,10 +1381,3 @@ class GantryToolBridge:
         if workflow_name is not None:
             wa_kwargs["name"] = workflow_name
         return WorkflowAgent(workflow, **wa_kwargs)
-
-    def as_tool_list(self, tool_defs: list[ToolDefinition]) -> list[Any]:
-        """Alias for :meth:`wrap_tools` with a name that reads naturally in
-        orchestration code where the returned list will be spread across
-        multiple agents (e.g. ``Agent(tools=bridge.as_tool_list([...]))``).
-        """
-        return self.wrap_tools(tool_defs)

@@ -310,7 +310,7 @@ Three deliberate deviations exist **one layer deeper** than `convert()`/
 own downstream consumption of it:
 
 1. **Microsoft Agent Framework** (`agent_framework_bridge.py`,
-   `GantryToolBridge._build_tool_execute`) returns a JSON `{"error": ...}`
+   `_build_callable_for_tool`) returns a JSON `{"error": ...}`
    **string** to the model instead of raising. Deliberate: AF's tool runner
    otherwise replaces an uncaught error with an opaque `"Error: Function
    failed."` string when `include_detailed_errors` is off (the AF default),
@@ -372,7 +372,7 @@ asserting no exception + a `WARNING` log record).
 | LangGraph | Raises `ToolExecutionError` | Degrades to no tools this turn (stateless) + `WARNING` |
 | LlamaIndex | Raises `ToolExecutionError` | Degrades to no tools this step (stateless) + `WARNING` |
 | CrewAI | Raises `ToolExecutionError` | *(per-call — see above)* |
-| Pydantic AI | Raises `ToolExecutionError` | Degrades to previous run's tools (stateful cache) + `WARNING` |
+| Pydantic AI | Raises `ToolExecutionError` | Degrades to no tools this step (stateless) + `WARNING` |
 | OpenAI Agents SDK | Raises `ToolExecutionError` | Degrades to previous turn's `agent.tools` (stateful) + `WARNING` |
 | Haystack | Raises `ToolExecutionError` | *(per-call — see above)* |
 | Agno | Raises `ToolExecutionError` | *(per-call — see above)* |

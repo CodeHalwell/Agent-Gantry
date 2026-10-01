@@ -10,52 +10,70 @@ registry.
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from agent_gantry.schema.mcp import MCPServerDefinition
 from agent_gantry.schema.tool import ToolDefinition
-from agent_gantry.utils.fingerprint import compute_tool_fingerprint
 
 if TYPE_CHECKING:
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
     from agent_gantry.adapters.vector_stores.base import VectorStoreAdapter
     from agent_gantry.core.mcp_registry import MCPRegistry
-    from agent_gantry.core.mcp_router import MCPRouter
+    from agent_gantry.core.sync_manager import SyncManager
 
 logger = logging.getLogger(__name__)
 
+#: Namespace of the pseudo-tools that stand in for MCP servers in the store.
+PSEUDO_NAMESPACE = "__mcp_servers__"
+
+
+def _pseudo_tool_name(server: MCPServerDefinition) -> str:
+    """Name of the pseudo-tool ``server`` is embedded as.
+
+    Sanitised to ``ToolDefinition``'s name pattern; the digest keeps two servers
+    whose sanitised names coincide (``b_c.a`` and ``b.c_a``) apart.
+    """
+    qualified = f"{server.namespace}.{server.name}"
+    stem = re.sub(r"[^a-z0-9_]+", "_", qualified.lower()).strip("_")[:100]
+    digest = hashlib.sha256(qualified.encode()).hexdigest()[:8]
+    return f"mcp_server_{stem}_{digest}"
+
+
+def _pseudo_tool(server: MCPServerDefinition) -> ToolDefinition:
+    """The ``ToolDefinition`` that stands in for ``server`` in the vector store."""
+    return ToolDefinition(
+        name=_pseudo_tool_name(server),
+        namespace=PSEUDO_NAMESPACE,
+        description=server.to_searchable_text(),
+        parameters_schema={"type": "object", "properties": {}},
+        metadata={
+            "entity_type": "mcp_server",
+            "server_name": server.name,
+            "server_namespace": server.namespace,
+            "server_tags": server.tags,
+            "server_capabilities": server.capabilities,
+            "server_command": server.command,
+        },
+    )
+
 
 class MCPManager:
-    """
-    Manages MCP server lifecycle: registration, sync, discovery, and serving.
-
-    Extracted from AgentGantry to keep the facade thin.
-    """
+    """Registers MCP servers and syncs them into the vector store as pseudo-tools."""
 
     def __init__(
         self,
         vector_store: VectorStoreAdapter,
         embedder: EmbeddingAdapter,
         registry: MCPRegistry,
-        router: MCPRouter,
-        get_embedder_id: callable,
+        sync_manager: SyncManager,
     ) -> None:
         self._vector_store = vector_store
         self._embedder = embedder
         self._registry = registry
-        self._router = router
-        self._get_embedder_id = get_embedder_id
-        self._synced = False
-
-    @property
-    def synced(self) -> bool:
-        return self._synced
-
-    async def ensure_synced(self) -> None:
-        """Ensure MCP servers are synced to the vector store."""
-        if not self._synced:
-            await self.sync_servers()
+        self._sync_manager = sync_manager
 
     def register_server(
         self,
@@ -94,11 +112,8 @@ class MCPManager:
             transport=transport,  # type: ignore[arg-type]
         )
 
-        # Re-registering under the same name may point somewhere else now
-        # (a new url, headers or command). A client cached from the previous
-        # definition would keep discovering and executing against the old
-        # endpoint, so it is dropped here; the next lookup builds one from
-        # the definition just registered.
+        # A re-registration may point somewhere else now; a client cached from
+        # the previous definition would keep using the old endpoint.
         previous = self._registry.get_server(name, namespace)
         if previous is not None and previous.to_config() != server_def.to_config():
             self._registry.forget_client(name, namespace)
@@ -108,8 +123,10 @@ class MCPManager:
         logger.info(f"Registered MCP server: {server_def.qualified_name}")
 
     async def sync_servers(self, batch_size: int = 100, force: bool = False) -> int:
-        """
-        Sync MCP server registrations to vector store with fingerprint detection.
+        """Embed new or changed servers into the vector store.
+
+        Change detection is the tool sync's: fingerprints, plus a full re-sync
+        when the embedder or its dimension changed.
 
         Args:
             batch_size: Number of servers per batch
@@ -119,121 +136,60 @@ class MCPManager:
             Number of servers synced
         """
         all_servers = self._registry.list_servers()
-        # The pending entries *this* sync answers for. A register_mcp_server()
-        # landing while the awaits below are in flight appends to the buffer
-        # but is not in this snapshot, so it must survive the drain.
+        # Pending entries this sync answers for; a registration landing while
+        # the awaits below run is not in the snapshot and survives the drain.
         pending_snapshot = self._registry.get_pending()
         if not all_servers:
-            self._synced = True
             return 0
 
-        # Build pseudo-tools for embedding
-        pseudo_tools_map: dict[str, ToolDefinition] = {}
-        for server in all_servers:
-            pseudo_name = f"mcp_server_{server.namespace}_{server.name}".replace("-", "_")
-            pseudo_tool = ToolDefinition(
-                name=pseudo_name,
-                namespace="__mcp_servers__",
-                description=server.to_searchable_text(),
-                parameters_schema={"type": "object", "properties": {}},
-                metadata={
-                    "entity_type": "mcp_server",
-                    "server_name": server.name,
-                    "server_namespace": server.namespace,
-                    "server_tags": server.tags,
-                    "server_capabilities": server.capabilities,
-                    "server_command": server.command,
-                },
-            )
-            pseudo_tools_map[f"{server.namespace}.{server.name}"] = pseudo_tool
-
-        # Compute fingerprints
-        current_fingerprints = {
-            f"{server.namespace}.{server.name}": compute_tool_fingerprint(pseudo_tool)
-            for server in all_servers
-            for pseudo_tool in [pseudo_tools_map[f"{server.namespace}.{server.name}"]]
-        }
-
-        embedder_id = self._get_embedder_id()
-        needs_full_resync = force
-
-        stored_fingerprints = await self._vector_store.get_stored_fingerprints()
-        stored_embedder = await self._vector_store.get_metadata("embedder_id")
-        stored_dim = await self._vector_store.get_metadata("dimension")
-
-        if stored_embedder and stored_embedder != embedder_id:
-            logger.info(
-                f"Embedder changed from '{stored_embedder}' to '{embedder_id}'. "
-                "Full re-sync required for MCP servers."
-            )
-            needs_full_resync = True
-        elif stored_dim and int(stored_dim) != self._vector_store.dimension:
-            logger.info(
-                f"Dimension changed from {stored_dim} to {self._vector_store.dimension}. "
-                "Full re-sync required for MCP servers."
-            )
-            needs_full_resync = True
-
-        if needs_full_resync:
-            servers_to_sync = all_servers
-        else:
-            servers_to_sync = []
-            for server in all_servers:
-                server_id = f"{server.namespace}.{server.name}"
-                pseudo_name = f"mcp_server_{server.namespace}_{server.name}".replace("-", "_")
-                pseudo_tool_id = f"__mcp_servers__.{pseudo_name}"
-
-                current_fp = current_fingerprints[server_id]
-                stored_fp = stored_fingerprints.get(pseudo_tool_id, "")
-
-                if current_fp != stored_fp:
-                    servers_to_sync.append(server)
-                    if stored_fp:
-                        logger.debug(f"MCP server '{server_id}' changed, will re-embed")
-                    else:
-                        logger.debug(f"MCP server '{server_id}' is new, will embed")
-
+        pseudo_tools = [_pseudo_tool(server) for server in all_servers]
+        to_sync = await self._sync_manager.detect_changes(pseudo_tools, force)
         self._registry.drain_pending(pending_snapshot)
-
-        if not servers_to_sync:
-            logger.debug(f"All {len(all_servers)} MCP servers up-to-date, skipping sync")
-            self._synced = True
-            return 0
-
-        logger.info(f"Syncing {len(servers_to_sync)}/{len(all_servers)} MCP servers...")
-
         total_synced = 0
-        for i in range(0, len(servers_to_sync), batch_size):
-            batch = servers_to_sync[i : i + batch_size]
-            texts = [s.to_searchable_text() for s in batch]
-            embeddings = await self._embedder.embed_batch(texts)
-            pseudo_tools = [pseudo_tools_map[f"{s.namespace}.{s.name}"] for s in batch]
-            count = await self._vector_store.add_tools(pseudo_tools, embeddings, upsert=True)
-            total_synced += count
-
-        await self._vector_store.update_sync_metadata(
-            embedder_id=embedder_id,
-            dimension=self._vector_store.dimension,
-        )
-
-        self._synced = True
-        logger.info(f"Synced {total_synced} MCP servers")
+        if to_sync:
+            logger.info(f"Syncing {len(to_sync)}/{len(all_servers)} MCP servers...")
+            for i in range(0, len(to_sync), batch_size):
+                batch = to_sync[i : i + batch_size]
+                # A pseudo-tool's description is the server's searchable text.
+                embeddings = await self._embedder.embed_batch([tool.description for tool in batch])
+                total_synced += await self._vector_store.add_tools(batch, embeddings, upsert=True)
+            await self._sync_manager.update_metadata()
+            logger.info(f"Synced {total_synced} MCP servers")
+        else:
+            logger.debug(f"All {len(all_servers)} MCP servers up-to-date, skipping sync")
+        # After the upsert, so a renamed server is never briefly absent.
+        await self._prune_pseudo_tools({tool.name for tool in pseudo_tools})
         return total_synced
 
-    async def retrieve_servers(
-        self,
-        query: str,
-        limit: int = 3,
-        score_threshold: float | None = None,
-        namespaces: list[str] | None = None,
-    ) -> list[MCPServerDefinition]:
-        """Retrieve relevant MCP servers based on a query."""
-        await self.ensure_synced()
+    async def _prune_pseudo_tools(self, wanted: set[str]) -> int:
+        """Delete pseudo-tool rows that no registered server owns.
 
-        result = await self._router.route(
-            query=query,
-            limit=limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-        )
-        return [scored.server for scored in result.servers]
+        Sync only ever upserts, so a persistent store kept the row of a
+        server removed from the registry, and after the digest-based rename
+        it kept every row under the old name beside the new one. The router
+        fetches a bounded candidate window, so such duplicates could crowd
+        other servers out. As with ``AgentGantry.prune_stale_tools``, a store
+        shared between gantries is pruned to *this* gantry's servers; a
+        gantry with no servers never gets here.
+        """
+        stored: list[ToolDefinition] = []
+        offset = 0
+        while True:
+            page = list(
+                await self._vector_store.list_all(
+                    namespace=PSEUDO_NAMESPACE, limit=1000, offset=offset
+                )
+            )
+            stored.extend(page)
+            if len(page) < 1000:
+                break
+            offset += 1000
+        removed = 0
+        for tool in stored:
+            if tool.name in wanted:
+                continue
+            if await self._vector_store.delete(tool.name, PSEUDO_NAMESPACE):
+                removed += 1
+        if removed:
+            logger.info(f"Pruned {removed} MCP server pseudo-tool(s) no registered server owns")
+        return removed
