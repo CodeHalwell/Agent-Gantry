@@ -107,6 +107,10 @@ gantries only if you close the gantries last.
 
 - `jsonschema` moved from the core dependencies to the `example-tools` extra;
   the library never imported it.
+- A skills-capable vector store's `list_all_skills` must accept `category`:
+  the facade passes a requested category straight through instead of
+  silently dropping it for stores whose signature lacked it. Both in-tree
+  stores accept it.
 - `ToolRegistry.register_tool(tool, handler=None)` takes the handler,
   `delete_tool()` returns the removed handler, and `has_tool()` /
   `handler_count` were added; `AgentGantry.tool_count` counts registry
