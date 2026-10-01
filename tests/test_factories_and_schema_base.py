@@ -151,3 +151,17 @@ class TestUnsetModelDefaults:
 
         with pytest.raises(ValueError, match="Unsupported reranker type"):
             build_reranker(SimpleNamespace(enabled=True, type="nope", model=None))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("kind", ["cohere", "cross_encoder", "jev"])
+def test_every_schema_allowed_reranker_type_reaches_a_builder(kind: str) -> None:
+    """A type the schema accepts must not fall through to the unsupported-type raise."""
+    from typing import get_args
+
+    assert kind in get_args(RerankerConfig.model_fields["type"].annotation)
+    try:
+        build_reranker(RerankerConfig(type=kind))  # type: ignore[arg-type]
+    except ImportError:
+        pass  # optional backend absent: its branch was still the one reached
+    except ValueError as exc:
+        assert "Unsupported reranker type" not in str(exc)

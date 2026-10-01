@@ -202,7 +202,7 @@ class OpenAIEmbedder(BaseOpenAIEmbedder):
         api_key = config.api_key or os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError(
-                "OpenAI API key is required. Set it in config or "
+                "OpenAI API key is required. Set EmbedderConfig.api_key or the "
                 "OPENAI_API_KEY environment variable."
             )
 
@@ -285,7 +285,7 @@ class AzureOpenAIEmbedder(BaseOpenAIEmbedder):
         api_key = config.api_key or os.getenv("AZURE_OPENAI_API_KEY")
         if not api_key:
             raise ValueError(
-                "Azure OpenAI API key is required. Set it in config or "
+                "Azure OpenAI API key is required. Set EmbedderConfig.api_key or the "
                 "AZURE_OPENAI_API_KEY environment variable."
             )
 
