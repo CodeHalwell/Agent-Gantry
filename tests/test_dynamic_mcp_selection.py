@@ -562,10 +562,19 @@ async def test_sync_removes_pseudo_tools_no_server_owns() -> None:
 
     gantry = AgentGantry(vector_store=store, embedder=embedder)
     try:
+
+        @gantry.register(tags=["math"])
+        def double(x: int) -> int:
+            """Double a number."""
+            return x * 2
+
+        await gantry.sync()
         gantry.register_mcp_server(name="fs", command=["echo"], description="File system server")
         assert await gantry.sync_mcp_servers() == 1
         names = {tool.name for tool in await store.list_all(namespace=PSEUDO_NAMESPACE)}
         assert "mcp_server_default_fs" not in names
         assert len(names) == 1  # the one registered server, under its current name
+        # The prune is confined to its namespace: a real tool is untouched.
+        assert await store.get_by_name("double") is not None
     finally:
         await gantry.close()
