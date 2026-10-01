@@ -100,7 +100,12 @@ class SentenceTransformersEmbedder(LazyModelMixin, EmbeddingAdapter):
 
     @property
     def dimension(self) -> int:
-        """Return the output embedding dimension."""
+        """Return the output embedding dimension.
+
+        With no configured dimension this loads the model synchronously,
+        blocking the caller (and an event loop, if called from one); embed
+        something first, or await ``_aensure_initialized()``.
+        """
         if self._requested_dimension:
             return self._requested_dimension
         self._ensure_initialized()
