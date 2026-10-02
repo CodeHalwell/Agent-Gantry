@@ -746,7 +746,10 @@ class ExecutionEngine:
         end_time = datetime.now(timezone.utc)
         total_time_ms = (end_time - start_time).total_seconds() * 1000
 
-        successful = sum(1 for r in results if r.status == ExecutionStatus.SUCCESS)
+        successful = 0
+        for r in results:
+            if r.status == ExecutionStatus.SUCCESS:
+                successful += 1
         failed = len(results) - successful
 
         return BatchToolResult(
@@ -1503,7 +1506,10 @@ class ExecutionEngine:
                 # likewise a branch that always matches — excluding it turned
                 # ``{"anyOf": [{}, {"type": "integer"}]}`` into an
                 # integer-only constraint.
-                matches = sum(1 for b in usable if _branch_matches(value, b, path))
+                matches = 0
+                for b in usable:
+                    if _branch_matches(value, b, path):
+                        matches += 1
                 if matches == 0:
                     return (
                         False,
