@@ -58,3 +58,6 @@
 ## 2026-08-25 - Avoid row-wise dictionary allocation with LanceDB to_list for single columns
 **Learning:** When retrieving a single column (like JSON strings) from LanceDB, using `.to_list()` allocates a dictionary for every row just to wrap the single field, causing O(N) memory overhead and slower execution on large tables.
 **Action:** Use columnar extraction via `.select(['col']).to_arrow()` and then extract the list of values directly using `table['col'].to_pylist()`. This avoids dictionary allocation per row.
+## 2026-10-03 - Optimize sliding window boundaries
+**Learning:** When replacing generator expressions (like `sum(1 for x if x > threshold)`) with reverse iterations that `break` early, strictly preserve the exact mathematical boundary conditions. If the original generator excludes the threshold, the inverted early exit condition must explicitly include it (e.g., `if stamp <= threshold: break`) to avoid subtle off-by-one errors in unit tests.
+**Action:** Always carefully invert boundary logic (`<=` instead of `<`) when converting filtering comprehensions into early-breaking loops.
