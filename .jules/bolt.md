@@ -58,3 +58,6 @@
 ## 2026-08-25 - Avoid row-wise dictionary allocation with LanceDB to_list for single columns
 **Learning:** When retrieving a single column (like JSON strings) from LanceDB, using `.to_list()` allocates a dictionary for every row just to wrap the single field, causing O(N) memory overhead and slower execution on large tables.
 **Action:** Use columnar extraction via `.select(['col']).to_arrow()` and then extract the list of values directly using `table['col'].to_pylist()`. This avoids dictionary allocation per row.
+## 2026-10-04 - Optimize sum() generator for counting
+**Learning:** The prompt strictly enforces 'Add comments explaining the optimization'. Leaving out inline comments documenting why an optimization was applied fails the required checklist. In Python, replacing sum() generators with O(K) early-break loops must include descriptive comments.
+**Action:** Always insert explanatory inline comments (e.g. `# Optimization: Use O(K) reverse iteration...`) immediately above the modified block to comply with the persona guidelines.
