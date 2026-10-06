@@ -94,3 +94,8 @@
 **Vulnerability:** Execution and event models lack newline validation on identifier fields.
 **Learning:** Identifier sanitization needs to be universally applied to all schema models to avoid CRLF injection.
 **Prevention:** Implement reject_newlines field_validator and validate_assignment=True on all schemas.
+
+## 2026-10-06 - [HIGH] Fix CRLF injection in selection candidates
+**Vulnerability:** The `SelectionCandidate` model lacked identifier validation for `id`, `name`, and `group` fields, making it vulnerable to CRLF/newline injection. Because these fields are echoed back in logs and results, this could lead to log injection or downstream processing issues.
+**Learning:** Like A2A and execution models, any identifier field in a schema, particularly those rendered in logs or used to access shared objects, needs defense against CRLF injection to prevent spoofing or injection attacks.
+**Prevention:** Apply `reject_newlines` to all candidate identifier fields via `@field_validator` and enforce it across assignment checks by setting `validate_assignment=True` in the schema configuration.
