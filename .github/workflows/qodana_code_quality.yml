@@ -3,26 +3,39 @@ on:
   workflow_dispatch:
   pull_request:
   push:
-    branches: # Specify your branches here
-      - main # The 'main' branch
-      - 'releases/*' # The release branches
+    branches:
+      - main
+      - 'releases/*'
 
 jobs:
   qodana:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
-      checks: write
+      contents: read
+      pull-requests: write   # PR summary comment
+      checks: write          # inline annotations
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}  # to check out the actual pull request commit, not the merge commit
-          fetch-depth: 0  # a full history is required for pull request analysis
+          ref: ${{ github.event.pull_request.head.sha }}  # the PR commit, not the merge commit
+          fetch-depth: 0  # full history is required for pr-mode
       - name: 'Qodana Scan'
         uses: JetBrains/qodana-action@v2026.1
+        # Tokenless on purpose. qodana.yaml selects the Community linter, for
+        # which JetBrains documents QODANA_TOKEN as optional. This workflow used
+        # to run the paid ``qodana-python`` linter with a token that Qodana
+        # Cloud declines ("License request: token was declined"), so every run
+        # failed in under a minute, before analysing anything, from at least
+        # August 2026 until this change: a red check that meant nothing.
+        #
+        # To get Qodana Cloud history back, create a project token at
+        # qodana.cloud, store it as a repository secret and add:
+        #   env:
+        #     QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
+        #     QODANA_ENDPOINT: 'https://qodana.cloud'
+        #
+        # pr-mode (the action's default) analyses only the files a PR changes,
+        # so a PR is annotated for its own diff rather than for the several
+        # hundred problems already on main.
         with:
-          pr-mode: false
-        env:
-          QODANA_TOKEN: ${{ secrets.QODANA_TOKEN_1276074518 }}
-          QODANA_ENDPOINT: 'https://qodana.cloud'
+          pr-mode: true

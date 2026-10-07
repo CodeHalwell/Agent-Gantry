@@ -3,8 +3,11 @@
 ####################################################################################################################
 
 version: "1.0"
-linter: qodana-python
+# The Community linter: free, and QODANA_TOKEN is optional for it. The previous
+# value, ``qodana-python``, is the paid linter and refuses to start without a
+# valid Qodana Cloud token, which is why this check failed on every run.
+linter: qodana-python-community
 profile:
   name: qodana.recommended
-include:
-  - name: CheckDependencyLicenses
+# ``CheckDependencyLicenses`` was included here, but the licence audit needs the
+# Ultimate Plus tier and is not available to the Community linter.
