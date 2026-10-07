@@ -24,10 +24,17 @@ from agent_gantry.integrations.anthropic_skills import (
     create_skills_client,
 )
 
-# Create mock anthropic module
+# A stand-in for the SDK, installed for the duration of each test only. It used
+# to be assigned to ``sys.modules["anthropic"]`` at import time and never
+# removed, so after collection *every* test in the session that imported
+# ``anthropic`` got this mock instead of the package.
 mock_anthropic = Mock()
 mock_anthropic.AsyncAnthropic = MagicMock
-sys.modules["anthropic"] = mock_anthropic
+
+
+@pytest.fixture(autouse=True)
+def _stand_in_for_the_anthropic_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "anthropic", mock_anthropic)
 
 
 class TestSkill:

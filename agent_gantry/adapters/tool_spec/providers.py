@@ -56,7 +56,10 @@ def _jsonable(obj: Any) -> Any:
     if isinstance(obj, BaseModel):
         return obj.model_dump(mode="json")
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
-        return dataclasses.asdict(obj)
+        # ``asdict`` returns a new dict that ``default=`` hands straight to the
+        # encoder, so its keys are never rewritten the way a top-level dict's
+        # are; an enum- or tuple-keyed field inside a dataclass raised.
+        return _json_keys(dataclasses.asdict(obj))
     if isinstance(obj, (datetime.datetime, datetime.date, datetime.time)):
         return obj.isoformat()
     if isinstance(obj, enum.Enum):
@@ -64,7 +67,7 @@ def _jsonable(obj: Any) -> Any:
     if isinstance(obj, (uuid.UUID, decimal.Decimal, pathlib.PurePath)):
         return str(obj)
     if isinstance(obj, (set, frozenset)):
-        return list(obj)
+        return _json_keys(list(obj))
     if isinstance(obj, (bytes, bytearray)):
         return obj.decode("utf-8", errors="replace")
     return str(obj)
@@ -644,7 +647,9 @@ class GeminiAdapter(_ToolCallMixin):
             tool_name=tool_name,
             # google-genai >= 1.x includes an "id" on parallel function calls
             tool_call_id=payload.get("id"),
-            arguments=_decode_arguments(payload.get("args", {}), tool_name, "GeminiAdapter"),
+            # ``args`` is present and ``None`` for a call with no arguments (the
+            # SDK's field is Optional), which is not a malformed payload.
+            arguments=_decode_arguments(payload.get("args") or {}, tool_name, "GeminiAdapter"),
             raw_payload=payload,
         )
 

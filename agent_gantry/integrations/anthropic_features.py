@@ -79,11 +79,17 @@ class _AnthropicGantryClient:
 
     @staticmethod
     def _last_user_query(messages: list[dict[str, Any]]) -> str | None:
-        """The most recent user message with plain-string content, if any."""
-        for msg in reversed(messages):
-            if msg.get("role") == "user" and isinstance(msg.get("content"), str):
-                return msg["content"]
-        return None
+        """The text of the most recent user message that has any, if one does.
+
+        Content may be a string or a list of blocks (``[{"type": "text", ...}]``),
+        which is what multimodal and cache-controlled requests send. Reading only
+        strings skipped those turns, so retrieval ran on an older message or on
+        nothing, and the model was called with no tools. The same reader backs
+        ``with_semantic_tools``, so both convenience layers agree.
+        """
+        from agent_gantry.query.strategies import last_user_text
+
+        return last_user_text(messages) or None
 
     async def _retrieve_tools(self, query: str, limit: int) -> list[dict[str, Any]]:
         """Top-``limit`` tools for ``query`` as Anthropic tool schemas."""

@@ -7,6 +7,7 @@ OpenAPI operation, or A2A agent skill).
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
@@ -14,6 +15,14 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agent_gantry.schema.base import HealthMetrics, reject_newlines
+
+logger = logging.getLogger(__name__)
+
+#: Longest tool name the provider APIs accept (OpenAI, Anthropic and Gemini all
+#: say 64). ``ToolDefinition.name`` allows 128, so a long name registers, syncs
+#: and routes fine and only fails at the provider, for the whole request.
+_PROVIDER_NAME_LIMIT = 64
+_WARNED_LONG_NAMES: set[str] = set()
 
 
 class SchemaDialect(str, Enum):
@@ -165,6 +174,17 @@ class ToolDefinition(BaseModel):
         # Convert enum to string if needed
         dialect_str = dialect.value if isinstance(dialect, SchemaDialect) else dialect
         adapter = get_adapter(dialect_str)
+        if len(self.name) > _PROVIDER_NAME_LIMIT and self.name not in _WARNED_LONG_NAMES:
+            _WARNED_LONG_NAMES.add(self.name)
+            logger.warning(
+                "Tool name %r is %d characters. OpenAI, Anthropic and Gemini accept at "
+                "most %d and reject the whole tools array for one over-long name, which "
+                "takes every other tool in the request down with it. Shorten the name "
+                "(an MCP tool's can be set by the server).",
+                self.name,
+                len(self.name),
+                _PROVIDER_NAME_LIMIT,
+            )
         return adapter.to_provider_schema(self, **options)
 
     def to_searchable_text(self) -> str:

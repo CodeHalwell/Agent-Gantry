@@ -118,6 +118,35 @@ and `max_retries` (the old fixed `30000` and `0` made both unconfigurable), and
   conversation". That holds for the OpenAI-style dialects; Anthropic's are
   content blocks for one user message and Gemini's are parts of one `Content`.
   The docstring now says which.
+- **Token usage from a dumped Anthropic message was never recorded.** A
+  `Message.model_dump()` carries `cache_read_input_tokens: None` when nothing
+  was cached, and `ProviderUsage.from_usage` ran `int()` on it, so
+  `with_semantic_tools` dropped the turn's usage (at debug level). `None` is
+  absent now, as the attribute path already treated it.
+- **Gemini usage left out thinking and tool-use tokens.** google-genai defines
+  `total_token_count` as prompt + candidates + tool-use prompt + thoughts, but
+  only the first and second were read, so prompt + completion fell short of the
+  total (250 of 420 tokens in the review's example) and
+  `tokens_completion_total` under-counted every thinking model. Tool-use prompt
+  tokens now count as prompt and thinking tokens as completion.
+- **`format_tool_result` still raised for a dataclass holding an enum- or
+  tuple-keyed dict**, so the earlier fix for those keys covered a bare dict but
+  not the dataclass `_jsonable` rendered with `asdict`. The turn's other tool
+  results were lost with it.
+- **`AnthropicClient` / `SkillsClient` retrieved tools for the wrong message.**
+  Only a user turn whose content was a string counted, so a block-shaped turn
+  (`[{"type": "text", ...}]`, which multimodal and cache-controlled requests
+  send) was skipped: retrieval ran on an older message, or on nothing and the
+  model got no tools. They read the turn the way `with_semantic_tools` does.
+- Every call to a Gemini tool with no arguments logged a "malformed arguments"
+  warning, because the SDK sends `args: None` rather than omitting it.
+- A tool name over 64 characters is accepted (the limit is 128) and routed
+  normally, then rejected by OpenAI, Anthropic and Gemini, which refuses the
+  whole `tools` array. Building a provider schema for one now logs a warning
+  once per name.
+- Two test modules replaced `sys.modules["anthropic"]` with a mock at import
+  time and never restored it, so after collection every test in the session
+  that imported `anthropic` got the mock. It is now scoped to each test.
 - **Health-aware routing only worked on the in-memory store.** The executor
   records failures on the registry's tool, and only the in-memory store hands
   that object back; LanceDB, Qdrant, Chroma and pgvector return a copy made at

@@ -560,3 +560,143 @@ async def test_a_call_waiting_for_approval_is_not_logged_as_an_error(
     assert caplog.records[-1].levelno == logging.INFO
     await adapter.record_execution(call, result(ExecutionStatus.FAILURE))
     assert caplog.records[-1].levelno == logging.ERROR
+
+
+# --------------------------------------------------------------------------
+# Provider layer
+# --------------------------------------------------------------------------
+
+
+def test_usage_from_a_dumped_anthropic_message_with_no_cache_activity() -> None:
+    from anthropic.types import Message, TextBlock, Usage
+
+    from agent_gantry.metrics.token_usage import ProviderUsage
+
+    message = Message(
+        id="msg_1",
+        type="message",
+        role="assistant",
+        model="claude-test",
+        content=[TextBlock(type="text", text="hi")],
+        stop_reason="end_turn",
+        stop_sequence=None,
+        usage=Usage(input_tokens=10, output_tokens=5),
+    )
+    for dumped in (message.model_dump(), message.model_dump(mode="json")):
+        # cache_creation_input_tokens / cache_read_input_tokens are None here, and
+        # ``None`` used to be coerced with int() and raise.
+        usage = ProviderUsage.from_response_usage(dumped)
+        assert usage == ProviderUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+
+
+def test_gemini_usage_counts_thinking_and_tool_use_tokens() -> None:
+    from google.genai import types
+
+    from agent_gantry.metrics.token_usage import ProviderUsage
+
+    metadata = types.GenerateContentResponseUsageMetadata(
+        prompt_token_count=100,
+        candidates_token_count=30,
+        thoughts_token_count=250,
+        tool_use_prompt_token_count=40,
+        total_token_count=420,
+    )
+    response = types.GenerateContentResponse(usage_metadata=metadata)
+    for source in (response, {"usage_metadata": metadata.model_dump()}):
+        usage = ProviderUsage.from_response_usage(source)
+        assert usage is not None
+        # google-genai defines the total as the sum of all four, so the two
+        # figures must add up to it; the thinking tokens are billed output.
+        assert (usage.prompt_tokens, usage.completion_tokens) == (140, 280)
+        assert usage.prompt_tokens + usage.completion_tokens == usage.total_tokens == 420
+
+
+def test_openai_and_anthropic_usage_is_unchanged() -> None:
+    from agent_gantry.metrics.token_usage import ProviderUsage
+
+    assert ProviderUsage.from_usage(
+        {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+    ) == ProviderUsage(10, 5, 15)
+    cached = ProviderUsage.from_usage(
+        {"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 7}
+    )
+    assert (cached.prompt_tokens, cached.cached_prompt_tokens) == (17, 7)
+
+
+def test_a_dataclass_result_holding_an_enum_or_tuple_keyed_dict_formats_for_every_dialect() -> None:
+    import dataclasses
+    import enum
+    import json
+
+    from agent_gantry.adapters.tool_spec.registry import DialectRegistry
+
+    class Color(enum.Enum):
+        RED = "red"
+
+    @dataclasses.dataclass
+    class Report:
+        counts: dict[Any, int]
+
+    results = [
+        Report(counts={Color.RED: 1}),
+        Report(counts={(1, 2): 3}),
+        [Report(counts={Color.RED: 1})],
+        {"report": Report(counts={Color.RED: 1})},
+    ]
+    registry = DialectRegistry.default()
+    for dialect in registry.list_dialects():
+        adapter = registry.get(dialect)
+        for result in results:
+            # Used to raise TypeError ("keys must be str, int, float, bool or None").
+            formatted = adapter.format_tool_result("report", result, "call_1")
+            text = json.dumps(formatted)
+            assert "Color.RED" in text or "(1, 2)" in text
+
+
+def test_a_call_with_no_arguments_is_not_logged_as_malformed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    from agent_gantry.adapters.tool_spec.registry import get_adapter
+
+    caplog.set_level(logging.WARNING)
+    payload = get_adapter("gemini").from_provider_payload(
+        {"name": "no_arguments", "args": None, "id": "call_1"}
+    )
+    assert payload.arguments == {}
+    assert not [r for r in caplog.records if "decoded to" in r.getMessage()]
+
+
+def test_the_anthropic_clients_read_a_block_shaped_latest_user_turn() -> None:
+    from agent_gantry.integrations.anthropic_features import AnthropicClient
+
+    messages = [
+        {"role": "user", "content": "an older question about the weather"},
+        {"role": "assistant", "content": "It is sunny."},
+        {"role": "user", "content": [{"type": "text", "text": "now what about stocks?"}]},
+    ]
+    assert AnthropicClient._last_user_query(messages) == "now what about stocks?"  # was the older one
+    assert AnthropicClient._last_user_query(messages[-1:]) == "now what about stocks?"  # was None
+    only_results = [
+        {"role": "user", "content": "check stocks"},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "42"}]},
+    ]
+    assert AnthropicClient._last_user_query(only_results) == "check stocks"
+
+
+def test_an_over_long_tool_name_is_flagged_once_when_a_provider_schema_is_built(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    caplog.set_level(logging.WARNING)
+    long_name = "fetch_" + "x" * 70  # valid for ToolDefinition (<=128), too long for providers
+    tool = _tool(long_name, "Fetch something with a very long name")
+    short = _tool("fetch_short", "Fetch something with a short name")
+
+    tool.to_dialect("openai")
+    tool.to_dialect("gemini")  # once per name, not once per call
+    short.to_dialect("openai")
+    flagged = [r for r in caplog.records if "accept at most 64" in r.getMessage()]
+    assert len(flagged) == 1 and long_name in flagged[0].getMessage()

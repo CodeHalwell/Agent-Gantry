@@ -15,6 +15,14 @@ from typing import Any
 
 # Provider spellings of each usage figure: OpenAI, Anthropic, Google.
 _PROMPT_KEYS = ("prompt_tokens", "input_tokens", "prompt_token_count")
+# Google bills two more kinds of token that its headline counts leave out:
+# ``tool_use_prompt_token_count`` (tool results fed back as input) and
+# ``thoughts_token_count`` (thinking, on by default from Gemini 2.5). Its
+# ``total_token_count`` is the sum of all four, so without these the prompt and
+# completion figures do not add up to the total. OpenAI and Anthropic fold the
+# equivalents into the figures above, so nothing else needs adding.
+_PROMPT_EXTRA_KEYS = ("tool_use_prompt_token_count",)
+_COMPLETION_EXTRA_KEYS = ("thoughts_token_count",)
 _COMPLETION_KEYS = (
     "completion_tokens",
     "output_tokens",
@@ -23,7 +31,14 @@ _COMPLETION_KEYS = (
 )
 _CACHE_KEYS = ("cache_creation_input_tokens", "cache_read_input_tokens")
 _TOTAL_KEYS = ("total_tokens", "total_token_count")
-_USAGE_KEYS = _PROMPT_KEYS + _COMPLETION_KEYS + _CACHE_KEYS + _TOTAL_KEYS
+_USAGE_KEYS = (
+    _PROMPT_KEYS
+    + _COMPLETION_KEYS
+    + _PROMPT_EXTRA_KEYS
+    + _COMPLETION_EXTRA_KEYS
+    + _CACHE_KEYS
+    + _TOTAL_KEYS
+)
 
 
 @dataclass(frozen=True)
@@ -72,26 +87,43 @@ class ProviderUsage:
           (cache_creation_input_tokens / cache_read_input_tokens), which are
           added to the prompt total and also surfaced as
           ``cached_prompt_tokens``
-        - Google: prompt_token_count, candidates_token_count, total_token_count
+        - Google: prompt_token_count, candidates_token_count, total_token_count.
+          Tool-use prompt tokens count as prompt and thinking tokens as
+          completion, so that prompt + completion matches ``total_token_count``.
 
         Checks each provider convention in order and uses the first present field,
         even if its value is 0. This ensures we don't skip valid zero token counts.
+        A field whose value is ``None`` is absent, not zero: an Anthropic
+        ``Message.model_dump()`` carries ``cache_read_input_tokens: None`` when
+        nothing was cached.
         """
-        prompt_raw = next((usage[key] for key in _PROMPT_KEYS if key in usage), None)
-        completion_raw = next((usage[key] for key in _COMPLETION_KEYS if key in usage), None)
-        total_raw = next((usage[key] for key in _TOTAL_KEYS if key in usage), None)
+
+        def present(key: str) -> bool:
+            return usage.get(key) is not None
+
+        prompt_raw = next((usage[key] for key in _PROMPT_KEYS if present(key)), None)
+        completion_raw = next((usage[key] for key in _COMPLETION_KEYS if present(key)), None)
+        total_raw = next((usage[key] for key in _TOTAL_KEYS if present(key)), None)
         # Anthropic reports cached prompt tokens separately from
         # ``input_tokens``; both were processed, so both count as prompt tokens.
-        cached = sum(cls._coerce_token_value(usage[key], key) for key in _CACHE_KEYS if key in usage)
+        cached = sum(cls._coerce_token_value(usage[key], key) for key in _CACHE_KEYS if present(key))
+        extra_prompt = sum(
+            cls._coerce_token_value(usage[key], key) for key in _PROMPT_EXTRA_KEYS if present(key)
+        )
+        extra_completion = sum(
+            cls._coerce_token_value(usage[key], key)
+            for key in _COMPLETION_EXTRA_KEYS
+            if present(key)
+        )
 
         prompt = (
             cls._coerce_token_value(prompt_raw, "prompt_tokens") if prompt_raw is not None else 0
-        ) + cached
+        ) + cached + extra_prompt
         completion = (
             cls._coerce_token_value(completion_raw, "completion_tokens")
             if completion_raw is not None
             else 0
-        )
+        ) + extra_completion
         # A missing total is derived; an explicit one (even 0) is preserved.
         total = (
             cls._coerce_token_value(total_raw, "total_tokens")
