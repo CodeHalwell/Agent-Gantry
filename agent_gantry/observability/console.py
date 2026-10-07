@@ -11,6 +11,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from agent_gantry.schema.execution import ExecutionStatus
+
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
@@ -172,7 +174,11 @@ class ConsoleTelemetryAdapter:
             if result.error_type:
                 log_data["error_type"] = result.error_type
 
-        log_level = logging.ERROR if result.error else self.log_level
+        # A call waiting on human approval is the designed outcome of a gated
+        # tool, not a failure, but the executor puts the approval hint in
+        # ``error``; keying on that alone logged every gated call at ERROR.
+        failed = bool(result.error) and result.status != ExecutionStatus.PENDING_CONFIRMATION
+        log_level = logging.ERROR if failed else self.log_level
         logger.log(log_level, "Tool execution", extra=log_data)
 
     async def record_health_change(

@@ -253,6 +253,15 @@ _ROOT_ASSERTIONS = (
 )
 
 
+class _EngineTimeoutError(Exception):
+    """The engine's own per-attempt deadline expired.
+
+    Deliberately not a ``TimeoutError``: a handler can raise one for a socket or
+    database timeout, and the retry loop has to tell that apart from the limit
+    it imposed itself.
+    """
+
+
 class ArgumentReconstructionError(ValueError):
     """An argument could not be rebuilt into the type its handler declares.
 
@@ -393,8 +402,10 @@ class ExecutionEngine:
 
         Args:
             registry: Tool registry for looking up handlers
-            default_timeout_ms: Default timeout for tool execution
-            max_retries: Maximum number of retry attempts
+            default_timeout_ms: Timeout, per attempt, for a call whose ``timeout_ms``
+                is unset
+            max_retries: Retries for a call whose ``retry_count`` is unset; a
+                call that sets its own count (``0`` included) is not capped by it
             circuit_breaker_threshold: Failures before opening circuit
             circuit_breaker_timeout_s: Seconds before attempting recovery
             security_policy: Security policy for permission checks
@@ -732,16 +743,40 @@ class ExecutionEngine:
         start_time = datetime.now(timezone.utc)
         results: list[ToolResult] = []
 
-        if batch.execution_strategy == "sequential":
+        # ``fail_fast`` needs calls that finish before the next starts, so it
+        # decides what ``adaptive`` means; it was honoured only by "sequential"
+        # and silently ignored by the default strategy.
+        in_order = batch.execution_strategy == "sequential" or (
+            batch.execution_strategy == "adaptive" and batch.fail_fast
+        )
+        if in_order:
             for call in batch.calls:
                 result = await self.execute(call)
                 results.append(result)
                 if batch.fail_fast and result.status != ExecutionStatus.SUCCESS:
                     break
         else:
-            # Parallel execution
-            tasks = [self.execute(call) for call in batch.calls]
-            results = list(await asyncio.gather(*tasks))
+            # Parallel execution. ``execute`` reports a failure as a result, so
+            # an exception here is a defect in one call; it becomes that call's
+            # failure rather than discarding the results of the rest.
+            outcomes = await asyncio.gather(
+                *(self.execute(call) for call in batch.calls), return_exceptions=True
+            )
+            for call, outcome in zip(batch.calls, outcomes):
+                if isinstance(outcome, BaseException):
+                    if not isinstance(outcome, Exception):
+                        raise outcome  # cancellation and interpreter exit still propagate
+                    logger.exception("Tool call %r raised out of execute()", call.tool_name)
+                    outcome = await self._finish(
+                        call,
+                        ExecutionStatus.FAILURE,
+                        datetime.now(timezone.utc),
+                        call.trace_id or str(uuid.uuid4()),
+                        str(uuid.uuid4()),
+                        error=str(outcome),
+                        error_type=type(outcome).__name__,
+                    )
+                results.append(outcome)
 
         end_time = datetime.now(timezone.utc)
         total_time_ms = (end_time - start_time).total_seconds() * 1000
@@ -776,11 +811,34 @@ class ExecutionEngine:
         arguments = _reconstructed(handler, arguments)
 
         if asyncio.iscoroutinefunction(handler):
-            return await asyncio.wait_for(handler(**arguments), timeout=timeout_s)
-        return await asyncio.wait_for(
-            asyncio.to_thread(handler, **arguments),
-            timeout=timeout_s,
-        )
+            return await self._within(handler(**arguments), timeout_s)
+        return await self._within(asyncio.to_thread(handler, **arguments), timeout_s)
+
+    @staticmethod
+    async def _within(awaitable: Any, timeout_s: float) -> Any:
+        """Await ``awaitable``, raising :class:`_EngineTimeoutError` if it outlives the limit.
+
+        ``asyncio.wait_for`` raises ``TimeoutError`` for its own deadline, and
+        from Python 3.11 that is the builtin ``TimeoutError`` a handler raises
+        for a socket, database or HTTP timeout, so the retry loop could not
+        tell the two apart: a handler's "statement_timeout (2s)" was reported
+        as "Execution timed out" with its message discarded. Waiting on the task
+        directly leaves whatever the handler raised untouched.
+        """
+        task = asyncio.ensure_future(awaitable)
+        try:
+            done, _ = await asyncio.wait({task}, timeout=timeout_s)
+        except BaseException:
+            task.cancel()  # the caller was cancelled: do not leave the handler running
+            raise
+        if task in done:
+            return task.result()
+        task.cancel()
+        try:
+            await task
+        except BaseException:
+            pass  # cancellation, or whatever the handler raised on being cancelled
+        raise _EngineTimeoutError
 
     async def _execute_handler_with_retries(
         self,
@@ -794,9 +852,12 @@ class ExecutionEngine:
         """Execute tool handler with retries."""
         from agent_gantry.core.security import PermissionDeniedError
 
-        max_attempts = (call.retry_count or self._max_retries) + 1
+        retries = self._max_retries if call.retry_count is None else call.retry_count
+        max_attempts = retries + 1
+        timeout_ms = self._default_timeout if call.timeout_ms is None else call.timeout_ms
         last_error: str | None = None
         last_error_type: str | None = None
+        timed_out = False
 
         for attempt in range(1, max_attempts + 1):
             started_at = datetime.now(timezone.utc)
@@ -804,7 +865,7 @@ class ExecutionEngine:
                 result_value = await self._execute_with_timeout(
                     handler,
                     call.arguments,
-                    call.timeout_ms or self._default_timeout,
+                    timeout_ms,
                 )
                 completed_at = datetime.now(timezone.utc)
                 await self._record_success(tool, (completed_at - started_at).total_seconds() * 1000)
@@ -848,26 +909,28 @@ class ExecutionEngine:
                     span_id,
                     error=str(e),
                     error_type="PermissionDeniedError",
+                    started_at=started_at,
                     completed_at=completed_at,
                     attempt=attempt,
                 )
-            except asyncio.TimeoutError:
+            except _EngineTimeoutError:
                 last_error = "Execution timed out"
                 last_error_type = "TimeoutError"
+                timed_out = True
             except Exception as e:
+                # Includes a TimeoutError the handler raised itself: that is a
+                # failure of the tool with its own message, not our deadline.
                 last_error = str(e)
                 last_error_type = type(e).__name__
+                timed_out = False
 
             if attempt < max_attempts:
                 await asyncio.sleep(2**attempt * 0.1)
 
         completed_at = datetime.now(timezone.utc)
         await self._record_failure(tool)
-        status = (
-            ExecutionStatus.TIMEOUT
-            if last_error_type == "TimeoutError"
-            else ExecutionStatus.FAILURE
-        )
+        # TIMEOUT means *our* deadline expired on the last attempt.
+        status = ExecutionStatus.TIMEOUT if timed_out else ExecutionStatus.FAILURE
         return await self._finish(
             call,
             status,
@@ -876,6 +939,9 @@ class ExecutionEngine:
             span_id,
             error=last_error,
             error_type=last_error_type,
+            # Of the last attempt, like ``attempt_number``; without it the
+            # latency of exactly the calls that were slow read as 0 ms.
+            started_at=started_at,
             completed_at=completed_at,
             attempt=max_attempts,
         )
@@ -1292,8 +1358,18 @@ class ExecutionEngine:
             Tuple of (is_valid, error_message)
         """
         schema = tool.parameters_schema
-        properties = schema.get("properties", {})
-        required = schema.get("required", [])
+        # An imported or hand-written schema can carry ``"properties": null`` or
+        # ``"required": null``; the nested walk already tolerates what it cannot
+        # read, and the root must too, or ``execute()`` raises instead of
+        # returning a validation result.
+        raw_properties = schema.get("properties")
+        properties = raw_properties if isinstance(raw_properties, dict) else {}
+        raw_required = schema.get("required")
+        required = (
+            [name for name in raw_required if isinstance(name, str)]
+            if isinstance(raw_required, list)
+            else []
+        )
 
         def _permits_additional(value: Any) -> bool:
             """Whether an ``additionalProperties`` value allows extra keys.

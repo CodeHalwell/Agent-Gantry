@@ -335,3 +335,228 @@ def test_every_name_in_all_resolves_without_the_mcp_extra() -> None:
     )
     result = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+# --------------------------------------------------------------------------
+# Execution: limits that can be configured, errors attributed correctly
+# --------------------------------------------------------------------------
+
+
+def _gantry(**execution: Any) -> AgentGantry:
+    return AgentGantry(
+        config=AgentGantryConfig(execution=ExecutionConfig(**execution)),
+        vector_store=InMemoryVectorStore(),
+        embedder=SimpleEmbedder(dimension=64),
+    )
+
+
+async def test_the_configured_default_timeout_applies_to_a_call_that_sets_none() -> None:
+    import asyncio
+
+    gantry = _gantry(default_timeout_ms=100, max_retries=0)
+    try:
+
+        @gantry.register()
+        async def slow_report() -> str:
+            """Take far too long to produce a report."""
+            await asyncio.sleep(2)
+            return "late"
+
+        result = await gantry.execute(ToolCall(tool_name="slow_report", arguments={}))
+        assert result.status == ExecutionStatus.TIMEOUT
+        assert result.error == "Execution timed out"
+        # The slow calls used to report no start time, hence 0 ms.
+        assert result.started_at is not None
+        assert result.latency_ms >= 90
+    finally:
+        await gantry.close()
+
+
+async def test_retry_count_zero_means_no_retries_and_unset_takes_the_engine_default() -> None:
+    gantry = _gantry(max_retries=1)
+    attempts = 0
+    try:
+
+        @gantry.register()
+        def send_email() -> str:
+            """Send an email, failing after the message has gone out."""
+            nonlocal attempts
+            attempts += 1
+            raise ValueError("smtp: connection reset")
+
+        explicit = await gantry.execute(
+            ToolCall(tool_name="send_email", arguments={}, retry_count=0)
+        )
+        assert (attempts, explicit.attempt_number) == (1, 1)  # was 4 attempts
+
+        attempts = 0
+        unset = await gantry.execute(ToolCall(tool_name="send_email", arguments={}))
+        assert (attempts, unset.attempt_number) == (2, 2)  # the engine's max_retries=1
+    finally:
+        await gantry.close()
+
+
+async def test_a_timeout_error_raised_by_the_handler_keeps_its_message() -> None:
+    gantry = _gantry(max_retries=0)
+    try:
+
+        @gantry.register()
+        def run_query() -> str:
+            """Run a database query."""
+            raise TimeoutError("postgres statement_timeout (2s)")
+
+        result = await gantry.execute(ToolCall(tool_name="run_query", arguments={}))
+        # Not Gantry's own deadline, so not TIMEOUT and not "Execution timed out".
+        assert result.status == ExecutionStatus.FAILURE
+        assert result.error == "postgres statement_timeout (2s)"
+        assert result.error_type == "TimeoutError"
+        assert result.started_at is not None
+    finally:
+        await gantry.close()
+
+
+async def test_a_permission_denied_result_carries_its_start_time() -> None:
+    from agent_gantry.core.security import PermissionDeniedError
+
+    gantry = _gantry(max_retries=0)
+    try:
+
+        @gantry.register()
+        def purge_cache_entries() -> str:
+            """Purge every cached entry."""
+            raise PermissionDeniedError("not today")
+
+        result = await gantry.execute(ToolCall(tool_name="purge_cache_entries", arguments={}))
+        assert result.status == ExecutionStatus.PERMISSION_DENIED
+        assert result.started_at is not None
+    finally:
+        await gantry.close()
+
+
+async def test_a_malformed_root_schema_is_a_validation_result_not_a_crash() -> None:
+    gantry = _gantry(max_retries=0)
+    try:
+        odd = _tool("odd_schema", "A tool imported with a null properties map")
+        odd.parameters_schema = {"type": "object", "properties": None, "required": None}
+        gantry._registry.register_tool(odd, lambda **kwargs: "ok")
+
+        result = await gantry._executor.execute(
+            ToolCall(tool_name="odd_schema", arguments={"unexpected": 1})
+        )
+        assert result.status == ExecutionStatus.FAILURE  # was: TypeError out of execute()
+        assert "unexpected" in (result.error or "")
+    finally:
+        await gantry.close()
+
+
+async def test_fail_fast_stops_an_adaptive_batch_and_only_then() -> None:
+    from agent_gantry.schema.execution import BatchToolCall
+
+    gantry = _gantry(max_retries=0)
+    ran: list[str] = []
+    try:
+
+        @gantry.register()
+        def failing_step() -> str:
+            """Always fail with an error."""
+            ran.append("failing_step")
+            raise RuntimeError("no")
+
+        @gantry.register()
+        def later_step() -> str:
+            """Always succeed with a result."""
+            ran.append("later_step")
+            return "ok"
+
+        calls = [
+            ToolCall(tool_name="failing_step", arguments={}),
+            ToolCall(tool_name="later_step", arguments={}),
+            ToolCall(tool_name="later_step", arguments={}),
+        ]
+        stopped = await gantry.execute_batch(BatchToolCall(calls=calls, fail_fast=True))
+        assert [r.tool_name for r in stopped.results] == ["failing_step"]
+        assert ran == ["failing_step"]
+
+        ran.clear()
+        everything = await gantry.execute_batch(BatchToolCall(calls=calls))
+        assert len(everything.results) == 3
+        assert sorted(ran) == ["failing_step", "later_step", "later_step"]
+    finally:
+        await gantry.close()
+
+
+async def test_one_calls_exception_does_not_discard_the_rest_of_a_parallel_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_gantry.schema.execution import BatchToolCall
+
+    gantry = _gantry(max_retries=0)
+    try:
+
+        @gantry.register()
+        def fine_step() -> str:
+            """Always succeed with a result."""
+            return "ok"
+
+        engine = gantry._executor
+        real_execute = engine.execute
+
+        async def execute(call: ToolCall) -> Any:
+            if call.tool_name == "defective_step":
+                raise RuntimeError("a defect in one call")
+            return await real_execute(call)
+
+        monkeypatch.setattr(engine, "execute", execute)
+        batch = BatchToolCall(
+            calls=[
+                ToolCall(tool_name="defective_step", arguments={}),
+                ToolCall(tool_name="fine_step", arguments={}),
+            ],
+            execution_strategy="parallel",
+        )
+        out = await engine.execute_batch(batch)
+        assert [r.status for r in out.results] == [ExecutionStatus.FAILURE, ExecutionStatus.SUCCESS]
+        assert out.results[0].error == "a defect in one call"
+        assert (out.successful_count, out.failed_count) == (1, 1)
+    finally:
+        await gantry.close()
+
+
+def test_a_not_keyword_that_forbids_null_stops_it_validating() -> None:
+    from agent_gantry.schema.base import null_validates_against
+
+    assert not null_validates_against({"type": ["string", "null"], "not": {"type": "null"}})
+    assert not null_validates_against({"not": {}})  # nothing satisfies "not anything"
+    assert null_validates_against({"type": ["string", "null"], "not": {"type": "string"}})
+    assert null_validates_against({"not": False})
+
+
+async def test_a_call_waiting_for_approval_is_not_logged_as_an_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+    from datetime import datetime, timezone
+
+    from agent_gantry.observability.console import ConsoleTelemetryAdapter
+    from agent_gantry.schema.execution import ToolResult
+
+    adapter = ConsoleTelemetryAdapter(log_level=logging.INFO)
+    caplog.set_level(logging.INFO, logger="agent_gantry")
+    now = datetime.now(timezone.utc)
+
+    def result(status: ExecutionStatus) -> ToolResult:
+        return ToolResult(
+            tool_name="refund_order",
+            status=status,
+            queued_at=now,
+            completed_at=now,
+            trace_id="t",
+            span_id="s",
+            error="Re-issue the call once a human approves it.",
+        )
+
+    call = ToolCall(tool_name="refund_order", arguments={})
+    await adapter.record_execution(call, result(ExecutionStatus.PENDING_CONFIRMATION))
+    assert caplog.records[-1].levelno == logging.INFO
+    await adapter.record_execution(call, result(ExecutionStatus.FAILURE))
+    assert caplog.records[-1].levelno == logging.ERROR

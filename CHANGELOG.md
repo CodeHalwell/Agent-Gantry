@@ -26,6 +26,11 @@ reranker and telemetry adapter, injected or not; share one embedder between
 gantries only if you close the gantries last.
 `AgentGantry.serve_a2a()` binds to loopback (`127.0.0.1`) by default, as
 `serve_mcp()` and the CLI already did; pass `host="0.0.0.0"` to expose it.
+An explicit `ToolCall(retry_count=0)` now means *no retries*; it used to be read as
+"unset" and ran the engine's default of three. `ToolCall.timeout_ms` and
+`retry_count` default to `None`, which takes `ExecutionConfig.default_timeout_ms`
+and `max_retries` (the old fixed `30000` and `0` made both unconfigurable), and
+`to_tool_call()` / `execute_tool_calls()` leave them unset the same way.
 
 ### Fixed
 
@@ -85,6 +90,34 @@ gantries only if you close the gantries last.
   asked for `openai_api_key=`, and an unknown embedder name (`"opnai"`)
   silently became the hash embedder. The OpenAI embedder resolves its own key
   and says what is missing; an unknown name raises `ValueError`.
+- **`ExecutionConfig.default_timeout_ms` and `max_retries` could never apply to
+  a call, and `retry_count=0` could not turn retries off.** `ToolCall` always
+  carried a truthy `timeout_ms` (30000) and read `retry_count=0` as "unset", so
+  a tool configured to time out at five seconds ran for thirty, and a
+  non-idempotent tool called with `retry_count=0` ran four times. Both fields
+  are optional now; `None` takes the engine's value, `0` means none. The timeout
+  is documented as per attempt, which it always was.
+- **A `TimeoutError` raised by a handler was reported as Gantry's own timeout,
+  with its message discarded.** On Python 3.11+ `asyncio.TimeoutError` is the
+  builtin, so a database or socket timeout inside a tool became "Execution timed
+  out". The engine's deadline is now a distinct signal; a handler's own error
+  comes back as a failure with its message and type.
+- **Failed, timed-out and permission-denied results had no `started_at`**, so
+  `latency_ms` read 0 for exactly the calls that were slow.
+- **`BatchToolCall(fail_fast=True)` was ignored by the default `adaptive`
+  strategy**, which ran every call. It now runs them in order and stops at the
+  first that does not succeed. One call raising out of a parallel batch no longer
+  discards its siblings' results; it becomes that call's failure.
+- A tool schema with `"properties": null` or `"required": null` made `execute()`
+  raise `TypeError`; the root is read as tolerantly as the nested levels.
+  `null_validates_against` honours `not`, so a null that the executor would
+  reject is dropped (letting the default apply) rather than kept and rejected.
+- A call waiting for human approval was logged at ERROR by the console adapter
+  because the executor puts the approval hint in `error`; only failures are.
+- `execute_tool_calls()` said its results were "ready to append to the
+  conversation". That holds for the OpenAI-style dialects; Anthropic's are
+  content blocks for one user message and Gemini's are parts of one `Content`.
+  The docstring now says which.
 - **Health-aware routing only worked on the in-memory store.** The executor
   records failures on the registry's tool, and only the in-memory store hands
   that object back; LanceDB, Qdrant, Chroma and pgvector return a copy made at

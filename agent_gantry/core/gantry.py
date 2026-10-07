@@ -1541,7 +1541,7 @@ class AgentGantry:
         response: Any,
         *,
         dialect: str = "openai",
-        timeout_ms: int = 30000,
+        timeout_ms: int | None = None,
         parallel: bool = True,
     ) -> list[dict[str, Any]]:
         """Run every tool call in ``response`` and format the results to send back.
@@ -1549,7 +1549,7 @@ class AgentGantry:
         Closes the loop that the dialect adapters could already describe but
         nothing drove: extract the calls (including parallel ones), execute
         each through the full protection stack, and format each result in the
-        provider's own reply shape, ready to append to the conversation.
+        provider's own reply shape.
 
         Failures are reported to the model rather than raised: a tool that
         errors comes back as an error-flagged result so the model can react,
@@ -1561,19 +1561,26 @@ class AgentGantry:
                 extracted list of ``ToolCallPayload`` (e.g. from
                 :class:`~agent_gantry.adapters.tool_spec.round_trip.StreamingToolCallAccumulator`).
             dialect: Which provider shape to read and reply in.
-            timeout_ms: Per-call execution timeout.
+            timeout_ms: Per-attempt execution timeout; ``None`` takes the engine's
+                ``ExecutionConfig.default_timeout_ms``.
             parallel: Execute the calls concurrently (default). Set ``False``
                 to run them in the order the model emitted, for tools that
                 share mutable state.
 
         Returns:
             One provider-formatted tool result per call, in emission order.
-            Empty when the model called no tools.
+            Empty when the model called no tools. What each item *is* depends on
+            the dialect: for ``openai``, ``groq``, ``mistral`` and the Agent
+            Framework each is a complete message to append to ``messages``; for
+            ``openai_responses`` each is an input item; for ``anthropic`` each is
+            a ``tool_result`` content block, and all of them go inside one
+            ``{"role": "user", "content": [...]}`` message; for ``gemini`` each
+            is a part, and all of them go inside one ``Content``.
 
         Example:
             >>> response = await client.chat.completions.create(...)  # doctest: +SKIP
             >>> results = await gantry.execute_tool_calls(response)  # doctest: +SKIP
-            >>> messages.extend(results)  # doctest: +SKIP
+            >>> messages.extend(results)  # OpenAI-style dialects  # doctest: +SKIP
         """
         from agent_gantry.adapters.tool_spec.base import ToolCallPayload
         from agent_gantry.adapters.tool_spec.registry import get_adapter

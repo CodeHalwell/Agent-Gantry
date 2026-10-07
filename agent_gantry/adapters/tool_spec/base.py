@@ -101,16 +101,18 @@ class ToolSpecAdapter(Protocol):
     def to_tool_call(
         self,
         payload: ToolCallPayload,
-        timeout_ms: int = 30000,
-        retry_count: int = 0,
+        timeout_ms: int | None = None,
+        retry_count: int | None = None,
     ) -> ToolCall:
         """
         Convert a ToolCallPayload to a ToolCall for execution.
 
         Args:
             payload: Unified tool call payload
-            timeout_ms: Execution timeout in milliseconds
-            retry_count: Number of retry attempts
+            timeout_ms: Per-attempt timeout in milliseconds; ``None`` takes the
+                engine's ``default_timeout_ms``
+            retry_count: Retries after a failed attempt; ``None`` takes the
+                engine's ``max_retries`` and ``0`` means none
 
         Returns:
             ToolCall ready for execution

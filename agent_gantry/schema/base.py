@@ -254,6 +254,13 @@ def null_validates_against(schema: Any) -> bool:
     if isinstance(all_of, list) and all_of:
         if not all(null_validates_against(branch) for branch in all_of):
             return False
+    # ``not`` asserts the opposite of its subschema, and the executor enforces
+    # it: a null the subschema matches is a null this schema refuses. Missing
+    # this kept a strict-mode null for ``{"not": {"type": "null"}}`` and then
+    # rejected it, where dropping it would have let the default apply.
+    forbidden = schema.get("not")
+    if isinstance(forbidden, (dict, bool)) and null_validates_against(forbidden):
+        return False
     return True
 
 

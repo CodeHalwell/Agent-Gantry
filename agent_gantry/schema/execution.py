@@ -41,8 +41,17 @@ class ToolCall(BaseModel):
     namespace: str | None = None
     arguments: dict[str, Any]
 
-    timeout_ms: int = Field(default=30000, ge=100, le=300000)
-    retry_count: int = Field(default=0, ge=0, le=5)
+    #: Wall-clock limit for *each attempt*, so a call that is retried can take
+    #: up to ``timeout_ms * (retry_count + 1)`` plus the back-off between
+    #: attempts. ``None`` takes the engine's ``default_timeout_ms``
+    #: (``ExecutionConfig.default_timeout_ms``), which a fixed 30000 here used
+    #: to make impossible to configure.
+    timeout_ms: int | None = Field(default=None, ge=100, le=300000)
+    #: Retries after a failed or timed-out attempt. ``0`` means none; ``None``
+    #: takes the engine's ``max_retries`` (``ExecutionConfig.max_retries``).
+    #: ``0`` used to be the field default *and* read as "unset", so asking for
+    #: no retries was impossible and a non-idempotent tool was run again.
+    retry_count: int | None = Field(default=None, ge=0, le=5)
     require_confirmation: bool | None = None
 
     trace_id: str | None = None
@@ -92,7 +101,11 @@ class BatchToolCall(BaseModel):
     """Request to execute multiple tools."""
 
     calls: list[ToolCall]
+    #: ``adaptive`` runs the calls one at a time when ``fail_fast`` is set (it
+    #: cannot stop a call that is already running) and concurrently otherwise.
     execution_strategy: Literal["parallel", "sequential", "adaptive"] = "adaptive"
+    #: Stop at the first call that does not succeed. Honoured by ``sequential``
+    #: and by ``adaptive``; ``parallel`` starts every call at once.
     fail_fast: bool = False
 
 

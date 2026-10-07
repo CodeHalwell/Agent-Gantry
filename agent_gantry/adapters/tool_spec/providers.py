@@ -227,8 +227,8 @@ class _ToolCallMixin:
     def to_tool_call(
         self,
         payload: ToolCallPayload,
-        timeout_ms: int = 30000,
-        retry_count: int = 0,
+        timeout_ms: int | None = None,
+        retry_count: int | None = None,
     ) -> ToolCall:
         return ToolCall(
             tool_name=payload.tool_name,
