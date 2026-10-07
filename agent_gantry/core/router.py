@@ -217,7 +217,11 @@ async def classify_intent(
     best_score = 0
 
     for intent, patterns in _INTENT_KEYWORD_PATTERNS.items():
-        count = sum(1 for pattern in patterns if pattern.search(enriched_query))
+        # ⚡ Bolt: Inline for-loop instead of sum() with generator expression to reduce overhead
+        count = 0
+        for pattern in patterns:
+            if pattern.search(enriched_query):
+                count += 1
 
         if count > best_score:
             best_score = count
