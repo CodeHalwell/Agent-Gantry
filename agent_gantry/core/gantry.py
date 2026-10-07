@@ -46,11 +46,11 @@ from agent_gantry.schema.execution import (
     ToolResult,
 )
 from agent_gantry.schema.introspection import build_parameters_schema
-from agent_gantry.schema.mcp import MCPServerDefinition
+from agent_gantry.schema.mcp import PSEUDO_NAMESPACE, MCPServerDefinition
 from agent_gantry.schema.query import ConversationContext, RetrievalResult, ScoredTool, ToolQuery
 from agent_gantry.schema.selection import SelectionCandidate
 from agent_gantry.schema.skill import Skill, SkillSearchResult
-from agent_gantry.schema.tool import ToolCapability, ToolDefinition
+from agent_gantry.schema.tool import ToolCapability, ToolDefinition, ToolHealth
 
 if TYPE_CHECKING:
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
@@ -231,7 +231,18 @@ class AgentGantry:
             weights=RoutingWeights(**self._config.routing.weights),
             llm_client=self._llm_client,
             use_llm_for_intent=self._config.routing.use_llm_for_intent,
+            health_for=self._live_health,
         )
+
+    def _live_health(self, namespace: str, name: str) -> ToolHealth | None:
+        """The registry's health record for a tool, which the executor keeps current.
+
+        A persistent vector store returns a copy of each tool deserialised at
+        sync time, so routing has to ask the registry instead to see a circuit
+        breaker that has opened since.
+        """
+        tool = self._registry.get_tool(name, namespace)
+        return tool.health if tool is not None else None
 
     def _create_rate_limiter(self) -> RateLimiter | None:
         """Build the optional rate limiter from execution config."""
@@ -2229,7 +2240,13 @@ class AgentGantry:
         """
         await self._ensure_initialized()
         await self.ensure_synced()
-        return await self._list_all_pages(self._vector_store.list_all, namespace=namespace)
+        tools = await self._list_all_pages(self._vector_store.list_all, namespace=namespace)
+        if namespace is None:
+            # Registered MCP servers are stored beside the tools as searchable
+            # pseudo-tools; they are not tools, so an unfiltered listing omits
+            # them. Asking for their namespace by name still returns them.
+            tools = [tool for tool in tools if tool.namespace != PSEUDO_NAMESPACE]
+        return tools
 
     @staticmethod
     async def _list_all_pages(

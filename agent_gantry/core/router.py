@@ -18,18 +18,19 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from agent_gantry.adapters.embedders.base import embed_query
+from agent_gantry.schema.mcp import PSEUDO_NAMESPACE
 
 _logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
     from agent_gantry.adapters.llm_client import LLMClient
     from agent_gantry.adapters.rerankers.base import RerankerAdapter
     from agent_gantry.adapters.vector_stores.base import VectorStoreAdapter
     from agent_gantry.schema.query import ToolQuery
-    from agent_gantry.schema.tool import ToolDefinition
+    from agent_gantry.schema.tool import ToolDefinition, ToolHealth
 
 
 @lru_cache(maxsize=256)
@@ -266,6 +267,8 @@ class SemanticRouter:
         weights: RoutingWeights | None = None,
         llm_client: LLMClient | None = None,
         use_llm_for_intent: bool = False,
+        *,
+        health_for: Callable[[str, str], ToolHealth | None] | None = None,
     ) -> None:
         """
         Initialize the semantic router.
@@ -277,7 +280,16 @@ class SemanticRouter:
             weights: Routing signal weights
             llm_client: Optional LLM client for intent classification
             use_llm_for_intent: Whether to use LLM for intent classification
+            health_for: Optional ``(namespace, name) -> ToolHealth | None`` that
+                supplies a tool's *live* health. The executor records failures
+                on the registry's definition, and only the in-memory store hands
+                that same object back; every persistent store returns a copy
+                deserialised at sync time, whose health is the registration
+                default. Without this callback, ``exclude_unhealthy`` and the
+                health score only work on the in-memory store. ``None`` from
+                the callback falls back to the candidate's own health.
         """
+        self._health_for = health_for
         self._vector_store = vector_store
         self._embedder = embedder
         self._reranker = reranker
@@ -459,6 +471,9 @@ class SemanticRouter:
         exc_caps: set[str] | None = None,
     ) -> bool:
         """Filter candidates based on query constraints."""
+        if tool.namespace == PSEUDO_NAMESPACE:
+            # An MCP server's searchable stand-in, not a tool anyone can call.
+            return False
         if query.exclude_deprecated and tool.deprecated:
             return False
         if query.namespaces and tool.namespace not in query.namespaces:
@@ -473,9 +488,17 @@ class SemanticRouter:
 
         if query.sources and tool.source not in query.sources:
             return False
-        if query.exclude_unhealthy and tool.health.circuit_breaker_open:
+        if query.exclude_unhealthy and self._health_of(tool).circuit_breaker_open:
             return False
         return True
+
+    def _health_of(self, tool: ToolDefinition) -> ToolHealth:
+        """The tool's live health when the facade supplies it, else the candidate's own."""
+        if self._health_for is not None:
+            live = self._health_for(tool.namespace, tool.name)
+            if live is not None:
+                return live
+        return tool.health
 
     async def _resolve_intent(self, query: ToolQuery) -> TaskIntent:
         """Resolve intent using context override or classification."""
@@ -522,7 +545,8 @@ class SemanticRouter:
                 conversation_relevance = min(1.0, conversation_relevance + 0.2)
 
         # Health score
-        health_score = 0.0 if tool.health.circuit_breaker_open else tool.health.success_rate
+        health = self._health_of(tool)
+        health_score = 0.0 if health.circuit_breaker_open else health.success_rate
 
         # Cost score (inverse - lower cost is better)
         cost_score = 1.0 - min(tool.cost.estimated_latency_ms / 10000, 1.0)

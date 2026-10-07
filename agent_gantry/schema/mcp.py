@@ -19,6 +19,12 @@ from agent_gantry.schema.base import (
     resolve_mcp_transport,
 )
 
+#: Namespace under which each registered MCP server is stored as a searchable
+#: pseudo-tool. Those rows exist so servers can be found by meaning; they have
+#: no handler and an empty schema, so tool routing and tool listing must never
+#: return them as if they were callable.
+PSEUDO_NAMESPACE = "__mcp_servers__"
+
 
 class MCPServerHealth(HealthMetrics):
     """Runtime health metrics for an MCP server."""

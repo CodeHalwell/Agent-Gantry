@@ -29,6 +29,25 @@ gantries only if you close the gantries last.
 
 ### Fixed
 
+- **A registered MCP server was returned as if it were a tool.** Each server is
+  stored beside the tools as a searchable pseudo-tool, and neither
+  `retrieve_tools()` nor `list_tools()` (and so the MCP server's static listing,
+  `find_relevant_tools`, `agent-gantry search` and A2A `tool_discovery`) left it
+  out. The model was handed `mcp_server_<ns>_<name>_<digest>` with an empty
+  schema, and calling it failed with "not found". Routing, selector filtering
+  and unfiltered listing now skip the `__mcp_servers__` namespace;
+  `list_tools(namespace="__mcp_servers__")` still returns the rows.
+  `PSEUDO_NAMESPACE` moved to `agent_gantry.schema.mcp` and is still importable
+  from `agent_gantry.core.mcp_manager`.
+- **Health-aware routing only worked on the in-memory store.** The executor
+  records failures on the registry's tool, and only the in-memory store hands
+  that object back; LanceDB, Qdrant, Chroma and pgvector return a copy made at
+  sync time. `exclude_unhealthy` and the health score therefore never saw an
+  open circuit breaker on a persistent store. `SemanticRouter` takes a
+  `health_for` callback and the facade passes the registry's health.
+- **`render_result` mis-rendered an empty mcp 2.x result.** The 2.x SDK moved
+  its types into a separate `mcp_types` package, which the identity check did
+  not know, so an empty `CallToolResult` rendered its repr instead of nothing.
 - **The five vector stores now honour one contract.** Qdrant and Chroma
   `delete()` report a missing tool as `False`; Qdrant, Chroma and PGVector
   honour the `tags` filter and, with `upsert=False`, skip stored ids and count
