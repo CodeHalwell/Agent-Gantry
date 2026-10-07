@@ -31,6 +31,8 @@ An explicit `ToolCall(retry_count=0)` now means *no retries*; it used to be read
 `retry_count` default to `None`, which takes `ExecutionConfig.default_timeout_ms`
 and `max_retries` (the old fixed `30000` and `0` made both unconfigurable), and
 `to_tool_call()` / `execute_tool_calls()` leave them unset the same way.
+`ExecutionConfig(enable_sandbox=True)` and `sandbox_type != "none"` now raise: no sandbox
+exists, and the fields were accepted and ignored.
 
 ### Fixed
 
@@ -196,6 +198,14 @@ and `max_retries` (the old fixed `30000` and `0` made both unconfigurable), and
   the ADK and Strands adapters do.
 - `agent_gantry.integrations` omitted `StrandsAdapter` and `DSPyAdapter`, which
   `agent_gantry.integrations.frameworks` exports.
+- **Config switches that did nothing.** `ExecutionConfig.enable_sandbox` and
+  `sandbox_type="docker"` were accepted and ignored, so tools ran in-process with
+  the host's privileges under a config that read as isolated; they raise now,
+  like a backend name with no implementation. `RoutingConfig.enable_mmr`,
+  `mmr_lambda`, `enable_intent_classification` and
+  `AgentGantryConfig.sync_on_register` were read by nothing and are removed (an
+  old YAML that sets them still loads). MMR is driven by
+  `ToolQuery.diversity_factor`, as it always was.
 - **Health-aware routing only worked on the in-memory store.** The executor
   records failures on the registry's tool, and only the in-memory store hands
   that object back; LanceDB, Qdrant, Chroma and pgvector return a copy made at
@@ -280,6 +290,17 @@ and `max_retries` (the old fixed `30000` and `0` made both unconfigurable), and
   asks the vector store to initialise again instead of searching one nobody
   reopened (an adapter that closed a connection for good stays closed; see
   `close()`); the in-memory telemetry adapters bound their span list.
+
+### Added
+
+- `AgentGantry.get_tool_health(name, namespace="default")` returns the live
+  health record the executor keeps (calls, success rate, whether the circuit
+  breaker is open). The core README already told readers to call it. It reads the
+  registry, since the vector store's copy of a tool is the one written at sync
+  time. `ToolSpec.sync_callable_for_signature()` is the synchronous twin of
+  `callable_for_signature()`.
+- `AgentGantryConfig` is exported from the package root; eight READMEs imported
+  it from there.
 
 ### Changed
 

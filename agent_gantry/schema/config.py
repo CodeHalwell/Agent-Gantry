@@ -136,11 +136,8 @@ class RoutingConfig(BaseModel):
             "cost": 0.05,
         }
     )
-    enable_intent_classification: bool = True
     use_llm_for_intent: bool = False
     llm: LLMConfig = Field(default_factory=LLMConfig)
-    enable_mmr: bool = True
-    mmr_lambda: float = 0.7
 
 
 class RateLimitConfig(BaseModel):
@@ -175,6 +172,22 @@ class ExecutionConfig(BaseModel):
     enable_sandbox: bool = False
     sandbox_type: Literal["none", "subprocess", "docker"] = "none"
     rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
+
+    @model_validator(mode="after")
+    def _sandbox_is_not_implemented(self) -> ExecutionConfig:
+        # Nothing reads these two fields: handlers run in this process whatever
+        # they say. Accepting ``enable_sandbox=True`` or ``sandbox_type="docker"``
+        # gave the impression of isolation that does not exist -- an untrusted
+        # imported tool ran with the host's privileges -- so, like a backend
+        # name with no implementation, they are refused rather than ignored.
+        if self.enable_sandbox or self.sandbox_type != "none":
+            raise ValueError(
+                "Sandboxed execution is not implemented: tool handlers run in this "
+                "process. Leave enable_sandbox=False and sandbox_type='none', and "
+                "isolate untrusted tools by running the process itself in a container "
+                "or sandbox."
+            )
+        return self
 
 
 class TelemetryConfig(BaseModel):
@@ -304,7 +317,6 @@ class AgentGantryConfig(BaseModel):
     a2a: A2AConfig = Field(default_factory=A2AConfig)
 
     auto_sync: bool = True
-    sync_on_register: bool = False
     prune_on_sync: bool = Field(
         default=False,
         description=(

@@ -3,6 +3,7 @@ import { codeToHtml } from "shiki";
 export async function highlightCode(
   code: string,
   lang: string = "python",
+  label: string = "Code snippet",
 ): Promise<string> {
   return codeToHtml(code.trimEnd(), {
     lang,
@@ -12,7 +13,7 @@ export async function highlightCode(
         pre(node) {
           node.properties.tabindex = "0";
           node.properties.role = "region";
-          node.properties["aria-label"] = "Code snippet";
+          node.properties["aria-label"] = label;
         },
       },
     ],

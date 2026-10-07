@@ -10,13 +10,23 @@ import CodeBlock from '../../components/CodeBlock.astro';
 from agent_gantry.schema.config import AgentGantryConfig
 
 config = AgentGantryConfig(
-    vector_store={"provider": "lancedb", "path": ".gantry/tools.lance"},
-    embedder={"provider": "nomic"},
-    routing={"score_threshold": 0.5, "use_llm_for_intent": False},
+    vector_store={"type": "lancedb", "db_path": ".gantry/tools.lance"},
+    embedder={"type": "nomic"},
+    routing={"use_llm_for_intent": False},
     execution={"default_timeout_ms": 30000, "max_retries": 2},
-    telemetry={"provider": "console"},
+    telemetry={"type": "console"},
 )
 gantry = AgentGantry(config=config)`} />
+
+  <p>The keys are the field names of the config models: <code>type</code> selects a backend, and <code>db_path</code> is where LanceDB keeps its files. A key a model does not have is ignored without an error, so a misspelt one leaves the default in place (here, an in-memory store and the sentence-transformers embedder) rather than failing. <code>default_timeout_ms</code> and <code>max_retries</code> apply to every call that does not set its own <code>timeout_ms</code> or <code>retry_count</code>; the timeout is per attempt.</p>
+
+  <p>The relevance cutoff is not part of the config. It is a per-query setting:</p>
+
+  <CodeBlock lang="python" code={`tools = await gantry.retrieve_tools(
+    "refund an order",
+    limit=5,
+    score_threshold=0.5,   # raw cosine; the convenience layers default to 0.0
+)`} />
 
   <h2>Common extras</h2>
   <CodeBlock lang="bash" code={`uv add "agent-gantry[openai]"          # OpenAI, Azure OpenAI, OpenRouter

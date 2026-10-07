@@ -23,6 +23,7 @@ from agent_gantry.integrations.semantic_tools import (
     with_semantic_tools,
 )
 from agent_gantry.observability.console import enable_console_logging
+from agent_gantry.schema.config import AgentGantryConfig
 from agent_gantry.schema.execution import ToolCall, ToolCallEvent, ToolResult
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 from agent_gantry.schema.selection import SelectionCandidate, SelectionResult
@@ -130,6 +131,7 @@ __version__ = "0.19.0"
 # reset_sse_shutdown_latch`` still works wherever ``mcp`` does.
 __all__ = [
     "AgentGantry",
+    "AgentGantryConfig",
     "StreamingToolCallAccumulator",
     "GantryContextProvider",
     "JevReranker",

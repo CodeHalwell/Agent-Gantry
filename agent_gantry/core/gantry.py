@@ -2260,6 +2260,25 @@ class AgentGantry:
         await self.ensure_synced()
         return await self._vector_store.get_by_name(name, namespace)
 
+    def get_tool_health(self, name: str, namespace: str = "default") -> ToolHealth | None:
+        """The live health record of a tool this gantry registers.
+
+        Call counts, success rate, last failure and whether the circuit breaker
+        is open: the record the executor keeps current and routing reads. It
+        comes from the registry rather than the vector store, whose copy of a
+        tool is the one written at the last sync and so shows none of this on a
+        persistent store.
+
+        Args:
+            name: Tool name
+            namespace: Tool namespace
+
+        Returns:
+            The health record, or ``None`` if this gantry does not register the
+            tool (for example, one that only exists in a shared store).
+        """
+        return self._live_health(namespace, name)
+
     async def list_tools(
         self,
         namespace: str | None = None,

@@ -8,7 +8,9 @@ interface Props {
 }
 
 const { code, lang = 'python', title } = Astro.props;
-const html = await highlightCode(code, lang);
+// A titled block names its region after the title, so a page with several
+// code blocks does not offer a list of identical "Code snippet" landmarks.
+const html = await highlightCode(code, lang, title ? `Code snippet: ${title}` : undefined);
 ---
 
 <figure class="code-block">

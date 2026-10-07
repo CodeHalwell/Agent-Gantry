@@ -38,8 +38,8 @@ def calculate_tax(amount: float) -> float:
     detail:
       'Persist embeddings, route to MCP/A2A, bridge agent frameworks, and instrument usage across production workflows.',
     code: `gantry = AgentGantry(config=AgentGantryConfig(
-    vector_store={"provider": "lancedb"},
-    telemetry={"provider": "opentelemetry"},
+    vector_store={"type": "lancedb", "db_path": ".gantry/tools.lance"},
+    telemetry={"type": "opentelemetry"},
 ))`,
   },
 ];

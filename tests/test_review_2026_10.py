@@ -1035,3 +1035,79 @@ def test_the_aggregate_integrations_package_exports_every_adapter() -> None:
     missing = [name for name in frameworks.__all__ if name.endswith("Adapter")
                and name not in integrations.__all__]
     assert not missing, missing  # StrandsAdapter and DSPyAdapter were absent
+
+
+# --------------------------------------------------------------------------
+# Configuration that must not silently do nothing
+# --------------------------------------------------------------------------
+
+
+def test_asking_for_a_sandbox_is_refused_because_none_exists() -> None:
+    from pydantic import ValidationError
+
+    ExecutionConfig()  # the defaults are fine
+    ExecutionConfig(enable_sandbox=False, sandbox_type="none")
+    for kwargs in ({"enable_sandbox": True}, {"sandbox_type": "docker"}, {"sandbox_type": "subprocess"}):
+        with pytest.raises(ValidationError, match="not implemented"):
+            ExecutionConfig(**kwargs)
+
+
+def test_an_old_yaml_with_the_removed_inert_fields_still_loads(tmp_path: Any) -> None:
+    path = tmp_path / "gantry.yaml"
+    path.write_text(
+        "routing:\n  enable_mmr: false\n  mmr_lambda: 0.5\n  enable_intent_classification: true\n"
+        "sync_on_register: true\n"
+    )
+    config = AgentGantryConfig.from_yaml(str(path))
+    assert not hasattr(config.routing, "enable_mmr") and not hasattr(config, "sync_on_register")
+
+
+def test_the_config_class_is_importable_from_the_package_root() -> None:
+    import agent_gantry
+
+    assert agent_gantry.AgentGantryConfig is AgentGantryConfig
+    assert "AgentGantryConfig" in agent_gantry.__all__
+
+
+async def test_get_tool_health_reads_the_live_record() -> None:
+    gantry = AgentGantry(
+        config=AgentGantryConfig(execution=ExecutionConfig(circuit_breaker_threshold=2, max_retries=0)),
+        vector_store=_CopyingStore(),
+        embedder=SimpleEmbedder(dimension=64),
+    )
+    try:
+
+        @gantry.register()
+        def flaky_service() -> str:
+            """Call a service that is down."""
+            raise RuntimeError("down")
+
+        assert gantry.get_tool_health("flaky_service") is not None
+        assert gantry.get_tool_health("never_registered") is None
+        for _ in range(2):
+            await gantry.execute(ToolCall(tool_name="flaky_service", arguments={}))
+        health = gantry.get_tool_health("flaky_service")
+        assert health is not None and health.circuit_breaker_open and health.total_calls == 2
+        # ...which the store's own copy (what get_tool returns) does not show.
+        stored = await gantry.get_tool("flaky_service")
+        assert stored is not None and not stored.health.circuit_breaker_open
+    finally:
+        await gantry.close()
+
+
+async def test_lancedb_never_scores_a_vector_above_one(tmp_path: Any) -> None:
+    """float32 rounding gave an identical vector a cosine distance of about -1e-7."""
+    pytest.importorskip("lancedb")
+    import numpy as np
+
+    from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+
+    rng = np.random.default_rng(0)  # seeded: 95 of 400 such vectors rounded over 1.0
+    vectors = [rng.random(8).astype(np.float32).tolist() for _ in range(120)]
+    store = LanceDBVectorStore(db_path=str(tmp_path), dimension=8)
+    await store.initialize()
+    tools = [_tool(f"tool_{i}", f"Tool number {i} doing something") for i in range(len(vectors))]
+    await store.add_tools(tools, vectors)
+    for vector in vectors:
+        hits = await store.search(vector, limit=1, score_threshold=0.0)
+        assert hits and hits[0][1] <= 1.0

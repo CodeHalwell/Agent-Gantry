@@ -10,12 +10,11 @@ import CodeBlock from '../../../../components/CodeBlock.astro';
 
   <h2>Advanced page: dynamic tool selection</h2>
   <p>Before each Haystack run, ask Gantry for a context-aware subset of tools. Combine request metadata, tenant policy, semantic similarity, and reranker results so the agent sees a concise, relevant tool surface.</p>
-  <CodeBlock lang="python" code={`candidate_tools = gantry.select_tools(
-    query=user_message,
-    tags=["support"],
+  <CodeBlock lang="python" code={`framework_tools = await HaystackAdapter(gantry).select(
+    user_message,
     limit=8,
+    namespaces=["support"],
 )
-framework_tools = [HaystackAdapter.convert(spec) for spec in candidate_tools]
 `} />
 
   <h2>LLM calls and model policy</h2>

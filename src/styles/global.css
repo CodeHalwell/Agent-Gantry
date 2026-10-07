@@ -83,9 +83,13 @@ a:hover {
   background: linear-gradient(135deg, var(--accent), var(--purple));
   box-shadow: 0 0 32px rgba(110, 231, 249, 0.35);
 }
-.brand h1 {
+.brand .brand-title {
+  /* Was an <h1>: bold, in the link colour it inherits. A paragraph now, so the
+     page's own heading is the only <h1>; `color: inherit` undoes `.brand p`. */
   font-size: 1.05rem;
+  font-weight: 700;
   margin: 0;
+  color: inherit;
 }
 .brand p {
   margin: 0.1rem 0 0;

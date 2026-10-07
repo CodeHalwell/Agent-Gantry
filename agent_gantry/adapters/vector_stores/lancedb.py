@@ -438,7 +438,10 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
                 # score 0 and so survive the ``score_threshold=0.0`` the
                 # convenience layers use, where the other stores drop it.
                 distance = row.get("_distance", 0)
-                score = 1.0 - distance
+                # Capped: float32 rounding puts an identical vector's cosine
+                # distance at about -1e-7 in a quarter of cases, a score a hair
+                # over 1.0 that breaks the [0, 1] contract downstream.
+                score = min(1.0, 1.0 - distance)
 
                 if score_threshold is not None and score < score_threshold:
                     continue
@@ -542,7 +545,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
         output: list[tuple[Skill, float]] = []
         for row in results:
             distance = row.get("_distance", 0)
-            score = 1.0 - distance  # cosine similarity; see the tools search
+            score = min(1.0, 1.0 - distance)  # cosine similarity; see the tools search
 
             if score_threshold is not None and score < score_threshold:
                 continue

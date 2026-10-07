@@ -13,9 +13,16 @@ import CodeBlock from '../../components/CodeBlock.astro';
     <li>Log tool-call events and attach tracing through console, OpenTelemetry, or Prometheus adapters.</li>
   </ul>
   <h2>Debug retrieval</h2>
-  <CodeBlock lang="python" code={`result = await gantry.retrieve(query)
+  <CodeBlock lang="python" code={`from agent_gantry import ConversationContext, ToolQuery
+
+result = await gantry.retrieve(ToolQuery(
+    context=ConversationContext(query="refund an order"),
+    limit=5,
+    score_threshold=0.0,   # keep everything, so near misses show up too
+))
 for candidate in result.tools:
-    print(candidate.tool.name, candidate.score, candidate.reason)`} />
+    # semantic_score is the routing score; rerank_score is set when a reranker ran
+    print(candidate.tool.name, candidate.semantic_score, candidate.rerank_score)`} />
   <h2>Release checklist</h2>
   <ul>
     <li>Run unit tests and framework adapter tests relevant to your extras.</li>
