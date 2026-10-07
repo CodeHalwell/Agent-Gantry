@@ -477,3 +477,30 @@ def test_a_structured_only_result_is_not_rendered_as_empty() -> None:
 
     rendered = render_result(_NotAResult())
     assert "_NotAResult" in rendered, rendered
+
+
+def test_an_empty_mcp_2x_result_is_recognised_by_its_module() -> None:
+    """mcp 2.x result types live in ``mcp_types``, not ``mcp``.
+
+    Stand-in classes carry the module name the 2.x SDK gives its types
+    (``mcp_types._types``, checked against mcp 2.2.0), so this runs whichever
+    major version is installed. Without the second module name an empty
+    result fell through to ``str()`` and the client was sent the dataclass
+    repr instead of nothing.
+    """
+    from agent_gantry.utils.render import _is_mcp_result
+
+    class CallToolResult:
+        content: list = []
+        is_error = False
+
+    CallToolResult.__module__ = "mcp_types._types"
+    assert _is_mcp_result(CallToolResult())
+    assert render_result(CallToolResult()) == ""
+
+    # An ordinary record that merely shares the field names is still not one.
+    class Record:
+        content: list = []
+        is_error = False
+
+    assert not _is_mcp_result(Record())

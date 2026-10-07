@@ -80,7 +80,10 @@ def _is_mcp_result(value: Any) -> bool:
     # is real identity: an instance of an SDK type, or a structured payload to
     # render. Both spellings, since mcp 2.x renamed ``structuredContent`` to
     # ``structured_content``.
-    if type(value).__module__.split(".")[0] == "mcp":
+    # mcp 2.x moved its types out of ``mcp.types`` into the separate
+    # ``mcp_types`` distribution, so an SDK result's top-level module is
+    # ``mcp`` on 1.x and ``mcp_types`` on 2.x.
+    if type(value).__module__.split(".")[0] in ("mcp", "mcp_types"):
         return True
     names = ("structuredContent", "structured_content")
     if isinstance(value, dict):
