@@ -123,6 +123,11 @@ def __getattr__(name: str) -> "Any":
 
 
 __version__ = "0.19.0"
+# ``reset_sse_shutdown_latch`` is deliberately not listed: it needs the ``mcp``
+# extra and is supplied lazily by ``__getattr__`` above, and ``import *`` reads
+# every name in ``__all__``, so listing it made the star-import raise
+# AttributeError on a base install. ``from agent_gantry import
+# reset_sse_shutdown_latch`` still works wherever ``mcp`` does.
 __all__ = [
     "AgentGantry",
     "StreamingToolCallAccumulator",
@@ -137,7 +142,6 @@ __all__ = [
     "enable_console_logging",
     "extract_tool_calls",
     "render_result",
-    "reset_sse_shutdown_latch",
     "with_semantic_tools",
     "set_default_gantry",
     "ToolCall",

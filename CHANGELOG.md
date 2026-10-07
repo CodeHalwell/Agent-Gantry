@@ -57,6 +57,34 @@ gantries only if you close the gantries last.
   with no media type was not; a data URI is now recognised by its shape.
   `allowed_domains` entries are matched case-insensitively, so
   `["API.GitHub.com"]` no longer denies `https://api.github.com`.
+- **`add_tool(new_definition)` after a first sync was silently dropped.** The
+  registry's copy of a name was read before the pending one, so `sync()`
+  fingerprinted the stale definition, found nothing changed and drained the
+  update; the store, the registry and `list_tools_sync()` kept the old
+  description and schema, and the same went for a re-discovered A2A agent.
+  A pending definition now wins, as `_drain_pending` and the selector path
+  already assumed.
+- **`sync()` is serialised per event loop.** Every coroutine that reached
+  `ensure_synced` before the first sync finished started its own: three
+  retrievals gathered on a fresh gantry embedded and upserted the whole
+  registry three times, which is a paid embedder's bill and, on LanceDB (whose
+  upsert is delete-then-add), interleaved writes of the same ids. The later
+  callers now wait and find nothing to do.
+- **A switch of embedder was only noticed by whichever sync ran first.** Tools
+  and MCP servers share one embedder record in the store; the first sync
+  re-embedded its own rows and rewrote the record, and the second found it
+  current and kept its old vectors. Each now owes its own re-embed. Tools
+  imported with `from_modules` / `collect_tools_from_modules` never wrote the
+  record at all, so a later gantry on a different model found nothing to
+  compare; they write it, and a sync that finds nothing to do writes it when
+  it is missing.
+- **`from agent_gantry import *` raised on a base install.** `__all__` listed
+  `reset_sse_shutdown_latch`, which needs the `mcp` extra and deliberately
+  raises `AttributeError` without it. It is still importable by name.
+- **`AgentGantry.quick_start(embedder="openai")` ignored `OPENAI_API_KEY`** and
+  asked for `openai_api_key=`, and an unknown embedder name (`"opnai"`)
+  silently became the hash embedder. The OpenAI embedder resolves its own key
+  and says what is missing; an unknown name raises `ValueError`.
 - **Health-aware routing only worked on the in-memory store.** The executor
   records failures on the registry's tool, and only the in-memory store hands
   that object back; LanceDB, Qdrant, Chroma and pgvector return a copy made at

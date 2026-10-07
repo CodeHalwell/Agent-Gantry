@@ -36,6 +36,13 @@ class SyncManager:
         self._vector_store = vector_store
         self._embedder = embedder
         self._registry = registry
+        # The embedder id and dimension are recorded once per *store*, but two
+        # things embed into it: the tools and the MCP servers (as pseudo-tools).
+        # When the store turns out to hold another embedder's vectors, each of
+        # those still owes a re-embed of its own rows; ``None`` means nothing
+        # is owed. Without this the first sync rewrote the shared record, the
+        # second found it current, and its rows kept the old vectors.
+        self._owes_reembed: set[str] | None = None
 
     def get_embedder_id(self) -> str:
         """
@@ -82,10 +89,32 @@ class SyncManager:
 
         return "-".join(parts)
 
+    async def _store_holds_other_embeddings(self) -> bool:
+        """Whether the store's recorded embedder or dimension differs from ours."""
+        embedder_id = self.get_embedder_id()
+        stored_embedder = await self._vector_store.get_metadata("embedder_id")
+        stored_dim = await self._vector_store.get_metadata("dimension")
+
+        if stored_embedder and stored_embedder != embedder_id:
+            logger.info(
+                f"Embedder changed from '{stored_embedder}' to '{embedder_id}'. "
+                "Full re-sync required."
+            )
+            return True
+        if stored_dim and int(stored_dim) != self._vector_store.dimension:
+            logger.info(
+                f"Dimension changed from {stored_dim} to {self._vector_store.dimension}. "
+                "Full re-sync required."
+            )
+            return True
+        return False
+
     async def detect_changes(
         self,
         all_tools: list[ToolDefinition],
         force: bool,
+        *,
+        kind: str = "tools",
     ) -> list[ToolDefinition]:
         """
         Detect which tools need to be synced based on fingerprints.
@@ -93,6 +122,9 @@ class SyncManager:
         Args:
             all_tools: List of all current tools
             force: If True, force resync of all tools
+            kind: Which consumer is asking, ``"tools"`` or ``"mcp"``. A store
+                found to hold another embedder's vectors is re-embedded once
+                *per kind*, whichever syncs first.
 
         Returns:
             List of tools that need to be synced
@@ -103,23 +135,11 @@ class SyncManager:
         }
 
         stored_fingerprints = await self._vector_store.get_stored_fingerprints()
-        embedder_id = self.get_embedder_id()
         needs_full_resync = force
 
-        stored_embedder = await self._vector_store.get_metadata("embedder_id")
-        stored_dim = await self._vector_store.get_metadata("dimension")
-
-        if stored_embedder and stored_embedder != embedder_id:
-            logger.info(
-                f"Embedder changed from '{stored_embedder}' to '{embedder_id}'. "
-                "Full re-sync required."
-            )
-            needs_full_resync = True
-        elif stored_dim and int(stored_dim) != self._vector_store.dimension:
-            logger.info(
-                f"Dimension changed from {stored_dim} to {self._vector_store.dimension}. "
-                "Full re-sync required."
-            )
+        if self._owes_reembed is None and await self._store_holds_other_embeddings():
+            self._owes_reembed = {"tools", "mcp"}
+        if self._owes_reembed and kind in self._owes_reembed:
             needs_full_resync = True
 
         if needs_full_resync:
@@ -168,9 +188,31 @@ class SyncManager:
             total_synced += count
         return total_synced
 
-    async def update_metadata(self) -> None:
-        """Update sync metadata in the vector store."""
+    async def update_metadata(self, kind: str = "tools") -> None:
+        """Record the embedder and dimension in the store, and that ``kind`` is done.
+
+        Args:
+            kind: The consumer that has just re-embedded its rows (see
+                :meth:`detect_changes`). The record itself is store-wide and is
+                rewritten at once; what is tracked per kind is whether that
+                consumer's rows were brought up to date.
+        """
         await self._vector_store.update_sync_metadata(
             embedder_id=self.get_embedder_id(),
             dimension=self._vector_store.dimension,
         )
+        if self._owes_reembed is not None:
+            self._owes_reembed.discard(kind)
+            if not self._owes_reembed:
+                self._owes_reembed = None  # fully migrated: ask the store afresh next time
+
+    async def ensure_metadata(self) -> None:
+        """Record the embedder in the store if nothing ever did.
+
+        Rows written by a path that skips :meth:`update_metadata` (importing
+        tools from modules did) leave the store without the record, and a later
+        gantry using a different embedder then finds nothing to compare and
+        searches the old vectors with the new model.
+        """
+        if not await self._vector_store.get_metadata("embedder_id"):
+            await self.update_metadata()

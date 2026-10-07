@@ -12,6 +12,7 @@ import inspect
 import logging
 import uuid
 import warnings
+import weakref
 from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from time import perf_counter
@@ -277,6 +278,11 @@ class AgentGantry:
         self._pending_tools: list[ToolDefinition] = []
         # Locks are created lazily, inside a running loop, on first use.
         self._init_lock: asyncio.Lock | None = None
+        # One lock per event loop, because an asyncio.Lock belongs to the loop
+        # that first waits on it and a gantry can be driven from several.
+        self._sync_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
+            weakref.WeakKeyDictionary()
+        )
         # One-shot guard for _ensure_skill_vectors_current (embedder is fixed
         # for this instance's lifetime)
         self._skill_vectors_checked = False
@@ -374,7 +380,10 @@ class AgentGantry:
         an in-memory vector store for immediate use.
 
         Args:
-            embedder: Embedder type - "auto", "nomic", "openai", or "simple"
+            embedder: Embedder type - "auto", "nomic", "openai", or "simple".
+                "openai" takes its key from ``openai_api_key=`` or the
+                ``OPENAI_API_KEY`` environment variable; any other value raises
+                ``ValueError``.
             dimension: Embedding dimension (for Nomic, default 256)
             **kwargs: Additional AgentGantry constructor arguments
 
@@ -424,23 +433,21 @@ class AgentGantry:
 
             embedder_instance = NomicEmbedder(dimension=dimension)
         elif embedder == "openai":
-            api_key = kwargs.pop("openai_api_key", None)
-            if not api_key:
-                raise ValueError(
-                    "OpenAI embedder requires a valid API key. "
-                    "Pass openai_api_key=... to quick_start() or configure AgentGantryConfig."
-                )
-            embedder_config = EmbedderConfig(type="openai", api_key=api_key)
-            try:
-                embedder_instance = OpenAIEmbedder(embedder_config)
-            except Exception as exc:
-                raise RuntimeError(
-                    "Failed to initialize OpenAI embedder. Ensure optional dependencies are "
-                    'installed with "pip install agent-gantry[openai]" and that your OpenAI '
-                    "API key is valid."
-                ) from exc
-        else:  # "simple" or unknown
+            # The embedder resolves OPENAI_API_KEY itself and raises a specific
+            # error (missing package, missing key) that says what to do. A key
+            # check here first made this the one entry point that ignored the
+            # environment variable, and wrapping the embedder's error replaced
+            # its message with a generic one.
+            embedder_instance = OpenAIEmbedder(
+                EmbedderConfig(type="openai", api_key=kwargs.pop("openai_api_key", None))
+            )
+        elif embedder == "simple":
             embedder_instance = SimpleEmbedder()
+        else:
+            # A typo used to fall through to the hash embedder with no sign of it.
+            raise ValueError(
+                f"Unknown embedder {embedder!r}: expected 'auto', 'nomic', 'openai' or 'simple'."
+            )
 
         return cls(config=config, embedder=embedder_instance, **kwargs)
 
@@ -629,6 +636,22 @@ class AgentGantry:
         Returns:
             Number of tools synced (0 if nothing changed)
         """
+        # Serialised per event loop. Without this, every coroutine that reached
+        # ``ensure_synced`` before the first sync finished started its own full
+        # sync: three retrievals gathered on a fresh gantry embedded and
+        # upserted the whole registry three times (a paid embedder's bill, and
+        # on LanceDB, whose upsert is delete-then-add, interleaved writes of the
+        # same ids). A waiter that gets the lock after the first sync finds
+        # nothing changed and returns immediately.
+        loop = asyncio.get_running_loop()
+        lock = self._sync_locks.get(loop)
+        if lock is None:
+            lock = self._sync_locks[loop] = asyncio.Lock()
+        async with lock:
+            return await self._sync_locked(batch_size, force, prune)
+
+    async def _sync_locked(self, batch_size: int, force: bool, prune: bool | None) -> int:
+        """The body of :meth:`sync`; the caller holds the sync lock."""
         # If modules were provided in constructor but not yet loaded, load them now
         if self._modules is not None:
             await self.collect_tools_from_modules(
@@ -675,6 +698,10 @@ class AgentGantry:
             # Ensure handlers are registered even if tools are already in DB
             for tool in all_tools:
                 self._registry.register_tool(tool)
+            # Rows written by a path that never recorded the embedder (tools
+            # imported from modules did not) would otherwise never be covered by
+            # the embedder-change check.
+            await self._sync_manager.ensure_metadata()
             # Every pending definition in the snapshot is now known to the
             # registry and the store, so drain it — otherwise ensure_synced()
             # would re-run the fingerprint scan on every retrieval.
@@ -776,7 +803,7 @@ class AgentGantry:
         stored = await self._list_all_pages(self._vector_store.list_all)
         removed = 0
         for tool in stored:
-            if tool.namespace == "__mcp_servers__":
+            if tool.namespace == PSEUDO_NAMESPACE:
                 continue
             if f"{tool.namespace}.{tool.name}" in wanted:
                 continue
@@ -928,6 +955,7 @@ class AgentGantry:
         elif tools_to_add:
             await self._ensure_initialized()
             await self._sync_manager.sync_batches(tools_to_add, batch_size=100)
+            await self._sync_manager.update_metadata()
 
         return imported
 
@@ -2286,20 +2314,19 @@ class AgentGantry:
         Returns:
             List of tool definitions known to the registry.
         """
-        registered = self._registry.list_tools()
-        pending = self._pending_tools
-
-        seen: set[str] = set()
-        out: list[ToolDefinition] = []
-        for tool in (*registered, *pending):
-            key = f"{tool.namespace}.{tool.name}"
-            if key in seen:
-                continue
+        # Later entries win. A pending definition is newer than the registry's
+        # copy of the same name (``_drain_pending`` and ``_select_tools`` already
+        # treat it so), and the registry is read first. Reading it the other way
+        # round made ``sync()`` fingerprint the stale copy, find nothing changed
+        # and drain the update, so ``add_tool(new_definition)`` after a first
+        # sync was dropped without a trace. A dict keeps each name's first
+        # position, so the order is the registry's then new arrivals.
+        by_key: dict[str, ToolDefinition] = {}
+        for tool in (*self._registry.list_tools(), *self._pending_tools):
             if namespace is not None and tool.namespace != namespace:
                 continue
-            seen.add(key)
-            out.append(tool)
-        return out
+            by_key[f"{tool.namespace}.{tool.name}"] = tool
+        return list(by_key.values())
 
     async def preview(
         self,

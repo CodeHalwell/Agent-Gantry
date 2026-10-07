@@ -38,10 +38,27 @@ class TestQuickStart:
         assert isinstance(gantry._embedder, SimpleEmbedder)
 
     @pytest.mark.asyncio
-    async def test_quick_start_openai_without_key(self):
+    async def test_quick_start_openai_without_key(self, monkeypatch):
         """Test quick_start raises error for OpenAI without API key."""
-        with pytest.raises(ValueError, match="OpenAI embedder requires a valid API key"):
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        with pytest.raises(ValueError, match="OpenAI API key is required"):
             AgentGantry.quick_start(embedder="openai")
+
+    @pytest.mark.asyncio
+    async def test_quick_start_openai_reads_the_environment_key(self, monkeypatch):
+        """The key may come from OPENAI_API_KEY, as it does for every other entry point."""
+        pytest.importorskip("openai")
+        from agent_gantry.adapters.embedders.openai import OpenAIEmbedder
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
+        gantry = AgentGantry.quick_start(embedder="openai")
+        assert isinstance(gantry._embedder, OpenAIEmbedder)
+
+    @pytest.mark.asyncio
+    async def test_quick_start_rejects_an_unknown_embedder(self):
+        """A typo no longer degrades silently to the hash-based embedder."""
+        with pytest.raises(ValueError, match="Unknown embedder 'opnai'"):
+            AgentGantry.quick_start(embedder="opnai")
 
     @pytest.mark.asyncio
     async def test_quick_start_with_tool_registration(self):

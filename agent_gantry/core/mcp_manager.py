@@ -142,7 +142,7 @@ class MCPManager:
             return 0
 
         pseudo_tools = [_pseudo_tool(server) for server in all_servers]
-        to_sync = await self._sync_manager.detect_changes(pseudo_tools, force)
+        to_sync = await self._sync_manager.detect_changes(pseudo_tools, force, kind="mcp")
         self._registry.drain_pending(pending_snapshot)
         total_synced = 0
         if to_sync:
@@ -152,7 +152,7 @@ class MCPManager:
                 # A pseudo-tool's description is the server's searchable text.
                 embeddings = await self._embedder.embed_batch([tool.description for tool in batch])
                 total_synced += await self._vector_store.add_tools(batch, embeddings, upsert=True)
-            await self._sync_manager.update_metadata()
+            await self._sync_manager.update_metadata(kind="mcp")
             logger.info(f"Synced {total_synced} MCP servers")
         else:
             logger.debug(f"All {len(all_servers)} MCP servers up-to-date, skipping sync")
