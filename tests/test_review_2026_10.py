@@ -1111,3 +1111,24 @@ async def test_lancedb_never_scores_a_vector_above_one(tmp_path: Any) -> None:
     for vector in vectors:
         hits = await store.search(vector, limit=1, score_threshold=0.0)
         assert hits and hits[0][1] <= 1.0
+
+
+# --------------------------------------------------------------------------
+# Network exposure
+# --------------------------------------------------------------------------
+
+
+def test_serve_a2a_binds_loopback_unless_told_otherwise(monkeypatch: pytest.MonkeyPatch) -> None:
+    """serve_a2a bound every interface by default; serve_mcp and the CLI bound loopback."""
+    uvicorn = pytest.importorskip("uvicorn")
+    pytest.importorskip("fastapi")
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: seen.update(kwargs))
+    gantry = AgentGantry(embedder=SimpleEmbedder())
+
+    gantry.serve_a2a()
+    assert seen == {"host": "127.0.0.1", "port": 8080}
+
+    seen.clear()
+    gantry.serve_a2a(host="0.0.0.0", port=9000)  # exposing it stays possible, but explicit
+    assert seen == {"host": "0.0.0.0", "port": 9000}
