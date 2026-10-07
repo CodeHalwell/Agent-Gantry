@@ -173,6 +173,29 @@ and `max_retries` (the old fixed `30000` and `0` made both unconfigurable), and
   stores do.
 - **`OpenAIEmbedder` and `AzureOpenAIEmbedder` had no `aclose()`**, so
   `AgentGantry.close()` could not release the HTTP connection pool it opened.
+- **The Agent Framework provider swallowed an out-of-range `top_k` or
+  `score_threshold`.** The six per-turn providers in `frameworks/` raise
+  `QueryBoundsError` at construction; `GantryContextProvider(top_k=60)` built
+  fine, then failed inside every run, where the retrieval handler logged the
+  validation error and carried on, so the agent ran with no Gantry tools and one
+  ERROR line. It checks first (before the `agent-framework` import, so it holds
+  without the package), `GantryToolBridge.get_tools(limit=60)` raises the same
+  error instead of a raw `ValidationError`, and the handler lets
+  `QueryBoundsError` and `MissingRequiredToolError` out.
+- **The Agent Framework wrapper serialised its result outside its error guard**,
+  so a `datetime`, `Decimal`, dataclass or tuple-keyed dict raised from a tool
+  that had run fine, and Agent Framework showed an opaque "Function failed". It
+  uses the provider adapters' encoder inside the guard
+  (`agent_gantry.integrations.frameworks.base.result_text`), as the OpenAI Agents
+  adapter now does; its `default=str` never reached dict keys either.
+- **Renamed parameters could not be supplied through LlamaIndex or Agno.** A
+  property such as `user-id` is exposed as `user_id`, and the two adapters
+  advertised that name and then sent it to the executor unmapped ("Missing
+  required parameter: user-id"). LlamaIndex maps it back; Agno uses the new
+  `ToolSpec.sync_callable_for_signature()` and advertises the aliased schema, as
+  the ADK and Strands adapters do.
+- `agent_gantry.integrations` omitted `StrandsAdapter` and `DSPyAdapter`, which
+  `agent_gantry.integrations.frameworks` exports.
 - **Health-aware routing only worked on the in-memory store.** The executor
   records failures on the registry's tool, and only the in-memory store hands
   that object back; LanceDB, Qdrant, Chroma and pgvector return a copy made at

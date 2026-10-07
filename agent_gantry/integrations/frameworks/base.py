@@ -233,17 +233,45 @@ class ToolSpec:
                 kwargs = {aliases.get(key, key): value for key, value in kwargs.items()}
             return await self.ainvoke(**kwargs)
 
-        _fn.__name__ = self.name
-        _fn.__doc__ = self.description
-        _fn.__signature__ = self.python_signature(  # type: ignore[attr-defined]
+        return self._labelled(_fn, type_matched_defaults)
+
+    def sync_callable_for_signature(
+        self,
+        *,
+        type_matched_defaults: bool = False,
+    ) -> Callable[..., Any]:
+        """The synchronous counterpart of :meth:`callable_for_signature`.
+
+        Same name, docstring and real ``__signature__``, and the same mapping
+        of renamed parameters (``user_id`` for ``user-id``) back to the schema's
+        own property names, but it calls :meth:`invoke` rather than awaiting.
+        For frameworks that call a plain function from synchronous code. An
+        adapter that copied the signature onto its own ``**kwargs`` wrapper
+        advertised the renamed parameters and then sent them to the executor
+        unmapped, so the tool could never be called with a renamed property.
+        """
+        aliases = self.parameter_aliases()
+
+        def _fn(**kwargs: Any) -> Any:
+            if aliases:
+                kwargs = {aliases.get(key, key): value for key, value in kwargs.items()}
+            return self.invoke(**kwargs)
+
+        return self._labelled(_fn, type_matched_defaults)
+
+    def _labelled(self, fn: Any, type_matched_defaults: bool) -> Callable[..., Any]:
+        """``fn`` carrying this tool's name, docstring, signature and annotations."""
+        fn.__name__ = self.name
+        fn.__doc__ = self.description
+        fn.__signature__ = self.python_signature(  # type: ignore[attr-defined]
             type_matched_defaults=type_matched_defaults,
         )
-        _fn.__annotations__ = {
+        fn.__annotations__ = {
             p.name: p.annotation
-            for p in _fn.__signature__.parameters.values()
+            for p in fn.__signature__.parameters.values()
             if p.annotation is not inspect.Parameter.empty
         }
-        return _fn
+        return fn  # type: ignore[no-any-return]
 
     def python_signature(
         self,
@@ -1092,6 +1120,19 @@ def _resolve_pins(
         gantry, always_include, seen_qualified, seen_bare, kind="always_include"
     )
     return pinned
+
+
+def result_text(result: Any) -> str:
+    """A tool result as the text a model reads: strings verbatim, anything else as JSON.
+
+    The same serialiser the provider adapters use for their replies, so a
+    ``datetime``, ``Decimal``, dataclass, Pydantic model, set, or a dict keyed
+    by an enum or tuple, comes out as JSON instead of raising ``TypeError`` out
+    of a wrapper that had already run the tool successfully.
+    """
+    from agent_gantry.adapters.tool_spec.providers import _result_text
+
+    return _result_text(result)
 
 
 class QueryBoundsError(ValueError):

@@ -82,11 +82,22 @@ def _spec_to_llamaindex(spec: ToolSpec) -> Any:
             return kwargs
         return {key: dumped.get(key, value) for key, value in kwargs.items()}
 
+    # With no ``fn_schema`` (the schema has a property that is not a valid
+    # parameter name) LlamaIndex advertises the *signature*, which carries the
+    # renamed parameters, so those are what the model sends. They go back to the
+    # schema's own names before the call; the executor knows no ``user_id``.
+    aliases = spec.parameter_aliases()
+
+    def _unaliased(kwargs: dict[str, Any]) -> dict[str, Any]:
+        if not aliases:
+            return kwargs
+        return {aliases.get(key, key): value for key, value in kwargs.items()}
+
     def _sync_fn(**kwargs: Any) -> Any:
-        return spec.invoke(**_coerced(kwargs))
+        return spec.invoke(**_coerced(_unaliased(kwargs)))
 
     async def _async_fn(**kwargs: Any) -> Any:
-        return await spec.ainvoke(**_coerced(kwargs))
+        return await spec.ainvoke(**_coerced(_unaliased(kwargs)))
 
     _async_fn.__name__ = spec.name
     _async_fn.__doc__ = spec.description

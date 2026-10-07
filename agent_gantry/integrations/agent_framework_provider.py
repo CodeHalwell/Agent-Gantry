@@ -77,6 +77,7 @@ from agent_gantry.integrations.agent_framework_bridge import (
 )
 from agent_gantry.integrations.agent_framework_middleware import _import_af_chat_middleware
 from agent_gantry.integrations.frameworks.base import (
+    QueryBoundsError,
     _maybe_await,
     _pin_specs,
     _resolve_tool_names,
@@ -743,6 +744,11 @@ def _build_impl_class(base: type) -> type:
                                 **self._query_kwargs,
                             )
                         )
+                    except (MissingRequiredToolError, QueryBoundsError):
+                        # Configuration errors, not retrieval failures: the six
+                        # per-turn providers in ``frameworks/`` let them out
+                        # instead of degrading to "no tools this turn".
+                        raise
                     except Exception:
                         logger.exception(
                             "GantryContextProvider: semantic retrieval failed; "
@@ -1050,6 +1056,24 @@ class GantryContextProvider:
             raise ValueError(
                 f"query_strategy must be 'per_run' or 'per_call', got {query_strategy!r}"
             )
+
+        # A configuration error, raised before anything else (including the
+        # check that ``agent-framework`` is installed) so it surfaces at
+        # construction. Left unchecked, ``top_k=60`` built a provider that failed
+        # inside every run, where the retrieval handler logged the validation
+        # error and carried on, so the agent ran with no tools and one ERROR line.
+        # A ``"relative:<frac>"`` threshold is the bridge's to parse; only a
+        # number is a ToolQuery bound.
+        from agent_gantry.integrations.frameworks.base import check_query_bounds
+
+        numeric_threshold = (
+            float(score_threshold)
+            if isinstance(score_threshold, (int, float)) and not isinstance(score_threshold, bool)
+            else 0.0
+        )
+        check_query_bounds(
+            limit=top_k, score_threshold=numeric_threshold, owner="GantryContextProvider"
+        )
 
         context_provider_cls = _import_context_provider()
 

@@ -856,3 +856,182 @@ async def test_lancedb_scores_are_true_cosines_whatever_the_vector_length(tmp_pa
     # 1 - d/2 on squared-L2 gave -0.5 and -1.25 here (clamped to 0 before).
     assert hits["long_same"] == pytest.approx(1.0)
     assert hits["diagonal"] == pytest.approx(2**-0.5, abs=1e-6)
+
+
+# --------------------------------------------------------------------------
+# Framework integrations
+# --------------------------------------------------------------------------
+
+
+async def test_the_agent_framework_provider_rejects_out_of_range_bounds_at_construction() -> None:
+    """The six other live providers raise QueryBoundsError; this one logged and ran tool-less.
+
+    Checked before the ``agent-framework`` import, so it holds whether or not the
+    package is installed.
+    """
+    from agent_gantry.integrations.agent_framework_provider import GantryContextProvider
+    from agent_gantry.integrations.frameworks.base import QueryBoundsError
+
+    gantry = AgentGantry(vector_store=InMemoryVectorStore(), embedder=SimpleEmbedder(dimension=64))
+    try:
+        with pytest.raises(QueryBoundsError, match="limit"):
+            GantryContextProvider(gantry, top_k=60)
+        with pytest.raises(QueryBoundsError, match="score_threshold"):
+            GantryContextProvider(gantry, score_threshold=2.0)
+        # A relative threshold is a string the bridge parses, not a ToolQuery bound,
+        # so it must get past the check (and only then meets the missing package).
+        try:
+            GantryContextProvider(gantry, score_threshold="relative:0.8")
+        except ImportError:
+            pass
+    finally:
+        await gantry.close()
+
+
+async def test_the_agent_framework_bridge_reports_a_bad_limit_as_a_bounds_error() -> None:
+    from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+    from agent_gantry.integrations.frameworks.base import QueryBoundsError
+
+    gantry = AgentGantry(vector_store=InMemoryVectorStore(), embedder=SimpleEmbedder(dimension=64))
+    try:
+        with pytest.raises(QueryBoundsError):
+            await GantryToolBridge(gantry).get_tools("add two numbers", limit=60)  # was ValidationError
+    finally:
+        await gantry.close()
+
+
+def _renamed_property_tool() -> ToolDefinition:
+    """A tool whose only property cannot be a Python parameter name."""
+    tool = _tool("lookup_user", "Look a user up by their identifier")
+    tool.parameters_schema = {
+        "type": "object",
+        "properties": {"user-id": {"type": "string", "description": "Identifier"}},
+        "required": ["user-id"],
+    }
+    return tool
+
+
+async def _gantry_with_renamed_property() -> tuple[AgentGantry, Any]:
+    from agent_gantry.integrations.frameworks.base import spec_from_tool
+
+    gantry = AgentGantry(vector_store=InMemoryVectorStore(), embedder=SimpleEmbedder(dimension=64))
+    tool = _renamed_property_tool()
+
+    def lookup_user(**arguments: Any) -> dict[str, Any]:
+        return {"called_with": sorted(arguments)}
+
+    await gantry.add_tool(tool, lookup_user)
+    return gantry, spec_from_tool(gantry, tool)
+
+
+async def test_agno_dispatches_a_renamed_parameter_and_advertises_the_same_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    import sys
+    import types
+
+    class Function:
+        def __init__(self, **kwargs: Any) -> None:
+            self.__dict__.update(kwargs)
+
+    function_module = types.ModuleType("agno.tools.function")
+    function_module.Function = Function  # type: ignore[attr-defined]
+    for name, module in (
+        ("agno", types.ModuleType("agno")),
+        ("agno.tools", types.ModuleType("agno.tools")),
+        ("agno.tools.function", function_module),
+    ):
+        monkeypatch.setitem(sys.modules, name, module)
+
+    from agent_gantry.integrations.frameworks.agno import AgnoAdapter
+
+    gantry, spec = await _gantry_with_renamed_property()
+    try:
+        function = AgnoAdapter.convert(spec)
+        # Schema and signature name the parameter the same way...
+        assert list(function.parameters["properties"]) == ["user_id"]
+        # ...and a call made with that name reaches the tool under the schema's.
+        result = await asyncio.to_thread(function.entrypoint, user_id="u-1")
+        assert result == {"called_with": ["user-id"]}  # was: "Missing required parameter"
+    finally:
+        await gantry.close()
+
+
+async def test_llamaindex_dispatches_a_renamed_parameter(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+    import types
+
+    class FunctionTool:
+        @classmethod
+        def from_defaults(cls, **kwargs: Any) -> Any:
+            tool = cls()
+            tool.__dict__.update(kwargs)
+            return tool
+
+    tools_module = types.ModuleType("llama_index.core.tools")
+    tools_module.FunctionTool = FunctionTool  # type: ignore[attr-defined]
+    core = types.ModuleType("llama_index.core")
+    pkg = types.ModuleType("llama_index")
+    for name, module in (
+        ("llama_index", pkg),
+        ("llama_index.core", core),
+        ("llama_index.core.tools", tools_module),
+    ):
+        monkeypatch.setitem(sys.modules, name, module)
+
+    from agent_gantry.integrations.frameworks.llamaindex import LlamaIndexAdapter
+
+    gantry, spec = await _gantry_with_renamed_property()
+    try:
+        tool = LlamaIndexAdapter.convert(spec)
+        # No fn_schema (the property is not a valid field name), so LlamaIndex
+        # advertises the signature, which carries the renamed parameter.
+        assert "user_id" in tool.async_fn.__signature__.parameters
+        assert await tool.async_fn(user_id="u-1") == {"called_with": ["user-id"]}
+    finally:
+        await gantry.close()
+
+
+async def test_the_agent_framework_wrapper_serialises_results_json_rejects() -> None:
+    import datetime
+    import json
+
+    from agent_gantry.integrations.agent_framework_bridge import _build_callable_for_tool
+
+    gantry = AgentGantry(vector_store=InMemoryVectorStore(), embedder=SimpleEmbedder(dimension=64))
+    try:
+
+        @gantry.register()
+        def when_is_it(city: str) -> dict[Any, Any]:
+            """Say when something happens in a city."""
+            return {"at": datetime.datetime(2026, 1, 2, 3, 4, tzinfo=datetime.timezone.utc),
+                    (1, 2): "a tuple key"}
+
+        tool = gantry._registry.get_tool("when_is_it")
+        wrapper = _build_callable_for_tool(tool, gantry, as_function_tool=False)
+        out = json.loads(await wrapper(city="Leeds"))  # was TypeError, outside the error guard
+        assert out["at"].startswith("2026-01-02T03:04")
+        assert out["(1, 2)"] == "a tuple key"
+
+        # A failure inside the tool is still reported as an error object.
+        @gantry.register()
+        def always_fails(city: str) -> str:
+            """Fail whenever it is asked."""
+            raise RuntimeError("down")
+
+        failing = _build_callable_for_tool(
+            gantry._registry.get_tool("always_fails"), gantry, as_function_tool=False
+        )
+        assert "RuntimeError" in json.loads(await failing(city="Leeds"))["error"]
+    finally:
+        await gantry.close()
+
+
+def test_the_aggregate_integrations_package_exports_every_adapter() -> None:
+    import agent_gantry.integrations as integrations
+    from agent_gantry.integrations import frameworks
+
+    missing = [name for name in frameworks.__all__ if name.endswith("Adapter")
+               and name not in integrations.__all__]
+    assert not missing, missing  # StrandsAdapter and DSPyAdapter were absent

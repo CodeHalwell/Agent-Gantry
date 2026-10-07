@@ -23,7 +23,7 @@ from agent_gantry.adapters.tool_spec.schema_utils import (
     strict_json_schema,
     unsupported_strict_paths,
 )
-from agent_gantry.integrations.frameworks.base import BaseFrameworkAdapter
+from agent_gantry.integrations.frameworks.base import BaseFrameworkAdapter, result_text
 
 if TYPE_CHECKING:
     from agent_gantry.integrations.frameworks.base import ToolSpec
@@ -88,8 +88,9 @@ def _spec_to_openai_agents(spec: ToolSpec) -> Any:
         result = await spec.ainvoke(**data)
         # ``str()`` on a dict yields Python repr (single quotes), which the
         # model then has to guess at. Serialize structured results as JSON,
-        # matching the Agent Framework bridge.
-        return result if isinstance(result, str) else json.dumps(result, default=str)
+        # matching the Agent Framework bridge; ``default=str`` alone never
+        # reached dict keys, so an enum- or tuple-keyed result still raised.
+        return result_text(result)
 
     params, use_strict = _strict_schema(spec.parameters)
     return FunctionTool(

@@ -31,23 +31,17 @@ def _spec_to_agno(spec: ToolSpec) -> Any:
     except ImportError as exc:  # pragma: no cover - exercised via stub
         raise ImportError(_INSTALL_HINT) from exc
 
-    async_fn = spec.callable_for_signature()
-
-    def _entrypoint(**kwargs: Any) -> Any:
-        return spec.invoke(**kwargs)
-
-    _entrypoint.__name__ = spec.name
-    _entrypoint.__doc__ = spec.description
-    # Copy the real signature so Agno introspection surfaces the actual
-    # parameters instead of a bare **kwargs (no-argument) tool.
-    _entrypoint.__signature__ = async_fn.__signature__  # type: ignore[attr-defined]
-    _entrypoint.__annotations__ = dict(getattr(async_fn, "__annotations__", {}))
-
+    # A sync callable with the real signature (so Agno introspection surfaces
+    # the actual parameters, not a bare ``**kwargs`` no-argument tool) that maps
+    # a renamed parameter back to the schema's property before the tool runs.
+    # The advertised schema carries the same aliases as the signature, as the
+    # ADK and Strands adapters do; schema and signature disagreeing made a
+    # property such as ``user-id`` impossible to supply.
     return Function(
         name=spec.name,
         description=spec.description,
-        parameters=spec.parameters,
-        entrypoint=_entrypoint,
+        parameters=spec.aliased_parameters(),
+        entrypoint=spec.sync_callable_for_signature(),
     )
 
 

@@ -42,7 +42,11 @@ from typing import TYPE_CHECKING, Annotated, Any, NamedTuple
 
 from pydantic import Field
 
-from agent_gantry.integrations.frameworks.base import ToolExecutionError, spec_from_tool
+from agent_gantry.integrations.frameworks.base import (
+    ToolExecutionError,
+    result_text,
+    spec_from_tool,
+)
 from agent_gantry.schema.tool import ToolCapability
 
 if TYPE_CHECKING:
@@ -501,7 +505,11 @@ def _build_callable_for_tool(
                 f"arguments but {len(args)} were given"
             )
         try:
-            result = await fn(**{**dict(zip(names, args)), **kwargs})
+            # Serialised inside the guard. A result the encoder rejected (a
+            # datetime, a tuple-keyed dict) raised from the line after it, past
+            # the handlers below, so a tool that had run fine surfaced in Agent
+            # Framework as an opaque "Function failed" with no cause.
+            return result_text(await fn(**{**dict(zip(names, args)), **kwargs}))
         except ToolExecutionError as exc:
             error_text = exc.error or "tool execution failed (no error message)"
             if exc.error_type and exc.error_type not in error_text:
@@ -509,7 +517,6 @@ def _build_callable_for_tool(
             return json.dumps({"error": error_text})
         except Exception as exc:
             return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
-        return result if isinstance(result, str) else json.dumps(result)
 
     _wrapper.__signature__ = inspect.Signature(params)  # type: ignore[attr-defined]
     _wrapper.__name__ = _wrapper.__qualname__ = tool_def.name
@@ -623,7 +630,13 @@ class GantryToolBridge:
         so we issue the underlying gantry query without a score cutoff
         and apply the filter post-hoc in :meth:`_apply_threshold`.
         """
+        from agent_gantry.integrations.frameworks.base import check_query_bounds
         from agent_gantry.schema.query import ConversationContext, ToolQuery
+
+        # An out-of-range ``limit`` is the caller's mistake: say so in the
+        # framework-wide error type rather than leaking a ToolQuery validation
+        # error from the construction below.
+        check_query_bounds(limit=limit, score_threshold=0.0, owner="GantryToolBridge")
 
         # Separate context-level kwargs from query-level kwargs
         context_fields = set(ConversationContext.model_fields.keys()) - {"query"}
