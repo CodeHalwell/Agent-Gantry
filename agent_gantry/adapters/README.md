@@ -38,7 +38,8 @@ swap implementations without touching the core. Most configuration can be driven
 ```python
 from agent_gantry import AgentGantry
 
-# Default: SimpleEmbedder + In-Memory VectorStore
+# Default: the sentence-transformers embedder (all-MiniLM-L6-v2, or the hash-based
+# SimpleEmbedder if that package is not installed) + In-Memory VectorStore
 gantry = AgentGantry()
 
 # Register tools...
@@ -52,7 +53,7 @@ from agent_gantry.schema.config import EmbedderConfig, VectorStoreConfig
 
 # Just change configuration - same code everywhere else
 config = AgentGantryConfig(
-    embedder=EmbedderConfig(type="nomic", model="nomic-embed-text-v1.5"),
+    embedder=EmbedderConfig(type="nomic", model="nomic-ai/nomic-embed-text-v1.5"),
     vector_store=VectorStoreConfig(type="lancedb", db_path="./gantry.lance"),
 )
 
@@ -93,9 +94,9 @@ from agent_gantry.schema.config import RerankerConfig
 
 config = AgentGantryConfig(
     reranker=RerankerConfig(
+        enabled=True,   # off by default: without it no reranker is built
         type="cohere",
         model="rerank-english-v3.0",
-        top_k=3
     )
 )
 
@@ -119,9 +120,9 @@ vector_store:
   db_path: ./gantry.lance
 
 reranker:
+  enabled: true
   type: cohere
   model: rerank-english-v3.0
-  top_k: 3
 
 routing:
   weights:
@@ -157,7 +158,7 @@ from agent_gantry.adapters.embedders.nomic import NomicEmbedder
 from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
 
 # Create adapters explicitly
-embedder = NomicEmbedder(model="nomic-embed-text-v1.5")
+embedder = NomicEmbedder(model="nomic-ai/nomic-embed-text-v1.5")
 vector_store = LanceDBVectorStore(db_path="./my_tools.lance")
 
 # Pass to AgentGantry

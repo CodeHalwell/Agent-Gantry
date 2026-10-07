@@ -1,86 +1,52 @@
 # Publishing Agent-Gantry to PyPI
 
-This guide explains how to build and publish Agent-Gantry to PyPI using `uv`.
+**Releases are made by the "Publish to PyPI" workflow, not by hand.** It builds and checks the
+distribution, smoke-installs the wheel on Python 3.10-3.13, publishes with trusted publishing (no
+long-lived token), and then tags the commit and creates the GitHub Release. The steps, the one-time
+trusted-publisher setup and the TestPyPI option are in [RELEASING.md](RELEASING.md).
 
-## Prerequisites
+This page covers only the manual fallback, for the case where the workflow itself is unavailable.
+Prefer the workflow: a manual upload creates **no tag and no GitHub Release**, and skips the
+smoke-install.
 
-1.  **PyPI Account**: You need an account on [PyPI](https://pypi.org/).
-2.  **API Token**: It is highly recommended to use an [API token](https://pypi.org/help/#apitoken) for publishing.
-3.  **uv**: Ensure you have `uv` installed.
+## Manual fallback
 
-## Step 1: Prepare the Release
-
-1.  **Update Version**: Ensure the version in `pyproject.toml` and `agent_gantry/__init__.py` is correct.
-2.  **Update Changelog**: Ensure `CHANGELOG.md` has an entry for the new version with the correct date.
-3.  **Run Tests**: Ensure all tests pass.
+1.  Check out the commit to release, with the version bumped everywhere `RELEASING.md` lists and a
+    `CHANGELOG.md` entry for it.
+2.  Run the checks the workflow would:
     ```bash
     uv run pytest
-    ```
-4.  **Check Linting**: Ensure code passes linting.
-    ```bash
     uv run ruff check agent_gantry/
     ```
-
-## Step 2: Build the Distribution
-
-Use `uv build` to create the source distribution and wheel.
-
-```bash
-uv build
-```
-
-This will create a `dist/` directory containing:
-- `agent_gantry-<version>.tar.gz` (source distribution)
-- `agent_gantry-<version>-py3-none-any.whl` (wheel)
-
-## Step 3: Publish to PyPI
-
-Use `uv publish` to upload the distribution files to PyPI.
-
-```bash
-uv publish
-```
-
-`uv` will prompt you for your PyPI credentials (username and password/token).
-
-### Using an API Token (Recommended)
-
-When prompted for a username, enter `__token__`.
-When prompted for a password, enter your PyPI API token (including the `pypi-` prefix).
-
-Alternatively, you can set environment variables:
-
-```bash
-# On Windows (PowerShell)
-$env:UV_PUBLISH_TOKEN = "your-pypi-token"
-
-# On Linux/macOS
-export UV_PUBLISH_TOKEN="your-pypi-token"
-```
-
-Then run:
-
-```bash
-uv publish
-```
-
-## Step 4: Verify the Release
-
-1.  Check the project page on PyPI: `https://pypi.org/project/agent-gantry/`
-2.  Try installing the new version in a fresh environment:
+3.  Build and check the distribution:
     ```bash
-    uv venv test-env
-    . test-env/bin/activate  # or test-env\Scripts\activate on Windows
-    uv pip install agent-gantry
+    uv build
+    uv tool run twine check dist/*
+    ```
+4.  Upload with an [API token](https://pypi.org/help/#apitoken). `uv publish` prompts for
+    credentials; enter `__token__` as the username and the token (with its `pypi-` prefix) as the
+    password, or set the token in the environment:
+    ```bash
+    export UV_PUBLISH_TOKEN="pypi-..."   # PowerShell: $env:UV_PUBLISH_TOKEN = "pypi-..."
+    uv publish
+    ```
+5.  **Record the release**, which the workflow would have done for you:
+    ```bash
+    git tag -a "v<version>" -m "Release v<version>"
+    git push origin "v<version>"
+    gh release create "v<version>" dist/* --title "v<version>" --generate-notes
+    ```
+6.  Verify in a fresh environment:
+    ```bash
+    uv venv test-env && . test-env/bin/activate   # test-env\Scripts\activate on Windows
+    uv pip install agent-gantry==<version>
+    python -c "import agent_gantry; print(agent_gantry.__version__)"
     ```
 
 ## Troubleshooting
 
-### Build Failures
-If `uv build` fails, ensure your `pyproject.toml` is valid and all dependencies are correctly specified.
-
-### Authentication Errors
-If `uv publish` fails with authentication errors, double-check your API token and ensure it has the necessary permissions for the project.
-
-### Version Conflicts
-If you try to publish a version that already exists on PyPI, the upload will fail. You must increment the version number for every new release.
+- **Build fails:** check `pyproject.toml` is valid and its dependencies resolve.
+- **Authentication error:** check the token and that it is scoped to the project.
+- **"File already exists":** PyPI never accepts the same version twice; bump it. (The workflow's
+  `skip-existing` setting hides this as a successful no-op, so confirm the new version really
+  appears on https://pypi.org/p/agent-gantry.)

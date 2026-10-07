@@ -362,6 +362,38 @@ Nothing below had a caller in the library, the tests, the examples or the docs.
   `get_sync_status()`, `parse_fingerprint()` and the fingerprint `version`
   parameter (hashes unchanged), `core.security.ValidationError`,
   `validate_tool_name()`, and `agent_gantry.utils.async_utils`.
+- `RerankerConfig.top_k`. Nothing read it: a reranker is handed `top_k` per call and the
+  router passes the query's `limit`, so the field never limited anything. A config that
+  still sets it loads, and the key is ignored.
+
+### Documentation
+
+- The nine framework "advanced" pages on the docs site called `gantry.select_tools()` and
+  `<Adapter>.convert()` on its result. Neither call shape exists; the pages now use
+  `<Adapter>(gantry).select(query, namespaces=[...])`. The configuration and journey pages
+  used config keys the models do not have (`provider`, `path`, `routing.score_threshold`),
+  which are ignored without an error, so the example configured nothing. They use `type` and
+  `db_path`, and the relevance cutoff is shown as the per-query `score_threshold` it is. The
+  operations page printed `candidate.reason`, which `ScoredTool` does not have; it prints
+  `semantic_score` and `rerank_score`.
+- The docs sidebar did not list Strands or DSPy, the viewport meta lacked `initial-scale`,
+  the brand mark was a second `<h1>` on every page, and every code block carried the same
+  "Code snippet" landmark label.
+- READMEs described APIs that do not exist: `SemanticRouter.search()` (it is `route()`),
+  `ExecutionResult` (`ToolResult`), `@register(capability=...)`, `gantry.register_executor()`,
+  `to_crewai_tools()`, `RerankerConfig(top_k=...)`, and a `RoutingWeights` assigned to a field
+  that takes a dict. They also gave the Nomic model without its `nomic-ai/` prefix, named the
+  wrong default embedder, counted 14 framework adapters (there are 12, 11 of them native),
+  and said every framework example runs without the framework installed (nine of the
+  eighteen import it at the top of the file).
+- `CONTRIBUTING.md`, `CLAUDE.md` and `.github/copilot-instructions.md` no longer ask for mypy,
+  which is not configured, or `pytest -n auto`, which needs a plugin that is not installed;
+  the Copilot file had two sections fused into one garbled code block. `RELEASING.md` lists
+  all four places a release bumps and `PUBLISHING.md` is the manual fallback it always was.
+- `AUDIT.md` and `REVIEW-2026-08-19.md` moved to `archive/` with a status note: both describe
+  the code on their dates, and several of their "pending" rows are done.
+- `tests/test_version_consistency.py` also checks `package.json` and the version in the
+  opening paragraph of `README.md`, which a release had to remember by hand.
 
 ## [0.19.0] - 2026-09-21
 
@@ -3878,7 +3910,7 @@ adapters, and the provider dialects agree with it.
 
 - `agent_gantry/schema/config.py` default `"gpt-4o-mini"` must be migrated to
   `"gpt-5.4-mini"` before OpenAI's 2026-10-23 shutdown. This is a **breaking change**
-  requiring a major version bump and is tracked in AUDIT.md §10.
+  requiring a major version bump and is tracked in archive/AUDIT-2026-08-03.md §10.
 - `claude-opus-4-1` (`claude-opus-4-1-20250805`) was marked deprecated in the Anthropic
   SDK (0.106.0, 2026-06-05); retirement date **2026-08-05**. Not referenced in Gantry
   source or examples — no code action required.
@@ -3942,7 +3974,7 @@ adapters, and the provider dialects agree with it.
 
 - `agent_gantry/schema/config.py` default `"gpt-4o-mini"` must be migrated to
   `"gpt-5.4-mini"` before OpenAI's 2026-10-23 shutdown. This is a **breaking change**
-  requiring a major version bump and is tracked in AUDIT.md §10.
+  requiring a major version bump and is tracked in archive/AUDIT-2026-08-03.md §10.
 
 ### Added
 

@@ -13,12 +13,21 @@ provider-specific `llm_integration/` demos, `llm_intent_classification_example.p
 The 53 include everything under `agent_frameworks/`, plus `fast_track_demo.py`,
 `project_demo/` and `tool_vector_db/`. Those register and sync first, and —
 where the framework itself is installed — retrieve, convert and print what was
-selected before gating the model call. Without the framework installed they
-still register and sync, then tell you which package to add; a LangChain
-adapter cannot demonstrate much without LangChain.
+selected before gating the model call.
 
-The 13 run cleanly and tell you which key they want, but show you no routing.
-Bringing them in line is tracked in issue #434.
+"Without a key" does not mean "without the framework". Nine of the eighteen
+`agent_frameworks/` scripts import their framework at the top of the file, so
+they stop with `ModuleNotFoundError` until it is installed (`uv add
+"agent-gantry[agent-frameworks]"` covers them): `langchain_example.py`,
+`langgraph_example.py`, `llamaindex_example.py`, `crewai_example.py`,
+`google_adk_example.py` and the four `agent_framework_*` examples
+(`agent_framework_example.py`, `_orchestration_`, `_provider_` and
+`_trace_events_`). The other nine — Agno, DSPy, Haystack, OpenAI Agents,
+Pydantic AI, Strands, the generic adapters, the harness and the TUI — register
+and sync first and then name the package to add.
+
+The 10 that stop at a credential check run cleanly and tell you which key they
+want, but show you no routing. Bringing them in line is tracked in issue #434.
 
 Each subdirectory has its own README with detail and run commands.
 

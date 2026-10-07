@@ -43,11 +43,20 @@ Use `limit` to control how many tools reach the model.
 
 ## Running these without API keys
 
-Every example here runs from a clean checkout with no keys set. Registration,
-sync, retrieval and conversion need no credentials, so each file does that work
-first and prints what was selected; only a final live model call is gated, and
-it names the variable it wants. That makes these useful for seeing what Gantry
-picks before you spend anything.
+Every example here runs with no keys set, provided its framework is installed.
+Registration, sync, retrieval and conversion need no credentials, so each file
+does that work first and prints what was selected; only a final live model call
+is gated, and it names the variable it wants. That makes these useful for seeing
+what Gantry picks before you spend anything.
+
+Nine of the eighteen import their framework at the top of the file and stop with
+`ModuleNotFoundError` if it is missing: `langchain_example.py`,
+`langgraph_example.py`, `llamaindex_example.py`, `crewai_example.py`,
+`google_adk_example.py` and the four `agent_framework_*` examples
+(`agent_framework_example.py`, `agent_framework_orchestration_example.py`,
+`agent_framework_provider_example.py`, `agent_framework_trace_events_example.py`).
+Install `agent-gantry[agent-frameworks]` for those. The other nine register and
+sync first, then tell you which package to add.
 
 Each framework has a clean namespace — `from agent_gantry.<framework> import <Framework>Adapter`
 (`agent_gantry.langchain` → `LangChainAdapter`, `agent_gantry.crewai` → `CrewAIAdapter`,

@@ -6,8 +6,7 @@ core `ExecutionEngine`.
 
 ## Modules
 
-- `base.py`: Declares the adapter contract (`execute_tool`, `execute_batch`) and shared helpers for
-  translating results and errors.
+- `base.py`: Declares the `ExecutorAdapter` protocol, whose one method is `execute(tool, call, handler)`.
 - `a2a_executor.py`: Runs tool calls against remote A2A agents over HTTP, mapping A2A skill metadata
   into `ToolDefinition` objects and converting responses into `ToolResult` instances.
 - `mcp_client.py`: Discovers and executes tools hosted on MCP servers (local stdio subprocesses, or remote Streamable HTTP / SSE endpoints via `MCPServerConfig(url=...)`), handling
@@ -15,8 +14,11 @@ core `ExecutionEngine`.
 
 ## When to use an executor
 
-- **Local tools**: No executor needed; `ExecutionEngine` invokes the Python callable directly.
-- **Remote agents (A2A)**: Register an `A2AExecutor` so retrieved tools can call into another agent.
+- **Local tools**: No executor needed; `ExecutionEngine` invokes the Python callable itself, in
+  this process. There is no sandboxed or containerised executor; `ExecutionConfig` refuses
+  `enable_sandbox=True` for that reason.
+- **Remote agents (A2A)**: `await gantry.add_a2a_agent(...)` discovers the agent's skills and
+  registers them; the engine owns the `A2AExecutor` that calls them.
 - **External MCP servers**: Use `add_mcp_server` on `AgentGantry`; the MCP client executor is
   attached automatically to discovered tools.
 
@@ -24,13 +26,14 @@ core `ExecutionEngine`.
 
 ```python
 from agent_gantry import AgentGantry
-from agent_gantry.adapters.executors.a2a_executor import A2AExecutor
 from agent_gantry.schema.config import A2AAgentConfig
 
-executor = A2AExecutor(agent=A2AAgentConfig(name="calc", url="https://calc.example.com"))
 gantry = AgentGantry()
-gantry.register_executor(executor)  # makes remote skills available under executor.namespace
+# Fetches the agent card, registers each skill as a tool under the "calc" namespace,
+# and returns how many it found. The engine's A2AExecutor makes the calls.
+count = await gantry.add_a2a_agent(A2AAgentConfig(name="calc", url="https://calc.example.com"))
 ```
 
-If you need a custom remote transport, subclass `ExecutorAdapter` and supply it to `AgentGantry`; the
-core router and executor require no additional changes.
+`AgentGantry` has no hook for supplying an executor of your own: `ExecutionEngine` picks the A2A
+executor for tools whose `source` is an A2A agent, the MCP client for MCP tools, and otherwise calls
+the registered Python handler. A new remote transport means extending the engine.

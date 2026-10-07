@@ -38,13 +38,13 @@ Extract prompt from function arguments
     ↓
 Build ToolQuery with ConversationContext
     ↓
-SemanticRouter.search()
+SemanticRouter.route()
     ├──▶ Embedder: Convert query to vector
     ├──▶ VectorStore: Semantic similarity search
     ├──▶ Reranker (optional): Re-rank by relevance
     └──▶ RoutingWeights: Combine semantic + health scores
     ↓
-Return list[ScoredTool]
+Return RoutingResult → list[ScoredTool]
     ↓
 Convert to target dialect (OpenAI/Anthropic/Gemini)
     ↓
@@ -61,7 +61,7 @@ ExecutionEngine.execute()
     ├──▶ CircuitBreaker: Check tool health
     └──▶ Execute with retries + telemetry
     ↓
-Return ExecutionResult
+Return ToolResult
 ```
 
 **Key Components:**
@@ -77,9 +77,10 @@ Return ExecutionResult
 2. **Router**: Performs semantic search
    ```python
    # Behind the scenes in decorator:
-   query = ToolQuery(context=ConversationContext(query="What's the weather?"))
-   scored_tools = await router.search(query, limit=3)
-   # Returns tools ranked by relevance
+   query = ToolQuery(context=ConversationContext(query="What's the weather?"), limit=3)
+   routed = await router.route(query)      # RoutingResult
+   # routed.tools: (ToolDefinition, score) pairs, ranked by relevance;
+   # gantry.retrieve(query) wraps them as list[ScoredTool]
    ```
 
 3. **Executor**: Runs tools safely
@@ -97,7 +98,7 @@ Return ExecutionResult
 ```
 AgentGantry.register(...) ──▶ ToolRegistry
                          └──▶ SemanticRouter (embeddings + vector store)
-ToolQuery(...) ──▶ SemanticRouter.search(...) ──▶ list[ScoredTool]
+ToolQuery(...) ──▶ SemanticRouter.route(...) ──▶ RoutingResult (list[ScoredTool] via gantry.retrieve)
 ToolCall(...)  ──▶ ExecutionEngine.execute(...) ──▶ result / CircuitBreaker
 ```
 
@@ -106,7 +107,7 @@ ToolCall(...)  ──▶ ExecutionEngine.execute(...) ──▶ result / Circuit
 ### Pattern 1: Automatic Injection (with decorator)
 
 ```python
-from agent_gantry import AgentGantry, with_semantic_tools
+from agent_gantry import AgentGantry, ToolCapability, with_semantic_tools
 from openai import AsyncOpenAI
 from pathlib import Path
 
@@ -116,7 +117,7 @@ client = AsyncOpenAI()
 # Define allowed directory for file access (security best practice)
 ALLOWED_DIR = Path("/app/data").resolve()
 
-@gantry.register(capability="files:read")
+@gantry.register(capabilities=[ToolCapability.FILE_SYSTEM])
 def read_file(path: str) -> str:
     """Safely read a file with path validation to prevent directory traversal attacks."""
     # Resolve the absolute path and validate it's within allowed directory
@@ -149,8 +150,13 @@ response = await chat("read the data.json file")
 ### Pattern 2: Manual Control (explicit retrieval and execution)
 
 ```python
-from agent_gantry import AgentGantry
-from agent_gantry.schema.execution import ToolCall
+from agent_gantry import (
+    AgentGantry,
+    ConversationContext,
+    ToolCall,
+    ToolCapability,
+    ToolQuery,
+)
 from pathlib import Path
 
 gantry = AgentGantry()
@@ -158,7 +164,7 @@ gantry = AgentGantry()
 # Define allowed directory for file access (security best practice)
 ALLOWED_DIR = Path("/app/data").resolve()
 
-@gantry.register(capability="files:read")
+@gantry.register(capabilities=[ToolCapability.FILE_SYSTEM])
 def read_file(path: str) -> str:
     """Safely read a file with path validation to prevent directory traversal attacks."""
     # Resolve the absolute path and validate it's within allowed directory
@@ -177,23 +183,26 @@ def read_file(path: str) -> str:
 
 await gantry.sync()  # embeds tools and loads vector store
 
-# Manually query the router
-results = await gantry.retrieve_tools("open and read a markdown file", limit=2)
-best_tool = results[0].tool
+# Manually query the router. retrieve() returns ScoredTool objects;
+# retrieve_tools() returns the tools already converted to a provider's schema.
+found = await gantry.retrieve(
+    ToolQuery(context=ConversationContext(query="open and read a markdown file"), limit=2)
+)
+best_tool = found.tools[0].tool
 
 # Manually execute via executor (will only work for files in /app/data)
 output = await gantry.execute(ToolCall(tool_name=best_tool.name, arguments={"path": "data.md"}))
-print(output.output)
+print(output.result)   # output.status says whether it succeeded
 ```
 
 ### Custom adapters and weights
 
 ```python
 from agent_gantry import AgentGantry, AgentGantryConfig
-from agent_gantry.core.router import RoutingWeights
 
 config = AgentGantryConfig()
-config.routing.weights = RoutingWeights(semantic=0.8, health=0.2)
+# Keys are the RoutingWeights fields: semantic, intent, conversation, health, cost.
+config.routing.weights = {"semantic": 0.8, "intent": 0.1, "health": 0.1, "conversation": 0.0, "cost": 0.0}
 
 # Plug in your own vector store or embedder
 # gantry = AgentGantry(config=config, vector_store=my_store, embedder=my_embedder)
@@ -204,7 +213,7 @@ gantry = AgentGantry(config=config)
 
 - **Routing Scores:** If tools aren't being selected correctly, check `router.py` and the embedder quality. Use `score_threshold` to filter low-relevance tools.
 - **Execution Failures:** Check `executor.py` for timeout/retry settings. Review telemetry for execution spans.
-- **Circuit Breakers:** Tools with high failure rates trigger circuit breakers. Check health metrics with `gantry.get_tool_health(tool_name)`.
+- **Circuit Breakers:** Tools with high failure rates trigger circuit breakers. Check a tool's live health (calls, success rate, whether its breaker is open) with `gantry.get_tool_health(tool_name)`.
 - **Security Blocks:** If tools are blocked, verify the `SecurityPolicy` and capability requirements.
 
 The core package is intentionally small but highly composable. If you are debugging routing scores,

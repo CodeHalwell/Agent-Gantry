@@ -18,7 +18,7 @@ throughout the examples and tests.
   injection demos.
 - `observability/`: Telemetry adapters (console, OpenTelemetry, Prometheus) and tracing hooks.
 - `providers/`: Clients that pull external tools/skills into the registry (e.g., A2A agents).
-- `schema/`: Pydantic models that define tools, configs, queries, events, and execution payloads.
+- `schema/`: Pydantic models that define tools, configs, queries, and execution payloads and call events.
 - `servers/`: Implementations for serving Agent-Gantry over MCP and A2A protocols.
 - `metrics/`: Utility code for normalizing and reporting token usage.
 
@@ -73,7 +73,7 @@ config = AgentGantryConfig.from_yaml("gantry.yaml")
 gantry = AgentGantry(config=config)
 
 # Register tools with detailed metadata
-@gantry.register(tags=["math"], capability="calculator")
+@gantry.register(tags=["math"])
 def add(a: int, b: int) -> int:
     """Add two integers."""
     return a + b

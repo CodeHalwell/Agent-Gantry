@@ -61,7 +61,7 @@ pip install -e ".[dev]"
 1. Make your changes in your feature branch
 2. Add tests for new functionality
 3. Ensure all tests pass
-4. Run linters and type checkers
+4. Run the linter (`ruff check`) and formatter (`ruff format`)
 5. Update documentation as needed
 6. Commit your changes with clear commit messages
 
@@ -76,9 +76,6 @@ pytest --cov=agent_gantry
 
 # Run specific test file
 pytest tests/test_tool.py
-
-# Run tests in parallel (faster)
-pytest -n auto
 ```
 
 ### Code Quality Checks
@@ -336,7 +333,7 @@ agent_gantry/
 
 ## Publishing
 
-For instructions on how to build and publish releases to PyPI, please see [PUBLISHING.md](PUBLISHING.md).
+Releases are made by the "Publish to PyPI" workflow; see [RELEASING.md](RELEASING.md). [PUBLISHING.md](PUBLISHING.md) covers only the manual fallback.
 
 ## Questions?
 

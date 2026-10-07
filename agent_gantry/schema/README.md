@@ -10,10 +10,13 @@ schemas are stable and are the safest place to integrate with external systems.
   `TelemetryConfig`, etc.). Supports YAML loading via `from_yaml`.
 - `tool.py`: Canonical `ToolDefinition`, `ToolCapability`, and schema transcoding helpers for OpenAI,
   Anthropic, and Google tool formats. Also performs argument validation.
-- `query.py`: `ToolQuery`, `ScoredTool`, `RetrievalResult`, and `RoutingWeights` models used by the
-  router.
-- `execution.py`: `ToolCall`, `ToolResult`, and batch execution models along with failure metadata.
-- `events.py`: Telemetry event payloads emitted during retrieval/execution.
+- `query.py`: `ToolQuery`, `ConversationContext`, `ScoredTool` and `RetrievalResult`, the models the
+  router consumes and produces. (`RoutingWeights` lives with the router, in `core/router.py`.)
+- `execution.py`: `ToolCall`, `ToolResult`, `ToolCallEvent` and the batch execution models, along with
+  failure metadata.
+- `mcp.py`, `skill.py`, `selection.py`: MCP server definitions, Agent Skills, and the neutral
+  candidate/result models a selector works on.
+- `introspection.py`: Builds a tool's JSON parameter schema from a Python signature.
 - `a2a.py`: Agent-to-Agent protocol models (agent cards, skill definitions, skill execution).
 
 ## Example: loading config from YAML

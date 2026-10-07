@@ -59,7 +59,6 @@ class RerankerConfig(BaseModel):
     enabled: bool = False
     type: Literal["cohere", "cross_encoder", "jev"] = "cross_encoder"
     model: str | None = None
-    top_k: int = 10
 
 
 class SelectorConfig(BaseModel):

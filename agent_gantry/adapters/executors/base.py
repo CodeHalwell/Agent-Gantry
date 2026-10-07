@@ -17,8 +17,9 @@ class ExecutorAdapter(Protocol):
     """
     Execution backend for tools.
 
-    Implementations: DirectExecutor, SandboxExecutor, DockerExecutor,
-                     MCPExecutor, A2AExecutor, HTTPExecutor.
+    The implementations in this package are ``A2AExecutor`` and the MCP client in
+    ``mcp_client.py``. In-process Python handlers are run by ``ExecutionEngine``
+    itself; there is no sandboxed, containerised or HTTP executor.
     """
 
     @abstractmethod

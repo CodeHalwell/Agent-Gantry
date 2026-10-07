@@ -7,9 +7,15 @@ the publish, not a separate step.
 
 ## How a release happens
 
-1. Bump the version in **both** places (they must match):
+1. Bump the version in **all four** places (they must match; `tests/test_version_consistency.py`
+   fails if they do not):
    - `pyproject.toml` → `[project] version`
    - `agent_gantry/__init__.py` → `__version__`
+   - `package.json` → `version` (the documentation site's "vX docs" label and footer read it)
+   - `README.md` → the `**vX.Y.Z**` in the opening paragraph
+
+   Then run `uv lock` and commit the result: the project's own entry in `uv.lock` carries the
+   version too, so a bump without it leaves the lockfile stale.
 2. Add a `CHANGELOG.md` entry for the new version.
 3. Open a PR and merge it to `main` (CI must pass: `test`, `lint`,
    `Framework adapter smoke tests`, `Verify package builds`).

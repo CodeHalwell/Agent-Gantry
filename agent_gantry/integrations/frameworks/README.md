@@ -105,7 +105,7 @@ round, not just the first.
 retrieval to any framework: re-rank the whole registry on every turn so the
 agent can pivot to a different tool as the task changes. It is the
 **standalone** utility for hand-rolled agent loops (a raw LLM SDK call in a
-`while` loop, no framework underneath) — if you're using one of the 14
+`while` loop, no framework underneath) — if you're using one of the 12
 frameworks below, prefer `adapter.live(...)` instead, which wires Gantry into
 that framework's own lifecycle rather than requiring you to call `refresh()`
 by hand between turns.
@@ -148,7 +148,7 @@ The `<Adapter>.select` methods above are *static*: select once, hand over a fixe
 tool list. Every adapter also exposes a **dynamic** re-selection surface that goes
 deeper — but historically each framework named and shaped it differently
 (`react_agent`, `toolset`, `tool_hook`, `agent_builder`, …), so writing
-framework-agnostic code against it meant knowing 14 different method names.
+framework-agnostic code against it meant knowing 12 different method names.
 
 `adapter.live_tier` and `adapter.live(...)` are the uniform entry point on top
 of those bespoke methods (which are **not** removed or renamed — they stay the
@@ -261,7 +261,7 @@ Tool failures surface two different ways depending on *what* failed:
   `ToolResult` (or raises). This is the everyday case: a registered tool
   raised, timed out, tripped a circuit breaker, or was denied by policy.
 - **Selection failure** — `gantry.retrieve()` itself raises, e.g. the vector
-  store or embedder is briefly unavailable. This only applies to the eight
+  store or embedder is briefly unavailable. This only applies to the six
   *per-turn* live providers (`integrations/frameworks/*_live.py`), which call
   back into Gantry autonomously, mid-conversation, with no application code
   between calls to catch anything.
@@ -294,7 +294,7 @@ policy refused it outright). Both are re-exported from
 `agent_gantry.integrations.frameworks`; catching `ToolExecutionError` still
 catches every outcome.
 
-**Every one of the 14 native adapters lets this propagate uncaught** from the
+**Every one of the 11 native adapters lets this propagate uncaught** from the
 native tool object's own invocation entry point (`.func`, `._run`, `.forward`,
 `.entrypoint`, `.method`, `.on_invoke_tool`, …) — proven for all of them,
 including the sync wrappers, by
@@ -340,7 +340,7 @@ Gantry-adapter contract at all.
 ### 2. Selection failure (live/per-turn mode) — always degrades, never raises
 
 A `gantry.retrieve()` failure inside a per-turn live provider must not kill
-the agent's turn. Every one of the eight `per-turn` providers now follows one
+the agent's turn. Every one of the six `per-turn` providers now follows one
 uniform rule: **catch, log a `WARNING` (with `exc_info=True`), and degrade —
 never propagate.** *How* it degrades depends on whether that framework's tool
 surface is stateless-per-turn or persists across turns:

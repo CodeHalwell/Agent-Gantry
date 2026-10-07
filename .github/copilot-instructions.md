@@ -17,15 +17,16 @@ Agent-Gantry is a **Universal Tool Orchestration Platform** for LLM-based agent 
 ```
 agent_gantry/
 ├── core/                 # Main facade, registry, router, executor
-├── schema/               # Pydantic data models (tools, queries, events, config)
+├── schema/               # Pydantic data models (tools, queries, execution, config, MCP/A2A, skills)
 ├── adapters/             # Protocol adapters
 │   ├── vector_stores/    # Qdrant, Chroma, In-Memory, etc.
 │   ├── embedders/        # OpenAI, SentenceTransformers, etc.
 │   ├── rerankers/        # Cohere, CrossEncoder, etc.
-│   └── executors/        # Direct, Sandbox, MCP, HTTP, A2A
+│   └── executors/        # A2A executor and MCP client (in-process handlers run in ExecutionEngine)
 ├── providers/            # Tool import from various sources
 ├── servers/              # MCP and A2A server implementations
-├── integrations/         # LangChain, LlamaIndex, CrewAI, Google ADK
+├── integrations/         # LangChain, LangGraph, LlamaIndex, CrewAI, Google ADK, Pydantic AI,
+│                         # OpenAI Agents, Haystack, Agno, Strands, DSPy, Microsoft Agent Framework
 ├── observability/        # Telemetry, metrics, logging
 └── cli/                  # Command-line interface
 
@@ -69,14 +70,13 @@ async def test_retrieve_tools_returns_relevant_results(gantry, sample_tools):
 ### Linting and Code Quality
 
 - **Linter**: `ruff` (configured in `pyproject.toml`)
-- **Type Checker**: `mypy` with strict mode enabled
+- **Types**: type hints are expected everywhere, but no type checker is configured or run in CI
 - **Line Length**: 100 characters max
 - **Python Version**: Python 3.10+ required
 
 Run before committing:
 ```bash
 ruff check agent_gantry/
-mypy agent_gantry/
 ```
 
 **Auto-fix**: Use `ruff check --fix agent_gantry/` to automatically fix linting issues.
@@ -95,7 +95,7 @@ python -m build
 
 ### Python Style
 
-1. **Type Hints**: Use type hints everywhere. We use strict mypy settings.
+1. **Type Hints**: Use type hints everywhere. This is a convention; CI does not gate on a type checker.
    ```python
    from typing import Any
    
@@ -156,7 +156,6 @@ python -m build
 - **Functions/Methods**: snake_case (`retrieve_tools`, `execute_tool`)
 - **Constants**: UPPER_SNAKE_CASE (`DEFAULT_LIMIT`, `MAX_RETRIES`)
 - **Private**: Prefix with underscore (`_internal_method`)
-5. **ContextVars**: Use `contextvars` for thread-safe and async-safe state management (see `core/context.py`)
 
 ### Tool Registration Pattern
 
@@ -166,7 +165,29 @@ Always use the `@gantry.register()` decorator with tags for semantic search:
 def get_weather(city: str) -> str:
     """Get current weather for a city."""
     return f"Weather in {city}: 72°F and sunny"
- (>80%)
+```
+
+### LLM Integration Pattern
+
+Use `with_semantic_tools` to inject only the relevant tools into an LLM call:
+```python
+from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
+
+gantry = AgentGantry()
+set_default_gantry(gantry)
+
+@with_semantic_tools(limit=3, dialect="openai")
+async def ask_llm(prompt: str, *, tools=None):
+    return await client.chat.completions.create(
+        model="gpt-5.5",
+        messages=[{"role": "user", "content": prompt}],
+        tools=tools,  # Automatically injected
+    )
+```
+
+### Testing
+
+1. **Coverage**: Aim for high test coverage (>80%)
 2. **Async Tests**: Use `pytest-asyncio` for async test functions (auto mode enabled)
 3. **Fixtures**: Leverage shared fixtures from `conftest.py`
 4. **Test Structure**: Mirror the source structure in tests
@@ -207,11 +228,7 @@ pytest tests/test_tool.py
 pytest tests/test_tool.py::TestToolDefinition::test_create_minimal_tool
 
 # With coverage
-pytest --cov=agent_gantry --cov-report=htmlurn await client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": prompt}],
-        tools=tools  # Automatically injected
-    )
+pytest --cov=agent_gantry --cov-report=html
 ```
 
 ### Architecture Patterns
@@ -297,7 +314,7 @@ class MyVectorStore(VectorStoreAdapter):
 
 1. **Minimal Changes**: Make small, focused changes
 2. **Test First**: Write or update tests before implementation when possible
-3. **Type Safety**: Always use type hints and pass mypy checks
+3. **Type Safety**: Always use type hints
 4. **Async by Default**: Core operations should be async
 5. **Backward Compatibility**: Don't break existing APIs without good reason
 6. **Documentation**: Update docstrings and README for user-facing changes
@@ -307,7 +324,7 @@ class MyVectorStore(VectorStoreAdapter):
 
 - **Core**: Pydantic 2.0+
 - **Optional**: OpenAI, sentence-transformers, qdrant-client, chromadb
-- **Dev**: pytest, pytest-asyncio, pytest-cov, ruff, mypy
+- **Dev**: pytest, pytest-asyncio, pytest-cov, pytest-timeout, ruff
 
 ## Roadmap Context
 

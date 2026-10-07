@@ -57,8 +57,8 @@ Everything funnels through one facade: **`AgentGantry`** in `agent_gantry/core/g
 
 ### Module map (`agent_gantry/`)
 - `core/` — facade (`gantry.py`), `registry.py`, `router.py`, `executor.py`, `security.py`, `rate_limiter.py`, `sync_manager.py`, `context.py` (a small conversation-state tracker that builds `ConversationContext`), and the MCP control plane (`mcp_manager.py`, `mcp_registry.py`, `mcp_router.py`).
-- `schema/` — **Pydantic v2** data models: `tool.py` (ToolDefinition, ToolCapability, ToolCost, ToolHealth, ToolSource), `execution.py` (ToolCall, ToolResult, ToolCallEvent), `query.py`, `config.py`, `mcp.py`, `a2a.py`, `skill.py`, `base.py`. **Schema-first**: define/extend a model here before implementing behavior.
-- `adapters/` — pluggable backends behind base protocols: `vector_stores/` (in-memory default, LanceDB, Qdrant, Chroma, pgvector), `embedders/` (OpenAI, Nomic, sentence-transformers), `rerankers/` (Cohere, CrossEncoder, Jev), `selectors/` (Jev — chooses catalogue entries by asking a decision model instead of embedding, as an alternative to the semantic router), `executors/` (direct, sandbox, MCP, HTTP, A2A), `tool_spec/` (provider schema transcoding), `llm_client.py`.
+- `schema/` — **Pydantic v2** data models: `tool.py` (ToolDefinition, ToolCapability, ToolCost, ToolHealth, ToolSource), `execution.py` (ToolCall, ToolResult, ToolCallEvent), `query.py`, `config.py`, `mcp.py`, `a2a.py`, `skill.py`, `selection.py`, `introspection.py`, `base.py`. **Schema-first**: define/extend a model here before implementing behavior.
+- `adapters/` — pluggable backends behind base protocols: `vector_stores/` (in-memory default, LanceDB, Qdrant, Chroma, pgvector), `embedders/` (OpenAI, Nomic, sentence-transformers), `rerankers/` (Cohere, CrossEncoder, Jev), `selectors/` (Jev — chooses catalogue entries by asking a decision model instead of embedding, as an alternative to the semantic router), `executors/` (the A2A executor and the MCP client; in-process handlers run inside `ExecutionEngine` itself, and there is no sandbox), `tool_spec/` (provider schema transcoding), `llm_client.py`.
 - `integrations/` + framework modules at package root (`langchain.py`, `langgraph.py`, `crewai.py`, `llamaindex.py`, `google_adk.py`, `agno.py`, `haystack.py`, `pydantic_ai.py`, `openai_agents.py`, `strands.py`, `dspy.py`) and LLM provider modules (`openai.py`, `anthropic.py`, `gemini.py`, `groq.py`, `mistral.py`, `vertexai.py`). The Microsoft Agent Framework bridge/provider/middleware live in `integrations/`. `semantic_tools.py` provides `with_semantic_tools` + `set_default_gantry`.
 - `providers/` — import tools from external sources.
 - `servers/` — MCP and A2A server implementations (`serve_mcp`, `serve_a2a`).
@@ -93,7 +93,7 @@ Everything funnels through one facade: **`AgentGantry`** in `agent_gantry/core/g
 
 ## Repo notes
 
-- Version of record is `pyproject.toml` / `agent_gantry/__init__.py` `__version__` (currently `0.19.0`). The docs `package.json` and `README.md` may lag — `tests/test_version_consistency.py` guards consistency where it matters.
+- Version of record is `pyproject.toml` / `agent_gantry/__init__.py` `__version__` (currently `0.19.0`). The docs `package.json` and the `**vX.Y.Z**` in `README.md` must match it too; `tests/test_version_consistency.py` checks all four (see `RELEASING.md`).
 - `.jules/` holds accumulated performance-optimization learnings (e.g. vectorized MMR, fast token matching) — useful context when optimizing the router or serialization paths.
 - `CHANGELOG.md` should be updated for user-facing changes.
 - Releasing/publishing: see `RELEASING.md` and `PUBLISHING.md`.

@@ -7,7 +7,7 @@ Runnable performance and quality benchmarks for Agent-Gantry.
 | `benchmark_tool_selection.py` | Semantic selection quality picking **top-3 of 50 tools** — top-1 accuracy, hit@3, MRR, latency p50/p95, token savings. |
 | `benchmark_multi_turn.py` | **Multi-turn re-selection** in a single agent run: select a tool, read its result, pivot to a different tool driven by the new sub-task. |
 | `benchmark_memory_store.py` | `InMemoryVectorStore.search` latency across registry sizes (10–5000 tools). |
-| `benchmark_pgvector.py` | PGVector store add/search throughput (mocked pool). |
+| `benchmark_pgvector.py` | PGVector store add/search throughput (mocked pool; still needs `asyncpg`, from the `pgvector` extra). |
 | `benchmark_skills.py` | Anthropic skills client message-build throughput. |
 
 ## Running
@@ -34,5 +34,5 @@ accuracy numbers.
 - **store search (after NumPy vectorization):** ~0.05ms at 50 tools, ~0.6ms at 1000 tools
   (≈36–59× faster than the previous pure-Python loop).
 
-See `docs/REVIEW_AGENT_FRAMEWORKS_2026-06-14.md` for the full review and methodology, including the
-`score_threshold=0.5` default that silently drops correct tools if not overridden.
+Mind the `score_threshold=0.5` default of a raw `ToolQuery`: it silently drops correct tools on longer
+queries unless overridden, which is why every measurement above passes `score_threshold=0.0`.

@@ -23,7 +23,7 @@ from agent_gantry import AgentGantry, AgentGantryConfig
 from agent_gantry.schema.config import RerankerConfig
 
 config = AgentGantryConfig(
-    reranker=RerankerConfig(enabled=True, type="cohere", model="rerank-english-v3.0", top_k=5)
+    reranker=RerankerConfig(enabled=True, type="cohere", model="rerank-english-v3.0")
 )
 gantry = AgentGantry(config=config)
 await gantry.sync()

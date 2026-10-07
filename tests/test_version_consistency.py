@@ -1,8 +1,11 @@
-"""The package version must match across its two sources.
+"""The package version must match everywhere it is written down.
 
-``agent_gantry.__version__`` and ``pyproject.toml``'s ``[project].version`` are
-maintained by hand. The automated release workflow gates on this match (and
-refuses to publish on a mismatch), so this test catches drift before CI/release.
+``agent_gantry.__version__``, ``pyproject.toml``'s ``[project].version``, the
+docs site's ``package.json`` (which the site reads for its "vX docs" label) and
+the version in ``README.md``'s opening paragraph are maintained by hand. The
+``lint`` job in ``ci.yml`` checks the first two before anything else runs; this
+test also covers the other two, which a release had to remember separately and
+which nothing checked, so the site and README could advertise a stale version.
 """
 
 from __future__ import annotations
@@ -30,4 +33,21 @@ def test_version_matches_pyproject() -> None:
     assert agent_gantry.__version__ == _pyproject_version(), (
         f"agent_gantry.__version__ ({agent_gantry.__version__}) != "
         f"pyproject.toml version ({_pyproject_version()})"
+    )
+
+
+def test_docs_site_version_matches_the_package() -> None:
+    import json
+
+    site = json.loads((_ROOT / "package.json").read_text(encoding="utf-8"))["version"]
+    assert site == agent_gantry.__version__, (
+        f"package.json version ({site}) != agent_gantry.__version__ ({agent_gantry.__version__}); "
+        "the documentation site displays the former"
+    )
+
+
+def test_readme_names_the_current_version() -> None:
+    readme = (_ROOT / "README.md").read_text(encoding="utf-8")
+    assert f"**v{agent_gantry.__version__}**" in readme, (
+        f"README.md's opening paragraph does not name v{agent_gantry.__version__}"
     )

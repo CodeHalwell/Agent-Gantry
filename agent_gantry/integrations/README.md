@@ -93,7 +93,7 @@ The `@with_semantic_tools` decorator accepts several configuration options:
 | `limit` | int | 5 | Maximum number of tools to retrieve |
 | `dialect` | str | "openai" | Tool schema format ("openai", "openai_responses", "anthropic", "gemini", "mistral", "groq", "agent_framework", "auto") |
 | `score_threshold` | float | 0.0 | Absolute cosine cutoff. `0.0` keeps everything `limit` allows — see the note below before raising it |
-| `auto_sync` | bool | True | Automatically sync tools before retrieval |
+| `auto_sync` | bool | True | Deprecated and ignored: retrieval always syncs pending tools first. Passing `False` logs a warning |
 | `prompt_param` | str | "prompt" | Parameter name containing the user prompt |
 | `tools_param` | str | "tools" | Parameter name for injecting tools |
 
@@ -105,7 +105,6 @@ Example with custom configuration:
     limit=2,                  # Return only top 2 tools
     dialect="anthropic",      # Use Anthropic tool format
     score_threshold=0.0,      # Absolute cosine cutoff; 0.0 = keep all, see note below
-    auto_sync=False,          # Skip automatic syncing (if already synced)
 )
 async def chat(messages, *, tools=None):
     # ... your LLM call
@@ -173,11 +172,10 @@ from agent_gantry import AgentGantry
 gantry = AgentGantry()
 # Register tools...
 
-# Convert Gantry tools to CrewAI format
-from agent_gantry.integrations.framework_adapters import to_crewai_tools
+# Select the relevant tools and convert them to CrewAI tools, wired through gantry.execute
+from agent_gantry.crewai import CrewAIAdapter
 
-tools = await gantry.retrieve_tools("task description", limit=3)
-crewai_tools = to_crewai_tools(tools, gantry)
+crewai_tools = await CrewAIAdapter(gantry).select("task description", limit=3)
 
 # Use with CrewAI agent
 agent = Agent(
@@ -258,7 +256,7 @@ Runnable example: `examples/frameworks/importers_example.py`.
 
 - `importers.py`: Reverse-direction importers — `register_langchain_tools`, `register_crewai_tools`, `register_llamaindex_tools` (see above).
 - `semantic_tools.py`: Core `with_semantic_tools` decorator and `SemanticToolSelector` class for automatic tool injection
-- `framework_adapters.py`: Legacy helper (`fetch_framework_tools`) for converting tools to OpenAI-shape JSON schemas for a small set of frameworks (LangGraph, CrewAI, Google ADK, Strands). Prefer the native `frameworks/strands.py` `StrandsAdapter` (see below) for Strands — it returns real `DecoratedFunctionTool` objects with execution wired through `gantry.execute`, and supports genuine per-turn re-selection via `BeforeModelCallEvent`.
+- `framework_adapters.py`: Legacy helper (`fetch_framework_tools`) for converting tools to OpenAI-shape JSON schemas for twelve frameworks (see `framework_adapters.py` for the list). Prefer the native `frameworks/strands.py` `StrandsAdapter` (see below) for Strands — it returns real `DecoratedFunctionTool` objects with execution wired through `gantry.execute`, and supports genuine per-turn re-selection via `BeforeModelCallEvent`.
 - `agent_framework_bridge.py`: Microsoft Agent Framework 1.0 GA bridge — `GantryToolBridge` wraps Gantry tools as AF `FunctionTool`s with `approval_mode` auto-derived from Gantry `ToolCapability`. Exposes three agent construction helpers:
   - `build_agent(client, query, ...)` — one-liner using `client.as_agent()`, fine for single-agent flows.
   - `as_agent(client, query, ...)` — direct `Agent(client, ...)` construction; preferred when the result feeds `WorkflowBuilder`.
@@ -399,6 +397,6 @@ See `examples/agent_frameworks/` for framework-specific examples:
 
 ## See Also
 
-- [Semantic Tool Decorator Documentation](../../docs/semantic_tool_decorator.md)
-- [LLM SDK Compatibility Guide](../../docs/llm_sdk_compatibility.md)
+- [API reference](https://codehalwell.github.io/Agent-Gantry/docs/api/) (the decorator and the dialect adapters)
+- [Providers](https://codehalwell.github.io/Agent-Gantry/docs/providers/) (LLM SDK compatibility)
 - [Core README](../core/README.md) - Understanding the router and executor
