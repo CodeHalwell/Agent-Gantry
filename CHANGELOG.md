@@ -39,6 +39,24 @@ gantries only if you close the gantries last.
   `list_tools(namespace="__mcp_servers__")` still returns the rows.
   `PSEUDO_NAMESPACE` moved to `agent_gantry.schema.mcp` and is still importable
   from `agent_gantry.core.mcp_manager`.
+- **`SecurityPolicy(allowed_domains=...)` could be bypassed through a URL's
+  userinfo.** The policy percent-decoded the whole URL before parsing it, so
+  `http://allowed.com%2F@evil.com/x` (or `%23`, `%3F`, `%5C`) became a path
+  separator and the policy saw `allowed.com`, while `httpx`, `urllib3` and
+  `urllib.parse` reading the string as written connected to `evil.com`. The
+  scanning pattern also stopped at a quote, angle bracket or whitespace that
+  a client treats as part of the authority (`allowed.com"@evil.com`,
+  `allowed.com<@evil.com`, a tab), and an unbalanced `[` raised inside the
+  parser and was swallowed as "no host". Every URL is now judged as written
+  and fully decoded, an authority carrying a userinfo is re-read the way a
+  client would, every host found must be allowed, and anything unparseable is
+  refused rather than ignored.
+- **Two false positives in the same check.** Any string containing `data:`
+  (`metadata: {...}`, `user data: Bob`) was refused as a data URI whenever
+  `allowed_domains` was set, while a real `data:,hello` or `data:;base64,...`
+  with no media type was not; a data URI is now recognised by its shape.
+  `allowed_domains` entries are matched case-insensitively, so
+  `["API.GitHub.com"]` no longer denies `https://api.github.com`.
 - **Health-aware routing only worked on the in-memory store.** The executor
   records failures on the registry's tool, and only the in-memory store hands
   that object back; LanceDB, Qdrant, Chroma and pgvector return a copy made at

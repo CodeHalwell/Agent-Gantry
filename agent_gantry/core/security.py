@@ -279,50 +279,104 @@ class SecurityPolicy:
             for item in data:
                 yield from self._extract_all_strings(item)
 
+    #: Where a URL's authority (``userinfo@host:port``) sits: after a scheme or a
+    #: scheme-relative ``//`` and up to the first delimiter that ends it. Quotes,
+    #: brackets and angle brackets are *inside* it, unlike in the pattern
+    #: :meth:`_extract_domains` scans with, which stops at them so it does not
+    #: swallow the prose around a URL. An HTTP client reading the same string
+    #: does not stop there, so ``http://allowed.com"@evil.com`` is a request to
+    #: ``evil.com`` whatever the scanning pattern made of it.
+    _AUTHORITY = re.compile(r"(?:(?:https?|ftps?|file)://|(?<![:\w])//)([^/?#\\ ]*)", re.IGNORECASE)
+
+    #: A data URI: ``data:`` that does not end a longer word (``metadata:``), then
+    #: an optional media type, then ``;`` or ``,``. Prose such as ``user data: x``
+    #: is not one.
+    _DATA_URI = re.compile(r"(?<![\w.+-])data:[^\s;,]*[;,]", re.IGNORECASE)
+
+    @staticmethod
+    def _unquote_fully(text: str) -> str:
+        """Percent-decode until nothing changes, which defeats double encoding."""
+        previous = ""
+        for _ in range(5):
+            if text == previous:
+                break
+            previous = text
+            text = urllib.parse.unquote(text)
+        return text
+
+    @staticmethod
+    def _hosts_in(url: str) -> set[str]:
+        """The host one reading of a URL leads to, or ``<invalid_domain>``.
+
+        Backslashes are read as slashes, as browsers and most clients do, so
+        ``evil.com\\@example.com`` is judged as the request it will be.
+        """
+        parsed = urllib.parse.urlparse(url.replace("\\", "/"))
+        try:
+            # Reading the port parses it, which rejects ``example.com:evil.com``
+            # and its like: a client may read a malformed port differently.
+            _ = parsed.port
+        except ValueError:
+            return {"<invalid_domain>"}
+        if parsed.scheme.lower() == "file" or not parsed.hostname:
+            return {"<invalid_domain>"}
+        return {parsed.hostname}
+
+    def _userinfo_hosts(self, value: str) -> set[str]:
+        """Hosts hidden behind a userinfo that the scanning pattern cut short.
+
+        Only an authority that contains an ``@`` can disagree with what the
+        scanning pattern saw, so only those are re-read; every other URL is
+        judged as before. Tabs and newlines inside the authority are dropped
+        first, since WHATWG-style parsers do, and the authority is read both as
+        written and percent-decoded because an encoded ``/`` or ``#`` in the
+        userinfo (``allowed.com%2F@evil.com``) ends it for one reading and not
+        the other.
+        """
+        hosts: set[str] = set()
+        for match in self._AUTHORITY.finditer(value):
+            authority = re.sub(r"[\t\r\n]", "", match.group(1))
+            for reading in {authority, self._unquote_fully(authority)}:
+                # Decoding can reintroduce a delimiter; the authority ends there.
+                reading = re.split(r"[/?#\\]", reading, maxsplit=1)[0]
+                if "@" not in reading:
+                    continue
+                try:
+                    hosts |= self._hosts_in("//" + reading.rpartition("@")[2])
+                except ValueError:
+                    hosts.add("<invalid_domain>")
+        return hosts
+
     def _extract_domains(self, value: str) -> set[str]:
-        """Extract potential domains from a string value."""
-        domains = set()
+        """Extract potential domains from a string value.
+
+        Every URL is judged as written and again fully percent-decoded, and the
+        caller requires *all* of the hosts found to be allowed. Judging only the
+        decoded form let ``allowed.com%2F@evil.com`` through: decoding turns the
+        ``%2F`` into a path separator, so the policy saw ``allowed.com`` while a
+        client reading the string as written connected to ``evil.com``.
+        """
+        domains: set[str] = set()
 
         # Match URLs with explicit protocol schemes (http, https, ftp, ftps)
         # and protocol-relative URLs (//example.com/path) securely,
         # avoiding matching inline comments
         url_pattern = r"(?:https?|ftps?|file)://[^\s\"\'<>]+|//(?:[a-zA-Z0-9][-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}|localhost)\b[-a-zA-Z0-9()@:%_\+.~#?&//=]*"
         for url_match in re.finditer(url_pattern, value, re.IGNORECASE):
-            try:
-                url = url_match.group(0)
-                # Repeatedly unquote to handle double/triple encoding bypasses
-                prev_url = ""
-                for _ in range(5):
-                    if url == prev_url:
-                        break
-                    prev_url = url
-                    url = urllib.parse.unquote(url)
-
-                # Normalize backslashes to forward slashes to prevent SSRF bypasses
-                # (e.g. evil.com\@example.com)
-                url = url.replace("\\", "/")
-
-                parsed = urllib.parse.urlparse(url)
-
+            raw = url_match.group(0)
+            for reading in {raw, self._unquote_fully(raw)}:
                 try:
-                    # Accessing port triggers parsing that catches invalid ports
-                    # like http://example.com:evil.com
-                    _ = parsed.port
+                    domains |= self._hosts_in(reading)
                 except ValueError:
-                    # Invalid port, fail the validation to avoid SSRF bypasses
-                    # where downstream clients parse the malformed port differently
+                    # Unparseable (an unbalanced IPv6 bracket, say). A client
+                    # may still make sense of it, so it is refused rather than
+                    # treated as naming no host at all.
                     domains.add("<invalid_domain>")
-                    continue
 
-                if parsed.scheme.lower() == "file" or not parsed.hostname:
-                    domains.add("<invalid_domain>")
-                else:
-                    domains.add(parsed.hostname)
-            except Exception:
-                pass
+        domains |= self._userinfo_hosts(value)
 
         # Block data URIs that reference external resources
-        if re.search(r"data:\s*[^;,]+", value, re.IGNORECASE) and "data:" in value.lower():
+        if self._DATA_URI.search(value):
             # data URIs themselves don't have domains, but flag if used
             # in combination with domain references
             domains.add("<invalid_domain>")
@@ -333,8 +387,15 @@ class SecurityPolicy:
         return domains
 
     def _is_domain_allowed(self, domain: str) -> bool:
-        """Check if a domain matches the allowed list."""
+        """Check if a domain matches the allowed list.
+
+        Host names are case-insensitive and ``urlparse`` lower-cases the host it
+        returns, so the configured entries are folded the same way; otherwise
+        ``allowed_domains=["API.GitHub.com"]`` denied every request to it.
+        """
+        domain = domain.lower()
         for allowed in self.allowed_domains:
+            allowed = allowed.lower()
             if allowed.startswith("*."):
                 suffix = allowed[2:]
                 # Match exactly the suffix or subdomains

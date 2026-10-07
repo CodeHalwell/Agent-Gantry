@@ -365,3 +365,82 @@ def test_pattern_gated_execution_is_rate_limited_like_any_other():
         with pytest.raises(PermissionDeniedError, match="Rate limit"):
             policy.check_permission("delete_thing", {}, confirmation_approved=True)
     assert len(policy._request_timestamps) == 3
+
+
+# --- allowed_domains: judge the URL the way a client reads it -----------------
+
+import pytest  # noqa: E402
+
+from agent_gantry.core.security import PermissionDeniedError, SecurityPolicy  # noqa: E402
+
+# Each of these names ``allowed.com`` to a parser that percent-decodes first,
+# and ``evil.com`` to httpx, urllib3 and ``urllib.parse`` reading the string as
+# written (checked against all three). The policy used to see only the former.
+_USERINFO_SMUGGLING = [
+    "http://allowed.com%2F@evil.com/x",  # encoded / ends the authority once decoded
+    "http://allowed.com%23@evil.com/x",  # encoded #
+    "http://allowed.com%3F@evil.com/x",  # encoded ?
+    "http://allowed.com%5C@evil.com/x",  # encoded backslash
+    'http://allowed.com"@evil.com/x',  # the scanning pattern stops at a quote
+    "http://allowed.com'@evil.com/x",
+    "http://allowed.com<@evil.com/x",
+    "http://allowed.com\t@evil.com/x",  # WHATWG parsers drop the tab
+    "http://allowed.com[@evil.com/x",  # unbalanced bracket used to raise, silently
+    "//allowed.com%2F@evil.com/x",  # scheme-relative
+]
+
+
+@pytest.mark.parametrize("url", _USERINFO_SMUGGLING)
+def test_a_userinfo_cannot_hide_the_real_host(url: str) -> None:
+    policy = SecurityPolicy(allowed_domains=["allowed.com"])
+    with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
+        policy.check_permission("fetch", {"url": url})
+    # Nested inside the arguments, as the existing recursive extraction allows.
+    with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
+        policy.check_permission("fetch", {"targets": [{"url": url}]})
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://allowed.com",
+        "https://allowed.com/path?q=a%2Fb#frag",
+        "https://ALLOWED.com/Path",
+        "https://user:pw@allowed.com:8443/x",
+        "https://user%40mail.com:pw@allowed.com/x",  # an encoded @ in the userinfo is legitimate
+        "see https://allowed.com for details",
+        '{"url": "https://allowed.com"}',
+        "https://allowed.com\nhttps://allowed.com/b",  # one URL per line
+        "https://allowed.com/a%2F@b",  # the @ is in the path, not the authority
+        "//allowed.com/x",
+        "https://api.allowed.com/x",
+    ],
+)
+def test_ordinary_urls_to_an_allowed_host_still_pass(value: str) -> None:
+    policy = SecurityPolicy(allowed_domains=["allowed.com", "*.allowed.com"])
+    policy.check_permission("fetch", {"url": value})
+
+
+def test_allowed_domains_are_case_insensitive() -> None:
+    SecurityPolicy(allowed_domains=["API.GitHub.com"]).check_permission(
+        "fetch", {"url": "https://api.github.com/repos"}
+    )
+    SecurityPolicy(allowed_domains=["*.GitHub.com"]).check_permission(
+        "fetch", {"url": "https://api.github.com/repos"}
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["metadata: {'a': 1}", "Please update the user data: name=Bob", "data: 5, 6", "big_data:x;y"],
+)
+def test_prose_containing_data_colon_is_not_a_data_uri(text: str) -> None:
+    SecurityPolicy(allowed_domains=["allowed.com"]).check_permission("note", {"text": text})
+
+
+@pytest.mark.parametrize(
+    "uri", ["data:text/plain;base64,aGk=", "data:,hello", "data:text/html,<b>x</b>", "DATA:;base64,AA"]
+)
+def test_real_data_uris_are_still_refused(uri: str) -> None:
+    with pytest.raises(PermissionDeniedError, match="not in allowed_domains"):
+        SecurityPolicy(allowed_domains=["allowed.com"]).check_permission("fetch", {"url": uri})
