@@ -24,6 +24,8 @@ names changed, and the first sync drops the rows under the old names. `AgentGant
 `AgentGantry.close()` now closes the embedder as well as the store, selector,
 reranker and telemetry adapter, injected or not; share one embedder between
 gantries only if you close the gantries last.
+`AgentGantry.serve_a2a()` binds to loopback (`127.0.0.1`) by default, as
+`serve_mcp()` and the CLI already did; pass `host="0.0.0.0"` to expose it.
 
 ### Fixed
 
@@ -105,6 +107,12 @@ gantries only if you close the gantries last.
 
 ### Changed
 
+- `AgentGantry.serve_a2a()` defaults to `host="127.0.0.1"`, matching
+  `serve_mcp()` and `agent-gantry serve-mcp`; it bound every interface.
+- `RateLimiter.would_exceed()` and `get_stats()` count the minute and hour
+  windows through one shared reverse pass, and a peek at a tool that was
+  never called no longer creates per-key state behind the limiter's back
+  (it showed up in `get_stats()["total_keys"]`).
 - `jsonschema` moved from the core dependencies to the `example-tools` extra;
   the library never imported it.
 - A skills-capable vector store's `list_all_skills` must accept `category`:

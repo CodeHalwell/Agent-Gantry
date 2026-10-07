@@ -23,6 +23,8 @@ from collections import defaultdict, deque
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Reversible
+
     from agent_gantry.schema.config import RateLimitConfig
 
 
@@ -124,6 +126,25 @@ class RateLimiter:
             return float(self._config.max_calls_per_minute)
         return float(self._config.burst_size)
 
+    @staticmethod
+    def _window_counts(history: Reversible[float], now: float) -> tuple[int, int]:
+        """Calls in the last minute and the last hour of a time-ordered history.
+
+        One reverse pass: entries are appended newest-last, so the first one
+        older than the hour ends the scan. Counting rather than pruning keeps
+        the history as it was, which is what the peeks (:meth:`would_exceed`,
+        :meth:`get_stats`) need.
+        """
+        minute_ago, hour_ago = now - 60, now - 3600
+        in_minute = in_hour = 0
+        for stamp in reversed(history):
+            if stamp < hour_ago:
+                break
+            in_hour += 1
+            if stamp >= minute_ago:
+                in_minute += 1
+        return in_minute, in_hour
+
     def _record_call(self, key: str, now: float) -> None:
         """Log an admitted call for :meth:`get_stats`, keeping one hour of history.
 
@@ -195,10 +216,11 @@ class RateLimiter:
     def would_exceed(self, tool_name: str, namespace: str = "default") -> str | None:
         """Whether an acquire would be refused right now, changing nothing.
 
-        Read-only by construction — it records no call, consumes no token and
-        prunes no history — so it can run *before* the work admission control
-        is meant to protect. ``acquire`` remains the authority; this only
-        short-circuits a call that is already over quota.
+        Read-only by construction — it records no call, consumes no token,
+        prunes no history and creates no per-key state — so it can run
+        *before* the work admission control is meant to protect. ``acquire``
+        remains the authority; this only short-circuits a call that is already
+        over quota.
 
         Returns the reason, or ``None`` when the call would be admitted.
         """
@@ -206,25 +228,21 @@ class RateLimiter:
             return None
         key = self._get_key(tool_name, namespace)
 
-        if self._concurrent[key] >= self._config.max_concurrent:
+        # ``.get`` throughout: indexing a defaultdict inserts the key, and a
+        # peek at a tool never called must not leave a trace in ``get_stats``.
+        if self._concurrent.get(key, 0) >= self._config.max_concurrent:
             return (
                 f"Concurrent execution limit ({self._config.max_concurrent}) exceeded for {key}"
             )
 
+        now = time.time()
         if self._config.strategy == "sliding_window":
-            history = self._call_history[key]
-            now = time.time()
-            hour_ago = now - 3600
-            minute_ago = now - 60
-            # Counted rather than pruned: pruning is a mutation, and this must
-            # leave the limiter exactly as it found it.
-            in_hour = sum(1 for stamp in history if stamp >= hour_ago)
+            in_minute, in_hour = self._window_counts(self._call_history.get(key, ()), now)
             if in_hour >= self._config.max_calls_per_hour:
                 return (
                     f"Rate limit exceeded: {in_hour}/"
                     f"{self._config.max_calls_per_hour} calls per hour"
                 )
-            in_minute = sum(1 for stamp in history if stamp >= minute_ago)
             if in_minute >= self._config.max_calls_per_minute:
                 return (
                     f"Rate limit exceeded: {in_minute}/"
@@ -233,7 +251,6 @@ class RateLimiter:
             return None
 
         if self._config.strategy == "token_bucket":
-            now = time.time()
             refill_rate = self._config.max_calls_per_minute / 60
             max_tokens = self._bucket_capacity()
             # The refill is *computed*, not stored: writing ``_tokens`` and
@@ -241,7 +258,8 @@ class RateLimiter:
             # an acquire for the next caller.
             available = min(
                 max_tokens,
-                self._tokens[key] + (now - self._last_refill[key]) * refill_rate,
+                self._tokens.get(key, max_tokens)
+                + (now - self._last_refill.get(key, now)) * refill_rate,
             )
             if available < 1:
                 return (
@@ -251,12 +269,12 @@ class RateLimiter:
             return None
 
         if self._config.strategy == "fixed_window":
-            now = time.time()
-            if now - self._window_start[key] >= 60:
+            if now - self._window_start.get(key, now) >= 60:
                 return None  # the window is due to reset, so nothing is spent
-            if self._window_calls[key] >= self._config.max_calls_per_minute:
+            calls = self._window_calls.get(key, 0)
+            if calls >= self._config.max_calls_per_minute:
                 return (
-                    f"Rate limit exceeded: {self._window_calls[key]}/"
+                    f"Rate limit exceeded: {calls}/"
                     f"{self._config.max_calls_per_minute} calls in window"
                 )
         return None
@@ -392,24 +410,12 @@ class RateLimiter:
         if tool_name:
             key = self._get_key(tool_name, namespace)
 
-            # One reverse pass for both windows. History is ordered
-            # oldest-first, so the first entry older than the hour ends it.
-            #
-            # ``calls_last_hour`` used to be the raw length of the deque, which
-            # is only pruned when a call is *admitted*: a key that went quiet
-            # kept reporting the calls it made hours ago, while
-            # ``calls_last_minute`` — measured against the clock — correctly
-            # read 0. The two stats disagreed for as long as the key stayed
-            # idle.
-            now = time.time()
-            minute_ago, hour_ago = now - 60, now - 3600
-            calls_last_minute = calls_last_hour = 0
-            for call_time in reversed(self._call_history.get(key, ())):
-                if call_time < hour_ago:
-                    break
-                calls_last_hour += 1
-                if call_time >= minute_ago:
-                    calls_last_minute += 1
+            # Measured against the clock, not the deque length: the history is
+            # only pruned when a call is *admitted*, so a key that went quiet
+            # would otherwise keep reporting calls it made hours ago.
+            calls_last_minute, calls_last_hour = self._window_counts(
+                self._call_history.get(key, ()), time.time()
+            )
 
             return {
                 "key": key,
