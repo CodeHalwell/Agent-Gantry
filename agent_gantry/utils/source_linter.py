@@ -38,7 +38,7 @@ _INVERTED_COMMENT = re.compile(r"compat|lower|loosen|relax|permissive|lenient", 
 
 #: Constructors whose result is a gantry that needs closing.
 _GANTRY_CONSTRUCTORS = {"AgentGantry", "create_default_gantry"}
-_GANTRY_CLASSMETHODS = {"quick_start", "from_config"}
+_GANTRY_CLASSMETHODS = {"quick_start", "from_config", "from_modules"}
 
 
 @dataclass

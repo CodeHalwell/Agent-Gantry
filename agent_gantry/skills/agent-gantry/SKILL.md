@@ -310,7 +310,7 @@ agent = LlamaIndexAdapter(gantry).function_agent(llm)   # re-selects tools each 
 
 The returned live objects keep their classes, importable from the framework's `*_live` module for `isinstance` checks: `GantryToolRetriever` (`llamaindex_live`), `GantryToolset` (`pydantic_ai_live`), `GantryAgentSession` (`openai_agents_live`) and `GantryStrandsToolHook` (`strands_live`). Google ADK and LangGraph return plain framework objects (a `before_model_callback` callable and a compiled agent), so there is no Gantry class to check for.
 
-Frameworks whose tool list is **fixed at agent construction** (CrewAI, Agno, Haystack, DSPy) can't re-advertise tools mid-run. Build a self-rebuilding agent with `<Adapter>(gantry).agent_builder(...)` (Haystack: `HaystackAdapter(gantry).tool_invoker_builder(...)`; DSPy: `DSPyAdapter(gantry).agent_builder(signature, ...)`, since `dspy.ReAct` needs a task signature); it re-selects and rebuilds on each top-level call. For a one-shot fresh slice of native tools, call `<Adapter>(gantry).live_tools(query)` (async, not available on DSPy — use `.select(query)` instead).
+Frameworks whose tool list is **fixed at agent construction** (CrewAI, Agno, Haystack, DSPy) can't re-advertise tools mid-run. Build a self-rebuilding agent with `<Adapter>(gantry).agent_builder(...)` (Haystack: `HaystackAdapter(gantry).tool_invoker_builder(...)`; DSPy: `DSPyAdapter(gantry).agent_builder(signature, ...)`, since `dspy.ReAct` needs a task signature); it re-selects and rebuilds on each top-level call. For a one-shot fresh slice of native tools, call `<Adapter>(gantry).select(query)` (async, on every adapter); `CrewAIAdapter` and `HaystackAdapter` also expose that call as `live_tools(query)`.
 
 ## Selection without embeddings (Jev)
 
@@ -579,11 +579,17 @@ uv run agent-gantry serve-mcp --module my_app.tools --transport http --mode hybr
 uv run agent-gantry install-skill --claude                          # install THIS skill into ~/.claude/skills
 ```
 
-`lint` flags three patterns that silently degrade routing quality:
+`lint --module` flags four patterns that silently degrade routing quality:
 
 1. Descriptions that mention other registered tools (embedding pulls them toward each other).
 2. Pairs of tools with >0.85 cosine similarity (probably should be one tool, or differentiated).
 3. Tags that appear on more than half the registry (low discriminative value).
+4. Tools registered without `examples=[...]`, the largest single retrieval lever the project has measured.
+
+`lint --source PATH` reads Python files instead of a registry and flags two mistakes in the calling code:
+
+1. A non-zero `score_threshold` literal with no comment, or with one that calls it a way to loosen retrieval. It is an absolute cosine cutoff that defaults to `0.0`, so a non-zero value only ever tightens the filter.
+2. A script that builds a gantry under `if __name__ == "__main__"` and never calls `close()` (or uses `async with`).
 
 ## Observability & tracing
 

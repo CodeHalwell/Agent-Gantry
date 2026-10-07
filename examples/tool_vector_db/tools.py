@@ -14,15 +14,36 @@ import os
 import random
 import statistics
 import uuid
+import warnings
 from typing import Any
 
 from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
 
-# Create gantry instance with Nomic embeddings (768 dimensions)
-embedder = NomicEmbedder(dimension=768)
-vector_store = LanceDBVectorStore(db_path="gantry_tools.lancedb", dimension=768)
+DIMENSION = 768
+
+# Create gantry instance with Nomic embeddings (768 dimensions).
+# NomicEmbedder imports sentence-transformers lazily, on first use, so constructing
+# it succeeds without the package and the failure only comes at the first sync.
+# Probe for it here, and fall back to the hash-based SimpleEmbedder at the same
+# dimension so the store below is unchanged.
+try:
+    import sentence_transformers  # noqa: F401
+
+    from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+
+    embedder = NomicEmbedder(dimension=DIMENSION)
+except ImportError:
+    warnings.warn(
+        "sentence-transformers is not installed, so the Nomic embedder is unavailable. "
+        "Using SimpleEmbedder; expect weaker ranking. "
+        "For semantic search: pip install agent-gantry[nomic]",
+        UserWarning,
+        stacklevel=2,
+    )
+    embedder = SimpleEmbedder(dimension=DIMENSION)
+vector_store = LanceDBVectorStore(db_path="gantry_tools.lancedb", dimension=DIMENSION)
 tools = AgentGantry(embedder=embedder, vector_store=vector_store)
 
 

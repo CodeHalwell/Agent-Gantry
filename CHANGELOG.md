@@ -394,6 +394,52 @@ Nothing below had a caller in the library, the tests, the examples or the docs.
   the code on their dates, and several of their "pending" rows are done.
 - `tests/test_version_consistency.py` also checks `package.json` and the version in the
   opening paragraph of `README.md`, which a release had to remember by hand.
+- The bundled skill said `lint` flags three patterns (it flags four, and `--source` adds
+  two more) and that `live_tools(query)` exists on the CrewAI, Agno and Haystack adapters
+  (only CrewAI and Haystack have it; `select(query)` is on every adapter). The registry
+  linter's docstring named the command `gantry lint`.
+
+### Fixed (examples and linters)
+
+- `project_demo/main_persistent.py` died with `Embedding 0 has dimension 64, expected 256`
+  when sentence-transformers was missing: the fallback `SimpleEmbedder` kept its 64
+  dimensions while the LanceDB table was created at 256. It now uses the table's dimension.
+- Five examples (`llm_integration/llm_demo.py`, `token_savings_demo.py`, `openai_demo.py`,
+  `anthropic_demo.py` and `tool_vector_db/tools.py`) wrapped `NomicEmbedder(...)` in
+  `except ImportError`. The constructor imports nothing, so the guard never fired and the
+  script crashed with a traceback at the first sync, against the examples README's promise
+  that nothing crashes without the extras. They probe for sentence-transformers first and
+  fall back to the hash embedder, and `tests/examples/test_nomic_examples_probe.py` keeps it
+  that way.
+- `tests/examples/test_plug_and_play_example.py` ran with `score_threshold=0.1` over the hash
+  embedder, whose scores sit far below that, and passed on the luck of the hash. It now uses
+  the example's own cutoff of `0.0` and asks for the single best match.
+- `agent-gantry lint --source` did not flag an unclosed gantry built with
+  `AgentGantry.from_modules(...)`.
+
+### Packaging and CI
+
+- The sdist and wheel include everything under `agent_gantry/`. The old include list named
+  four file types, and because `uv build` makes the wheel from the sdist, any other file
+  (a JSON or YAML data file, a `py.typed` marker) was dropped from both while a plain
+  `uv build --wheel` from a checkout still shipped it. Today's contents are unchanged.
+- `publish.yml` checks the version before building: `pyproject.toml` and
+  `agent_gantry/__init__.py` must agree and, for a published GitHub Release, the tag must be
+  `v<version>`. Before, a Release cut on an unbumped commit built the old version, PyPI
+  skipped it, and every job was green. It also warns in the run summary when PyPI already
+  has the version, and its jobs default to read-only permissions.
+- `ci.yml` cancels a pull request's superseded runs, syncs with `uv sync --locked` so a
+  stale `uv.lock` fails instead of being re-resolved on the runner, runs the suite once
+  (under coverage) on the ubuntu / Python 3.12 cell rather than twice, and uploads coverage
+  with `codecov-action@v5` using the `files:` input and an optional `CODECOV_TOKEN` secret.
+  Codecov needs the token for commits on `main`; until it is added the upload is skipped.
+- `package.json` pins React, TypeScript and their types to caret ranges taken from the lock
+  instead of `latest`, which the documented `npm install` resolved afresh each time, and
+  `tests/test_docs_site_manifest.py` keeps them pinned.
+- `.gitignore` no longer ignores `Claude.md`, which matched `CLAUDE.md` on case-insensitive
+  checkouts and hid per-directory `CLAUDE.md` files there.
+- The pytest-timeout comment in `pyproject.toml` said a test over the limit is failed and the
+  run moves on. With the `thread` method it dumps stacks and ends the whole run.
 
 ## [0.19.0] - 2026-09-21
 

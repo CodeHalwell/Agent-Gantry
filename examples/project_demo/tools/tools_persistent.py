@@ -167,8 +167,11 @@ def create_persistent_gantry(dimension: int = 256) -> AgentGantry:
         )
         from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 
-        embedder = SimpleEmbedder()
-        embedder_config = EmbedderConfig(type="sentence_transformers")
+        # The table below is created at `dimension`, so the fallback must produce vectors
+        # of that size (SimpleEmbedder defaults to 64). The injected embedder is what
+        # runs; the config only has to agree with it on the dimension.
+        embedder = SimpleEmbedder(dimension=dimension)
+        embedder_config = EmbedderConfig(dimension=dimension)
 
     # Configure persistent vector store
     vector_store_config = VectorStoreConfig(

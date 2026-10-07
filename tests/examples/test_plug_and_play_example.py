@@ -9,14 +9,16 @@ from agent_gantry import AgentGantry, with_semantic_tools
 async def test_toolpack_can_be_loaded_and_filtered() -> None:
     gantry = await AgentGantry.from_modules(["examples.basics.toolpack"])
 
+    # The toolpack has only four tools, so a wide limit would prove little:
+    # ask for the single best match. The cutoff stays at the 0.0 default, as in the
+    # example, because the hash embedder's scores sit far below any useful threshold.
     tools = await gantry.retrieve_tools(
         "convert 10 kilometers to miles",
-        limit=3,
-        score_threshold=0.1,
+        limit=1,
+        score_threshold=0.0,
     )
 
-    tool_names = {tool["function"]["name"] for tool in tools}
-    assert "convert_km_to_miles" in tool_names
+    assert [tool["function"]["name"] for tool in tools] == ["convert_km_to_miles"]
 
 
 @pytest.mark.asyncio
@@ -25,7 +27,7 @@ async def test_decorator_injects_relevant_tools() -> None:
 
     captured: dict[str, list[str]] = {}
 
-    @with_semantic_tools(gantry, limit=2, score_threshold=0.1)
+    @with_semantic_tools(gantry, limit=2, score_threshold=0.0)
     async def chat(prompt: str, *, tools: list[dict[str, Any]] | None = None):
         captured["tools"] = [t["function"]["name"] for t in tools or []]
         return "ok"

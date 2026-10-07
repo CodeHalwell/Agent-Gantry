@@ -42,6 +42,11 @@ async def main() -> None:
         return
 
     try:
+        # NomicEmbedder imports sentence-transformers lazily, on first use, so
+        # constructing it succeeds without the package and the failure only comes
+        # at the first sync. Probe for it here instead.
+        import sentence_transformers  # noqa: F401
+
         from agent_gantry.adapters.embedders.nomic import NomicEmbedder
 
         gantry = AgentGantry(embedder=NomicEmbedder())

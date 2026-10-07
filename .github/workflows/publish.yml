@@ -14,12 +14,35 @@ on:
           - testpypi
           - pypi
 
+# Read-only by default; the publish jobs below ask for what they need.
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build distribution
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check the version before building
+        # The match ci.yml's lint job requires, plus, for a published GitHub Release,
+        # that its tag names the version in the tree. Without this, a Release cut on a
+        # commit that was never bumped builds the old version, PyPI skips it as already
+        # present (skip-existing below), and every job is green with nothing released.
+        run: |
+          set -euo pipefail
+          version=$(grep -m1 -E '^version = ' pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          init=$(grep -m1 -E '^__version__' agent_gantry/__init__.py | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ "$version" != "$init" ]; then
+            echo "::error::pyproject version ($version) != agent_gantry/__init__.py ($init)"
+            exit 1
+          fi
+          if [ "$GITHUB_EVENT_NAME" = "release" ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Release tag $GITHUB_REF_NAME does not match the version in the tree (v$version)"
+            exit 1
+          fi
+          echo "Building $version"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -113,6 +136,16 @@ jobs:
         with:
           name: dist
           path: dist/
+
+      # skip-existing stays on so that re-running a partly failed publish can still
+      # reach the tag and release step below. The price is that publishing a version
+      # PyPI already has is a silent no-op, so say so in the run summary.
+      - name: Warn if this version is already on PyPI
+        run: |
+          version=$(grep -m1 -E '^version = ' pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          if curl -fsS -o /dev/null "https://pypi.org/pypi/agent-gantry/$version/json"; then
+            echo "::warning::agent-gantry $version is already on PyPI, so the upload below is skipped. If this was meant to be a new release, bump the version first."
+          fi
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

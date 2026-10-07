@@ -21,9 +21,12 @@ the publish, not a separate step.
    `Framework adapter smoke tests`, `Verify package builds`).
 4. Go to **Actions → Publish to PyPI → Run workflow**, pick the `main` branch and
    set **target = `pypi`**, then run it. The workflow:
+   - checks the version before building: `pyproject.toml` and `agent_gantry/__init__.py`
+     must agree, and for a published GitHub Release the tag must be `v<version>`;
    - builds the sdist + wheel and runs `twine check`;
    - smoke-installs the wheel on Python 3.10–3.13 and imports it;
-   - **publishes to PyPI** via trusted publishing;
+   - **publishes to PyPI** via trusted publishing (a version PyPI already has is skipped,
+     with a warning in the run summary, so a re-run can still reach the tag and release);
    - **tags `v<version>`** (created only if missing) and **creates the GitHub
      Release** `v<version>` with generated notes.
 
@@ -39,7 +42,8 @@ touching PyPI, tags, or releases (the tag/release step only runs for `pypi`).
 
 The workflow also triggers automatically when a GitHub Release is *published*
 (`on: release: [published]`). In that case the tag and release already exist, so
-the run publishes to PyPI only and skips the tag/release step.
+the run publishes to PyPI only and skips the tag/release step. The tag must read
+`v<version>` for the version in the tree, or the build step fails before anything is uploaded.
 
 ## One-time setup
 

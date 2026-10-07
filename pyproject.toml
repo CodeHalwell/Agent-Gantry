@@ -447,16 +447,17 @@ packages = ["agent_gantry"]
 "agent_gantry/skills/agent-gantry" = "share/claude/skills/agent-gantry"
 
 [tool.hatch.build]
-# Make sure SKILL.md and the references/ tree ship inside the wheel
-# alongside the package itself. The shared-data table above also
-# publishes a copy under ``share/claude/skills/`` so Claude Code can
-# find the skill via the standard discovery path
-# (``$VENV/share/claude/skills/`` is searched at startup).
+# Everything under the package ships, SKILL.md and the references/ tree
+# included. ``uv build`` makes the sdist first and the wheel from it, and this
+# list governs the sdist, so a list of file types would silently drop any other
+# (a ``py.typed`` marker, a JSON or YAML data file) from both, while a plain
+# ``uv build --wheel`` from the checkout would still include it and hide the
+# loss. Hatch still honours .gitignore, so caches and bytecode stay out. The
+# shared-data table above also publishes a copy of the skill under
+# ``share/claude/skills/`` so Claude Code can find it via the standard
+# discovery path (``$VENV/share/claude/skills/`` is searched at startup).
 include = [
-    "agent_gantry/**/*.py",
-    "agent_gantry/**/*.md",
-    "agent_gantry/**/*.txt",
-    "agent_gantry/skills/**/*",
+    "agent_gantry/**",
 ]
 
 [tool.ruff]
@@ -484,13 +485,16 @@ markers = [
 # before the root cause (a process-global latch in sse_starlette) was found.
 #
 # ``timeout`` is pytest-timeout's, and it is the actual backstop (#420): a test
-# still running after 300s is failed and the run moves on. ``thread`` rather
-# than ``signal`` because the suite is async and multi-threaded (to_thread
-# workers, uvicorn), and because the signal method is unavailable on Windows,
-# where the hang was also observed. No test runs anywhere near 300s -- the
-# whole suite is minutes -- so nothing legitimate trips either. The specific
-# awaits that hung are additionally wrapped by ``_bounded`` in
-# tests/test_mcp_transports.py, which fails them with live task stacks.
+# still running after 300s dumps every thread's stack and ends the WHOLE run
+# with exit status 1 (``os._exit``) -- no summary, no remaining tests, no
+# coverage file. That is blunt, but it is what the ``thread`` method does, and
+# it is chosen over ``signal`` (which would fail only that test and carry on)
+# because the suite is async and multi-threaded (to_thread workers, uvicorn),
+# and because the signal method is unavailable on Windows, where the hang was
+# also observed. No test runs anywhere near 300s -- the whole suite is minutes
+# -- so nothing legitimate trips either. The specific awaits that hung are
+# additionally wrapped by ``_bounded`` in tests/test_mcp_transports.py, which
+# fails them with live task stacks, so a hang there is a red test, not a kill.
 faulthandler_timeout = 300
 timeout = 300
 timeout_method = "thread"

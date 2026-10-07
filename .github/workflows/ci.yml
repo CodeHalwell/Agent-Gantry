@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same pull request makes the older run's result moot, so cancel
+# it. Runs on main and develop are never cancelled: each is a result worth keeping.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -35,7 +41,10 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync --extra dev --extra nomic --extra lancedb --extra agent-frameworks --extra example-tools
+        # --locked fails the job when uv.lock is out of date with pyproject.toml (a
+        # floor raised or a version bumped without `uv lock`) instead of quietly
+        # re-resolving it on the runner, which would leave the committed lock untested.
+        run: uv sync --locked --extra dev --extra nomic --extra lancedb --extra agent-frameworks --extra example-tools
 
       - name: Run ruff
         run: uv run ruff check agent_gantry/
@@ -65,9 +74,12 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --python ${{ matrix.python-version }} --extra dev --extra nomic --extra lancedb --extra agent-frameworks --extra example-tools
+        # --locked: see the lint job.
+        run: uv sync --locked --python ${{ matrix.python-version }} --extra dev --extra nomic --extra lancedb --extra agent-frameworks --extra example-tools
 
       - name: Run tests
+        # The ubuntu / 3.12 cell runs the suite once, under coverage, in the next step.
+        if: matrix.os != 'ubuntu-latest' || matrix.python-version != '3.12'
         # PYTORCH_MPS_HIGH_WATERMARK_RATIO: on Apple Silicon runners, torch's
         # MPS allocator caps at ~7.9 GiB and sentence-transformers model loads
         # accumulate against it over the session, flaking late tests with
@@ -79,16 +91,20 @@ jobs:
         run: |
           uv run pytest --ignore=tests/test_phase5_mcp.py --ignore=tests/test_phase6_a2a.py -v
 
-      - name: Run tests with coverage (Ubuntu only)
+      - name: Run tests with coverage (Ubuntu, Python 3.12 only)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         run: |
-          uv run pytest --cov=agent_gantry --cov-report=xml --ignore=tests/test_phase5_mcp.py --ignore=tests/test_phase6_a2a.py
+          uv run pytest --cov=agent_gantry --cov-report=xml --ignore=tests/test_phase5_mcp.py --ignore=tests/test_phase6_a2a.py -v
 
-      - name: Upload coverage to Codecov (Ubuntu only)
+      - name: Upload coverage to Codecov (Ubuntu, Python 3.12 only)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
-          file: ./coverage.xml
+          files: ./coverage.xml
+          # Codecov needs this token for a commit on a protected branch such as main;
+          # only pull requests from forks upload without one. Add it as the repository
+          # secret CODECOV_TOKEN. Until then the upload is skipped, never a failure.
+          token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
   framework-adapters:

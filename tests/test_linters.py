@@ -98,6 +98,25 @@ def test_quick_start_and_from_config_are_constructions_too() -> None:
     assert [f.line for f in analyze_source(src, "demo.py").unclosed] == [4]
 
 
+def test_an_awaited_from_modules_is_a_construction_too() -> None:
+    # ``from_modules`` builds and returns a gantry, so a script that awaits it and
+    # never closes the result leaks it like any other.
+    src = (
+        "from agent_gantry import AgentGantry\n\nasync def run():\n"
+        "    gantry = await AgentGantry.from_modules(['my_app.tools'])\n" + _MAIN
+    )
+    assert [f.line for f in analyze_source(src, "demo.py").unclosed] == [4]
+
+
+def test_a_from_modules_gantry_that_is_closed_is_clean() -> None:
+    src = (
+        "from agent_gantry import AgentGantry\n\nasync def run():\n"
+        "    gantry = await AgentGantry.from_modules(['my_app.tools'])\n"
+        "    await gantry.close()\n" + _MAIN
+    )
+    assert analyze_source(src, "demo.py").empty
+
+
 def test_a_library_module_without_a_main_guard_is_not_flagged() -> None:
     src = "from agent_gantry import AgentGantry\n\ngantry = AgentGantry()\n"
     assert analyze_source(src, "tools.py").empty

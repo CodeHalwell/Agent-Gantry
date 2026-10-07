@@ -15,7 +15,7 @@ The two entry points are:
   (pre-commit hooks, CI checks, dashboards).
 - :func:`pairwise_similarity` — score two registered tools head-to-head.
 
-The CLI mirrors both as ``gantry lint`` and ``gantry sim``.
+The CLI mirrors both as ``agent-gantry lint`` and ``agent-gantry sim``.
 """
 
 from __future__ import annotations
