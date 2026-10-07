@@ -155,6 +155,17 @@ class BaseOpenAIEmbedder:
             all_embeddings.extend(batch_embeddings)
         return all_embeddings
 
+    async def aclose(self) -> None:
+        """Close the HTTP client so its connection pool is released.
+
+        ``AgentGantry.close()`` closes the embedder when it has a ``close`` or
+        ``aclose``; these had neither, so the pool of every gantry that used one
+        stayed open until the process exited.
+        """
+        client = getattr(self, "_client", None)
+        if client is not None:
+            await client.close()
+
     async def health_check(self) -> bool:
         """
         Check health by attempting a simple embedding.

@@ -367,10 +367,17 @@ class SemanticRouter:
         rerank_time_ms: float | None = None
         if self._reranker and query.enable_reranking:
             rerank_start = perf_counter()
+            # Every reranker keeps only its ``top_k`` best, and MMR can only
+            # reorder what it is handed. Asking for just ``limit`` here meant
+            # that with a reranker configured the pool MMR chose from *was* the
+            # answer, and ``diversity_factor`` could no longer change which
+            # tools came back. Scoring the whole pool costs nothing extra: the
+            # rerankers score every candidate they are given either way.
+            keep = max(len(scored_tools), query.limit) if query.diversity_factor > 0 else query.limit
             scored_tools = await self._reranker.rerank(
                 query.context.query,
                 scored_tools,
-                query.limit,
+                keep,
             )
             rerank_time_ms = (perf_counter() - rerank_start) * 1000
 

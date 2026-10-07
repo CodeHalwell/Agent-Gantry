@@ -278,11 +278,17 @@ class QdrantVectorStore:
         upsert: bool = True,
     ) -> int:
         """Add tools to the vector store."""
+        # Validated before anything is written, as the in-memory and LanceDB
+        # stores do: a plain zip stored the matching prefix and reported
+        # success, so a tool whose embedding an upstream failure dropped was
+        # registered and executable but never retrievable.
+        if len(tools) != len(embeddings):
+            raise ValueError(f"tools/embeddings length mismatch: {len(tools)} != {len(embeddings)}")
         from qdrant_client.models import PointStruct
 
         await self.initialize()
 
-        if not tools or not embeddings:
+        if not tools:
             return 0
 
         # Without upsert, ids already stored (or repeated within the batch)
@@ -395,18 +401,16 @@ class QdrantVectorStore:
 
         point_id = self._point_id(namespace, name)
 
-        try:
-            result = await self._client.retrieve(
-                collection_name=self._collection_name,
-                ids=[point_id],
-            )
-
-            if result:
-                tool_json = result[0].payload.get("tool_json", "{}")
-                return ToolDefinition.model_validate_json(tool_json)
-        except Exception as e:
-            logger.debug(f"get_by_name failed for {namespace}.{name}: {e}")
-
+        # No blanket ``except``: ``retrieve`` returns an empty list for a miss, so
+        # anything raised here is a connection or server error, and reporting it
+        # as "no such tool" hid an outage as an absence.
+        result = await self._client.retrieve(
+            collection_name=self._collection_name,
+            ids=[point_id],
+        )
+        if result:
+            tool_json = result[0].payload.get("tool_json", "{}")
+            return ToolDefinition.model_validate_json(tool_json)
         return None
 
     async def delete(self, name: str, namespace: str = "default") -> bool:
@@ -415,25 +419,25 @@ class QdrantVectorStore:
 
         point_id = self._point_id(namespace, name)
 
-        try:
-            from qdrant_client.models import PointIdsList
+        from qdrant_client.models import PointIdsList
 
-            # Qdrant's delete is a silent no-op on a miss, so check first.
-            existing = await self._client.retrieve(
-                collection_name=self._collection_name,
-                ids=[point_id],
-                with_payload=False,
-                with_vectors=False,
-            )
-            if not existing:
-                return False
-            await self._client.delete(
-                collection_name=self._collection_name,
-                points_selector=PointIdsList(points=[point_id]),
-            )
-            return True
-        except Exception:
+        # Qdrant's delete is a silent no-op on a miss, so check first. Errors are
+        # not caught: ``False`` means "was not stored" (the protocol's contract),
+        # and a refused connection reported as that made ``sync(prune=True)``
+        # claim success while every stale tool stayed retrievable.
+        existing = await self._client.retrieve(
+            collection_name=self._collection_name,
+            ids=[point_id],
+            with_payload=False,
+            with_vectors=False,
+        )
+        if not existing:
             return False
+        await self._client.delete(
+            collection_name=self._collection_name,
+            points_selector=PointIdsList(points=[point_id]),
+        )
+        return True
 
     async def list_all(
         self,
@@ -710,9 +714,15 @@ class ChromaVectorStore:
         upsert: bool = True,
     ) -> int:
         """Add tools to the vector store."""
+        # Validated before anything is written, as the in-memory and LanceDB
+        # stores do: a plain zip stored the matching prefix and reported
+        # success, so a tool whose embedding an upstream failure dropped was
+        # registered and executable but never retrievable.
+        if len(tools) != len(embeddings):
+            raise ValueError(f"tools/embeddings length mismatch: {len(tools)} != {len(embeddings)}")
         await self.initialize()
 
-        if not tools or not embeddings:
+        if not tools:
             return 0
 
         # Without upsert, ids already stored (or repeated within the batch)
@@ -809,16 +819,12 @@ class ChromaVectorStore:
 
         tool_id = f"{namespace}.{name}"
 
-        try:
-            # Wrap synchronous operation to avoid blocking event loop
-            result = await asyncio.to_thread(self._collection.get, ids=[tool_id])
-
-            if result["metadatas"]:
-                tool_json = result["metadatas"][0].get("tool_json", "{}")
-                return ToolDefinition.model_validate_json(tool_json)
-        except Exception as e:
-            logger.debug(f"get_by_name failed for {namespace}.{name}: {e}")
-
+        # Wrap synchronous operation to avoid blocking event loop. A miss comes
+        # back as empty ids, so an exception is a real error and propagates.
+        result = await asyncio.to_thread(self._collection.get, ids=[tool_id])
+        if result["metadatas"]:
+            tool_json = result["metadatas"][0].get("tool_json", "{}")
+            return ToolDefinition.model_validate_json(tool_json)
         return None
 
     async def delete(self, name: str, namespace: str = "default") -> bool:
@@ -827,15 +833,13 @@ class ChromaVectorStore:
 
         tool_id = f"{namespace}.{name}"
 
-        try:
-            # Chroma's delete is a silent no-op on a miss, so check first.
-            existing = await asyncio.to_thread(self._collection.get, ids=[tool_id], include=[])
-            if not existing.get("ids"):
-                return False
-            await asyncio.to_thread(self._collection.delete, ids=[tool_id])
-            return True
-        except Exception:
+        # Chroma's delete is a silent no-op on a miss, so check first. Errors
+        # propagate for the reason given on Qdrant's ``delete``.
+        existing = await asyncio.to_thread(self._collection.get, ids=[tool_id], include=[])
+        if not existing.get("ids"):
             return False
+        await asyncio.to_thread(self._collection.delete, ids=[tool_id])
+        return True
 
     async def list_all(
         self,
@@ -855,25 +859,23 @@ class ChromaVectorStore:
         if namespace:
             where = self._build_namespace_where(namespace)
 
-        try:
-            # Wrap synchronous operation to avoid blocking event loop
-            result = await asyncio.to_thread(
-                self._collection.get,
-                where=where,
-                limit=limit,
-                offset=offset,
-            )
+        # Wrap synchronous operation to avoid blocking event loop. Errors
+        # propagate: an empty list on a failure told ``prune_stale_tools`` there
+        # was nothing stale, and ``count`` reported 0 for the same outage.
+        result = await asyncio.to_thread(
+            self._collection.get,
+            where=where,
+            limit=limit,
+            offset=offset,
+        )
 
-            tools = []
-            if result["metadatas"]:
-                for metadata in result["metadatas"]:
-                    tool_json = metadata.get("tool_json", "{}")
-                    tools.append(ToolDefinition.model_validate_json(tool_json))
+        tools = []
+        if result["metadatas"]:
+            for metadata in result["metadatas"]:
+                tool_json = metadata.get("tool_json", "{}")
+                tools.append(ToolDefinition.model_validate_json(tool_json))
 
-            return tools
-        except Exception as e:
-            logger.warning(f"list_all failed: {e}")
-            return []
+        return tools
 
     async def count(self, namespace: str | None = None) -> int:
         """Count tools."""
@@ -883,25 +885,23 @@ class ChromaVectorStore:
             # absence of one, which is how ``search`` reads it.
             return 0
 
-        try:
-            where = None
-            if namespace:
-                where = self._build_namespace_where(namespace)
+        where = None
+        if namespace:
+            where = self._build_namespace_where(namespace)
 
-            # Wrap synchronous operation to avoid blocking event loop
-            if where:
-                # Collection.count() takes no filter (passing one raised
-                # TypeError, swallowed below into a permanent 0). Fetch the
-                # matching ids only and count those.
-                result = await asyncio.to_thread(
-                    self._collection.get,
-                    where=where,
-                    include=[],
-                )
-                return len(result.get("ids") or [])
-            return await asyncio.to_thread(self._collection.count)
-        except Exception:
-            return 0
+        # Wrap synchronous operation to avoid blocking event loop
+        if where:
+            # Collection.count() takes no filter (passing one raised
+            # TypeError, which the old blanket ``except`` turned into a
+            # permanent 0 -- and an outage into the same 0). Fetch the matching
+            # ids only and count those.
+            result = await asyncio.to_thread(
+                self._collection.get,
+                where=where,
+                include=[],
+            )
+            return len(result.get("ids") or [])
+        return await asyncio.to_thread(self._collection.count)
 
     async def health_check(self) -> bool:
         """Check health of Chroma connection."""
@@ -1100,9 +1100,15 @@ class PGVectorStore:
         upsert: bool = True,
     ) -> int:
         """Add tools to the vector store."""
+        # Validated before anything is written, as the in-memory and LanceDB
+        # stores do: a plain zip stored the matching prefix and reported
+        # success, so a tool whose embedding an upstream failure dropped was
+        # registered and executable but never retrievable.
+        if len(tools) != len(embeddings):
+            raise ValueError(f"tools/embeddings length mismatch: {len(tools)} != {len(embeddings)}")
         await self.initialize()
 
-        if not tools or not embeddings:
+        if not tools:
             return 0
 
         records = [

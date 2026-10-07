@@ -293,8 +293,15 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
         to_record = _skill_record if skills else _tool_record
         records = [to_record(item, embedding, now) for item, embedding in zip(items, embeddings)]
 
+        if upsert:
+            # One row per id, the last occurrence winning, as the in-memory
+            # store, pgvector (ON CONFLICT), Qdrant and Chroma all behave. The
+            # delete below clears the id once, so a repeat within the batch
+            # was written twice and then returned twice from every search.
+            records = list({record["id"]: record for record in records}.values())
+
         # Predicate over the batch's ids (escape for SQL safety)
-        ids = [_escape_sql_string(f"{item.namespace}.{item.name}") for item in items]
+        ids = [_escape_sql_string(record["id"]) for record in records]
         if len(ids) > 1:
             id_predicate = "id IN ({})".format(", ".join(f"'{id_}'" for id_ in ids))
         else:
@@ -413,17 +420,25 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
             fetch_limit = min(max(limit * 4, 1), max_rows)
 
         def _build_search(size: int) -> Any:
-            search = self._tools_table.search(query_vector).select(columns).limit(size)
+            search = (
+                self._tools_table.search(query_vector).metric("cosine").select(columns).limit(size)
+            )
             return search.where(where_clause) if where_clause else search
 
         def _collect(rows: list[Any]) -> list[Any]:
             """Score, deserialise and tag-filter a page of rows, up to ``limit``."""
             collected: list[Any] = []
             for row in rows:
-                # LanceDB returns distance (lower is better), convert to similarity
+                # With the cosine metric LanceDB's ``_distance`` is 1 - cosine
+                # similarity, whatever the vectors' length, so the score is the
+                # cosine itself -- what every other store compares
+                # ``score_threshold`` against. It used to be ``1 - d/2`` on the
+                # default squared-L2 distance, clamped at 0.0: exact only for
+                # unit vectors, and a clamp that made an anti-correlated tool
+                # score 0 and so survive the ``score_threshold=0.0`` the
+                # convenience layers use, where the other stores drop it.
                 distance = row.get("_distance", 0)
-                # Convert L2 distance to cosine similarity approximation
-                score = max(0.0, 1.0 - (distance / 2.0))
+                score = 1.0 - distance
 
                 if score_threshold is not None and score < score_threshold:
                     continue
@@ -503,6 +518,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
         # it once output columns are specified.
         search = (
             self._skills_table.search(query_vector)
+            .metric("cosine")
             .select(["skill_json", "_distance"])
             .limit(limit * 2)
         )
@@ -526,7 +542,7 @@ class LanceDBVectorStore(LanceDBToolsMixin, LanceDBMetadataMixin):
         output: list[tuple[Skill, float]] = []
         for row in results:
             distance = row.get("_distance", 0)
-            score = max(0.0, 1.0 - (distance / 2.0))
+            score = 1.0 - distance  # cosine similarity; see the tools search
 
             if score_threshold is not None and score < score_threshold:
                 continue

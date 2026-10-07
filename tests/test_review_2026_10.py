@@ -700,3 +700,159 @@ def test_an_over_long_tool_name_is_flagged_once_when_a_provider_schema_is_built(
     short.to_dialect("openai")
     flagged = [r for r in caplog.records if "accept at most 64" in r.getMessage()]
     assert len(flagged) == 1 and long_name in flagged[0].getMessage()
+
+
+# --------------------------------------------------------------------------
+# Retrieval path
+# --------------------------------------------------------------------------
+
+
+async def test_a_diversity_factor_still_applies_when_a_reranker_is_configured() -> None:
+    """Rerankers keep ``top_k``; MMR must be handed more than ``limit`` to choose from."""
+    embedder = SimpleEmbedder(dimension=256)
+    store = InMemoryVectorStore()
+    tools = [
+        _tool("send_email", "Send an email message to a person"),
+        _tool("send_email_copy", "Send an email message copy to a person"),
+        _tool("convert_units", "Convert a temperature between units"),
+    ]
+    await store.initialize()
+    await store.add_tools(tools, await embedder.embed_batch([t.to_searchable_text() for t in tools]))
+
+    class OrderedReranker:
+        """Ranks the near-duplicates above the different tool, keeping ``top_k``."""
+
+        order = ["send_email", "send_email_copy", "convert_units"]
+
+        async def rerank(self, query: str, tools: Any, top_k: int) -> Any:
+            return sorted(tools, key=lambda pair: self.order.index(pair[0].name))[:top_k]
+
+    router = SemanticRouter(vector_store=store, embedder=embedder, reranker=OrderedReranker())
+    query = _query(
+        "send an email message", limit=2, diversity_factor=0.9, enable_reranking=True
+    )
+    routed = await router.route(query)
+    names = [tool.name for tool, _ in routed.tools]
+    assert names == ["send_email", "convert_units"]  # was the two near-duplicates
+
+    # Without diversity the reranker's order stands.
+    plain = await router.route(_query("send an email message", limit=2, enable_reranking=True))
+    assert [t.name for t, _ in plain.tools] == ["send_email", "send_email_copy"]
+
+
+async def test_lancedb_and_memory_stores_agree_on_a_zero_threshold(tmp_path: Any) -> None:
+    pytest.importorskip("lancedb")
+    from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+
+    tools = [_tool("aligned", "Points the same way"), _tool("orthogonal", "Points sideways"),
+             _tool("opposed", "Points the other way")]
+    vectors = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [-1.0, 0.0, 0.0, 0.0]]
+    lance = LanceDBVectorStore(db_path=str(tmp_path), dimension=4)
+    memory = InMemoryVectorStore()
+    found = {}
+    for label, store in (("lancedb", lance), ("memory", memory)):
+        await store.initialize()
+        await store.add_tools(tools, vectors)
+        hits = await store.search([1.0, 0.0, 0.0, 0.0], limit=10, score_threshold=0.0)
+        found[label] = sorted(tool.name for tool, _score in hits)
+    # An opposed vector has cosine -1; LanceDB clamped it to 0 and kept it.
+    assert found["memory"] == ["aligned", "orthogonal"]
+    assert found["lancedb"] == found["memory"]
+
+
+async def test_lancedb_upsert_with_a_repeated_id_keeps_one_row(tmp_path: Any) -> None:
+    pytest.importorskip("lancedb")
+    from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+
+    store = LanceDBVectorStore(db_path=str(tmp_path), dimension=4)
+    await store.initialize()
+    first, second = _tool("report", "First wording of the report tool"), _tool(
+        "report", "Second wording of the report tool"
+    )
+    other = _tool("other", "Some other tool entirely here")
+    written = await store.add_tools(
+        [first, other, second], [[1.0, 0, 0, 0], [0, 1.0, 0, 0], [1.0, 0, 0, 0]], upsert=True
+    )
+    assert written == 2 and await store.count() == 2  # was 3 rows, 'report' twice
+    hits = await store.search([1.0, 0.0, 0.0, 0.0], limit=10, score_threshold=0.0)
+    assert sorted(t.name for t, _ in hits) == ["other", "report"]
+    kept = await store.get_by_name("report")
+    assert kept is not None and kept.description == second.description  # the last one wins
+
+
+class _FailingChroma:
+    """Stands in for a Chroma collection whose server is down."""
+
+    def get(self, **kwargs: Any) -> Any:
+        raise ConnectionError("chroma is down")
+
+    def count(self) -> int:
+        raise ConnectionError("chroma is down")
+
+    def delete(self, **kwargs: Any) -> Any:
+        raise ConnectionError("chroma is down")
+
+
+async def test_chroma_reports_an_outage_instead_of_an_empty_store() -> None:
+    from agent_gantry.adapters.vector_stores.remote import ChromaVectorStore
+
+    store = ChromaVectorStore.__new__(ChromaVectorStore)
+    store._initialized = True  # type: ignore[attr-defined]
+    store._collection = _FailingChroma()  # type: ignore[attr-defined]
+    for call in (
+        store.get_by_name("x"),
+        store.delete("x"),
+        store.list_all(),
+        store.count(),
+    ):
+        with pytest.raises(ConnectionError, match="chroma is down"):
+            await call  # each used to return None / False / [] / 0
+
+
+async def test_remote_stores_refuse_a_short_embedding_batch() -> None:
+    from agent_gantry.adapters.vector_stores.remote import (
+        ChromaVectorStore,
+        PGVectorStore,
+        QdrantVectorStore,
+    )
+
+    tools = [_tool("one", "The first tool in the batch"), _tool("two", "The second tool in it")]
+    for cls in (QdrantVectorStore, ChromaVectorStore, PGVectorStore):
+        store = cls.__new__(cls)  # a mismatch is refused before any connection is made
+        with pytest.raises(ValueError, match="length mismatch"):
+            await store.add_tools(tools, [[0.0, 1.0]])
+
+
+async def test_closing_a_gantry_closes_an_openai_embedders_http_client() -> None:
+    pytest.importorskip("openai")
+    from agent_gantry.adapters.embedders.openai import OpenAIEmbedder
+    from agent_gantry.schema.config import EmbedderConfig
+
+    embedder = OpenAIEmbedder(EmbedderConfig(type="openai", api_key="sk-test-not-a-real-key"))
+    closed: list[bool] = []
+
+    class FakeClient:
+        async def close(self) -> None:
+            closed.append(True)
+
+    embedder._client = FakeClient()  # type: ignore[assignment]
+    gantry = AgentGantry(vector_store=InMemoryVectorStore(), embedder=embedder)
+    await gantry.close()
+    assert closed == [True]  # the embedder had no close, so the pool leaked
+
+
+async def test_lancedb_scores_are_true_cosines_whatever_the_vector_length(tmp_path: Any) -> None:
+    pytest.importorskip("lancedb")
+    from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+
+    store = LanceDBVectorStore(db_path=str(tmp_path), dimension=4)
+    await store.initialize()
+    tools = [_tool("long_same", "Same direction, longer"), _tool("diagonal", "Halfway round")]
+    await store.add_tools(tools, [[3.0, 0.0, 0.0, 0.0], [0.5, 0.5, 0.0, 0.0]])
+    hits = dict(
+        (tool.name, score)
+        for tool, score in await store.search([2.0, 0.0, 0.0, 0.0], limit=5, score_threshold=0.0)
+    )
+    # 1 - d/2 on squared-L2 gave -0.5 and -1.25 here (clamped to 0 before).
+    assert hits["long_same"] == pytest.approx(1.0)
+    assert hits["diagonal"] == pytest.approx(2**-0.5, abs=1e-6)

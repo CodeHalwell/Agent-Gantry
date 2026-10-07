@@ -147,6 +147,32 @@ and `max_retries` (the old fixed `30000` and `0` made both unconfigurable), and
 - Two test modules replaced `sys.modules["anthropic"]` with a mock at import
   time and never restored it, so after collection every test in the session
   that imported `anthropic` got the mock. It is now scoped to each test.
+- **A diversity factor did nothing once a reranker was configured.** Every
+  reranker keeps only its `top_k` best and the router asked for `limit`, so the
+  pool MMR chose from was already the answer and could only be reordered. With
+  `diversity_factor > 0` the reranker now scores the whole candidate pool (it
+  scores every candidate it is given either way) and MMR picks from it.
+- **LanceDB scored with `1 - d/2` clamped at 0.** That is a cosine only for
+  unit-length vectors, and the clamp made an anti-correlated tool score exactly
+  0, so it survived the `score_threshold=0.0` that the convenience layers pass
+  and the other four stores drop. The tools and skills searches use LanceDB's
+  cosine metric, so the score is the cosine for any vector length and the
+  stores agree.
+- **LanceDB wrote two rows for an id repeated in one upsert batch** (it deleted
+  the id once, then added both), and a search returned the tool twice. The last
+  occurrence wins, as in the other stores.
+- **Qdrant and Chroma turned backend errors into answers.** `delete()` returned
+  `False` ("was not stored") for a refused connection, so `sync(prune=True)`
+  reported success while every stale tool stayed retrievable; Chroma's
+  `list_all()` returned `[]` and `count()` returned `0` for the same outage, so
+  nothing looked stale; `get_by_name()` returned `None` on both. LanceDB and
+  pgvector already let such errors out; these now do too.
+- **Qdrant, Chroma and pgvector zip-truncated a short embeddings batch** and
+  reported success, leaving a tool that was registered and executable but never
+  retrievable. They refuse it with a `ValueError`, as the in-memory and LanceDB
+  stores do.
+- **`OpenAIEmbedder` and `AzureOpenAIEmbedder` had no `aclose()`**, so
+  `AgentGantry.close()` could not release the HTTP connection pool it opened.
 - **Health-aware routing only worked on the in-memory store.** The executor
   records failures on the registry's tool, and only the in-memory store hands
   that object back; LanceDB, Qdrant, Chroma and pgvector return a copy made at
