@@ -83,6 +83,10 @@ class TaskRequest(BaseModel):
     messages: list[TaskMessage] = Field(default_factory=list, description="Conversation messages")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
 
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
+    _reject_newline_identifiers = field_validator("skill_id")(reject_newlines)
+
 
 class TaskResponse(BaseModel):
     """Response from an A2A agent task execution."""

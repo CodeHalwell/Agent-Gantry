@@ -94,3 +94,8 @@
 **Vulnerability:** Execution and event models lack newline validation on identifier fields.
 **Learning:** Identifier sanitization needs to be universally applied to all schema models to avoid CRLF injection.
 **Prevention:** Implement reject_newlines field_validator and validate_assignment=True on all schemas.
+
+## 2026-10-12 - [HIGH] Fix CRLF injection via unvalidated skill_id in TaskRequest
+**Vulnerability:** The `TaskRequest` model in `agent_gantry/schema/a2a.py` lacked identifier validation on the `skill_id` field, allowing newline injection (CRLF injection).
+**Learning:** Identifier fields across all schemas, including A2A models like TaskRequest, must strictly validate against newline characters to prevent downstream log injection, command injection, and path traversal bypasses.
+**Prevention:** Apply the `reject_newlines` custom field validator and set `validate_assignment=True` in the model's `ConfigDict` for every identifier field.
