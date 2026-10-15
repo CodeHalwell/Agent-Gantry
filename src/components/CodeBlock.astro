@@ -8,7 +8,7 @@ interface Props {
 }
 
 const { code, lang = 'python', title } = Astro.props;
-const html = await highlightCode(code, lang);
+const html = await highlightCode(code, lang, title);
 ---
 
 <figure class="code-block">
