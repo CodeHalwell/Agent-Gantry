@@ -1,6 +1,8 @@
 # Publishing Agent-Gantry
 
-Use the GitHub [Publish to PyPI workflow](.github/workflows/publish.yml).
+The GitHub [Publish to PyPI workflow](.github/workflows/publish.yml) is the
+supported publishing path; local `uv publish` bypasses the release checks and
+GitHub release creation and is not part of this process.
 [RELEASING.md](RELEASING.md) is the release checklist and documents version
 updates, changelog notes, validation, TestPyPI, and production publication.
 

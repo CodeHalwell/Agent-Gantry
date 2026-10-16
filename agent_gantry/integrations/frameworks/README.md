@@ -207,9 +207,17 @@ default timeout and retry budget to every framework; a direct
 `ToolCall(..., retry_count=0)` explicitly disables retries for that call. Omit
 the fields to inherit configuration. To serialize a call while preserving which
 settings were omitted, use `call.model_dump(exclude_unset=True)`.
+Plain `model_dump()` writes the model's default values; reloading that payload
+treats those values as explicit overrides, including zero retries.
 Provider tool-call conversion and `execute_tool_calls(response)` inherit the same
 configuration. Use `execute_tool_calls(response, timeout_ms=5000, retry_count=0)`
 to override the settings for a model turn.
+
+A timeout stops waiting for a synchronous handler but cannot stop its worker
+thread. Retrying may overlap with that still-running call. For tools with side
+effects, choose a retry policy deliberately and set timeouts in the underlying
+I/O client too. Async handlers and returned awaitables receive cancellation
+when they are being awaited.
 
 ## Multi-turn re-selection — autonomous *and* conversational
 

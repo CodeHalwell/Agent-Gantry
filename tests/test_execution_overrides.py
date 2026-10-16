@@ -101,6 +101,49 @@ async def test_sync_framework_bridge_uses_the_configured_timeout():
         assert exc.value.status == "timeout"
 
 
+@pytest.mark.parametrize("exclude_unset", [False, True])
+async def test_serialized_call_preserves_omission_only_when_requested(exclude_unset, monkeypatch):
+    config = AgentGantryConfig(execution=ExecutionConfig(max_retries=1))
+    attempts = []
+    async with AgentGantry(config=config) as gantry:
+
+        @gantry.register
+        async def flaky() -> str:
+            """Fail once so an inherited retry budget changes the outcome."""
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise RuntimeError("try again")
+            return "done"
+
+        monkeypatch.setattr("agent_gantry.core.executor.asyncio.sleep", AsyncMock())
+        original = ToolCall(tool_name="flaky", arguments={})
+        restored = ToolCall.model_validate(original.model_dump(exclude_unset=exclude_unset))
+        result = await gantry.execute(restored)
+        assert len(attempts) == (2 if exclude_unset else 1)
+        assert result.status == (
+            ExecutionStatus.SUCCESS if exclude_unset else ExecutionStatus.FAILURE
+        )
+
+
+@pytest.mark.parametrize("exclude_unset", [False, True])
+async def test_serialized_timeout_defaults_are_explicit_unless_excluded(exclude_unset):
+    config = AgentGantryConfig(execution=ExecutionConfig(default_timeout_ms=100, max_retries=0))
+    async with AgentGantry(config=config) as gantry:
+
+        @gantry.register
+        async def slow() -> str:
+            """Finish after the configured timeout but before the model default."""
+            await asyncio.sleep(0.2)
+            return "done"
+
+        original = ToolCall(tool_name="slow", arguments={})
+        restored = ToolCall.model_validate(original.model_dump(exclude_unset=exclude_unset))
+        result = await gantry.execute(restored)
+        assert result.status == (
+            ExecutionStatus.TIMEOUT if exclude_unset else ExecutionStatus.SUCCESS
+        )
+
+
 @pytest.mark.parametrize("dialect", PROVIDERS)
 async def test_provider_call_conversion_inherits_retry_configuration(dialect):
     from agent_gantry.adapters.tool_spec.base import ToolCallPayload

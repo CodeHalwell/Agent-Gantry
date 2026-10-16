@@ -14,7 +14,7 @@ from agent_gantry.schema.tool import ToolDefinition
 
 
 @pytest.fixture
-def duplicate_gantry():
+def duplicate_gantry(request):
     gantry = AgentGantry()
     for namespace in ("billing", "inventory"):
 
@@ -25,7 +25,9 @@ def duplicate_gantry():
 
             return lookup
 
-        gantry.register(make_lookup(namespace), name="lookup", namespace=namespace)
+        gantry.register(
+            make_lookup(namespace), name=getattr(request, "param", "lookup"), namespace=namespace
+        )
     return gantry
 
 
@@ -37,12 +39,19 @@ async def test_duplicate_names_keep_both_execution_targets(duplicate_gantry):
     assert {t.name for t in duplicate_gantry.list_tools_sync()} == {"lookup"}
 
 
+@pytest.mark.parametrize("duplicate_gantry", ["lookup", "x" * 64, "x" * 128], indirect=True)
 async def test_aliases_stay_stable_across_selection_subsets_and_pins(duplicate_gantry):
     toolset = GantryToolset(duplicate_gantry)
     all_specs = await toolset.select("look up an item", limit=2)
     expected = {s._namespace: s.native_name for s in all_specs}
+    bare_name = all_specs[0].name
+    if len(bare_name) >= 64:
+        assert {len(s.native_name) for s in all_specs} == {64}
+        assert len(set(expected.values())) == 2
     one = await toolset.select("look up an item", namespaces=["billing"], limit=1)
-    pinned = await toolset.select_or_empty("", required=["inventory.lookup", "billing.lookup"])
+    pinned = await toolset.select_or_empty(
+        "", required=[f"inventory.{bare_name}", f"billing.{bare_name}"]
+    )
     assert one[0].native_name == expected["billing"]
     assert {s._namespace: s.native_name for s in pinned} == expected
 

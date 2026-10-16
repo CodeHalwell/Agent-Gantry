@@ -26,9 +26,9 @@ pytest tests/test_tool.py      # single file
 pytest tests/test_tool.py::TestToolDefinition::test_create_minimal_tool  # single test
 pytest --cov=agent_gantry --cov-report=html  # coverage
 
-ruff check agent_gantry/       # lint
-ruff check --fix agent_gantry/ # lint + autofix
-ruff format agent_gantry/      # format
+ruff check agent_gantry/ examples/ scripts/ tests/       # lint (same scope as CI)
+ruff check --fix agent_gantry/ examples/ scripts/ tests/ # lint + autofix
+ruff format agent_gantry/                                # format
 ```
 
 Note: there is **no mypy config** in `pyproject.toml` and mypy is not a dev dependency, despite older docs (CONTRIBUTING.md, copilot-instructions.md) mentioning it. Ruff is the enforced linter/formatter (line length 100, rules `E,F,I,N,W,UP`, ignoring `E501,E402`). Static typing is still expected by convention but not gated in CI.

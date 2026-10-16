@@ -207,7 +207,11 @@ jobs:
           git config --local user.name "github-actions[bot]"
           git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if git rev-parse "refs/tags/v$VERSION" >/dev/null 2>&1; then
-            test "$(git rev-parse "refs/tags/v$VERSION^{commit}")" = "$GITHUB_SHA"
+            tagged_commit=$(git rev-parse "refs/tags/v$VERSION^{commit}")
+            if [ "$tagged_commit" != "$GITHUB_SHA" ]; then
+              echo "::error::Tag v$VERSION points to $tagged_commit; expected source commit $GITHUB_SHA. Retry the original workflow or bump the version."
+              exit 1
+            fi
           else
             git tag -a "v$VERSION" "$GITHUB_SHA" -m "Release v$VERSION"
             git push origin "refs/tags/v$VERSION"

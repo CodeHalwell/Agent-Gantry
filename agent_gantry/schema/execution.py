@@ -28,7 +28,12 @@ class ExecutionStatus(str, Enum):
 
 
 class ToolCall(BaseModel):
-    """Request to execute a tool."""
+    """Request to execute a tool.
+
+    Omitted execution settings inherit the executor configuration. Persist with
+    ``model_dump(exclude_unset=True)`` to preserve that intent when reloading;
+    plain ``model_dump()`` writes default values as explicit overrides.
+    """
 
     tool_name: str
     #: Namespace the call targets. ``None`` means "resolve by bare name",
