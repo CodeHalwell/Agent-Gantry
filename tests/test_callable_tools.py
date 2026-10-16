@@ -11,9 +11,18 @@ import pytest
 from pydantic import BaseModel
 
 from agent_gantry import AgentGantry, ToolCall
+from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 from agent_gantry.schema.config import AgentGantryConfig, ExecutionConfig
 from agent_gantry.schema.execution import ExecutionStatus
 from agent_gantry.schema.introspection import build_parameters_schema
+
+
+@pytest.fixture(autouse=True)
+def _offline_embedder(monkeypatch):
+    """Execution tests must not race an optional model's download/startup."""
+    monkeypatch.setattr(
+        "agent_gantry.core.gantry.build_embedder", lambda config: SimpleEmbedder()
+    )
 
 
 class Payload(BaseModel):
@@ -161,8 +170,10 @@ async def test_cancellation_reaches_async_callable():
         task = asyncio.create_task(
             gantry.execute(ToolCall(tool_name="wait_for_cancel", arguments={}))
         )
-        await asyncio.wait_for(started.wait(), timeout=2)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
+        try:
+            await asyncio.wait_for(started.wait(), timeout=2)
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
         assert cancelled.is_set()

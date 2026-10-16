@@ -502,6 +502,11 @@ def _build_callable_for_tool(
             )
         )
     names = [p.name for p in params]
+    native_approval = (
+        as_function_tool is not False
+        and _try_import_af_tool() is not None
+        and _tool_approval_mode(tool_def) == "always_require"
+    )
 
     async def _wrapper(*args: Any, **kwargs: Any) -> str:
         if len(args) > len(names):
@@ -510,7 +515,15 @@ def _build_callable_for_tool(
                 f"arguments but {len(args)} were given"
             )
         try:
-            result = await fn(**{**dict(zip(names, args)), **kwargs})
+            arguments = {**dict(zip(names, args)), **kwargs}
+            if aliases:
+                arguments = {aliases.get(key, key): value for key, value in arguments.items()}
+            # AF's invocation layer owns approval for native FunctionTools and
+            # only invokes them after approval. Its no-middleware path does not
+            # pass approval_response metadata, so metadata cannot be the signal.
+            # Direct FunctionTool.invoke calls are trusted host execution under
+            # AF's own contract. Bare wrappers keep Gantry's confirmation gate.
+            result = await spec._ainvoke(arguments, confirmation_approved=native_approval)
         except ToolExecutionError as exc:
             error_text = exc.error or "tool execution failed (no error message)"
             if exc.error_type and exc.error_type not in error_text:

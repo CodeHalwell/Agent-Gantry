@@ -778,6 +778,8 @@ class ExecutionEngine:
         arguments = _reconstructed(handler, arguments)
 
         async def invoke() -> Any:
+            # Callable instances can declare async __call__ even though the
+            # instance itself is not recognized as a coroutine function.
             if is_coroutine_function(handler) or is_coroutine_function(
                 getattr(handler, "__call__", None)
             ):

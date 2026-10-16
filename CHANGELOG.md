@@ -46,6 +46,14 @@ fields inherit execution configuration. Persist calls with
 
 ### Fixed
 
+- The combined framework extra respects CrewAI's Python <3.14 support limit;
+  older CrewAI/Chroma packages no longer backtrack into a broken 3.14 install.
+  The standalone Chroma extra selects a Pydantic v2 release on Python 3.14.
+- Callable cancellation tests use offline embeddings, so model loading cannot
+  consume their cancellation deadline.
+- Agent Framework native approvals reach Gantry's confirmation gate. Approved
+  calls execute while domain restrictions and other denial policies still apply;
+  bare callables continue to require explicit Gantry confirmation.
 - Framework CI requires a real Strands SDK (`strands-agents>=1`), preventing
   dependency resolution from backtracking to the empty 0.0.1 placeholder.
 - Empty MCP results from the newer `mcp_types` package render correctly; coroutine
@@ -177,6 +185,9 @@ fields inherit execution configuration. Persist calls with
 
 ### Changed
 
+- Explicit `ToolCall(retry_count=0)` now disables configured retries. Omitting
+  the field inherits the executor's retry budget; persist with `exclude_unset=True`
+  to preserve omission through Python or JSON round trips.
 - `jsonschema` moved from the core dependencies to the `example-tools` extra;
   the library never imported it.
 - A skills-capable vector store's `list_all_skills` must accept `category`:

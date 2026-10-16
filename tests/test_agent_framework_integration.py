@@ -751,3 +751,59 @@ async def test_bridge_wraps_nullable_and_boolean_property_schemas() -> None:
     assert await wrapped["lookup_user"]("abc", 2) == "abc:2"
     assert await wrapped["lookup_user"](user_id="abc") == "abc:5"
     assert await wrapped["imported_tool"](q="anything") == "ok"
+
+
+@pytest.mark.parametrize("allowed", [False, True])
+async def test_native_af_invocation_delegates_confirmation_and_retains_policy(allowed):
+    """Host-level native invocation clears confirmation, while denials still apply."""
+    pytest.importorskip("agent_framework")
+    from agent_gantry import AgentGantry
+    from agent_gantry.core.security import SecurityPolicy
+    from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+
+    calls = []
+    policy = SecurityPolicy(require_confirmation=["submit_*"], allowed_domains=["allowed.test"])
+    async with AgentGantry(security_policy=policy) as gantry:
+
+        @gantry.register(requires_confirmation=True)
+        async def submit_request(url: str, require_confirmation: bool) -> str:
+            """Submit to a permitted URL after approval."""
+            calls.append((url, require_confirmation))
+            return "submitted"
+
+        native = GantryToolBridge(gantry, as_function_tool=True).wrap_tools(
+            gantry.list_tools_sync()
+        )[0]
+        assert native.approval_mode == "always_require"
+        assert set(native.parameters()["properties"]) == {"url", "require_confirmation"}
+        url = "https://allowed.test" if allowed else "https://blocked.test"
+        arguments = {"url": url, "require_confirmation": True}
+        result = await native.invoke(arguments=arguments)
+        text = " ".join(c.text or "" for c in result)
+        if allowed:
+            assert text == "submitted"
+            assert calls == [(url, True)]
+        else:
+            assert "error" in text
+            assert calls == []
+            assert "PermissionDenied" in text
+
+
+async def test_bare_af_wrapper_keeps_gantry_confirmation_gate():
+    from agent_gantry import AgentGantry
+    from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+
+    calls = []
+    async with AgentGantry() as gantry:
+
+        @gantry.register(requires_confirmation=True)
+        def submit_request() -> str:
+            """Submit after confirmation."""
+            calls.append(1)
+            return "submitted"
+
+        wrapper = GantryToolBridge(gantry, as_function_tool=False).wrap_tools(
+            gantry.list_tools_sync()
+        )[0]
+        assert "error" in await wrapper()
+        assert calls == []

@@ -15,7 +15,8 @@ from typing import Any
 from agent_gantry.integrations.frameworks.base import BaseFrameworkAdapter, ToolSpec
 
 _INSTALL_HINT = (
-    "CrewAI support requires `crewai`. Install it with `pip install crewai` (or `uv add crewai`)."
+    "CrewAI support requires `crewai` on Python 3.10–3.13 (its SDK requires Python <3.14). "
+    "Install it with `pip install crewai` (or `uv add crewai`)."
 )
 
 

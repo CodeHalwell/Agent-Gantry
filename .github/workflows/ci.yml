@@ -70,6 +70,9 @@ jobs:
         # No effect on Linux/Windows (no MPS backend).
         env:
           PYTORCH_MPS_HIGH_WATERMARK_RATIO: "0.0"
+          # CrewAI's supported SDK requires Python <3.14. All other SDKs in
+          # agent-frameworks must import on every supported Python version.
+          GANTRY_REQUIRED_FRAMEWORKS: ${{ matrix.python-version == '3.14' && 'agent_framework,langchain,langgraph,llamaindex,google_adk' || 'agent_framework,langchain,langgraph,llamaindex,google_adk,crewai' }}
         run: |
           uv run pytest --ignore=tests/test_phase5_mcp.py --ignore=tests/test_phase6_a2a.py -v
 

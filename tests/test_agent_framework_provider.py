@@ -29,6 +29,7 @@ import pytest
 af = pytest.importorskip("agent_framework")
 
 from agent_gantry import AgentGantry, GantryContextProvider  # noqa: E402
+from agent_gantry.adapters.embedders.simple import SimpleEmbedder  # noqa: E402
 from agent_gantry.integrations.anthropic_skills import SkillRegistry  # noqa: E402
 
 
@@ -45,7 +46,7 @@ def _tool_names(tools: list) -> list[str]:
 
 @pytest.fixture
 async def gantry_with_tools() -> AgentGantry:
-    g = AgentGantry()
+    g = AgentGantry(embedder=SimpleEmbedder())
 
     @g.register
     def get_weather(city: str) -> str:

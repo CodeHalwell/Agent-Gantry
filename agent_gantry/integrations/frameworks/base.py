@@ -171,7 +171,12 @@ class ToolSpec:
         ``5`` where the caller asked for ``None``. Both paths share one
         predicate so they cannot disagree about which nulls are meaningful.
         """
-        arguments = _coerce_arguments(args, kwargs)
+        return await self._ainvoke(_coerce_arguments(args, kwargs))
+
+    async def _ainvoke(
+        self, arguments: dict[str, Any], *, confirmation_approved: bool = False
+    ) -> Any:
+        """Shared invocation; native approval clears only the confirmation gate."""
         required = set(self.parameters.get("required") or [])
         properties = self.parameters.get("properties") or {}
         arguments = {
@@ -188,9 +193,10 @@ class ToolSpec:
         # Pass the namespace: selection resolved this spec to one specific
         # tool, and a bare-name execute would prefer ``default.<name>`` if
         # another namespace registers the same name.
-        result = await self._gantry.execute(
-            ToolCall(tool_name=self.name, namespace=self._namespace, arguments=arguments)
-        )
+        call = ToolCall(tool_name=self.name, namespace=self._namespace, arguments=arguments)
+        if confirmation_approved:
+            call.require_confirmation = False
+        result = await self._gantry.execute(call)
         if result.status != ExecutionStatus.SUCCESS:
             exc_cls = ToolExecutionError
             if result.status == ExecutionStatus.PENDING_CONFIRMATION:

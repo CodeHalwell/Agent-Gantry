@@ -29,7 +29,7 @@ python examples/agent_frameworks/langchain_example.py    # no key needed to see 
 |---|---|---|
 | LangChain | [`agent_frameworks/langchain_example.py`](agent_frameworks/langchain_example.py) | `pip install langchain langchain-openai` |
 | LangGraph | [`agent_frameworks/langgraph_example.py`](agent_frameworks/langgraph_example.py) | `pip install langchain langgraph langchain-openai` |
-| CrewAI | [`agent_frameworks/crewai_example.py`](agent_frameworks/crewai_example.py) | `pip install crewai` |
+| CrewAI | [`agent_frameworks/crewai_example.py`](agent_frameworks/crewai_example.py) | `pip install crewai` (Python 3.10–3.13) |
 | LlamaIndex | [`agent_frameworks/llamaindex_example.py`](agent_frameworks/llamaindex_example.py) | `pip install llama-index-core llama-index-llms-openai` |
 | Google ADK | [`agent_frameworks/google_adk_example.py`](agent_frameworks/google_adk_example.py) | `pip install google-adk` |
 | Microsoft Agent Framework | [`agent_frameworks/agent_framework_provider_example.py`](agent_frameworks/agent_framework_provider_example.py) | `pip install agent-framework-core agent-framework-openai agent-framework-orchestrations` |

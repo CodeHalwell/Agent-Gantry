@@ -128,6 +128,9 @@ pip install agent-gantry dspy
 
 **Note on Python version:** CI exercises the adapter suite on **Python 3.10, 3.11, 3.12, 3.13 and 3.14** (ubuntu, plus a macOS 3.12 cell). Agent-Gantry supports Python 3.10–3.14.
 
+CrewAI's SDK currently requires Python **3.10–3.13**. Use one of those versions
+for `crewai_example.py`; the combined framework extra omits CrewAI on 3.14.
+
 ## Environment variables
 
 Only needed for the final live-model step of each example; everything before it

@@ -78,6 +78,17 @@ All third-party imports are **lazy** — `import agent_gantry` never requires an
 of these frameworks. A missing framework raises `ImportError` with a
 `pip install …` hint only when you call its adapter.
 
+Agent-Gantry supports Python 3.10–3.14. CrewAI's current SDK declares Python
+`<3.14`, so its integration requires Python 3.10–3.13. The combined
+`agent-frameworks` extra omits CrewAI on 3.14; other adapters remain available.
+
+Microsoft Agent Framework native tools delegate confirmation to AF's
+`approval_mode="always_require"`. AF pauses before invoking the tool and resumes
+after approval; Gantry still applies its domain, rate and other denial checks.
+Calling `FunctionTool.invoke` directly is host-level execution in AF, so the
+caller must obtain approval first. Bare bridge callables retain Gantry's own
+confirmation gate.
+
 ## Usage
 
 ```python

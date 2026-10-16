@@ -104,6 +104,9 @@ for each framework's install command, static tools, and live selection hook.
 - **Observability:** emit retrieval/execution telemetry to the console, OpenTelemetry, or Prometheus, and track token savings with the built-in metrics helpers.
 - **Selection without embeddings:** point a decision model at the catalogue instead of a vector store. `JevSelector` replaces embed-then-search for tools, skills and MCP servers; `JevReranker` refines the shortlist when the catalogue is too large to send. Both fail open to semantic routing.
 
+Agent-Gantry supports Python 3.10–3.14. CrewAI's current SDK requires Python
+3.10–3.13; the `agent-frameworks` extra includes it only on those versions.
+
 ## Selecting tools without a vector store
 
 Semantic routing embeds the query and searches. A *selector* asks a decision
