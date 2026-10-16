@@ -10,7 +10,7 @@ Selection runs **without an API key**; only the agent run needs one.
 
 Run with::
 
-    pip install agent-gantry llama-index llama-index-llms-openai
+    pip install agent-gantry llama-index-core llama-index-llms-openai
     export OPENAI_API_KEY=...        # only needed for the agent run
     python examples/agent_frameworks/llamaindex_example.py
 """
@@ -20,17 +20,14 @@ from __future__ import annotations
 import asyncio
 import os
 
-from llama_index.core.agent.workflow import ReActAgent
-from llama_index.llms.openai import OpenAI
-
 from agent_gantry import AgentGantry
-from agent_gantry.llamaindex import LlamaIndexAdapter
+from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 
 USER_QUERY = "What are the preferences for user dev_123?"
 
 
 async def main() -> None:
-    gantry = AgentGantry()
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
     try:
         # `examples=[...]` is what the router embeds, and it moves retrieval
         # accuracy more than switching to a larger embedding model does.
@@ -62,7 +59,11 @@ async def main() -> None:
 
         # No score_threshold: it defaults to 0.0. Raising it is a silent-drop
         # trap — longer queries dilute absolute similarity.
-        tools = await LlamaIndexAdapter(gantry).select(USER_QUERY, limit=1)
+        try:
+            tools = await gantry.framework("llamaindex").select(USER_QUERY, limit=1)
+        except ImportError as exc:
+            print(exc)
+            return
 
         print(f"Catalogue: 3 tools. Gantry selected {len(tools)} for this query:")
         for tool in tools:
@@ -73,6 +74,13 @@ async def main() -> None:
         if not os.getenv("OPENAI_API_KEY"):
             print("Set OPENAI_API_KEY to run the agent itself.")
             print("Everything above works without one.")
+            return
+
+        try:
+            from llama_index.core.agent.workflow import ReActAgent
+            from llama_index.llms.openai import OpenAI
+        except ImportError as exc:
+            print(f"{exc}\nInstall the model integration: pip install llama-index-llms-openai")
             return
 
         agent = ReActAgent(tools=tools, llm=OpenAI(model="gpt-5.5"))

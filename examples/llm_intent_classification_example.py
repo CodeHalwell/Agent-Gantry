@@ -7,7 +7,6 @@ for improved routing accuracy when keyword matching fails.
 Requirements:
     pip install openai  # or anthropic, google-genai, groq
     # Mistral: use the openai SDK with base_url="https://api.mistral.ai/v1"
-    # (the official mistralai package was quarantined on PyPI 2026-05-12)
 
 Environment:
     Set OPENAI_API_KEY (or other provider's API key) in your environment

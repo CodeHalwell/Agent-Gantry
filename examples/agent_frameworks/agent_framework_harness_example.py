@@ -51,6 +51,7 @@ import asyncio
 from dotenv import load_dotenv
 
 from agent_gantry import AgentGantry
+from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
 
 load_dotenv()
@@ -60,7 +61,7 @@ async def main() -> None:
     # ------------------------------------------------------------------
     # 1. Register domain tools with Agent-Gantry
     # ------------------------------------------------------------------
-    gantry = AgentGantry()
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
     try:
 
         @gantry.register(
@@ -162,8 +163,6 @@ async def main() -> None:
             print("    # or, standalone:  pip install 'agent-framework>=1.7.0'")
             return
 
-        from agent_framework.openai import OpenAIChatClient
-
         # Guard on the real condition — whether a client can be built — rather than
         # on an env var standing in for it. AF resolves its endpoint from several
         # settings (OPENAI_API_KEY, or AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_BASE_URL
@@ -171,6 +170,8 @@ async def main() -> None:
         # question than "can this run", and an Azure-configured reader would be
         # turned away from an example that works for them.
         try:
+            from agent_framework.openai import OpenAIChatClient
+
             client = OpenAIChatClient()
         except Exception as exc:
             print(f"No usable Agent Framework chat client ({type(exc).__name__}: {exc}).")

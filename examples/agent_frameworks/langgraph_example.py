@@ -9,8 +9,8 @@ without you rebuilding the agent.
 
 Compare ``langchain_example.py``, where the tool list is fixed at construction.
 
-The agent build and the selection both run **without an API key**; only the
-model call needs one.
+Tool selection runs **without an API key**. Agent construction and the model
+call run only when a key is configured.
 
 Run with::
 
@@ -24,11 +24,8 @@ from __future__ import annotations
 import asyncio
 import os
 
-from langchain_core.messages import HumanMessage
-from langchain_openai import ChatOpenAI
-
 from agent_gantry import AgentGantry
-from agent_gantry.langgraph import LangGraphAdapter
+from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 
 # Two turns that want different tools. That contrast is the whole demo.
 TURNS = [
@@ -38,7 +35,7 @@ TURNS = [
 
 
 async def main() -> None:
-    gantry = AgentGantry()
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
     try:
         # `examples=[...]` carries more routing weight than anything else you
         # can add here — it is the text the router embeds. Use the phrasing a
@@ -77,13 +74,17 @@ async def main() -> None:
 
         await gantry.sync()
 
-        adapter = LangGraphAdapter(gantry)
+        adapter = gantry.framework("langgraph")
 
         # What each turn would get, before any model is involved. This is the
         # selection the middleware performs internally on every model call.
         print("Catalogue: 4 tools. What each turn selects:\n")
         for turn in TURNS:
-            chosen = await adapter.select(turn, limit=2)
+            try:
+                chosen = await adapter.select(turn, limit=2)
+            except ImportError as exc:
+                print(exc)
+                return
             names = ", ".join(t.name for t in chosen)
             print(f"  {turn[:52]:<52} -> {names}")
         print(
@@ -99,6 +100,13 @@ async def main() -> None:
         if not os.getenv("OPENAI_API_KEY"):
             print("Set OPENAI_API_KEY to run the agent itself.")
             print("Everything above works without one.")
+            return
+
+        try:
+            from langchain_core.messages import HumanMessage
+            from langchain_openai import ChatOpenAI
+        except ImportError as exc:
+            print(f"{exc}\nInstall the model integration: pip install langchain langchain-openai")
             return
 
         # areact_agent installs the selection middleware. `limit` bounds how

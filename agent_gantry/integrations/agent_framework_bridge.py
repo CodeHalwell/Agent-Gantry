@@ -37,12 +37,18 @@ import copy
 import inspect
 import json
 import logging
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Annotated, Any, NamedTuple
 
 from pydantic import Field
 
-from agent_gantry.integrations.frameworks.base import ToolExecutionError, spec_from_tool
+from agent_gantry.integrations.frameworks.base import (
+    ToolExecutionError,
+    _native_tool_names,
+    spec_from_tool,
+)
 from agent_gantry.schema.tool import ToolCapability
 
 if TYPE_CHECKING:
@@ -356,7 +362,7 @@ def _require_af_installed(caller: str) -> None:
     except ImportError as exc:
         raise ImportError(
             f"{caller}() requires the 'agent-framework' package. "
-            "Install with: pip install 'agent-gantry[agent-frameworks]' (or uv add 'agent-gantry[agent-frameworks]')"
+            "Install with: pip install agent-framework-core (or uv add agent-framework-core)"
         ) from exc
 
 
@@ -379,12 +385,14 @@ def _try_import_af_tool() -> Any | None:
 
 
 def _tool_approval_mode(tool_def: ToolDefinition) -> str | None:
-    """Map Gantry ``ToolCapability`` set to AF ``approval_mode``.
+    """Map confirmation requirements and capabilities to AF ``approval_mode``.
 
     Destructive / sensitive capabilities elevate the tool to
     ``"always_require"`` so AF pauses for human approval before invocation.
     Everything else returns ``None`` (AF defaults to ``"never_require"``).
     """
+    if tool_def.requires_confirmation:
+        return "always_require"
     caps = set(tool_def.capabilities)
     if caps & _APPROVAL_REQUIRED_CAPS:
         return "always_require"
@@ -412,13 +420,13 @@ def _maybe_wrap_as_function_tool(
     if af_tool is None:
         if as_function_tool is True:
             raise ImportError(
-                "as_function_tool=True requires the 'agent-framework' package. "
-                "Install with: pip install 'agent-gantry[agent-frameworks]' (or uv add 'agent-gantry[agent-frameworks]')"
+                "Native Agent Framework tools require 'agent-framework-core'. "
+                "Install with: pip install agent-framework-core (or uv add agent-framework-core)"
             )
         return wrapper
 
     tool_kwargs: dict[str, Any] = {
-        "name": tool_def.name,
+        "name": wrapper.__name__,
         "description": tool_def.description,
         "approval_mode": _tool_approval_mode(tool_def),
     }
@@ -446,6 +454,7 @@ def _build_callable_for_tool(
     gantry: AgentGantry,
     *,
     as_function_tool: bool | None = None,
+    native_name: str | None = None,
 ) -> Any:
     """
     Build a Python callable wrapping a Gantry tool for Microsoft Agent Framework.
@@ -473,7 +482,7 @@ def _build_callable_for_tool(
         Either an ``agent_framework.FunctionTool`` or a bare async callable,
         both accepted by ``Agent(tools=[...])``.
     """
-    spec = spec_from_tool(gantry, tool_def)
+    spec = spec_from_tool(gantry, tool_def, native_name=native_name)
     fn = spec.callable_for_signature()
     properties = tool_def.parameters_schema.get("properties") or {}
     aliases = spec.parameter_aliases()
@@ -509,10 +518,12 @@ def _build_callable_for_tool(
             return json.dumps({"error": error_text})
         except Exception as exc:
             return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
-        return result if isinstance(result, str) else json.dumps(result)
+        from agent_gantry.adapters.tool_spec.providers import _result_text
+
+        return _result_text(result)
 
     _wrapper.__signature__ = inspect.Signature(params)  # type: ignore[attr-defined]
-    _wrapper.__name__ = _wrapper.__qualname__ = tool_def.name
+    _wrapper.__name__ = _wrapper.__qualname__ = spec.native_name
     _wrapper.__doc__ = tool_def.description
     return _maybe_wrap_as_function_tool(_wrapper, tool_def, as_function_tool)
 
@@ -520,6 +531,19 @@ def _build_callable_for_tool(
 def _cache_key(tool_def: ToolDefinition) -> str:
     """Build a namespace-qualified cache key for a tool definition."""
     return f"{tool_def.namespace}:{tool_def.name}"
+
+
+def _wrapper_signature(tool_def: ToolDefinition, native_name: str | None) -> tuple[Any, ...]:
+    """Only metadata that affects the native wrapper; runtime health is excluded."""
+    return (
+        native_name or tool_def.name,
+        tool_def.version,
+        tool_def.description,
+        tool_def.requires_confirmation,
+        frozenset(tool_def.capabilities),
+        # Property order is part of the bare callable's positional signature.
+        json.dumps(tool_def.parameters_schema, default=str),
+    )
 
 
 class GantryToolBridge:
@@ -568,6 +592,7 @@ class GantryToolBridge:
         score_threshold: float | str | None = 0.0,
         as_function_tool: bool | None = None,
         disable_af_instrumentation: bool = False,
+        cache_size: int = 256,
     ) -> None:
         """Initialise the bridge.
 
@@ -592,13 +617,19 @@ class GantryToolBridge:
                 Safe to pass when AF <1.6.0 is installed (becomes a no-op).
                 Sequential single-agent flows are unaffected and do NOT need
                 this flag. Defaults to ``False``.
+            cache_size: Maximum cached wrappers (least recently used are evicted).
+                Set to zero to disable caching. Defaults to 256.
         """
         # Parsed once; a misconfigured threshold fails at construction time
         # rather than on the first retrieval round.
         self._threshold = _Threshold.parse(score_threshold)
         self._gantry = gantry
         self._as_function_tool = as_function_tool
-        self._tool_cache: dict[str, Any] = {}
+        if not isinstance(cache_size, int) or cache_size < 0:
+            raise ValueError("cache_size must be a non-negative integer")
+        self._cache_size = cache_size
+        self._tool_cache: OrderedDict[str, tuple[tuple[Any, ...], Any]] = OrderedDict()
+        self._cache_lock = threading.RLock()
         if disable_af_instrumentation:
             _disable_af_instrumentation()
 
@@ -734,19 +765,32 @@ class GantryToolBridge:
         self,
         tool_def: ToolDefinition,
         cache: bool,
+        native_name: str | None = None,
     ) -> Any:
-        """Look up a cached wrapper or build a new one."""
+        """Reuse an unchanged wrapper, with bounded LRU retention across updates."""
+        if not cache or self._cache_size == 0:
+            return _build_callable_for_tool(
+                tool_def, self._gantry,
+                as_function_tool=self._as_function_tool, native_name=native_name,
+            )
         key = _cache_key(tool_def)
-        if cache and key in self._tool_cache:
-            return self._tool_cache[key]
-        wrapper = _build_callable_for_tool(
-            tool_def,
-            self._gantry,
-            as_function_tool=self._as_function_tool,
-        )
-        if cache:
-            self._tool_cache[key] = wrapper
-        return wrapper
+        signature = _wrapper_signature(tool_def, native_name)
+        # A bridge can be shared by synchronous callers in different threads.
+        # Cache lookup, recency changes and eviction are one operation.
+        with self._cache_lock:
+            cached = self._tool_cache.get(key)
+            if cached is not None and cached[0] == signature:
+                self._tool_cache.move_to_end(key)
+                return cached[1]
+            wrapper = _build_callable_for_tool(
+                tool_def, self._gantry,
+                as_function_tool=self._as_function_tool, native_name=native_name,
+            )
+            self._tool_cache[key] = (signature, wrapper)
+            self._tool_cache.move_to_end(key)
+            if len(self._tool_cache) > self._cache_size:
+                self._tool_cache.popitem(last=False)
+            return wrapper
 
     async def get_tools(
         self,
@@ -868,8 +912,8 @@ class GantryToolBridge:
                 list(result.tools), threshold=threshold, limit=limit
             )
             decision.query = query
-            tools = [self._get_or_build(st.tool, cache) for st in kept_top]
-            decision.injected = [st.tool.name for st in kept_top]
+            tools = self.wrap_tools([st.tool for st in kept_top], cache=cache)
+            decision.injected = [getattr(t, "name", None) or t.__name__ for t in tools]
 
             # Enrich the span with the structured decision. Telemetry
             # adapters in this codebase store the same dict instance they
@@ -912,7 +956,13 @@ class GantryToolBridge:
         Returns:
             List of async callables suitable for AF agent ``tools=[...]``.
         """
-        return [self._get_or_build(td, cache) for td in tool_definitions]
+        if not tool_definitions:
+            return []
+        names = _native_tool_names(self._gantry.list_tools_sync() + tool_definitions)
+        return [
+            self._get_or_build(td, cache, names[f"{td.namespace}.{td.name}"])
+            for td in tool_definitions
+        ]
 
     def wrap_single(self, tool_def: ToolDefinition) -> Any:
         """
@@ -924,11 +974,12 @@ class GantryToolBridge:
         Returns:
             An async callable suitable for AF agent ``tools=[...]``.
         """
-        return self._get_or_build(tool_def, cache=True)
+        return self.wrap_tools([tool_def], cache=True)[0]
 
     def clear_cache(self) -> None:
         """Clear the cached tool wrappers."""
-        self._tool_cache.clear()
+        with self._cache_lock:
+            self._tool_cache.clear()
 
     async def get_tools_with_scores(
         self,

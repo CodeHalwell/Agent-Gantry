@@ -41,8 +41,18 @@ class ToolCall(BaseModel):
     namespace: str | None = None
     arguments: dict[str, Any]
 
-    timeout_ms: int = Field(default=30000, ge=100, le=300000)
-    retry_count: int = Field(default=0, ge=0, le=5)
+    timeout_ms: int = Field(
+        default=30000,
+        ge=100,
+        le=300000,
+        description="Per-call timeout override; when omitted, use the executor's configured timeout.",
+    )
+    retry_count: int = Field(
+        default=0,
+        ge=0,
+        le=5,
+        description="Per-call retry override; zero disables retries. When omitted, use the executor's configured retries.",
+    )
     require_confirmation: bool | None = None
 
     trace_id: str | None = None

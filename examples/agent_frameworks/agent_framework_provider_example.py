@@ -34,16 +34,20 @@ The example walks through three patterns:
 import asyncio
 
 from agent_framework import Agent, Skill, SkillsProvider
-from agent_framework.openai import OpenAIChatClient
-from agent_framework.orchestrations import SequentialBuilder
 from dotenv import load_dotenv
 
 from agent_gantry import AgentGantry, GantryContextProvider
+from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+
+try:
+    from agent_framework.openai import OpenAIChatClient
+except ImportError:
+    OpenAIChatClient = None  # Install agent-framework-openai for the live step.
 
 
 def build_gantry() -> AgentGantry:
     """Create a Gantry instance with a few representative tools."""
-    gantry = AgentGantry()
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
 
     @gantry.register(
         examples=[
@@ -170,6 +174,8 @@ async def example_workflow(gantry: AgentGantry) -> None:
         context_providers=[GantryContextProvider(gantry, top_k=3, score_threshold=0.0)],
     )
 
+    from agent_framework.orchestrations import SequentialBuilder
+
     workflow = SequentialBuilder(participants=[triage, resolver]).build()
     result = await workflow.run("My flight LHR->NRT was cancelled, please rebook.")
     print("[workflow] →", result)
@@ -200,6 +206,8 @@ async def main() -> None:
         # question than "can this run", and an Azure-configured reader would be
         # turned away from an example that works for them.
         try:
+            if OpenAIChatClient is None:
+                raise ImportError("Install the chat client: pip install agent-framework-openai")
             OpenAIChatClient()
         except Exception as exc:
             print(f"No usable Agent Framework chat client ({type(exc).__name__}: {exc}).")

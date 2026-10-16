@@ -7,6 +7,7 @@ Handles tool execution with retries, timeouts, circuit breakers, and health trac
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import re
 import uuid
@@ -775,12 +776,19 @@ class ExecutionEngine:
         timeout_s = timeout_ms / 1000
         arguments = _reconstructed(handler, arguments)
 
-        if asyncio.iscoroutinefunction(handler):
-            return await asyncio.wait_for(handler(**arguments), timeout=timeout_s)
-        return await asyncio.wait_for(
-            asyncio.to_thread(handler, **arguments),
-            timeout=timeout_s,
-        )
+        async def invoke() -> Any:
+            if asyncio.iscoroutinefunction(handler) or asyncio.iscoroutinefunction(
+                getattr(handler, "__call__", None)
+            ):
+                result = handler(**arguments)
+            else:
+                result = await asyncio.to_thread(handler, **arguments)
+            # Callable objects and synchronous decorators can return awaitables
+            # without being coroutine functions themselves. Await the result
+            # under the same timeout, so failures and cancellations are observed.
+            return await result if inspect.isawaitable(result) else result
+
+        return await asyncio.wait_for(invoke(), timeout=timeout_s)
 
     async def _execute_handler_with_retries(
         self,
@@ -794,7 +802,9 @@ class ExecutionEngine:
         """Execute tool handler with retries."""
         from agent_gantry.core.security import PermissionDeniedError
 
-        max_attempts = (call.retry_count or self._max_retries) + 1
+        retries = call.retry_count if "retry_count" in call.model_fields_set else self._max_retries
+        timeout_ms = call.timeout_ms if "timeout_ms" in call.model_fields_set else self._default_timeout
+        max_attempts = retries + 1
         last_error: str | None = None
         last_error_type: str | None = None
 
@@ -804,7 +814,7 @@ class ExecutionEngine:
                 result_value = await self._execute_with_timeout(
                     handler,
                     call.arguments,
-                    call.timeout_ms or self._default_timeout,
+                    timeout_ms,
                 )
                 completed_at = datetime.now(timezone.utc)
                 await self._record_success(tool, (completed_at - started_at).total_seconds() * 1000)

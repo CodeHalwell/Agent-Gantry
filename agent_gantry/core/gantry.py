@@ -15,7 +15,7 @@ import warnings
 from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from time import perf_counter
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 from agent_gantry.adapters.embedders.base import embed_query
 from agent_gantry.adapters.embedders.openai import OpenAIEmbedder
@@ -45,7 +45,7 @@ from agent_gantry.schema.execution import (
     ToolCallEvent,
     ToolResult,
 )
-from agent_gantry.schema.introspection import build_parameters_schema
+from agent_gantry.schema.introspection import _callable_target, build_parameters_schema
 from agent_gantry.schema.mcp import MCPServerDefinition
 from agent_gantry.schema.query import ConversationContext, RetrievalResult, ScoredTool, ToolQuery
 from agent_gantry.schema.selection import SelectionCandidate
@@ -58,6 +58,9 @@ if TYPE_CHECKING:
     from agent_gantry.adapters.selectors.base import SelectorAdapter
     from agent_gantry.adapters.vector_stores.base import VectorStoreAdapter
     from agent_gantry.core.rate_limiter import RateLimiter
+    from agent_gantry.integrations import frameworks as framework_adapters
+    from agent_gantry.integrations.agent_framework_adapter import AgentFrameworkAdapter
+    from agent_gantry.integrations.frameworks.base import BaseFrameworkAdapter
     from agent_gantry.observability.telemetry import TelemetryAdapter
 
 
@@ -510,7 +513,7 @@ class AgentGantry:
             wrapper_name = getattr(fn, "name", None)
             wrapper_func = getattr(fn, "func", None)
             wrapper_desc = getattr(fn, "description", None)
-            if wrapper_func is not None and callable(wrapper_func):
+            if isinstance(wrapper_name, str) and wrapper_name and callable(wrapper_func):
                 underlying = wrapper_func
             else:
                 underlying = fn
@@ -529,7 +532,8 @@ class AgentGantry:
                 )
 
             tool_description = (
-                (underlying.__doc__ if hasattr(underlying, "__doc__") else None)
+                getattr(_callable_target(underlying), "__doc__", None)
+                or getattr(underlying, "__doc__", None)
                 or wrapper_desc
                 or f"Tool: {tool_name}"
             )
@@ -1502,8 +1506,9 @@ class AgentGantry:
         response: Any,
         *,
         dialect: str = "openai",
-        timeout_ms: int = 30000,
+        timeout_ms: int | None = None,
         parallel: bool = True,
+        retry_count: int | None = None,
     ) -> list[dict[str, Any]]:
         """Run every tool call in ``response`` and format the results to send back.
 
@@ -1522,10 +1527,12 @@ class AgentGantry:
                 extracted list of ``ToolCallPayload`` (e.g. from
                 :class:`~agent_gantry.adapters.tool_spec.round_trip.StreamingToolCallAccumulator`).
             dialect: Which provider shape to read and reply in.
-            timeout_ms: Per-call execution timeout.
+            timeout_ms: Per-call timeout override; omitted uses execution configuration.
             parallel: Execute the calls concurrently (default). Set ``False``
                 to run them in the order the model emitted, for tools that
                 share mutable state.
+            retry_count: Per-call retry override; omitted uses execution configuration.
+                Set to zero to disable retries for this turn.
 
         Returns:
             One provider-formatted tool result per call, in emission order.
@@ -1550,7 +1557,12 @@ class AgentGantry:
         if not payloads:
             return []
 
-        calls = [adapter.to_tool_call(p, timeout_ms=timeout_ms) for p in payloads]
+        overrides: dict[str, Any] = {}
+        if timeout_ms is not None:
+            overrides["timeout_ms"] = timeout_ms
+        if retry_count is not None:
+            overrides["retry_count"] = retry_count
+        calls = [adapter.to_tool_call(p, **overrides) for p in payloads]
 
         if parallel and len(calls) > 1:
             results = await asyncio.gather(*(self.execute(call) for call in calls))
@@ -2367,6 +2379,103 @@ class AgentGantry:
         )
 
         return await _sim(self, tool_a, tool_b)
+
+    @overload
+    def framework(
+        self, name: Literal["agno"], *, default_limit: int = 5
+    ) -> framework_adapters.AgnoAdapter: ...
+
+    @overload
+    def framework(
+        self, name: Literal["agent_framework", "agent-framework"], *, default_limit: int = 5
+    ) -> AgentFrameworkAdapter: ...
+
+    @overload
+    def framework(
+        self, name: Literal["crewai", "crew_ai"], *, default_limit: int = 5
+    ) -> framework_adapters.CrewAIAdapter: ...
+
+    @overload
+    def framework(
+        self, name: Literal["dspy"], *, default_limit: int = 5
+    ) -> framework_adapters.DSPyAdapter: ...
+
+    @overload
+    def framework(
+        self, name: Literal["google_adk", "google-adk"], *, default_limit: int = 5
+    ) -> framework_adapters.GoogleADKAdapter: ...
+
+    @overload
+    def framework(
+        self, name: Literal["haystack"], *, default_limit: int = 5
+    ) -> framework_adapters.HaystackAdapter: ...
+
+    @overload
+    def framework(
+        self, name: Literal["langchain"], *, default_limit: int = 5
+    ) -> framework_adapters.LangChainAdapter: ...
+
+    @overload
+    def framework(
+        self, name: Literal["langgraph"], *, default_limit: int = 5
+    ) -> framework_adapters.LangGraphAdapter: ...
+
+    @overload
+    def framework(
+        self, name: Literal["llamaindex", "llama_index", "llama-index"], *, default_limit: int = 5
+    ) -> framework_adapters.LlamaIndexAdapter: ...
+
+    @overload
+    def framework(
+        self, name: Literal["openai_agents", "openai-agents"], *, default_limit: int = 5
+    ) -> framework_adapters.OpenAIAgentsAdapter: ...
+
+    @overload
+    def framework(
+        self, name: Literal["pydantic_ai", "pydantic-ai"], *, default_limit: int = 5
+    ) -> framework_adapters.PydanticAIAdapter: ...
+
+    @overload
+    def framework(
+        self, name: Literal["strands"], *, default_limit: int = 5
+    ) -> framework_adapters.StrandsAdapter: ...
+
+    @overload
+    def framework(
+        self, name: str, *, default_limit: int = 5
+    ) -> BaseFrameworkAdapter | AgentFrameworkAdapter: ...
+
+    def framework(
+        self, name: str, *, default_limit: int = 5
+    ) -> BaseFrameworkAdapter | AgentFrameworkAdapter:
+        """Access a native framework adapter without a framework-specific import.
+
+        Examples:
+            tools = await gantry.framework("langchain").select("send an email")
+            toolset = gantry.framework("pydantic-ai").live(limit=3)
+            provider = gantry.framework("agent-framework").live(limit=3)
+
+        Literal names preserve the concrete adapter type for editor completion.
+        Names are case-insensitive; hyphens and underscores are interchangeable.
+        Use `agent_gantry.supported_frameworks()` to discover canonical names.
+        SDKs are imported only when selecting tools or building live integrations,
+        with installation instructions if a required SDK is missing.
+
+        Args:
+            name: Framework name, such as "langchain", "pydantic_ai" or "strands".
+            default_limit: Default selection budget (1–50) for this adapter.
+
+        Returns:
+            A fresh adapter bound to this registry. Keep it to configure live
+            selection or reuse it across calls. All adapters expose `select(query)`
+            for static selection and `live(...)` for framework lifecycle hooks.
+
+        Raises:
+            ValueError: The framework name or default selection budget is invalid.
+        """
+        from agent_gantry.integrations.frameworks.registry import create_framework_adapter
+
+        return create_framework_adapter(self, name, default_limit=default_limit)
 
     def export_tools(self) -> list[ToolDefinition]:
         """

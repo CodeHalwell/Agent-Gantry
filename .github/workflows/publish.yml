@@ -14,12 +14,23 @@ on:
           - testpypi
           - pypi
 
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-agent-gantry
+  cancel-in-progress: false
+
 jobs:
   build:
     name: Build distribution
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -27,17 +38,43 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
+      - name: Validate release version, notes and source tag
+        id: metadata
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          args=(--check-git-tag --notes-file release-notes.md)
+          if [ -n "$RELEASE_TAG" ]; then
+            args+=(--tag "$RELEASE_TAG")
+          fi
+          uv run --no-project --python 3.12 python scripts/check_release.py "${args[@]}"
+          version=$(uv run --no-project --python 3.12 python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Build package
         run: uv build
 
       - name: Verify package metadata
         run: uv tool run twine check dist/*
 
+      - name: Checksum distributions
+        run: sha256sum dist/* > SHA256SUMS
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
+          if-no-files-found: error
+
+      - name: Upload release notes and checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-metadata
+          path: |
+            release-notes.md
+            SHA256SUMS
           if-no-files-found: error
 
   test-install:
@@ -61,10 +98,38 @@ jobs:
           path: dist/
 
       - name: Install from wheel and verify import
+        env:
+          EXPECTED_VERSION: ${{ needs.build.outputs.version }}
         run: |
           uv venv --python ${{ matrix.python-version }} .venv
           uv pip install --python .venv/bin/python dist/*.whl
-          .venv/bin/python -c "import agent_gantry; from agent_gantry import AgentGantry, ToolDefinition; print(f'agent-gantry {agent_gantry.__version__} installed at {agent_gantry.__file__}')"
+          .venv/bin/python -I - <<'PY'
+          import asyncio
+          import os
+          from pathlib import Path
+          import agent_gantry
+          from agent_gantry import AgentGantry, supported_frameworks
+          from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+          from agent_gantry.integrations.frameworks import GantryToolset
+
+          assert agent_gantry.__version__ == os.environ["EXPECTED_VERSION"]
+          assert Path(agent_gantry.__file__).with_name("py.typed").is_file()
+
+          async def smoke():
+              async with AgentGantry(embedder=SimpleEmbedder()) as gantry:
+                  @gantry.register(examples=["add two numbers"])
+                  def add(a: int, b: int) -> int:
+                      """Add two numbers."""
+                      return a + b
+                  specs = await GantryToolset(gantry).select("add two numbers", limit=1)
+                  assert await specs[0].ainvoke(a=2, b=3) == 5
+                  assert len(supported_frameworks()) == 12
+                  for name in supported_frameworks():
+                      assert callable(gantry.framework(name).select)
+
+          asyncio.run(smoke())
+          print(f"agent-gantry {agent_gantry.__version__} wheel smoke passed")
+          PY
 
   publish-testpypi:
     name: Publish to TestPyPI
@@ -114,6 +179,15 @@ jobs:
           name: dist
           path: dist/
 
+      - name: Download release notes and checksums
+        uses: actions/download-artifact@v4
+        with:
+          name: release-metadata
+          path: release-metadata/
+
+      - name: Verify distribution checksums
+        run: sha256sum --check release-metadata/SHA256SUMS
+
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
@@ -123,25 +197,24 @@ jobs:
       # On a manual publish, record the release in git: tag the checked-out commit
       # and cut a GitHub Release from the version in pyproject.toml. When the run
       # was triggered by a GitHub Release being *published*, the tag/release
-      # already exist, so this step is skipped. Both the tag and the release are
-      # created only when missing, so re-running a partially-failed publish is safe.
+      # already exist. Upload assets on both paths, including a partial retry.
       - name: Tag and create GitHub Release
-        if: github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
           set -euo pipefail
-          version=$(python3 -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
           git config --local user.name "github-actions[bot]"
           git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git rev-parse "v$version" >/dev/null 2>&1; then
-            echo "Tag v$version already exists; skipping tag creation."
+          if git rev-parse "refs/tags/v$VERSION" >/dev/null 2>&1; then
+            test "$(git rev-parse "refs/tags/v$VERSION^{commit}")" = "$GITHUB_SHA"
           else
-            git tag -a "v$version" -m "Release v$version"
-            git push origin "v$version"
+            git tag -a "v$VERSION" "$GITHUB_SHA" -m "Release v$VERSION"
+            git push origin "refs/tags/v$VERSION"
           fi
-          if gh release view "v$version" >/dev/null 2>&1; then
-            echo "Release v$version already exists; skipping."
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            gh release upload "v$VERSION" dist/* release-metadata/SHA256SUMS --clobber
           else
-            gh release create "v$version" dist/* --title "v$version" --generate-notes
+            gh release create "v$VERSION" dist/* release-metadata/SHA256SUMS \
+              --verify-tag --title "v$VERSION" --notes-file release-metadata/release-notes.md
           fi

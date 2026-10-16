@@ -16,6 +16,7 @@ or ``TaskGroup`` on AF 1.6.0, add one call at startup::
     from agent_gantry import disable_af_instrumentation
     disable_af_instrumentation()
 
+
 Or construct the bridge with ``GantryToolBridge(gantry, disable_af_instrumentation=True)``.
 
 Covers three construction patterns:
@@ -35,11 +36,10 @@ Covers three construction patterns:
 
 import asyncio
 
-from agent_framework.openai import OpenAIChatClient
-from agent_framework.orchestrations import SequentialBuilder
 from dotenv import load_dotenv
 
 from agent_gantry import AgentGantry
+from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 from agent_gantry.core.security import SecurityPolicy
 from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
 from agent_gantry.integrations.agent_framework_middleware import (
@@ -48,6 +48,11 @@ from agent_gantry.integrations.agent_framework_middleware import (
 )
 from agent_gantry.schema.tool import ToolCapability
 
+try:
+    from agent_framework.openai import OpenAIChatClient
+except ImportError:
+    OpenAIChatClient = None  # Install agent-framework-openai for the live step.
+
 load_dotenv()
 
 
@@ -55,7 +60,7 @@ async def main() -> str:
     # -----------------------------------------------------------------------
     # 1. Register tools with Agent-Gantry
     # -----------------------------------------------------------------------
-    gantry = AgentGantry()
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
     try:
 
         @gantry.register(examples=["who is this user", "look up the customer profile"])
@@ -110,6 +115,10 @@ async def main() -> str:
         # test that substitutes a fake client should still exercise everything
         # below.
         try:
+            if OpenAIChatClient is None:
+                raise ImportError("Install the chat client: pip install agent-framework-openai")
+            from agent_framework.orchestrations import SequentialBuilder
+
             client = OpenAIChatClient()
         except Exception as exc:
             print(f"No usable Agent Framework chat client ({type(exc).__name__}: {exc}).")

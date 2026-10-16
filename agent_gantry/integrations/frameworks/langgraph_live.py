@@ -197,7 +197,10 @@ async def _all_tools(gantry: AgentGantry) -> list[Any]:
     subset of this set, by name).
     """
     definitions = await gantry.list_tools()
-    return [_spec_to_langchain(spec_from_tool(gantry, d)) for d in definitions]
+    from agent_gantry.integrations.frameworks.base import _with_native_names
+
+    specs = _with_native_names(gantry, [spec_from_tool(gantry, d) for d in definitions])
+    return [_spec_to_langchain(spec) for spec in specs]
 
 
 def _create_gantry_react_agent(

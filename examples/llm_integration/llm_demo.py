@@ -16,6 +16,7 @@ import os
 from dotenv import load_dotenv
 
 from agent_gantry import AgentGantry
+from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 from agent_gantry.schema.execution import ToolCall
 
 load_dotenv()
@@ -33,19 +34,8 @@ except ImportError:
 async def main():
     print("=== Agent-Gantry LLM Integration Demo ===\n")
 
-    # 1. Initialize Gantry with Nomic Embeddings (for high-quality retrieval)
-    print("1. Initializing AgentGantry with Nomic Embeddings...")
-    try:
-        from agent_gantry.adapters.embedders.nomic import NomicEmbedder
-
-        embedder = NomicEmbedder(dimension=256)
-        gantry = AgentGantry(embedder=embedder)
-    except ImportError:
-        gantry = AgentGantry()
-        print(
-            "Nomic dependencies missing. Falling back to the default embedder: "
-            f"{type(gantry.embedder).__name__}"
-        )
+    # Keep the offline path independent of model downloads.
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
 
     try:
         # 2. Register a diverse set of tools (The "Universe" of tools)

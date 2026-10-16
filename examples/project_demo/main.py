@@ -15,14 +15,12 @@ LanceDB store.
 """
 
 import asyncio
-import json
 import os
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
 from agent_gantry.integrations.semantic_tools import with_semantic_tools
-from agent_gantry.schema.execution import ToolCall
 
 # Import the tools module which creates and configures the gantry instance
 from examples.project_demo.tools.tools import tools as gantry
@@ -61,25 +59,13 @@ async def generate_response(prompt: str, tools: list | None = None):
     tool_results = []
 
     if tool_calls:
-        # Execute each tool call and collect results
-        function_call_outputs = []
-        for tc in tool_calls:
-            result = await gantry.execute(
-                ToolCall(tool_name=tc.name, arguments=json.loads(tc.arguments))
-            )
-            tool_results.append(result)
-            function_call_outputs.append(
-                {
-                    "type": "function_call_output",
-                    "call_id": tc.call_id,
-                    "output": json.dumps(result.result),
-                }
-            )
+        # Decode, execute and serialize results in the provider's reply format.
+        tool_results = await gantry.execute_tool_calls(first, dialect="openai_responses")
 
         # Follow up with tool results
         follow_up = await client().responses.create(
             model="gpt-5.4-mini",
-            input=function_call_outputs,
+            input=tool_results,
             previous_response_id=first.id,
         )
 
@@ -123,7 +109,7 @@ async def main() -> None:
         if tool_calls:
             for tc, result in zip(tool_calls, tool_results):
                 print(f"LLM decided to call: {tc.name}({tc.arguments})")
-                print(f"Execution Result: {result.result}")
+                print(f"Execution Result: {result['output']}")
         else:
             print("LLM did not call any tools.")
     finally:

@@ -167,8 +167,8 @@ def create_persistent_gantry(dimension: int = 256) -> AgentGantry:
         )
         from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 
-        embedder = SimpleEmbedder()
-        embedder_config = EmbedderConfig(type="sentence_transformers")
+        embedder = SimpleEmbedder(dimension=dimension)
+        embedder_config = EmbedderConfig(type="sentence_transformers", dimension=dimension)
 
     # Configure persistent vector store
     vector_store_config = VectorStoreConfig(

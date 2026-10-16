@@ -30,15 +30,19 @@ agent_gantry`` never requires LangChain et al. to be installed.
 from __future__ import annotations
 
 import asyncio
+import copy
 import datetime
+import functools
+import hashlib
 import inspect
 import keyword
 import logging
 import re
 import threading
 import uuid
+from collections import Counter
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import ValidationError
@@ -114,7 +118,8 @@ class ToolSpec:
     """Framework-neutral handle to one selected Gantry tool.
 
     Attributes:
-        name: The tool's bare name (what the model calls).
+        name: The tool's bare execution name.
+        native_name: The framework-facing name, disambiguated across namespaces.
         qualified_name: ``namespace.name`` — unique within a registry.
         description: Human/LLM-facing description.
         parameters: JSON-Schema object describing the arguments.
@@ -132,6 +137,17 @@ class ToolSpec:
     _gantry: AgentGantry
     _namespace: str
     tool: ToolDefinition | None = None
+    _native_name: str | None = None
+
+    @property
+    def native_name(self) -> str:
+        """Name exposed to frameworks; disambiguated when namespaces share a name.
+
+        ``name`` and ``_namespace`` always identify the original execution target.
+        Native names stay stable when a query selects a different subset of the
+        registry, so framework tool indexes never shadow a same-named tool.
+        """
+        return self._native_name or self.name
 
     # -- invocation -------------------------------------------------------- #
     async def ainvoke(self, *args: Any, **kwargs: Any) -> Any:
@@ -233,7 +249,7 @@ class ToolSpec:
                 kwargs = {aliases.get(key, key): value for key, value in kwargs.items()}
             return await self.ainvoke(**kwargs)
 
-        _fn.__name__ = self.name
+        _fn.__name__ = self.native_name
         _fn.__doc__ = self.description
         _fn.__signature__ = self.python_signature(  # type: ignore[attr-defined]
             type_matched_defaults=type_matched_defaults,
@@ -530,12 +546,11 @@ def _json_native(value: Any, prop: Any, _depth: int = 0) -> Any:
     if isinstance(value, (list, tuple)):
         prefix = prop.get("prefixItems")
         items = prop.get("items")
-        restored: list[Any] = []
-        # A *tuple* is already a change: the canonical schema types these as
-        # JSON arrays and the executor's ``_matches_type`` accepts only a
-        # ``list``, so a framework that materialized the positional annotation
-        # below would otherwise have its correctly-shaped value refused.
-        changed = isinstance(value, tuple)
+        # Most framework arguments already contain JSON-native values. Copy
+        # only when a child changes (or the framework supplied a tuple).
+        restored = list(value) if isinstance(value, tuple) else None
+        if not isinstance(prefix, list) and not isinstance(items, dict):
+            return restored if restored is not None else _json_native_via_branches(value, prop, _depth)
         for index, item in enumerate(value):
             sub: Any = None
             if isinstance(prefix, list) and index < len(prefix):
@@ -543,9 +558,11 @@ def _json_native(value: Any, prop: Any, _depth: int = 0) -> Any:
             elif isinstance(items, dict):
                 sub = items
             new_item = _json_native(item, sub, _depth + 1) if isinstance(sub, dict) else item
-            changed = changed or new_item is not item
-            restored.append(new_item)
-        if changed:
+            if new_item is not item:
+                if restored is None:
+                    restored = list(value)
+                restored[index] = new_item
+        if restored is not None:
             return restored
         return _json_native_via_branches(value, prop, _depth)
 
@@ -553,12 +570,14 @@ def _json_native(value: Any, prop: Any, _depth: int = 0) -> Any:
         properties = prop.get("properties")
         patterns = prop.get("patternProperties")
         additional = prop.get("additionalProperties")
-        rebuilt: dict[Any, Any] = {}
-        changed = False
+        if not properties and not patterns and not isinstance(additional, dict):
+            return _json_native_via_branches(value, prop, _depth)
+        rebuilt: dict[Any, Any] | None = None
         for key, item in value.items():
-            subs: list[Any] = []
-            if isinstance(properties, dict) and key in properties:
-                subs.append(properties[key])
+            new_item = item
+            declared = isinstance(properties, dict) and key in properties
+            if declared:
+                new_item = _json_native(new_item, properties[key], _depth + 1)
             # Not ``elif``: JSON Schema applies ``properties`` and
             # ``patternProperties`` *both*, and so does the executor —
             # ``_check_pattern_properties`` runs every pattern over every key
@@ -569,18 +588,18 @@ def _json_native(value: Any, prop: Any, _depth: int = 0) -> Any:
             # unserialized-datetime-against-``type: string`` rejection one
             # level along (PR #386 review).
             if isinstance(patterns, dict) and isinstance(key, str):
-                subs.extend(_pattern_subschemas(patterns, key))
-            if not subs and isinstance(additional, dict):
+                for sub in _pattern_subschemas(patterns, key):
+                    declared = True
+                    new_item = _json_native(new_item, sub, _depth + 1)
+            if not declared and isinstance(additional, dict):
                 # ``additionalProperties`` governs only the keys neither
                 # ``properties`` nor ``patternProperties`` claimed.
-                subs.append(additional)
-            new_item = item
-            for sub in subs:
-                if isinstance(sub, dict):
-                    new_item = _json_native(new_item, sub, _depth + 1)
-            changed = changed or new_item is not item
-            rebuilt[key] = new_item
-        if changed:
+                new_item = _json_native(new_item, additional, _depth + 1)
+            if new_item is not item:
+                if rebuilt is None:
+                    rebuilt = value.copy()
+                rebuilt[key] = new_item
+        if rebuilt is not None:
             return rebuilt
         return _json_native_via_branches(value, prop, _depth)
 
@@ -921,10 +940,18 @@ def _coerce_arguments(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str
     return dict(kwargs)
 
 
-def spec_from_tool(gantry: AgentGantry, tool: ToolDefinition, score: float = 0.0) -> ToolSpec:
+def spec_from_tool(
+    gantry: AgentGantry,
+    tool: ToolDefinition,
+    score: float = 0.0,
+    *,
+    native_name: str | None = None,
+) -> ToolSpec:
     """Build a :class:`ToolSpec` from a Gantry :class:`ToolDefinition`."""
     qualified = getattr(tool, "qualified_name", None) or f"{tool.namespace}.{tool.name}"
-    params = tool.parameters_schema or {"type": "object", "properties": {}}
+    # SDKs may normalize schemas in place. A selected spec is a snapshot:
+    # exporting or editing it must not change registry validation or later turns.
+    params = copy.deepcopy(tool.parameters_schema) if tool.parameters_schema else {"type": "object", "properties": {}}
     return ToolSpec(
         name=tool.name,
         qualified_name=qualified,
@@ -935,7 +962,64 @@ def spec_from_tool(gantry: AgentGantry, tool: ToolDefinition, score: float = 0.0
         _gantry=gantry,
         _namespace=tool.namespace,
         tool=tool,
+        _native_name=native_name,
     )
+
+
+def _native_tool_names(definitions: Sequence[ToolDefinition]) -> dict[str, str]:
+    """Stable, unique framework names for a registry, preserving ordinary names.
+
+    Frameworks index tools by name alone. Namespace-qualified aliases include a
+    digest so namespaces that normalize identically cannot collide. Reserve all
+    authored names too: a generated alias must never hide a real tool. The
+    64-character bound works with the common model-provider function APIs.
+    """
+    identities = tuple(dict.fromkeys((tool.namespace, tool.name) for tool in definitions))
+    return _native_names_for(identities)
+
+
+@functools.lru_cache(maxsize=16)
+def _native_names_for(identities: tuple[tuple[str, str], ...]) -> dict[str, str]:
+    """Cache only names, bounded across registry churn; never retain tools/gantries."""
+    counts = Counter(name for _, name in identities)
+    taken = {name for _, name in identities}
+    names: dict[str, str] = {}
+    aliases: list[tuple[str, str]] = []
+    for namespace, name in identities:
+        key = f"{namespace}.{name}"
+        if counts[name] == 1 and len(name) <= 64:
+            names[key] = name
+            continue
+        aliases.append((namespace, name))
+    for namespace, name in sorted(aliases):
+        key = f"{namespace}.{name}"
+        stem = re.sub(r"[^a-z0-9_]", "_", f"{namespace}__{name}".lower())
+        if not stem[0].isalpha():
+            stem = f"tool_{stem}"
+        attempt = 0
+        while True:
+            identity = key if attempt == 0 else f"{key}:{attempt}"
+            digest = hashlib.sha256(identity.encode()).hexdigest()[:8]
+            alias = f"{stem[:55]}_{digest}"
+            if alias not in taken:
+                break
+            attempt += 1
+        names[key] = alias
+        taken.add(alias)
+    return names
+
+
+def _with_native_names(gantry: AgentGantry, specs: list[ToolSpec]) -> list[ToolSpec]:
+    """Name a selection against the full registry, including pins and imports."""
+    if not specs:
+        return specs
+    definitions = gantry.list_tools_sync() + [s.tool for s in specs if s.tool is not None]
+    names = _native_tool_names(definitions)
+    named: list[ToolSpec] = []
+    for spec in specs:
+        native = names.get(f"{spec._namespace}.{spec.name}", spec.name)
+        named.append(replace(spec, _native_name=native) if native != spec.native_name else spec)
+    return named
 
 
 def _bare_qualified_name(tool: ToolDefinition) -> str:
@@ -1192,9 +1276,14 @@ class GantryToolset:
         check_query_bounds(
             limit=limit, score_threshold=score_threshold, owner="GantryToolset.select"
         )
+        used = list(tools_already_used or [])
+        if used:
+            native_names = _native_tool_names(self._gantry.list_tools_sync())
+            originals = {native: qualified.rsplit(".", 1)[-1] for qualified, native in native_names.items()}
+            used = [originals.get(name, name) for name in used]
         context = ConversationContext(
             query=query,
-            tools_already_used=list(tools_already_used or []),
+            tools_already_used=used,
         )
         result = await self._gantry.retrieve(
             ToolQuery(
@@ -1205,12 +1294,10 @@ class GantryToolset:
             )
         )
         specs = [spec_from_tool(self._gantry, st.tool, st.semantic_score) for st in result.tools]
-        if not required and not always_include:
-            return specs
         pinned = _resolve_pins(
             self._gantry, specs, required=required, always_include=always_include
         )
-        return specs + pinned
+        return _with_native_names(self._gantry, specs + pinned)
 
     async def select_or_empty(
         self,
@@ -1246,8 +1333,9 @@ class GantryToolset:
         :class:`~agent_gantry.integrations.frameworks.errors.MissingRequiredToolError`.
         """
         if not (query or "").strip():
-            return _resolve_pins(
-                self._gantry, [], required=required, always_include=always_include
+            return _with_native_names(
+                self._gantry,
+                _resolve_pins(self._gantry, [], required=required, always_include=always_include),
             )
         return await self.select(
             query,

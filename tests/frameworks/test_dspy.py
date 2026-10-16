@@ -217,6 +217,58 @@ async def test_missing_dspy_raises_helpful_error(monkeypatch, gantry):
         DSPyAdapter.convert(specs[0])
 
 
+@pytest.mark.parametrize("types_", [["string", "null"], ["string", "integer", "null"]])
+async def test_type_lists_survive_dspy_schema_conversion(fake_dspy, gantry, monkeypatch, types_):
+    """Mirror DSPy's scalar-type lookup and keep its full validation schema."""
+    from copy import deepcopy
+
+    from agent_gantry.dspy import DSPyAdapter
+    from agent_gantry.integrations.frameworks.base import spec_from_tool
+    from agent_gantry.schema.tool import ToolDefinition
+
+    def converter(schema):
+        # DSPy 3.4.1 hashes the JSON type; a list here raises TypeError.
+        for prop in schema["properties"].values():
+            hash(prop.get("type"))
+        return _fake_convert_input_schema_to_tool_args(schema)
+
+    monkeypatch.setattr(
+        sys.modules["dspy.adapters.types.tool"], "convert_input_schema_to_tool_args", converter
+    )
+    parameters = {
+        "type": "object",
+        "properties": {"value": {"type": types_, "default": "ready", "description": "A value"}},
+    }
+    before = deepcopy(parameters)
+    definition = ToolDefinition(
+        name="echo_value", description="Return the supplied value.", parameters_schema=parameters
+    )
+    spec = spec_from_tool(gantry, definition)
+    tool = DSPyAdapter.convert(spec)
+
+    assert tool.args["value"] == parameters["properties"]["value"]
+    assert tool.arg_desc["value"] == "A value"
+    assert spec.parameters == before
+
+
+async def test_real_dspy_validates_nullable_parameters(gantry):
+    pytest.importorskip("dspy")
+    from agent_gantry.dspy import DSPyAdapter
+
+    @gantry.register(namespace="nullable")
+    def echo_value(value: str | None = "ready") -> str:
+        """Return the supplied nullable value."""
+        return repr(value)
+
+    tools = await DSPyAdapter(gantry).select("echo a value", namespaces=["nullable"], limit=1)
+    tool = tools[0]
+    assert tool(value=None) == "None"
+    assert tool(value="hello") == "'hello'"
+    assert tool() == "'ready'"
+    with pytest.raises(ValueError, match="invalid"):
+        tool(value=["wrong type"])
+
+
 async def test_agent_builder_rebuilds_dspy_react_with_reselected_tools(fake_dspy, gantry):
     """``agent_builder(...)`` returns a per-call builder; ``.build(query)`` makes a fresh ReAct."""
     from agent_gantry.dspy import DSPyAdapter

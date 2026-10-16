@@ -120,7 +120,7 @@ def build_parameters_schema(func: Callable[..., Any]) -> dict[str, Any]:
             getattr(func, "__qualname__", func),
         )
 
-    param_docs = _parse_param_docs(inspect.getdoc(func) or "")
+    param_docs = _parse_param_docs(inspect.getdoc(_callable_target(func)) or inspect.getdoc(func) or "")
 
     properties: dict[str, Any] = {}
     required: list[str] = []
@@ -216,6 +216,16 @@ def _hoist_annotated(hint: Any) -> Any:
     return typing.Annotated[(base | None, *metadata)]
 
 
+def _callable_target(func: Callable[..., Any]) -> Callable[..., Any]:
+    """Function or bound method carrying a callable's annotations and docs."""
+    target = func
+    while isinstance(target, functools.partial):
+        target = target.func
+    if not inspect.isroutine(target) and not inspect.isclass(target):
+        target = getattr(target, "__call__", target)
+    return target
+
+
 def _function_hints(func: Callable[..., Any]) -> tuple[dict[str, Any], list[str]]:
     """Resolved annotations of ``func``, plus the parameter names that failed to resolve.
 
@@ -224,11 +234,15 @@ def _function_hints(func: Callable[..., Any]) -> tuple[dict[str, Any], list[str]
     """
     import typing
 
+    # Signature inspection understands partials and callable instances, while
+    # get_type_hints expects their underlying function or bound __call__ method.
+    target = _callable_target(func)
+
     unresolved: list[str] = []
     try:
-        hints = typing.get_type_hints(func, include_extras=True)
+        hints = typing.get_type_hints(target, include_extras=True)
     except Exception:  # noqa: BLE001 - retried one annotation at a time
-        target = inspect.unwrap(func)
+        target = inspect.unwrap(target)
         hints = {}
         for name, annotation in getattr(target, "__annotations__", {}).items():
             one = types.SimpleNamespace(

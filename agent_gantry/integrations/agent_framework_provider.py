@@ -113,7 +113,7 @@ def _import_context_provider() -> type:
     except ImportError as exc:  # pragma: no cover - depends on install
         raise ImportError(
             "GantryContextProvider requires the 'agent-framework' package. "
-            "Install with: pip install 'agent-gantry[agent-frameworks]' (or uv add 'agent-gantry[agent-frameworks]')"
+            "Install with: pip install agent-framework-core (or uv add agent-framework-core)"
         ) from exc
     return ContextProvider
 
@@ -125,7 +125,7 @@ def _import_function_middleware() -> Any:
     except ImportError as exc:  # pragma: no cover - depends on install
         raise ImportError(
             "GantryContextProvider.trace() requires the 'agent-framework' "
-            "package. Install with: pip install 'agent-gantry[agent-frameworks]' (or uv add 'agent-gantry[agent-frameworks]')"
+            "package. Install with: pip install agent-framework-core (or uv add agent-framework-core)"
         ) from exc
     return function_middleware
 
@@ -761,6 +761,9 @@ def _build_impl_class(base: type) -> type:
                         seen_qualified.update(
                             c.qualified_name for c in decision.kept[: self._top_k]
                         )
+                        # Pin resolution uses authored bare names; framework
+                        # indexes use native aliases when namespaces collide.
+                        seen_bare.update(c.name for c in decision.kept[: self._top_k])
 
             # Skills: always-on tools bound to registered Gantry skills.
             skill_count = 0
@@ -897,7 +900,7 @@ def _build_impl_class(base: type) -> type:
             specs = _pin_specs(
                 self._gantry, names, seen_qualified, seen_bare, kind="always_include"
             )
-            return [self._bridge.wrap_single(spec.tool) for spec in specs]
+            return self._bridge.wrap_tools([spec.tool for spec in specs])
 
     return _GantryContextProviderImpl
 

@@ -1,58 +1,77 @@
 # Releasing Agent-Gantry
 
-Releases are published by **manually running the "Publish to PyPI" workflow**
-(`.github/workflows/publish.yml`). The same run that publishes to PyPI also tags
-the commit `v<version>` and creates the GitHub Release — so tagging is part of
-the publish, not a separate step.
+The [Publish to PyPI workflow](.github/workflows/publish.yml) builds one source
+archive and wheel, validates them, publishes with PyPI trusted publishing, and
+attaches the distributions and SHA-256 checksums to a GitHub Release.
 
-## How a release happens
+## Prepare the release
 
-1. Bump the version in **both** places (they must match):
-   - `pyproject.toml` → `[project] version`
-   - `agent_gantry/__init__.py` → `__version__`
-2. Add a `CHANGELOG.md` entry for the new version.
-3. Open a PR and merge it to `main` (CI must pass: `test`, `lint`,
-   `Framework adapter smoke tests`, `Verify package builds`).
-4. Go to **Actions → Publish to PyPI → Run workflow**, pick the `main` branch and
-   set **target = `pypi`**, then run it. The workflow:
-   - builds the sdist + wheel and runs `twine check`;
-   - smoke-installs the wheel on Python 3.10–3.13 and imports it;
-   - **publishes to PyPI** via trusted publishing;
-   - **tags `v<version>`** (created only if missing) and **creates the GitHub
-     Release** `v<version>` with generated notes.
+1. Update `pyproject.toml`, `agent_gantry/__init__.py`, the editable project
+   version in `uv.lock`, `package.json`, the root versions in `package-lock.json`,
+   and the version in `README.md`.
+2. Move the accumulated `CHANGELOG.md` notes into a dated release entry, keeping
+   an empty `Unreleased` section for subsequent work. Include compatibility and
+   migration notes, especially for pre-1.0 minor releases.
+3. Check the metadata and review the exact notes that GitHub will receive:
 
-Both the tag and the GitHub Release are created only when they don't already
-exist, so re-running after a partial failure is safe.
+   ```bash
+   python scripts/check_release.py --tag v0.20.0 --notes-file /tmp/release-notes.md
+   uv lock --check
+   ```
 
-### Test publishes (TestPyPI)
+4. Run the relevant tests, including `tests/examples/` and
+   `tests/frameworks/test_real_packages.py` with the optional SDKs installed.
+   Check `ruff check agent_gantry examples scripts tests`, `uv build`,
+   `uv tool run twine check dist/*`, and `npm run build` for the docs.
+5. Merge the release PR to `main` after CI passes, including the native SDK
+   matrix and package build job. Preparing a release does not publish it.
 
-Run the same workflow with **target = `testpypi`** to publish to TestPyPI without
-touching PyPI, tags, or releases (the tag/release step only runs for `pypi`).
+The metadata check runs in CI and again before the publish build. It rejects
+version drift, a mismatched GitHub Release tag, missing dated changelog notes,
+and an existing version tag that points to a different source commit.
 
-### Publishing from an existing GitHub Release
+## Publish from GitHub Actions
 
-The workflow also triggers automatically when a GitHub Release is *published*
-(`on: release: [published]`). In that case the tag and release already exist, so
-the run publishes to PyPI only and skips the tag/release step.
+Open **Actions → Publish to PyPI → Run workflow**, choose `main`, and choose a
+publish target:
+
+- `testpypi` (the default) publishes to TestPyPI only. It creates no tag or GitHub Release.
+- `pypi` publishes to PyPI, tags the checked-out source `v<version>`, and creates
+  the GitHub Release using the dated changelog entry. The release includes both
+  distributions and `SHA256SUMS`.
+
+Before either upload, the workflow checks distribution metadata and installs
+the built wheel on Python 3.10, 3.11, 3.12 and 3.13. Those clean installations
+verify the version, typing marker, tool selection and execution, and lazy
+construction of all twelve framework adapters without their SDKs.
+
+Publishing an existing GitHub Release also triggers this workflow. Its tag
+must match the package version. The workflow publishes that tagged source to
+PyPI and attaches the artifacts to the existing release.
+
+Runs are serialized. A retry skips distributions already on the package index
+and repairs missing GitHub release assets; it never moves an existing tag.
 
 ## One-time setup
 
-Trusted publishing (no long-lived tokens) must be configured once:
+Configure a [PyPI trusted publisher](https://docs.pypi.org/trusted-publishers/)
+for `CodeHalwell/Agent-Gantry`, workflow `publish.yml`, environment `pypi`.
+Configure the corresponding TestPyPI publisher for environment `testpypi`.
+Create both environments in **GitHub → Settings → Environments**; any configured
+required reviewers must approve that environment before publication.
 
-1. **PyPI → Trusted Publishers** (https://docs.pypi.org/trusted-publishers/) for
-   the `agent-gantry` project, with:
-   - Owner / repository: `CodeHalwell/Agent-Gantry`
-   - Workflow filename: `publish.yml`
-   - Environment: `pypi`
-2. **GitHub → Settings → Environments → `pypi`** (and `testpypi`): referenced by
-   the publish jobs. Leave without required reviewers for hands-off publishes, or
-   add required reviewers for a manual approval gate before each publish.
+No long-lived PyPI token is required. Only the publish jobs receive OIDC
+permission; only the production job can write tags and release assets.
 
-> If you prefer API tokens over trusted publishing, add a `PYPI_API_TOKEN` secret
-> and set `password: ${{ secrets.PYPI_API_TOKEN }}` on the publish step.
+## Verify the published version
 
-## Verifying
+Check [PyPI](https://pypi.org/project/agent-gantry/) and
+[GitHub Releases](https://github.com/CodeHalwell/Agent-Gantry/releases). Download
+`SHA256SUMS` and the artifacts to verify their hashes, then install the version
+in a fresh environment:
 
-After the run, the new version appears on https://pypi.org/p/agent-gantry and a
-`v<version>` GitHub Release is created. The workflow `twine check`s and
-smoke-installs the wheel before publishing as a final safety net.
+```bash
+uv venv /tmp/gantry-release-check
+uv pip install --python /tmp/gantry-release-check/bin/python agent-gantry==0.20.0
+/tmp/gantry-release-check/bin/python -I -c 'import agent_gantry; print(agent_gantry.__version__)'
+```

@@ -39,7 +39,7 @@ def _spec_to_langchain(spec: ToolSpec) -> Any:
     return StructuredTool.from_function(
         func=_sync,
         coroutine=spec.callable_for_signature(),
-        name=spec.name,
+        name=spec.native_name,
         description=spec.description,
         args_schema=spec.parameters,
     )

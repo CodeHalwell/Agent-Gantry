@@ -26,7 +26,7 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 from agent_gantry import AgentGantry
-from agent_gantry.google_adk import GoogleADKAdapter
+from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 
 APP_NAME = "gantry_adk_app"
 USER_ID = "demo_user"
@@ -36,7 +36,7 @@ USER_QUERY = "What's the status of order 12345?"
 
 
 async def build_gantry() -> AgentGantry:
-    gantry = AgentGantry()
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
 
     # `examples=[...]` is the text the router actually embeds — the single
     # highest-value field on a tool definition.
@@ -79,7 +79,7 @@ async def run_query(query: str, gantry: AgentGantry | None = None) -> str:
     try:
         # No score_threshold: it defaults to 0.0, and raising it is a
         # silent-drop trap on longer queries.
-        adk_tools = await GoogleADKAdapter(gantry).select(query, limit=1)
+        adk_tools = await gantry.framework("google_adk").select(query, limit=1)
 
         adk_agent = Agent(
             model="gemini-2.5-flash",
@@ -128,7 +128,7 @@ async def run_query(query: str, gantry: AgentGantry | None = None) -> str:
 async def main() -> None:
     gantry = await build_gantry()
     try:
-        selected = await GoogleADKAdapter(gantry).select(USER_QUERY, limit=1)
+        selected = await gantry.framework("google_adk").select(USER_QUERY, limit=1)
         print(f"Catalogue: 3 tools. Gantry selected {len(selected)} for this query:")
         for tool in selected:
             print(f"  - {tool.name}")

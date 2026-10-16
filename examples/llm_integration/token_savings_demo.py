@@ -12,11 +12,13 @@ Run: python examples/llm_integration/token_savings_demo.py
 import asyncio
 import json
 import os
+from functools import lru_cache
 from typing import Any
 
 from dotenv import load_dotenv
 
 from agent_gantry import AgentGantry
+from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 
 # Load environment variables from .env file
 load_dotenv()
@@ -38,27 +40,28 @@ except ImportError:
     TIKTOKEN_AVAILABLE = False
 
 
-def count_tokens(tools: list[dict[str, Any]], model: str = "gpt-5.4-mini") -> int:
-    """
-    Count exact tokens for a list of tool schemas using tiktoken.
-    """
+@lru_cache(maxsize=4)
+def _tokenizer(model: str) -> Any:
+    """Load once; a missing cached vocabulary must not break the offline demo."""
     if not TIKTOKEN_AVAILABLE:
-        # Fallback to estimation
-        json_str = json.dumps(tools)
-        return len(json_str) // 4
-
+        return None
     try:
-        encoding = tiktoken.encoding_for_model(model)
-    except KeyError:
-        # GPT-5.x models use o200k_base; fall back to cl100k_base if unknown
         try:
-            encoding = tiktoken.get_encoding("o200k_base")
-        except Exception:
-            encoding = tiktoken.get_encoding("cl100k_base")
+            return tiktoken.encoding_for_model(model)
+        except KeyError:
+            return tiktoken.get_encoding("o200k_base")
+    except Exception as exc:
+        print(f"Tokenizer vocabulary unavailable ({type(exc).__name__}); estimating tokens.")
+        return None
+
+
+def count_tokens(tools: list[dict[str, Any]], model: str = "gpt-5.4-mini") -> int:
+    """Count compact JSON tokens, or estimate when the vocabulary is unavailable."""
+    encoding = _tokenizer(model)
 
     # Use compact separators to match API behavior closer
     json_str = json.dumps(tools, separators=(",", ":"))
-    return len(encoding.encode(json_str))
+    return len(encoding.encode(json_str)) if encoding is not None else len(json_str) // 4
 
 
 def estimate_tokens(tools: list[dict[str, Any]]) -> int:
@@ -72,17 +75,8 @@ def estimate_tokens(tools: list[dict[str, Any]]) -> int:
 async def main():
     print("=== Agent-Gantry Token Savings Demo ===\n")
 
-    # 1. Initialize Gantry
-    print("1. Initializing AgentGantry...")
-    try:
-        from agent_gantry.adapters.embedders.nomic import NomicEmbedder
-
-        embedder = NomicEmbedder(dimension=256)
-        gantry = AgentGantry(embedder=embedder)
-        print("   Using Nomic Embeddings (High Accuracy)")
-    except ImportError:
-        gantry = AgentGantry()
-        print(f"   Using the default embedder: {type(gantry.embedder).__name__}")
+    # Keep the offline path independent of model downloads.
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
 
     try:
         # 2. Register 15 Diverse Tools
@@ -232,7 +226,8 @@ async def main():
 
         est_tokens_all = count_tokens(all_tools_schema)
         print(f"   Tools passed: {len(all_tools_schema)}")
-        print(f"   Exact Tool Definition Tokens (tiktoken, compact): {est_tokens_all}")
+        method = "tiktoken" if _tokenizer("gpt-5.4-mini") is not None else "estimate"
+        print(f"   Tool definition tokens ({method}): {est_tokens_all}")
 
         if client:
             try:
@@ -268,7 +263,7 @@ async def main():
         print(f"   Tools passed: {len(relevant_tools_schema)}")
         for t in relevant_tools_schema:
             print(f"     - {t['function']['name']}")
-        print(f"   Exact Tool Definition Tokens (tiktoken, compact): {est_tokens_filtered}")
+        print(f"   Tool definition tokens ({method}): {est_tokens_filtered}")
 
         if client:
             try:

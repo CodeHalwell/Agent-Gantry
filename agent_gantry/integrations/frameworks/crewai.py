@@ -42,7 +42,7 @@ def _spec_to_crewai(spec: ToolSpec) -> Any:
         def _run(self, **kwargs: Any) -> Any:
             return spec.invoke(**kwargs)
 
-    kwargs: dict[str, Any] = {"name": spec.name, "description": spec.description}
+    kwargs: dict[str, Any] = {"name": spec.native_name, "description": spec.description}
     args_schema = _build_args_schema(spec)
     if args_schema is not None:
         kwargs["args_schema"] = args_schema
@@ -67,7 +67,7 @@ def _build_args_schema(spec: ToolSpec) -> Any:
         pydantic_model_from_schema,
     )
 
-    return pydantic_model_from_schema(f"{spec.name}_Args", spec.parameters)
+    return pydantic_model_from_schema(f"{spec.native_name}_Args", spec.parameters)
 
 
 class CrewAIAdapter(BaseFrameworkAdapter):

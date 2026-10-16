@@ -18,7 +18,7 @@ Require a provider key (each exits with a message naming the variable if it is m
 - `anthropic_thinking_demo.py` (`ANTHROPIC_API_KEY`): Interleaved and extended thinking via `create_anthropic_client`, with and without Gantry tools.
 - `google_genai_demo.py` (`GOOGLE_API_KEY`): `to_dialect("gemini")` with the function-call round trip, decorator, and the typed `GeminiAdapter`.
 - `groq_demo.py` (`GROQ_API_KEY`): OpenAI-style schemas into Groq's SDK, decorator, and the typed `GroqAdapter`.
-- `mistral_demo.py` (`MISTRAL_API_KEY`): Mistral through the `openai` SDK with `base_url="https://api.mistral.ai/v1"` (the `mistralai` package is quarantined on PyPI), plus the typed `MistralAdapter`.
+- `mistral_demo.py` (`MISTRAL_API_KEY`): Mistral through the `openai` SDK with `base_url="https://api.mistral.ai/v1"`, plus the typed `MistralAdapter`.
 
 ## Run commands
 
@@ -31,4 +31,9 @@ python examples/llm_integration/token_savings_demo.py
 
 Install the provider extra for the script you want, e.g. `pip install "agent-gantry[openai]"`,
 `[anthropic]`, `[google-genai]`, `[groq]`. `mistral_demo.py` uses the `openai` extra. Check the
-script headers for environment variable hints before running.
+script headers for environment variable hints before running. For `.env` support,
+install `python-dotenv` (included in the repository's `dev` extra).
+
+`llm_demo.py` and `token_savings_demo.py` use a local hash embedder and require no
+embedding-model download. Token counting estimates from compact JSON when
+`tiktoken` or its cached vocabulary is unavailable; live API usage is reported separately.

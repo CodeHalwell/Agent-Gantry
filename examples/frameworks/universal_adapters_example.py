@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import asyncio
 
-from agent_gantry import AgentGantry
+from agent_gantry import AgentGantry, supported_frameworks
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 from agent_gantry.integrations.frameworks import GantryToolset
 
@@ -78,26 +78,10 @@ async def main() -> None:
         # 2) Export to each framework ------------------------------------- #
         # One ``<Framework>Adapter`` class per framework; ``adapter.select(query,
         # limit=...)`` selects and builds the native tool objects in one async call.
-        from agent_gantry.integrations import frameworks
-
-        adapters = {
-            "langchain": frameworks.LangChainAdapter,
-            "langgraph": frameworks.LangGraphAdapter,
-            "llamaindex": frameworks.LlamaIndexAdapter,
-            "crewai": frameworks.CrewAIAdapter,
-            "pydantic_ai": frameworks.PydanticAIAdapter,
-            "openai_agents": frameworks.OpenAIAgentsAdapter,
-            "haystack": frameworks.HaystackAdapter,
-            "agno": frameworks.AgnoAdapter,
-            "strands": frameworks.StrandsAdapter,
-            "dspy": frameworks.DSPyAdapter,
-            "google_adk": frameworks.GoogleADKAdapter,
-        }
-
         print("\nExport the selection to each framework's native tool object:")
-        for name, adapter_cls in adapters.items():
+        for name in supported_frameworks():
             try:
-                native = await adapter_cls(gantry).select("email the report to finance", limit=2)
+                native = await gantry.framework(name).select("email the report to finance", limit=2)
                 kind = type(native[0]).__name__ if native else "—"
                 print(f"  [built] {name:<14} -> {len(native)} x {kind}")
             except ImportError:

@@ -41,11 +41,16 @@ from datetime import datetime, timezone
 from typing import Annotated
 
 from agent_framework import Agent
-from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 
 from agent_gantry import AgentGantry, ToolCallEvent, render_result
-from agent_gantry.agent_framework import AgentFrameworkAdapter
+from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+
+try:
+    from agent_framework.openai import OpenAIChatClient
+except ImportError:
+    OpenAIChatClient = None  # Install agent-framework-openai for the live step.
+
 
 load_dotenv()
 
@@ -85,7 +90,7 @@ def _safe_arith(expression: str) -> str:
 # Tags + example queries sharpen the semantic router's recall.
 # ---------------------------------------------------------------------------
 def build_gantry() -> AgentGantry:
-    gantry = AgentGantry()
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
 
     @gantry.register(
         tags=["password", "security", "secret", "random"],
@@ -161,7 +166,7 @@ async def main() -> None:
         # adapts as the agent reasons. The default per_call query generator is driven
         # by the previous tool's result, which is what makes step 2 (hashing) find
         # the hash tool after step 1 (password generation) runs.
-        provider = AgentFrameworkAdapter(gantry).context_provider(
+        provider = gantry.framework("agent_framework").context_provider(
             top_k=3,
             query_strategy="per_call",
         )
@@ -183,6 +188,8 @@ async def main() -> None:
         # question than "can this run", and an Azure-configured reader would be
         # turned away from an example that works for them.
         try:
+            if OpenAIChatClient is None:
+                raise ImportError("Install the chat client: pip install agent-framework-openai")
             OpenAIChatClient()
         except Exception as exc:
             print(f"No usable Agent Framework chat client ({type(exc).__name__}: {exc}).")

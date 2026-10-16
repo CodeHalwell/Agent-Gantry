@@ -6,7 +6,58 @@ objects** — not just JSON schemas — so the framework can introspect and call
 them, while every invocation still routes through `gantry.execute` (retries,
 timeouts, circuit breakers, security policy all apply).
 
-## Supported frameworks
+## Start from your registry
+
+Access the adapter directly, with concrete adapter types available to your editor:
+
+```python
+from agent_gantry import AgentGantry, supported_frameworks
+
+gantry = AgentGantry()
+
+@gantry.register
+def add(a: int, b: int) -> int:
+    """Add two integers together."""
+    return a + b
+
+tools = await gantry.framework("langchain").select("add two numbers", limit=3)
+assert await tools[0].ainvoke({"a": 2, "b": 3}) == 5
+print(supported_frameworks())
+```
+
+Selection syncs pending registrations automatically. Keep an adapter around to
+reuse its configuration, for example `adapter = gantry.framework("langchain",
+default_limit=3)`. Unknown names raise a `ValueError` with a suggested spelling
+and the supported names; invalid budgets fail at adapter construction. Names
+accept hyphens or underscores, and are case-insensitive. Imports and existing
+adapter constructors continue to work.
+
+Install Gantry plus just the SDK you need:
+
+| `gantry.framework(name)` | Install | Minimal wiring |
+|---|---|---|
+| `langchain` | `pip install agent-gantry langchain-core` | `model.bind_tools(await adapter.select(query))` |
+| `langgraph` | `pip install agent-gantry langgraph` | `adapter.live(model=model)` builds the dynamic agent |
+| `llamaindex` | `pip install agent-gantry llama-index-core` | `FunctionAgent(tool_retriever=adapter.live())` |
+| `crewai` | `pip install agent-gantry crewai` | `Agent(..., tools=await adapter.select(query))` |
+| `pydantic_ai` | `pip install agent-gantry pydantic-ai` | `Agent(model, toolsets=[adapter.live()])` |
+| `openai_agents` | `pip install agent-gantry openai-agents` | `Agent(..., tools=await adapter.select(query))` |
+| `haystack` | `pip install agent-gantry haystack-ai` | `Agent(..., tools=await adapter.select(query))` |
+| `agno` | `pip install agent-gantry agno` | `Agent(..., tools=await adapter.select(query))` |
+| `google_adk` | `pip install agent-gantry google-adk` | `Agent(..., before_model_callback=adapter.live())` |
+| `strands` | `pip install agent-gantry strands-agents` | `Agent(hooks=[adapter.live()])` |
+| `dspy` | `pip install agent-gantry dspy` | `dspy.ReAct(signature, tools=await adapter.select(query))` |
+| `agent_framework` | `pip install agent-gantry agent-framework-core` | `provider = adapter.live(); provider.attach_to(agent)` |
+
+Each row assumes `adapter = gantry.framework(name)` and the framework's native
+imports. Model providers may need their own SDK extra and credentials. Framework
+dependency constraints can differ; install the frameworks used by each app in
+that app's environment. Live integrations refresh at the framework's supported
+tier, detailed below. All twelve adapters support `await adapter.select(query)`.
+Microsoft Agent Framework also retains `adapter.tool_bridge()` for cached
+wrappers, relative thresholds, and its lower-level callable integration.
+
+## Supported native tool objects
 
 | Framework | Adapter class | Native object |
 |---|---|---|
@@ -21,6 +72,7 @@ timeouts, circuit breakers, security policy all apply).
 | Google ADK | `GoogleADKAdapter` | `google.adk.tools.FunctionTool` |
 | Strands Agents | `StrandsAdapter` | `strands.tools.decorator.DecoratedFunctionTool` |
 | DSPy | `DSPyAdapter` | `dspy.Tool` |
+| Microsoft Agent Framework | `AgentFrameworkAdapter` | `agent_framework.FunctionTool` |
 
 All third-party imports are **lazy** — `import agent_gantry` never requires any
 of these frameworks. A missing framework raises `ImportError` with a
@@ -98,6 +150,66 @@ tools = await LangChainAdapter(gantry).select(
 The live/dynamic paths (`adapter.live(required=..., always_include=...)` and
 the bespoke methods it delegates to) re-apply both pins on every re-selection
 round, not just the first.
+
+## Schema ownership, updates, and result types
+
+Every selected `ToolSpec` owns a snapshot of its parameter schema. Framework
+normalization and application edits to an exported schema cannot change Gantry's
+registry validation or another selection's schema.
+
+The Microsoft Agent Framework bridge refreshes cached wrappers when the tool's
+schema, description, version, native name, capabilities, or confirmation flag
+changes. Runtime health and routing-only metadata keep the existing wrapper.
+Its cache retains at most 256 wrappers using least-recently-used eviction;
+configure `adapter.tool_bridge(cache_size=64)` or disable reuse with
+`cache_size=0`. Existing `cache=False` and `clear_cache()` options remain available.
+Tool updates become visible after registration/sync and the next selection.
+
+The Agent Framework and OpenAI Agents text wrappers serialize Pydantic models,
+dataclasses, dates, UUIDs, decimals, sets and structured mappings as JSON, matching
+Gantry's provider result formatting. String results remain unchanged.
+
+## Namespaces and callable tools
+
+Tools can share a name across namespaces. Native framework exports use distinct,
+provider-safe names so each tool survives the framework's name index. Ordinary
+names stay unchanged; collisions get a namespace-based alias with a short digest,
+and names longer than 64 characters are shortened. Names remain stable across
+queries and namespace filters while the registry's tool identities stay the same.
+
+`ToolSpec.name` and `ToolSpec.qualified_name` retain the original identity;
+`ToolSpec.native_name` is the name advertised to the framework. Calls still execute
+the original tool through Gantry, including its policy and confirmation checks.
+Keep using original names for pins, such as `required=["billing.lookup"]`;
+`tools_already_used` also accepts the advertised native names.
+
+You can register callable objects and partially bound functions directly:
+
+```python
+from functools import partial
+
+class Notify:
+    async def __call__(self, recipient: str) -> str:
+        """Build a notification for a recipient."""
+        return f"Notification for {recipient}"
+
+def label(prefix: str, value: int) -> str:
+    """Label a numeric value with a fixed prefix."""
+    return f"{prefix}: {value}"
+
+gantry.register(Notify(), name="notify")
+gantry.register(partial(label, "Report"), name="label_report")
+```
+
+Their types and docstrings are preserved. Awaitable results are awaited, even
+when a synchronous decorator returns them. Execution configuration supplies the
+default timeout and retry budget to every framework; a direct
+`ToolCall(..., retry_count=0)` explicitly disables retries for that call. Omit
+the fields to inherit configuration. To serialize a call while preserving which
+settings were omitted, use `call.model_dump(exclude_unset=True)`.
+Provider tool-call conversion and `execute_tool_calls(response)` inherit the same
+configuration. Use `execute_tool_calls(response, timeout_ms=5000, retry_count=0)`
+to override the settings for a model turn.
 
 ## Multi-turn re-selection — autonomous *and* conversational
 
@@ -186,11 +298,11 @@ documented, framework-idiomatic path; `live()` just delegates to one of them):
 | Agno | per-call | `agent_builder` | `GantryLiveAgnoAgent` builder | `await builder.build(query)` per run |
 | Google ADK | per-turn | `before_model_callback` | async `(callback_context, llm_request) -> None` | `Agent(tools=[], before_model_callback=<result>)` |
 | Strands Agents | per-turn | `tool_hook` | `GantryStrandsToolHook` (`HookProvider`) | `Agent(tools=[], hooks=[<result>])` |
-| Microsoft Agent Framework* | per-turn | `context_provider` (`query_strategy="per_call"`) | `GantryContextProvider` | `Agent(context_providers=[<result>])` + `<result>.as_chat_middleware()`, or `<result>.attach_to(agent)` |
+| DSPy | per-call | `agent_builder` (requires `signature=`) | `GantryLiveDSPyReAct` builder | `await builder.build(query)` per task |
+| Microsoft Agent Framework | per-turn | `context_provider` (`query_strategy="per_call"`) | `GantryContextProvider` | `Agent(context_providers=[<result>])` + `<result>.as_chat_middleware()`, or `<result>.attach_to(agent)` |
 
-\* `AgentFrameworkAdapter` (`agent_gantry.agent_framework`) is not a
-`BaseFrameworkAdapter` subclass (no `select`/`convert`) but participates in the
-same `live_tier`/`live()` facade — see `agent_framework_adapter.py`.
+`AgentFrameworkAdapter` uses the shared `select`/`convert` surface and retains
+its AF-specific provider and middleware factories — see `agent_framework_adapter.py`.
 
 ```python
 from agent_gantry.llamaindex import LlamaIndexAdapter

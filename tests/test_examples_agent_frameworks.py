@@ -16,7 +16,7 @@ class _Result:
 
 
 @pytest.mark.asyncio
-async def test_agent_framework_example_runs_with_fakes(monkeypatch):
+async def test_agent_framework_example_runs_with_fakes(monkeypatch, request):
     import sys
     from types import ModuleType
 
@@ -120,23 +120,13 @@ async def test_agent_framework_example_runs_with_fakes(monkeypatch):
     monkeypatch.setitem(sys.modules, "agent_framework.openai", af_openai_mod)
     monkeypatch.setitem(sys.modules, "agent_framework.orchestrations", af_orchestrations_mod)
 
-    # The example module imports the middleware integration at top level,
-    # and the middleware module caches its AF-subclass construction via
-    # lru_cache. Force a fresh import so those modules pick up the stubs
-    # registered above instead of any previously imported agent_framework
-    # objects (and so the lru_cache starts empty for this test).
-    for m in [
-        "agent_gantry.integrations.agent_framework_middleware",
-        "agent_gantry.integrations.agent_framework_bridge",
-        "agent_gantry.integrations",
-    ]:
-        if m in sys.modules:
-            del sys.modules[m]
+    # Rebuild the SDK-dependent middleware classes against the stubs, then
+    # discard them at teardown. Evicting Gantry modules from sys.modules leaves
+    # stale class/module references behind and breaks tests in a different order.
+    from agent_gantry.integrations import agent_framework_middleware
 
-    # Force re-import of the example module
-    mod_name = "examples.agent_frameworks.agent_framework_example"
-    if mod_name in sys.modules:
-        del sys.modules[mod_name]
+    agent_framework_middleware._build_middleware_classes.cache_clear()
+    request.addfinalizer(agent_framework_middleware._build_middleware_classes.cache_clear)
 
     from examples.agent_frameworks import agent_framework_example as mod
 
@@ -221,11 +211,6 @@ async def test_google_adk_example_runs_with_fakes(monkeypatch):
     monkeypatch.setattr(sys.modules["google.genai"], "types", sys.modules["google.genai.types"], raising=False)  # type: ignore[attr-defined]
     monkeypatch.setattr(sys.modules["google.genai.types"], "Content", StubContent, raising=False)  # type: ignore[attr-defined]
     monkeypatch.setattr(sys.modules["google.genai.types"], "Part", StubPart, raising=False)  # type: ignore[attr-defined]
-
-    # Force reimport
-    example_mod_name = "examples.agent_frameworks.google_adk_example"
-    if example_mod_name in sys.modules:
-        del sys.modules[example_mod_name]
 
     from examples.agent_frameworks import google_adk_example as mod
 

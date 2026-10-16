@@ -1,24 +1,19 @@
 # Agent-Gantry Examples
 
-Hands-on examples. **Every one of them runs from a clean checkout with no API
-keys set** — nothing crashes and nothing hangs waiting for a credential.
+Run these examples from the repository root after installing the library and
+any optional packages listed for the example. Start with:
 
-Two different promises there, so to be precise about which you get. Measured on
-2026-09-21 by running all 63 runnable scripts with every credential unset and
-recording what each one actually called: **53 do real Gantry work without a
-key**, 10 exit at a credential check having demonstrated nothing — the seven
-provider-specific `llm_integration/` demos, `llm_intent_classification_example.py`,
-`observability/token_savings_demo.py` and `routing/jev_threshold_tuning_demo.py`.
+```bash
+pip install -e ".[dev]"
+python examples/frameworks/universal_adapters_example.py
+```
 
-The 53 include everything under `agent_frameworks/`, plus `fast_track_demo.py`,
-`project_demo/` and `tool_vector_db/`. Those register and sync first, and —
-where the framework itself is installed — retrieve, convert and print what was
-selected before gating the model call. Without the framework installed they
-still register and sync, then tell you which package to add; a LangChain
-adapter cannot demonstrate much without LangChain.
-
-The 13 run cleanly and tell you which key they want, but show you no routing.
-Bringing them in line is tracked in issue #434.
+Framework examples print their tool selection before making a model call. They
+use a local hash embedder, so they need no embedding-model download. Install
+the chosen SDK to see its native tools; only live model runs need credentials.
+Pydantic AI and DSPy also demonstrate full agent loops using local test models.
+The Nomic routing demo explicitly needs the `nomic` extra and a model download;
+provider-specific demos describe their credential requirements in their headers.
 
 Each subdirectory has its own README with detail and run commands.
 
@@ -32,12 +27,12 @@ python examples/agent_frameworks/langchain_example.py    # no key needed to see 
 
 | Framework | Example | Installed via |
 |---|---|---|
-| LangChain | [`agent_frameworks/langchain_example.py`](agent_frameworks/langchain_example.py) | `agent-gantry[agent-frameworks]` |
-| LangGraph | [`agent_frameworks/langgraph_example.py`](agent_frameworks/langgraph_example.py) | `agent-gantry[agent-frameworks]` |
-| CrewAI | [`agent_frameworks/crewai_example.py`](agent_frameworks/crewai_example.py) | `agent-gantry[agent-frameworks]` |
-| LlamaIndex | [`agent_frameworks/llamaindex_example.py`](agent_frameworks/llamaindex_example.py) | `agent-gantry[agent-frameworks]` |
-| Google ADK | [`agent_frameworks/google_adk_example.py`](agent_frameworks/google_adk_example.py) | `agent-gantry[agent-frameworks]` |
-| Microsoft Agent Framework | [`agent_frameworks/agent_framework_provider_example.py`](agent_frameworks/agent_framework_provider_example.py) | `agent-gantry[agent-frameworks]` |
+| LangChain | [`agent_frameworks/langchain_example.py`](agent_frameworks/langchain_example.py) | `pip install langchain langchain-openai` |
+| LangGraph | [`agent_frameworks/langgraph_example.py`](agent_frameworks/langgraph_example.py) | `pip install langchain langgraph langchain-openai` |
+| CrewAI | [`agent_frameworks/crewai_example.py`](agent_frameworks/crewai_example.py) | `pip install crewai` |
+| LlamaIndex | [`agent_frameworks/llamaindex_example.py`](agent_frameworks/llamaindex_example.py) | `pip install llama-index-core llama-index-llms-openai` |
+| Google ADK | [`agent_frameworks/google_adk_example.py`](agent_frameworks/google_adk_example.py) | `pip install google-adk` |
+| Microsoft Agent Framework | [`agent_frameworks/agent_framework_provider_example.py`](agent_frameworks/agent_framework_provider_example.py) | `pip install agent-framework-core agent-framework-openai agent-framework-orchestrations` |
 | OpenAI Agents SDK | [`agent_frameworks/openai_agents_example.py`](agent_frameworks/openai_agents_example.py) | `pip install openai-agents` |
 | Pydantic AI | [`agent_frameworks/pydantic_ai_example.py`](agent_frameworks/pydantic_ai_example.py) | `pip install pydantic-ai-slim` |
 | Haystack | [`agent_frameworks/haystack_example.py`](agent_frameworks/haystack_example.py) | `pip install haystack-ai` |
@@ -46,15 +41,15 @@ python examples/agent_frameworks/langchain_example.py    # no key needed to see 
 | DSPy | [`agent_frameworks/dspy_example.py`](agent_frameworks/dspy_example.py) | `pip install dspy` |
 | *(none yet)* | [`agent_frameworks/generic_adapters_example.py`](agent_frameworks/generic_adapters_example.py) | — |
 
-The six rows marked `pip install ...` — OpenAI Agents SDK, Pydantic AI,
-Haystack, Agno, Strands and DSPy — are **deliberately not** part of any project
-extra: they cannot co-resolve with the combined `agent-frameworks` set. Install
-them standalone alongside `agent-gantry`. See
+Install only the SDK for the framework you use. The `agent-frameworks` extra
+contains the first six frameworks; OpenAI Agents SDK, Pydantic AI, Haystack,
+Agno, Strands and DSPy are installed separately because some of their dependency
+constraints conflict with that combined extra. See
 [`agent_frameworks/README.md`](agent_frameworks/README.md).
 
 No adapter for your framework? [`agent_frameworks/generic_adapters_example.py`](agent_frameworks/generic_adapters_example.py) shows the
 framework-neutral path, which works anywhere: `GantryToolset(gantry).select(query, limit=1)`
-returns `ToolSpec`s carrying `spec.name`, `spec.description` and `spec.parameters` — hand those
+returns `ToolSpec`s carrying `spec.native_name`, `spec.description` and `spec.parameters` — hand those
 to your framework's tool type and point its callback at `spec.ainvoke(...)`.
 
 ## Not using a framework?
@@ -118,17 +113,17 @@ with no error.
   or connected); `claude_desktop_config.json` launches the real server with
   `agent-gantry serve-mcp --module your.module`.
 - `project_demo/`, `tool_vector_db/` — fuller applications with persistence.
-  Both build a gitignored LanceDB cache on first run (`project_demo/tools/.tool_cache/`
+  The persistent variants build a gitignored LanceDB cache on first run (`project_demo/tools/.tool_cache/`
   and `gantry_tools.lancedb/` in the repo root), so expect the first run to take
-  roughly 30-70 s and to leave those directories behind; later runs reuse them.
+  longer when using a downloaded embedder; later runs reuse the stored embeddings.
 - `testing_limits/` — retrieval accuracy at 30 and 100 tools; the 30-tool run adds an
   LLM selection step when a key is set.
 
 ## Installing
 
 ```bash
-# Everything the examples can use
-pip install -e ".[example-tools,agent-frameworks,mcp,a2a]"
+# Larger example catalogues and the combined framework set
+pip install -e ".[dev,example-tools,agent-frameworks,mcp,a2a]"
 
 # Or only what you need
 pip install -e ".[agent-frameworks]"   # LangChain, LangGraph, CrewAI, LlamaIndex, ADK, MS AF
@@ -153,9 +148,20 @@ async def chat(prompt: str, *, tools=None):
 conversion and execution wiring:
 
 ```python
-tools = await LangChainAdapter(gantry).select(query, limit=3)
+tools = await gantry.framework("langchain").select(query, limit=3)
 agent = create_agent(model=llm, tools=tools)
 ```
 
 Either way every call routes back through `gantry.execute`, so retries,
 timeouts, circuit breakers and the security policy still apply.
+
+## Checking the examples
+
+```bash
+python -m pytest tests/examples tests/test_examples_agent_frameworks.py -q
+```
+
+The checks parse every Python example for Python 3.10 compatibility and run the
+framework entry points without credentials in separate processes. SDK-specific
+checks skip when their optional package is absent. The real-package framework
+matrix tests native construction and tool execution with all twelve SDKs.

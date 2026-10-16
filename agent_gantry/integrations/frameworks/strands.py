@@ -56,7 +56,7 @@ def _spec_to_strands(spec: ToolSpec) -> Any:
 
     async_fn = spec.callable_for_signature()
     return strands_tool(
-        name=spec.name,
+        name=spec.native_name,
         description=spec.description,
         inputSchema={"json": spec.aliased_parameters()},
     )(async_fn)

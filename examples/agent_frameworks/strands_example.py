@@ -3,9 +3,9 @@ AWS Strands Agents + Agent-Gantry integration example.
 
 Demonstrates both re-selection tiers Agent-Gantry offers for Strands:
 
-1. **Static** — ``StrandsAdapter(gantry).select(query, limit=...)`` selects and
+1. **Static** — ``gantry.framework("strands").select(query, limit=...)`` selects and
    converts a fixed slice of tools in one call, ready for ``Agent(tools=[...])``.
-2. **Deep, per-turn** — ``StrandsAdapter(gantry).agent(...)`` builds an
+2. **Deep, per-turn** — ``gantry.framework("strands").agent(...)`` builds an
    ``Agent`` with *no* statically registered tools; a
    ``strands.hooks.BeforeModelCallEvent`` hook re-runs Gantry's semantic router
    before every model call and swaps the agent's tool registry in place. This
@@ -24,11 +24,9 @@ import asyncio
 import os
 
 from agent_gantry import AgentGantry
+from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 
-# Importing the adapter namespace never requires strands-agents to be
-# installed -- the real `strands` import is deferred to the first call that
-# actually needs it (`.select`/`.convert`/`.agent`), caught gracefully below.
-from agent_gantry.strands import StrandsAdapter
+# Framework SDK imports are deferred until selection, with a setup hint below.
 
 
 def _has_model_credentials() -> bool:
@@ -55,7 +53,7 @@ def _has_model_credentials() -> bool:
 
 async def main() -> None:
     # 1. Initialize Agent-Gantry and register tools.
-    gantry = AgentGantry()
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
     try:
 
         @gantry.register(
@@ -88,7 +86,7 @@ async def main() -> None:
         #    The `strands` package is only imported lazily, right here -- catch that
         #    gracefully so the example is useful to run even without it installed.
         try:
-            strands_tools = await StrandsAdapter(gantry).select(
+            strands_tools = await gantry.framework("strands").select(
                 user_query, limit=2
             )
         except ImportError as exc:
@@ -101,7 +99,7 @@ async def main() -> None:
         # 3. Deep path: build an Agent with NO static tools. StrandsAdapter wires a
         #    BeforeModelCallEvent hook that re-selects Gantry tools before every
         #    model call, so the tool surface tracks the conversation turn by turn.
-        live_agent = StrandsAdapter(gantry).agent(
+        live_agent = gantry.framework("strands").agent(
             limit=2,
             system_prompt="You are a helpful assistant with access to weather and finance tools.",
             callback_handler=None,

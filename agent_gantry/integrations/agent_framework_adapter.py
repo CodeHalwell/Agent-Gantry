@@ -20,21 +20,29 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+from agent_gantry.integrations.agent_framework_bridge import (
+    GantryToolBridge,
+    _build_callable_for_tool,
+)
 from agent_gantry.integrations.agent_framework_middleware import (
     GantryApprovalMiddleware,
     GantryObservabilityMiddleware,
     GantryToolChoiceMiddleware,
 )
 from agent_gantry.integrations.agent_framework_provider import GantryContextProvider
-from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT
+from agent_gantry.integrations.frameworks.base import (
+    DEFAULT_TOOL_LIMIT,
+    BaseFrameworkAdapter,
+    ToolSpec,
+)
+from agent_gantry.schema.tool import ToolDefinition
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
     from agent_gantry.core.security import SecurityPolicy
 
 
-class AgentFrameworkAdapter:
+class AgentFrameworkAdapter(BaseFrameworkAdapter):
     """Route Gantry into the Microsoft Agent Framework (AF 1.x).
 
     Example::
@@ -53,12 +61,9 @@ class AgentFrameworkAdapter:
         provider = af.context_provider(top_k=3, query_strategy="per_call")
         provider.attach_to(agent)
 
-    Not a :class:`~agent_gantry.integrations.frameworks.base.BaseFrameworkAdapter`
-    subclass (it has no ``select``/``convert`` staticmethods — see
-    ``tests/frameworks/test_conformance.py``), but it participates in the same
-    uniform ``live_tier`` / :meth:`live` facade the 13 ``<Framework>Adapter``
-    classes expose, since AF genuinely supports per-call (multi-round) dynamic
-    tool re-selection via ``query_strategy="per_call"``.
+    :meth:`select` and :meth:`convert` share the native-adapter selection API,
+    including required tools and namespace filters. The bridge, provider and
+    middleware factories remain available for AF-specific configuration.
     """
 
     #: AF's ``GantryContextProvider`` supports genuine per-round re-selection
@@ -66,8 +71,27 @@ class AgentFrameworkAdapter:
     live_tier = "per-turn"
 
     def __init__(self, gantry: AgentGantry, *, default_top_k: int = DEFAULT_TOOL_LIMIT) -> None:
-        self._gantry = gantry
+        super().__init__(gantry, default_limit=default_top_k)
         self._default_top_k = default_top_k
+
+    @staticmethod
+    def convert(spec: ToolSpec) -> Any:
+        """Convert a selected spec into a native AF FunctionTool.
+
+        Requires agent-framework-core. The lower-level tool bridge retains its
+        optional bare-callable mode for applications that need it.
+        """
+        fields = {
+            "name": spec.name,
+            "namespace": spec._namespace,
+            "description": spec.description,
+            "parameters_schema": spec.parameters,
+            "requires_confirmation": spec.requires_confirmation,
+        }
+        definition = spec.tool.model_copy(update=fields) if spec.tool is not None else ToolDefinition(**fields)
+        return _build_callable_for_tool(
+            definition, spec._gantry, as_function_tool=True, native_name=spec.native_name,
+        )
 
     def live(
         self,
@@ -116,7 +140,7 @@ class AgentFrameworkAdapter:
             **kwargs,
         )
 
-    def tool_bridge(self, **kwargs: Any) -> Any:
+    def tool_bridge(self, **kwargs: Any) -> GantryToolBridge:
         """Build a ``GantryToolBridge`` (query-time tool retrieval / agent building)."""
         return GantryToolBridge(self._gantry, **kwargs)
 

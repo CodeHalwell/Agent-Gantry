@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-A review of the whole library for correctness, dead code and duplication.
-The public API loses only members nothing called; the behaviour changes are
-listed under Fixed. The package is about 3,000 lines shorter.
+## [0.20.0] - 2026-10-16
+
+Twelve native framework integrations share one typed entry point, with safer
+schemas, callable registration, execution defaults and tool naming. This release
+also includes the library-wide correctness and cleanup review below.
 
 **Breaking changes.** The names under Removed are gone without a deprecation
 period; none had a caller in the library, tests, examples or docs, but check
@@ -25,8 +27,69 @@ names changed, and the first sync drops the rows under the old names. `AgentGant
 reranker and telemetry adapter, injected or not; share one embedder between
 gantries only if you close the gantries last.
 
+### Added
+
+- `gantry.framework(name)` and `supported_frameworks()` provide typed framework
+  discovery with actionable setup errors; the wheel includes `py.typed`.
+- Release checks validate all version files, dated changelog notes, and GitHub
+  tags before publishing. GitHub releases use the reviewed changelog notes.
+
 ### Fixed
 
+- Examples use the current framework entry point, defer model-only imports, and
+  run selection before credential checks. Offline LLM demos avoid embedding-model
+  downloads; token counting falls back when its vocabulary cannot be downloaded.
+  Persistent hash embeddings now match the configured vector dimension.
+  The larger Responses API demos use `execute_tool_calls` for argument parsing,
+  call IDs, error reporting and structured result serialization.
+
+- **Exported native-tool schemas are isolated from the registry.** Editing an
+  exported schema or letting an SDK normalize it cannot change subsequent
+  selection or canonical argument validation.
+- **Microsoft Agent Framework wrappers follow tool revisions.** The bridge
+  refreshes schema and approval metadata automatically and keeps a bounded,
+  thread-safe LRU cache (`cache_size=256`, zero disables reuse). A tool's
+  `requires_confirmation` flag now sets native AF approval metadata too.
+- **All twelve native adapters support `select(query)` and `convert(spec)`.**
+  Microsoft Agent Framework shares the selection core, including required tools,
+  namespace filtering and the common default budget; its existing factories remain.
+- **Provider tool calls inherit execution configuration.** Conversion no longer
+  injects explicit default timeout/retry values, and `execute_tool_calls` supports
+  `retry_count=0` for a per-turn override. AF and OpenAI Agents wrappers also use
+  the shared result serializer, preserving structured Python results as JSON.
+- **Same-named tools in different namespaces stay usable in native frameworks.**
+  Framework-facing names now disambiguate collisions and fit the common 64-character
+  provider limit. Aliases stay stable across selection subsets, and execution,
+  policies, pins and usage tracking continue to use the original tool identities.
+  This also covers live Pydantic AI toolsets, LangGraph's tool superset, and the
+  Microsoft Agent Framework bridge and provider.
+- **Callable objects and partials preserve their types and behavior.** Registration
+  no longer unwraps `functools.partial` and discards bound arguments. Callable
+  objects and partials supply their underlying annotations and docstrings;
+  async callable objects and returned awaitables are awaited under the execution
+  timeout, with their failures and cancellation handled normally.
+- **Execution configuration applies when a call omits overrides.** The configured
+  timeout was masked by `ToolCall`'s default value, and `retry_count=0` incorrectly
+  inherited configured retries. Omitted fields now inherit the executor settings,
+  while explicit values take precedence, including zero retries.
+- **DSPy tools accept nullable and multi-type parameters.** DSPy's schema helper
+  crashes on JSON-Schema type lists such as `["string", "null"]`; the adapter
+  now handles those lists while preserving the full schema and explicit nulls.
+  Real-package regression tests cover arrays, enums, defaults, nulls and
+  namespace routing across the native adapters.
+- **Framework setup is available from the registry:**
+  `gantry.framework("langchain").select(query)` and
+  `gantry.framework("pydantic-ai").live()` reach the existing native adapters
+  without framework-specific Gantry imports. All twelve adapters are discoverable
+  with `supported_frameworks()`. Literal names retain concrete adapter types for
+  editor completion, and the distribution now ships a PEP 561 `py.typed` marker.
+- **Shared framework argument normalization avoids unnecessary container copies**
+  and skips walking free-form payloads whose schemas need no conversion. Changed
+  paths are copied while caller-owned arguments remain untouched. A standalone
+  microbenchmark records latency and peak allocations.
+- **Framework CI checks fail when an expected SDK cannot import** rather than
+  silently skipping its real-package smoke tests. Minimal local installations
+  continue to skip SDKs that are not installed.
 - **The five vector stores now honour one contract.** Qdrant and Chroma
   `delete()` report a missing tool as `False`; Qdrant, Chroma and PGVector
   honour the `tags` filter and, with `upsert=False`, skip stored ids and count

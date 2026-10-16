@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-gantry"
-version = "0.19.0"
+version = "0.20.0"
 description = "Universal Tool Orchestration Platform - Intelligent, secure tool orchestration for LLM-based agent systems"
 readme = "README.md"
 license = "MIT"
@@ -453,6 +453,7 @@ packages = ["agent_gantry"]
 # find the skill via the standard discovery path
 # (``$VENV/share/claude/skills/`` is searched at startup).
 include = [
+    "agent_gantry/py.typed",
     "agent_gantry/**/*.py",
     "agent_gantry/**/*.md",
     "agent_gantry/**/*.txt",

@@ -91,7 +91,7 @@ def _declaration_from_schema(spec: ToolSpec) -> Any:
     schema.setdefault("properties", {})
     try:
         return declaration_cls(
-            name=spec.name,
+            name=spec.native_name,
             description=spec.description,
             parameters_json_schema=schema,
         )

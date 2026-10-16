@@ -1,9 +1,8 @@
 """
 Mistral AI + Agent-Gantry integration demo.
 
-The official `mistralai` SDK was quarantined on PyPI on 2026-05-12 and is no
-longer installable from the package index. Mistral's chat endpoint is
-OpenAI-compatible, so this demo uses the `openai` Python SDK with
+Mistral's chat endpoint is OpenAI-compatible, so this demo shares the
+library's `openai` SDK dependency and configures it with
 ``base_url="https://api.mistral.ai/v1"``. All function-calling schemas produced
 by Gantry's ``dialect="openai"`` or default adapter work without modification.
 

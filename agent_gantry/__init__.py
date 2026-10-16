@@ -18,6 +18,7 @@ from agent_gantry.integrations.agent_framework_provider import (
     GantryContextProvider,
     MissingRequiredToolError,
 )
+from agent_gantry.integrations.frameworks.registry import supported_frameworks
 from agent_gantry.integrations.semantic_tools import (
     set_default_gantry,
     with_semantic_tools,
@@ -122,7 +123,7 @@ def __getattr__(name: str) -> "Any":
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__version__ = "0.19.0"
+__version__ = "0.20.0"
 __all__ = [
     "AgentGantry",
     "StreamingToolCallAccumulator",
@@ -140,6 +141,7 @@ __all__ = [
     "reset_sse_shutdown_latch",
     "with_semantic_tools",
     "set_default_gantry",
+    "supported_frameworks",
     "ToolCall",
     "ToolCallEvent",
     "ToolResult",

@@ -257,7 +257,7 @@ def _toolset_class(abstract_toolset: type) -> type:
                     exc_info=True,
                 )
                 return {}
-            return {spec.name: self._spec_to_tool(ctx, spec) for spec in specs}
+            return {spec.native_name: self._spec_to_tool(ctx, spec) for spec in specs}
 
         def _spec_to_tool(self, ctx: Any, spec: ToolSpec) -> Any:
             """Wrap a :class:`ToolSpec` as a native ``ToolsetTool``.
@@ -266,7 +266,7 @@ def _toolset_class(abstract_toolset: type) -> type:
             ``parameters_json_schema`` so the model sees the real parameters.
             """
             tool_def = ToolDefinition(
-                name=spec.name,
+                name=spec.native_name,
                 description=spec.description,
                 parameters_json_schema=spec.parameters or {"type": "object", "properties": {}},
             )
