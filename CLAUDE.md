@@ -31,7 +31,7 @@ ruff check --fix agent_gantry/ examples/ scripts/ tests/ # lint + autofix
 ruff format agent_gantry/                                # format
 ```
 
-Note: there is **no mypy config** in `pyproject.toml` and mypy is not a dev dependency, despite older docs (CONTRIBUTING.md, copilot-instructions.md) mentioning it. Ruff is the enforced linter/formatter (line length 100, rules `E,F,I,N,W,UP`, ignoring `E501,E402`). Static typing is still expected by convention but not gated in CI.
+Note: there is **no mypy config** in `pyproject.toml` and mypy is not a dev dependency. Ruff is the enforced linter/formatter (line length 100, rules `E,F,I,N,W,UP`, ignoring `E501,E402`). Static typing is still expected by convention but not gated in CI.
 
 ### Docs site
 ```bash

@@ -87,10 +87,10 @@ Before submitting a pull request, ensure your code passes all quality checks:
 
 ```bash
 # Run linter
-ruff check agent_gantry/
+ruff check agent_gantry/ examples/ scripts/ tests/
 
 # Auto-fix linting issues
-ruff check --fix agent_gantry/
+ruff check --fix agent_gantry/ examples/ scripts/ tests/
 
 # Format code (if you have ruff format)
 ruff format agent_gantry/
@@ -100,7 +100,7 @@ ruff format agent_gantry/
 
 ### Python Style Guidelines
 
-- **Python Version**: Python 3.10+ required
+- **Python Version**: Python 3.10–3.14 supported
 - **Line Length**: Maximum 100 characters
 - **Type Hints**: Use type hints for all function signatures
 - **Docstrings**: Use Google-style docstrings

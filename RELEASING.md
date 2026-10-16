@@ -36,9 +36,13 @@ Open **Actions → Publish to PyPI → Run workflow**, choose `main`, and choose
 publish target:
 
 - `testpypi` (the default) publishes to TestPyPI only. It creates no tag or GitHub Release.
-- `pypi` publishes to PyPI, tags the checked-out source `v<version>`, and creates
+- `pypi` tags the checked-out source `v<version>`, publishes to PyPI, and creates
   the GitHub Release using the dated changelog entry. The release includes both
   distributions and `SHA256SUMS`.
+
+Manual production runs must select `main`; other refs fail before building.
+The source tag is created after wheel checks and before the PyPI upload. If an
+upload fails, retry the original workflow to publish the same tagged source.
 
 Before either upload, the workflow checks distribution metadata and installs
 the built wheel on Python 3.10, 3.11, 3.12, 3.13 and 3.14. Those clean installations
@@ -55,7 +59,8 @@ Uploading to an existing release replaces same-named distribution and checksum
 assets, including files attached by hand; other assets are left alone. Re-run
 the original failed workflow to retain its source commit. Starting a new run
 from an advanced branch for an already-tagged version is rejected; use the
-matching tag or prepare a new version.
+original workflow or prepare a new version. Release-triggered runs build their
+published tag rather than `main`.
 
 ## One-time setup
 

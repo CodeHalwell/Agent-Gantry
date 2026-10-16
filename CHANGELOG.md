@@ -36,7 +36,11 @@ fields inherit execution configuration. Persist calls with
 
 - Python 3.14 support, including the CI framework matrix and clean release-wheel checks.
 - `gantry.framework(name)` and `supported_frameworks()` provide typed framework
-  discovery with actionable setup errors; the wheel includes `py.typed`.
+  discovery with actionable setup errors. Literal names retain concrete adapter
+  types for editor completion, and the wheel includes `py.typed`.
+- All twelve native adapters support `select(query)` and `convert(spec)`.
+  Microsoft Agent Framework shares the selection core, including required tools,
+  namespace filtering and the common default budget; its existing factories remain.
 - Release checks validate all version files, dated changelog notes, and GitHub
   tags before publishing. GitHub releases use the reviewed changelog notes.
 
@@ -49,13 +53,14 @@ fields inherit execution configuration. Persist calls with
 - Legacy-marked async decorators keep async retrieval and usage tracking on
   Python 3.10/3.11. Native tool aliases retain their namespace when tracking
   used tools, so conversation signals and penalties affect the selected tool.
+- Agent Framework per-call refresh removes stale native aliases before adding
+  the next top-k, including tools with colliding or long authored names.
 - Examples use the current framework entry point, defer model-only imports, and
   run selection before credential checks. Offline LLM demos avoid embedding-model
   downloads; token counting falls back when its vocabulary cannot be downloaded.
   Persistent hash embeddings now match the configured vector dimension.
   The larger Responses API demos use `execute_tool_calls` for argument parsing,
   call IDs, error reporting and structured result serialization.
-
 - **Exported native-tool schemas are isolated from the registry.** Editing an
   exported schema or letting an SDK normalize it cannot change subsequent
   selection or canonical argument validation.
@@ -63,9 +68,6 @@ fields inherit execution configuration. Persist calls with
   refreshes schema and approval metadata automatically and keeps a bounded,
   thread-safe LRU cache (`cache_size=256`, zero disables reuse). A tool's
   `requires_confirmation` flag now sets native AF approval metadata too.
-- **All twelve native adapters support `select(query)` and `convert(spec)`.**
-  Microsoft Agent Framework shares the selection core, including required tools,
-  namespace filtering and the common default budget; its existing factories remain.
 - **Provider tool calls inherit execution configuration.** Conversion no longer
   injects explicit default timeout/retry values, and `execute_tool_calls` supports
   `retry_count=0` for a per-turn override. AF and OpenAI Agents wrappers also use
@@ -90,12 +92,6 @@ fields inherit execution configuration. Persist calls with
   now handles those lists while preserving the full schema and explicit nulls.
   Real-package regression tests cover arrays, enums, defaults, nulls and
   namespace routing across the native adapters.
-- **Framework setup is available from the registry:**
-  `gantry.framework("langchain").select(query)` and
-  `gantry.framework("pydantic-ai").live()` reach the existing native adapters
-  without framework-specific Gantry imports. All twelve adapters are discoverable
-  with `supported_frameworks()`. Literal names retain concrete adapter types for
-  editor completion, and the distribution now ships a PEP 561 `py.typed` marker.
 - **Shared framework argument normalization avoids unnecessary container copies**
   and skips walking free-form payloads whose schemas need no conversion. Changed
   paths are copied while caller-owned arguments remain untouched. A standalone

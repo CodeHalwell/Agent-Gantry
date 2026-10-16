@@ -28,10 +28,15 @@ def _build_call(construction: str, **values: Any) -> ToolCall:
         return ToolCall.model_construct(**values)
     if construction == "copy":
         return ToolCall(tool_name="original", arguments={}).model_copy(update=values)
+    if construction == "assignment":
+        call = ToolCall(tool_name="original", arguments={})
+        for name, value in values.items():
+            setattr(call, name, value)
+        return call
     return ToolCall(**values)
 
 
-@pytest.mark.parametrize("construction", ["validated", "construct", "copy"])
+@pytest.mark.parametrize("construction", ["validated", "construct", "copy", "assignment"])
 @pytest.mark.parametrize("explicit", [False, True])
 async def test_zero_retries_is_distinct_from_an_omitted_retry_count(
     explicit, construction, monkeypatch
@@ -61,7 +66,7 @@ async def test_zero_retries_is_distinct_from_an_omitted_retry_count(
         assert result.status == (ExecutionStatus.FAILURE if explicit else ExecutionStatus.SUCCESS)
 
 
-@pytest.mark.parametrize("construction", ["validated", "construct", "copy"])
+@pytest.mark.parametrize("construction", ["validated", "construct", "copy", "assignment"])
 @pytest.mark.parametrize("explicit", [False, True])
 async def test_timeout_configuration_applies_unless_the_call_overrides_it(explicit, construction):
     config = AgentGantryConfig(execution=ExecutionConfig(default_timeout_ms=100, max_retries=0))
@@ -102,7 +107,10 @@ async def test_sync_framework_bridge_uses_the_configured_timeout():
 
 
 @pytest.mark.parametrize("exclude_unset", [False, True])
-async def test_serialized_call_preserves_omission_only_when_requested(exclude_unset, monkeypatch):
+@pytest.mark.parametrize("serialization", ["python", "json"])
+async def test_serialized_call_preserves_omission_only_when_requested(
+    exclude_unset, serialization, monkeypatch
+):
     config = AgentGantryConfig(execution=ExecutionConfig(max_retries=1))
     attempts = []
     async with AgentGantry(config=config) as gantry:
@@ -117,7 +125,12 @@ async def test_serialized_call_preserves_omission_only_when_requested(exclude_un
 
         monkeypatch.setattr("agent_gantry.core.executor.asyncio.sleep", AsyncMock())
         original = ToolCall(tool_name="flaky", arguments={})
-        restored = ToolCall.model_validate(original.model_dump(exclude_unset=exclude_unset))
+        if serialization == "json":
+            restored = ToolCall.model_validate_json(
+                original.model_dump_json(exclude_unset=exclude_unset)
+            )
+        else:
+            restored = ToolCall.model_validate(original.model_dump(exclude_unset=exclude_unset))
         result = await gantry.execute(restored)
         assert len(attempts) == (2 if exclude_unset else 1)
         assert result.status == (
@@ -126,7 +139,8 @@ async def test_serialized_call_preserves_omission_only_when_requested(exclude_un
 
 
 @pytest.mark.parametrize("exclude_unset", [False, True])
-async def test_serialized_timeout_defaults_are_explicit_unless_excluded(exclude_unset):
+@pytest.mark.parametrize("serialization", ["python", "json"])
+async def test_serialized_timeout_defaults_are_explicit_unless_excluded(exclude_unset, serialization):
     config = AgentGantryConfig(execution=ExecutionConfig(default_timeout_ms=100, max_retries=0))
     async with AgentGantry(config=config) as gantry:
 
@@ -137,7 +151,12 @@ async def test_serialized_timeout_defaults_are_explicit_unless_excluded(exclude_
             return "done"
 
         original = ToolCall(tool_name="slow", arguments={})
-        restored = ToolCall.model_validate(original.model_dump(exclude_unset=exclude_unset))
+        if serialization == "json":
+            restored = ToolCall.model_validate_json(
+                original.model_dump_json(exclude_unset=exclude_unset)
+            )
+        else:
+            restored = ToolCall.model_validate(original.model_dump(exclude_unset=exclude_unset))
         result = await gantry.execute(restored)
         assert result.status == (
             ExecutionStatus.TIMEOUT if exclude_unset else ExecutionStatus.SUCCESS

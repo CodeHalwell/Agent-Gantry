@@ -78,6 +78,7 @@ from agent_gantry.integrations.agent_framework_bridge import (
 from agent_gantry.integrations.agent_framework_middleware import _import_af_chat_middleware
 from agent_gantry.integrations.frameworks.base import (
     _maybe_await,
+    _native_tool_names,
     _pin_specs,
     _resolve_tool_names,
 )
@@ -707,7 +708,7 @@ def _build_impl_class(base: type) -> type:
             )
 
         def _all_known_tool_names(self) -> set[str]:
-            """Every tool name registered in the gantry.
+            """Authored and native names of every tool registered in the gantry.
 
             Used to identify which entries in ``context.options['tools']``
             were produced by this gantry (or any other provider sharing
@@ -715,7 +716,13 @@ def _build_impl_class(base: type) -> type:
             per-round selection.
             """
             try:
-                return {t.name for t in self._gantry.list_tools_sync()}
+                definitions = self._gantry.list_tools_sync()
+                # The bridge advertises aliases for namespace collisions and
+                # long names. Match that same full-registry mapping so a prior
+                # round's wrapper is removed before the fresh top-k is added.
+                return {t.name for t in definitions} | set(
+                    _native_tool_names(definitions).values()
+                )
             except Exception:
                 return set()
 

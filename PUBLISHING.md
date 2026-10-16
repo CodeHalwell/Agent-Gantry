@@ -11,6 +11,11 @@ checks the distributions, smoke-installs the wheel on all supported Python
 versions, and only then uploads. A production run also creates the matching
 GitHub tag and Release with changelog notes and checksums.
 
+If trusted publishing fails, check the PyPI publisher's repository, workflow and
+environment names against [RELEASING.md](RELEASING.md), then retry the original
+run. An emergency token-based upload must use the validated workflow artifacts
+and checksums; it also requires completing the tag and GitHub release steps.
+
 To inspect artifacts locally without publishing:
 
 ```bash

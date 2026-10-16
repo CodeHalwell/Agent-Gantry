@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -813,3 +815,42 @@ async def test_required_qualified_name_resolves_per_request(monkeypatch):
     tools = provider._pin_tools(["billing.refund"], {"default.refund"}, {"refund"})
     assert len(tools) == 1
     assert provider._pin_tools(["billing.refund"], {"billing.refund"}, {"refund"}) == []
+
+
+@pytest.mark.parametrize("name", ["lookup", "x" * 128])
+@pytest.mark.parametrize("as_function_tool", [False, True])
+async def test_per_call_refresh_removes_stale_native_aliases(
+    name, as_function_tool, monkeypatch
+):
+    """Switch namespaces without accumulating tools or dropping foreign tools."""
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+
+    async with AgentGantry(embedder=SimpleEmbedder()) as gantry:
+        for namespace in ("billing", "inventory"):
+
+            def lookup(item: str) -> str:
+                """Look up an item."""
+                return item
+
+            gantry.register(lookup, name=name, namespace=namespace)
+
+        bridge = GantryToolBridge(gantry, as_function_tool=as_function_tool)
+        wrappers = bridge.wrap_tools(gantry.list_tools_sync())
+        aliases = _tool_names(wrappers)
+        assert len(set(aliases)) == 2
+        assert all(alias != name and len(alias) <= 64 for alias in aliases)
+        provider = GantryContextProvider(gantry, top_k=1, query_strategy="per_call")
+        monkeypatch.setattr(
+            provider._bridge,
+            "get_tools_with_decision",
+            AsyncMock(side_effect=[([wrappers[0]], None), ([wrappers[1]], None), ([], None)]),
+        )
+        foreign = SimpleNamespace(name="foreign_skill")
+        options = {"tools": [foreign]}
+        context = SimpleNamespace(options=options, messages=[_user_msg("look up item")])
+
+        for expected in ([foreign, wrappers[0]], [foreign, wrappers[1]], [foreign]):
+            await provider._refresh_tools_on_chat_context(context)
+            assert context.options is options
+            assert context.options["tools"] == expected

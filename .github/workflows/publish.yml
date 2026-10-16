@@ -32,6 +32,17 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Validate production publish source
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUBLISH_TARGET: ${{ inputs.target }}
+          SOURCE_REF: ${{ github.ref }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$PUBLISH_TARGET" = "pypi" ] && [ "$SOURCE_REF" != "refs/heads/main" ]; then
+            echo "::error::Manual production publishing must run from main. Re-run the original workflow to retry its source commit."
+            exit 1
+          fi
+
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
@@ -188,19 +199,10 @@ jobs:
       - name: Verify distribution checksums
         run: sha256sum --check release-metadata/SHA256SUMS
 
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist/
-          skip-existing: true
-
-      # On a manual publish, record the release in git: tag the checked-out commit
-      # and cut a GitHub Release from the version in pyproject.toml. When the run
-      # was triggered by a GitHub Release being *published*, the tag/release
-      # already exist. Upload assets on both paths, including a partial retry.
-      - name: Tag and create GitHub Release
+      # Record the validated source before uploading to PyPI, so a tag-write
+      # failure cannot leave a published package without a matching source tag.
+      - name: Ensure release tag
         env:
-          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.build.outputs.version }}
         run: |
           set -euo pipefail
@@ -216,6 +218,21 @@ jobs:
             git tag -a "v$VERSION" "$GITHUB_SHA" -m "Release v$VERSION"
             git push origin "refs/tags/v$VERSION"
           fi
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: true
+
+      # A release-triggered run already has a GitHub Release; a manual run
+      # creates it after publication. Both paths repair assets on retry.
+      - name: Create GitHub Release and upload assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
           if gh release view "v$VERSION" >/dev/null 2>&1; then
             gh release upload "v$VERSION" dist/* release-metadata/SHA256SUMS --clobber
           else

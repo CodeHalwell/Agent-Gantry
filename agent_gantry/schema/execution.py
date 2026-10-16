@@ -33,6 +33,9 @@ class ToolCall(BaseModel):
     Omitted execution settings inherit the executor configuration. Persist with
     ``model_dump(exclude_unset=True)`` to preserve that intent when reloading;
     plain ``model_dump()`` writes default values as explicit overrides.
+    These are request overrides, not resolved settings: telemetry and callbacks
+    receive this original request. Check ``model_fields_set`` before interpreting
+    a timeout or retry value as an explicit setting. Assignment makes it explicit.
     """
 
     tool_name: str
@@ -137,6 +140,7 @@ class ToolCallEvent:
     accessors mirror the most-used fields of the underlying result.
     """
 
+    #: Original request, retaining omitted overrides; see ToolCall.model_fields_set.
     call: ToolCall
     result: ToolResult
 
