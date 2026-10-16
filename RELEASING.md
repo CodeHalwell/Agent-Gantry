@@ -41,7 +41,7 @@ publish target:
   distributions and `SHA256SUMS`.
 
 Before either upload, the workflow checks distribution metadata and installs
-the built wheel on Python 3.10, 3.11, 3.12 and 3.13. Those clean installations
+the built wheel on Python 3.10, 3.11, 3.12, 3.13 and 3.14. Those clean installations
 verify the version, typing marker, tool selection and execution, and lazy
 construction of all twelve framework adapters without their SDKs.
 
@@ -51,6 +51,11 @@ PyPI and attaches the artifacts to the existing release.
 
 Runs are serialized. A retry skips distributions already on the package index
 and repairs missing GitHub release assets; it never moves an existing tag.
+Uploading to an existing release replaces same-named distribution and checksum
+assets, including files attached by hand; other assets are left alone. Re-run
+the original failed workflow to retain its source commit. Starting a new run
+from an advanced branch for an already-tagged version is rejected; use the
+matching tag or prepare a new version.
 
 ## One-time setup
 

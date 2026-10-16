@@ -34,6 +34,8 @@ for an unchanged mapping. A free-form object can skip traversal entirely.
 These are local microbenchmark results for argument normalization, not estimates
 of end-to-end agent latency. Payloads that need conversion still allocate their
 changed containers.
+It is a manual diagnostic, with no timing gate in CI: runner load and Python
+versions affect these small measurements. Compare before and after on the same machine.
 
 ## Reference results
 

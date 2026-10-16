@@ -11,6 +11,7 @@ accounting.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import time
 from enum import Enum
 from typing import Any
@@ -246,12 +247,12 @@ class TestQueryStrategies:
             return "from async"
 
         chained = fallback_chain(empty, answer, last_user_text)
-        assert asyncio.iscoroutinefunction(chained)
+        assert inspect.iscoroutinefunction(chained)
         assert await chained([{"role": "user", "content": "hi"}]) == "from async"
 
         # A chain of sync generators stays sync
         sync_chain = fallback_chain(lambda _m: "", last_user_text)
-        assert not asyncio.iscoroutinefunction(sync_chain)
+        assert not inspect.iscoroutinefunction(sync_chain)
         assert sync_chain([{"role": "user", "content": "hi"}]) == "hi"
 
         # An async generator that yields nothing falls through to a sync one
@@ -272,7 +273,7 @@ class TestQueryStrategies:
                 return self._text
 
         chained = fallback_chain(AsyncGenerator("from object"), last_user_text)
-        assert asyncio.iscoroutinefunction(chained)
+        assert inspect.iscoroutinefunction(chained)
         assert await chained([{"role": "user", "content": "hi"}]) == "from object"
 
         # an empty one still falls through to the sync generator after it

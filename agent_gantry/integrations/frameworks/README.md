@@ -45,7 +45,7 @@ Install Gantry plus just the SDK you need:
 | `haystack` | `pip install agent-gantry haystack-ai` | `Agent(..., tools=await adapter.select(query))` |
 | `agno` | `pip install agent-gantry agno` | `Agent(..., tools=await adapter.select(query))` |
 | `google_adk` | `pip install agent-gantry google-adk` | `Agent(..., before_model_callback=adapter.live())` |
-| `strands` | `pip install agent-gantry strands-agents` | `Agent(hooks=[adapter.live()])` |
+| `strands` | `pip install agent-gantry 'strands-agents>=1'` | `Agent(hooks=[adapter.live()])` |
 | `dspy` | `pip install agent-gantry dspy` | `dspy.ReAct(signature, tools=await adapter.select(query))` |
 | `agent_framework` | `pip install agent-gantry agent-framework-core` | `provider = adapter.live(); provider.attach_to(agent)` |
 

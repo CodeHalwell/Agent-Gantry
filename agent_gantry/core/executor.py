@@ -777,7 +777,7 @@ class ExecutionEngine:
         arguments = _reconstructed(handler, arguments)
 
         async def invoke() -> Any:
-            if asyncio.iscoroutinefunction(handler) or asyncio.iscoroutinefunction(
+            if inspect.iscoroutinefunction(handler) or inspect.iscoroutinefunction(
                 getattr(handler, "__call__", None)
             ):
                 result = handler(**arguments)
@@ -786,6 +786,8 @@ class ExecutionEngine:
             # Callable objects and synchronous decorators can return awaitables
             # without being coroutine functions themselves. Await the result
             # under the same timeout, so failures and cancellations are observed.
+            # Returned awaitables run on this loop and must keep blocking work
+            # off it, just like an async handler declared with async def.
             return await result if inspect.isawaitable(result) else result
 
         return await asyncio.wait_for(invoke(), timeout=timeout_s)
@@ -803,7 +805,9 @@ class ExecutionEngine:
         from agent_gantry.core.security import PermissionDeniedError
 
         retries = call.retry_count if "retry_count" in call.model_fields_set else self._max_retries
-        timeout_ms = call.timeout_ms if "timeout_ms" in call.model_fields_set else self._default_timeout
+        timeout_ms = (
+            call.timeout_ms if "timeout_ms" in call.model_fields_set else self._default_timeout
+        )
         max_attempts = retries + 1
         last_error: str | None = None
         last_error_type: str | None = None

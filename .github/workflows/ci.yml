@@ -48,7 +48,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
 
@@ -97,7 +97,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         include:
           # Single macOS cell to catch platform-specific drift without
           # multiplying the full OS x Python grid (cost control).
@@ -131,11 +131,13 @@ jobs:
       # tests/frameworks/test_haystack_build_live.py), and dspy 3.3.0 (fully
       # backward compatible on the adapter surface; ReActV2 remains a separate
       # experimental class).
+      # strands-agents 0.0.1 is an empty placeholder. Without a real-version
+      # floor, uv can select it to keep a newer MCP dependency on Python 3.10/3.11.
       - name: Run adapter smoke tests
         run: |
           uv venv .venv-frameworks --python ${{ matrix.python-version }}
           uv pip install --python .venv-frameworks ".[dev]" \
-            pydantic-ai-slim openai-agents haystack-ai agno strands-agents dspy
+            pydantic-ai-slim openai-agents haystack-ai agno "strands-agents>=1" dspy
           .venv-frameworks/bin/python -m pytest tests/frameworks/ -v
 
   docs:

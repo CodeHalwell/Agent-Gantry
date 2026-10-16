@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -22,8 +23,19 @@ PROVIDERS = [
 ]
 
 
+def _build_call(construction: str, **values: Any) -> ToolCall:
+    if construction == "construct":
+        return ToolCall.model_construct(**values)
+    if construction == "copy":
+        return ToolCall(tool_name="original", arguments={}).model_copy(update=values)
+    return ToolCall(**values)
+
+
+@pytest.mark.parametrize("construction", ["validated", "construct", "copy"])
 @pytest.mark.parametrize("explicit", [False, True])
-async def test_zero_retries_is_distinct_from_an_omitted_retry_count(explicit, monkeypatch):
+async def test_zero_retries_is_distinct_from_an_omitted_retry_count(
+    explicit, construction, monkeypatch
+):
     config = AgentGantryConfig(execution=ExecutionConfig(max_retries=1))
     attempts = []
 
@@ -38,14 +50,20 @@ async def test_zero_retries_is_distinct_from_an_omitted_retry_count(explicit, mo
             return "done"
 
         monkeypatch.setattr("agent_gantry.core.executor.asyncio.sleep", AsyncMock())
-        call = ToolCall(tool_name="flaky", arguments={}, **({"retry_count": 0} if explicit else {}))
+        call = _build_call(
+            construction,
+            tool_name="flaky",
+            arguments={},
+            **({"retry_count": 0} if explicit else {}),
+        )
         result = await gantry.execute(call)
         assert len(attempts) == (1 if explicit else 2)
         assert result.status == (ExecutionStatus.FAILURE if explicit else ExecutionStatus.SUCCESS)
 
 
+@pytest.mark.parametrize("construction", ["validated", "construct", "copy"])
 @pytest.mark.parametrize("explicit", [False, True])
-async def test_timeout_configuration_applies_unless_the_call_overrides_it(explicit):
+async def test_timeout_configuration_applies_unless_the_call_overrides_it(explicit, construction):
     config = AgentGantryConfig(execution=ExecutionConfig(default_timeout_ms=100, max_retries=0))
     async with AgentGantry(config=config) as gantry:
 
@@ -55,8 +73,11 @@ async def test_timeout_configuration_applies_unless_the_call_overrides_it(explic
             await asyncio.sleep(0.2)
             return "done"
 
-        call = ToolCall(
-            tool_name="slow", arguments={}, **({"timeout_ms": 2000} if explicit else {})
+        call = _build_call(
+            construction,
+            tool_name="slow",
+            arguments={},
+            **({"timeout_ms": 2000} if explicit else {}),
         )
         result = await gantry.execute(call)
         assert result.status == (ExecutionStatus.SUCCESS if explicit else ExecutionStatus.TIMEOUT)

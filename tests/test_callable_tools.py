@@ -92,7 +92,8 @@ async def test_sync_handler_returning_awaitable_is_awaited():
         assert sync_threads and sync_threads[0] != loop_thread
 
 
-async def test_awaitable_failure_is_reported_instead_of_success():
+@pytest.mark.parametrize("async_object", [False, True], ids=["sync_factory", "async_callable"])
+async def test_awaitable_failure_is_reported_instead_of_success(async_object):
     def fail_later():
         """Fail after the synchronous handler returns."""
 
@@ -101,16 +102,21 @@ async def test_awaitable_failure_is_reported_instead_of_success():
 
         return fail()
 
+    class FailingCallable:
+        async def __call__(self):
+            return await fail_later()
+
     config = AgentGantryConfig(execution=ExecutionConfig(max_retries=0))
     async with AgentGantry(config=config) as gantry:
-        gantry.register(fail_later)
+        gantry.register(FailingCallable() if async_object else fail_later, name="fail_later")
         result = await gantry.execute(ToolCall(tool_name="fail_later", arguments={}))
         assert result.status == ExecutionStatus.FAILURE
         assert result.error_type == "ValueError"
         assert "failure inside awaitable" in result.error
 
 
-async def test_timeout_covers_returned_awaitable_and_cancels_it():
+@pytest.mark.parametrize("async_object", [False, True], ids=["sync_factory", "async_callable"])
+async def test_timeout_covers_returned_awaitable_and_cancels_it(async_object):
     cancelled = asyncio.Event()
 
     def wait_later():
@@ -124,9 +130,13 @@ async def test_timeout_covers_returned_awaitable_and_cancels_it():
 
         return wait()
 
+    class WaitingCallable:
+        async def __call__(self):
+            return await wait_later()
+
     config = AgentGantryConfig(execution=ExecutionConfig(max_retries=0))
     async with AgentGantry(config=config) as gantry:
-        gantry.register(wait_later)
+        gantry.register(WaitingCallable() if async_object else wait_later, name="wait_later")
         result = await gantry.execute(
             ToolCall(tool_name="wait_later", arguments={}, timeout_ms=100)
         )

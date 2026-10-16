@@ -37,7 +37,7 @@ python examples/agent_frameworks/langchain_example.py    # no key needed to see 
 | Pydantic AI | [`agent_frameworks/pydantic_ai_example.py`](agent_frameworks/pydantic_ai_example.py) | `pip install pydantic-ai-slim` |
 | Haystack | [`agent_frameworks/haystack_example.py`](agent_frameworks/haystack_example.py) | `pip install haystack-ai` |
 | Agno | [`agent_frameworks/agno_example.py`](agent_frameworks/agno_example.py) | `pip install agno` |
-| Strands | [`agent_frameworks/strands_example.py`](agent_frameworks/strands_example.py) | `pip install strands-agents` |
+| Strands | [`agent_frameworks/strands_example.py`](agent_frameworks/strands_example.py) | `pip install 'strands-agents>=1'` |
 | DSPy | [`agent_frameworks/dspy_example.py`](agent_frameworks/dspy_example.py) | `pip install dspy` |
 | *(none yet)* | [`agent_frameworks/generic_adapters_example.py`](agent_frameworks/generic_adapters_example.py) | — |
 

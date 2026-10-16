@@ -122,11 +122,11 @@ pip install agent-gantry pydantic-ai-slim
 pip install agent-gantry openai-agents
 pip install agent-gantry haystack-ai
 pip install agent-gantry agno
-pip install agent-gantry strands-agents
+pip install agent-gantry 'strands-agents>=1'
 pip install agent-gantry dspy
 ```
 
-**Note on Python version:** CI exercises the adapter suite on **Python 3.10, 3.11, 3.12 and 3.13** (ubuntu, plus a macOS 3.12 cell). Agent-Gantry supports Python 3.10–3.13.
+**Note on Python version:** CI exercises the adapter suite on **Python 3.10, 3.11, 3.12, 3.13 and 3.14** (ubuntu, plus a macOS 3.12 cell). Agent-Gantry supports Python 3.10–3.14.
 
 ## Environment variables
 

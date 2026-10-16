@@ -27,8 +27,14 @@ names changed, and the first sync drops the rows under the old names. `AgentGant
 reranker and telemetry adapter, injected or not; share one embedder between
 gantries only if you close the gantries last.
 
+Execution overrides now distinguish omitted values from explicit ones:
+`ToolCall(..., retry_count=0)` disables retries, while omitted retry and timeout
+fields inherit execution configuration. Persist calls with
+`model_dump(exclude_unset=True)` to preserve which settings were omitted.
+
 ### Added
 
+- Python 3.14 support, including the CI framework matrix and clean release-wheel checks.
 - `gantry.framework(name)` and `supported_frameworks()` provide typed framework
   discovery with actionable setup errors; the wheel includes `py.typed`.
 - Release checks validate all version files, dated changelog notes, and GitHub
@@ -36,6 +42,10 @@ gantries only if you close the gantries last.
 
 ### Fixed
 
+- Framework CI requires a real Strands SDK (`strands-agents>=1`), preventing
+  dependency resolution from backtracking to the empty 0.0.1 placeholder.
+- Empty MCP results from the newer `mcp_types` package render correctly; coroutine
+  detection uses `inspect.iscoroutinefunction`, avoiding the Python 3.14 deprecation.
 - Examples use the current framework entry point, defer model-only imports, and
   run selection before credential checks. Offline LLM demos avoid embedding-model
   downloads; token counting falls back when its vocabulary cannot be downloaded.

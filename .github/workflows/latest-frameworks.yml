@@ -74,7 +74,7 @@ jobs:
           # same as the `framework-adapters` CI job but unpinned.
           - name: native adapters (latest)
             required: pydantic_ai,openai_agents,haystack,agno,strands,dspy
-            install: '".[dev]" pydantic-ai-slim openai-agents haystack-ai agno strands-agents dspy'
+            install: '".[dev]" pydantic-ai-slim openai-agents haystack-ai agno "strands-agents>=1" dspy'
             tests: tests/frameworks/
     steps:
       - uses: actions/checkout@v4

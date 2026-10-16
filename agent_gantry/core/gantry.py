@@ -2828,7 +2828,7 @@ class AgentGantry:
         try:
             health_method = getattr(self._telemetry, "health_check", None)
             if health_method is not None:
-                if asyncio.iscoroutinefunction(health_method):
+                if inspect.iscoroutinefunction(health_method):
                     results["telemetry"] = await health_method()
                 else:
                     results["telemetry"] = bool(health_method())

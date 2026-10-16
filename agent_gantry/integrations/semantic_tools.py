@@ -457,7 +457,7 @@ class SemanticToolSelector:
         Returns:
             Wrapped function with semantic tool selection.
         """
-        if asyncio.iscoroutinefunction(func):
+        if inspect.iscoroutinefunction(func):
             return self.wrap_async(func)
         return self.wrap_sync(func)
 
