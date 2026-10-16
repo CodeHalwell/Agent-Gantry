@@ -63,6 +63,8 @@ fields inherit execution configuration. Persist calls with
   used tools, so conversation signals and penalties affect the selected tool.
 - Agent Framework per-call refresh removes stale native aliases before adding
   the next top-k, including tools with colliding or long authored names.
+  Static tools deduplicate against emitted names, preserving a host tool whose
+  name matches only a Gantry tool's authored name.
 - Examples use the current framework entry point, defer model-only imports, and
   run selection before credential checks. Offline LLM demos avoid embedding-model
   downloads; token counting falls back when its vocabulary cannot be downloaded.

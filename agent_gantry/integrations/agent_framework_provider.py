@@ -789,13 +789,17 @@ def _build_impl_class(base: type) -> type:
                 always_count = len(extra)
 
             # Static AF-native tools that live outside the gantry registry.
+            # seen_bare also contains authored names for pin resolution. An
+            # authored name can differ from the emitted native alias, so only
+            # deduplicate static tools against names actually exposed to AF.
+            emitted_names = {_tool_name(t) for t in tools}
             static_count = 0
             for t in self._static_tools:
                 name = _tool_name(t)
-                if name and name in seen_bare:
+                if name and name in emitted_names:
                     continue
                 if name:
-                    seen_bare.add(name)
+                    emitted_names.add(name)
                 tools.append(t)
                 static_count += 1
 

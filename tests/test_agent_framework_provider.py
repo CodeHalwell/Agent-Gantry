@@ -855,3 +855,47 @@ async def test_per_call_refresh_removes_stale_native_aliases(
             await provider._refresh_tools_on_chat_context(context)
             assert context.options is options
             assert context.options["tools"] == expected
+
+
+@pytest.mark.parametrize("strategy", ["per_run", "per_call"])
+@pytest.mark.parametrize("static_name_kind", ["authored", "native"])
+async def test_static_tools_deduplicate_against_emitted_names(strategy, static_name_kind):
+    """Authored names used for pins must not hide a distinct AF-native tool."""
+    from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+
+    async with AgentGantry(embedder=SimpleEmbedder()) as gantry:
+        for namespace in ("billing", "inventory"):
+
+            def lookup(item: str) -> str:
+                """Look up an item."""
+                return item
+
+            gantry.register(lookup, namespace=namespace)
+
+        aliases = set(_tool_names(GantryToolBridge(gantry).wrap_tools(gantry.list_tools_sync())))
+        static_name = "lookup" if static_name_kind == "authored" else sorted(aliases)[0]
+
+        def foreign() -> str:
+            """A static tool owned by the host application."""
+            return "foreign"
+
+        static = af.tool(foreign, name=static_name)
+        provider = GantryContextProvider(
+            gantry, top_k=2, score_threshold=0.0, query_strategy=strategy,
+            always_include=["billing.lookup"], static_tools=[static],
+        )
+        if strategy == "per_run":
+            context = af.SessionContext(input_messages=[_user_msg("look up an item")])
+            await provider.before_run(agent=None, session=None, context=context, state={})
+            tools = context.tools
+        else:
+            context = SimpleNamespace(options={"tools": [static]}, messages=[_user_msg("lookup")])
+            for _ in range(2):
+                await provider._refresh_tools_on_chat_context(context)
+            tools = context.options["tools"]
+
+        expected = aliases | {static_name}
+        assert set(_tool_names(tools)) == expected
+        assert len(tools) == len(expected)
+        if static_name_kind == "authored":
+            assert static in tools
