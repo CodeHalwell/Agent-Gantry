@@ -46,6 +46,9 @@ fields inherit execution configuration. Persist calls with
   dependency resolution from backtracking to the empty 0.0.1 placeholder.
 - Empty MCP results from the newer `mcp_types` package render correctly; coroutine
   detection uses `inspect.iscoroutinefunction`, avoiding the Python 3.14 deprecation.
+- Legacy-marked async decorators keep async retrieval and usage tracking on
+  Python 3.10/3.11. Native tool aliases retain their namespace when tracking
+  used tools, so conversation signals and penalties affect the selected tool.
 - Examples use the current framework entry point, defer model-only imports, and
   run selection before credential checks. Offline LLM demos avoid embedding-model
   downloads; token counting falls back when its vocabulary cannot be downloaded.

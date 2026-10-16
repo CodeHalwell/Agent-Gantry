@@ -182,6 +182,8 @@ queries and namespace filters while the registry's tool identities stay the same
 the original tool through Gantry, including its policy and confirmation checks.
 Keep using original names for pins, such as `required=["billing.lookup"]`;
 `tools_already_used` also accepts the advertised native names.
+Generated aliases retain their namespace when computing conversation signals.
+An explicitly supplied bare name continues to apply to matching tools in every namespace.
 
 You can register callable objects and partially bound functions directly:
 

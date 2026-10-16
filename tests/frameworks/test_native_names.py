@@ -62,7 +62,26 @@ async def test_usage_tracking_resolves_native_aliases(duplicate_gantry, monkeypa
     retrieve = AsyncMock(return_value=SimpleNamespace(tools=[]))
     monkeypatch.setattr(duplicate_gantry, "retrieve", retrieve)
     await toolset.select("look up an item", tools_already_used=[specs[0].native_name])
-    assert retrieve.call_args.args[0].context.tools_already_used == ["lookup"]
+    assert retrieve.call_args.args[0].context.tools_already_used == [
+        f"{specs[0]._namespace}.lookup"
+    ]
+
+
+@pytest.mark.parametrize("name", ["lookup", "billing.lookup"])
+def test_used_and_failed_signals_respect_qualified_names(duplicate_gantry, name):
+    from agent_gantry.core.router import TaskIntent, _QueryContextCache
+
+    context = _QueryContextCache(
+        summary_lower="", messages_lower=[], tools_used={name}, tools_failed={name}
+    )
+    for tool in duplicate_gantry.list_tools_sync():
+        signals = duplicate_gantry._router._compute_signals(
+            tool, semantic_score=0.5, intent=TaskIntent.UNKNOWN, ctx=context
+        )
+        affected = name == "lookup" or tool.namespace == "billing"
+        assert signals.conversation_relevance == (0.5 if affected else 0.0)
+        assert signals.already_used_penalty == (0.1 if affected else 0.0)
+        assert signals.already_failed_penalty == (0.3 if affected else 0.0)
 
 
 def _definition(namespace, name="lookup"):

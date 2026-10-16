@@ -51,6 +51,7 @@ from agent_gantry.schema.query import ConversationContext, RetrievalResult, Scor
 from agent_gantry.schema.selection import SelectionCandidate
 from agent_gantry.schema.skill import Skill, SkillSearchResult
 from agent_gantry.schema.tool import ToolCapability, ToolDefinition
+from agent_gantry.utils.async_utils import is_coroutine_function
 
 if TYPE_CHECKING:
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
@@ -2828,7 +2829,7 @@ class AgentGantry:
         try:
             health_method = getattr(self._telemetry, "health_check", None)
             if health_method is not None:
-                if inspect.iscoroutinefunction(health_method):
+                if is_coroutine_function(health_method):
                     results["telemetry"] = await health_method()
                 else:
                     results["telemetry"] = bool(health_method())

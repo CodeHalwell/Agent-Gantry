@@ -33,6 +33,7 @@ from agent_gantry.schema.execution import (
     ToolResult,
 )
 from agent_gantry.schema.introspection import build_argument_coercers
+from agent_gantry.utils.async_utils import is_coroutine_function
 
 if TYPE_CHECKING:
     from agent_gantry.core.rate_limiter import RateLimiter
@@ -777,7 +778,7 @@ class ExecutionEngine:
         arguments = _reconstructed(handler, arguments)
 
         async def invoke() -> Any:
-            if inspect.iscoroutinefunction(handler) or inspect.iscoroutinefunction(
+            if is_coroutine_function(handler) or is_coroutine_function(
                 getattr(handler, "__call__", None)
             ):
                 result = handler(**arguments)

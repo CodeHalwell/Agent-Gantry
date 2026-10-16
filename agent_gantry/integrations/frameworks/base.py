@@ -1279,7 +1279,11 @@ class GantryToolset:
         used = list(tools_already_used or [])
         if used:
             native_names = _native_tool_names(self._gantry.list_tools_sync())
-            originals = {native: qualified.rsplit(".", 1)[-1] for qualified, native in native_names.items()}
+            originals = {
+                native: qualified
+                for qualified, native in native_names.items()
+                if native != qualified.rsplit(".", 1)[-1]
+            }
             used = [originals.get(name, name) for name in used]
         context = ConversationContext(
             query=query,
