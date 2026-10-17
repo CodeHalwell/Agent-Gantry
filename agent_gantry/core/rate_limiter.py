@@ -207,9 +207,7 @@ class RateLimiter:
         key = self._get_key(tool_name, namespace)
 
         if self._concurrent[key] >= self._config.max_concurrent:
-            return (
-                f"Concurrent execution limit ({self._config.max_concurrent}) exceeded for {key}"
-            )
+            return f"Concurrent execution limit ({self._config.max_concurrent}) exceeded for {key}"
 
         if self._config.strategy == "sliding_window":
             history = self._call_history[key]
@@ -218,13 +216,22 @@ class RateLimiter:
             minute_ago = now - 60
             # Counted rather than pruned: pruning is a mutation, and this must
             # leave the limiter exactly as it found it.
-            in_hour = sum(1 for stamp in history if stamp >= hour_ago)
+
+            # ⚡ Bolt: Iterate in reverse and break early instead of using generator over entire history
+            in_hour = 0
+            in_minute = 0
+            for stamp in reversed(history):
+                if stamp < hour_ago:
+                    break
+                in_hour += 1
+                if stamp >= minute_ago:
+                    in_minute += 1
+
             if in_hour >= self._config.max_calls_per_hour:
                 return (
                     f"Rate limit exceeded: {in_hour}/"
                     f"{self._config.max_calls_per_hour} calls per hour"
                 )
-            in_minute = sum(1 for stamp in history if stamp >= minute_ago)
             if in_minute >= self._config.max_calls_per_minute:
                 return (
                     f"Rate limit exceeded: {in_minute}/"
@@ -244,10 +251,7 @@ class RateLimiter:
                 self._tokens[key] + (now - self._last_refill[key]) * refill_rate,
             )
             if available < 1:
-                return (
-                    f"Rate limit exceeded: no tokens available "
-                    f"(refills at {refill_rate:.2f}/s)"
-                )
+                return f"Rate limit exceeded: no tokens available (refills at {refill_rate:.2f}/s)"
             return None
 
         if self._config.strategy == "fixed_window":
