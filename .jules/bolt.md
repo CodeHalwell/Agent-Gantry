@@ -58,3 +58,6 @@
 ## 2026-08-25 - Avoid row-wise dictionary allocation with LanceDB to_list for single columns
 **Learning:** When retrieving a single column (like JSON strings) from LanceDB, using `.to_list()` allocates a dictionary for every row just to wrap the single field, causing O(N) memory overhead and slower execution on large tables.
 **Action:** Use columnar extraction via `.select(['col']).to_arrow()` and then extract the list of values directly using `table['col'].to_pylist()`. This avoids dictionary allocation per row.
+## 2026-10-13 - Replace generator expressions in rate limiter's would_exceed
+**Learning:** Generator expressions inside `sum()` (like `sum(1 for stamp in history if stamp >= hour_ago)`) incur significant overhead, especially when iterating over a large history. Reverse iteration combined with an early break over a chronologically ordered `deque` is much faster.
+**Action:** Replaced O(N) generator expressions with a single early-breaking reverse iteration loop in `agent_gantry/core/rate_limiter.py`'s `would_exceed` method.
