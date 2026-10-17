@@ -11,7 +11,18 @@ const { code, lang = 'python', title } = Astro.props;
 const html = await highlightCode(code, lang);
 ---
 
-<figure class="code-block">
+<figure class="code-block" style="position: relative;">
   {title && <figcaption class="code-title">{title}</figcaption>}
+  <button
+    type="button"
+    class="pill"
+    aria-label="Copy code to clipboard"
+    title="Copy code"
+    style="position: absolute; top: 0.5rem; right: 0.5rem; cursor: pointer; z-index: 10; background: var(--panel2); border: 1px solid var(--line); color: var(--text);"
+    onclick="navigator.clipboard.writeText(this.dataset.code); const orig = this.innerText; this.innerText = 'Copied!'; setTimeout(() => this.innerText = orig, 2000);"
+    data-code={code}
+  >
+    Copy
+  </button>
   <Fragment set:html={html} />
 </figure>
