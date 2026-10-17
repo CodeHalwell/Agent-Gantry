@@ -58,3 +58,7 @@
 ## 2026-08-25 - Avoid row-wise dictionary allocation with LanceDB to_list for single columns
 **Learning:** When retrieving a single column (like JSON strings) from LanceDB, using `.to_list()` allocates a dictionary for every row just to wrap the single field, causing O(N) memory overhead and slower execution on large tables.
 **Action:** Use columnar extraction via `.select(['col']).to_arrow()` and then extract the list of values directly using `table['col'].to_pylist()`. This avoids dictionary allocation per row.
+
+## 2026-10-12 - Chronological Deque Iteration Optimization
+**Learning:** Generator expressions in sum() (e.g., sum(1 for item in deque if condition)) iterate the entire sequence and create generator instantiation overhead. On chronologically ordered structures like deques, reverse iteration is significantly faster as it allows breaking early when the condition is no longer met, converting an O(N) operation to O(K).
+**Action:** Use reversed() with an explicit loop and break early instead of generator expressions when checking conditions on time-ordered collections.
