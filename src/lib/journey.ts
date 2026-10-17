@@ -6,7 +6,7 @@ export async function buildHighlightedJourneyStages() {
     journeyStages.map(async ({ title, detail, code }) => ({
       title,
       detail,
-      codeHtml: await highlightCode(code),
+      codeHtml: await highlightCode(code, "python", title),
     })),
   );
 }
