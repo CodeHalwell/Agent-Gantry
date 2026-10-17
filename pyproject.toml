@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-gantry"
-version = "0.19.0"
+version = "0.20.0"
 description = "Universal Tool Orchestration Platform - Intelligent, secure tool orchestration for LLM-based agent systems"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.10,<3.15"
 authors = [
     { name = "Agent-Gantry Contributors" }
 ]
@@ -29,6 +29,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
@@ -162,7 +163,11 @@ agent-frameworks = [
     # of reporting them as success.
     # Source: https://pypi.org/pypi/crewai/json (verified 2026-08-03;
     # adapter re-verified against crewai 1.15.17 standalone 2026-08-26)
-    "crewai>=1.15.22",
+    # CrewAI 1.15.28 declares Python <3.14. Older releases have permissive
+    # metadata but pull Chroma 1.1.x / Pydantic v1, which crash on 3.14 import.
+    # Keep CrewAI in its supported Python range instead of backtracking to a
+    # broken SDK. The other framework integrations remain available on 3.14.
+    "crewai>=1.15.22; python_version < '3.14'",
     # langchain 1.3.14 (released 2026-07-16) — patch releases only since 1.3.4
     # (1.3.5 was yanked); no API changes.
     # Source: https://pypi.org/pypi/langchain/json (verified 2026-08-03;
@@ -326,7 +331,9 @@ qdrant = [
     "qdrant-client>=1.7.0",
 ]
 chroma = [
-    "chromadb>=0.4.0",
+    "chromadb>=0.4.0; python_version < '3.14'",
+    # Chroma 1.5.9 uses Pydantic v2 settings and imports on Python 3.14.
+    "chromadb>=1.5.9; python_version >= '3.14'",
 ]
 pgvector = [
     "asyncpg>=0.29.0",
@@ -338,7 +345,7 @@ lancedb = [
 # Combined vector stores
 vector-stores = [
     "qdrant-client>=1.7.0",
-    "chromadb>=0.4.0",
+    "agent-gantry[chroma]",
     "asyncpg>=0.29.0",
 ]
 nomic = [
@@ -453,6 +460,7 @@ packages = ["agent_gantry"]
 # find the skill via the standard discovery path
 # (``$VENV/share/claude/skills/`` is searched at startup).
 include = [
+    "agent_gantry/py.typed",
     "agent_gantry/**/*.py",
     "agent_gantry/**/*.md",
     "agent_gantry/**/*.txt",

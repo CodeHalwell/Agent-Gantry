@@ -69,7 +69,8 @@ logger = logging.getLogger(__name__)
 
 _INSTALL_HINT = (
     "Strands Agents support requires `strands-agents`. "
-    "Install it with `pip install strands-agents` (or `uv add strands-agents`)."
+    "Install it with `pip install 'strands-agents>=1'` "
+    "(or `uv add 'strands-agents>=1'`)."
 )
 
 

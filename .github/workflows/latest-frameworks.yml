@@ -34,22 +34,22 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # google-adk 2.x requires langgraph<0.4.8, which conflicts with the
-          # langgraph>=1.2.4 floor in the `agent-frameworks` extra, so install
-          # it standalone per the pyproject comment (no langchain/langgraph).
+          # Check ADK's latest Google SDK and telemetry dependencies separately
+          # so constraints from other frameworks cannot hold it on an old release.
           # test_real_packages.py rides along: importorskip limits it to the
           # one framework this cell installs, and it is the only suite that
           # builds AND invokes the native tool object.
           - name: google-adk (latest)
+            required: google_adk
             install: '".[dev,google-genai]" "google-adk>=2.2.0"'
             tests: tests/frameworks/test_google_adk.py tests/frameworks/test_google_adk_live.py tests/frameworks/test_real_packages.py
 
-          # crewai's latest release pins opentelemetry-api ~=1.34, which
-          # conflicts with agent-framework's opentelemetry-api>=1.39 floor, so
-          # install it standalone without agent-framework.
+          # Check CrewAI independently of AF and ADK so their telemetry and
+          # model SDK constraints cannot hold CrewAI on an old release.
           # (no -k filter: importorskip already limits test_live_wrappers /
           # test_real_packages to the frameworks this cell installs)
           - name: crewai (latest)
+            required: crewai
             install: '".[dev]" crewai'
             tests: tests/frameworks/test_crewai.py tests/frameworks/test_live_wrappers.py tests/frameworks/test_real_packages.py
 
@@ -58,21 +58,23 @@ jobs:
           # floors in the main matrix). All of these co-resolve without
           # agent-framework in the venv.
           - name: langchain + llamaindex (latest)
+            required: langchain,langgraph,llamaindex
             install: '".[dev]" langchain langgraph langchain-core llama-index-core'
             tests: tests/frameworks/test_langchain.py tests/frameworks/test_langgraph.py tests/frameworks/test_langgraph_live.py tests/frameworks/test_llamaindex.py tests/frameworks/test_llamaindex_live.py tests/frameworks/test_real_packages.py
 
           # agent-framework itself is floored below latest (<2.0 stays on the
           # documented 1.x series); validate the newest 1.x release standalone.
           - name: agent-framework (latest 1.x)
+            required: agent_framework
             install: '".[dev]" "agent-framework<2.0"'
             tests: tests/test_agent_framework_adapter.py tests/test_agent_framework_integration.py tests/test_agent_framework_provider.py tests/test_agent_framework_orchestration.py tests/frameworks/test_real_packages.py
 
-          # The native-tool-adapter frameworks are never a project extra (see
-          # pyproject.toml) because they can't co-resolve with the combined
-          # agent-frameworks set. Validate their latest releases together,
+          # The native-tool-adapter frameworks are tested separately from the
+          # combined agent-frameworks set (see pyproject.toml). Validate their latest releases together,
           # same as the `framework-adapters` CI job but unpinned.
           - name: native adapters (latest)
-            install: '".[dev]" pydantic-ai-slim openai-agents haystack-ai agno strands-agents dspy'
+            required: pydantic_ai,openai_agents,haystack,agno,strands,dspy
+            install: '".[dev]" pydantic-ai-slim openai-agents haystack-ai agno "strands-agents>=1" dspy'
             tests: tests/frameworks/
     steps:
       - uses: actions/checkout@v4
@@ -92,5 +94,7 @@ jobs:
           uv pip install --python .venv-latest ${{ matrix.install }}
 
       - name: Run tests
+        env:
+          GANTRY_REQUIRED_FRAMEWORKS: ${{ matrix.required }}
         run: |
           .venv-latest/bin/python -m pytest ${{ matrix.tests }} -v

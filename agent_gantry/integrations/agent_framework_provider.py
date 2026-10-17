@@ -78,6 +78,7 @@ from agent_gantry.integrations.agent_framework_bridge import (
 from agent_gantry.integrations.agent_framework_middleware import _import_af_chat_middleware
 from agent_gantry.integrations.frameworks.base import (
     _maybe_await,
+    _native_tool_names,
     _pin_specs,
     _resolve_tool_names,
 )
@@ -113,7 +114,7 @@ def _import_context_provider() -> type:
     except ImportError as exc:  # pragma: no cover - depends on install
         raise ImportError(
             "GantryContextProvider requires the 'agent-framework' package. "
-            "Install with: pip install 'agent-gantry[agent-frameworks]' (or uv add 'agent-gantry[agent-frameworks]')"
+            "Install with: pip install agent-framework-core (or uv add agent-framework-core)"
         ) from exc
     return ContextProvider
 
@@ -125,7 +126,7 @@ def _import_function_middleware() -> Any:
     except ImportError as exc:  # pragma: no cover - depends on install
         raise ImportError(
             "GantryContextProvider.trace() requires the 'agent-framework' "
-            "package. Install with: pip install 'agent-gantry[agent-frameworks]' (or uv add 'agent-gantry[agent-frameworks]')"
+            "package. Install with: pip install agent-framework-core (or uv add agent-framework-core)"
         ) from exc
     return function_middleware
 
@@ -707,7 +708,7 @@ def _build_impl_class(base: type) -> type:
             )
 
         def _all_known_tool_names(self) -> set[str]:
-            """Every tool name registered in the gantry.
+            """Authored and native names of every tool registered in the gantry.
 
             Used to identify which entries in ``context.options['tools']``
             were produced by this gantry (or any other provider sharing
@@ -715,7 +716,13 @@ def _build_impl_class(base: type) -> type:
             per-round selection.
             """
             try:
-                return {t.name for t in self._gantry.list_tools_sync()}
+                definitions = self._gantry.list_tools_sync()
+                # The bridge advertises aliases for namespace collisions and
+                # long names. Match that same full-registry mapping so a prior
+                # round's wrapper is removed before the fresh top-k is added.
+                return {t.name for t in definitions} | set(
+                    _native_tool_names(definitions).values()
+                )
             except Exception:
                 return set()
 
@@ -761,6 +768,9 @@ def _build_impl_class(base: type) -> type:
                         seen_qualified.update(
                             c.qualified_name for c in decision.kept[: self._top_k]
                         )
+                        # Pin resolution uses authored bare names; framework
+                        # indexes use native aliases when namespaces collide.
+                        seen_bare.update(c.name for c in decision.kept[: self._top_k])
 
             # Skills: always-on tools bound to registered Gantry skills.
             skill_count = 0
@@ -779,13 +789,17 @@ def _build_impl_class(base: type) -> type:
                 always_count = len(extra)
 
             # Static AF-native tools that live outside the gantry registry.
+            # seen_bare also contains authored names for pin resolution. An
+            # authored name can differ from the emitted native alias, so only
+            # deduplicate static tools against names actually exposed to AF.
+            emitted_names = {_tool_name(t) for t in tools}
             static_count = 0
             for t in self._static_tools:
                 name = _tool_name(t)
-                if name and name in seen_bare:
+                if name and name in emitted_names:
                     continue
                 if name:
-                    seen_bare.add(name)
+                    emitted_names.add(name)
                 tools.append(t)
                 static_count += 1
 
@@ -897,7 +911,7 @@ def _build_impl_class(base: type) -> type:
             specs = _pin_specs(
                 self._gantry, names, seen_qualified, seen_bare, kind="always_include"
             )
-            return [self._bridge.wrap_single(spec.tool) for spec in specs]
+            return self._bridge.wrap_tools([spec.tool for spec in specs])
 
     return _GantryContextProviderImpl
 

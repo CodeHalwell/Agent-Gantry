@@ -17,16 +17,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check version sync (pyproject.toml == agent_gantry/__init__.py)
-        run: |
-          set -euo pipefail
-          version=$(grep -m1 -E '^version = ' pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')
-          init=$(grep -m1 -E '^__version__' agent_gantry/__init__.py | sed -E 's/.*"([^"]+)".*/\1/')
-          if [ "$version" != "$init" ]; then
-            echo "::error::pyproject version ($version) != agent_gantry/__init__.py ($init)"
-            exit 1
-          fi
-          echo "version sync OK: $version"
+      - name: Check release metadata consistency
+        run: python scripts/check_release.py
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -38,7 +30,7 @@ jobs:
         run: uv sync --extra dev --extra nomic --extra lancedb --extra agent-frameworks --extra example-tools
 
       - name: Run ruff
-        run: uv run ruff check agent_gantry/
+        run: uv run ruff check agent_gantry/ examples/ scripts/ tests/
 
       - name: Run ty (informational)
         # Static typing is not gated in CI (see CLAUDE.md) — ty exits 1 on any
@@ -48,13 +40,15 @@ jobs:
 
   test:
     runs-on: ${{ matrix.os }}
+    env:
+      GANTRY_REQUIRED_FRAMEWORKS: langchain,langgraph,llamaindex,crewai,google_adk,agent_framework
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
 
@@ -76,6 +70,9 @@ jobs:
         # No effect on Linux/Windows (no MPS backend).
         env:
           PYTORCH_MPS_HIGH_WATERMARK_RATIO: "0.0"
+          # CrewAI's supported SDK requires Python <3.14. All other SDKs in
+          # agent-frameworks must import on every supported Python version.
+          GANTRY_REQUIRED_FRAMEWORKS: ${{ matrix.python-version == '3.14' && 'agent_framework,langchain,langgraph,llamaindex,google_adk' || 'agent_framework,langchain,langgraph,llamaindex,google_adk,crewai' }}
         run: |
           uv run pytest --ignore=tests/test_phase5_mcp.py --ignore=tests/test_phase6_a2a.py -v
 
@@ -94,6 +91,8 @@ jobs:
   framework-adapters:
     name: Framework adapter smoke tests
     runs-on: ${{ matrix.os }}
+    env:
+      GANTRY_REQUIRED_FRAMEWORKS: pydantic_ai,openai_agents,haystack,agno,strands,dspy
     timeout-minutes: 30
     permissions:
       contents: read
@@ -101,7 +100,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         include:
           # Single macOS cell to catch platform-specific drift without
           # multiplying the full OS x Python grid (cost control).
@@ -117,13 +116,13 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       # Isolated env: the native-adapter frameworks (pydantic-ai, openai-agents,
-      # haystack, agno, strands-agents) don't co-resolve with the
-      # combined agent-frameworks/nomic set, so they are NOT a project extra.
+      # haystack, agno, strands-agents) are tested independently of the
+      # combined agent-frameworks/nomic set to keep dependency trees isolated.
       # Install the project (dev) then add them directly with a one-off
-      # resolution, and run the real-package adapter smoke tests. importorskip
-      # handles any that aren't present (e.g. a Strands adapter landing later
-      # can rely on the package already being installed here).
-      # langchain/llamaindex/crewai/SK/ADK are covered by the main `test`
+      # resolution, and run the real-package adapter smoke tests. The declared
+      # GANTRY_REQUIRED_FRAMEWORKS must import; SDKs covered by the other test
+      # group remain optional here.
+      # langchain/llamaindex/crewai/ADK are covered by the main `test`
       # matrix (which installs the `agent-frameworks` extra).
       # Resolve the project (dev) + the adapter frameworks together in ONE
       # isolated venv, so a shared dep (pydantic/httpx/openai) is resolved to a
@@ -135,11 +134,13 @@ jobs:
       # tests/frameworks/test_haystack_build_live.py), and dspy 3.3.0 (fully
       # backward compatible on the adapter surface; ReActV2 remains a separate
       # experimental class).
+      # strands-agents 0.0.1 is an empty placeholder. Without a real-version
+      # floor, uv can select it to keep a newer MCP dependency on Python 3.10/3.11.
       - name: Run adapter smoke tests
         run: |
           uv venv .venv-frameworks --python ${{ matrix.python-version }}
           uv pip install --python .venv-frameworks ".[dev]" \
-            pydantic-ai-slim openai-agents haystack-ai agno strands-agents dspy
+            pydantic-ai-slim openai-agents haystack-ai agno "strands-agents>=1" dspy
           .venv-frameworks/bin/python -m pytest tests/frameworks/ -v
 
   docs:

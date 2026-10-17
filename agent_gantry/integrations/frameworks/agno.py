@@ -36,7 +36,7 @@ def _spec_to_agno(spec: ToolSpec) -> Any:
     def _entrypoint(**kwargs: Any) -> Any:
         return spec.invoke(**kwargs)
 
-    _entrypoint.__name__ = spec.name
+    _entrypoint.__name__ = spec.native_name
     _entrypoint.__doc__ = spec.description
     # Copy the real signature so Agno introspection surfaces the actual
     # parameters instead of a bare **kwargs (no-argument) tool.
@@ -44,7 +44,7 @@ def _spec_to_agno(spec: ToolSpec) -> Any:
     _entrypoint.__annotations__ = dict(getattr(async_fn, "__annotations__", {}))
 
     return Function(
-        name=spec.name,
+        name=spec.native_name,
         description=spec.description,
         parameters=spec.parameters,
         entrypoint=_entrypoint,

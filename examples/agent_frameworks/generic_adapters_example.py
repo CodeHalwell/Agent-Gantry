@@ -24,13 +24,14 @@ import asyncio
 import json
 
 from agent_gantry import AgentGantry
+from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 from agent_gantry.integrations.frameworks import GantryToolset
 
 USER_QUERY = "What is the market data for MSFT?"
 
 
 async def main() -> None:
-    gantry = AgentGantry()
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
     try:
         # `examples=[...]` is the text the router embeds — the single
         # highest-value field on a tool definition.
@@ -66,9 +67,10 @@ async def main() -> None:
 
         print(f"Catalogue: 3 tools. Gantry selected {len(specs)} for this query:")
         for spec in specs:
-            print(f"  - {spec.name}: {spec.description}")
+            print(f"  - {spec.native_name}: {spec.description}")
 
-        # Everything a framework's tool constructor needs is on the spec.
+        # Pass spec.native_name to the framework; it handles namespace collisions.
+        # Everything else its tool constructor needs is on the spec.
         spec = specs[0]
         print("\nJSON-Schema parameters to hand to your framework:")
         print(json.dumps(spec.parameters, indent=2))

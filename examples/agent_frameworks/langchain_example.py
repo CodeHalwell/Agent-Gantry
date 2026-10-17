@@ -25,18 +25,14 @@ from __future__ import annotations
 import asyncio
 import os
 
-from langchain.agents import create_agent
-from langchain_core.messages import HumanMessage
-from langchain_openai import ChatOpenAI
-
 from agent_gantry import AgentGantry
-from agent_gantry.langchain import LangChainAdapter
+from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 
 USER_QUERY = "What's the weather in London?"
 
 
 async def main() -> None:
-    gantry = AgentGantry()
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
     try:
         # `examples=[...]` is the highest-value thing you can add to a tool.
         # It is what the router embeds and what a selector reads, and on our own
@@ -74,7 +70,11 @@ async def main() -> None:
         # Note there is no `score_threshold` here — it defaults to 0.0, and
         # raising it is a silent-drop trap: a long query dilutes absolute
         # similarity, so a non-zero cutoff can quietly return nothing at all.
-        tools = await LangChainAdapter(gantry).select(USER_QUERY, limit=1)
+        try:
+            tools = await gantry.framework("langchain").select(USER_QUERY, limit=1)
+        except ImportError as exc:
+            print(exc)
+            return
 
         print(f"Catalogue: 3 tools. Gantry selected {len(tools)} for this query:")
         for tool in tools:
@@ -85,6 +85,14 @@ async def main() -> None:
         if not os.getenv("OPENAI_API_KEY"):
             print("Set OPENAI_API_KEY to run the agent itself.")
             print("Everything above works without one.")
+            return
+
+        try:
+            from langchain.agents import create_agent
+            from langchain_core.messages import HumanMessage
+            from langchain_openai import ChatOpenAI
+        except ImportError as exc:
+            print(f"{exc}\nInstall the model integration: pip install langchain langchain-openai")
             return
 
         llm = ChatOpenAI(model="gpt-5.5")

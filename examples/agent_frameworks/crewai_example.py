@@ -10,7 +10,7 @@ Selection runs **without an API key**; only the crew kickoff needs one.
 
 Run with::
 
-    pip install agent-gantry crewai langchain-openai
+    pip install agent-gantry crewai
     export OPENAI_API_KEY=...        # only needed for the kickoff
     python examples/agent_frameworks/crewai_example.py
 """
@@ -20,18 +20,15 @@ from __future__ import annotations
 import asyncio
 import os
 
-from crewai import Agent, Crew, Process, Task
-from langchain_openai import ChatOpenAI
-
 from agent_gantry import AgentGantry
-from agent_gantry.crewai import CrewAIAdapter
+from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 
 RESEARCH_BRIEF = "Look up the customer john@example.com and their recent orders"
 SUPPORT_BRIEF = "Refund the customer's last order and email them to confirm"
 
 
 async def main() -> None:
-    gantry = AgentGantry()
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
     try:
         # `examples=[...]` is the strongest routing signal a tool can carry —
         # more than the description, and more than a bigger embedding model.
@@ -69,12 +66,16 @@ async def main() -> None:
 
         await gantry.sync()
 
-        adapter = CrewAIAdapter(gantry)
+        adapter = gantry.framework("crewai")
 
         # Two agents, one catalogue, different slices. No score_threshold: it
         # defaults to 0.0, and raising it silently drops tools on longer queries.
-        research_tools = await adapter.select(RESEARCH_BRIEF, limit=2)
-        support_tools = await adapter.select(SUPPORT_BRIEF, limit=2)
+        try:
+            research_tools = await adapter.select(RESEARCH_BRIEF, limit=2)
+            support_tools = await adapter.select(SUPPORT_BRIEF, limit=2)
+        except ImportError as exc:
+            print(exc)
+            return
 
         print("Catalogue: 4 tools. What each crew member gets:\n")
         print(f"  researcher -> {[t.name for t in research_tools]}")
@@ -89,7 +90,13 @@ async def main() -> None:
             print("Everything above works without one.")
             return
 
-        llm = ChatOpenAI(model="gpt-5.5")
+        try:
+            from crewai import LLM, Agent, Crew, Process, Task
+        except ImportError as exc:
+            print(f"{exc}\nInstall the model integration: pip install crewai")
+            return
+
+        llm = LLM(model="openai/gpt-5.5")
         researcher = Agent(
             role="Customer Success Researcher",
             goal="Find and summarise customer information",

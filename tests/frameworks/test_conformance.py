@@ -15,16 +15,10 @@ honor the same contract regardless of which third-party framework it targets:
 
 This locks the uniform surface so a new adapter can't silently drift.
 
-``AgentFrameworkAdapter`` (Microsoft Agent Framework, ``agent_gantry.agent_framework``)
-is deliberately **not** part of ``ADAPTERS`` below: it has no ``select``/``convert``
-staticmethods at all. It is a small factory whose methods
-(``context_provider``, ``tool_bridge``, ``approval_middleware``,
-``observability_middleware``, ``tool_choice_middleware``) build distinct AF
-primitives (a ``ContextProvider``, a ``GantryToolBridge``, AF middleware), and
-its ``select``-equivalent is ``tool_bridge().get_tools(...)``. It gets its own
-parametrized contract checks in the "Microsoft Agent Framework" section below,
-mirroring the same three properties (uniform surface / clean ImportError /
-end-to-end smoke) adapted to its actual shape.
+``AgentFrameworkAdapter`` shares the selection base and also exposes provider,
+bridge and middleware factories. Its specialized AF factory tests remain below;
+the uniform select/convert surface is additionally covered by
+``test_agent_framework_adapter.py`` and the twelve-framework real-SDK matrix.
 """
 
 from __future__ import annotations
@@ -862,7 +856,7 @@ async def test_strands_live_selection_failure_degrades_gracefully(
 # --------------------------------------------------------------------------- #
 # Microsoft Agent Framework (AgentFrameworkAdapter)
 #
-# Not a `BaseFrameworkAdapter` — no `select`/`convert` staticmethods. Its
+# AF-specific factory methods supplement the shared select/convert surface. Its
 # surface is a set of factory methods that build distinct AF primitives.
 # These checks assert the same three properties as the ADAPTERS matrix above
 # (uniform surface / clean ImportError / end-to-end smoke), adapted to that

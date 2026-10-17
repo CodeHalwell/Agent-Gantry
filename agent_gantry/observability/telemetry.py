@@ -55,7 +55,8 @@ class TelemetryAdapter(Protocol):
         Record an execution event.
 
         Args:
-            call: The tool call
+            call: The original request. Its timeout/retry fields are overrides;
+                unset fields inherit execution configuration (see model_fields_set).
             result: The execution result
         """
         ...

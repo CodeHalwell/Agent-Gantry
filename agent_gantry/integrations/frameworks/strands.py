@@ -51,12 +51,13 @@ def _spec_to_strands(spec: ToolSpec) -> Any:
     except ImportError as exc:  # pragma: no cover - exercised via stub
         raise ImportError(
             "Strands Agents support requires `strands-agents`. "
-            "Install it with `pip install strands-agents` (or `uv add strands-agents`)."
+            "Install it with `pip install 'strands-agents>=1'` "
+            "(or `uv add 'strands-agents>=1'`)."
         ) from exc
 
     async_fn = spec.callable_for_signature()
     return strands_tool(
-        name=spec.name,
+        name=spec.native_name,
         description=spec.description,
         inputSchema={"json": spec.aliased_parameters()},
     )(async_fn)

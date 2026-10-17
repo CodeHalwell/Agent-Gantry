@@ -46,7 +46,7 @@ def _spec_to_llamaindex(spec: ToolSpec) -> Any:
 
     fn_schema = None
     if spec.parameters.get("properties"):
-        fn_schema = pydantic_model_from_schema(f"{spec.name}_Args", spec.parameters)
+        fn_schema = pydantic_model_from_schema(f"{spec.native_name}_Args", spec.parameters)
 
     def _coerced(kwargs: dict[str, Any]) -> dict[str, Any]:
         """Re-run the args model over ``kwargs`` before dispatch.
@@ -88,12 +88,12 @@ def _spec_to_llamaindex(spec: ToolSpec) -> Any:
     async def _async_fn(**kwargs: Any) -> Any:
         return await spec.ainvoke(**_coerced(kwargs))
 
-    _async_fn.__name__ = spec.name
+    _async_fn.__name__ = spec.native_name
     _async_fn.__doc__ = spec.description
     _async_fn.__signature__ = async_fn.__signature__  # type: ignore[attr-defined]
     _async_fn.__annotations__ = dict(getattr(async_fn, "__annotations__", {}))
 
-    _sync_fn.__name__ = spec.name
+    _sync_fn.__name__ = spec.native_name
     _sync_fn.__doc__ = spec.description
     # Copy the real signature so LlamaIndex introspection surfaces the actual
     # parameters instead of a bare **kwargs (no-argument) tool.
@@ -103,7 +103,7 @@ def _spec_to_llamaindex(spec: ToolSpec) -> Any:
     return FunctionTool.from_defaults(
         fn=_sync_fn,
         async_fn=_async_fn,
-        name=spec.name,
+        name=spec.native_name,
         description=spec.description,
         fn_schema=fn_schema,
     )

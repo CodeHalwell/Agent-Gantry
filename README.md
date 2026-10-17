@@ -4,7 +4,7 @@
 
 *Context is precious. Execution is sacred. Trust is earned.*
 
-Agent-Gantry is a Python library (**v0.19.0**) for building agents that can discover, select, and execute the right tools without flooding every prompt with every schema your organization owns. It combines semantic retrieval, provider schema conversion, secure execution, framework bridges, MCP/A2A interoperability, persistence adapters, and observability into one tool orchestration layer.
+Agent-Gantry is a Python library (**v0.20.0**) for building agents that can discover, select, and execute the right tools without flooding every prompt with every schema your organization owns. It combines semantic retrieval, provider schema conversion, secure execution, framework bridges, MCP/A2A interoperability, persistence adapters, and observability into one tool orchestration layer.
 
 ## Documentation
 
@@ -67,6 +67,29 @@ await ask_llm("What's the weather in San Francisco?")
 
 Agent-Gantry automatically fingerprints registered tools, syncs definitions to the configured vector store, retrieves semantically relevant tools, and converts schemas to the requested provider dialect.
 
+## Framework integration in one line
+
+Use the same registry with any supported framework. Install the framework SDK
+you use; Gantry imports it only when it builds native tools or live hooks.
+
+```python
+# Native LangChain tools, ready for model.bind_tools(tools).
+tools = await gantry.framework("langchain").select("What's the weather?", limit=3)
+
+# Dynamic Pydantic AI tools, reselected on every model turn.
+from pydantic_ai import Agent
+agent = Agent("openai:gpt-5.5", toolsets=[gantry.framework("pydantic-ai").live(limit=3)])
+
+# Discover all twelve integrations without installing their SDKs.
+from agent_gantry import supported_frameworks
+print(supported_frameworks())
+```
+
+Framework names preserve adapter types for editor completion. Hyphenated names
+such as `google-adk` and `openai-agents` also work. Existing adapter classes and
+imports remain available. See the [integration recipes](agent_gantry/integrations/frameworks/README.md)
+for each framework's install command, static tools, and live selection hook.
+
 ## Core capabilities
 
 - **Semantic tool routing:** reduce prompt context by retrieving top-k relevant tools instead of injecting every tool.
@@ -80,6 +103,9 @@ Agent-Gantry automatically fingerprints registered tools, syncs definitions to t
 - **Bundled Claude Skill:** install with `agent-gantry install-skill --claude` or target a project-local skills directory.
 - **Observability:** emit retrieval/execution telemetry to the console, OpenTelemetry, or Prometheus, and track token savings with the built-in metrics helpers.
 - **Selection without embeddings:** point a decision model at the catalogue instead of a vector store. `JevSelector` replaces embed-then-search for tools, skills and MCP servers; `JevReranker` refines the shortlist when the catalogue is too large to send. Both fail open to semantic routing.
+
+Agent-Gantry supports Python 3.10–3.14. CrewAI's current SDK requires Python
+3.10–3.13; the `agent-frameworks` extra includes it only on those versions.
 
 ## Selecting tools without a vector store
 

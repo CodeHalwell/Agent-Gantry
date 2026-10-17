@@ -26,12 +26,12 @@ pytest tests/test_tool.py      # single file
 pytest tests/test_tool.py::TestToolDefinition::test_create_minimal_tool  # single test
 pytest --cov=agent_gantry --cov-report=html  # coverage
 
-ruff check agent_gantry/       # lint
-ruff check --fix agent_gantry/ # lint + autofix
-ruff format agent_gantry/      # format
+ruff check agent_gantry/ examples/ scripts/ tests/       # lint (same scope as CI)
+ruff check --fix agent_gantry/ examples/ scripts/ tests/ # lint + autofix
+ruff format agent_gantry/                                # format
 ```
 
-Note: there is **no mypy config** in `pyproject.toml` and mypy is not a dev dependency, despite older docs (CONTRIBUTING.md, copilot-instructions.md) mentioning it. Ruff is the enforced linter/formatter (line length 100, rules `E,F,I,N,W,UP`, ignoring `E501,E402`). Static typing is still expected by convention but not gated in CI.
+Note: there is **no mypy config** in `pyproject.toml` and mypy is not a dev dependency. Ruff is the enforced linter/formatter (line length 100, rules `E,F,I,N,W,UP`, ignoring `E501,E402`). Static typing is still expected by convention but not gated in CI.
 
 ### Docs site
 ```bash
@@ -93,7 +93,7 @@ Everything funnels through one facade: **`AgentGantry`** in `agent_gantry/core/g
 
 ## Repo notes
 
-- Version of record is `pyproject.toml` / `agent_gantry/__init__.py` `__version__` (currently `0.19.0`). The docs `package.json` and `README.md` may lag — `tests/test_version_consistency.py` guards consistency where it matters.
+- Version of record is `pyproject.toml` / `agent_gantry/__init__.py` `__version__` (currently `0.20.0`). Keep `package.json`, `package-lock.json`, `uv.lock`, `README.md` and the dated changelog in sync too; `scripts/check_release.py` validates release metadata.
 - `.jules/` holds accumulated performance-optimization learnings (e.g. vectorized MMR, fast token matching) — useful context when optimizing the router or serialization paths.
 - `CHANGELOG.md` should be updated for user-facing changes.
 - Releasing/publishing: see `RELEASING.md` and `PUBLISHING.md`.

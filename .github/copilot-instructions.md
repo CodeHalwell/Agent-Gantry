@@ -69,17 +69,16 @@ async def test_retrieve_tools_returns_relevant_results(gantry, sample_tools):
 ### Linting and Code Quality
 
 - **Linter**: `ruff` (configured in `pyproject.toml`)
-- **Type Checker**: `mypy` with strict mode enabled
+- **Type Checking**: Type hints are expected; static typing is informational in CI
 - **Line Length**: 100 characters max
-- **Python Version**: Python 3.10+ required
+- **Python Version**: Python 3.10–3.14 supported
 
 Run before committing:
 ```bash
-ruff check agent_gantry/
-mypy agent_gantry/
+ruff check agent_gantry/ examples/ scripts/ tests/
 ```
 
-**Auto-fix**: Use `ruff check --fix agent_gantry/` to automatically fix linting issues.
+**Auto-fix**: Use `ruff check --fix agent_gantry/ examples/ scripts/ tests/` to automatically fix linting issues.
 
 **Format**: Use `ruff format agent_gantry/` to format code.
 
@@ -95,7 +94,7 @@ python -m build
 
 ### Python Style
 
-1. **Type Hints**: Use type hints everywhere. We use strict mypy settings.
+1. **Type Hints**: Use type hints everywhere. There is no configured mypy gate.
    ```python
    from typing import Any
    
@@ -297,7 +296,7 @@ class MyVectorStore(VectorStoreAdapter):
 
 1. **Minimal Changes**: Make small, focused changes
 2. **Test First**: Write or update tests before implementation when possible
-3. **Type Safety**: Always use type hints and pass mypy checks
+3. **Type Safety**: Always use type hints and review informational CI typing output
 4. **Async by Default**: Core operations should be async
 5. **Backward Compatibility**: Don't break existing APIs without good reason
 6. **Documentation**: Update docstrings and README for user-facing changes
@@ -307,7 +306,7 @@ class MyVectorStore(VectorStoreAdapter):
 
 - **Core**: Pydantic 2.0+
 - **Optional**: OpenAI, sentence-transformers, qdrant-client, chromadb
-- **Dev**: pytest, pytest-asyncio, pytest-cov, ruff, mypy
+- **Dev**: pytest, pytest-asyncio, pytest-cov, ruff
 
 ## Roadmap Context
 

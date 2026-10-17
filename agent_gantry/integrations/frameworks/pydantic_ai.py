@@ -39,14 +39,14 @@ def _spec_to_pydantic_ai(spec: ToolSpec) -> Any:
     try:
         return Tool.from_schema(
             function=function,
-            name=spec.name,
+            name=spec.native_name,
             description=spec.description,
             json_schema=spec.parameters,
         )
     except AttributeError:
         return Tool(
             function,
-            name=spec.name,
+            name=spec.native_name,
             description=spec.description,
             takes_ctx=False,
         )

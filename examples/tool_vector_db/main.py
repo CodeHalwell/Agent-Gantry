@@ -12,18 +12,17 @@ Key Feature: ZERO-CONFIG AUTO-SYNC
     - No manual sync() calls needed!
 
 Requirements:
-    pip install agent-gantry[nomic] openai python-dotenv
+    pip install "agent-gantry[lancedb,openai]" python-dotenv
 
 Usage:
-    python main.py                      # retrieval runs with no key at all
+    python -m examples.tool_vector_db.main                      # retrieval runs with no key at all
     export OPENAI_API_KEY=your-key-here # only the model call needs this
-    python main.py
+    python -m examples.tool_vector_db.main
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 
 from dotenv import load_dotenv
@@ -32,10 +31,8 @@ from openai import AsyncOpenAI
 load_dotenv()
 
 # Import our 50 tools - they're registered at import time
-from tools import tools
-
 from agent_gantry.integrations.semantic_tools import with_semantic_tools
-from agent_gantry.schema.execution import ToolCall
+from examples.tool_vector_db.tools import tools
 
 
 async def main():
@@ -89,25 +86,11 @@ async def main():
 
         response = await chat(query)
 
-        # Process tool calls and execute them
-        tool_results = []
-        for item in response.output:
-            if item.type == "function_call":
-                tool_name = item.name
-                arguments = json.loads(item.arguments)
-
-                print(f"Tool call: {tool_name}({arguments})")
-
-                # Execute the tool using Agent-Gantry
-                call = ToolCall(tool_name=tool_name, arguments=arguments)
-                result = await tools.execute(call)
-
-                print(f"  Result: {result.result}")
-                tool_results.append({
-                    "type": "function_call_output",
-                    "call_id": item.call_id,
-                    "output": str(result.result),
-                })
+        # The provider round trip handles argument parsing, execution failures,
+        # call IDs and structured-result serialization in one call.
+        tool_results = await tools.execute_tool_calls(response, dialect="openai_responses")
+        for result in tool_results:
+            print(f"Tool result {result['call_id']}: {result['output']}")
 
         # Send tool results back to get final response
         if tool_results:

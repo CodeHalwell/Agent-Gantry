@@ -78,7 +78,9 @@ from agent_gantry.integrations.frameworks.live_wrappers import _PerCallBuilder
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
 
-_INSTALL_HINT = "DSPy support requires `dspy`. Install it with `pip install dspy` (or `uv add dspy`)."
+_INSTALL_HINT = (
+    "DSPy support requires `dspy`. Install it with `pip install dspy` (or `uv add dspy`)."
+)
 
 
 def _spec_to_dspy(spec: ToolSpec) -> Any:
@@ -106,7 +108,31 @@ def _spec_to_dspy(spec: ToolSpec) -> Any:
     except ImportError as exc:  # pragma: no cover - exercised via stub
         raise ImportError(_INSTALL_HINT) from exc
 
-    args, arg_types, arg_desc = convert_input_schema_to_tool_args(spec.parameters)
+    # DSPy's converter looks up a property's ``type`` in a dict. JSON Schema
+    # also permits a list (e.g. ["string", "null"]), which raises TypeError
+    # in DSPy through 3.4.1. Omit only that type during conversion so DSPy uses
+    # Any for runtime parsing, then restore the union in the advertised schema.
+    # DSPy's JSON-Schema validator and Gantry still enforce the full union.
+    properties = spec.parameters.get("properties") or {}
+    unions = {
+        name: prop["type"]
+        for name, prop in properties.items()
+        if isinstance(prop, dict) and isinstance(prop.get("type"), list)
+    }
+    parameters = spec.parameters
+    if unions:
+        parameters = {
+            **parameters,
+            "properties": {
+                name: {key: value for key, value in prop.items() if key != "type"}
+                if name in unions
+                else prop
+                for name, prop in properties.items()
+            },
+        }
+    args, arg_types, arg_desc = convert_input_schema_to_tool_args(parameters)
+    for name, types in unions.items():
+        args[name] = {**args[name], "type": types}
 
     # Borrow the real __signature__/__annotations__ from the async wrapper
     # (same JSON-Schema-derived signature every other adapter uses) but call
@@ -116,14 +142,14 @@ def _spec_to_dspy(spec: ToolSpec) -> Any:
     def _fn(**kwargs: Any) -> Any:
         return spec.invoke(**kwargs)
 
-    _fn.__name__ = spec.name
+    _fn.__name__ = spec.native_name
     _fn.__doc__ = spec.description
     _fn.__signature__ = async_fn.__signature__  # type: ignore[attr-defined]
     _fn.__annotations__ = dict(getattr(async_fn, "__annotations__", {}))
 
     return DSPyTool(
         func=_fn,
-        name=spec.name,
+        name=spec.native_name,
         desc=spec.description,
         args=args,
         arg_types=arg_types,

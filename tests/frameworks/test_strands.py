@@ -169,7 +169,7 @@ async def test_missing_strands_raises_helpful_error(monkeypatch, gantry):
     from agent_gantry.strands import StrandsAdapter
 
     specs = await GantryToolset(gantry).select("send an email", limit=1)
-    with pytest.raises(ImportError, match="pip install strands-agents"):
+    with pytest.raises(ImportError, match="pip install 'strands-agents>=1'"):
         StrandsAdapter.convert(specs[0])
 
 
@@ -186,5 +186,5 @@ async def test_tool_hook_and_agent_builders_require_strands(monkeypatch, gantry)
     hook = adapter.tool_hook(limit=2)
     assert hook is not None
 
-    with pytest.raises(ImportError, match="pip install strands-agents"):
+    with pytest.raises(ImportError, match="pip install 'strands-agents>=1'"):
         adapter.agent()

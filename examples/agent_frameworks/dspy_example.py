@@ -3,10 +3,10 @@ DSPy + Agent-Gantry integration example.
 
 Demonstrates both tool-surfacing tiers Agent-Gantry offers for DSPy:
 
-1. **Static** — ``DSPyAdapter(gantry).select(query, limit=...)`` selects and
+1. **Static** — ``gantry.framework("dspy").select(query, limit=...)`` selects and
    converts a fixed slice of tools to ``dspy.Tool`` objects in one call, ready
    for ``dspy.ReAct(signature, tools=[...])``.
-2. **Per-call** — ``DSPyAdapter(gantry).agent_builder(signature, ...)``
+2. **Per-call** — ``gantry.framework("dspy").agent_builder(signature, ...)``
    returns a builder whose ``await builder.build(query)`` re-selects tools and
    constructs a *fresh* ``dspy.ReAct`` for that call. ``dspy.ReAct`` fixes its
    tool list at construction with no runtime re-selection hook (unlike
@@ -27,11 +27,9 @@ import asyncio
 import os
 
 from agent_gantry import AgentGantry
+from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 
-# Importing the adapter namespace never requires dspy to be installed -- the
-# real `dspy` import is deferred to the first call that actually needs it
-# (`.select`/`.convert`/`.agent_builder`), caught gracefully below.
-from agent_gantry.dspy import DSPyAdapter
+# Framework SDK imports are deferred until selection, with a setup hint below.
 
 
 def _run_with_dummy_lm(react, question: str):
@@ -82,7 +80,7 @@ def _run_with_real_lm(react, question: str):
 
 async def main() -> None:
     # 1. Initialize Agent-Gantry and register tools.
-    gantry = AgentGantry()
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
     try:
 
         @gantry.register(
@@ -115,7 +113,7 @@ async def main() -> None:
         #    The `dspy` package is only imported lazily, right here -- catch that
         #    gracefully so the example is useful to run even without it installed.
         try:
-            dspy_tools = await DSPyAdapter(gantry).select(user_query, limit=1)
+            dspy_tools = await gantry.framework("dspy").select(user_query, limit=1)
         except ImportError as exc:
             print(f"{exc}")
             return
@@ -143,7 +141,7 @@ async def main() -> None:
         #    re-selection hook), so `agent_builder` rebuilds a fresh ReAct per
         #    call, tools re-selected for that call's query -- the deepest tier
         #    DSPy allows (see the adapter module docstring for why).
-        builder = DSPyAdapter(gantry).agent_builder("question -> answer", max_iters=3, limit=1)
+        builder = gantry.framework("dspy").agent_builder("question -> answer", max_iters=3, limit=1)
         finance_react = await builder.build("What's the stock price for AAPL?")
         print(
             f"\nPer-call agent_builder rebuilt a ReAct with tools "

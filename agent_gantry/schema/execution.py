@@ -28,7 +28,15 @@ class ExecutionStatus(str, Enum):
 
 
 class ToolCall(BaseModel):
-    """Request to execute a tool."""
+    """Request to execute a tool.
+
+    Omitted execution settings inherit the executor configuration. Persist with
+    ``model_dump(exclude_unset=True)`` to preserve that intent when reloading;
+    plain ``model_dump()`` writes default values as explicit overrides.
+    These are request overrides, not resolved settings: telemetry and callbacks
+    receive this original request. Check ``model_fields_set`` before interpreting
+    a timeout or retry value as an explicit setting. Assignment makes it explicit.
+    """
 
     tool_name: str
     #: Namespace the call targets. ``None`` means "resolve by bare name",
@@ -41,8 +49,18 @@ class ToolCall(BaseModel):
     namespace: str | None = None
     arguments: dict[str, Any]
 
-    timeout_ms: int = Field(default=30000, ge=100, le=300000)
-    retry_count: int = Field(default=0, ge=0, le=5)
+    timeout_ms: int = Field(
+        default=30000,
+        ge=100,
+        le=300000,
+        description="Per-call timeout override; when omitted, use the executor's configured timeout.",
+    )
+    retry_count: int = Field(
+        default=0,
+        ge=0,
+        le=5,
+        description="Per-call retry override; zero disables retries. When omitted, use the executor's configured retries.",
+    )
     require_confirmation: bool | None = None
 
     trace_id: str | None = None
@@ -122,6 +140,7 @@ class ToolCallEvent:
     accessors mirror the most-used fields of the underlying result.
     """
 
+    #: Original request, retaining omitted overrides; see ToolCall.model_fields_set.
     call: ToolCall
     result: ToolResult
 

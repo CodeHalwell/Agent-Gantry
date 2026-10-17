@@ -42,23 +42,24 @@ from __future__ import annotations
 
 import asyncio
 
-from agent_framework.openai import OpenAIChatClient
-from agent_framework.orchestrations import (
-    ConcurrentBuilder,
-    HandoffBuilder,
-    SequentialBuilder,
-)
 from dotenv import load_dotenv
 
 from agent_gantry import AgentGantry
+from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+
+try:
+    from agent_framework.openai import OpenAIChatClient
+except ImportError:
+    OpenAIChatClient = None  # Install agent-framework-openai for the live step.
+
 
 load_dotenv()
 
 
 async def build_gantry() -> AgentGantry:
     """Register a realistic multi-role tool set for customer support."""
-    gantry = AgentGantry()
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
 
     # Research role
     @gantry.register(
@@ -129,6 +130,8 @@ async def sequential_pipeline(
         instructions="Draft a concise, empathetic customer email.",
         limit=2,
     )
+    from agent_framework.orchestrations import SequentialBuilder
+
     workflow = SequentialBuilder(participants=[researcher, writer]).build()
     print(f"\n[sequential] workflow built with {2} participants")
     result = await workflow.run(query)
@@ -153,6 +156,8 @@ async def concurrent_analysts(
         instructions="Assess the operational situation.",
         limit=2,
     )
+    from agent_framework.orchestrations import ConcurrentBuilder
+
     workflow = ConcurrentBuilder(
         participants=[billing_analyst, ops_analyst],
     ).build()
@@ -194,6 +199,8 @@ async def handoff_triage(
     for a in (triage, billing, research):
         a.require_per_service_call_history_persistence = True
 
+    from agent_framework.orchestrations import HandoffBuilder
+
     workflow = (
         HandoffBuilder(name="support_desk")
         .participants([triage, billing, research])
@@ -233,6 +240,8 @@ async def main() -> None:
         # question than "can this run", and an Azure-configured reader would be
         # turned away from an example that works for them.
         try:
+            if OpenAIChatClient is None:
+                raise ImportError("Install the chat client: pip install agent-framework-openai")
             client = OpenAIChatClient()
         except Exception as exc:
             print(f"No usable Agent Framework chat client ({type(exc).__name__}: {exc}).")

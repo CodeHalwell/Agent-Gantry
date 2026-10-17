@@ -38,7 +38,7 @@ def _spec_to_haystack(spec: ToolSpec) -> Any:
         return spec.invoke(**kwargs)
 
     return Tool(
-        name=spec.name,
+        name=spec.native_name,
         description=spec.description,
         parameters=spec.parameters,
         function=_function,

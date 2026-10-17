@@ -40,10 +40,11 @@ import json
 import os
 
 from agent_gantry import AgentGantry
+from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 
 
 def build_gantry() -> AgentGantry:
-    gantry = AgentGantry()
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
 
     @gantry.register(
         tags=["weather"],
@@ -95,9 +96,8 @@ async def main() -> None:
             )
             return
 
-        from agent_gantry.openai_agents import OpenAIAgentsAdapter
 
-        adapter = OpenAIAgentsAdapter(gantry)
+        adapter = gantry.framework("openai_agents")
 
         # --- 1. Static tier: select once, get native agents.FunctionTool -------- #
         query = "what's the weather in Paris?"

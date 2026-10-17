@@ -512,8 +512,11 @@ class SemanticRouter:
 
         # Conversation relevance
         tool_name_lower = tool.name.lower()
+        qualified_name = f"{tool.namespace}.{tool.name}"
+        was_used = tool.name in ctx.tools_used or qualified_name in ctx.tools_used
+        previously_failed = tool.name in ctx.tools_failed or qualified_name in ctx.tools_failed
         conversation_relevance = 0.0
-        if tool.name in ctx.tools_used:
+        if was_used:
             conversation_relevance = 0.5
         if ctx.summary_lower and self._contains_token(ctx.summary_lower, tool_name_lower):
             conversation_relevance = min(1.0, conversation_relevance + 0.2)
@@ -528,8 +531,8 @@ class SemanticRouter:
         cost_score = 1.0 - min(tool.cost.estimated_latency_ms / 10000, 1.0)
 
         # Penalties
-        already_used_penalty = 0.1 if tool.name in ctx.tools_used else 0.0
-        already_failed_penalty = 0.3 if tool.name in ctx.tools_failed else 0.0
+        already_used_penalty = 0.1 if was_used else 0.0
+        already_failed_penalty = 0.3 if previously_failed else 0.0
         deprecated_penalty = 0.5 if tool.deprecated else 0.0
 
         return RoutingSignals(

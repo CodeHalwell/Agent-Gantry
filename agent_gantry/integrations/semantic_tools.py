@@ -37,6 +37,7 @@ from pydantic import ValidationError
 
 from agent_gantry.integrations.frameworks.base import check_query_bounds
 from agent_gantry.query.strategies import last_user_text
+from agent_gantry.utils.async_utils import is_coroutine_function
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
@@ -457,7 +458,7 @@ class SemanticToolSelector:
         Returns:
             Wrapped function with semantic tool selection.
         """
-        if asyncio.iscoroutinefunction(func):
+        if is_coroutine_function(func):
             return self.wrap_async(func)
         return self.wrap_sync(func)
 

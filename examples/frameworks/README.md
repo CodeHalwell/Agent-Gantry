@@ -2,8 +2,10 @@
 
 These examples exercise the native tool adapters
 (`agent_gantry.integrations.frameworks`) and the multi-turn `ToolRefresher`.
-They all run **offline** — no API keys, no LLM, and no third-party agent
-framework required (uninstalled frameworks are skipped cleanly).
+No API key or LLM is required. Uninstalled agent frameworks are skipped cleanly.
+The universal adapter example uses a local hash embedder. The verification and
+multi-turn demos use SentenceTransformers when installed, which may download its
+model on first run; otherwise they use the hash embedder.
 
 | File | What it does |
 |---|---|
@@ -31,11 +33,10 @@ installed) and falls back to the offline `SimpleEmbedder`. Install a framework
 - **Select** → `GantryToolset(gantry).select(query, limit=3)` returns ranked
   `ToolSpec`s. Each `ToolSpec` is invocable directly (`ainvoke`/`invoke`) and
   routes through `gantry.execute`.
-- **Export** → `LangChainAdapter(gantry).select(query, limit=3)` (and
-  `LlamaIndexAdapter` / `CrewAIAdapter` / `PydanticAIAdapter` / `OpenAIAgentsAdapter` /
-  `HaystackAdapter` / `AgnoAdapter` / `StrandsAdapter` / `DSPyAdapter` /
-  `GoogleADKAdapter` / `LangGraphAdapter`) build that framework's native tool
-  objects; use `<Adapter>.convert(spec)` for a single `ToolSpec`.
+- **Export** → `gantry.framework("langchain").select(query, limit=3)` builds
+  native tools. All twelve names from `supported_frameworks()` share this API,
+  including Microsoft Agent Framework. Use `gantry.framework(name).convert(spec)`
+  for one `ToolSpec`; `spec.native_name` is the safe framework-facing name.
 - **Multi-turn** → `ToolRefresher(gantry).refresh(messages)` re-selects fresh
   each turn so the agent can pivot to a different tool as the task changes.
 - **Import (reverse)** → `register_langchain_tools(gantry, tools)` /
@@ -47,5 +48,4 @@ installed) and falls back to the offline `SimpleEmbedder`. Install a framework
   again via any adapter above, to a *different* framework than the one they
   came from.
 
-The framework-specific examples that use real LLMs and the older manual
-wrapping pattern live in [`../agent_frameworks/`](../agent_frameworks/).
+Framework-specific static and live integration examples are in [`../agent_frameworks/`](../agent_frameworks/).

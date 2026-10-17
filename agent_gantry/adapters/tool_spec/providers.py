@@ -227,15 +227,19 @@ class _ToolCallMixin:
     def to_tool_call(
         self,
         payload: ToolCallPayload,
-        timeout_ms: int = 30000,
-        retry_count: int = 0,
+        timeout_ms: int | None = None,
+        retry_count: int | None = None,
     ) -> ToolCall:
+        overrides: dict[str, Any] = {}
+        if timeout_ms is not None:
+            overrides["timeout_ms"] = timeout_ms
+        if retry_count is not None:
+            overrides["retry_count"] = retry_count
         return ToolCall(
             tool_name=payload.tool_name,
             arguments=payload.arguments,
-            timeout_ms=timeout_ms,
-            retry_count=retry_count,
             trace_id=payload.tool_call_id,
+            **overrides,
         )
 
 

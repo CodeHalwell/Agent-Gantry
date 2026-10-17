@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -27,6 +29,7 @@ import pytest
 af = pytest.importorskip("agent_framework")
 
 from agent_gantry import AgentGantry, GantryContextProvider  # noqa: E402
+from agent_gantry.adapters.embedders.simple import SimpleEmbedder  # noqa: E402
 from agent_gantry.integrations.anthropic_skills import SkillRegistry  # noqa: E402
 
 
@@ -43,7 +46,7 @@ def _tool_names(tools: list) -> list[str]:
 
 @pytest.fixture
 async def gantry_with_tools() -> AgentGantry:
-    g = AgentGantry()
+    g = AgentGantry(embedder=SimpleEmbedder())
 
     @g.register
     def get_weather(city: str) -> str:
@@ -813,3 +816,86 @@ async def test_required_qualified_name_resolves_per_request(monkeypatch):
     tools = provider._pin_tools(["billing.refund"], {"default.refund"}, {"refund"})
     assert len(tools) == 1
     assert provider._pin_tools(["billing.refund"], {"billing.refund"}, {"refund"}) == []
+
+
+@pytest.mark.parametrize("name", ["lookup", "x" * 128])
+@pytest.mark.parametrize("as_function_tool", [False, True])
+async def test_per_call_refresh_removes_stale_native_aliases(
+    name, as_function_tool, monkeypatch
+):
+    """Switch namespaces without accumulating tools or dropping foreign tools."""
+    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+
+    async with AgentGantry(embedder=SimpleEmbedder()) as gantry:
+        for namespace in ("billing", "inventory"):
+
+            def lookup(item: str) -> str:
+                """Look up an item."""
+                return item
+
+            gantry.register(lookup, name=name, namespace=namespace)
+
+        bridge = GantryToolBridge(gantry, as_function_tool=as_function_tool)
+        wrappers = bridge.wrap_tools(gantry.list_tools_sync())
+        aliases = _tool_names(wrappers)
+        assert len(set(aliases)) == 2
+        assert all(alias != name and len(alias) <= 64 for alias in aliases)
+        provider = GantryContextProvider(gantry, top_k=1, query_strategy="per_call")
+        monkeypatch.setattr(
+            provider._bridge,
+            "get_tools_with_decision",
+            AsyncMock(side_effect=[([wrappers[0]], None), ([wrappers[1]], None), ([], None)]),
+        )
+        foreign = SimpleNamespace(name="foreign_skill")
+        options = {"tools": [foreign]}
+        context = SimpleNamespace(options=options, messages=[_user_msg("look up item")])
+
+        for expected in ([foreign, wrappers[0]], [foreign, wrappers[1]], [foreign]):
+            await provider._refresh_tools_on_chat_context(context)
+            assert context.options is options
+            assert context.options["tools"] == expected
+
+
+@pytest.mark.parametrize("strategy", ["per_run", "per_call"])
+@pytest.mark.parametrize("static_name_kind", ["authored", "native"])
+async def test_static_tools_deduplicate_against_emitted_names(strategy, static_name_kind):
+    """Authored names used for pins must not hide a distinct AF-native tool."""
+    from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+
+    async with AgentGantry(embedder=SimpleEmbedder()) as gantry:
+        for namespace in ("billing", "inventory"):
+
+            def lookup(item: str) -> str:
+                """Look up an item."""
+                return item
+
+            gantry.register(lookup, namespace=namespace)
+
+        aliases = set(_tool_names(GantryToolBridge(gantry).wrap_tools(gantry.list_tools_sync())))
+        static_name = "lookup" if static_name_kind == "authored" else sorted(aliases)[0]
+
+        def foreign() -> str:
+            """A static tool owned by the host application."""
+            return "foreign"
+
+        static = af.tool(foreign, name=static_name)
+        provider = GantryContextProvider(
+            gantry, top_k=2, score_threshold=0.0, query_strategy=strategy,
+            always_include=["billing.lookup"], static_tools=[static],
+        )
+        if strategy == "per_run":
+            context = af.SessionContext(input_messages=[_user_msg("look up an item")])
+            await provider.before_run(agent=None, session=None, context=context, state={})
+            tools = context.tools
+        else:
+            context = SimpleNamespace(options={"tools": [static]}, messages=[_user_msg("lookup")])
+            for _ in range(2):
+                await provider._refresh_tools_on_chat_context(context)
+            tools = context.options["tools"]
+
+        expected = aliases | {static_name}
+        assert set(_tool_names(tools)) == expected
+        assert len(tools) == len(expected)
+        if static_name_kind == "authored":
+            assert static in tools

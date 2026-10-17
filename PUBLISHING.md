@@ -1,86 +1,30 @@
-# Publishing Agent-Gantry to PyPI
+# Publishing Agent-Gantry
 
-This guide explains how to build and publish Agent-Gantry to PyPI using `uv`.
+The GitHub [Publish to PyPI workflow](.github/workflows/publish.yml) is the
+supported publishing path; local `uv publish` bypasses the release checks and
+GitHub release creation and is not part of this process.
+[RELEASING.md](RELEASING.md) is the release checklist and documents version
+updates, changelog notes, validation, TestPyPI, and production publication.
 
-## Prerequisites
+The workflow uses PyPI trusted publishing through GitHub OIDC. It builds and
+checks the distributions, smoke-installs the wheel on all supported Python
+versions, and only then uploads. A production run also creates the matching
+GitHub tag and Release with changelog notes and checksums.
 
-1.  **PyPI Account**: You need an account on [PyPI](https://pypi.org/).
-2.  **API Token**: It is highly recommended to use an [API token](https://pypi.org/help/#apitoken) for publishing.
-3.  **uv**: Ensure you have `uv` installed.
+If trusted publishing fails, check the PyPI publisher's repository, workflow and
+environment names against [RELEASING.md](RELEASING.md), then retry the original
+run. An emergency token-based upload must use the validated workflow artifacts
+and checksums; it also requires completing the tag and GitHub release steps.
 
-## Step 1: Prepare the Release
-
-1.  **Update Version**: Ensure the version in `pyproject.toml` and `agent_gantry/__init__.py` is correct.
-2.  **Update Changelog**: Ensure `CHANGELOG.md` has an entry for the new version with the correct date.
-3.  **Run Tests**: Ensure all tests pass.
-    ```bash
-    uv run pytest
-    ```
-4.  **Check Linting**: Ensure code passes linting.
-    ```bash
-    uv run ruff check agent_gantry/
-    ```
-
-## Step 2: Build the Distribution
-
-Use `uv build` to create the source distribution and wheel.
+To inspect artifacts locally without publishing:
 
 ```bash
+python scripts/check_release.py
 uv build
+uv tool run twine check dist/*
 ```
 
-This will create a `dist/` directory containing:
-- `agent_gantry-<version>.tar.gz` (source distribution)
-- `agent_gantry-<version>-py3-none-any.whl` (wheel)
-
-## Step 3: Publish to PyPI
-
-Use `uv publish` to upload the distribution files to PyPI.
-
-```bash
-uv publish
-```
-
-`uv` will prompt you for your PyPI credentials (username and password/token).
-
-### Using an API Token (Recommended)
-
-When prompted for a username, enter `__token__`.
-When prompted for a password, enter your PyPI API token (including the `pypi-` prefix).
-
-Alternatively, you can set environment variables:
-
-```bash
-# On Windows (PowerShell)
-$env:UV_PUBLISH_TOKEN = "your-pypi-token"
-
-# On Linux/macOS
-export UV_PUBLISH_TOKEN="your-pypi-token"
-```
-
-Then run:
-
-```bash
-uv publish
-```
-
-## Step 4: Verify the Release
-
-1.  Check the project page on PyPI: `https://pypi.org/project/agent-gantry/`
-2.  Try installing the new version in a fresh environment:
-    ```bash
-    uv venv test-env
-    . test-env/bin/activate  # or test-env\Scripts\activate on Windows
-    uv pip install agent-gantry
-    ```
-
-## Troubleshooting
-
-### Build Failures
-If `uv build` fails, ensure your `pyproject.toml` is valid and all dependencies are correctly specified.
-
-### Authentication Errors
-If `uv publish` fails with authentication errors, double-check your API token and ensure it has the necessary permissions for the project.
-
-### Version Conflicts
-If you try to publish a version that already exists on PyPI, the upload will fail. You must increment the version number for every new release.
+To publish after the release PR has merged and CI has passed, open
+**Actions → Publish to PyPI → Run workflow**, select `main`, and choose
+`testpypi` or `pypi`. TestPyPI is selected by default. A published GitHub Release
+also triggers the workflow for that tag.

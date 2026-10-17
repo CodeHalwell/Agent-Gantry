@@ -24,6 +24,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from agent_gantry.core.gantry import AgentGantry
+from agent_gantry.integrations.frameworks.registry import supported_frameworks
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 
 # Canonical framework names, matching the native adapter module names under
@@ -46,22 +47,7 @@ FrameworkName = Literal[
     "crew_ai",
 ]
 
-_SUPPORTED_FRAMEWORKS: frozenset[str] = frozenset(
-    {
-        "langchain",
-        "langgraph",
-        "llamaindex",
-        "crewai",
-        "google_adk",
-        "agno",
-        "haystack",
-        "pydantic_ai",
-        "openai_agents",
-        "agent_framework",
-        "strands",
-        "dspy",
-    }
-)
+_SUPPORTED_FRAMEWORKS: frozenset[str] = frozenset(supported_frameworks())
 
 # Legacy / alternate spellings kept for backwards compatibility, mapped to the
 # canonical name they normalize to. See GitHub issue #101 — this module's

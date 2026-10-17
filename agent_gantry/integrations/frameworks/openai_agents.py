@@ -89,11 +89,13 @@ def _spec_to_openai_agents(spec: ToolSpec) -> Any:
         # ``str()`` on a dict yields Python repr (single quotes), which the
         # model then has to guess at. Serialize structured results as JSON,
         # matching the Agent Framework bridge.
-        return result if isinstance(result, str) else json.dumps(result, default=str)
+        from agent_gantry.adapters.tool_spec.providers import _result_text
+
+        return _result_text(result)
 
     params, use_strict = _strict_schema(spec.parameters)
     return FunctionTool(
-        name=spec.name,
+        name=spec.native_name,
         description=spec.description,
         params_json_schema=params,
         strict_json_schema=use_strict,

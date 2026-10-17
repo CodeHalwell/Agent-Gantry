@@ -764,6 +764,45 @@ async def test_approval_mode_maps_from_gantry_capabilities(bridge: GantryToolBri
     assert by_name["get_weather"].approval_mode == "never_require"
     assert by_name["lookup_order"].approval_mode == "never_require"
 
+
+@pytest.mark.parametrize("approved", [False, True])
+async def test_native_approval_round_trip_executes_only_after_approval(approved):
+    """Drive AF's own pause/resume flow through a confirmation-gated Gantry tool."""
+    calls = []
+    async with AgentGantry() as gantry:
+
+        @gantry.register(requires_confirmation=True)
+        async def submit_request() -> str:
+            """Submit a request after human approval."""
+            calls.append(1)
+            return "submitted"
+
+        tools = GantryToolBridge(gantry).wrap_tools(gantry.list_tools_sync())
+        client = ScriptedChatClient(
+            script=[[_fc("submit_request", {}, "approval-call")], [Content.from_text("done")]]
+        )
+        agent = Agent(client, instructions="", name="approval_test", tools=tools)
+        session = agent.create_session()
+        response = await agent.run("submit the request", session=session)
+        requests = [
+            c for msg in response.messages for c in msg.contents
+            if c.type == "function_approval_request"
+        ]
+        assert len(requests) == 1
+        assert calls == []
+
+        response = await agent.run(
+            [Message(role="user", contents=[requests[0].to_function_approval_response(approved)])],
+            session=session,
+        )
+        assert calls == ([1] if approved else [])
+        if approved:
+            results = [
+                c for msg in response.messages for c in msg.contents
+                if c.type == "function_result"
+            ]
+            assert any("submitted" in str(c.result) for c in results)
+
 # ---------------------------------------------------------------------------
 # 14. as_agent() — direct Agent construction
 # ---------------------------------------------------------------------------

@@ -9,7 +9,7 @@ Agent-Gantry acts as a **Semantic Tool Router**. Instead of passing all your too
 The general pattern is:
 1. **Register** all your tools with `AgentGantry`.
 2. **Select + convert** in one call with a native adapter — e.g.
-   `tools = await LangChainAdapter(gantry).select(query, limit=3)` — which retrieves
+   `tools = await gantry.framework("langchain").select(query, limit=3)` — which retrieves
    the relevant tools, wraps them as that framework's native tool objects, and wires
    execution back through `gantry.execute` (retries, timeouts, circuit breakers,
    security policy all apply). No manual factory or name-based branching.
@@ -43,13 +43,19 @@ Use `limit` to control how many tools reach the model.
 
 ## Running these without API keys
 
-Every example here runs from a clean checkout with no keys set. Registration,
+After installing the chosen SDK, the scripts run without model credentials. Registration,
 sync, retrieval and conversion need no credentials, so each file does that work
 first and prints what was selected; only a final live model call is gated, and
 it names the variable it wants. That makes these useful for seeing what Gantry
-picks before you spend anything.
+picks before you spend anything. The scripts explicitly use `SimpleEmbedder`
+for an offline walkthrough; configure a semantic embedder for production routing.
+The TUI additionally needs `textual`.
 
-Each framework has a clean namespace — `from agent_gantry.<framework> import <Framework>Adapter`
+All twelve frameworks support `gantry.framework(name).select(query)` and
+`gantry.framework(name).convert(spec)`. `supported_frameworks()` lists the names.
+The selected adapter retains its framework-specific live methods and editor completion.
+
+Direct adapter imports also remain available — `from agent_gantry.<framework> import <Framework>Adapter`
 (`agent_gantry.langchain` → `LangChainAdapter`, `agent_gantry.crewai` → `CrewAIAdapter`,
 `agent_gantry.llamaindex` → `LlamaIndexAdapter`, `agent_gantry.pydantic_ai` → `PydanticAIAdapter`,
 `agent_gantry.openai_agents` → `OpenAIAgentsAdapter`,
@@ -69,7 +75,7 @@ For per-step (multi-turn) re-selection within one run, use `ToolRefresher`
 - `agent_framework_trace_events_example.py` — **per-call routing with built-in observability**. Shows the multi-step pattern (`query_strategy="per_call"`) where the tool surface re-selects every chat round, wired with one `provider.attach_to(agent, trace=True)` call. Demonstrates the library's batteries-included observability: the built-in console **trace** middleware (no hand-rolled `@function_middleware`), the framework-agnostic `gantry.on_tool_call(...)` **event hook**, per-round `provider.selections` history, and `agent_gantry.render_result(...)`. Uses stdlib-only tools, so it runs without extra API keys (beyond your chat client).
 - `agent_framework_tui_demo.py` — **Textual TUI dashboard** for screenshots and demos. Three-panel view: full tool registry, per-round semantic selection (via `GantryContextProvider.dry_run_retrieve`), and execution log (`gantry.execute`). Press **D** for a scripted four-step demo (no API key); press **L** for a live AF agent when `OPENAI_API_KEY` is set. From this repo: `uv sync --extra agent-frameworks && uv pip install textual`, then `uv run examples/agent_frameworks/agent_framework_tui_demo.py`. Optional: `--embedder nomic` for stronger retrieval (requires `agent-gantry[nomic]`; embeddings sync before the TUI starts).
 - `agent_framework_example.py`: Microsoft Agent Framework (1.5.0+) integration via `GantryToolBridge` (still useful when the tool set is *static* and known at agent-construction time). Demonstrates three construction patterns:
-  1. `bridge.build_agent(client, query, ...)` — convenience one-liner via `client.as_agent()`.
+  1. `bridge.build_agent(client, query, ...)` — convenience one-liner that constructs an AF `Agent`.
   2. `bridge.as_agent(client, query, ...)` — direct `Agent(client, ...)` construction; preferred for `WorkflowBuilder` because the result is a first-class `Agent`.
   3. `bridge.build_workflow([specs], edges=[...])` — fan-out/handoff routing where each participating agent receives its own semantically-selected Gantry tool subset.
 - `agent_framework_orchestration_example.py`: Multi-agent orchestration patterns (Sequential / Concurrent / Handoff) on AF 1.5.0+, each participating agent receiving its own semantically selected Gantry tool slice. Since AF 1.2.2, the terminal output of sequential/concurrent workflows is an `AgentResponse` (str-coercible) rather than a bare string — extract text with `str(result)` or `result.text`.
@@ -89,10 +95,11 @@ For per-step (multi-turn) re-selection within one run, use `ToolRefresher`
 
 ## Installation Requirements
 
-You can install all framework integrations at once or install individual frameworks as needed.
+Install the individual SDK for the framework you use. The combined extra contains
+LangChain, LangGraph, CrewAI, LlamaIndex, Google ADK and Microsoft Agent Framework.
 
 ```bash
-# Option 1: Install all framework dependencies (uv project)
+# Combined extra for those six frameworks (uv project)
 uv add "agent-gantry[agent-frameworks]"
 
 # Option 2: Install individual frameworks
@@ -115,11 +122,14 @@ pip install agent-gantry pydantic-ai-slim
 pip install agent-gantry openai-agents
 pip install agent-gantry haystack-ai
 pip install agent-gantry agno
-pip install agent-gantry strands-agents
+pip install agent-gantry 'strands-agents>=1'
 pip install agent-gantry dspy
 ```
 
-**Note on Python version:** CI exercises the adapter suite on **Python 3.10, 3.11, 3.12 and 3.13** (ubuntu, plus a macOS 3.12 cell). Agent-Gantry supports 3.10+.
+**Note on Python version:** CI exercises the adapter suite on **Python 3.10, 3.11, 3.12, 3.13 and 3.14** (ubuntu, plus a macOS 3.12 cell). Agent-Gantry supports Python 3.10–3.14.
+
+CrewAI's SDK currently requires Python **3.10–3.13**. Use one of those versions
+for `crewai_example.py`; the combined framework extra omits CrewAI on 3.14.
 
 ## Environment variables
 

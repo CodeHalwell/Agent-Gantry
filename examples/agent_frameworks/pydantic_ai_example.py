@@ -32,10 +32,11 @@ from __future__ import annotations
 import asyncio
 
 from agent_gantry import AgentGantry
+from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 
 
 def build_gantry() -> AgentGantry:
-    gantry = AgentGantry()
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
 
     @gantry.register(
         tags=["weather"],
@@ -88,9 +89,8 @@ async def main() -> None:
             )
             return
 
-        from agent_gantry.pydantic_ai import PydanticAIAdapter
 
-        adapter = PydanticAIAdapter(gantry)
+        adapter = gantry.framework("pydantic_ai")
 
         # --- 1. Static tier: select once, get native pydantic_ai.tools.Tool ----- #
         query = "what's the weather in Paris?"

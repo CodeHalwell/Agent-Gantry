@@ -1,6 +1,7 @@
 ---
 import DocsLayout from '../../layouts/DocsLayout.astro';
 import ProviderMatrix from '../../components/ProviderMatrix';
+import CodeBlock from '../../components/CodeBlock.astro';
 const guides = [
   ['Microsoft Agent Framework', '/Agent-Gantry/docs/frameworks/agent-framework/'],
   ['LangChain', '/Agent-Gantry/docs/frameworks/langchain/'],
@@ -20,6 +21,26 @@ const guides = [
   <h1>Framework integrations</h1>
   <p class="lead">Agent-Gantry is designed to be the shared tool layer below many agent frameworks. These guides show how to expose the same trusted tool registry, retrieval strategy, and LLM routing policy from basic prototypes through production-grade agent systems.</p>
   <ProviderMatrix />
+
+  <h2>Start with one adapter call</h2>
+  <p>Install Gantry and the framework SDK your app uses. The same registry exposes twelve integrations through <code>gantry.framework(name)</code>, with concrete adapter types for editor completion and lazy SDK imports.</p>
+  <CodeBlock lang="bash" code={`pip install agent-gantry langchain-core`} />
+  <CodeBlock lang="python" code={`from agent_gantry import AgentGantry, supported_frameworks
+
+gantry = AgentGantry()
+
+@gantry.register
+def add(a: int, b: int) -> int:
+    """Add two integers together."""
+    return a + b
+
+# Selection syncs registrations and returns native, executable tools.
+tools = await gantry.framework("langchain").select("add two numbers", limit=3)
+assert await tools[0].ainvoke({"a": 2, "b": 3}) == 5
+
+# Discover adapters without installing all twelve SDKs.
+print(supported_frameworks())`} />
+  <p>For dynamic selection, use <code>gantry.framework(name).live(...)</code>. For example, Pydantic AI accepts <code>toolsets=[gantry.framework("pydantic-ai").live(limit=3)]</code>. Each guide below shows the framework's native wiring and how often it refreshes tools. Existing adapter imports remain available.</p>
 
   <h2>Framework-by-framework guides</h2>
   <p>Each guide is organized as a two-page learning path in one place: a <strong>basic page</strong> for setup, registration, and a first tool call, followed by an <strong>advanced page</strong> for dynamic tool selection, LLM calls, observability, and deployment patterns.</p>
