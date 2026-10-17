@@ -94,3 +94,7 @@
 **Vulnerability:** Execution and event models lack newline validation on identifier fields.
 **Learning:** Identifier sanitization needs to be universally applied to all schema models to avoid CRLF injection.
 **Prevention:** Implement reject_newlines field_validator and validate_assignment=True on all schemas.
+## 2026-09-23 - Hardcoded Bind All Interfaces
+**Vulnerability:** The `serve_a2a` method bound to `0.0.0.0` by default.
+**Learning:** Binding to `0.0.0.0` exposes the server to all network interfaces, which can be dangerous if the server is running on a machine accessible from the internet or untrusted networks without explicit intent.
+**Prevention:** Default to `127.0.0.1` for local-only binding unless explicitly overridden.
