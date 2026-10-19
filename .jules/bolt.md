@@ -58,3 +58,7 @@
 ## 2026-08-25 - Avoid row-wise dictionary allocation with LanceDB to_list for single columns
 **Learning:** When retrieving a single column (like JSON strings) from LanceDB, using `.to_list()` allocates a dictionary for every row just to wrap the single field, causing O(N) memory overhead and slower execution on large tables.
 **Action:** Use columnar extraction via `.select(['col']).to_arrow()` and then extract the list of values directly using `table['col'].to_pylist()`. This avoids dictionary allocation per row.
+
+## 2026-10-19 - Fast sliding window boundary checks
+**Learning:** Calculating rate limit thresholds chronologically over sliding windows using `sum(1 for t in history if condition)` requires an O(N) evaluation of every item in the history deque, acting as a CPU bottleneck for instances with large traffic caps.
+**Action:** Exploit the strictly chronological insertion order of timestamp deques by iterating backwards with `reversed(history)` and inserting an early `break` once the time horizon is crossed. This changes evaluation complexity from O(N) to O(1) for all limit checks.
