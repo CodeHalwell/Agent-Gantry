@@ -260,7 +260,15 @@ class SecurityPolicy:
         if self.max_requests_per_minute <= 0:
             return None
         now = time.time()
-        recent = sum(1 for stamp in self._request_timestamps if now - stamp < 60)
+        threshold = now - 60
+
+        # ⚡ Bolt: Iterate in reverse and break early instead of using O(N) generator
+        recent = 0
+        for stamp in reversed(self._request_timestamps):
+            if stamp <= threshold:
+                break
+            recent += 1
+
         if recent >= self.max_requests_per_minute:
             return (
                 f"Rate limit exceeded: maximum {self.max_requests_per_minute} "
