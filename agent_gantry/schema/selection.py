@@ -14,7 +14,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from agent_gantry.schema.base import reject_newlines
 
 
 class SelectionCandidate(BaseModel):
@@ -43,6 +45,10 @@ class SelectionCandidate(BaseModel):
     group: str | None = None
     tags: list[str] = Field(default_factory=list)
     examples: list[str] = Field(default_factory=list)
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    _reject_newline_identifiers = field_validator("id", "name", "group")(reject_newlines)
 
     @classmethod
     def from_tool(cls, tool: Any) -> SelectionCandidate:
