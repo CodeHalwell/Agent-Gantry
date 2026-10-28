@@ -58,3 +58,7 @@
 ## 2026-08-25 - Avoid row-wise dictionary allocation with LanceDB to_list for single columns
 **Learning:** When retrieving a single column (like JSON strings) from LanceDB, using `.to_list()` allocates a dictionary for every row just to wrap the single field, causing O(N) memory overhead and slower execution on large tables.
 **Action:** Use columnar extraction via `.select(['col']).to_arrow()` and then extract the list of values directly using `table['col'].to_pylist()`. This avoids dictionary allocation per row.
+
+## 2026-10-27 - Inline loop for regex match counting
+**Learning:** In Python, calculating the number of regex matches using a generator expression inside `sum()` (e.g., `sum(1 for pattern in patterns if pattern.search(query))`) incurs significant generator overhead. Replacing the generator expression with a single-pass inline `for` loop that manually accumulates a counter variable significantly improves performance by eliminating iterator overhead.
+**Action:** When calculating match counts over lists in performance-critical paths (like intent classification on every incoming query), use explicit inline `for` loops instead of generator expressions.
