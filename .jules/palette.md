@@ -120,3 +120,7 @@
 ## 2026-09-16 - ARIA Tablist Keyboard Navigation
 **Learning:** When implementing ARIA tablists in React, merely updating the active state via click is insufficient for accessibility. You must provide arrow key navigation and manage focus using `tabIndex={0}` for the active tab and `tabIndex={-1}` for inactive tabs. Using refs to programmatically focus tabs ensures focus isn't trapped.
 **Action:** Always implement ArrowRight/ArrowLeft handlers and programmatic focus (e.g., using `useRef`) when building custom tablist components.
+
+## 2026-11-04 - [Contextual ARIA Labels for Code Blocks]
+**Learning:** When generating scrollable code blocks (e.g., using Shiki) that possess a visual title or filename, using a generic `aria-label` like "Code snippet" on the scrollable container forces screen reader users to listen to the code without knowing its context. Including the title directly in the `aria-label` provides vital context for screen reader users navigating the code.
+**Action:** Always ensure the scrollable `<pre>` or container element's `aria-label` incorporates the title (e.g., `aria-label="Code snippet: ${title}"`) instead of using a generic label when a title is present.
