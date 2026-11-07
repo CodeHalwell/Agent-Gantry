@@ -120,3 +120,7 @@
 ## 2026-09-16 - ARIA Tablist Keyboard Navigation
 **Learning:** When implementing ARIA tablists in React, merely updating the active state via click is insufficient for accessibility. You must provide arrow key navigation and manage focus using `tabIndex={0}` for the active tab and `tabIndex={-1}` for inactive tabs. Using refs to programmatically focus tabs ensures focus isn't trapped.
 **Action:** Always implement ArrowRight/ArrowLeft handlers and programmatic focus (e.g., using `useRef`) when building custom tablist components.
+
+## 2026-10-27 - [Interactive States for Interactive Elements]
+**Learning:** Components like `.card` and `.pill` that are primarily designed for static display lack interactive cues when wrapped in `<a>` tags. Without hover transitions (e.g., `transform: translateY(-2px)`, border color changes), users may not realize these elements are clickable, harming discoverability.
+**Action:** Always ensure that when visual container components (like cards or pills) can function as links, they possess distinct `:hover` styles (like a border color change, background shift, or slight lift) coupled with smooth CSS transitions.
