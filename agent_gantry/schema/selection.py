@@ -14,7 +14,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from agent_gantry.schema.base import reject_newlines
 
 
 class SelectionCandidate(BaseModel):
@@ -36,6 +38,10 @@ class SelectionCandidate(BaseModel):
             withholding them from a selector while giving them to the vector
             store is not a fair comparison, it is a handicap.
     """
+
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
+    _reject_newline_identifiers = field_validator("id", "name")(reject_newlines)
 
     id: str = Field(..., min_length=1)
     name: str = Field(..., min_length=1)
