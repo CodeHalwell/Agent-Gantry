@@ -94,3 +94,8 @@
 **Vulnerability:** Execution and event models lack newline validation on identifier fields.
 **Learning:** Identifier sanitization needs to be universally applied to all schema models to avoid CRLF injection.
 **Prevention:** Implement reject_newlines field_validator and validate_assignment=True on all schemas.
+
+## 2026-11-09 - Fix CRLF injection in selection models
+**Vulnerability:** The `SelectionCandidate` model lacked identifier validation for `id` and `name` fields, making it vulnerable to newline (CRLF) injection.
+**Learning:** Identifier sanitization needs to be universally applied to all schema models to avoid CRLF injection. Selection candidates, which contain dynamically generated identifiers and names, were missed in previous identifier validation sweeps.
+**Prevention:** Implement `reject_newlines` `field_validator` and `validate_assignment=True` on all schema models that carry identifiers, including auxiliary models like those used for selection routing.
