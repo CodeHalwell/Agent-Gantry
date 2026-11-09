@@ -58,3 +58,7 @@
 ## 2026-08-25 - Avoid row-wise dictionary allocation with LanceDB to_list for single columns
 **Learning:** When retrieving a single column (like JSON strings) from LanceDB, using `.to_list()` allocates a dictionary for every row just to wrap the single field, causing O(N) memory overhead and slower execution on large tables.
 **Action:** Use columnar extraction via `.select(['col']).to_arrow()` and then extract the list of values directly using `table['col'].to_pylist()`. This avoids dictionary allocation per row.
+
+## 2023-11-10 - Fast reverse iteration for time window constraints
+**Learning:** Checking timestamps within multiple fixed sliding time windows (like minute and hour rate limit constraints) using separate generator expressions over the entire list (`sum(1 for t in history if t >= hour_ago)`, etc.) is highly inefficient since each comprehension forces an O(N) iteration, checking elements that shouldn't be matched.
+**Action:** Replace the generator expressions with a single `reversed(history)` iteration. Maintain separate manual counters for the hour and minute thresholds, increment them accordingly as timestamps are processed in reverse order, and early `break` as soon as a timestamp older than the longest time window (hour_ago) is encountered to reduce the operation from O(N) over all elements to O(K) where K is only the number of recent timestamps within the time window.
