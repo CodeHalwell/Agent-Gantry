@@ -94,3 +94,8 @@
 **Vulnerability:** Execution and event models lack newline validation on identifier fields.
 **Learning:** Identifier sanitization needs to be universally applied to all schema models to avoid CRLF injection.
 **Prevention:** Implement reject_newlines field_validator and validate_assignment=True on all schemas.
+
+## 2026-11-10 - Protect API Keys in Configuration Repr
+**Vulnerability:** API keys (such as `EmbedderConfig.api_key`, `VectorStoreConfig.api_key`, and `LLMConfig.api_key`) were accidentally exposed in logging when a config object was stringified or passed to a logger using `repr()`, because the `api_key` attributes did not have `repr=False`.
+**Learning:** Even if `headers` and `env` are protected via `repr=False`, all explicit credential fields across all nested configuration models must also be excluded from string representations, otherwise logging the root configuration object exposes all embedded API keys.
+**Prevention:** Always set `repr=False` on `Field` definitions for any properties that hold secrets, tokens, or API keys in Pydantic models.

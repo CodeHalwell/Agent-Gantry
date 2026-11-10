@@ -24,7 +24,7 @@ class VectorStoreConfig(BaseModel):
 
     type: Literal["memory", "qdrant", "chroma", "pgvector", "lancedb"] = "memory"
     url: str | None = None
-    api_key: str | None = None
+    api_key: str | None = Field(default=None, repr=False)
     collection_name: str = "agent_gantry"
     dimension: int | None = None
     db_path: str | None = Field(default=None, description="Path to local database (for LanceDB)")
@@ -42,7 +42,7 @@ class EmbedderConfig(BaseModel):
             "give the deployment name."
         ),
     )
-    api_key: str | None = None
+    api_key: str | None = Field(default=None, repr=False)
     api_base: str | None = None
     api_version: str | None = Field(default=None, description="API version (for Azure OpenAI)")
     batch_size: int = 100
@@ -118,7 +118,7 @@ class LLMConfig(BaseModel):
     # deployment relying on it at that date. Callers pinning the old model
     # must now set model="gpt-4o-mini" explicitly (until shutdown).
     model: str = "gpt-5.4-mini"
-    api_key: str | None = None
+    api_key: str | None = Field(default=None, repr=False)
     base_url: str | None = Field(default=None, description="Custom base URL (for OpenRouter, etc.)")
     max_tokens: int = 100
     temperature: float = 0.0
