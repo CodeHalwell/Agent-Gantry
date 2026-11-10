@@ -58,3 +58,7 @@
 ## 2026-08-25 - Avoid row-wise dictionary allocation with LanceDB to_list for single columns
 **Learning:** When retrieving a single column (like JSON strings) from LanceDB, using `.to_list()` allocates a dictionary for every row just to wrap the single field, causing O(N) memory overhead and slower execution on large tables.
 **Action:** Use columnar extraction via `.select(['col']).to_arrow()` and then extract the list of values directly using `table['col'].to_pylist()`. This avoids dictionary allocation per row.
+
+## 2026-10-27 - Optimize sliding window counting
+**Learning:** Using generator expressions like `sum(1 for stamp in history if stamp >= threshold)` over a chronologically sorted collection (like a sliding window rate limiter's history list) is highly inefficient. Because the history isn't always pruned immediately, iterating over the entire list incurs significant $O(N)$ overhead, especially when only recent entries are needed.
+**Action:** Use a reverse iterator (`for stamp in reversed(history):`) and break early when `stamp < threshold`. This turns an $O(N)$ full-history scan into an $O(K)$ operation where $K$ is just the number of entries within the time window.
