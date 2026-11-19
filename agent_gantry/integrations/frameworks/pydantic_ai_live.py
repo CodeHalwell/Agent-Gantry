@@ -32,12 +32,14 @@ from __future__ import annotations
 
 import copy
 import functools
+import json
 import logging
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import (
     DEFAULT_TOOL_LIMIT,
     QueryBoundsError,
+    ToolExecutionError,
     ToolSpec,
     _resolve_pins,
     _with_native_names,
@@ -103,7 +105,12 @@ def _content_text(content: Any) -> str:
         parts = [c for c in (_content_text(item) for item in content) if c]
         return " ".join(parts).strip()
     if isinstance(content, dict):
-        return str(content).strip()
+        # JSON rather than Python repr: quotes and keys read as the model
+        # and the embedder would see them.
+        try:
+            return json.dumps(content, ensure_ascii=False, default=str).strip()
+        except (TypeError, ValueError):
+            return str(content).strip()
     # Multimodal items (ImageUrl, BinaryContent, ...) carry no retrieval text.
     if type(content).__module__.startswith("pydantic_ai"):
         return ""
@@ -284,7 +291,8 @@ def _toolset_classes(abstract_toolset: type) -> tuple[type, type]:
                     from pydantic_ai.exceptions import ModelRetry
 
                     raise ModelRetry(message)
-                raise KeyError(message)
+                # The raise contract: every failure is a ToolExecutionError.
+                raise ToolExecutionError(name, "failure", message, "ToolNotFound")
             return await execute_for_pydantic_ai(spec, tool_args, ctx, error_mode=self._error_mode)
 
     class GantryToolset(_GantryToolsetBase):

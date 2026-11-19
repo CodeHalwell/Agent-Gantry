@@ -720,5 +720,27 @@ async def test_unavailable_tool_asks_the_model_to_choose_again(gantry):
 
     raising = _adapter(gantry).toolset(limit=1, error_mode="raise")
     raising.set_query("weather forecast for a city")
-    with pytest.raises(KeyError, match="not available"):
+    with pytest.raises(ToolExecutionError, match="not available") as info:
         await raising.call_tool("divide", {"a": 1, "b": 2}, _ctx(), None)
+    assert info.value.error_type == "ToolNotFound"
+
+
+async def test_error_mode_raise_through_search_mode(gantry):
+    _pydantic_ai()
+    from pydantic_ai import Agent
+
+    model = _script(
+        [("search_tools", {"queries": ["divide integer a by integer b"]})],
+        [("divide", {"a": 1, "b": 0})],
+    )
+    capability = _adapter(gantry).capability(mode="search", limit=1, error_mode="raise")
+    with pytest.raises(ToolExecutionError, match="division by zero"):
+        await Agent(model, capabilities=[capability]).run("divide 1 by 0")
+
+
+def test_dict_tool_results_render_as_json():
+    from agent_gantry.integrations.frameworks.pydantic_ai_live import _content_text
+
+    assert _content_text({"to": "jo@example.com", "ok": True}) == (
+        '{"to": "jo@example.com", "ok": true}'
+    )
