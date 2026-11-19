@@ -510,8 +510,9 @@ async def test_search_strategy_ranks_gantry_tools_semantically(gantry):
         ctx, ["weather forecast", "translate into french"], [*corpus, foreign]
     )
 
-    assert names[0] == "get_weather"
-    assert "translate_text" in names  # native tools share the limit via keywords
+    # Each query's best hit makes the shared limit: Gantry's semantically,
+    # the native tool's by keyword.
+    assert set(names) == {"get_weather", "translate_text"}
     assert len(queries) == 2  # one Gantry retrieval per search query
 
 
@@ -1011,3 +1012,42 @@ async def test_invocation_context_is_reset_after_a_handler_raises(gantry):
         await execute_for_pydantic_ai(spec, {"x": "y"}, _ctx(), error_mode="raise")
     assert seen and seen[0] is not None  # visible inside the handler
     assert current_tool_invocation() is None  # and reset afterwards
+
+
+@pytest.mark.parametrize("outage", [False, True])
+async def test_keyword_fusion_respects_gantrys_hard_filters(outage):
+    _pydantic_ai()
+    from pydantic_ai.tools import ToolDefinition
+
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+
+    @g.register(namespace="private")
+    def export_payroll(month: str) -> str:
+        """Export the payroll report for a month."""
+        return month
+
+    @g.register(namespace="public")
+    def get_weather(city: str) -> str:
+        """Get the current weather forecast for a city."""
+        return city
+
+    await g.sync()
+    try:
+        adapter = _adapter(g)
+        corpus = [t.tool_def for t in (await adapter.deferred_toolset().get_tools(_ctx())).values()]
+        native = ToolDefinition(name="translate_text", description="Translate text into French.")
+        if outage:
+
+            async def down(query):
+                raise RuntimeError("vector store down")
+
+            g.retrieve = down
+        names = await adapter.search_strategy(limit=3, namespaces=["public"])(
+            _ctx(), ["export the payroll report", "weather forecast"], [*corpus, native]
+        )
+        # The excluded namespace stays excluded, with or without native tools
+        # in the corpus, and through the outage fallback too.
+        assert "export_payroll" not in names
+        assert "get_weather" in names
+    finally:
+        await g.close()

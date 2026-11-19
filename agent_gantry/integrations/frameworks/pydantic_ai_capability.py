@@ -133,6 +133,25 @@ def gantry_search_strategy(
         )
         return min(_MAX_RETRIEVAL_LIMIT, limit + max(0, in_scope - eligible))
 
+    def _allowed(tool: Any) -> bool:
+        """The router's hard filters, as ``select`` applies them by default."""
+        if getattr(tool, "deprecated", False):
+            return False
+        if namespaces and tool.namespace not in namespaces:
+            return False
+        health = getattr(tool, "health", None)
+        return not getattr(health, "circuit_breaker_open", False)
+
+    def _eligible_own(tools: Sequence[Any]) -> list[Any]:
+        """This registry's tools from ``tools`` that pass the hard filters."""
+        known = {tool.qualified_name: tool for tool in gantry.list_tools_sync()}
+        eligible = []
+        for td in tools:
+            tool = known.get(_gantry_name(td, registry) or "")
+            if tool is not None and _allowed(tool):
+                eligible.append(td)
+        return eligible
+
     async def search(ctx: Any, queries: Sequence[str], tools: Sequence[Any]) -> list[str]:
         by_qualified: dict[str, str] = {}
         others = []
@@ -170,7 +189,9 @@ def gantry_search_strategy(
                     )
                     failed = True
             if failed and not per_query:
-                others.extend(td for td in tools if _gantry_name(td, registry))
+                # Total outage: rank this registry's tools by keyword instead,
+                # but only those the router itself would have allowed.
+                others.extend(_eligible_own(tools))
                 by_qualified = {}
             # Interleave per-query rankings so each query's best hit comes first.
             seen: set[str] = set()
@@ -183,10 +204,13 @@ def gantry_search_strategy(
                             ranked.append(name)
         if not others:
             return ranked[:limit]  # Gantry tools only: pure semantic ranking.
-        # Shared budget: fuse Gantry's semantic ranking with a keyword ranking
-        # over the whole corpus, so a native tool's exact match can outrank an
+        # Shared budget: fuse Gantry's semantic ranking with a keyword ranking of
+        # the *other* tools, so a native tool's exact match can outrank an
         # unrelated Gantry hit, then apply ``limit`` once to the merged list.
-        return _fuse(ranked, _keyword_rank(ctx, queries, tools))[:limit]
+        # Keyword ranking never sees this registry's tools while semantic
+        # retrieval works: that would reintroduce tools its namespace,
+        # deprecation and health filters excluded.
+        return _fuse(ranked, _keyword_rank(ctx, queries, others))[:limit]
 
     search.__name__ = "gantry_semantic_search"
     return search
