@@ -34,7 +34,10 @@ adapter with `PydanticAIAdapter(gantry, error_mode="raise")`. Otherwise:
   (capped at 2,000 characters), or pass `error_formatter=` to redact them;
 - expect the per-turn toolset to offer the tools it selected earlier in a run
   (`sticky=True`, capped at `max_offered`, default `3 * limit`); pass
-  `sticky=False` for the previous strict top-k per step.
+  `sticky=False` for the previous strict top-k per step;
+- prefer a pydantic-ai release with `ToolFailed`. On earlier 2.x releases a
+  terminal failure comes back as an ordinary tool result (`Error: ...`), which
+  the model and telemetry cannot tell apart from a successful call.
 
 ### Added
 

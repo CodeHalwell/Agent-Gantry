@@ -899,3 +899,36 @@ async def test_default_cap_is_three_times_the_limit(gantry):
     assert _adapter(gantry).toolset(limit=2)._max_offered == 6
     with pytest.raises(ValueError, match="max_offered"):
         _adapter(gantry).toolset(max_offered=0)
+
+
+async def test_reselected_sticky_tool_gets_its_fresh_spec(gantry):
+    _pydantic_ai()
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+    run = await _adapter(gantry).toolset(limit=1).for_run(_ctx())
+    seen = []
+    for prompt in ("weather forecast for a city", "divide integers", "current weather forecast"):
+        ctx = _ctx()
+        ctx.messages = [ModelRequest(parts=[UserPromptPart(content=prompt)])]
+        tools = await run.get_tools(ctx)
+        seen.append((list(tools), tools["get_weather"].gantry_spec.score))
+    # Same position throughout, but the third step's selection replaced the spec.
+    assert [names for names, _ in seen] == [
+        ["get_weather"],
+        ["get_weather", "divide"],
+        ["get_weather", "divide"],
+    ]
+    assert seen[2][1] != seen[0][1]
+
+
+async def test_retrieval_outage_during_call_tool_reports_unavailable(gantry):
+    _pydantic_ai()
+    from pydantic_ai.exceptions import ModelRetry
+
+    async def down(query):
+        raise RuntimeError("vector store down")
+
+    gantry.retrieve = down
+    toolset = _adapter(gantry).toolset(limit=1).set_query("weather forecast for a city")
+    with pytest.raises(ModelRetry, match="not available"):
+        await toolset.call_tool("get_weather", {"city": "Leeds"}, _ctx(), None)

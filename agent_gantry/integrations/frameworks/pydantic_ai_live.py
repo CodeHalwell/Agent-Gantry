@@ -447,9 +447,14 @@ def _toolset_classes(abstract_toolset: type) -> tuple[type, type]:
             self._step += 1
             current = set()
             for spec in selected:
-                self._offered.setdefault(spec.native_name, spec)
+                # Assignment refreshes a re-selected tool's spec (score, schema)
+                # without moving it: an existing key keeps its position.
+                self._offered[spec.native_name] = spec
                 self._last_selected[spec.native_name] = self._step
                 current.add(spec.native_name)
+            # Only tools outside this step's selection can be evicted. Pins are in
+            # every selection, so they are never dropped -- even if there are more
+            # of them than ``max_offered``, which then caps only carried-over tools.
             evictable = sorted(
                 (name for name in self._offered if name not in current),
                 key=lambda name: self._last_selected.get(name, 0),
@@ -463,7 +468,22 @@ def _toolset_classes(abstract_toolset: type) -> tuple[type, type]:
         async def _lookup(self, name: str, ctx: Any, tool: Any) -> ToolSpec | None:
             if self._offered and name in self._offered:
                 return self._offered[name]
-            for spec in await self._select(ctx):
+            try:
+                specs = await self._select(ctx)
+            except (MissingRequiredToolError, QueryBoundsError):
+                raise
+            except Exception:
+                # Same policy as get_tools: a retrieval outage must not surface
+                # as a raw exception from a tool call; the tool is reported as
+                # unavailable (ModelRetry, or ToolNotFound with error_mode="raise").
+                logger.warning(
+                    "GantryToolset.call_tool: semantic retrieval failed while "
+                    "recovering %r; reporting it as unavailable.",
+                    name,
+                    exc_info=True,
+                )
+                return None
+            for spec in specs:
                 if spec.native_name == name:
                     return spec
             return None
