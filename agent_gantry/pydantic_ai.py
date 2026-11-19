@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.pydantic_ai import (
+    ErrorFormatter,
     ErrorMode,
     PydanticAIAdapter,
     current_run_context,
@@ -36,6 +37,7 @@ if TYPE_CHECKING:  # resolved lazily by ``__getattr__`` below
     )
 
 __all__ = [
+    "ErrorFormatter",
     "ErrorMode",
     "GantryCapability",
     "GantryDeferredToolset",

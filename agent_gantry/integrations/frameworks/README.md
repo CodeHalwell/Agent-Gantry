@@ -402,7 +402,9 @@ characters), so a chained task surfaces the next tool it needs mid-run. Tools
 the model already called feed the router's `tools_already_used` signal.
 Selections are cached per run (one retrieval per distinct query, not per
 step); with `sticky=True` (default) tools offered earlier in a run stay
-offered. Run state lives on the copy `for_run()` returns, so concurrent runs
+offered, up to `max_offered` per step (default `3 * limit`; the current
+step's selection and pins are always offered, older tools are dropped least
+recently selected first). Run state lives on the copy `for_run()` returns, so concurrent runs
 can share one toolset. Give each Gantry toolset on an agent a distinct `id=`.
 Tool-result text used in the query is sent to the embedder (a remote service
 for OpenAI-style embedders); pass `query_from_results=False` to `toolset()` /
@@ -424,9 +426,11 @@ guarantee. Other deferred tools on the agent fall back to keyword matching.
 `requires_confirmation` flag or a `SecurityPolicy` pattern). Approve with
 Pydantic AI's `DeferredToolResults`; the approved replay runs once through
 `gantry.execute` with the gate cleared. `error_mode="raise"` opts out. The
-model sees a failure's text (`error_type: message`), as it would from a
-hand-written tool, so raise model-safe messages from handlers rather than ones
-carrying paths or connection strings.
+model sees a failure's text (`error_type: message`, capped at 2,000
+characters), as it would from a hand-written tool. To redact it, pass
+`PydanticAIAdapter(gantry, error_formatter=fn)`: `fn(exc: ToolExecutionError)
+-> str` rewrites every model-facing failure, and a formatter that raises is
+replaced by a generic message so a bug in it cannot leak the original text.
 
 **Run context.** Gantry handlers can read the run's `RunContext` (`deps`,
 `run_id`, `tool_call_id`, retry count) without changing their schema:

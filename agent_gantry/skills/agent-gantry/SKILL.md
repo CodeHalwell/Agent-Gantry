@@ -283,7 +283,7 @@ agent = Agent(
 - Tools already called feed the router's `tools_already_used` signal.
 - Tool-result text is sent to the embedder; `query_from_results=False` (on `toolset()` / `capability()`) keeps tool output out of retrieval when it may hold sensitive data.
 - One retrieval per distinct query per run (cached), not one per step.
-- `sticky=True` (default) keeps tools offered earlier in the run; `sticky=False` for a strict top-k.
+- `sticky=True` (default) keeps tools offered earlier in the run, up to `max_offered` per step (default `3 * limit`; the current selection and pins always stay, older tools drop least recently selected first); `sticky=False` for a strict top-k.
 - State lives on the per-run copy from `for_run`, so concurrent runs can share one toolset.
 - Retrieval failure mid-run: keeps the run's earlier tools, logs a WARNING, never raises.
 - Several Gantry toolsets on one agent need distinct `id=` values and non-clashing names (`namespaces=` or `.prefixed(...)`).
@@ -310,7 +310,7 @@ if isinstance(result.output, DeferredToolRequests):
     )
 ```
 
-The approved replay runs once through `gantry.execute` with only the confirmation gate cleared. `result.output.metadata[call_id]["agent_gantry"]` holds the tool's qualified name and the reason. Pass `error_mode="raise"` (adapter or any builder) to get `ToolExecutionError` instead, like the other adapters. The model sees the failure's text, so handler exception messages should be model-safe (no paths or connection strings).
+The approved replay runs once through `gantry.execute` with only the confirmation gate cleared. `result.output.metadata[call_id]["agent_gantry"]` holds the tool's qualified name and the reason. Pass `error_mode="raise"` (adapter or any builder) to get `ToolExecutionError` instead, like the other adapters. The model sees the failure's text (capped at 2,000 chars); to redact it, pass `PydanticAIAdapter(gantry, error_formatter=lambda exc: ...)`, which rewrites every model-facing failure and falls back to a generic message if the formatter itself raises.
 
 ### Run context and tracing
 

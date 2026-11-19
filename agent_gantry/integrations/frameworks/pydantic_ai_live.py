@@ -51,6 +51,7 @@ from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
 from agent_gantry.integrations.frameworks.pydantic_ai import (
     _INSTALL_HINT,
     METADATA_KEY,
+    ErrorFormatter,
     ErrorMode,
     check_error_mode,
     execute_for_pydantic_ai,
@@ -238,6 +239,7 @@ def _toolset_classes(abstract_toolset: type) -> tuple[type, type]:
 
         _toolset_id: str
         _error_mode: ErrorMode
+        _error_formatter: ErrorFormatter | None
         _max_retries: int
         _label: str
 
@@ -295,7 +297,13 @@ def _toolset_classes(abstract_toolset: type) -> tuple[type, type]:
                     raise ModelRetry(message)
                 # The raise contract: every failure is a ToolExecutionError.
                 raise ToolExecutionError(name, "failure", message, "ToolNotFound")
-            return await execute_for_pydantic_ai(spec, tool_args, ctx, error_mode=self._error_mode)
+            return await execute_for_pydantic_ai(
+                spec,
+                tool_args,
+                ctx,
+                error_mode=self._error_mode,
+                error_formatter=self._error_formatter,
+            )
 
     class GantryToolset(_GantryToolsetBase):
         """A Gantry-backed toolset that re-selects tools on every model step."""
@@ -316,10 +324,14 @@ def _toolset_classes(abstract_toolset: type) -> tuple[type, type]:
             sticky: bool = True,
             max_retries: int = 1,
             query_from_results: bool = True,
+            max_offered: int | None = None,
+            error_formatter: ErrorFormatter | None = None,
         ) -> None:
             check_query_bounds(limit=limit, score_threshold=score_threshold, owner="GantryToolset")
             if max_retries < 0:
                 raise ValueError("max_retries must be >= 0")
+            if max_offered is not None and max_offered < 1:
+                raise ValueError("max_offered must be >= 1")
             self._toolset = _BaseToolset(gantry)
             self._limit = limit
             self._score_threshold = score_threshold
@@ -331,6 +343,8 @@ def _toolset_classes(abstract_toolset: type) -> tuple[type, type]:
             self._sticky = sticky
             self._max_retries = max_retries
             self._query_from_results = query_from_results
+            self._error_formatter = error_formatter
+            self._max_offered = 3 * limit if max_offered is None else max_offered
             # An explicit query override, used when driving selection without a
             # full RunContext (tests, manual selection). Copied into each run.
             self._query: str | None = None
@@ -338,6 +352,10 @@ def _toolset_classes(abstract_toolset: type) -> tuple[type, type]:
             # the copy ``for_run`` returns.
             self._cache: dict[tuple[str, tuple[str, ...]], list[ToolSpec]] | None = None
             self._offered: dict[str, ToolSpec] | None = None
+            # native name -> step counter at which it was last selected; drives
+            # eviction while ``_offered`` keeps a stable (insertion) order.
+            self._last_selected: dict[str, int] = {}
+            self._step = 0
 
         # -- per-run isolation ---------------------------------------------- #
         async def for_run(self, ctx: Any) -> GantryToolset:
@@ -345,6 +363,8 @@ def _toolset_classes(abstract_toolset: type) -> tuple[type, type]:
             run = copy.copy(self)
             run._cache = {}
             run._offered = {}
+            run._last_selected = {}
+            run._step = 0
             return run
 
         # -- per-turn query override ---------------------------------------- #
@@ -413,10 +433,32 @@ def _toolset_classes(abstract_toolset: type) -> tuple[type, type]:
                 )
                 specs = []
             if self._sticky and self._offered is not None:
-                for spec in specs:
-                    self._offered.setdefault(spec.native_name, spec)
-                specs = list(self._offered.values())
+                specs = self._carry_over(specs)
             return {spec.native_name: self._wrap(spec) for spec in specs}
+
+        def _carry_over(self, selected: list[ToolSpec]) -> list[ToolSpec]:
+            """This step's selection plus recent earlier ones, up to ``max_offered``.
+
+            The current selection (pins included) is always offered in full;
+            carried-over tools are evicted least recently selected first. The
+            offered order stays stable across steps.
+            """
+            assert self._offered is not None
+            self._step += 1
+            current = set()
+            for spec in selected:
+                self._offered.setdefault(spec.native_name, spec)
+                self._last_selected[spec.native_name] = self._step
+                current.add(spec.native_name)
+            evictable = sorted(
+                (name for name in self._offered if name not in current),
+                key=lambda name: self._last_selected.get(name, 0),
+            )
+            while len(self._offered) > self._max_offered and evictable:
+                name = evictable.pop(0)
+                del self._offered[name]
+                self._last_selected.pop(name, None)
+            return list(self._offered.values())
 
         async def _lookup(self, name: str, ctx: Any, tool: Any) -> ToolSpec | None:
             if self._offered and name in self._offered:
@@ -441,9 +483,11 @@ def _toolset_classes(abstract_toolset: type) -> tuple[type, type]:
             error_mode: ErrorMode = "model",
             id: str | None = None,  # noqa: A002
             max_retries: int = 1,
+            error_formatter: ErrorFormatter | None = None,
         ) -> None:
             if max_retries < 0:
                 raise ValueError("max_retries must be >= 0")
+            self._error_formatter = error_formatter
             self._gantry = gantry
             self._namespaces = namespaces
             self._required = required
@@ -542,6 +586,8 @@ def _gantry_toolset(
     sticky: bool = True,
     max_retries: int = 1,
     query_from_results: bool = True,
+    max_offered: int | None = None,
+    error_formatter: ErrorFormatter | None = None,
 ) -> Any:
     """Build a per-turn :class:`GantryToolset` (``Agent(model, toolsets=[ts])``).
 
@@ -560,6 +606,8 @@ def _gantry_toolset(
         sticky=sticky,
         max_retries=max_retries,
         query_from_results=query_from_results,
+        max_offered=max_offered,
+        error_formatter=error_formatter,
     )
 
 
@@ -572,6 +620,7 @@ def _gantry_deferred_toolset(
     error_mode: ErrorMode = "model",
     id: str | None = None,  # noqa: A002
     max_retries: int = 1,
+    error_formatter: ErrorFormatter | None = None,
 ) -> Any:
     """Build a :class:`GantryDeferredToolset` for use with ``ToolSearch``.
 
@@ -586,6 +635,7 @@ def _gantry_deferred_toolset(
         error_mode=error_mode,
         id=id,
         max_retries=max_retries,
+        error_formatter=error_formatter,
     )
 
 

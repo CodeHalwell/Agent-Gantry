@@ -810,3 +810,92 @@ async def test_every_builder_gives_the_install_hint_without_pydantic_ai(monkeypa
     for build in (adapter.tool_search, adapter.capability, adapter.toolset):
         with pytest.raises(ImportError, match=r"agent-gantry\[pydantic-ai\]"):
             build()
+
+
+# --------------------------------------------------------------------------- #
+# 0.21.0: error_formatter and max_offered
+# --------------------------------------------------------------------------- #
+
+
+def _redact(exc):
+    return f"{exc.error_type}: [redacted]"
+
+
+@pytest.mark.parametrize("path", ["static", "toolset", "search"])
+async def test_error_formatter_rewrites_what_the_model_sees(gantry, path):
+    _pydantic_ai()
+    from pydantic_ai import Agent
+
+    adapter = _adapter(gantry, error_formatter=_redact)
+    call = [("divide", {"a": 1, "b": 0})]
+    if path == "static":
+        agent = Agent(_script(call), tools=await adapter.select("divide integers", limit=6))
+    elif path == "toolset":
+        agent = Agent(_script(call), toolsets=[adapter.toolset(limit=6)])
+    else:
+        search = [("search_tools", {"queries": ["divide integer a by integer b"]})]
+        agent = Agent(_script(search, call), capabilities=[adapter.capability(mode="search")])
+    result = await agent.run("divide integer a by integer b")
+    assert result.output.endswith("ZeroDivisionError: [redacted]")
+    assert "division by zero" not in result.output
+
+
+async def test_a_failing_error_formatter_fails_closed(gantry, caplog):
+    _pydantic_ai()
+    from pydantic_ai import Agent
+
+    def broken(exc):
+        raise RuntimeError("formatter bug")
+
+    tools = await _adapter(gantry, error_formatter=broken).select("divide integers", limit=6)
+    with caplog.at_level("WARNING"):
+        result = await Agent(_script([("divide", {"a": 1, "b": 0})]), tools=tools).run("1/0")
+    assert result.output.endswith("ZeroDivisionError: the tool call failed.")
+    assert "division by zero" not in result.output
+    assert "error_formatter raised" in caplog.text
+
+
+async def _offered_after(toolset, prompts):
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+    run = await toolset.for_run(_ctx())
+    offered = []
+    for prompt in prompts:
+        ctx = _ctx()
+        ctx.messages = [ModelRequest(parts=[UserPromptPart(content=prompt)])]
+        offered.append(list(await run.get_tools(ctx)))
+    return offered
+
+
+async def test_sticky_tools_are_capped_least_recently_selected_first(gantry):
+    _pydantic_ai()
+    toolset = _adapter(gantry).toolset(limit=1, max_offered=2)
+    steps = await _offered_after(
+        toolset,
+        [
+            "weather forecast for a city",
+            "divide integer a by integer b",
+            "send an email message to a recipient",
+        ],
+    )
+    assert steps[0] == ["get_weather"]
+    assert steps[1] == ["get_weather", "divide"]
+    # get_weather was selected least recently, so it goes; order stays stable.
+    assert steps[2] == ["divide", "send_email"]
+
+
+async def test_current_selection_and_pins_are_never_evicted(gantry):
+    _pydantic_ai()
+    toolset = _adapter(gantry).toolset(limit=1, max_offered=1, always_include=["whoami"])
+    steps = await _offered_after(
+        toolset, ["weather forecast for a city", "divide integer a by integer b"]
+    )
+    assert set(steps[0]) == {"get_weather", "whoami"}  # over the cap, but all current
+    assert set(steps[1]) == {"divide", "whoami"}
+
+
+async def test_default_cap_is_three_times_the_limit(gantry):
+    _pydantic_ai()
+    assert _adapter(gantry).toolset(limit=2)._max_offered == 6
+    with pytest.raises(ValueError, match="max_offered"):
+        _adapter(gantry).toolset(max_offered=0)

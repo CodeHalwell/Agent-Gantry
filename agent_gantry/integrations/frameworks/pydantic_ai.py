@@ -37,6 +37,8 @@ Public entry point: :class:`PydanticAIAdapter`.
 from __future__ import annotations
 
 import copy
+import logging
+from collections.abc import Callable
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -72,6 +74,16 @@ if TYPE_CHECKING:
 #:   :class:`~agent_gantry.integrations.frameworks.base.ToolExecutionError`
 #:   family propagates and ends the run.
 ErrorMode = Literal["model", "raise"]
+
+#: Turns a failed execution into the text the model sees, e.g. to redact
+#: paths, hostnames or connection strings from handler exception messages.
+#: Applies to every model-facing failure (``ModelRetry``, ``ToolFailed`` and the
+#: pre-``ToolFailed`` fallback); the result is still capped. A formatter that
+#: raises is replaced by a generic message, so a bug in it cannot leak the
+#: original text.
+ErrorFormatter = Callable[[ToolExecutionError], str]
+
+logger = logging.getLogger(__name__)
 
 FRAMEWORK_NAME = "pydantic_ai"
 
@@ -164,8 +176,25 @@ def _capped(message: str) -> str:
     return message[:_MAX_ERROR_CHARS] + " ... [truncated]"
 
 
-def failure_text(exc: ToolExecutionError) -> str:
-    """The model-facing text for a failed execution (``error_type: message``, capped)."""
+def _formatted(exc: ToolExecutionError, formatter: ErrorFormatter) -> str:
+    try:
+        return _capped(str(formatter(exc)))
+    except Exception:
+        logger.warning(
+            "Pydantic AI error_formatter raised; sending a generic failure message "
+            "to the model instead.",
+            exc_info=True,
+        )
+        return f"{exc.error_type or 'ToolError'}: the tool call failed."
+
+
+def failure_text(exc: ToolExecutionError, formatter: ErrorFormatter | None = None) -> str:
+    """The model-facing text for a failed execution (``error_type: message``, capped).
+
+    With ``formatter``, its output replaces the default text (see :data:`ErrorFormatter`).
+    """
+    if formatter is not None:
+        return _formatted(exc, formatter)
     message = exc.error or "tool execution failed (no error message)"
     if isinstance(exc, ToolPermissionDeniedError):
         message = f"Permission denied: {message}"
@@ -178,7 +207,12 @@ def failure_text(exc: ToolExecutionError) -> str:
     return _capped(message)
 
 
-def to_pydantic_ai_exception(spec: ToolSpec, exc: ToolExecutionError) -> Exception | None:
+def to_pydantic_ai_exception(
+    spec: ToolSpec,
+    exc: ToolExecutionError,
+    *,
+    error_formatter: ErrorFormatter | None = None,
+) -> Exception | None:
     """Translate a failed Gantry execution into Pydantic AI's control flow.
 
     Returns ``None`` for a terminal failure on a Pydantic AI release without
@@ -201,7 +235,7 @@ def to_pydantic_ai_exception(spec: ToolSpec, exc: ToolExecutionError) -> Excepti
                 }
             }
         )
-    message = failure_text(exc)
+    message = failure_text(exc, error_formatter)
     if exc.error_type in _MODEL_CORRECTABLE_ERRORS:
         return ModelRetry(message)
     try:
@@ -217,6 +251,7 @@ async def execute_for_pydantic_ai(
     ctx: Any,
     *,
     error_mode: ErrorMode = "model",
+    error_formatter: ErrorFormatter | None = None,
 ) -> Any:
     """Run ``spec`` through ``gantry.execute`` on behalf of a Pydantic AI tool call.
 
@@ -241,9 +276,9 @@ async def execute_for_pydantic_ai(
     except ToolExecutionError as exc:
         if error_mode == "raise":
             raise
-        mapped = to_pydantic_ai_exception(spec, exc)
+        mapped = to_pydantic_ai_exception(spec, exc, error_formatter=error_formatter)
         if mapped is None:
-            return f"Error: {failure_text(exc)}"
+            return f"Error: {failure_text(exc, error_formatter)}"
         raise mapped from exc
 
 
@@ -252,7 +287,12 @@ def json_schema_for(spec: ToolSpec) -> dict[str, Any]:
     return copy.deepcopy(spec.parameters) or {"type": "object", "properties": {}}
 
 
-def _spec_to_pydantic_ai(spec: ToolSpec, *, error_mode: ErrorMode = "model") -> Any:
+def _spec_to_pydantic_ai(
+    spec: ToolSpec,
+    *,
+    error_mode: ErrorMode = "model",
+    error_formatter: ErrorFormatter | None = None,
+) -> Any:
     """Wrap a :class:`ToolSpec` as a Pydantic AI ``Tool``.
 
     Uses ``Tool.from_schema`` so the JSON schema Gantry already produced is sent
@@ -269,7 +309,9 @@ def _spec_to_pydantic_ai(spec: ToolSpec, *, error_mode: ErrorMode = "model") -> 
         raise ImportError(_INSTALL_HINT) from exc
 
     async def _call(run_context: Any, /, **kwargs: Any) -> Any:
-        return await execute_for_pydantic_ai(spec, kwargs, run_context, error_mode=error_mode)
+        return await execute_for_pydantic_ai(
+            spec, kwargs, run_context, error_mode=error_mode, error_formatter=error_formatter
+        )
 
     _call.__name__ = _call.__qualname__ = spec.native_name
     _call.__doc__ = spec.description
@@ -296,6 +338,9 @@ class PydanticAIAdapter(BaseFrameworkAdapter):
         gantry: The registry to select from and execute against.
         default_limit: Default selection budget.
         error_mode: Default :data:`ErrorMode` for every tool this adapter builds.
+        error_formatter: Rewrites failure text before the model sees it, for
+            every tool, toolset and capability this adapter builds (see
+            :data:`ErrorFormatter`). Default: ``error_type: message``, capped.
     """
 
     live_tier = "per-turn"
@@ -307,17 +352,26 @@ class PydanticAIAdapter(BaseFrameworkAdapter):
         *,
         default_limit: int = DEFAULT_TOOL_LIMIT,
         error_mode: ErrorMode = "model",
+        error_formatter: ErrorFormatter | None = None,
     ) -> None:
         super().__init__(gantry, default_limit=default_limit)
         self._error_mode = check_error_mode(error_mode)
+        self._error_formatter = error_formatter
 
     def _mode(self, error_mode: ErrorMode | None) -> ErrorMode:
         return self._error_mode if error_mode is None else check_error_mode(error_mode)
 
     @staticmethod
-    def convert(spec: ToolSpec, *, error_mode: ErrorMode = "model") -> Any:
+    def convert(
+        spec: ToolSpec,
+        *,
+        error_mode: ErrorMode = "model",
+        error_formatter: ErrorFormatter | None = None,
+    ) -> Any:
         """Wrap a single :class:`ToolSpec` as a Pydantic AI ``Tool``."""
-        return _spec_to_pydantic_ai(spec, error_mode=check_error_mode(error_mode))
+        return _spec_to_pydantic_ai(
+            spec, error_mode=check_error_mode(error_mode), error_formatter=error_formatter
+        )
 
     async def select(
         self,
@@ -343,7 +397,9 @@ class PydanticAIAdapter(BaseFrameworkAdapter):
             tools_already_used=tools_already_used,
             **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
         )
-        return [self.convert(s, error_mode=mode) for s in specs]
+        return [
+            self.convert(s, error_mode=mode, error_formatter=self._error_formatter) for s in specs
+        ]
 
     def toolset(
         self,
@@ -358,6 +414,7 @@ class PydanticAIAdapter(BaseFrameworkAdapter):
         sticky: bool = True,
         max_retries: int = 1,
         query_from_results: bool = True,
+        max_offered: int | None = None,
     ) -> Any:
         """A live ``AbstractToolset`` that re-selects tools on every model step.
 
@@ -372,6 +429,11 @@ class PydanticAIAdapter(BaseFrameworkAdapter):
                 required to differ when an agent uses several Gantry toolsets,
                 and stable ids are what durable execution keys on.
             sticky: Keep earlier selections within a run.
+            max_offered: With ``sticky``, the most tools offered in one step
+                (default ``3 * limit``). The current step's selection, pins
+                included, is always offered in full; tools carried over from
+                earlier steps are dropped least recently selected first, so a
+                long run keeps the token savings selection exists for.
             max_retries: ``ModelRetry`` budget per tool (Pydantic AI's default is 1).
             query_from_results: Let tool output (its first 2,000 characters)
                 drive the next step's selection. That text is sent to the
@@ -385,10 +447,12 @@ class PydanticAIAdapter(BaseFrameworkAdapter):
             self._gantry,
             **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
             error_mode=self._mode(error_mode),
+            error_formatter=self._error_formatter,
             id=id,
             sticky=sticky,
             max_retries=max_retries,
             query_from_results=query_from_results,
+            max_offered=max_offered,
         )
 
     def deferred_toolset(
@@ -416,6 +480,7 @@ class PydanticAIAdapter(BaseFrameworkAdapter):
             required=required,
             always_include=always_include,
             error_mode=self._mode(error_mode),
+            error_formatter=self._error_formatter,
             id=id,
             max_retries=max_retries,
         )
@@ -479,6 +544,7 @@ class PydanticAIAdapter(BaseFrameworkAdapter):
         sticky: bool = True,
         max_retries: int = 1,
         query_from_results: bool = True,
+        max_offered: int | None = None,
     ) -> Any:
         """One ``Capability`` wiring Gantry into an agent: ``Agent(model, capabilities=[...])``.
 
@@ -514,6 +580,7 @@ class PydanticAIAdapter(BaseFrameworkAdapter):
                 sticky=sticky,
                 max_retries=max_retries,
                 query_from_results=query_from_results,
+                max_offered=max_offered,
             )
             search = None
         else:
