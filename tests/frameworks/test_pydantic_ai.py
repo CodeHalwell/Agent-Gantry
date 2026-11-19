@@ -960,3 +960,51 @@ def test_fusion_breaks_ties_towards_keyword_matches():
 
     assert _fuse(["semantic_only"], ["keyword_only"]) == ["keyword_only", "semantic_only"]
     assert _fuse(["both", "a"], ["both", "b"])[0] == "both"
+
+
+async def test_search_keeps_successful_queries_when_one_retrieval_fails(gantry):
+    _pydantic_ai()
+    adapter = _adapter(gantry)
+    corpus = [t.tool_def for t in (await adapter.deferred_toolset().get_tools(_ctx())).values()]
+    original = gantry.retrieve
+
+    async def flaky(query):
+        if "divide" in query.context.query:
+            raise RuntimeError("vector store blip")
+        return await original(query)
+
+    gantry.retrieve = flaky
+    names = await adapter.search_strategy(limit=2)(
+        _ctx(), ["weather forecast for a city", "divide integers"], corpus
+    )
+    assert names[0] == "get_weather"  # the successful query's semantic hit survives
+
+    async def down(query):
+        raise RuntimeError("vector store down")
+
+    gantry.retrieve = down
+    names = await adapter.search_strategy(limit=1)(_ctx(), ["divide integer a by b"], corpus)
+    assert names == ["divide"]  # every query failed: keyword fallback
+
+
+async def test_invocation_context_is_reset_after_a_handler_raises(gantry):
+    _pydantic_ai()
+    from agent_gantry.integrations.frameworks.pydantic_ai import execute_for_pydantic_ai
+
+    seen = []
+
+    @gantry.register
+    def boom_with_context(x: str) -> str:
+        """Record the invocation context, then raise an error."""
+        seen.append(current_tool_invocation())
+        raise ValueError("boom")
+
+    await gantry.sync()
+    spec = (
+        await GantryToolset(gantry).select("record the invocation context then raise", limit=1)
+    )[0]
+    assert spec.name == "boom_with_context"
+    with pytest.raises(ToolExecutionError):
+        await execute_for_pydantic_ai(spec, {"x": "y"}, _ctx(), error_mode="raise")
+    assert seen and seen[0] is not None  # visible inside the handler
+    assert current_tool_invocation() is None  # and reset afterwards

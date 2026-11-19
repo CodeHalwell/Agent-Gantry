@@ -147,6 +147,7 @@ def gantry_search_strategy(
         if by_qualified:
             fetch = _fetch_limit(len(by_qualified))
             per_query = []
+            failed = False
             for query in queries:
                 if not (query or "").strip():
                     continue
@@ -160,16 +161,17 @@ def gantry_search_strategy(
                         )
                     )
                 except Exception:
+                    # Keep the queries that did succeed; only if every one fails
+                    # do Gantry's tools fall back to keyword matching (below).
                     logger.warning(
-                        "Gantry tool search: semantic retrieval failed for %r; "
-                        "falling back to keyword matching.",
+                        "Gantry tool search: semantic retrieval failed for %r; skipping it.",
                         query,
                         exc_info=True,
                     )
-                    others.extend(td for td in tools if _gantry_name(td, registry))
-                    by_qualified = {}
-                    per_query = []
-                    break
+                    failed = True
+            if failed and not per_query:
+                others.extend(td for td in tools if _gantry_name(td, registry))
+                by_qualified = {}
             # Interleave per-query rankings so each query's best hit comes first.
             seen: set[str] = set()
             for rank in range(max((len(r) for r in per_query), default=0)):
