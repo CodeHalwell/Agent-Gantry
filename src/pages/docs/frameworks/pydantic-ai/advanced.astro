@@ -43,6 +43,7 @@ agent = Agent(
   <ul>
     <li><strong>Query:</strong> the newest user prompt; after a tool call, the run's prompt plus the newest tool result (first 2,000 characters). Tools the model already called feed the router's <code>tools_already_used</code> signal.</li>
     <li><strong>Cost:</strong> selections are cached per run, so there is one retrieval per distinct query, not one per step.</li>
+    <li><strong>Privacy:</strong> tool-result text in the query is sent to the embedder, which is a remote service for OpenAI-style embedders. Pass <code>query_from_results=False</code> to <code>toolset()</code> or <code>capability()</code> to keep tool output out of retrieval.</li>
     <li><strong>Stickiness:</strong> with <code>sticky=True</code> (the default), tools offered earlier in a run stay offered, so a plan the model made at step one doesn't lose a tool at step three. Use <code>sticky=False</code> for a strict top-k.</li>
     <li><strong>Concurrency:</strong> run state lives on the per-run copy Pydantic AI's <code>for_run</code> hook creates, so concurrent runs can share one toolset safely.</li>
     <li><strong>Failure:</strong> if retrieval fails mid-run, the step keeps the run's earlier tools and logs a warning; the run continues.</li>
@@ -69,6 +70,6 @@ agent = Agent(
     <li>Add <code>DeferredToolRequests</code> to <code>output_type</code> on any agent that can reach a confirmation-gated tool.</li>
     <li>Use search mode for large catalogues or prompt-cache-sensitive agents; per-turn mode for small, fast-moving tool sets.</li>
     <li>Read <code>deps</code> through <code>current_run_context()</code>. It is not available to out-of-process executors (sandbox, MCP, A2A, HTTP).</li>
-    <li>Keep <code>error_mode="model"</code> unless your application handles <code>ToolExecutionError</code> itself.</li>
+    <li>Keep <code>error_mode="model"</code> unless your application handles <code>ToolExecutionError</code> itself, and make handler exception messages safe for the model to read.</li>
   </ul>
 </DocsLayout>

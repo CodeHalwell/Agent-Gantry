@@ -67,6 +67,10 @@ DEFAULT_TOOLSET_ID = "agent-gantry"
 #: useful as a retrieval signal, and embedders have input limits.
 _MAX_TOOL_RESULT_QUERY_CHARS = 2000
 
+#: Per-run selection cache size. Queries that include tool results rarely
+#: repeat, so only recent ones are worth keeping; oldest entries are evicted.
+_MAX_CACHED_SELECTIONS = 32
+
 
 def _require_pydantic_ai() -> tuple[Any, Any, Any, Any]:
     """Import the Pydantic AI toolset machinery, with a helpful error if missing.
@@ -138,12 +142,14 @@ def _latest_request(messages: Any) -> tuple[str, str]:
     return "", ""
 
 
-def _query_from_ctx(ctx: Any) -> str:
+def _query_from_ctx(ctx: Any, *, include_results: bool = True) -> str:
     """Derive the per-step selection query from a Pydantic AI ``RunContext``.
 
     1. The newest request carries a user prompt -> that prompt (a new turn).
     2. It carries tool results -> the run's prompt plus those results, so the
-       next selection reflects both the goal and what just happened.
+       next selection reflects both the goal and what just happened. With
+       ``include_results=False`` tool output never enters the query (and so
+       never reaches the embedder); the run's prompt is used instead.
     3. Otherwise ``ctx.prompt``, then :func:`latest_activity` for role-shaped
        or dict-shaped histories some setups pass through.
     """
@@ -152,7 +158,7 @@ def _query_from_ctx(ctx: Any) -> str:
     user_text, result_text = _latest_request(messages)
     if user_text:
         return user_text
-    if result_text:
+    if result_text and include_results:
         return f"{prompt}\n{result_text}".strip()
     if prompt:
         return prompt
@@ -270,7 +276,15 @@ def _toolset_classes(abstract_toolset: type) -> tuple[type, type]:
             """
             spec = getattr(tool, "gantry_spec", None) or await self._lookup(name, ctx, tool)
             if spec is None:
-                raise KeyError(f"Tool {name!r} is not available in this toolset.")
+                message = (
+                    f"Tool {name!r} is not available in this step's Gantry selection; "
+                    "call one of the tools currently offered instead."
+                )
+                if self._error_mode == "model":
+                    from pydantic_ai.exceptions import ModelRetry
+
+                    raise ModelRetry(message)
+                raise KeyError(message)
             return await execute_for_pydantic_ai(spec, tool_args, ctx, error_mode=self._error_mode)
 
     class GantryToolset(_GantryToolsetBase):
@@ -291,6 +305,7 @@ def _toolset_classes(abstract_toolset: type) -> tuple[type, type]:
             id: str | None = None,  # noqa: A002
             sticky: bool = True,
             max_retries: int = 1,
+            query_from_results: bool = True,
         ) -> None:
             check_query_bounds(limit=limit, score_threshold=score_threshold, owner="GantryToolset")
             if max_retries < 0:
@@ -305,6 +320,7 @@ def _toolset_classes(abstract_toolset: type) -> tuple[type, type]:
             self._toolset_id = id or DEFAULT_TOOLSET_ID
             self._sticky = sticky
             self._max_retries = max_retries
+            self._query_from_results = query_from_results
             # An explicit query override, used when driving selection without a
             # full RunContext (tests, manual selection). Copied into each run.
             self._query: str | None = None
@@ -343,7 +359,11 @@ def _toolset_classes(abstract_toolset: type) -> tuple[type, type]:
 
         # -- dynamic tool discovery ----------------------------------------- #
         async def _select(self, ctx: Any) -> list[ToolSpec]:
-            query = self._query if self._query is not None else _query_from_ctx(ctx)
+            query = (
+                self._query
+                if self._query is not None
+                else _query_from_ctx(ctx, include_results=self._query_from_results)
+            )
             used = _tools_used(ctx)
             key = (query, tuple(used))
             if self._cache is not None and key in self._cache:
@@ -358,6 +378,8 @@ def _toolset_classes(abstract_toolset: type) -> tuple[type, type]:
                 always_include=self._always_include,
             )
             if self._cache is not None:
+                if len(self._cache) >= _MAX_CACHED_SELECTIONS:
+                    self._cache.pop(next(iter(self._cache)))
                 self._cache[key] = specs
             return specs
 
@@ -453,9 +475,20 @@ def _toolset_classes(abstract_toolset: type) -> tuple[type, type]:
                 catalogue.setdefault(spec.native_name, (spec, False))
             return catalogue
 
-        def _current(self) -> dict[str, tuple[ToolSpec, bool]]:
+        async def _current(self) -> dict[str, tuple[ToolSpec, bool]]:
             if self._per_run and self._catalogue is not None:
                 return self._catalogue
+            # Lazy ``modules=`` and late registrations only reach the registry
+            # on sync; the search strategy needs them embedded anyway. A sync
+            # failure degrades to the tools already registered.
+            try:
+                await self._gantry.ensure_synced()
+            except Exception:
+                logger.warning(
+                    "GantryDeferredToolset: sync failed; building the catalogue from "
+                    "the tools already registered.",
+                    exc_info=True,
+                )
             catalogue = self._build_catalogue()
             if self._per_run:
                 self._catalogue = catalogue
@@ -465,11 +498,12 @@ def _toolset_classes(abstract_toolset: type) -> tuple[type, type]:
             """Every catalogue tool, deferred unless pinned visible."""
             return {
                 name: self._wrap(spec, defer_loading=deferred)
-                for name, (spec, deferred) in self._current().items()
+                for name, (spec, deferred) in (await self._current()).items()
             }
 
         async def _lookup(self, name: str, ctx: Any, tool: Any) -> ToolSpec | None:
-            entry = self._current().get(name)
+            catalogue = await self._current()
+            entry = catalogue.get(name)
             if entry is not None:
                 return entry[0]
             # A wrapper renamed the tool: recover it from the definition's metadata.
@@ -477,7 +511,7 @@ def _toolset_classes(abstract_toolset: type) -> tuple[type, type]:
                 METADATA_KEY
             ) or {}
             qualified = meta.get("qualified_name")
-            for spec, _ in self._current().values():
+            for spec, _ in catalogue.values():
                 if spec.qualified_name == qualified:
                     return spec
             return None
@@ -497,6 +531,7 @@ def _gantry_toolset(
     id: str | None = None,  # noqa: A002
     sticky: bool = True,
     max_retries: int = 1,
+    query_from_results: bool = True,
 ) -> Any:
     """Build a per-turn :class:`GantryToolset` (``Agent(model, toolsets=[ts])``).
 
@@ -514,6 +549,7 @@ def _gantry_toolset(
         id=id,
         sticky=sticky,
         max_retries=max_retries,
+        query_from_results=query_from_results,
     )
 
 

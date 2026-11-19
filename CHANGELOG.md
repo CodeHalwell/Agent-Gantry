@@ -44,8 +44,9 @@ calling `tool.function(...)` directly must pass a context (or `None`) first.
 - The active OpenTelemetry span is propagated into Pydantic AI tool calls'
   `ToolCall.trace_id` / `parent_span_id`, joining Gantry's execution telemetry
   to the agent's trace.
-- `PydanticAIAdapter.toolset()` gains `id=`, `sticky=`, `max_retries=` and
-  `error_mode=`.
+- `PydanticAIAdapter.toolset()` gains `id=`, `sticky=`, `max_retries=`,
+  `error_mode=` and `query_from_results=` (set `False` to keep tool output out
+  of the retrieval query, and so away from a remote embedder).
 
 ### Fixed
 

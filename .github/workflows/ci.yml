@@ -137,11 +137,17 @@ jobs:
       # experimental class).
       # strands-agents 0.0.1 is an empty placeholder. Without a real-version
       # floor, uv can select it to keep a newer MCP dependency on Python 3.10/3.11.
+      # dspy<3.5 (2026-11-19): DSPy 3.5.0 redesigned ReAct (native
+      # `tool_calls` + a `submit` tool instead of next_tool_name /
+      # next_tool_args), which breaks the scripted-LM ReAct tests in
+      # tests/frameworks/test_dspy_live.py and may affect the DSPy live
+      # wrapper. Remove the cap once the DSPy adapter supports 3.5 -- the
+      # latest-frameworks workflow keeps testing the newest release meanwhile.
       - name: Run adapter smoke tests
         run: |
           uv venv .venv-frameworks --python ${{ matrix.python-version }}
           uv pip install --python .venv-frameworks ".[dev,pydantic-ai]" \
-            openai-agents haystack-ai agno "strands-agents>=1" dspy
+            openai-agents haystack-ai agno "strands-agents>=1" "dspy<3.5"
           .venv-frameworks/bin/python -m pytest tests/frameworks/ -v
 
       # Pydantic AI is first-class with a declared floor (the `pydantic-ai`

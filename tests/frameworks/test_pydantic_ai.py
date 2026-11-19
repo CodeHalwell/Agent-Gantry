@@ -605,3 +605,120 @@ async def test_missing_pydantic_ai_raises_helpful_error(monkeypatch, gantry):
     specs = await GantryToolset(gantry).select("send an email", limit=1)
     with pytest.raises(ImportError, match=r"agent-gantry\[pydantic-ai\]"):
         _adapter(gantry).convert(specs[0])
+
+
+# --------------------------------------------------------------------------- #
+# Review follow-ups (PR #558)
+# --------------------------------------------------------------------------- #
+
+
+def _ctx():
+    from pydantic_ai.models.test import TestModel
+    from pydantic_ai.tools import RunContext
+    from pydantic_ai.usage import RunUsage
+
+    return RunContext(deps=None, model=TestModel(), usage=RunUsage())
+
+
+async def test_deferred_catalogue_loads_lazy_modules_before_snapshot():
+    _pydantic_ai()
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=128), modules=["tests.test_modules.module_a"])
+    try:
+        adapter = _adapter(g)
+        tools = await adapter.deferred_toolset().get_tools(_ctx())  # no sync() beforehand
+        assert {"tool_a1", "tool_a2"} <= set(tools)
+
+        corpus = [t.tool_def for t in tools.values()]
+        names = await adapter.search_strategy(limit=2)(_ctx(), ["first tool"], corpus)
+        assert "tool_a1" in names
+    finally:
+        await g.close()
+
+
+async def test_search_budget_is_applied_after_the_eligibility_filter():
+    _pydantic_ai()
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+
+    @g.register
+    def get_weather(city: str) -> str:
+        """Get the current weather forecast for a city."""
+        return city
+
+    @g.register
+    def get_weather_alerts(city: str) -> str:
+        """Get severe weather alerts in the forecast for a city."""
+        return city
+
+    @g.register
+    def divide(a: int, b: int) -> float:
+        """Divide integer a by integer b."""
+        return a / b
+
+    await g.sync()
+    try:
+        adapter = _adapter(g)
+        # get_weather is pinned visible, so it is not in the search corpus,
+        # yet it is the registry's best match for the query.
+        tools = await adapter.deferred_toolset(always_include=["get_weather"]).get_tools(_ctx())
+        corpus = [t.tool_def for t in tools.values() if t.tool_def.defer_loading]
+        assert "get_weather" not in {td.name for td in corpus}
+
+        names = await adapter.search_strategy(limit=1)(
+            _ctx(), ["current weather forecast for a city"], corpus
+        )
+        assert names == ["get_weather_alerts"]
+    finally:
+        await g.close()
+
+
+async def test_query_from_results_false_keeps_tool_output_out_of_retrieval(gantry):
+    _pydantic_ai()
+    from pydantic_ai import Agent
+
+    queries = _count_retrievals(gantry)
+    model = _script([("lookup_customer", {"name": "Jo"})])
+    toolset = _adapter(gantry).toolset(limit=1, query_from_results=False)
+    await Agent(model, toolsets=[toolset]).run("look up the customer record for Jo")
+
+    assert all("jo@example.com" not in q for q in queries)
+    assert model.seen[1] == ["lookup_customer"]
+
+
+async def test_model_retry_exhaustion_ends_the_run(gantry):
+    _pydantic_ai()
+    from pydantic_ai import Agent
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+    bad = [("divide", {"a": "x", "b": 2})]
+    tools = await _adapter(gantry).select("divide integers", limit=6)
+    with pytest.raises(UnexpectedModelBehavior, match="retries"):
+        await Agent(_script(bad, bad, bad), tools=tools).run("divide")
+
+
+async def test_per_run_selection_cache_is_bounded(gantry, monkeypatch):
+    _pydantic_ai()
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+    import agent_gantry.integrations.frameworks.pydantic_ai_live as live
+
+    monkeypatch.setattr(live, "_MAX_CACHED_SELECTIONS", 2)
+    run = await _adapter(gantry).toolset(limit=1).for_run(_ctx())
+    for prompt in ("weather forecast", "divide integers", "send an email", "who am I"):
+        ctx = _ctx()
+        ctx.messages = [ModelRequest(parts=[UserPromptPart(content=prompt)])]
+        await run.get_tools(ctx)
+    assert len(run._cache) == 2
+
+
+async def test_unavailable_tool_asks_the_model_to_choose_again(gantry):
+    _pydantic_ai()
+    from pydantic_ai.exceptions import ModelRetry
+
+    toolset = _adapter(gantry).toolset(limit=1).set_query("weather forecast for a city")
+    with pytest.raises(ModelRetry, match="not available"):
+        await toolset.call_tool("divide", {"a": 1, "b": 2}, _ctx(), None)
+
+    raising = _adapter(gantry).toolset(limit=1, error_mode="raise")
+    raising.set_query("weather forecast for a city")
+    with pytest.raises(KeyError, match="not available"):
+        await raising.call_tool("divide", {"a": 1, "b": 2}, _ctx(), None)

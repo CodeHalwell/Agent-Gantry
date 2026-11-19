@@ -404,6 +404,10 @@ Selections are cached per run (one retrieval per distinct query, not per
 step); with `sticky=True` (default) tools offered earlier in a run stay
 offered. Run state lives on the copy `for_run()` returns, so concurrent runs
 can share one toolset. Give each Gantry toolset on an agent a distinct `id=`.
+Tool-result text used in the query is sent to the embedder (a remote service
+for OpenAI-style embedders); pass `query_from_results=False` to `toolset()` /
+`capability()` when tool output must not leave the process, and selection
+then uses the run's prompt.
 
 **Tool search.** `deferred_toolset()` returns the catalogue with
 `defer_loading=True` (`required`/`always_include` tools stay visible), and
@@ -419,7 +423,10 @@ guarantee. Other deferred tools on the agent fall back to keyword matching.
 `ApprovalRequired` for Gantry's confirmation gate (the tool's
 `requires_confirmation` flag or a `SecurityPolicy` pattern). Approve with
 Pydantic AI's `DeferredToolResults`; the approved replay runs once through
-`gantry.execute` with the gate cleared. `error_mode="raise"` opts out.
+`gantry.execute` with the gate cleared. `error_mode="raise"` opts out. The
+model sees a failure's text (`error_type: message`), as it would from a
+hand-written tool, so raise model-safe messages from handlers rather than ones
+carrying paths or connection strings.
 
 **Run context.** Gantry handlers can read the run's `RunContext` (`deps`,
 `run_id`, `tool_call_id`, retry count) without changing their schema:

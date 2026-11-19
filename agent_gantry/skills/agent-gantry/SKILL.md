@@ -281,6 +281,7 @@ agent = Agent(
 
 - Each step's query is the newest user prompt, or after a tool call the run's prompt plus the newest tool result (first 2,000 chars) — so "look up the customer, then email them" surfaces the email tool mid-run.
 - Tools already called feed the router's `tools_already_used` signal.
+- Tool-result text is sent to the embedder; `query_from_results=False` (on `toolset()` / `capability()`) keeps tool output out of retrieval when it may hold sensitive data.
 - One retrieval per distinct query per run (cached), not one per step.
 - `sticky=True` (default) keeps tools offered earlier in the run; `sticky=False` for a strict top-k.
 - State lives on the per-run copy from `for_run`, so concurrent runs can share one toolset.
@@ -309,7 +310,7 @@ if isinstance(result.output, DeferredToolRequests):
     )
 ```
 
-The approved replay runs once through `gantry.execute` with only the confirmation gate cleared. `result.output.metadata[call_id]["agent_gantry"]` holds the tool's qualified name and the reason. Pass `error_mode="raise"` (adapter or any builder) to get `ToolExecutionError` instead, like the other adapters.
+The approved replay runs once through `gantry.execute` with only the confirmation gate cleared. `result.output.metadata[call_id]["agent_gantry"]` holds the tool's qualified name and the reason. Pass `error_mode="raise"` (adapter or any builder) to get `ToolExecutionError` instead, like the other adapters. The model sees the failure's text, so handler exception messages should be model-safe (no paths or connection strings).
 
 ### Run context and tracing
 

@@ -62,6 +62,11 @@ if TYPE_CHECKING:
 #:   retries within the tool's retry budget), other failures raise
 #:   ``ToolFailed`` (the model sees a terminal failure and adapts), and a
 #:   confirmation-gated call raises ``ApprovalRequired``.
+#:
+#:   The model sees the failure's text (``error_type: message``), as it would
+#:   from a hand-written tool -- so an exception message carrying internals
+#:   (paths, connection strings) reaches the model and its logs. Raise
+#:   model-safe messages from handlers, or use ``"raise"``.
 #: - ``"raise"`` -- the cross-framework default contract: the
 #:   :class:`~agent_gantry.integrations.frameworks.base.ToolExecutionError`
 #:   family propagates and ends the run.
@@ -312,6 +317,7 @@ class PydanticAIAdapter(BaseFrameworkAdapter):
         id: str | None = None,  # noqa: A002 - mirrors Pydantic AI's toolset ``id``
         sticky: bool = True,
         max_retries: int = 1,
+        query_from_results: bool = True,
     ) -> Any:
         """A live ``AbstractToolset`` that re-selects tools on every model step.
 
@@ -327,6 +333,11 @@ class PydanticAIAdapter(BaseFrameworkAdapter):
                 and stable ids are what durable execution keys on.
             sticky: Keep earlier selections within a run.
             max_retries: ``ModelRetry`` budget per tool (Pydantic AI's default is 1).
+            query_from_results: Let tool output (its first 2,000 characters)
+                drive the next step's selection. That text is sent to the
+                embedder -- a remote service for OpenAI-style embedders -- so
+                set ``False`` when tool results may hold data that must not
+                leave the process; selection then uses the run's prompt.
         """
         from agent_gantry.integrations.frameworks.pydantic_ai_live import _gantry_toolset
 
@@ -337,6 +348,7 @@ class PydanticAIAdapter(BaseFrameworkAdapter):
             id=id,
             sticky=sticky,
             max_retries=max_retries,
+            query_from_results=query_from_results,
         )
 
     def deferred_toolset(
@@ -423,6 +435,7 @@ class PydanticAIAdapter(BaseFrameworkAdapter):
         id: str | None = None,  # noqa: A002 - mirrors Pydantic AI's capability ``id``
         sticky: bool = True,
         max_retries: int = 1,
+        query_from_results: bool = True,
     ) -> Any:
         """One ``Capability`` wiring Gantry into an agent: ``Agent(model, capabilities=[...])``.
 
@@ -452,7 +465,12 @@ class PydanticAIAdapter(BaseFrameworkAdapter):
         mode_error = self._mode(error_mode)
         if mode == "per-turn":
             toolset = self.toolset(
-                **kwargs, error_mode=mode_error, id=id, sticky=sticky, max_retries=max_retries
+                **kwargs,
+                error_mode=mode_error,
+                id=id,
+                sticky=sticky,
+                max_retries=max_retries,
+                query_from_results=query_from_results,
             )
             search = None
         else:
@@ -474,4 +492,5 @@ class PydanticAIAdapter(BaseFrameworkAdapter):
             skills=skills,
             skill_namespaces=skill_namespaces,
             id=id,
+            query_from_results=query_from_results,
         )

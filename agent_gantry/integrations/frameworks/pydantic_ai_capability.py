@@ -39,6 +39,9 @@ logger = logging.getLogger(__name__)
 
 _WORD = re.compile(r"[a-z0-9]+")
 
+#: ``ToolQuery.limit`` ceiling: the most candidates one retrieval can return.
+_MAX_RETRIEVAL_LIMIT = 50
+
 
 def _gantry_name(tool_def: Any) -> str | None:
     meta = getattr(tool_def, "metadata", None) or {}
@@ -83,6 +86,19 @@ def gantry_search_strategy(
     """
     selector = _BaseToolset(gantry)
 
+    def _fetch_limit(eligible: int) -> int:
+        """Candidates to retrieve so ``limit`` eligible ones survive the filter.
+
+        The registry can hold tools the search corpus does not -- pinned-visible
+        ones, or ones a ``filtered``/namespaced toolset leaves out. They can
+        outrank eligible tools, so retrieve enough to cover them before cutting
+        to ``limit`` (bounded by the retrieval ceiling).
+        """
+        in_scope = sum(
+            1 for tool in gantry.list_tools_sync() if not namespaces or tool.namespace in namespaces
+        )
+        return min(_MAX_RETRIEVAL_LIMIT, limit + max(0, in_scope - eligible))
+
     async def search(ctx: Any, queries: Sequence[str], tools: Sequence[Any]) -> list[str]:
         by_qualified: dict[str, str] = {}
         others = []
@@ -95,6 +111,7 @@ def gantry_search_strategy(
 
         ranked: list[str] = []
         if by_qualified:
+            fetch = _fetch_limit(len(by_qualified))
             per_query = []
             for query in queries:
                 if not (query or "").strip():
@@ -103,7 +120,7 @@ def gantry_search_strategy(
                     per_query.append(
                         await selector.select(
                             query,
-                            limit=limit,
+                            limit=fetch,
                             score_threshold=score_threshold,
                             namespaces=namespaces,
                         )
@@ -159,6 +176,7 @@ def _capability_class(abstract_capability: type) -> type:
             skills: int = 0,
             skill_namespaces: list[str] | None = None,
             id: str | None = None,  # noqa: A002 - Pydantic AI's capability ``id``
+            query_from_results: bool = True,
         ) -> None:
             super().__init__()
             if id is not None:
@@ -167,6 +185,7 @@ def _capability_class(abstract_capability: type) -> type:
             self._toolset = toolset
             self._skills = skills
             self._skill_namespaces = skill_namespaces
+            self._query_from_results = query_from_results
 
         def __repr__(self) -> str:
             return f"GantryCapability(toolset={self._toolset!r}, skills={self._skills})"
@@ -179,7 +198,7 @@ def _capability_class(abstract_capability: type) -> type:
                 return None
 
             async def gantry_skills(ctx: Any) -> str:
-                query = _query_from_ctx(ctx)
+                query = _query_from_ctx(ctx, include_results=self._query_from_results)
                 if not query.strip():
                     return ""
                 try:
@@ -207,10 +226,16 @@ def _gantry_capability(
     skills: int = 0,
     skill_namespaces: list[str] | None = None,
     id: str | None = None,  # noqa: A002
+    query_from_results: bool = True,
 ) -> Any:
     """A ``GantryCapability``, combined with ``tool_search`` when given."""
     capability = _build_capability_class()(
-        gantry, toolset, skills=skills, skill_namespaces=skill_namespaces, id=id
+        gantry,
+        toolset,
+        skills=skills,
+        skill_namespaces=skill_namespaces,
+        id=id,
+        query_from_results=query_from_results,
     )
     if tool_search is None:
         return capability
