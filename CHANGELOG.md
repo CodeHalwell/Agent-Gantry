@@ -7,6 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-19
+
+Pydantic AI becomes a first-class integration: Gantry now plugs into Pydantic
+AI 2.x's own toolset, capability, tool-search, retry and approval mechanisms
+instead of handing it plain callables. It is a minor release because it changes
+how tool failures behave for existing Pydantic AI users (below). No other
+framework's behaviour changes.
+
+**Behaviour change (Pydantic AI only).** A failed Gantry execution inside a
+Pydantic AI run no longer raises `ToolExecutionError`, which ended the run.
+Argument errors now raise `ModelRetry` (the model corrects its call), other
+failures raise `ToolFailed` (the model sees the error and adapts), and
+confirmation-gated calls raise `ApprovalRequired`, so agents that can reach one
+need `output_type=[str, DeferredToolRequests]`. Pass `error_mode="raise"` to
+`PydanticAIAdapter` (or any of its builders) to keep the previous behaviour.
+Static Pydantic AI tools now take the `RunContext` (`takes_ctx=True`), so code
+calling `tool.function(...)` directly must pass a context (or `None`) first.
+
+**Migrating.** To keep failures ending the run as in 0.20.0, construct the
+adapter with `PydanticAIAdapter(gantry, error_mode="raise")`. Otherwise:
+
+- add `DeferredToolRequests` to `output_type` on any agent that can reach a
+  confirmation-gated tool, and handle approvals with `DeferredToolResults`;
+- review what handler exception messages reveal, since the model now sees them
+  (capped at 2,000 characters), or pass `error_formatter=` to redact them;
+- expect the per-turn toolset to offer the tools it selected earlier in a run
+  (`sticky=True`, capped at `max_offered`, default `3 * limit`); pass
+  `sticky=False` for the previous strict top-k per step;
+- prefer a pydantic-ai release with `ToolFailed`. On earlier 2.x releases a
+  terminal failure comes back as an ordinary tool result (`Error: ...`), which
+  the model and telemetry cannot tell apart from a successful call.
+
+### Added
+
+- `pydantic-ai` extra (`pip install 'agent-gantry[pydantic-ai]'`, pinning
+  `pydantic-ai-slim>=2.0.0`), included in `all`. CI runs the adapter tests on
+  the latest release and on exactly 2.0.0.
+- `PydanticAIAdapter.capability(mode="per-turn" | "search", skills=...)`: one
+  Pydantic AI `Capability` wiring Gantry into an agent, optionally injecting the
+  Gantry skills relevant to each turn as instructions.
+- Gantry-backed tool search: `PydanticAIAdapter.deferred_toolset()` exposes the
+  catalogue as `defer_loading` tools and `tool_search()` / `search_strategy()`
+  back Pydantic AI's `ToolSearch` with Gantry's semantic router. The tool list
+  stays stable between turns, so provider prompt caches survive. When the agent
+  has its own deferred tools too, they are ranked by keyword and fused with the
+  semantic ranking under the same result limit.
+- Native human-in-the-loop approval for Pydantic AI: Gantry's confirmation gate
+  (`requires_confirmation` or a `SecurityPolicy` pattern) pauses the run with
+  `DeferredToolRequests`; an approved replay executes once with the gate
+  cleared and every denial check still running.
+- `agent_gantry.current_tool_invocation()` and `ToolInvocationContext`: a
+  framework-neutral way for a tool handler to read the calling framework's run
+  state. `agent_gantry.pydantic_ai.current_run_context()` returns the Pydantic
+  AI `RunContext`, so Gantry tools can use `ctx.deps`.
+- The active OpenTelemetry span is propagated into Pydantic AI tool calls'
+  `ToolCall.trace_id` / `parent_span_id`, joining Gantry's execution telemetry
+  to the agent's trace.
+- `PydanticAIAdapter.toolset()` gains `id=`, `sticky=`, `max_offered=`,
+  `max_retries=`, `error_mode=` and `query_from_results=` (set `False` to keep
+  tool output out of the retrieval query, and so away from a remote embedder;
+  the default `True` is what lets a tool result surface the next tool).
+- `PydanticAIAdapter(gantry, error_formatter=...)` rewrites failure text before
+  the model sees it, for every tool, toolset and capability the adapter builds.
+  A formatter that raises is replaced by a generic message, so a bug in it
+  cannot leak the original text. Failure text is capped at 2,000 characters
+  either way.
+- `max_offered` caps the tools a sticky per-turn toolset offers in one step
+  (default `3 * limit`): the current selection and pinned tools always stay,
+  and tools carried over from earlier steps are dropped least recently
+  selected first, so long runs keep the token savings.
+
+### Fixed
+
+- The Pydantic AI per-turn toolset never re-selected mid-run: it always used the
+  run's original prompt, so a tool needed only after a tool result never
+  appeared. Each step now selects from the newest prompt or tool result, and
+  feeds the tools already called to the router.
+- The Pydantic AI toolset ran a retrieval (an embedding call) on every model
+  step even when the query had not changed. Selections are now cached per run.
+- Concurrent Pydantic AI runs sharing one Gantry toolset no longer share
+  state: per-run state lives on the copy Pydantic AI's `for_run` hook returns.
+- Several Gantry toolsets can coexist on one agent: the toolset id was fixed at
+  `"agent-gantry"`.
+
+### Changed
+
+- CI caps `dspy<3.5` in the framework-adapter job. DSPy 3.5.0 redesigned
+  `ReAct` (native `tool_calls` and a `submit` tool) and breaks two DSPy adapter
+  tests; the cap is lifted once the DSPy adapter supports 3.5. The adapter
+  itself is unchanged, so DSPy 3.5 users should stay on 3.4 for now.
+
 ## [0.20.0] - 2026-10-16
 
 Twelve native framework integrations share one typed entry point, with safer

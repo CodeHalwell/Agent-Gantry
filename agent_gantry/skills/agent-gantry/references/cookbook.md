@@ -74,7 +74,59 @@ while not done:
 
 The default `latest_activity` query generator is recency-aware: a tool result drives the next selection in an autonomous pipeline (`fetch → clean → train → report`), while a new user message drives it in a chat agent (`weather → flights → hotel`). Pin one with `query_generator=last_user_text` or `last_tool_result`.
 
-For frameworks with a native per-turn hook (LlamaIndex, Pydantic AI, Google ADK, LangGraph, OpenAI Agents SDK), prefer the deep **live** adapter method instead of `ToolRefresher` — e.g. `from agent_gantry.llamaindex import LlamaIndexAdapter` then `LlamaIndexAdapter(gantry).function_agent(llm)`.
+For frameworks with a native per-turn hook (LlamaIndex, Pydantic AI, Google ADK, LangGraph, OpenAI Agents SDK), prefer the deep **live** adapter method instead of `ToolRefresher` — e.g. `from agent_gantry.llamaindex import LlamaIndexAdapter` then `LlamaIndexAdapter(gantry).function_agent(llm)`, or for Pydantic AI `Agent(model, capabilities=[PydanticAIAdapter(gantry).capability()])` (Recipe 1c).
+
+## Recipe 1c: Pydantic AI agent with approvals, deps and tool search
+
+Goal: a Pydantic AI 2.x agent over a large registry, where risky tools need a human's approval and tools can read the run's `deps`. Install `agent-gantry[pydantic-ai]`.
+
+```python
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults
+from agent_gantry import AgentGantry
+from agent_gantry.pydantic_ai import PydanticAIAdapter, current_run_context
+
+@dataclass
+class Deps:
+    user_id: str
+
+gantry = AgentGantry()
+
+@gantry.register(examples=["has order 4471 shipped"])
+async def order_status(order_id: str) -> str:
+    """Return the shipping status of one of the signed-in user's orders."""
+    ctx = current_run_context()                     # RunContext[Deps]
+    return await orders.status(ctx.deps.user_id, order_id)
+
+@gantry.register(examples=["refund order 4471"], requires_confirmation=True)
+async def refund_order(order_id: str) -> str:
+    """Refund an order in full."""
+    return await orders.refund(order_id)
+
+await gantry.sync()
+adapter = PydanticAIAdapter(gantry)
+agent = Agent(
+    "openai:gpt-5.5",
+    deps_type=Deps,
+    output_type=[str, DeferredToolRequests],
+    # "search": the catalogue stays behind search_tools, ranked by Gantry;
+    # use the default "per-turn" mode for small registries.
+    capabilities=[adapter.capability(mode="search", limit=5)],
+)
+
+result = await agent.run("Refund order 4471", deps=Deps("u-42"))
+if isinstance(result.output, DeferredToolRequests):          # refund_order paused
+    approvals = {c.tool_call_id: ask_human(c) for c in result.output.approvals}
+    result = await agent.run(
+        deps=Deps("u-42"),
+        message_history=result.all_messages(),
+        deferred_tool_results=DeferredToolResults(approvals=approvals),
+    )
+print(result.output)
+```
+
+Bad arguments come back to the model as `ModelRetry`, other failures as `ToolFailed`; neither ends the run. See SKILL.md → Pydantic AI for the full behaviour table.
 
 ## Recipe 2: Pipe a custom embedding endpoint (Requesty / OpenRouter / vLLM)
 

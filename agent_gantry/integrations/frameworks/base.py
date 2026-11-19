@@ -174,9 +174,18 @@ class ToolSpec:
         return await self._ainvoke(_coerce_arguments(args, kwargs))
 
     async def _ainvoke(
-        self, arguments: dict[str, Any], *, confirmation_approved: bool = False
+        self,
+        arguments: dict[str, Any],
+        *,
+        confirmation_approved: bool = False,
+        trace_id: str | None = None,
+        parent_span_id: str | None = None,
     ) -> Any:
-        """Shared invocation; native approval clears only the confirmation gate."""
+        """Shared invocation; native approval clears only the confirmation gate.
+
+        ``trace_id``/``parent_span_id`` link Gantry's execution telemetry to the
+        calling framework's trace (e.g. the active OpenTelemetry tool span).
+        """
         required = set(self.parameters.get("required") or [])
         properties = self.parameters.get("properties") or {}
         arguments = {
@@ -194,6 +203,10 @@ class ToolSpec:
         # tool, and a bare-name execute would prefer ``default.<name>`` if
         # another namespace registers the same name.
         call = ToolCall(tool_name=self.name, namespace=self._namespace, arguments=arguments)
+        if trace_id:
+            call.trace_id = trace_id
+        if parent_span_id:
+            call.parent_span_id = parent_span_id
         if confirmation_approved:
             call.require_confirmation = False
         result = await self._gantry.execute(call)

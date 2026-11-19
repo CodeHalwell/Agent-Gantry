@@ -91,13 +91,12 @@ async def _invoke_strands(tool, arguments):
 
 
 def _invoke_pydantic_ai(tool, arguments):
-    # ``Tool``/``Tool.from_schema`` both stash the wrapped callable as the
-    # public ``function`` attribute (see pydantic_ai.tools.Tool.__init__).
-    # Calling it directly exercises the exact function a live agent run would
-    # invoke, without needing a full ``RunContext`` — it's the same async
-    # `ToolSpec.callable_for_signature()` wrapper every other adapter uses,
-    # which already routes through ``gantry.execute``.
-    return tool.function(**arguments)
+    # ``Tool.from_schema`` stashes the wrapped callable as the public
+    # ``function`` attribute (see pydantic_ai.tools.Tool.__init__). It is
+    # built with ``takes_ctx=True``, so a live agent run passes the
+    # ``RunContext`` positionally; ``None`` stands in for a context-free call.
+    # It routes through ``gantry.execute`` like every other adapter.
+    return tool.function(None, **arguments)
 
 
 async def _invoke_agent_framework(tool, arguments):

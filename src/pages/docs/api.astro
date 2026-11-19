@@ -9,6 +9,7 @@ import CodeBlock from '../../components/CodeBlock.astro';
     AgentGantry, create_default_gantry, with_semantic_tools,
     set_default_gantry, ToolCall, ToolResult, ToolDefinition,
     GantryContextProvider, enable_console_logging,
+    current_tool_invocation, ToolInvocationContext,
 )`} />
   <h2>AgentGantry</h2>
   <ul>
@@ -21,7 +22,18 @@ import CodeBlock from '../../components/CodeBlock.astro';
     <li><code>serve_mcp(transport="stdio" | "http" | "sse", mode="dynamic" | "static" | "hybrid", expose=[...])</code>: expose the registry as an MCP server.</li>
     <li><code>add_skills_from_directory(path)</code> / <code>retrieve_skills_as_prompt(query)</code>: load Agent Skills (<code>SKILL.md</code>) and inject only the relevant ones per prompt.</li>
     <li><code>sync(prune=True)</code>: also remove stored tools that are no longer registered.</li>
+    <li><code>on_tool_call(callback)</code>: receive a <code>ToolCallEvent</code> after every execution, whichever framework drove it.</li>
   </ul>
+  <h2>Framework run context inside a tool</h2>
+  <p><code>current_tool_invocation()</code> returns a <code>ToolInvocationContext</code> (<code>framework</code>, <code>deps</code>, <code>run_id</code>, <code>tool_call_id</code>, <code>native_context</code>) while a framework adapter is executing the tool, and <code>None</code> otherwise. The tool's schema is unchanged. Pydantic AI populates it; <code>agent_gantry.pydantic_ai.current_run_context()</code> returns the <code>RunContext</code> itself. It reaches async and thread-dispatched sync handlers, not out-of-process executors.</p>
+  <CodeBlock lang="python" code={`from agent_gantry import current_tool_invocation
+
+@gantry.register
+async def get_balance(account: str) -> str:
+    """Fetch an account balance for the signed-in user."""
+    invocation = current_tool_invocation()
+    bank = invocation.deps.bank if invocation else default_bank
+    return await bank.balance(account)`} />
   <h2>Decorator path</h2>
   <p><code>with_semantic_tools</code> wraps existing async generation functions and injects a <code>tools</code> argument based on the prompt parameter.</p>
   <h2>CLI</h2>

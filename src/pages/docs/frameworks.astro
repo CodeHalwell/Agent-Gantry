@@ -40,7 +40,7 @@ assert await tools[0].ainvoke({"a": 2, "b": 3}) == 5
 
 # Discover adapters without installing all twelve SDKs.
 print(supported_frameworks())`} />
-  <p>For dynamic selection, use <code>gantry.framework(name).live(...)</code>. For example, Pydantic AI accepts <code>toolsets=[gantry.framework("pydantic-ai").live(limit=3)]</code>. Each guide below shows the framework's native wiring and how often it refreshes tools. Existing adapter imports remain available.</p>
+  <p>For dynamic selection, use <code>gantry.framework(name).live(...)</code>. For example, Pydantic AI accepts <code>toolsets=[gantry.framework("pydantic-ai").live(limit=3)]</code>, or the whole integration as one capability: <code>capabilities=[gantry.framework("pydantic-ai").capability()]</code>. Each guide below shows the framework's native wiring and how often it refreshes tools. Existing adapter imports remain available.</p>
 
   <h2>Framework-by-framework guides</h2>
   <p>Each guide is organized as a two-page learning path in one place: a <strong>basic page</strong> for setup, registration, and a first tool call, followed by an <strong>advanced page</strong> for dynamic tool selection, LLM calls, observability, and deployment patterns.</p>
@@ -55,4 +55,7 @@ print(supported_frameworks())`} />
 
   <h2>Microsoft Agent Framework</h2>
   <p>The first-class integration path. Use <code>GantryContextProvider</code> for per-run or per-call semantic tool injection, or <code>GantryToolBridge</code> when the tool set is fixed at construction. See the <a href="/Agent-Gantry/docs/frameworks/agent-framework/">basic guide</a> and <a href="/Agent-Gantry/docs/frameworks/agent-framework/advanced/">advanced guide</a> for orchestration, middleware, and AF 1.6 concurrent-workflow notes.</p>
+
+  <h2>Pydantic AI</h2>
+  <p>Also first-class, through Pydantic AI 2.x's own extension points. <code>adapter.capability()</code> re-selects tools every model step (including from tool results mid-run); <code>adapter.capability(mode="search")</code> puts the catalogue behind Pydantic AI's <code>ToolSearch</code>, ranked by Gantry. Failures surface as <code>ModelRetry</code> / <code>ToolFailed</code>, confirmation-gated tools use Pydantic AI's approval flow, and tools can read the run's <code>deps</code>. Install <code>agent-gantry[pydantic-ai]</code>; see the <a href="/Agent-Gantry/docs/frameworks/pydantic-ai/">basic guide</a> and <a href="/Agent-Gantry/docs/frameworks/pydantic-ai/advanced/">advanced guide</a>.</p>
 </DocsLayout>

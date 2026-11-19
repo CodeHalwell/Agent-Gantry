@@ -10,6 +10,7 @@ import logging as _logging
 from typing import Any
 
 from agent_gantry.core.gantry import AgentGantry, create_default_gantry
+from agent_gantry.core.invocation import current_tool_invocation
 from agent_gantry.integrations.agent_framework_bridge import (
     RetrievalCandidate,
     RetrievalDecision,
@@ -24,7 +25,12 @@ from agent_gantry.integrations.semantic_tools import (
     with_semantic_tools,
 )
 from agent_gantry.observability.console import enable_console_logging
-from agent_gantry.schema.execution import ToolCall, ToolCallEvent, ToolResult
+from agent_gantry.schema.execution import (
+    ToolCall,
+    ToolCallEvent,
+    ToolInvocationContext,
+    ToolResult,
+)
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 from agent_gantry.schema.selection import SelectionCandidate, SelectionResult
 from agent_gantry.schema.skill import Skill, SkillCategory, SkillSearchResult
@@ -123,7 +129,7 @@ def __getattr__(name: str) -> "Any":
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__version__ = "0.20.0"
+__version__ = "0.21.0"
 __all__ = [
     "AgentGantry",
     "StreamingToolCallAccumulator",
@@ -134,6 +140,7 @@ __all__ = [
     "RetrievalCandidate",
     "RetrievalDecision",
     "create_default_gantry",
+    "current_tool_invocation",
     "disable_af_instrumentation",
     "enable_console_logging",
     "extract_tool_calls",
@@ -144,6 +151,7 @@ __all__ = [
     "supported_frameworks",
     "ToolCall",
     "ToolCallEvent",
+    "ToolInvocationContext",
     "ToolResult",
     "ToolQuery",
     "ConversationContext",

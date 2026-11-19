@@ -4,7 +4,7 @@
 
 *Context is precious. Execution is sacred. Trust is earned.*
 
-Agent-Gantry is a Python library (**v0.20.0**) for building agents that can discover, select, and execute the right tools without flooding every prompt with every schema your organization owns. It combines semantic retrieval, provider schema conversion, secure execution, framework bridges, MCP/A2A interoperability, persistence adapters, and observability into one tool orchestration layer.
+Agent-Gantry is a Python library (**v0.21.0**) for building agents that can discover, select, and execute the right tools without flooding every prompt with every schema your organization owns. It combines semantic retrieval, provider schema conversion, secure execution, framework bridges, MCP/A2A interoperability, persistence adapters, and observability into one tool orchestration layer.
 
 ## Documentation
 
@@ -36,6 +36,7 @@ uv add "agent-gantry[google-genai]"
 uv add "agent-gantry[lancedb,nomic]"
 uv add "agent-gantry[mcp,a2a]"
 uv add "agent-gantry[agent-frameworks]"
+uv add "agent-gantry[pydantic-ai]"
 uv add "agent-gantry[all]"
 ```
 
@@ -76,9 +77,10 @@ you use; Gantry imports it only when it builds native tools or live hooks.
 # Native LangChain tools, ready for model.bind_tools(tools).
 tools = await gantry.framework("langchain").select("What's the weather?", limit=3)
 
-# Dynamic Pydantic AI tools, reselected on every model turn.
+# Pydantic AI: tools reselected on every model step, with native retries,
+# approvals and deps (pip install 'agent-gantry[pydantic-ai]').
 from pydantic_ai import Agent
-agent = Agent("openai:gpt-5.5", toolsets=[gantry.framework("pydantic-ai").live(limit=3)])
+agent = Agent("openai:gpt-5.5", capabilities=[gantry.framework("pydantic-ai").capability(limit=3)])
 
 # Discover all twelve integrations without installing their SDKs.
 from agent_gantry import supported_frameworks
