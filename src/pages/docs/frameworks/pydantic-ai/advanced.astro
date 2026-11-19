@@ -37,7 +37,7 @@ agent = Agent(
     toolsets=[adapter.deferred_toolset(always_include=["get_order_status"])],
     capabilities=[adapter.tool_search(limit=5)],
 )`} />
-  <p>Other deferred tools on the same agent (not managed by Gantry) remain searchable by keyword.</p>
+  <p>Other deferred tools on the same agent (not managed by Gantry) are ranked by keyword and merged with Gantry's semantic ranking under the same <code>limit</code>, so an exact keyword match is not crowded out by an unrelated Gantry hit.</p>
 
   <h2>Per-turn selection inside a run</h2>
   <ul>

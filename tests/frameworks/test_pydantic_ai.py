@@ -506,12 +506,12 @@ async def test_search_strategy_ranks_gantry_tools_semantically(gantry):
     foreign = ToolDefinition(name="translate_text", description="Translate text into French.")
     queries = _count_retrievals(gantry)
 
-    names = await adapter.search_strategy(limit=1)(
+    names = await adapter.search_strategy(limit=2)(
         ctx, ["weather forecast", "translate into french"], [*corpus, foreign]
     )
 
     assert names[0] == "get_weather"
-    assert "translate_text" in names  # non-Gantry tools fall back to keywords
+    assert "translate_text" in names  # native tools share the limit via keywords
     assert len(queries) == 2  # one Gantry retrieval per search query
 
 
@@ -794,7 +794,7 @@ async def test_search_keeps_another_registrys_tools_discoverable(gantry):
         ]
         # This adapter's strategy cannot retrieve from `other`; its tools must
         # fall through to keyword matching rather than being claimed and lost.
-        names = await _adapter(gantry).search_strategy(limit=1)(
+        names = await _adapter(gantry).search_strategy(limit=2)(
             _ctx(), ["translate text into french", "weather forecast"], [*own, *foreign]
         )
         assert "translate_text" in names
@@ -932,3 +932,31 @@ async def test_retrieval_outage_during_call_tool_reports_unavailable(gantry):
     toolset = _adapter(gantry).toolset(limit=1).set_query("weather forecast for a city")
     with pytest.raises(ModelRetry, match="not available"):
         await toolset.call_tool("get_weather", {"city": "Leeds"}, _ctx(), None)
+
+
+async def test_native_keyword_match_shares_the_search_budget(gantry):
+    _pydantic_ai()
+    from pydantic_ai.tools import ToolDefinition
+
+    own = [
+        t.tool_def for t in (await _adapter(gantry).deferred_toolset().get_tools(_ctx())).values()
+    ]
+    native = ToolDefinition(name="translate_text", description="Translate text into French.")
+    # limit=1: the exact keyword match must not lose its only slot to an
+    # unrelated Gantry tool returned at the zero score threshold.
+    names = await _adapter(gantry).search_strategy(limit=1)(
+        _ctx(), ["translate text into french"], [*own, native]
+    )
+    assert names == ["translate_text"]
+    # And a Gantry tool that matches still wins its own query.
+    names = await _adapter(gantry).search_strategy(limit=1)(
+        _ctx(), ["current weather forecast for a city"], [*own, native]
+    )
+    assert names == ["get_weather"]
+
+
+def test_fusion_breaks_ties_towards_keyword_matches():
+    from agent_gantry.integrations.frameworks.pydantic_ai_capability import _fuse
+
+    assert _fuse(["semantic_only"], ["keyword_only"]) == ["keyword_only", "semantic_only"]
+    assert _fuse(["both", "a"], ["both", "b"])[0] == "both"

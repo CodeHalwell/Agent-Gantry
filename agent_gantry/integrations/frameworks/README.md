@@ -417,7 +417,9 @@ then uses the run's prompt.
 its `strategy`. The model calls `search_tools` (or the provider's native tool
 search) and only discovered tools reach it. The tool list sent each turn is
 stable, so provider prompt caches survive, which per-turn re-selection cannot
-guarantee. Other deferred tools on the agent fall back to keyword matching.
+guarantee. Other deferred tools on the agent are ranked by keyword and fused
+with Gantry's semantic ranking (reciprocal rank fusion) under the same `limit`,
+so an exact keyword match is not crowded out by an unrelated Gantry hit.
 `capability(mode="search")` wires both.
 
 **Errors and approval.** See the [error-handling policy](#error-handling-policy):

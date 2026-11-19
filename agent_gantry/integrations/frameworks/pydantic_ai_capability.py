@@ -46,6 +46,28 @@ _WORD = re.compile(r"[a-z0-9]+")
 #: ``ToolQuery.limit`` ceiling: the most candidates one retrieval can return.
 _MAX_RETRIEVAL_LIMIT = 50
 
+#: Reciprocal-rank-fusion constant (the conventional 60): damps the gap between
+#: adjacent ranks so neither ranking dominates through its top hit alone.
+_RRF_K = 60
+
+
+def _fuse(semantic: list[str], keyword: list[str]) -> list[str]:
+    """Merge two rankings with reciprocal rank fusion.
+
+    Used when Gantry-ranked tools share one search budget with keyword-ranked
+    tools the agent owns natively, so neither kind is pushed past the
+    ``max_results`` cut just by being listed second. Ties go to keyword
+    matches: an exact word match is stronger evidence than a semantic hit
+    taken at a zero score threshold.
+    """
+    scores: dict[str, float] = {}
+    for ranking in (semantic, keyword):
+        for rank, name in enumerate(ranking, start=1):
+            scores[name] = scores.get(name, 0.0) + 1.0 / (_RRF_K + rank)
+    keyword_hits = set(keyword)
+    order = {name: i for i, name in enumerate(dict.fromkeys([*semantic, *keyword]))}
+    return sorted(scores, key=lambda n: (-scores[n], n not in keyword_hits, order[n]))
+
 
 def _gantry_name(tool_def: Any, registry: str) -> str | None:
     """The tool's qualified name if it belongs to ``registry``, else ``None``.
@@ -157,11 +179,12 @@ def gantry_search_strategy(
                         if name and name not in seen:
                             seen.add(name)
                             ranked.append(name)
-            ranked = ranked[:limit]
-        for name in _keyword_rank(ctx, queries, others):
-            if name not in ranked:
-                ranked.append(name)
-        return ranked
+        if not others:
+            return ranked[:limit]  # Gantry tools only: pure semantic ranking.
+        # Shared budget: fuse Gantry's semantic ranking with a keyword ranking
+        # over the whole corpus, so a native tool's exact match can outrank an
+        # unrelated Gantry hit, then apply ``limit`` once to the merged list.
+        return _fuse(ranked, _keyword_rank(ctx, queries, tools))[:limit]
 
     search.__name__ = "gantry_semantic_search"
     return search

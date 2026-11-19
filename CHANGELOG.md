@@ -50,7 +50,9 @@ adapter with `PydanticAIAdapter(gantry, error_mode="raise")`. Otherwise:
 - Gantry-backed tool search: `PydanticAIAdapter.deferred_toolset()` exposes the
   catalogue as `defer_loading` tools and `tool_search()` / `search_strategy()`
   back Pydantic AI's `ToolSearch` with Gantry's semantic router. The tool list
-  stays stable between turns, so provider prompt caches survive.
+  stays stable between turns, so provider prompt caches survive. When the agent
+  has its own deferred tools too, they are ranked by keyword and fused with the
+  semantic ranking under the same result limit.
 - Native human-in-the-loop approval for Pydantic AI: Gantry's confirmation gate
   (`requires_confirmation` or a `SecurityPolicy` pattern) pauses the run with
   `DeferredToolRequests`; an approved replay executes once with the gate

@@ -495,8 +495,10 @@ class PydanticAIAdapter(BaseFrameworkAdapter):
         """A ``ToolSearch`` strategy function backed by Gantry's semantic router.
 
         ``ToolSearch(strategy=adapter.search_strategy())``. Gantry-managed tools
-        are ranked by semantic retrieval; any other deferred tools on the agent
-        fall back to keyword matching so they remain discoverable.
+        are ranked by semantic retrieval. When the agent has other deferred
+        tools too, they are ranked by keyword and fused with the semantic
+        ranking (reciprocal rank fusion) before ``limit`` applies, so both kinds
+        share the result budget fairly.
         """
         from agent_gantry.integrations.frameworks.pydantic_ai_capability import (
             gantry_search_strategy,
