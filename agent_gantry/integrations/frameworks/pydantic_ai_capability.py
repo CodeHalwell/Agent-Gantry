@@ -29,7 +29,11 @@ from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT
 from agent_gantry.integrations.frameworks.base import GantryToolset as _BaseToolset
-from agent_gantry.integrations.frameworks.pydantic_ai import _INSTALL_HINT, METADATA_KEY
+from agent_gantry.integrations.frameworks.pydantic_ai import (
+    _INSTALL_HINT,
+    METADATA_KEY,
+    registry_token,
+)
 from agent_gantry.integrations.frameworks.pydantic_ai_live import _query_from_ctx
 
 if TYPE_CHECKING:
@@ -43,10 +47,17 @@ _WORD = re.compile(r"[a-z0-9]+")
 _MAX_RETRIEVAL_LIMIT = 50
 
 
-def _gantry_name(tool_def: Any) -> str | None:
+def _gantry_name(tool_def: Any, registry: str) -> str | None:
+    """The tool's qualified name if it belongs to ``registry``, else ``None``.
+
+    A deferred tool from another ``AgentGantry`` on the same agent is not
+    this strategy's to rank: it falls through to keyword matching instead.
+    """
     meta = getattr(tool_def, "metadata", None) or {}
     entry = meta.get(METADATA_KEY) if isinstance(meta, dict) else None
-    return entry.get("qualified_name") if isinstance(entry, dict) else None
+    if not isinstance(entry, dict) or entry.get("registry") != registry:
+        return None
+    return entry.get("qualified_name")
 
 
 def _keyword_rank(ctx: Any, queries: Sequence[str], tools: Sequence[Any]) -> list[str]:
@@ -85,6 +96,7 @@ def gantry_search_strategy(
     toolset rather than found through search.
     """
     selector = _BaseToolset(gantry)
+    registry = registry_token(gantry)
 
     def _fetch_limit(eligible: int) -> int:
         """Candidates to retrieve so ``limit`` eligible ones survive the filter.
@@ -103,7 +115,7 @@ def gantry_search_strategy(
         by_qualified: dict[str, str] = {}
         others = []
         for td in tools:
-            qualified = _gantry_name(td)
+            qualified = _gantry_name(td, registry)
             if qualified:
                 by_qualified[qualified] = td.name
             else:
@@ -132,7 +144,7 @@ def gantry_search_strategy(
                         query,
                         exc_info=True,
                     )
-                    others.extend(td for td in tools if _gantry_name(td))
+                    others.extend(td for td in tools if _gantry_name(td, registry))
                     by_qualified = {}
                     per_query = []
                     break

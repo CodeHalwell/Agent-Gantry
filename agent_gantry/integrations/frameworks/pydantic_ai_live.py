@@ -55,6 +55,7 @@ from agent_gantry.integrations.frameworks.pydantic_ai import (
     check_error_mode,
     execute_for_pydantic_ai,
     json_schema_for,
+    registry_token,
 )
 from agent_gantry.query import latest_activity
 
@@ -199,6 +200,7 @@ def _tool_definition(tool_definition_cls: Any, spec: ToolSpec, *, defer_loading:
         "metadata": {
             METADATA_KEY: {
                 "qualified_name": spec.qualified_name,
+                "registry": registry_token(spec._gantry),
                 "namespace": spec._namespace,
                 "score": spec.score,
                 "requires_confirmation": spec.requires_confirmation,

@@ -91,6 +91,15 @@ _MAX_ERROR_CHARS = 2000
 METADATA_KEY = "agent_gantry"
 
 
+def registry_token(gantry: AgentGantry) -> str:
+    """An in-process identity for ``gantry``, stored in tool metadata.
+
+    Lets a search strategy tell its own registry's tools from those of another
+    ``AgentGantry`` whose deferred toolset sits on the same agent.
+    """
+    return f"{id(gantry):x}"
+
+
 def check_error_mode(error_mode: str) -> ErrorMode:
     """Validate an ``error_mode`` value early, at construction time."""
     if error_mode not in ("model", "raise"):

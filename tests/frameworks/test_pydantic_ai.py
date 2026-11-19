@@ -771,3 +771,33 @@ async def test_failure_text_shown_to_the_model_is_capped(gantry):
     assert len(text) < 2100
     assert text.startswith("ValueError: xxx")
     assert text.endswith("[truncated]")
+
+
+async def test_search_keeps_another_registrys_tools_discoverable(gantry):
+    _pydantic_ai()
+    other = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+
+    @other.register
+    def translate_text(text: str) -> str:
+        """Translate text into French."""
+        return text
+
+    await other.sync()
+    try:
+        own = [
+            t.tool_def
+            for t in (await _adapter(gantry).deferred_toolset().get_tools(_ctx())).values()
+        ]
+        foreign = [
+            t.tool_def
+            for t in (await _adapter(other).deferred_toolset().get_tools(_ctx())).values()
+        ]
+        # This adapter's strategy cannot retrieve from `other`; its tools must
+        # fall through to keyword matching rather than being claimed and lost.
+        names = await _adapter(gantry).search_strategy(limit=1)(
+            _ctx(), ["translate text into french", "weather forecast"], [*own, *foreign]
+        )
+        assert "translate_text" in names
+        assert "get_weather" in names
+    finally:
+        await other.close()
