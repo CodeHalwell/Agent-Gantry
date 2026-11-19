@@ -146,7 +146,7 @@ AWS_SECRET_ACCESS_KEY=...      # so the credential must be entitled to the model
 ```
 
 `pydantic_ai_example.py` and `dspy_example.py` need no key at all: they run a
-full agent loop against `TestModel` and `DummyLM` respectively.
+full agent loop against a scripted `FunctionModel` and `DummyLM` respectively.
 
 `agent_framework_harness_example.py` needs `agent-framework>=1.7.0` for its
 experimental `create_harness_agent`. From agent-gantry 0.17.0 the
