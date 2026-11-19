@@ -969,15 +969,18 @@ async def test_search_keeps_successful_queries_when_one_retrieval_fails(gantry):
     original = gantry.retrieve
 
     async def flaky(query):
-        if "divide" in query.context.query:
+        if "fails" in query.context.query:
             raise RuntimeError("vector store blip")
+        # The surviving query's semantic answer deliberately differs from what
+        # keyword matching would pick, so the test tells the two paths apart.
+        query.context.query = "divide integer a by integer b"
         return await original(query)
 
     gantry.retrieve = flaky
-    names = await adapter.search_strategy(limit=2)(
-        _ctx(), ["weather forecast for a city", "divide integers"], corpus
+    names = await adapter.search_strategy(limit=1)(
+        _ctx(), ["weather forecast for a city", "this query fails"], corpus
     )
-    assert names[0] == "get_weather"  # the successful query's semantic hit survives
+    assert names == ["divide"]  # the successful query's semantic hit survives
 
     async def down(query):
         raise RuntimeError("vector store down")
