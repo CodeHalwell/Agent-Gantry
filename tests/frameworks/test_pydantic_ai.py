@@ -801,3 +801,12 @@ async def test_search_keeps_another_registrys_tools_discoverable(gantry):
         assert "get_weather" in names
     finally:
         await other.close()
+
+
+async def test_every_builder_gives_the_install_hint_without_pydantic_ai(monkeypatch, gantry):
+    for module in ("pydantic_ai", "pydantic_ai.capabilities", "pydantic_ai.tools"):
+        monkeypatch.setitem(sys.modules, module, None)
+    adapter = _adapter(gantry)
+    for build in (adapter.tool_search, adapter.capability, adapter.toolset):
+        with pytest.raises(ImportError, match=r"agent-gantry\[pydantic-ai\]"):
+            build()

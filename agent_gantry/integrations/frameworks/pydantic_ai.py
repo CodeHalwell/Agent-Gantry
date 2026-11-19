@@ -450,7 +450,10 @@ class PydanticAIAdapter(BaseFrameworkAdapter):
         namespaces: list[str] | None = None,
     ) -> Any:
         """Pydantic AI's ``ToolSearch`` capability using :meth:`search_strategy`."""
-        from pydantic_ai.capabilities import ToolSearch
+        try:
+            from pydantic_ai.capabilities import ToolSearch
+        except ImportError as exc:
+            raise ImportError(_INSTALL_HINT) from exc
 
         resolved = self._default_limit if limit is None else limit
         return ToolSearch(

@@ -251,7 +251,10 @@ def _gantry_capability(
     )
     if tool_search is None:
         return capability
-    from pydantic_ai.capabilities import CombinedCapability
+    try:
+        from pydantic_ai.capabilities import CombinedCapability
+    except ImportError as exc:  # pragma: no cover - guarded by the class build above
+        raise ImportError(_INSTALL_HINT) from exc
 
     return CombinedCapability([capability, tool_search])
 
