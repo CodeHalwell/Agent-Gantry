@@ -127,7 +127,8 @@ jobs:
       # Resolve the project (dev) + the adapter frameworks together in ONE
       # isolated venv, so a shared dep (pydantic/httpx/openai) is resolved to a
       # single compatible version rather than installed-then-downgraded.
-      # Uncapped since 2026-08-03: adapters verified against pydantic-ai 2.23.0
+      # Uncapped since 2026-08-03 (pydantic-ai now via its own extra, floor
+      # 2.0.0, verified through 2.71.0 on 2026-11-19): adapters verified against pydantic-ai 2.23.0
       # (keyword-only construction spans 1.x/2.x — no changes were needed),
       # haystack-ai 3.0.0 (ToolInvoker removal handled by a version branch in
       # GantryLiveHaystackToolInvoker.build, guarded by
@@ -139,9 +140,20 @@ jobs:
       - name: Run adapter smoke tests
         run: |
           uv venv .venv-frameworks --python ${{ matrix.python-version }}
-          uv pip install --python .venv-frameworks ".[dev]" \
-            pydantic-ai-slim openai-agents haystack-ai agno "strands-agents>=1" dspy
+          uv pip install --python .venv-frameworks ".[dev,pydantic-ai]" \
+            openai-agents haystack-ai agno "strands-agents>=1" dspy
           .venv-frameworks/bin/python -m pytest tests/frameworks/ -v
+
+      # Pydantic AI is first-class with a declared floor (the `pydantic-ai`
+      # extra, >=2.0.0). Re-run its tests on exactly the floor so a change
+      # that needs a newer release is caught here, not by users. One cell.
+      - name: Pydantic AI floor (2.0.0)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: |
+          uv venv .venv-pydantic-ai-floor --python ${{ matrix.python-version }}
+          uv pip install --python .venv-pydantic-ai-floor ".[dev]" "pydantic-ai-slim==2.0.0"
+          .venv-pydantic-ai-floor/bin/python -m pytest \
+            tests/frameworks/test_pydantic_ai.py tests/frameworks/test_pydantic_ai_live.py -v
 
   docs:
     name: Verify Astro docs build

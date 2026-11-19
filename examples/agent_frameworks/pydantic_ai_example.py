@@ -1,26 +1,27 @@
 """Pydantic AI + Agent-Gantry integration example.
 
-Demonstrates both tiers `PydanticAIAdapter` exposes:
+Walks through each way Gantry plugs into Pydantic AI:
 
-1. **Static tier** — ``PydanticAIAdapter.select(query, limit=...)`` runs semantic
-   retrieval once and wraps the result as native ``pydantic_ai.tools.Tool``
-   objects, ready to hand to ``Agent(model, tools=[...])``.
-2. **Dynamic tier** — ``PydanticAIAdapter.toolset(...)`` returns a live
-   ``pydantic_ai.toolsets.AbstractToolset``. Handed to ``Agent(model,
-   toolsets=[...])``, it re-runs Gantry selection on *every* run/step (derived
-   from the current ``RunContext``), so the tool surface tracks the
-   conversation's focus without any manual re-selection code.
+1. **Static tools** -- ``adapter.select(query)`` selects once and returns native
+   ``pydantic_ai.Tool`` objects for ``Agent(model, tools=[...])``.
+2. **Per-turn capability** -- ``adapter.capability()`` re-selects tools on every
+   model step. After the CRM lookup returns, the email tool appears mid-run
+   because the next selection reads the tool result.
+3. **Approval** -- a ``requires_confirmation`` tool pauses the run with Pydantic
+   AI's ``DeferredToolRequests``; approving it via ``DeferredToolResults``
+   executes it exactly once through ``gantry.execute``.
+4. **Run context** -- a Gantry tool reads ``RunContext.deps`` with
+   ``current_run_context()``.
+5. **Tool search** -- ``adapter.capability(mode="search")`` hides the catalogue
+   behind Pydantic AI's ``search_tools``, backed by Gantry's semantic router.
 
-Both tiers run **fully offline**: this example uses ``pydantic_ai.models.test.
-TestModel``, which simulates tool calls without hitting a real LLM, so no API
-key is required anywhere in this file.
+Everything runs **offline**: ``FunctionModel`` scripts the model's tool calls,
+so no API key is needed. Swap in a real model string (``"openai:gpt-5.5"``,
+``"anthropic:claude-sonnet-4-6"``, ...) and drop the scripts to use it for real.
 
-Pydantic AI is intentionally NOT part of any Agent-Gantry project extra (see
-the comment block in ``pyproject.toml`` below the ``agent-frameworks`` extra — it can't
-co-resolve with the combined ``agent-frameworks`` extra). Install it
-standalone:
+Install:
 
-    pip install agent-gantry pydantic-ai-slim
+    pip install 'agent-gantry[pydantic-ai]'
 
 Run:
 
@@ -30,48 +31,75 @@ Run:
 from __future__ import annotations
 
 import asyncio
+import os
+from dataclasses import dataclass
 
 from agent_gantry import AgentGantry
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+
+os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
+
+
+@dataclass
+class Deps:
+    """Dependencies Pydantic AI injects into a run (``Agent(deps_type=Deps)``)."""
+
+    user: str
 
 
 def build_gantry() -> AgentGantry:
     gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
 
-    @gantry.register(
-        tags=["weather"],
-        examples=[
-            "what's the weather in London",
-            "is it raining in Leeds",
-        ],
-    )
+    @gantry.register(tags=["weather"], examples=["what's the weather in London"])
     def get_weather(city: str) -> str:
-        """Get the current weather for a city."""
+        """Get the current weather forecast for a city."""
         return f"It is 21C and sunny in {city}."
+
+    @gantry.register(tags=["crm"], examples=["find the customer record for Jo"])
+    def lookup_customer(name: str) -> str:
+        """Look up a customer record by name."""
+        return f"Customer {name} found. Next step: send an email message to jo@example.com"
 
     @gantry.register(
         tags=["email"],
-        examples=[
-            "email the team about the delay",
-            "send a message to Sam",
-        ],
+        examples=["email the team about the delay"],
+        requires_confirmation=True,
     )
     def send_email(to: str, body: str = "") -> str:
-        """Compose and send an email message to a recipient."""
+        """Send an email message to a recipient."""
         return f"Email sent to {to}."
 
-    @gantry.register(
-        tags=["finance"],
-        examples=[
-            "how much is 50 euros in pounds",
-            "convert 100 dollars to yen",
-        ],
-    )
-    def convert_currency(amount: float, frm: str, to: str) -> str:
-        """Convert an amount of money from one currency to another."""
-        return f"{amount} {frm} = {amount * 1.1:.2f} {to}"
+    @gantry.register(tags=["identity"], examples=["who am I signed in as"])
+    def whoami() -> str:
+        """Return the name of the signed-in user."""
+        from agent_gantry.pydantic_ai import current_run_context
+
+        ctx = current_run_context()
+        return f"You are signed in as {ctx.deps.user}." if ctx else "Unknown user."
 
     return gantry
+
+
+def scripted(*steps):
+    """A FunctionModel that issues ``steps`` of tool calls, then echoes the last result.
+
+    ``model.seen`` records which tools the model was offered at each step.
+    """
+    from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+    from pydantic_ai.models.function import FunctionModel
+
+    queue = list(steps)
+
+    def respond(messages, info):
+        model.seen.append(sorted(t.name for t in info.function_tools if not t.defer_loading))
+        if queue:
+            return ModelResponse(parts=[ToolCallPart(n, a) for n, a in queue.pop(0)])
+        last = messages[-1].parts[0]
+        return ModelResponse(parts=[TextPart(str(getattr(last, "content", last)))])
+
+    model = FunctionModel(respond)
+    model.seen = []
+    return model
 
 
 async def main() -> None:
@@ -80,46 +108,77 @@ async def main() -> None:
         await gantry.sync()
 
         try:
-            from pydantic_ai import Agent
-            from pydantic_ai.models.test import TestModel
+            from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults
         except ImportError as exc:
             print(
                 f"Pydantic AI is not installed ({exc}).\n"
-                "Install it with `pip install pydantic-ai-slim` to run this example."
+                "Install it with `pip install 'agent-gantry[pydantic-ai]'` to run this example."
             )
             return
 
-
         adapter = gantry.framework("pydantic_ai")
 
-        # --- 1. Static tier: select once, get native pydantic_ai.tools.Tool ----- #
-        query = "what's the weather in Paris?"
-        static_tools = await adapter.select(query, limit=2)
-        print(f"[static] selected {len(static_tools)} tool(s) for {query!r}:")
-        for tool in static_tools:
-            print(f"  - {tool.name}: {tool.description}")
+        # 1. Static tools: select once ------------------------------------- #
+        tools = await adapter.select("what's the weather in Paris?", limit=1)
+        print(f"[static] selected tool(s): {[t.name for t in tools]}")
+        result = await Agent(scripted([("get_weather", {"city": "Paris"})]), tools=tools).run(
+            "what's the weather in Paris?"
+        )
+        print(f"[static] {result.output}\n")
 
-        static_agent = Agent(TestModel(), tools=static_tools)
-        static_result = await static_agent.run(query)
-        print(f"[static] TestModel run output: {static_result.output}\n")
+        # 2. Per-turn capability: the tool surface follows the run ---------- #
+        model = scripted([("lookup_customer", {"name": "Jo"})])
+        agent = Agent(model, capabilities=[adapter.capability(limit=1)])
+        await agent.run("find the customer record for Jo")
+        print(f"[per-turn] tools offered at step 1: {model.seen[0]}")
+        print(f"[per-turn] tools offered at step 2: {model.seen[1]}  <- after the lookup result\n")
 
-        # --- 2. Dynamic tier: a live AbstractToolset re-selects every run ------- #
-        # One toolset, reused across two runs with very different intents — the
-        # tool surface Pydantic AI sees changes each time, driven purely by the
-        # run's prompt (no manual re-selection code on our side).
-        toolset = adapter.toolset(limit=1)
-        dynamic_agent = Agent(TestModel(), toolsets=[toolset])
+        # 3. Approval: Gantry's confirmation gate -> DeferredToolRequests ---- #
+        agent = Agent(
+            scripted([("send_email", {"to": "jo@example.com"})]),
+            output_type=[str, DeferredToolRequests],
+            toolsets=[adapter.toolset(limit=1)],
+        )
+        paused = await agent.run("send an email message to Jo")
+        assert isinstance(paused.output, DeferredToolRequests)
+        pending = paused.output.approvals[0]
+        print(f"[approval] run paused; awaiting approval for tool {pending.tool_name!r}")
+        resumed = await agent.run(
+            message_history=paused.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={pending.tool_call_id: True}),
+        )
+        print(f"[approval] approved -> {resumed.output}\n")
 
-        weather_run = await dynamic_agent.run("what's the weather in Tokyo?")
-        print(f"[dynamic] weather run output: {weather_run.output}")
+        # 4. Run context: deps reach the Gantry handler -------------------- #
+        agent = Agent(
+            scripted([("whoami", {})]),
+            deps_type=Deps,
+            toolsets=[adapter.toolset(limit=1)],
+        )
+        result = await agent.run("who am I signed in as?", deps=Deps(user="Dan"))
+        print(f"[deps] {result.output}\n")
 
-        email_run = await dynamic_agent.run("send an email to my manager")
-        print(f"[dynamic] email run output:   {email_run.output}")
+        # 5. Tool search: Gantry ranks what search_tools returns ------------ #
+        model = scripted(
+            [("search_tools", {"queries": ["weather forecast"]})],
+            [("get_weather", {"city": "Leeds"})],
+        )
+        agent = Agent(model, capabilities=[adapter.capability(mode="search", limit=1)])
+        result = await agent.run("what's the weather in Leeds?")
+        found = [
+            part.content
+            for message in result.all_messages()
+            for part in message.parts
+            if getattr(part, "tool_name", None) == "search_tools"
+            and getattr(part, "part_kind", None) == "tool-return"
+        ]
+        print(f"[search] tools visible at step 1: {model.seen[0]}")
+        print(f"[search] search_tools returned: {found[0] if found else None}")
+        print(f"[search] {result.output}")
 
         print(
-            "\nEvery call above (static Tool and dynamic toolset alike) routes "
-            "through gantry.execute, so retries, timeouts, circuit breakers, and "
-            "the security policy all still apply."
+            "\nEvery tool call above went through gantry.execute, so the security "
+            "policy, retries, timeouts and circuit breakers all applied."
         )
     finally:
         await gantry.close()

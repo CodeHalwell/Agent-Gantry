@@ -255,6 +255,22 @@ agent-frameworks = [
 # along with their packages (smolagents, autogen-agentchat, autogen-ext,
 # semantic-kernel) and CI cells. Dropping semantic-kernel is what let the
 # google-adk floor move to the 2.x line — see its comment above.
+#
+# EXCEPTION (after 0.20.0, see CHANGELOG): Pydantic AI is a first-class target with its
+# own extra, so `pip install 'agent-gantry[pydantic-ai]'` pins a supported
+# version instead of leaving it to the user. The `-slim` distribution keeps the
+# footprint to the core agent (no provider SDKs). Floor 2.0.0: the adapter
+# uses `Tool.from_schema(takes_ctx=True)`, `ApprovalRequired`,
+# `AbstractToolset.for_run`, `ToolDefinition.defer_loading` and the
+# `ToolSearch` / `AbstractCapability` API, all present and stable from 2.0.0
+# through 2.71.0 (verified 2026-11-19; `ToolFailed` arrived later in 2.x and is
+# feature-detected, falling back to `ModelRetry`). The `framework-adapters` CI
+# job installs this extra, and its floor cell re-runs the Pydantic AI tests on
+# exactly 2.0.0. Deliberately NOT part of `agent-frameworks` (that extra drives
+# the main test matrix); it is part of `all`.
+pydantic-ai = [
+    "pydantic-ai-slim>=2.0.0",
+]
 example-tools = [
     "beautifulsoup4>=4.12.0",
     "cryptography>=41.0.0",
@@ -437,7 +453,7 @@ llm-providers = [
     "agent-gantry[openai,anthropic,google-genai,google-vertexai,mistral,groq]",
 ]
 all = [
-    "agent-gantry[dev,embeddings,openai,cohere,jev,vector-stores,lancedb,nomic,mcp,a2a,llm-providers,agent-frameworks,example-tools]",
+    "agent-gantry[dev,embeddings,openai,cohere,jev,vector-stores,lancedb,nomic,mcp,a2a,llm-providers,agent-frameworks,pydantic-ai,example-tools]",
 ]
 
 [project.scripts]

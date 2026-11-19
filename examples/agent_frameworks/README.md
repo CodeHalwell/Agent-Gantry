@@ -88,7 +88,7 @@ For per-step (multi-turn) re-selection within one run, use `ToolRefresher`
 - `generic_adapters_example.py`: The framework-neutral `GantryToolset.select` → `ToolSpec` path (`name`, `description`, JSON-Schema `parameters`, `ainvoke`) for hand-wiring a framework that has no dedicated adapter yet. Needs no framework and no key.
 - `dspy_example.py`: `DSPyAdapter` — static `select` → native `dspy.Tool` (schema passed through DSPy's own `convert_input_schema_to_tool_args` bridge), plus the per-call tier via `adapter.agent_builder(signature)` (rebuilds a fresh `dspy.ReAct` per call).
 - `strands_example.py`: `StrandsAdapter` — static `select` → native `DecoratedFunctionTool`, plus the genuine per-turn tier via `adapter.tool_hook()` / `adapter.agent()` (Strands' `BeforeModelCallEvent` fires before every model call, so the registry swap lands on the very call about to happen).
-- `pydantic_ai_example.py`: `PydanticAIAdapter` — static `select` → native `pydantic_ai.tools.Tool`, plus the deep per-turn tier via `adapter.toolset(...)` (a live `AbstractToolset` that re-selects on every run/step from the `RunContext`). Runs fully offline with `pydantic_ai.models.test.TestModel` — no API key needed anywhere in the file.
+- `pydantic_ai_example.py`: `PydanticAIAdapter` — static `select` → native `pydantic_ai.Tool`; `adapter.capability()` re-selecting tools mid-run from a tool result; a confirmation-gated tool pausing with `DeferredToolRequests` and running once on approval; `deps` read via `current_run_context()`; and `capability(mode="search")` with Gantry-backed `ToolSearch`. Runs fully offline with `FunctionModel` — no API key needed anywhere in the file.
 - `openai_agents_example.py`: `OpenAIAgentsAdapter` — static `select` → native `agents.FunctionTool`, plus the deep per-turn tier via `adapter.session(agent, ...)` (re-selects and applies `agent.tools` before each `session.run(...)`, installing `adapter.run_hooks(agent)` for intra-run dynamism; `adapter.refresh(agent, ...)` is the underlying one-shot primitive). Tool selection and re-selection run with no API key; the actual `agents.Runner.run(...)` turn is gated behind `OPENAI_API_KEY`.
 - `haystack_example.py`: `HaystackAdapter` — static `select` → native `haystack.tools.Tool`, plus the per-call tier via `adapter.live_tools(...)` and `adapter.tool_invoker_builder(...)` (rebuilds a fresh `ToolInvoker` per call on haystack 2.x; on haystack >=3.0, which removed `ToolInvoker`, it builds a per-call `Agent` when given `chat_generator=...`). Tool selection runs with no API key; a live chat + tool-invocation round is gated behind `OPENAI_API_KEY`.
 - `agno_example.py`: `AgnoAdapter` — static `select` → native `agno.tools.function.Function`, plus the per-call tier via `adapter.agent_builder(...)` (Agno fixes an agent's tools at construction, so this rebuilds a fresh `agno.agent.Agent` per call with freshly selected tools). Tool selection runs with no API key; building the model + running the agent is gated behind `OPENAI_API_KEY`.
@@ -112,13 +112,13 @@ uv sync --extra agent-frameworks
 ```
 
 **pydantic_ai / openai_agents / haystack / agno / strands / dspy are
-intentionally NOT part of `agent-frameworks`** (or any other project extra) —
-several of them can't co-resolve with the combined extra's pinned dependencies
-(see the note below the `agent-frameworks` extra in `pyproject.toml` for the
-specifics). Install them standalone alongside `agent-gantry`:
+intentionally NOT part of `agent-frameworks`** — they are kept out of the
+main test matrix (see the note below the `agent-frameworks` extra in
+`pyproject.toml`). Pydantic AI has its own extra with a supported version
+floor; install the others standalone alongside `agent-gantry`:
 
 ```bash
-pip install agent-gantry pydantic-ai-slim
+pip install 'agent-gantry[pydantic-ai]'
 pip install agent-gantry openai-agents
 pip install agent-gantry haystack-ai
 pip install agent-gantry agno

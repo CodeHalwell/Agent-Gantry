@@ -2,39 +2,71 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Pydantic AI guide | Agent-Gantry">
+<DocsLayout title="Pydantic AI guide | Agent-Gantry" description="Integrate Agent-Gantry with Pydantic AI 2.x through a native Capability, toolset or Gantry-backed ToolSearch.">
   <p class="eyebrow">Framework guide</p>
   <h1>Pydantic AI</h1>
-  <p class="lead">Use Agent-Gantry with typed agents with validated dependencies. This page covers basic setup and the first production-friendly path; continue to the advanced page for dynamic retrieval, LLM calls, and operations.</p>
+  <p class="lead">Agent-Gantry plugs into Pydantic AI 2.x through its own extension points: a <code>Capability</code>, an <code>AbstractToolset</code> that re-selects tools on every model step, and a <code>ToolSearch</code> strategy backed by Gantry's semantic router. Tool failures, approvals, <code>deps</code> and tracing all use Pydantic AI's native mechanisms.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/pydantic-ai/advanced/">Advanced Pydantic AI usage →</a></p>
 
-  <h2>Basic page: register once, adapt at the edge</h2>
+  <h2>Install</h2>
+  <CodeBlock lang="bash" code={`uv add "agent-gantry[pydantic-ai]"   # pins pydantic-ai-slim>=2.0.0`} />
+
+  <h2>Basic page: one capability</h2>
   <ol>
-    <li>Create a Gantry instance near application startup.</li>
-    <li>Register deterministic Python functions with descriptions and input schemas.</li>
-    <li>Export framework-native tools for Pydantic AI immediately before constructing the agent, graph, pipeline, or crew.</li>
-    <li>Keep authorization, rate limits, and audit metadata in Gantry instead of duplicating it inside framework glue code.</li>
+    <li>Register tools with <code>@gantry.register</code> and <code>await gantry.sync()</code>.</li>
+    <li>Add <code>adapter.capability()</code> to your agent's <code>capabilities</code>.</li>
+    <li>Run the agent normally. Each model step sees only the top-k relevant tools, re-selected from the newest prompt or tool result.</li>
   </ol>
-  <CodeBlock lang="python" code={`from agent_gantry import AgentGantry
+  <CodeBlock lang="python" title="Per-turn tool selection" code={`import asyncio
+
+from pydantic_ai import Agent
+from agent_gantry import AgentGantry
 from agent_gantry.pydantic_ai import PydanticAIAdapter
 
 gantry = AgentGantry()
 
-@gantry.register(
-    tags=["support", "orders"],
-    examples=["where is my order", "has order 4471 shipped"],
-)
+@gantry.register(examples=["where is my order", "has order 4471 shipped"])
 def get_order_status(order_id: str) -> str:
     """Return the current shipping status for an order."""
     return "in_transit"
-adapter = PydanticAIAdapter(gantry)
-framework_tools = await adapter.select("check an order", limit=3)  # Native Pydantic AI adapter export.
-`} />
 
-  <h2>First tool-calling loop</h2>
-  <p>Let Pydantic AI own the conversation lifecycle while Gantry owns the tool catalog. Start with a small tool set and assert that the framework receives only safe, documented functions.</p>
-  <div class="callout"><strong>Basic testing checklist:</strong> verify tool names, JSON schemas, auth metadata, and a happy-path invocation before wiring a live model.</div>
+@gantry.register(examples=["refund order 4471"], requires_confirmation=True)
+def refund_order(order_id: str) -> str:
+    """Refund an order in full."""
+    return "refunded"
 
-  <h2>Basic LLM call guidance</h2>
-  <p>For early prototypes, use the model client already recommended by Pydantic AI. Wrap that client with a thin policy function that records model name, prompt tokens, completion tokens, tool calls, and latency. Once the integration stabilizes, move the policy into Agent-Gantry's LLM adapter layer so other frameworks share the same rules.</p>
+async def main():
+    await gantry.sync()
+    adapter = PydanticAIAdapter(gantry)
+    agent = Agent("openai:gpt-5.5", capabilities=[adapter.capability(limit=5)])
+    result = await agent.run("Has order 4471 shipped?")
+    print(result.output)
+
+asyncio.run(main())`} />
+
+  <h2>Choosing a mode</h2>
+  <ul>
+    <li><strong>Per-turn</strong> (<code>adapter.capability()</code> or <code>Agent(toolsets=[adapter.toolset()])</code>): Gantry pushes a fresh top-k each step. After a tool returns, the next selection reads its result, so a chained task ("look up the customer, then email them") surfaces the next tool mid-run.</li>
+    <li><strong>Search</strong> (<code>adapter.capability(mode="search")</code>): the whole catalogue is deferred behind Pydantic AI's <code>search_tools</code>, and Gantry ranks what it returns. The tool list stays stable between turns, so provider prompt caching survives. Prefer it for large catalogues.</li>
+    <li><strong>Static</strong> (<code>Agent(tools=await adapter.select(query))</code>): one selection up front, for fixed tasks.</li>
+  </ul>
+
+  <h2>What the model sees when a tool fails</h2>
+  <p>Pydantic AI ends a run on an ordinary exception from a tool, so Gantry maps its outcomes to Pydantic AI's own exceptions instead:</p>
+  <ul>
+    <li><strong>Bad arguments</strong> become <code>ModelRetry</code>, so the model corrects its call within the tool's retry budget.</li>
+    <li><strong>Terminal failures</strong> (handler errors, timeouts, open circuit breakers, policy denials) become <code>ToolFailed</code>. The model sees the error and adapts.</li>
+    <li><strong>Confirmation-gated calls</strong> become <code>ApprovalRequired</code>. See the advanced page for the approval flow.</li>
+  </ul>
+  <div class="callout"><strong>Opt out:</strong> pass <code>error_mode="raise"</code> to the adapter or any builder to let <code>ToolExecutionError</code> propagate instead, matching the other framework adapters.</div>
+
+  <h2>Reading <code>deps</code> from a Gantry tool</h2>
+  <p>Gantry tools keep their own schema; the run's <code>RunContext</code> is available ambiently while the call executes.</p>
+  <CodeBlock lang="python" code={`from agent_gantry.pydantic_ai import current_run_context
+
+@gantry.register
+async def get_balance(account: str) -> str:
+    """Fetch an account balance for the signed-in user."""
+    ctx = current_run_context()   # pydantic_ai.RunContext, or None outside a run
+    return await ctx.deps.bank.balance(account)`} />
 </DocsLayout>

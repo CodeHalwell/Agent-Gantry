@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Pydantic AI becomes a first-class integration: Gantry now plugs into Pydantic
+AI 2.x's own toolset, capability, tool-search, retry and approval mechanisms
+instead of handing it plain callables.
+
+**Behaviour change (Pydantic AI only).** A failed Gantry execution inside a
+Pydantic AI run no longer raises `ToolExecutionError`, which ended the run.
+Argument errors now raise `ModelRetry` (the model corrects its call), other
+failures raise `ToolFailed` (the model sees the error and adapts), and
+confirmation-gated calls raise `ApprovalRequired`, so agents that can reach one
+need `output_type=[str, DeferredToolRequests]`. Pass `error_mode="raise"` to
+`PydanticAIAdapter` (or any of its builders) to keep the previous behaviour.
+Static Pydantic AI tools now take the `RunContext` (`takes_ctx=True`), so code
+calling `tool.function(...)` directly must pass a context (or `None`) first.
+
+### Added
+
+- `pydantic-ai` extra (`pip install 'agent-gantry[pydantic-ai]'`, pinning
+  `pydantic-ai-slim>=2.0.0`), included in `all`. CI runs the adapter tests on
+  the latest release and on exactly 2.0.0.
+- `PydanticAIAdapter.capability(mode="per-turn" | "search", skills=...)`: one
+  Pydantic AI `Capability` wiring Gantry into an agent, optionally injecting the
+  Gantry skills relevant to each turn as instructions.
+- Gantry-backed tool search: `PydanticAIAdapter.deferred_toolset()` exposes the
+  catalogue as `defer_loading` tools and `tool_search()` / `search_strategy()`
+  back Pydantic AI's `ToolSearch` with Gantry's semantic router. The tool list
+  stays stable between turns, so provider prompt caches survive.
+- Native human-in-the-loop approval for Pydantic AI: Gantry's confirmation gate
+  (`requires_confirmation` or a `SecurityPolicy` pattern) pauses the run with
+  `DeferredToolRequests`; an approved replay executes once with the gate
+  cleared and every denial check still running.
+- `agent_gantry.current_tool_invocation()` and `ToolInvocationContext`: a
+  framework-neutral way for a tool handler to read the calling framework's run
+  state. `agent_gantry.pydantic_ai.current_run_context()` returns the Pydantic
+  AI `RunContext`, so Gantry tools can use `ctx.deps`.
+- The active OpenTelemetry span is propagated into Pydantic AI tool calls'
+  `ToolCall.trace_id` / `parent_span_id`, joining Gantry's execution telemetry
+  to the agent's trace.
+- `PydanticAIAdapter.toolset()` gains `id=`, `sticky=`, `max_retries=` and
+  `error_mode=`.
+
+### Fixed
+
+- The Pydantic AI per-turn toolset never re-selected mid-run: it always used the
+  run's original prompt, so a tool needed only after a tool result never
+  appeared. Each step now selects from the newest prompt or tool result, and
+  feeds the tools already called to the router.
+- The Pydantic AI toolset ran a retrieval (an embedding call) on every model
+  step even when the query had not changed. Selections are now cached per run.
+- Concurrent Pydantic AI runs sharing one Gantry toolset no longer share
+  state: per-run state lives on the copy Pydantic AI's `for_run` hook returns.
+- Several Gantry toolsets can coexist on one agent: the toolset id was fixed at
+  `"agent-gantry"`.
+
 ## [0.20.0] - 2026-10-16
 
 Twelve native framework integrations share one typed entry point, with safer

@@ -6,7 +6,8 @@ Models for tool calls, results, and batch operations.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
@@ -168,3 +169,40 @@ class ToolCallEvent:
     def latency_ms(self) -> float:
         """Execution latency in milliseconds (0.0 if not started)."""
         return self.result.latency_ms
+
+
+@dataclass(frozen=True)
+class ToolInvocationContext:
+    """The agent framework's run state for the tool call currently executing.
+
+    Set by a framework adapter around each ``gantry.execute`` it drives, and
+    read inside a tool handler with
+    :func:`agent_gantry.current_tool_invocation`. It carries objects the
+    framework owns and Gantry cannot serialise -- a Pydantic AI
+    ``RunContext`` and its ``deps``, for instance -- so a Gantry tool can
+    reach the same dependency-injected database handle, user identity or
+    HTTP client a hand-written native tool would receive.
+
+    A frozen ``@dataclass`` rather than a Pydantic model for the same reason
+    as :class:`ToolCallEvent`: it is in-process only, never persisted or
+    validated, and holds arbitrary framework objects.
+
+    Propagation follows :mod:`contextvars`: it reaches async handlers and
+    sync handlers (dispatched with :func:`asyncio.to_thread`, which copies
+    the context), but not out-of-process executors such as the sandbox or
+    remote MCP/A2A/HTTP executors.
+    """
+
+    #: Canonical framework name, e.g. ``"pydantic_ai"``.
+    framework: str
+    #: The framework's own per-call context object (``RunContext`` for
+    #: Pydantic AI), or ``None`` when the framework has none.
+    native_context: Any = None
+    #: Dependency-injection payload the framework exposes (``ctx.deps``).
+    deps: Any = None
+    #: The framework's identifier for the agent run, when it has one.
+    run_id: str | None = None
+    #: The model-issued identifier of this tool call, when known.
+    tool_call_id: str | None = None
+    #: Framework-specific extras (retry count, run step, approval flag, ...).
+    metadata: Mapping[str, Any] = field(default_factory=dict)

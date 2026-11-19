@@ -18,7 +18,7 @@ This skill is the canonical reference for using the library. Read the section th
 | LangGraph | `LangGraphAdapter(gantry).select(...)` (static) or `.react_agent(model)` (live) | [Native framework adapters](#native-framework-adapters) |
 | LlamaIndex | `LlamaIndexAdapter(gantry).select(...)` (static) or `.function_agent(llm)` (live) | [Native framework adapters](#native-framework-adapters) |
 | CrewAI | `CrewAIAdapter(gantry).select(...)` | [Native framework adapters](#native-framework-adapters) |
-| Pydantic AI | `PydanticAIAdapter(gantry).select(...)` (static) or `.toolset()` (live) | [Native framework adapters](#native-framework-adapters) |
+| Pydantic AI | `PydanticAIAdapter(gantry).capability()` (per-turn) / `.capability(mode="search")` (Gantry-backed `ToolSearch`), or `.toolset()` / `.select(...)` | [Native framework adapters](#native-framework-adapters) |
 | OpenAI Agents SDK | `OpenAIAgentsAdapter(gantry).select(...)` (static) or `.run(agent, run_input)` (live) | [Native framework adapters](#native-framework-adapters) |
 | Haystack | `HaystackAdapter(gantry).select(...)` | [Native framework adapters](#native-framework-adapters) |
 | Agno | `AgnoAdapter(gantry).select(...)` | [Native framework adapters](#native-framework-adapters) |
@@ -302,13 +302,15 @@ agent = LlamaIndexAdapter(gantry).function_agent(llm)   # re-selects tools each 
 | Framework | Live adapter method | Native hook |
 |---|---|---|
 | LlamaIndex | `LlamaIndexAdapter(gantry).tool_retriever()` / `.function_agent(llm)` | `FunctionAgent(tool_retriever=…)` |
-| Pydantic AI | `PydanticAIAdapter(gantry).toolset()` | `AbstractToolset.get_tools()` |
+| Pydantic AI | `PydanticAIAdapter(gantry).toolset()` / `.capability()` / `.deferred_toolset()` + `.tool_search()` | `AbstractToolset.get_tools()` + `for_run()`; `AbstractCapability`; `ToolSearch(strategy=…)` |
 | Google ADK | `GoogleADKAdapter(gantry).before_model_callback()` / `.agent(model=, name=)` | `Agent(before_model_callback=…)` |
 | Strands Agents | `StrandsAdapter(gantry).tool_hook()` / `.agent(...)` | `Agent(hooks=[…])` — `BeforeModelCallEvent` |
 | LangGraph | `LangGraphAdapter(gantry).react_agent(model)` / `.areact_agent(model)` | dynamic `model` callable (re-binds tools per turn) |
 | OpenAI Agents SDK | `OpenAIAgentsAdapter(gantry).run(agent, run_input)` / `.session(agent)` / `.run_hooks(agent)` | `RunHooks.on_llm_start` + per-run refresh |
 
-The returned live objects keep their classes, importable from the framework's `*_live` module for `isinstance` checks: `GantryToolRetriever` (`llamaindex_live`), `GantryToolset` (`pydantic_ai_live`), `GantryAgentSession` (`openai_agents_live`) and `GantryStrandsToolHook` (`strands_live`). Google ADK and LangGraph return plain framework objects (a `before_model_callback` callable and a compiled agent), so there is no Gantry class to check for.
+The returned live objects keep their classes, importable from the framework's `*_live` module for `isinstance` checks: `GantryToolRetriever` (`llamaindex_live`), `GantryToolset` / `GantryDeferredToolset` (`pydantic_ai_live`, also `agent_gantry.pydantic_ai`), `GantryAgentSession` (`openai_agents_live`) and `GantryStrandsToolHook` (`strands_live`). Google ADK and LangGraph return plain framework objects (a `before_model_callback` callable and a compiled agent), so there is no Gantry class to check for.
+
+**Pydantic AI specifics** (install with `pip install 'agent-gantry[pydantic-ai]'`, pydantic-ai 2.x): Gantry failures surface as Pydantic AI's own exceptions, not `ToolExecutionError` — argument errors as `ModelRetry`, terminal failures as `ToolFailed`, and confirmation-gated calls (`requires_confirmation=True` or a `SecurityPolicy` pattern) as `ApprovalRequired`, so the agent needs `output_type=[str, DeferredToolRequests]` and approves with `DeferredToolResults`. Pass `error_mode="raise"` to get `ToolExecutionError` instead. Gantry handlers read the run's `deps` with `agent_gantry.pydantic_ai.current_run_context()` (or the framework-neutral `agent_gantry.current_tool_invocation()`). Per-turn selection reads the newest prompt or tool result each step, caches per run and keeps earlier tools (`sticky=True`); give each Gantry toolset on an agent its own `id=`. If the agent "can't see" a tool in search mode, it hasn't called `search_tools` for it yet — pin it with `always_include=[...]`.
 
 Frameworks whose tool list is **fixed at agent construction** (CrewAI, Agno, Haystack, DSPy) can't re-advertise tools mid-run. Build a self-rebuilding agent with `<Adapter>(gantry).agent_builder(...)` (Haystack: `HaystackAdapter(gantry).tool_invoker_builder(...)`; DSPy: `DSPyAdapter(gantry).agent_builder(signature, ...)`, since `dspy.ReAct` needs a task signature); it re-selects and rebuilds on each top-level call. For a one-shot fresh slice of native tools, call `<Adapter>(gantry).live_tools(query)` (async, not available on DSPy — use `.select(query)` instead).
 

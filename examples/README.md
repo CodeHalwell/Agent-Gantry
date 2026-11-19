@@ -34,7 +34,7 @@ python examples/agent_frameworks/langchain_example.py    # no key needed to see 
 | Google ADK | [`agent_frameworks/google_adk_example.py`](agent_frameworks/google_adk_example.py) | `pip install google-adk` |
 | Microsoft Agent Framework | [`agent_frameworks/agent_framework_provider_example.py`](agent_frameworks/agent_framework_provider_example.py) | `pip install agent-framework-core agent-framework-openai agent-framework-orchestrations` |
 | OpenAI Agents SDK | [`agent_frameworks/openai_agents_example.py`](agent_frameworks/openai_agents_example.py) | `pip install openai-agents` |
-| Pydantic AI | [`agent_frameworks/pydantic_ai_example.py`](agent_frameworks/pydantic_ai_example.py) | `pip install pydantic-ai-slim` |
+| Pydantic AI | [`agent_frameworks/pydantic_ai_example.py`](agent_frameworks/pydantic_ai_example.py) | `pip install 'agent-gantry[pydantic-ai]'` |
 | Haystack | [`agent_frameworks/haystack_example.py`](agent_frameworks/haystack_example.py) | `pip install haystack-ai` |
 | Agno | [`agent_frameworks/agno_example.py`](agent_frameworks/agno_example.py) | `pip install agno` |
 | Strands | [`agent_frameworks/strands_example.py`](agent_frameworks/strands_example.py) | `pip install 'strands-agents>=1'` |
@@ -42,9 +42,9 @@ python examples/agent_frameworks/langchain_example.py    # no key needed to see 
 | *(none yet)* | [`agent_frameworks/generic_adapters_example.py`](agent_frameworks/generic_adapters_example.py) | — |
 
 Install only the SDK for the framework you use. The `agent-frameworks` extra
-contains the first six frameworks; OpenAI Agents SDK, Pydantic AI, Haystack,
-Agno, Strands and DSPy are installed separately because some of their dependency
-constraints conflict with that combined extra. See
+contains the first six frameworks. Pydantic AI has its own `pydantic-ai`
+extra; OpenAI Agents SDK, Haystack, Agno, Strands and DSPy are installed
+separately to keep their dependency trees out of the main test matrix. See
 [`agent_frameworks/README.md`](agent_frameworks/README.md).
 
 No adapter for your framework? [`agent_frameworks/generic_adapters_example.py`](agent_frameworks/generic_adapters_example.py) shows the

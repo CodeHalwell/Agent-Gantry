@@ -2,38 +2,73 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Advanced Pydantic AI guide | Agent-Gantry">
+<DocsLayout title="Advanced Pydantic AI guide | Agent-Gantry" description="Approvals, tool search, skills, toolset ids, tracing and error modes for the Agent-Gantry Pydantic AI integration.">
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced Pydantic AI</h1>
-  <p class="lead">Scale Pydantic AI from static tool demos to governed agent workloads with semantic selection, explicit LLM-call policy, tracing, and deployment boundaries.</p>
+  <p class="lead">Human-in-the-loop approval, Gantry-backed tool search, per-turn skills, multiple toolsets, tracing, and how per-turn selection behaves inside a run.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/pydantic-ai/">← Basic Pydantic AI usage</a></p>
 
-  <h2>Advanced page: dynamic tool selection</h2>
-  <p>Before each Pydantic AI run, ask Gantry for a context-aware subset of tools. Combine request metadata, tenant policy, semantic similarity, and reranker results so the agent sees a concise, relevant tool surface.</p>
-  <CodeBlock lang="python" code={`candidate_tools = gantry.select_tools(
-    query=user_message,
-    tags=["support"],
-    limit=8,
-)
-framework_tools = [PydanticAIAdapter.convert(spec) for spec in candidate_tools]
-`} />
+  <h2>Human-in-the-loop approval</h2>
+  <p>A tool registered with <code>requires_confirmation=True</code>, or matched by a <code>SecurityPolicy(require_confirmation=[...])</code> pattern, pauses the run with Pydantic AI's <code>DeferredToolRequests</code>. Approving it with <code>DeferredToolResults</code> replays the call once through <code>gantry.execute</code> with the confirmation gate cleared; every other policy check still runs. A denial never executes the tool.</p>
+  <CodeBlock lang="python" code={`from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults
 
-  <h2>LLM calls and model policy</h2>
-  <p>Centralize LLM calls when Pydantic AI supports custom model clients; otherwise add middleware around the framework call. The policy should select the provider, enforce budget ceilings, redact sensitive fields, emit token metrics, and decide whether tool results should be summarized before returning to the model.</p>
-  <CodeBlock lang="python" code={`response = llm_policy.complete(
-    framework="Pydantic AI",
-    model="primary-or-fallback-model",
-    messages=messages,
-    tools=framework_tools,
-    trace_id=trace_id,
+agent = Agent(
+    "openai:gpt-5.5",
+    output_type=[str, DeferredToolRequests],   # required for approval-gated tools
+    capabilities=[adapter.capability()],
 )
-`} />
 
-  <h2>Production patterns</h2>
+result = await agent.run("Refund order 4471")
+if isinstance(result.output, DeferredToolRequests):
+    decisions = {call.tool_call_id: ask_a_human(call) for call in result.output.approvals}
+    result = await agent.run(
+        message_history=result.all_messages(),
+        deferred_tool_results=DeferredToolResults(approvals=decisions),
+    )`} />
+  <p>Each request's metadata carries Gantry's identity for the tool under <code>"agent_gantry"</code> (its qualified name and the reason it needs approval).</p>
+
+  <h2>Tool search backed by Gantry</h2>
+  <p><code>capability(mode="search")</code> combines a deferred catalogue (every Gantry tool marked <code>defer_loading</code>) with Pydantic AI's <code>ToolSearch</code>, using Gantry's semantic router as the search strategy. The model calls <code>search_tools</code>, or the provider's native tool search where supported, and only discovered tools reach it. Tools passed as <code>required</code> or <code>always_include</code> stay visible.</p>
+  <CodeBlock lang="python" code={`agent = Agent(model, capabilities=[adapter.capability(mode="search", limit=5)])
+
+# Or compose the parts yourself:
+agent = Agent(
+    model,
+    toolsets=[adapter.deferred_toolset(always_include=["get_order_status"])],
+    capabilities=[adapter.tool_search(limit=5)],
+)`} />
+  <p>Other deferred tools on the same agent (not managed by Gantry) remain searchable by keyword.</p>
+
+  <h2>Per-turn selection inside a run</h2>
   <ul>
-    <li><strong>Observability:</strong> attach trace IDs to every Pydantic AI run, LLM call, and tool execution.</li>
-    <li><strong>Safety:</strong> keep high-risk tools behind explicit allowlists, human approval, or dry-run executors.</li>
-    <li><strong>Resilience:</strong> add provider fallback for LLM calls and executor fallback for remote MCP/A2A tools.</li>
-    <li><strong>Evaluation:</strong> replay representative prompts with fixed tool snapshots before broadening dynamic retrieval.</li>
+    <li><strong>Query:</strong> the newest user prompt; after a tool call, the run's prompt plus the newest tool result (first 2,000 characters). Tools the model already called feed the router's <code>tools_already_used</code> signal.</li>
+    <li><strong>Cost:</strong> selections are cached per run, so there is one retrieval per distinct query, not one per step.</li>
+    <li><strong>Stickiness:</strong> with <code>sticky=True</code> (the default), tools offered earlier in a run stay offered, so a plan the model made at step one doesn't lose a tool at step three. Use <code>sticky=False</code> for a strict top-k.</li>
+    <li><strong>Concurrency:</strong> run state lives on the per-run copy Pydantic AI's <code>for_run</code> hook creates, so concurrent runs can share one toolset safely.</li>
+    <li><strong>Failure:</strong> if retrieval fails mid-run, the step keeps the run's earlier tools and logs a warning; the run continues.</li>
+  </ul>
+
+  <h2>Several Gantry toolsets on one agent</h2>
+  <p>Give each one a distinct <code>id</code> (durable execution keys on it) and avoid name clashes with a namespace filter or a prefix.</p>
+  <CodeBlock lang="python" code={`agent = Agent(
+    model,
+    toolsets=[
+        adapter.toolset(id="billing", namespaces=["billing"]),
+        adapter.toolset(id="support", namespaces=["support"]).prefixed("support"),
+    ],
+)`} />
+
+  <h2>Skills as instructions</h2>
+  <p><code>capability(skills=2)</code> injects up to two Gantry skills relevant to the current turn as dynamic instructions. Restrict them with <code>skill_namespaces=[...]</code>. If skill retrieval fails, the step continues without them.</p>
+
+  <h2>Tracing</h2>
+  <p>When Pydantic AI is instrumented (Logfire or any OpenTelemetry backend), the active tool span's ids become the Gantry <code>ToolCall</code>'s <code>trace_id</code> and <code>parent_span_id</code>, so <code>gantry.on_tool_call</code> events and Gantry's own telemetry join the agent's trace.</p>
+
+  <h2>Production checklist</h2>
+  <ul>
+    <li>Add <code>DeferredToolRequests</code> to <code>output_type</code> on any agent that can reach a confirmation-gated tool.</li>
+    <li>Use search mode for large catalogues or prompt-cache-sensitive agents; per-turn mode for small, fast-moving tool sets.</li>
+    <li>Read <code>deps</code> through <code>current_run_context()</code>. It is not available to out-of-process executors (sandbox, MCP, A2A, HTTP).</li>
+    <li>Keep <code>error_mode="model"</code> unless your application handles <code>ToolExecutionError</code> itself.</li>
   </ul>
 </DocsLayout>

@@ -134,6 +134,32 @@ def _stub_pydantic_ai_attrs() -> dict[str, object]:
     return {"Tool": _StubPydanticAITool}
 
 
+class _StubModelRetryError(Exception):
+    """Stand-in for ``pydantic_ai.exceptions.ModelRetry``."""
+
+
+class _StubToolFailedError(Exception):
+    """Stand-in for ``pydantic_ai.exceptions.ToolFailed``."""
+
+
+class _StubApprovalRequiredError(Exception):
+    """Stand-in for ``pydantic_ai.exceptions.ApprovalRequired``."""
+
+    def __init__(self, metadata: dict[str, Any] | None = None) -> None:
+        self.metadata = metadata
+        super().__init__()
+
+
+def _stub_pydantic_ai_extra_modules() -> dict[str, dict[str, object]]:
+    return {
+        "pydantic_ai.exceptions": {
+            "ModelRetry": _StubModelRetryError,
+            "ToolFailed": _StubToolFailedError,
+            "ApprovalRequired": _StubApprovalRequiredError,
+        }
+    }
+
+
 def _stub_openai_agents_attrs() -> dict[str, object]:
     return {"FunctionTool": _echo}
 
@@ -211,6 +237,13 @@ class AdapterCase:
             propagates :class:`~agent_gantry.integrations.frameworks.base.ToolExecutionError`
             uncaught, matching the documented default contract (see
             "Error-handling policy" in ``integrations/frameworks/README.md``).
+            ``"native_tool_failed"`` (Pydantic AI) -- the failure is
+            re-raised as the framework's own ``ToolFailed`` (``ModelRetry``
+            for argument errors, ``ApprovalRequired`` for confirmation-gated
+            calls), chained from the
+            :class:`~agent_gantry.integrations.frameworks.base.ToolExecutionError`,
+            so the model sees it instead of the run ending; ``error_mode="raise"``
+            restores ``"raises"``.
             The three deliberate "framework absorbs the error" deviations
             (Microsoft Agent Framework's JSON error string, the *live*
             ``Workbench.call_tool``, Strands' real ``Agent`` tool-execution
@@ -238,6 +271,7 @@ class AdapterCase:
     stub_attrs: Callable[[], dict[str, object]] | None = None
     live_extra_kwargs: Callable[[], dict[str, object]] | None = None
     error_kind: str = "raises"
+    extra_stub_modules: Callable[[], dict[str, dict[str, object]]] | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -268,7 +302,9 @@ async def _invoke_crewai_failure(native: Any) -> Any:
 
 
 async def _invoke_pydantic_ai_failure(native: Any) -> Any:
-    return await native.function()
+    # ``Tool.from_schema(takes_ctx=True)``: Pydantic AI passes the RunContext
+    # positionally. ``None`` stands in for a context-free direct call.
+    return await native.function(None)
 
 
 async def _invoke_openai_agents_failure(native: Any) -> Any:
@@ -344,6 +380,8 @@ ADAPTERS: list[AdapterCase] = [
         live_delegate="toolset",
         stub_attrs=_stub_pydantic_ai_attrs,
         invoke_failure=_invoke_pydantic_ai_failure,
+        error_kind="native_tool_failed",
+        extra_stub_modules=_stub_pydantic_ai_extra_modules,
     ),
     AdapterCase(
         "openai_agents",
@@ -662,12 +700,25 @@ async def test_adapter_tool_failure_matches_documented_error_kind(
     """
     if case.stub_attrs is not None:
         _install_stub(monkeypatch, case.modules, case.stub_attrs())
+        for module, attrs in (case.extra_stub_modules or dict)().items():
+            _install_stub(monkeypatch, [module], attrs)
 
     from agent_gantry.integrations.frameworks.base import GantryToolset, ToolExecutionError
 
     specs = await GantryToolset(gantry_with_failing_tool).select("always raises", limit=1)
     assert specs, f"{case.name}: failing tool not found by selection"
     native = case.adapter_cls.convert(specs[0])
+
+    if case.error_kind == "native_tool_failed":
+        with pytest.raises(Exception) as native_info:
+            await case.invoke_failure(native)
+        tool_failed = sys.modules["pydantic_ai.exceptions"].ToolFailed
+        assert isinstance(native_info.value, tool_failed)
+        assert "boom" in str(native_info.value)
+        cause = native_info.value.__cause__
+        assert isinstance(cause, ToolExecutionError)
+        assert cause.tool_name == "explode"
+        return
 
     assert case.error_kind == "raises", f"{case.name}: unknown error_kind {case.error_kind!r}"
     with pytest.raises(ToolExecutionError) as exc_info:
