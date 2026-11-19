@@ -295,7 +295,7 @@ Pydantic AI ends a run on an ordinary tool exception, so with the default `error
 | Gantry outcome | Pydantic AI exception | What the model sees |
 |---|---|---|
 | Bad arguments (`ValidationError`, `ToolNotFound`) | `ModelRetry` | The error; it retries within `max_retries` (default 1) |
-| Handler error, timeout, circuit open, permission denied | `ToolFailed` (`ModelRetry` on early 2.x) | A terminal failure it can adapt to |
+| Handler error, timeout, circuit open, permission denied | `ToolFailed` (on early 2.x, returned as the tool's `Error: ...` result) | A terminal failure it can adapt to |
 | Confirmation required (`requires_confirmation=True` or a `SecurityPolicy` pattern) | `ApprovalRequired` | Nothing yet — the run pauses with `DeferredToolRequests` |
 
 ```python

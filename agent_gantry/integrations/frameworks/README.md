@@ -528,8 +528,10 @@ default (`error_mode="model"`) the adapter re-raises, chained from the
 tool's retry budget; `ToolConfirmationRequiredError` as `ApprovalRequired`,
 Pydantic AI's human-in-the-loop flow (an approved replay executes once with
 the confirmation gate cleared, every denial check still running); and every
-other failure as `ToolFailed` (`ModelRetry` on 2.x releases before
-`ToolFailed` existed), which the model sees as a terminal result.
+other failure as `ToolFailed`, which the model sees as a terminal result (on
+2.x releases before `ToolFailed` existed, the failure text is returned as the
+tool's result instead, which is equally terminal). The text is capped at 2,000
+characters.
 `error_mode="raise"` (on the adapter, `select`, `toolset`, `capability`, …)
 restores the raise contract above. Locked by the `native_tool_failed` case
 of the conformance matrix and `tests/frameworks/test_pydantic_ai.py`.

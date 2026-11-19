@@ -264,10 +264,11 @@ agent-frameworks = [
 # `AbstractToolset.for_run`, `ToolDefinition.defer_loading` and the
 # `ToolSearch` / `AbstractCapability` API, all present and stable from 2.0.0
 # through 2.71.0 (verified 2026-11-19; `ToolFailed` arrived later in 2.x and is
-# feature-detected, falling back to `ModelRetry`). The `framework-adapters` CI
-# job installs this extra, and its floor cell re-runs the Pydantic AI tests on
-# exactly 2.0.0. Deliberately NOT part of `agent-frameworks` (that extra drives
-# the main test matrix); it is part of `all`.
+# feature-detected: without it a terminal failure is returned as the tool's
+# result). The `framework-adapters` CI job installs this extra, and its floor
+# cell re-runs the Pydantic AI tests on exactly 2.0.0. Deliberately NOT part
+# of `agent-frameworks` (that extra drives the main test matrix); it is part
+# of `all`.
 pydantic-ai = [
     "pydantic-ai-slim>=2.0.0",
 ]

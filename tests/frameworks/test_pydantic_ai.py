@@ -173,7 +173,8 @@ async def test_tool_failure_is_reported_to_the_model_not_raised(gantry):
 
     tools = await _adapter(gantry).select("divide integers", limit=6)
     result = await Agent(_script([("divide", {"a": 1, "b": 0})]), tools=tools).run("1/0")
-    assert result.output == "ZeroDivisionError: division by zero"
+    # ToolFailed's text, or (before ToolFailed existed) the tool's error result.
+    assert result.output.endswith("ZeroDivisionError: division by zero")
 
 
 async def test_argument_errors_become_model_retry(gantry):
@@ -225,9 +226,11 @@ async def test_permission_denied_maps_to_tool_failed(gantry):
     mapped = to_pydantic_ai_exception(
         spec, ToolPermissionDeniedError("get_weather", "permission_denied", "blocked")
     )
-    expected = getattr(pai.exceptions, "ToolFailed", pai.exceptions.ModelRetry)
-    assert isinstance(mapped, expected)
-    assert "Permission denied: blocked" in str(mapped)
+    if hasattr(pai.exceptions, "ToolFailed"):
+        assert isinstance(mapped, pai.exceptions.ToolFailed)
+        assert "Permission denied: blocked" in str(mapped)
+    else:
+        assert mapped is None  # returned to the model as the tool's result
 
 
 # --------------------------------------------------------------------------- #
@@ -744,3 +747,27 @@ def test_dict_tool_results_render_as_json():
     assert _content_text({"to": "jo@example.com", "ok": True}) == (
         '{"to": "jo@example.com", "ok": true}'
     )
+
+
+async def test_terminal_failure_without_tool_failed_is_returned_not_retried(gantry, monkeypatch):
+    _pydantic_ai()
+    import pydantic_ai.exceptions as pai_exceptions
+    from pydantic_ai import Agent
+
+    # Simulate a 2.x release from before ToolFailed existed.
+    monkeypatch.delattr(pai_exceptions, "ToolFailed", raising=False)
+    tools = await _adapter(gantry).select("divide integers", limit=6)
+    # The model repeats the failing call; with ModelRetry that would exhaust
+    # the retry budget and fail the run.
+    bad = [("divide", {"a": 1, "b": 0})]
+    result = await Agent(_script(bad, bad, bad), tools=tools).run("1/0")
+    assert result.output == "Error: ZeroDivisionError: division by zero"
+
+
+async def test_failure_text_shown_to_the_model_is_capped(gantry):
+    from agent_gantry.integrations.frameworks.pydantic_ai import failure_text
+
+    text = failure_text(ToolExecutionError("t", "failure", "x" * 5000, "ValueError"))
+    assert len(text) < 2100
+    assert text.startswith("ValueError: xxx")
+    assert text.endswith("[truncated]")

@@ -28,7 +28,8 @@ is propagated into Gantry's execution telemetry.
 
 The ``pydantic_ai`` import is lazy so ``import agent_gantry`` never requires
 Pydantic AI to be installed. Supported: ``pydantic-ai`` / ``pydantic-ai-slim``
-2.x (``ToolFailed`` is used where available, ``ModelRetry`` otherwise).
+2.x (``ToolFailed`` is used where available; on earlier 2.x releases a
+terminal failure is returned as the tool's result instead).
 
 Public entry point: :class:`PydanticAIAdapter`.
 """
@@ -81,6 +82,10 @@ _INSTALL_HINT = (
 
 #: Executor ``error_type`` values the model can fix by changing its call.
 _MODEL_CORRECTABLE_ERRORS = frozenset({"ValidationError", "ToolNotFound"})
+
+#: Longest failure text shown to the model. Exception messages can carry
+#: stack-like detail or echoed payloads; the head is what the model needs.
+_MAX_ERROR_CHARS = 2000
 
 #: Key under ``ToolDefinition.metadata`` carrying Gantry's identity for a tool.
 METADATA_KEY = "agent_gantry"
@@ -144,8 +149,35 @@ def current_run_context() -> Any:
     return invocation.native_context
 
 
-def to_pydantic_ai_exception(spec: ToolSpec, exc: ToolExecutionError) -> Exception:
-    """Translate a failed Gantry execution into Pydantic AI's control flow."""
+def _capped(message: str) -> str:
+    if len(message) <= _MAX_ERROR_CHARS:
+        return message
+    return message[:_MAX_ERROR_CHARS] + " ... [truncated]"
+
+
+def failure_text(exc: ToolExecutionError) -> str:
+    """The model-facing text for a failed execution (``error_type: message``, capped)."""
+    message = exc.error or "tool execution failed (no error message)"
+    if isinstance(exc, ToolPermissionDeniedError):
+        message = f"Permission denied: {message}"
+    elif (
+        exc.error_type
+        and exc.error_type not in message
+        and (exc.error_type not in _MODEL_CORRECTABLE_ERRORS)
+    ):
+        message = f"{exc.error_type}: {message}"
+    return _capped(message)
+
+
+def to_pydantic_ai_exception(spec: ToolSpec, exc: ToolExecutionError) -> Exception | None:
+    """Translate a failed Gantry execution into Pydantic AI's control flow.
+
+    Returns ``None`` for a terminal failure on a Pydantic AI release without
+    ``ToolFailed``: :func:`execute_for_pydantic_ai` then returns the failure
+    text as the tool's result, which is terminal (no retry loop) on every
+    release. ``ModelRetry`` would make the model repeat a call that cannot
+    succeed until the retry budget ran out and the run failed.
+    """
     try:
         from pydantic_ai.exceptions import ApprovalRequired, ModelRetry
     except ImportError as import_exc:  # pragma: no cover - adapter needs pydantic_ai
@@ -160,17 +192,13 @@ def to_pydantic_ai_exception(spec: ToolSpec, exc: ToolExecutionError) -> Excepti
                 }
             }
         )
-    message = exc.error or "tool execution failed (no error message)"
+    message = failure_text(exc)
     if exc.error_type in _MODEL_CORRECTABLE_ERRORS:
         return ModelRetry(message)
-    if isinstance(exc, ToolPermissionDeniedError):
-        message = f"Permission denied: {message}"
-    elif exc.error_type and exc.error_type not in message:
-        message = f"{exc.error_type}: {message}"
     try:
         from pydantic_ai.exceptions import ToolFailed
-    except ImportError:  # pydantic-ai < 2.x release that introduced ToolFailed
-        return ModelRetry(message)
+    except ImportError:  # 2.x releases before ToolFailed existed
+        return None
     return ToolFailed(message)
 
 
@@ -204,7 +232,10 @@ async def execute_for_pydantic_ai(
     except ToolExecutionError as exc:
         if error_mode == "raise":
             raise
-        raise to_pydantic_ai_exception(spec, exc) from exc
+        mapped = to_pydantic_ai_exception(spec, exc)
+        if mapped is None:
+            return f"Error: {failure_text(exc)}"
+        raise mapped from exc
 
 
 def json_schema_for(spec: ToolSpec) -> dict[str, Any]:
