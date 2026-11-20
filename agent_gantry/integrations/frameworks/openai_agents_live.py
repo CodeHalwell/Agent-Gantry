@@ -518,6 +518,14 @@ class _RunState:
         self.last_output = ""
         self.outputs = 0
         self.called: list[str] = []
+        # Model-request count at a failed retrieval; None when the last one worked.
+        self.failed_at: int | None = None
+
+
+def _requests(ctx: Any) -> int | None:
+    """The run's model-request count: a per-turn counter the SDK keeps on ``usage``."""
+    requests = getattr(getattr(ctx, "usage", None), "requests", None)
+    return requests if isinstance(requests, int) else None
 
 
 _MAX_CACHED_SELECTIONS = 32
@@ -656,19 +664,29 @@ class GantryDynamicTools:
             query = f"{prompt}\n{state.last_output}".strip()
         used = tuple(dict.fromkeys([*_called_tools(turn_input), *state.called]))
         turn_key = (query, used, state.outputs)
-        if state.turn_key == turn_key:
+        requests = _requests(ctx)
+
+        def current() -> bool:
+            # A failed retrieval holds only for the turn it happened in, even
+            # when the key is unchanged (e.g. only non-Gantry tools ran since).
+            return state.turn_key == turn_key and (
+                state.failed_at is None or state.failed_at == requests
+            )
+
+        if current():
             return state.enabled
         async with state.lock:
-            if state.turn_key == turn_key:
+            if current():
                 return state.enabled
             specs = await self._select(state, query, used)
             if specs is None:
                 # Retrieval failed: every gate this turn reuses the last tools
-                # plus the pins (which never depend on retrieval); the next
-                # turn (a new key) tries again.
+                # plus the pins (which never depend on retrieval).
                 state.enabled = state.enabled | self._pinned
                 state.turn_key = turn_key
+                state.failed_at = requests
                 return state.enabled
+            state.failed_at = None
             if self._sticky:
                 state.step += 1
                 specs = carry_over(

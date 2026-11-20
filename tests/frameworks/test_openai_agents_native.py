@@ -393,7 +393,8 @@ async def test_dynamic_tools_retrieval_failure_keeps_earlier_tools(gantry, caplo
         )
     assert _offered(model)[1] == ["lookup_customer"]
     assert "semantic retrieval failed" in caplog.text
-    assert calls["n"] == 2  # one failed attempt per turn, shared by every tool's gate
+    # One attempt per turn (ok, failed, failed), shared by every tool's gate.
+    assert calls["n"] == 3
 
 
 async def test_dynamic_tools_pins_outside_the_namespace_filter_are_offered(gantry):
@@ -412,6 +413,31 @@ async def test_dynamic_tools_pins_survive_a_first_turn_retrieval_failure(gantry)
     gantry.retrieve = down
     _, model = await _run(tools, [("get_weather", {"city": "Leeds"})], prompt="weather in Leeds")
     assert _offered(model)[0] == ["get_weather"]
+
+
+async def test_dynamic_tools_retry_after_failure_when_only_other_tools_ran(gantry):
+    from agents import function_tool
+
+    @function_tool
+    def ping() -> str:
+        """Return pong."""
+        return "pong"
+
+    original = gantry.retrieve
+    calls = {"n": 0}
+
+    async def flaky(query):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("vector store blip")
+        return await original(query)
+
+    gantry.retrieve = flaky
+    tools = await OpenAIAgentsAdapter(gantry).dynamic_tools(limit=1, sticky=False)
+    model = _script([("ping", {})], [("ping", {})])
+    await Runner.run(Agent(name="a", model=model, tools=[*tools, ping]), "weather in Leeds")
+    assert calls["n"] == 2  # the turn after the blip retried instead of reusing it
+    assert "get_weather" in _offered(model)[2]
 
 
 async def test_dynamic_tools_validate_arguments(gantry):
