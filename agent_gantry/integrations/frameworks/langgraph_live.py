@@ -182,16 +182,30 @@ def _query_from_state(state: Any, *, from_results: bool = True) -> str:
     return latest_activity(_query_messages(_messages(state), from_results=from_results)) or ""
 
 
-def _run_key(state: Any, config: Any) -> tuple[Any, Any]:
-    """(thread id, newest user message id): one run of the agent."""
+def _message_id(message: Any) -> str | None:
+    value = message.get("id") if isinstance(message, dict) else getattr(message, "id", None)
+    return value if isinstance(value, str) and value else None
+
+
+def _run_key(state: Any, config: Any) -> tuple[Any, str] | None:
+    """(thread id, anchor message id) for one run, or ``None`` when unidentifiable.
+
+    The anchor is the newest user message, or the first message when there is
+    none. LangGraph gives every message in a graph's state an id; without ids
+    there is nothing stable to keep state against, so the caller uses fresh
+    state for the turn rather than risk sharing it between runs.
+    """
     thread_id = None
     if isinstance(config, dict):
         thread_id = (config.get("configurable") or {}).get("thread_id")
-    newest = None
-    for index, message in enumerate(_messages(state)):
+    messages = _messages(state)
+    anchor = None
+    for message in messages:
         if _role(message) in ("human", "user"):
-            newest = getattr(message, "id", None) or index
-    return thread_id, newest
+            anchor = _message_id(message)
+    if anchor is None and messages and not any(_role(m) in ("human", "user") for m in messages):
+        anchor = _message_id(messages[0])
+    return (thread_id, anchor) if anchor is not None else None
 
 
 def _used_tools(state: Any) -> list[str]:
@@ -338,7 +352,8 @@ class _Selector:
 
     async def enabled(self, state: Any, config: Any) -> frozenset[str]:
         """The Gantry tool names to offer this turn."""
-        run = self._state(_run_key(state, config))
+        key = _run_key(state, config)
+        run = self._state(key) if key is not None else _RunState()
         query = _query_from_state(state, from_results=self._query_from_results)
         used = tuple(_used_tools(state))
         async with run.lock:

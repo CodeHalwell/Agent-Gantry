@@ -432,6 +432,40 @@ async def test_middleware_runs_are_isolated(gantry):
     assert crm == [["lookup_customer"]]
 
 
+async def test_middleware_runs_without_user_messages_or_threads_stay_isolated(gantry):
+    from agent_gantry.integrations.frameworks.langgraph_live import _Selector
+
+    selector = _Selector(
+        gantry,
+        limit=1,
+        score_threshold=0.0,
+        namespaces=None,
+        required=None,
+        always_include=None,
+        sticky=True,
+        max_offered=3,
+        query_from_results=True,
+        pinned=frozenset(),
+    )
+
+    def state(text, ids):
+        call = {"name": "x", "args": {}, "id": "c1"}
+        messages = [
+            AIMessage(content="", tool_calls=[call]),
+            ToolMessage(content=text, tool_call_id="c1"),
+        ]
+        if ids:
+            for i, message in enumerate(messages):
+                message.id = f"{text[:8]}-{i}"
+        return {"messages": messages}
+
+    for ids in (False, True):
+        weather = await selector.enabled(state("what's the weather in London", ids), None)
+        crm = await selector.enabled(state("look up the customer record", ids), None)
+        assert weather == {"get_weather"}
+        assert crm == {"lookup_customer"}  # nothing carried over from the other run
+
+
 async def test_areact_agent_builds_a_per_turn_agent(gantry):
     model = _model([("get_weather", {"city": "Paris"})])
     agent = await LangGraphAdapter(gantry).areact_agent(model, limit=1)
