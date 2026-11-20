@@ -628,7 +628,10 @@ class GantryDynamicTools:
             if state.turn_key == turn_key:
                 return state.enabled
             specs = await self._select(state, query, used)
-            if specs is None:  # retrieval failed: keep the last turn's tools, retry next turn
+            if specs is None:
+                # Retrieval failed: every gate this turn reuses the last tools;
+                # the next turn (a new key) tries again.
+                state.turn_key = turn_key
                 return state.enabled
             if self._sticky:
                 state.step += 1

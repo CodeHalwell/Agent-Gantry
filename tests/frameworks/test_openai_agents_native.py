@@ -378,6 +378,7 @@ async def test_dynamic_tools_retrieval_failure_keeps_earlier_tools(gantry, caplo
         )
     assert _offered(model)[1] == ["lookup_customer"]
     assert "semantic retrieval failed" in caplog.text
+    assert calls["n"] == 2  # one failed attempt per turn, shared by every tool's gate
 
 
 async def test_dynamic_tools_pins_outside_the_namespace_filter_are_offered(gantry):
