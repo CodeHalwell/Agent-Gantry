@@ -146,6 +146,21 @@ async def test_error_mode_raise_with_a_gated_tool_raises_and_never_runs(gantry):
     assert gantry.sent == []
 
 
+@pytest.mark.parametrize("helper", ["run", "session"])
+async def test_legacy_helpers_honour_the_adapter_error_mode(gantry, helper):
+    adapter = OpenAIAgentsAdapter(gantry, error_mode="raise")
+    agent = Agent(name="a", model=_script([("divide", {"a": 1, "b": 0})]), tools=[])
+    with pytest.raises(Exception) as info:
+        if helper == "run":
+            await adapter.run(agent, "divide 1 by 0 with the divide tool", limit=6)
+        else:
+            await adapter.session(agent, limit=6).run("divide 1 by 0 with the divide tool")
+    chain = [info.value]
+    while chain[-1].__cause__ is not None:
+        chain.append(chain[-1].__cause__)
+    assert any(isinstance(e, ToolExecutionError) for e in chain)
+
+
 async def test_error_formatter_rewrites_the_output(gantry):
     adapter = OpenAIAgentsAdapter(
         gantry, error_formatter=lambda exc: f"{exc.error_type}: [redacted]"

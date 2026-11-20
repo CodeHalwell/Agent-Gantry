@@ -329,6 +329,9 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
         self._error_mode = check_error_mode(error_mode)
         self._error_formatter = error_formatter
 
+    def _tool_kwargs(self) -> dict[str, Any]:
+        return {"error_mode": self._error_mode, "error_formatter": self._error_formatter}
+
     def _mode(self, error_mode: ErrorMode | None) -> ErrorMode:
         return self._error_mode if error_mode is None else check_error_mode(error_mode)
 
@@ -436,6 +439,7 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
             self._gantry,
             run_input,
             **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
+            **self._tool_kwargs(),
             **run_kwargs,
         )
 
@@ -458,6 +462,7 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
             agent,
             self._gantry,
             **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
+            **self._tool_kwargs(),
         )
 
     def run_hooks(
@@ -479,6 +484,7 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
             self._gantry,
             agent,
             **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
+            **self._tool_kwargs(),
         )
 
     async def refresh(
@@ -502,6 +508,7 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
             self._gantry,
             query_or_input,
             **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
+            **self._tool_kwargs(),
         )
 
     async def select_function_tools(
@@ -523,4 +530,5 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
             self._gantry,
             query_or_input,
             **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
+            **self._tool_kwargs(),
         )

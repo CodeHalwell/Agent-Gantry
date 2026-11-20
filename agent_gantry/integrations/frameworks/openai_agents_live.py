@@ -92,6 +92,7 @@ from agent_gantry.integrations.frameworks.native import (
     ErrorFormatter,
     ErrorMode,
     carry_over,
+    check_error_mode,
 )
 from agent_gantry.integrations.frameworks.openai_agents import (
     _INSTALL_HINT,
@@ -144,6 +145,8 @@ async def _select_function_tools(
     namespaces: list[str] | None = None,
     required: list[str] | None = None,
     always_include: list[str] | None = None,
+    error_mode: ErrorMode = "model",
+    error_formatter: ErrorFormatter | None = None,
 ) -> list[Any]:
     """Re-select tools for the current activity and return ``FunctionTool``s.
 
@@ -170,7 +173,10 @@ async def _select_function_tools(
         required=required,
         always_include=always_include,
     )
-    return [_spec_to_openai_agents(spec) for spec in specs]
+    return [
+        _spec_to_openai_agents(spec, error_mode=error_mode, error_formatter=error_formatter)
+        for spec in specs
+    ]
 
 
 async def _refresh_agent_tools(
@@ -183,6 +189,8 @@ async def _refresh_agent_tools(
     namespaces: list[str] | None = None,
     required: list[str] | None = None,
     always_include: list[str] | None = None,
+    error_mode: ErrorMode = "model",
+    error_formatter: ErrorFormatter | None = None,
 ) -> list[Any]:
     """Re-select tools and rewrite ``agent.tools`` in place; return the new tools.
 
@@ -209,6 +217,8 @@ async def _refresh_agent_tools(
             namespaces=namespaces,
             required=required,
             always_include=always_include,
+            error_mode=error_mode,
+            error_formatter=error_formatter,
         )
     except (ImportError, MissingRequiredToolError, QueryBoundsError):
         # Install-time and configuration errors, not transient retrieval
@@ -236,6 +246,8 @@ def _gantry_run_hooks(
     namespaces: list[str] | None = None,
     required: list[str] | None = None,
     always_include: list[str] | None = None,
+    error_mode: ErrorMode = "model",
+    error_formatter: ErrorFormatter | None = None,
 ) -> Any:
     """Build a :class:`agents.RunHooks` that re-selects tools every model call.
 
@@ -281,6 +293,8 @@ def _gantry_run_hooks(
                 namespaces=namespaces,
                 required=required,
                 always_include=always_include,
+                error_mode=error_mode,
+                error_formatter=error_formatter,
             )
 
     return _GantryRunHooks()
@@ -322,6 +336,8 @@ class GantryAgentSession:
         namespaces: list[str] | None = None,
         required: list[str] | None = None,
         always_include: list[str] | None = None,
+        error_mode: ErrorMode = "model",
+        error_formatter: ErrorFormatter | None = None,
     ) -> None:
         _require_agents()  # fail fast with the pip hint at construction
         check_query_bounds(limit=limit, score_threshold=score_threshold, owner="GantryAgentSession")
@@ -332,6 +348,8 @@ class GantryAgentSession:
         self._namespaces = namespaces
         self._required = required
         self._always_include = always_include
+        self._error_mode = check_error_mode(error_mode)
+        self._error_formatter = error_formatter
 
     @property
     def agent(self) -> Any:
@@ -357,6 +375,8 @@ class GantryAgentSession:
             namespaces=self._namespaces,
             required=self._required,
             always_include=self._always_include,
+            error_mode=self._error_mode,
+            error_formatter=self._error_formatter,
         )
 
     async def run(self, run_input: Any, **run_kwargs: Any) -> Any:
@@ -383,6 +403,8 @@ class GantryAgentSession:
             namespaces=self._namespaces,
             required=self._required,
             always_include=self._always_include,
+            error_mode=self._error_mode,
+            error_formatter=self._error_formatter,
         )
 
 
@@ -396,6 +418,8 @@ async def _run_with_gantry(
     namespaces: list[str] | None = None,
     required: list[str] | None = None,
     always_include: list[str] | None = None,
+    error_mode: ErrorMode = "model",
+    error_formatter: ErrorFormatter | None = None,
     **run_kwargs: Any,
 ) -> Any:
     """Re-select ``agent``'s tools for ``run_input`` and run it once via Gantry.
@@ -418,6 +442,8 @@ async def _run_with_gantry(
         namespaces=namespaces,
         required=required,
         always_include=always_include,
+        error_mode=error_mode,
+        error_formatter=error_formatter,
     )
     return await session.run(run_input, **run_kwargs)
 
