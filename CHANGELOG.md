@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Google ADK becomes a first-class integration, using ADK's tool confirmation,
+`ToolContext` and `{"error": ...}` function responses.
+
+**Behaviour change (Google ADK).** A failed Gantry execution no longer raises
+out of `FunctionTool.run_async` (which ended the ADK run): it returns
+`{"error": "<type>: <message>"}` for the model to read. Confirmation-gated
+tools now set ADK's `require_confirmation`, so the run asks for an
+`adk_request_confirmation` response instead of failing. The per-turn callback
+is sticky within a run and keeps the previous tools plus pins when retrieval
+fails, instead of injecting none. Pass `error_mode="raise"` to
+`GoogleADKAdapter` to keep the previous error behaviour.
+
+### Added
+
+- `google-adk` extra (`pip install 'agent-gantry[google-adk]'`, `>=2.6.1`).
+  CI runs the ADK tests on exactly 2.6.1 and on the latest.
+- Native ADK approval: Gantry's confirmation gate drives
+  `FunctionTool(require_confirmation=...)`; a confirmed call runs once.
+- `agent_gantry.google_adk.current_tool_context()`: the call's ADK
+  `ToolContext` (session state, user, invocation, artifacts, memory), also on
+  `current_tool_invocation()`.
+- Per-turn selection for ADK gains per-invocation state, caching, `sticky` /
+  `max_offered`, `query_from_results` (the latest successful tool result joins
+  the query) and pins that survive retrieval failures.
+- `error_mode` and `error_formatter` on `GoogleADKAdapter`.
+
+### Changed
+
+- `uv.lock`: re-resolving for the new extra settled `chromadb` on 1.5.9 and
+  `oauthlib` on 4.0.1 in every environment.
+
+### Fixed
+
+- A bare-name pin (`required=["ping"]`) under a `namespaces` filter now
+  resolves to the in-scope registration when the same tool name exists in
+  another namespace too, in selection and in the per-turn catalogues and
+  fallbacks of Pydantic AI, the OpenAI Agents SDK, LangGraph and Google ADK.
+  Previously the first registration anywhere won, so the required tool could
+  be missing from the turn.
+
 LangChain and LangGraph become first-class integrations, using LangChain's
 `ToolException`, LangGraph's `interrupt()` and runtime, and `create_agent`
 middleware for per-turn selection.

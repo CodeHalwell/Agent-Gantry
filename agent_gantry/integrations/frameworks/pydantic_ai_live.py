@@ -540,7 +540,11 @@ def _toolset_classes(abstract_toolset: type) -> tuple[type, type]:
             pinned = _with_native_names(
                 self._gantry,
                 _resolve_pins(
-                    self._gantry, [], required=self._required, always_include=self._always_include
+                    self._gantry,
+                    [],
+                    required=self._required,
+                    always_include=self._always_include,
+                    namespaces=self._namespaces,
                 ),
             )
             visible = {spec.qualified_name for spec in pinned}

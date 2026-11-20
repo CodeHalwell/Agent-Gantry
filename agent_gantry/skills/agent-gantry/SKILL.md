@@ -24,7 +24,7 @@ This skill is the canonical reference for using the library. Read the section th
 | Agno | `AgnoAdapter(gantry).select(...)` | [Native framework adapters](#native-framework-adapters) |
 | Strands Agents | `StrandsAdapter(gantry).select(...)` (static) or `.agent(...)` / `.tool_hook(...)` (live, per-turn) | [Native framework adapters](#native-framework-adapters) |
 | DSPy | `DSPyAdapter(gantry).select(...)` (static) or `.agent_builder(signature, ...)` (per-call) | [Native framework adapters](#native-framework-adapters) |
-| Google ADK | `GoogleADKAdapter(gantry).select(...)` (static) or `.agent(model=, name=)` (live) | [Native framework adapters](#native-framework-adapters) |
+| Google ADK (>=2.6.1) | `GoogleADKAdapter(gantry).agent(model=, name=)` (per-turn) or `.select(...)` (static) | [Google ADK](#google-adk) |
 | Any framework, re-select every turn | `ToolRefresher(gantry).refresh(messages)` | [Multi-turn re-selection](#multi-turn-re-selection-toolrefresher) |
 | Plain OpenAI / Anthropic / Gemini SDK | `OpenAIAdapter(gantry).tools(query)` (or `@with_semantic_tools(dialect=...)`) | [LLM-SDK direct](#llm-sdk-direct) |
 | MCP server (expose Gantry as MCP) | `gantry.serve_mcp(mode="dynamic")` | [MCP](#mcp) |
@@ -80,6 +80,7 @@ uv add "agent-gantry[agent-frameworks]" # Microsoft AF, LangChain, LangGraph, Cr
 uv add "agent-gantry[pydantic-ai]"      # Pydantic AI (pydantic-ai-slim>=2.0.0)
 uv add "agent-gantry[openai-agents]"    # OpenAI Agents SDK (>=0.23.1); not with [agent-frameworks]/[all] (openai 3 vs crewai)
 uv add "agent-gantry[langgraph]"        # LangGraph + LangChain (>=1.0); [langchain] for LangChain alone
+uv add "agent-gantry[google-adk]"       # Google ADK (>=2.6.1)
 uv add "agent-gantry[lancedb]"          # disk-persistent vector store
 uv add "agent-gantry[jev]"              # selection without embeddings (TypeSafe Jev)
 uv add "agent-gantry[mcp]"              # MCP client/server
@@ -382,6 +383,28 @@ if "__interrupt__" in result:                         # Gantry's confirmation ga
 - **Approval**: gated calls (`gantry.requires_confirmation(tool)`) call LangGraph's `interrupt()` with `{"type": "gantry_approval", "tool", "arguments", "tool_call_id"}`; resume with `Command(resume=True)` / `{"approved": True}` to run, anything else rejects. Needs a checkpointer; without one the model is told the call needs approval and it is not run.
 - **Run context**: `current_tool_runtime()` gives `.context` (the graph's `context=`), `.store`, `.config`, `.tool_call_id`; `current_tool_invocation().metadata["thread_id"]`.
 - **Tracing**: an OpenTelemetry span, else the current LangSmith run, becomes the `ToolCall`'s `trace_id`/`parent_span_id`.
+
+## Google ADK
+
+Install with `uv add "agent-gantry[google-adk]"` (pins `google-adk>=2.6.1`; tested on 2.6.1 and the latest).
+
+```python
+from google.adk.runners import InMemoryRunner
+from google.genai import types
+from agent_gantry.google_adk import GoogleADKAdapter, current_tool_context
+
+adapter = GoogleADKAdapter(gantry)                    # error_formatter=... to redact failure text
+agent = adapter.agent(model="gemini-2.5-flash", name="support", limit=5)
+runner = InMemoryRunner(agent=agent, app_name="app")
+# a gated tool emits an "adk_request_confirmation" function call; answer it with
+# FunctionResponse(name="adk_request_confirmation", id=call.id, response={"confirmed": True})
+```
+
+- **Per-turn selection** (`agent()` / `before_model_callback()`): injects each model request's tools with `LlmRequest.append_tools`; the agent's own tools stay. Query = newest user message + latest successful tool result (`query_from_results=False` to exclude output). Per-run state keyed by the ADK invocation; cached, sticky up to `max_offered` (default `3 * limit`); a retrieval failure keeps the previous tools plus pins.
+- **Errors**: the function response is `{"error": "<type>: <message>"}` (ADK's convention), so the model can correct itself; an exception would end the run. `error_mode="raise"` restores `ToolExecutionError`.
+- **Approval**: `gantry.requires_confirmation(tool)` drives ADK's `require_confirmation`; a confirmed call runs exactly once, ADK refuses a rejected one.
+- **Run context**: `current_tool_context()` returns the ADK `ToolContext` (`.state`, `.user_id`, `.invocation_id`, `.function_call_id`, artifacts, memory).
+- **Tracing**: ADK's OpenTelemetry span becomes the `ToolCall`'s `trace_id`/`parent_span_id`.
 
 ## Native framework adapters
 
@@ -914,6 +937,7 @@ This catches the headline mistakes: a tool description that names another tool (
 | OpenAI Agents run pauses with `result.interruptions` | A Gantry-gated tool (`requires_confirmation` or a `SecurityPolicy` pattern) needs approval | `state = result.to_state(); state.approve(item); await Runner.run(agent, state)` |
 | `ImportError: Per-turn Gantry selection needs openai-agents>=0.23.1` | An older SDK came in transitively | `pip install 'agent-gantry[openai-agents]'` |
 | LangGraph run returns `__interrupt__` | A Gantry-gated tool needs approval | `await agent.ainvoke(Command(resume=True), config)` with the same `thread_id` |
+| ADK run stops with an `adk_request_confirmation` function call | A Gantry-gated tool needs approval | Send `FunctionResponse(name="adk_request_confirmation", id=call.id, response={"confirmed": True})` as the next message |
 | LangGraph gated tool says it "requires human approval and was not run" | No checkpointer, so the interrupt could never be resumed | Pass `checkpointer=` to `create_agent` / `areact_agent` |
 | A LangChain tool error became a `ToolMessage` instead of raising | `handle_tool_error=True` in the default `error_mode="model"` | `LangChainAdapter(gantry, error_mode="raise")` |
 | MCP `find_relevant_tools` returns nothing (≤0.14.0) | The meta-tool inherited `ToolQuery`'s 0.5 absolute cutoff | Upgrade; the meta-tool now uses `score_threshold=0.0` like every other convenience layer |

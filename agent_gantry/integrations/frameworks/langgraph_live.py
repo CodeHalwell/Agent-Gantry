@@ -278,9 +278,13 @@ async def _catalogue(
         for d in definitions
         if not namespaces or d.namespace in namespaces
     ]
-    specs += _resolve_pins(gantry, specs, required=required, always_include=always_include)
+    specs += _resolve_pins(
+        gantry, specs, required=required, always_include=always_include, namespaces=namespaces
+    )
     specs = _with_native_names(gantry, specs)
-    pins = _resolve_pins(gantry, [], required=required, always_include=always_include)
+    pins = _resolve_pins(
+        gantry, [], required=required, always_include=always_include, namespaces=namespaces
+    )
     pin_keys = {(pin._namespace, pin.name) for pin in pins}
     pinned = frozenset(s.native_name for s in specs if (s._namespace, s.name) in pin_keys)
     return specs, pinned

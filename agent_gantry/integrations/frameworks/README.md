@@ -44,7 +44,7 @@ Install Gantry plus just the SDK you need:
 | `openai_agents` | `pip install 'agent-gantry[openai-agents]'` | `Agent(..., tools=await adapter.dynamic_tools())` — see [OpenAI Agents SDK](#openai-agents-sdk-first-class) |
 | `haystack` | `pip install agent-gantry haystack-ai` | `Agent(..., tools=await adapter.select(query))` |
 | `agno` | `pip install agent-gantry agno` | `Agent(..., tools=await adapter.select(query))` |
-| `google_adk` | `pip install agent-gantry google-adk` | `Agent(..., before_model_callback=adapter.live())` |
+| `google_adk` | `pip install 'agent-gantry[google-adk]'` | `adapter.agent(model=..., name=...)` — see [Google ADK](#google-adk-first-class) |
 | `strands` | `pip install agent-gantry 'strands-agents>=1'` | `Agent(hooks=[adapter.live()])` |
 | `dspy` | `pip install agent-gantry dspy` | `dspy.ReAct(signature, tools=await adapter.select(query))` |
 | `agent_framework` | `pip install agent-gantry agent-framework-core` | `provider = adapter.live(); provider.attach_to(agent)` |
@@ -567,6 +567,57 @@ of both behaviours.
 OpenTelemetry span, else the current LangSmith run, becomes the `ToolCall`'s
 `trace_id`/`parent_span_id`.
 
+## Google ADK (first-class)
+
+`pip install 'agent-gantry[google-adk]'` (pins `google-adk>=2.6.1`; CI runs the
+tests on exactly 2.6.1 and on the latest). `agent-frameworks` also includes it,
+capped below 2.8 for an opentelemetry trade-off with Agent Framework.
+
+| Mode | Build | Use when |
+|---|---|---|
+| Per-turn (recommended) | `adapter.agent(model=..., name=...)`, or `Agent(tools=[], before_model_callback=adapter.before_model_callback())` | Agents; Gantry picks each model request's tools |
+| Static slice | `await adapter.select(query)` → `Agent(tools=...)` | A fixed task |
+
+**Per-turn selection.** Before every model request the callback selects tools
+and injects them with `LlmRequest.append_tools` (which also registers them in
+`tools_dict`, so ADK can run them); tools the agent already has are left
+alone. The query is the newest user message plus the latest successful tool
+result after it (first 2,000 characters; `query_from_results=False` keeps
+output out; an `{"error": ...}` response never feeds it). State is keyed by
+the ADK invocation, so concurrent runs are independent; within a run
+selections are cached, earlier tools stay offered up to `max_offered`
+(`sticky=True`, default `3 * limit`), and a retrieval failure keeps the
+previous tools plus the pins.
+
+**Errors and approval.** A failed call returns `{"error": "<type>: <message>"}`
+as the function response, ADK's convention for telling the model a tool
+failed (an exception would end the run). A confirmation-gated call (the tool's
+flag or a `SecurityPolicy` pattern, per `AgentGantry.requires_confirmation()`)
+sets ADK's `require_confirmation`, so the run emits an
+`adk_request_confirmation` function call:
+
+```python
+async for event in runner.run_async(user_id=uid, session_id=sid, new_message=msg):
+    for part in event.content.parts if event.content else []:
+        if part.function_call and part.function_call.name == "adk_request_confirmation":
+            pending = part.function_call
+reply = types.FunctionResponse(name="adk_request_confirmation", id=pending.id,
+                               response={"confirmed": True})   # False rejects
+await consume(runner.run_async(user_id=uid, session_id=sid,
+                               new_message=types.Content(role="user", parts=[types.Part(function_response=reply)])))
+```
+
+A confirmed call runs once through `gantry.execute` with only the confirmation
+gate cleared; ADK itself refuses a rejected one. `error_formatter=fn` rewrites
+failure text; `error_mode="raise"` opts out of both behaviours.
+
+**Run context and tracing.** Gantry handlers read the call's ADK `ToolContext`
+(session `state`, `user_id`, `invocation_id`, `function_call_id`, artifacts,
+memory) with `agent_gantry.google_adk.current_tool_context()` or
+`current_tool_invocation()` (`deps` is the session state; `metadata` carries
+`agent_name`, `user_id`, `session_id`). ADK traces with OpenTelemetry, so its
+active span becomes the `ToolCall`'s `trace_id`/`parent_span_id`.
+
 ## Shared base
 
 `base.py` provides `GantryToolset` (selection, including the `required`/
@@ -624,7 +675,7 @@ policy refused it outright). Both are re-exported from
 `agent_gantry.integrations.frameworks`; catching `ToolExecutionError` still
 catches every outcome.
 
-**Every native adapter except Pydantic AI, the OpenAI Agents SDK, LangChain and LangGraph lets this propagate uncaught** from the
+**Every native adapter except Pydantic AI, the OpenAI Agents SDK, LangChain, LangGraph and Google ADK lets this propagate uncaught** from the
 native tool object's own invocation entry point (`.func`, `._run`, `.forward`,
 `.entrypoint`, `.method`, `.on_invoke_tool`, …) — proven for all of them,
 including the sync wrappers, by
@@ -738,7 +789,7 @@ asserting no exception + a `WARNING` log record).
 | OpenAI Agents SDK | **Deviation:** returned to the model as `Error: ...` tool output; `error_mode="raise"` restores raising | `dynamic_tools`: degrades to this run's earlier tools (per-run state) + `WARNING`; `session`/`run_hooks`: previous turn's `agent.tools` + `WARNING` |
 | Haystack | Raises `ToolExecutionError` | *(per-call — see above)* |
 | Agno | Raises `ToolExecutionError` | *(per-call — see above)* |
-| Google ADK | Raises `ToolExecutionError` | Degrades to no tools this turn (stateless) + `WARNING` — the original precedent |
+| Google ADK | **Deviation:** `FunctionTool.run_async` returns `{"error": ...}` (ADK's convention; the raw `.func` still raises); `error_mode="raise"` restores raising | Degrades to this run's previous tools plus pins (per-run state) + `WARNING` |
 | Strands Agents (`__call__`/`.acall`) | Raises `ToolExecutionError` | — |
 | Strands Agents (real agent loop, `.stream()`) | **Deviation:** error `ToolResult(status="error")`, not raised (Strands' own contract) | Degrades to previous turn's registered tools (stateful) + `WARNING` — the other precedent |
 | DSPy (`dspy.Tool.__call__`/`.acall`) | Raises `ToolExecutionError` | *(per-call — see above)* |

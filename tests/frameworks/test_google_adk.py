@@ -69,5 +69,5 @@ async def test_missing_google_adk_raises_helpful_error(monkeypatch, gantry):
     monkeypatch.setitem(sys.modules, "google.adk", None)
     monkeypatch.setitem(sys.modules, "google.adk.tools", None)
     specs = await GantryToolset(gantry).select("send an email", limit=1)
-    with pytest.raises(ImportError, match="pip install google-adk"):
+    with pytest.raises(ImportError, match=r"agent-gantry\[google-adk\]"):
         GoogleADKAdapter.convert(specs[0])

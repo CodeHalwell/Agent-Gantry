@@ -308,6 +308,17 @@ langgraph = [
     "langchain-core>=1.0.0",
     "langgraph>=1.0.0",
 ]
+# Google ADK, first-class (see CHANGELOG). Floor 2.6.1, the same as the
+# agent-frameworks floor: the adapter uses FunctionTool(require_confirmation=)
+# with ToolContext.tool_confirmation, run_async overrides, LlmRequest
+# .append_tools and before_model_callback (verified 2026-11-20 on exactly
+# 2.6.1 and on 2.15.0). No ceiling here: the <2.8 cap in agent-frameworks is
+# an opentelemetry trade-off with agent-framework, not an adapter limit, and
+# still applies when both extras are installed. The `framework-adapters` CI
+# job re-runs the ADK tests on exactly 2.6.1.
+google-adk = [
+    "google-adk>=2.6.1",
+]
 example-tools = [
     "beautifulsoup4>=4.12.0",
     "cryptography>=41.0.0",

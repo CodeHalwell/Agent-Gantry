@@ -2,39 +2,53 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Google ADK guide | Agent-Gantry">
+<DocsLayout title="Google ADK guide | Agent-Gantry" description="Integrate Agent-Gantry with Google ADK: per-turn tool selection through before_model_callback, ADK tool confirmation, readable tool errors and session context.">
   <p class="eyebrow">Framework guide</p>
   <h1>Google ADK</h1>
-  <p class="lead">Use Agent-Gantry with Google agent runtimes and tool callbacks. This page covers basic setup and the first production-friendly path; continue to the advanced page for dynamic retrieval, LLM calls, and operations.</p>
+  <p class="lead">Agent-Gantry plugs into the Agent Development Kit's own mechanisms: <code>before_model_callback</code> picks each model request's tools, <code>require_confirmation</code> handles human approval, and the <code>ToolContext</code> carries your session state. Failures come back to the model as <code>&#123;"error": ...&#125;</code> responses instead of ending the run.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/google-adk/advanced/">Advanced Google ADK usage →</a></p>
 
-  <h2>Basic page: register once, adapt at the edge</h2>
-  <ol>
-    <li>Create a Gantry instance near application startup.</li>
-    <li>Register deterministic Python functions with descriptions and input schemas.</li>
-    <li>Export framework-native tools for Google ADK immediately before constructing the agent, graph, pipeline, or crew.</li>
-    <li>Keep authorization, rate limits, and audit metadata in Gantry instead of duplicating it inside framework glue code.</li>
-  </ol>
-  <CodeBlock lang="python" code={`from agent_gantry import AgentGantry
+  <h2>Install</h2>
+  <CodeBlock lang="bash" code={`uv add "agent-gantry[google-adk]"   # google-adk >= 2.6.1`} />
+
+  <h2>Basic page: per-turn tools</h2>
+  <CodeBlock lang="python" title="Per-turn tool selection" code={`import asyncio
+
+from google.adk.runners import InMemoryRunner
+from google.genai import types
+from agent_gantry import AgentGantry
 from agent_gantry.google_adk import GoogleADKAdapter
 
 gantry = AgentGantry()
 
-@gantry.register(
-    tags=["support", "orders"],
-    examples=["where is my order", "has order 4471 shipped"],
-)
+@gantry.register(examples=["where is my order", "has order 4471 shipped"])
 def get_order_status(order_id: str) -> str:
     """Return the current shipping status for an order."""
     return "in_transit"
-adapter = GoogleADKAdapter(gantry)
-framework_tools = await adapter.select("check an order", limit=3)  # Native Google ADK adapter export.
-`} />
 
-  <h2>First tool-calling loop</h2>
-  <p>Let Google ADK own the conversation lifecycle while Gantry owns the tool catalog. Start with a small tool set and assert that the framework receives only safe, documented functions.</p>
-  <div class="callout"><strong>Basic testing checklist:</strong> verify tool names, JSON schemas, auth metadata, and a happy-path invocation before wiring a live model.</div>
+async def main():
+    await gantry.sync()
+    agent = GoogleADKAdapter(gantry).agent(model="gemini-2.5-flash", name="support", limit=5)
+    runner = InMemoryRunner(agent=agent, app_name="support")
+    session = await runner.session_service.create_session(app_name="support", user_id="u")
+    message = types.Content(role="user", parts=[types.Part(text="Has order 4471 shipped?")])
+    async for event in runner.run_async(user_id="u", session_id=session.id, new_message=message):
+        if event.is_final_response():
+            print(event.content.parts[0].text)
 
-  <h2>Basic LLM call guidance</h2>
-  <p>For early prototypes, use the model client already recommended by Google ADK. Wrap that client with a thin policy function that records model name, prompt tokens, completion tokens, tool calls, and latency. Once the integration stabilizes, move the policy into Agent-Gantry's LLM adapter layer so other frameworks share the same rules.</p>
+asyncio.run(main())`} />
+  <p>For an agent you build yourself, pass <code>before_model_callback=adapter.before_model_callback(limit=5)</code>. Tools the agent already has stay available; Gantry adds its selection each turn.</p>
+
+  <h2>What the model sees when a tool fails</h2>
+  <p>A failed call returns <code>&#123;"error": "&lt;type&gt;: &lt;message&gt;"&#125;</code> as the function response, capped at 2,000 characters, which is how ADK tells a model a tool failed. An exception would end the run instead.</p>
+  <div class="callout"><strong>Redact or opt out:</strong> <code>GoogleADKAdapter(gantry, error_formatter=redact)</code> rewrites the text the model sees; <code>error_mode="raise"</code> lets <code>ToolExecutionError</code> propagate instead.</div>
+
+  <h2>Reading session state from a Gantry tool</h2>
+  <CodeBlock lang="python" code={`from agent_gantry.google_adk import current_tool_context
+
+@gantry.register
+def get_balance(account: str) -> str:
+    """Fetch an account balance for the signed-in user."""
+    ctx = current_tool_context()   # ADK ToolContext, or None outside a run
+    return bank.balance(ctx.state["user_id"], account)`} />
 </DocsLayout>

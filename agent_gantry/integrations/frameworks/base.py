@@ -1059,7 +1059,9 @@ def _bare_qualified_name(tool: ToolDefinition) -> str:
 
 
 def _resolve_tool_names(
-    gantry: AgentGantry, names: Sequence[str]
+    gantry: AgentGantry,
+    names: Sequence[str],
+    namespaces: Sequence[str] | None = None,
 ) -> tuple[list[ToolDefinition], list[str]]:
     """Resolve bare or qualified tool names against the gantry's registry.
 
@@ -1070,7 +1072,9 @@ def _resolve_tool_names(
     tool's bare ``name`` or its ``namespace.name`` qualified name (see
     :func:`_bare_qualified_name`); bare-name lookups take the first match
     across namespaces (mirroring
-    :meth:`~agent_gantry.core.registry.ToolRegistry.get_tool_by_name`).
+    :meth:`~agent_gantry.core.registry.ToolRegistry.get_tool_by_name`), except
+    that with ``namespaces`` a bare name prefers a registration inside them,
+    so a namespace-filtered selection pins the in-scope tool.
 
     Returns ``(found, missing)`` — ``(requested name, resolved ToolDefinition)``
     pairs in the order ``names`` was given, and the subset of ``names`` that
@@ -1081,9 +1085,13 @@ def _resolve_tool_names(
     known = gantry.list_tools_sync()
     by_qualified: dict[str, ToolDefinition] = {}
     by_bare: dict[str, ToolDefinition] = {}
+    scoped: dict[str, ToolDefinition] = {}
     for tool in known:
         by_qualified.setdefault(_bare_qualified_name(tool), tool)
         by_bare.setdefault(tool.name, tool)
+        if namespaces and tool.namespace in namespaces:
+            scoped.setdefault(tool.name, tool)
+    by_bare.update(scoped)
 
     found: list[tuple[str, ToolDefinition]] = []
     missing: list[str] = []
@@ -1103,6 +1111,7 @@ def _pin_specs(
     seen_bare: set[str],
     *,
     kind: Literal["required", "always_include"],
+    namespaces: Sequence[str] | None = None,
 ) -> list[ToolSpec]:
     """Resolve ``names`` and wrap any not already present as pinned :class:`ToolSpec`\\ s.
 
@@ -1135,7 +1144,7 @@ def _pin_specs(
     """
     if not names:
         return []
-    found, missing = _resolve_tool_names(gantry, names)
+    found, missing = _resolve_tool_names(gantry, names, namespaces)
     if missing:
         if kind == "required":
             raise MissingRequiredToolError(
@@ -1168,8 +1177,12 @@ def _resolve_pins(
     *,
     required: Sequence[str] | None,
     always_include: Sequence[str] | None,
+    namespaces: Sequence[str] | None = None,
 ) -> list[ToolSpec]:
     """Build the pinned-tool tail appended after ``specs`` (the semantic slice).
+
+    ``namespaces`` (the selection's filter) makes a bare pin resolve to the
+    in-scope registration when one exists; qualified pins are unaffected.
 
     Ordering matches
     :class:`~agent_gantry.integrations.agent_framework_provider.GantryContextProvider`:
@@ -1190,9 +1203,16 @@ def _resolve_pins(
     for s in specs:
         seen_qualified.add(f"{s._namespace}.{s.name}")
         seen_bare.add(s.name)
-    pinned = _pin_specs(gantry, required, seen_qualified, seen_bare, kind="required")
+    pinned = _pin_specs(
+        gantry, required, seen_qualified, seen_bare, kind="required", namespaces=namespaces
+    )
     pinned += _pin_specs(
-        gantry, always_include, seen_qualified, seen_bare, kind="always_include"
+        gantry,
+        always_include,
+        seen_qualified,
+        seen_bare,
+        kind="always_include",
+        namespaces=namespaces,
     )
     return pinned
 
@@ -1318,7 +1338,11 @@ class GantryToolset:
         )
         specs = [spec_from_tool(self._gantry, st.tool, st.semantic_score) for st in result.tools]
         pinned = _resolve_pins(
-            self._gantry, specs, required=required, always_include=always_include
+            self._gantry,
+            specs,
+            required=required,
+            always_include=always_include,
+            namespaces=namespaces,
         )
         return _with_native_names(self._gantry, specs + pinned)
 
@@ -1358,7 +1382,13 @@ class GantryToolset:
         if not (query or "").strip():
             return _with_native_names(
                 self._gantry,
-                _resolve_pins(self._gantry, [], required=required, always_include=always_include),
+                _resolve_pins(
+                    self._gantry,
+                    [],
+                    required=required,
+                    always_include=always_include,
+                    namespaces=namespaces,
+                ),
             )
         return await self.select(
             query,
