@@ -421,9 +421,6 @@ async def _run_with_gantry(
     return await session.run(run_input, **run_kwargs)
 
 
-__all__ = ["GantryAgentSession"]
-
-
 # --------------------------------------------------------------------------- #
 # Per-turn selection through ``FunctionTool.is_enabled``
 # --------------------------------------------------------------------------- #
@@ -595,9 +592,11 @@ class GantryDynamicTools:
 
     def _record_output(self, ctx: Any, name: str, text: str) -> None:
         state = self._state(ctx)
-        state.last_output = text[:MAX_TOOL_RESULT_QUERY_CHARS]
+        if text:
+            state.last_output = text[:MAX_TOOL_RESULT_QUERY_CHARS]
         state.outputs += 1
-        state.called.append(name)
+        if name not in state.called:
+            state.called.append(name)
 
     # -- selection -------------------------------------------------------- #
     def _gate(self, name: str) -> Any:
@@ -658,3 +657,6 @@ class GantryDynamicTools:
             state.cache.pop(next(iter(state.cache)))
         state.cache[key] = specs
         return specs
+
+
+__all__ = ["GantryAgentSession", "GantryDynamicTools"]

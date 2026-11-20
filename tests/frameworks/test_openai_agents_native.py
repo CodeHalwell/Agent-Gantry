@@ -30,7 +30,10 @@ from agent_gantry.core.security import (  # noqa: E402
     ConfirmationRequiredError,
     SecurityPolicy,
 )
-from agent_gantry.integrations.frameworks.base import ToolExecutionError  # noqa: E402
+from agent_gantry.integrations.frameworks.base import (  # noqa: E402
+    ToolConfirmationRequiredError,
+    ToolExecutionError,
+)
 from agent_gantry.openai_agents import OpenAIAgentsAdapter  # noqa: E402
 
 
@@ -130,6 +133,17 @@ async def test_error_mode_raise_ends_the_run(gantry):
     while chain[-1].__cause__ is not None:
         chain.append(chain[-1].__cause__)
     assert any(isinstance(e, ToolExecutionError) for e in chain)
+
+
+async def test_error_mode_raise_with_a_gated_tool_raises_and_never_runs(gantry):
+    tools = await OpenAIAgentsAdapter(gantry, error_mode="raise").select("send email", limit=6)
+    with pytest.raises(Exception) as info:
+        await _run(tools, [("send_email", {"to": "bob@x"})])
+    chain = [info.value]
+    while chain[-1].__cause__ is not None:
+        chain.append(chain[-1].__cause__)
+    assert any(isinstance(e, ToolConfirmationRequiredError) for e in chain)
+    assert gantry.sent == []
 
 
 async def test_error_formatter_rewrites_the_output(gantry):
@@ -326,6 +340,21 @@ async def test_dynamic_tools_query_from_results_false(gantry):
     )
     assert all("jo@example.com" not in q for q in queries)
     assert _offered(model)[1] == ["lookup_customer"]
+
+
+async def test_dynamic_tools_error_output_never_feeds_retrieval(gantry):
+    queries = []
+    original = gantry.retrieve
+
+    async def spy(query):
+        queries.append(query.context.query)
+        return await original(query)
+
+    gantry.retrieve = spy
+    tools = await OpenAIAgentsAdapter(gantry).dynamic_tools(limit=1)
+    await _run(tools, [("divide", {"a": 1, "b": 0})], prompt="divide 1 by 0")
+    assert len(queries) >= 2  # reselected after the failed call
+    assert all("ZeroDivisionError" not in q for q in queries)
 
 
 async def test_dynamic_tools_retrieval_failure_keeps_earlier_tools(gantry, caplog):

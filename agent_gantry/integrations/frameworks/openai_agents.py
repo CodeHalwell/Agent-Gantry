@@ -23,7 +23,9 @@ callables:
   with per-run state (no shared ``agent.tools`` mutation).
 
 The ``agents`` import is lazy so ``import agent_gantry`` never requires the SDK.
-Supported: ``openai-agents`` >= 0.21.
+Supported: ``openai-agents`` >= 0.23.1 for everything above. Older SDKs still
+get static tools, readable errors and run context, but no ``needs_approval``
+(a gated call is refused, not paused) and no :meth:`~OpenAIAgentsAdapter.dynamic_tools`.
 
 Public entry point: :class:`OpenAIAgentsAdapter`.
 """
@@ -225,7 +227,9 @@ def _spec_to_openai_agents(
         error_formatter: Rewrites failure text before the model sees it.
         is_enabled: Passed through to ``FunctionTool.is_enabled`` (per-turn selection).
         on_output: Called with ``(tool_context, tool_name, output_text)`` after
-            each call, so a per-turn provider can select from the result.
+            each call, so a per-turn provider can select from the result. The
+            text is ``""`` when the call failed or awaits approval, so error
+            text never feeds retrieval.
 
     Raises:
         ImportError: If ``openai-agents`` is not installed.
@@ -245,7 +249,8 @@ def _spec_to_openai_agents(
         # as JSON, matching the Agent Framework bridge.
         text = _result_text(result)
         if on_output is not None and ctx is not None:
-            on_output(ctx, spec.native_name, text)
+            failed = text == _PENDING_APPROVAL_TEXT or text.startswith("Error: ")
+            on_output(ctx, spec.native_name, "" if failed else text)
         return text
 
     fields = _function_tool_fields(FunctionTool)
@@ -257,8 +262,19 @@ def _spec_to_openai_agents(
                 "(FunctionTool.is_enabled). " + _INSTALL_HINT
             )
         kwargs["is_enabled"] = is_enabled
-    # SDKs without ``needs_approval`` (before 0.21) still never run a gated
-    # call: it reaches the confirmation gate and the model is told so.
+    # SDKs without ``needs_approval`` still never run a gated call: it reaches
+    # the confirmation gate and the model is told so (warned above).
+    if (
+        error_mode == "model"
+        and "needs_approval" not in fields
+        and spec._gantry.requires_confirmation(spec.tool or spec.name, spec._namespace)
+    ):
+        _logger.warning(
+            "Tool %r needs confirmation but this openai-agents has no needs_approval; "
+            "calls will be refused instead of paused for approval. Upgrade to "
+            "openai-agents>=0.23.1.",
+            spec.native_name,
+        )
     if error_mode == "model" and "needs_approval" in fields:
         gantry = spec._gantry
         tool_def = spec.tool if spec.tool is not None else spec.name
