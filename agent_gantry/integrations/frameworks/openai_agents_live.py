@@ -571,6 +571,7 @@ class GantryDynamicTools:
         self._max_offered = 3 * limit if max_offered is None else max_offered
         self._query_from_results = query_from_results
         self._states: dict[int, tuple[weakref.ref[Any], _RunState]] = {}
+        self._pinned: frozenset[str] = frozenset()
 
     async def build(self) -> list[Any]:
         """The catalogue (in-scope registry tools) as gated ``FunctionTool``s."""
@@ -594,6 +595,13 @@ class GantryDynamicTools:
             self._gantry, specs, required=self._required, always_include=self._always_include
         )
         specs = _with_native_names(self._gantry, specs)
+        pins = _resolve_pins(
+            self._gantry, [], required=self._required, always_include=self._always_include
+        )
+        pin_keys = {(pin._namespace, pin.name) for pin in pins}
+        self._pinned = frozenset(
+            spec.native_name for spec in specs if (spec._namespace, spec.name) in pin_keys
+        )
         return [
             _spec_to_openai_agents(
                 spec,
@@ -655,8 +663,10 @@ class GantryDynamicTools:
                 return state.enabled
             specs = await self._select(state, query, used)
             if specs is None:
-                # Retrieval failed: every gate this turn reuses the last tools;
-                # the next turn (a new key) tries again.
+                # Retrieval failed: every gate this turn reuses the last tools
+                # plus the pins (which never depend on retrieval); the next
+                # turn (a new key) tries again.
+                state.enabled = state.enabled | self._pinned
                 state.turn_key = turn_key
                 return state.enabled
             if self._sticky:

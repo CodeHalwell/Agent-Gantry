@@ -404,6 +404,16 @@ async def test_dynamic_tools_pins_outside_the_namespace_filter_are_offered(gantr
     assert _offered(model)[0] == ["get_weather"]
 
 
+async def test_dynamic_tools_pins_survive_a_first_turn_retrieval_failure(gantry):
+    async def down(query):
+        raise RuntimeError("vector store down")
+
+    tools = await OpenAIAgentsAdapter(gantry).dynamic_tools(limit=1, always_include=["get_weather"])
+    gantry.retrieve = down
+    _, model = await _run(tools, [("get_weather", {"city": "Leeds"})], prompt="weather in Leeds")
+    assert _offered(model)[0] == ["get_weather"]
+
+
 async def test_dynamic_tools_validate_arguments(gantry):
     with pytest.raises(ValueError, match="max_offered"):
         await OpenAIAgentsAdapter(gantry).dynamic_tools(max_offered=0)
