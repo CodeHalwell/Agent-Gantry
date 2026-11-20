@@ -82,7 +82,7 @@ For per-step (multi-turn) re-selection within one run, use `ToolRefresher`
 - `agent_framework_harness_example.py`: AF background-agent harness integration (see the file's docstring for the AF version gates it exercises).
 - `google_adk_example.py`: Google Agent Development Kit (ADK) integration using `Agent` + `Runner`.
 - `langchain_example.py`: `LangChainAdapter.select` feeding `langchain.agents.create_agent` (LangChain 1.x; the old `langgraph.prebuilt.create_react_agent` is deprecated and removed in LangGraph 2.0).
-- `langgraph_example.py`: `LangGraphAdapter.areact_agent` — the dynamic tier. Middleware re-runs selection before every model turn; the file prints what two different turns select before the key gate.
+- `langgraph_example.py`: runs offline with a scripted chat model. `LangGraphAdapter.middleware()` re-selects tools every model turn (the email tool appears after the CRM lookup returns), failures come back as error `ToolMessage`s, a confirmation-gated tool pauses with `interrupt()` and runs once on `Command(resume=True)`, and a tool reads the graph's `context=` through `current_tool_runtime()`.
 - `crewai_example.py`: `CrewAIAdapter.select` once per agent — two crew members each holding a different static slice of one catalogue (run with `kickoff_async`).
 - `llamaindex_example.py`: Using Gantry with LlamaIndex's new `AgentWorkflow` based `ReActAgent`.
 - `generic_adapters_example.py`: The framework-neutral `GantryToolset.select` → `ToolSpec` path (`name`, `description`, JSON-Schema `parameters`, `ainvoke`) for hand-wiring a framework that has no dedicated adapter yet. Needs no framework and no key.

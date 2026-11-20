@@ -92,10 +92,14 @@ def _echo(**kwargs: Any) -> Any:
     return types.SimpleNamespace(**kwargs)
 
 
+class _StubToolException(Exception):  # noqa: N818  (mirrors the real name)
+    """Stand-in for ``langchain_core.tools.ToolException``."""
+
+
 def _stub_langchain_attrs() -> dict[str, object]:
     structured_tool = types.SimpleNamespace()
     structured_tool.from_function = staticmethod(_echo)
-    return {"StructuredTool": structured_tool}
+    return {"StructuredTool": structured_tool, "ToolException": _StubToolException}
 
 
 def _stub_llamaindex_attrs() -> dict[str, object]:
@@ -237,6 +241,12 @@ class AdapterCase:
             propagates :class:`~agent_gantry.integrations.frameworks.base.ToolExecutionError`
             uncaught, matching the documented default contract (see
             "Error-handling policy" in ``integrations/frameworks/README.md``).
+            ``"native_tool_exception"`` (LangChain, LangGraph) -- the failure
+            is re-raised as LangChain's ``ToolException`` chained from the
+            :class:`~agent_gantry.integrations.frameworks.base.ToolExecutionError`;
+            the tool sets ``handle_tool_error=True``, so the model receives an
+            error ``ToolMessage`` instead of the run ending.
+            ``error_mode="raise"`` restores ``"raises"``.
             ``"native_tool_output"`` (OpenAI Agents SDK) -- the failure is
             returned as the tool's output text (``Error: ...``) for the model
             to read, since the SDK has no retry exception and would otherwise
@@ -348,6 +358,7 @@ ADAPTERS: list[AdapterCase] = [
         live_delegate="select",
         stub_attrs=_stub_langchain_attrs,
         invoke_failure=_invoke_langchain_failure,
+        error_kind="native_tool_exception",
     ),
     AdapterCase(
         "langgraph",
@@ -358,6 +369,7 @@ ADAPTERS: list[AdapterCase] = [
         stub_attrs=_stub_langchain_attrs,
         live_extra_kwargs=lambda: {"model": object()},
         invoke_failure=_invoke_langchain_failure,
+        error_kind="native_tool_exception",
     ),
     AdapterCase(
         "llamaindex",
@@ -724,6 +736,16 @@ async def test_adapter_tool_failure_matches_documented_error_kind(
         cause = native_info.value.__cause__
         assert isinstance(cause, ToolExecutionError)
         assert cause.tool_name == "explode"
+        return
+
+    if case.error_kind == "native_tool_exception":
+        # LangChain's ToolException, which a tool with handle_tool_error=True
+        # turns into an error ToolMessage for the model.
+        with pytest.raises(Exception) as native_info:
+            await case.invoke_failure(native)
+        assert type(native_info.value).__name__ in {"ToolException", "_StubToolException"}
+        assert "boom" in str(native_info.value)
+        assert isinstance(native_info.value.__cause__, ToolExecutionError)
         return
 
     if case.error_kind == "native_tool_output":

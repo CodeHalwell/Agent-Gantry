@@ -104,5 +104,5 @@ async def test_missing_langchain_raises_helpful_error(monkeypatch, gantry):
     from agent_gantry.langchain import LangChainAdapter
 
     specs = await GantryToolset(gantry).select("send an email", limit=1)
-    with pytest.raises(ImportError, match="pip install langchain-core"):
+    with pytest.raises(ImportError, match=r"agent-gantry\[langchain\]"):
         LangChainAdapter.convert(specs[0])

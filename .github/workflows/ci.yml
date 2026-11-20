@@ -153,7 +153,8 @@ jobs:
       # Pydantic AI is first-class with a declared floor (the `pydantic-ai`
       # extra, >=2.0.0). Re-run its tests on exactly the floor so a change
       # that needs a newer release is caught here, not by users. One cell.
-      # Same for the OpenAI Agents SDK (`openai-agents` extra, >=0.23.1).
+      # Same for the OpenAI Agents SDK (`openai-agents` extra, >=0.23.1)
+      # and LangChain / LangGraph (`langchain` / `langgraph` extras, >=1.0.0).
       - name: OpenAI Agents SDK floor (0.23.1)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         run: |
@@ -162,6 +163,16 @@ jobs:
           .venv-openai-agents-floor/bin/python -m pytest \
             tests/frameworks/test_openai_agents.py tests/frameworks/test_openai_agents_live.py \
             tests/frameworks/test_openai_agents_native.py -v
+
+      - name: LangChain / LangGraph floor (1.0.0)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: |
+          uv venv .venv-langchain-floor --python ${{ matrix.python-version }}
+          uv pip install --python .venv-langchain-floor ".[dev]" \
+            "langchain==1.0.0" "langchain-core==1.0.0" "langgraph==1.0.0"
+          .venv-langchain-floor/bin/python -m pytest \
+            tests/frameworks/test_langchain.py tests/frameworks/test_langgraph.py \
+            tests/frameworks/test_langgraph_live.py tests/frameworks/test_langgraph_native.py -v
 
       - name: Pydantic AI floor (2.0.0)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'

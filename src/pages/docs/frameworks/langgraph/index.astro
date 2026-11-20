@@ -2,39 +2,63 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="LangGraph guide | Agent-Gantry">
+<DocsLayout title="LangGraph guide | Agent-Gantry" description="Integrate Agent-Gantry with LangGraph: per-turn tool selection as create_agent middleware, approval through interrupt(), readable tool errors and run context.">
   <p class="eyebrow">Framework guide</p>
   <h1>LangGraph</h1>
-  <p class="lead">Use Agent-Gantry with stateful graphs with conditional tool nodes. This page covers basic setup and the first production-friendly path; continue to the advanced page for dynamic retrieval, LLM calls, and operations.</p>
+  <p class="lead">Agent-Gantry plugs into LangGraph's own mechanisms: a <code>create_agent</code> middleware that picks each model turn's tools, <code>interrupt()</code> for human approval, and the graph's runtime for your context. Failures come back to the model as error <code>ToolMessage</code>s instead of ending the run.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/langgraph/advanced/">Advanced LangGraph usage →</a></p>
 
-  <h2>Basic page: register once, adapt at the edge</h2>
+  <h2>Install</h2>
+  <CodeBlock lang="bash" code={`uv add "agent-gantry[langgraph]"   # langchain, langchain-core, langgraph >= 1.0`} />
+
+  <h2>Basic page: per-turn tools</h2>
   <ol>
-    <li>Create a Gantry instance near application startup.</li>
-    <li>Register deterministic Python functions with descriptions and input schemas.</li>
-    <li>Export framework-native tools for LangGraph immediately before constructing the agent, graph, pipeline, or crew.</li>
-    <li>Keep authorization, rate limits, and audit metadata in Gantry instead of duplicating it inside framework glue code.</li>
+    <li>Register tools with <code>@gantry.register</code> and <code>await gantry.sync()</code>.</li>
+    <li>Add <code>await adapter.middleware()</code> to <code>create_agent</code>. It brings the Gantry tools with it.</li>
+    <li>Run the agent normally. Each model turn sees only the tools Gantry selects for the newest message or tool result.</li>
   </ol>
-  <CodeBlock lang="python" code={`from agent_gantry import AgentGantry
+  <CodeBlock lang="python" title="Per-turn tool selection" code={`import asyncio
+
+from langchain.agents import create_agent
+from agent_gantry import AgentGantry
 from agent_gantry.langgraph import LangGraphAdapter
 
 gantry = AgentGantry()
 
-@gantry.register(
-    tags=["support", "orders"],
-    examples=["where is my order", "has order 4471 shipped"],
-)
+@gantry.register(examples=["where is my order", "has order 4471 shipped"])
 def get_order_status(order_id: str) -> str:
     """Return the current shipping status for an order."""
     return "in_transit"
-adapter = LangGraphAdapter(gantry)
-framework_tools = await adapter.select("check an order", limit=3)  # Native LangGraph adapter export.
-`} />
 
-  <h2>First tool-calling loop</h2>
-  <p>Let LangGraph own the conversation lifecycle while Gantry owns the tool catalog. Start with a small tool set and assert that the framework receives only safe, documented functions.</p>
-  <div class="callout"><strong>Basic testing checklist:</strong> verify tool names, JSON schemas, auth metadata, and a happy-path invocation before wiring a live model.</div>
+@gantry.register(examples=["refund order 4471"], requires_confirmation=True)
+def refund_order(order_id: str) -> str:
+    """Refund an order in full."""
+    return "refunded"
 
-  <h2>Basic LLM call guidance</h2>
-  <p>For early prototypes, use the model client already recommended by LangGraph. Wrap that client with a thin policy function that records model name, prompt tokens, completion tokens, tool calls, and latency. Once the integration stabilizes, move the policy into Agent-Gantry's LLM adapter layer so other frameworks share the same rules.</p>
+async def main():
+    await gantry.sync()
+    adapter = LangGraphAdapter(gantry)
+    agent = create_agent("openai:gpt-5.5", middleware=[await adapter.middleware(limit=5)])
+    result = await agent.ainvoke({"messages": [("user", "Has order 4471 shipped?")]})
+    print(result["messages"][-1].content)
+
+asyncio.run(main())`} />
+  <p>Tools you pass to <code>create_agent(tools=...)</code> yourself stay available every turn; only the Gantry tools are narrowed. <code>await adapter.areact_agent(model, limit=5)</code> builds the same agent in one call.</p>
+
+  <h2>What the model sees when a tool fails</h2>
+  <p>A failed call raises LangChain's <code>ToolException</code>, and Gantry's tools set <code>handle_tool_error=True</code>, so the model receives an error <code>ToolMessage</code> (<code>status="error"</code>) with <code>&lt;type&gt;: &lt;message&gt;</code>, capped at 2,000 characters. It can correct a bad argument or try something else.</p>
+  <div class="callout"><strong>Redact or opt out:</strong> <code>LangGraphAdapter(gantry, error_formatter=redact)</code> rewrites the text the model sees; <code>error_mode="raise"</code> lets <code>ToolExecutionError</code> propagate instead.</div>
+
+  <h2>Reading your context from a Gantry tool</h2>
+  <p>Whatever you pass as the graph's <code>context=</code> is available while the tool runs, without changing its schema.</p>
+  <CodeBlock lang="python" code={`from agent_gantry.langgraph import current_tool_runtime
+
+@gantry.register
+async def get_balance(account: str) -> str:
+    """Fetch an account balance for the signed-in user."""
+    runtime = current_tool_runtime()   # None outside a run
+    return await runtime.context.bank.balance(account)
+
+# agent = create_agent(model, middleware=[...], context_schema=AppContext)
+# await agent.ainvoke({"messages": [...]}, context=AppContext(bank=bank))`} />
 </DocsLayout>

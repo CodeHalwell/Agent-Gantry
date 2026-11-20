@@ -27,8 +27,8 @@ python examples/agent_frameworks/langchain_example.py    # no key needed to see 
 
 | Framework | Example | Installed via |
 |---|---|---|
-| LangChain | [`agent_frameworks/langchain_example.py`](agent_frameworks/langchain_example.py) | `pip install langchain langchain-openai` |
-| LangGraph | [`agent_frameworks/langgraph_example.py`](agent_frameworks/langgraph_example.py) | `pip install langchain langgraph langchain-openai` |
+| LangChain | [`agent_frameworks/langchain_example.py`](agent_frameworks/langchain_example.py) | `pip install 'agent-gantry[langchain]' langchain-openai` |
+| LangGraph | [`agent_frameworks/langgraph_example.py`](agent_frameworks/langgraph_example.py) | `pip install 'agent-gantry[langgraph]'` (runs offline) |
 | CrewAI | [`agent_frameworks/crewai_example.py`](agent_frameworks/crewai_example.py) | `pip install crewai` (Python 3.10–3.13) |
 | LlamaIndex | [`agent_frameworks/llamaindex_example.py`](agent_frameworks/llamaindex_example.py) | `pip install llama-index-core llama-index-llms-openai` |
 | Google ADK | [`agent_frameworks/google_adk_example.py`](agent_frameworks/google_adk_example.py) | `pip install google-adk` |

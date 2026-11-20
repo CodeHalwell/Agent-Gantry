@@ -1,132 +1,154 @@
-"""
-LangGraph + Agent-Gantry: tools re-chosen on every model turn.
+"""LangGraph + Agent-Gantry, through LangGraph's own mechanisms.
 
-This is the **dynamic tier**, and it is what LangGraph gives you that plain
-LangChain does not. ``LangGraphAdapter.areact_agent`` installs middleware that
-re-runs selection before each model call, so a conversation that starts about
-the weather and turns into a refund request gets different tools on turn two —
-without you rebuilding the agent.
+1. **Per-turn selection** -- ``adapter.middleware()`` is a ``create_agent``
+   middleware that re-selects the Gantry tools offered on every model turn.
+   After the CRM lookup returns, the email tool appears because the next
+   selection reads the lookup's output.
+2. **Readable errors** -- a failing tool comes back as an error ``ToolMessage``
+   the model can react to, instead of ending the run.
+3. **Approval** -- a ``requires_confirmation`` tool pauses the graph with
+   ``interrupt()``; ``Command(resume=True)`` runs it exactly once.
+4. **Run context** -- a Gantry tool reads the graph's ``context=`` through
+   ``current_tool_runtime()``.
 
-Compare ``langchain_example.py``, where the tool list is fixed at construction.
+Everything runs **offline**: a scripted chat model stands in for a real one, so
+no API key is needed. Swap in ``init_chat_model("openai:gpt-5.5")`` (or any
+LangChain chat model) to use it for real.
 
-Tool selection runs **without an API key**. Agent construction and the model
-call run only when a key is configured.
+Install and run::
 
-Run with::
-
-    pip install agent-gantry langchain langgraph langchain-openai
-    export OPENAI_API_KEY=...        # only needed for the last step
+    pip install 'agent-gantry[langgraph]'
     python examples/agent_frameworks/langgraph_example.py
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
+from typing import Any
 
 from agent_gantry import AgentGantry
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 
-# Two turns that want different tools. That contrast is the whole demo.
-TURNS = [
-    "How does Agent-Gantry route tools?",
-    "Actually, refund order 4471 and email the customer to confirm.",
-]
+
+def build_gantry() -> AgentGantry:
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+
+    @gantry.register(tags=["crm"], examples=["find the customer record for Jo"])
+    def lookup_customer(name: str) -> str:
+        """Look up a customer record by name."""
+        return f"Customer {name} found. Next step: send an email message to jo@example.com"
+
+    @gantry.register(tags=["email"], examples=["email the team"], requires_confirmation=True)
+    def send_email(to: str) -> str:
+        """Send an email message to a recipient."""
+        return f"Email sent to {to}."
+
+    @gantry.register(tags=["math"], examples=["divide 10 by 2"])
+    def divide(a: int, b: int) -> float:
+        """Divide integer a by integer b."""
+        return a / b
+
+    @gantry.register(tags=["identity"], examples=["who am I signed in as"])
+    def whoami() -> str:
+        """Return the name of the signed-in user."""
+        from agent_gantry.langgraph import current_tool_runtime
+
+        runtime = current_tool_runtime()
+        return f"You are signed in as {runtime.context['user']}." if runtime else "Unknown user."
+
+    return gantry
+
+
+def scripted(*steps: list[tuple[str, dict[str, Any]]]) -> Any:
+    """A fake chat model that issues ``steps`` of tool calls, then answers."""
+    from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+    from langchain_core.messages import AIMessage
+
+    class Scripted(GenericFakeChatModel):
+        offered: list[list[str]] = []
+
+        def bind_tools(self, tools: Any, **kwargs: Any) -> Any:
+            self.offered.append(sorted(t.name for t in tools))
+            return self
+
+    replies = [
+        AIMessage(
+            content="",
+            tool_calls=[
+                {"name": n, "args": a, "id": f"call_{i}_{j}"} for j, (n, a) in enumerate(step)
+            ],
+        )
+        for i, step in enumerate(steps)
+    ]
+    model = Scripted(messages=iter([*replies, AIMessage(content="done")]))
+    model.offered = []
+    return model
+
+
+def tool_outputs(result: dict[str, Any]) -> list[str]:
+    return [m.content for m in result["messages"] if m.type == "tool"]
 
 
 async def main() -> None:
-    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+    gantry = build_gantry()
     try:
-        # `examples=[...]` carries more routing weight than anything else you
-        # can add here — it is the text the router embeds. Use the phrasing a
-        # user would type.
-        @gantry.register(
-            tags=["docs"],
-            examples=["how does the router work", "search the internal docs"],
-        )
-        def search_docs(query: str) -> str:
-            """Search internal documentation about how Agent-Gantry works."""
-            return f"Docs for '{query}': Gantry retrieves the top-k relevant tools."
-
-        @gantry.register(
-            tags=["billing"],
-            examples=["refund this order", "give the customer their money back"],
-        )
-        def refund_order(order_id: str) -> str:
-            """Issue a refund against a customer order."""
-            return f"Refunded order {order_id}."
-
-        @gantry.register(
-            tags=["comms"],
-            examples=["email the customer", "let them know by email"],
-        )
-        def send_email(to: str, body: str) -> str:
-            """Send an email to a customer."""
-            return f"Emailed {to}."
-
-        @gantry.register(
-            tags=["analytics"],
-            examples=["how many signups last month", "query the warehouse"],
-        )
-        def run_query(sql: str) -> str:
-            """Run a read-only SQL query against the analytics warehouse."""
-            return "42"
-
         await gantry.sync()
-
-        adapter = gantry.framework("langgraph")
-
-        # What each turn would get, before any model is involved. This is the
-        # selection the middleware performs internally on every model call.
-        print("Catalogue: 4 tools. What each turn selects:\n")
-        for turn in TURNS:
-            try:
-                chosen = await adapter.select(turn, limit=2)
-            except ImportError as exc:
-                print(exc)
-                return
-            names = ", ".join(t.name for t in chosen)
-            print(f"  {turn[:52]:<52} -> {names}")
-        print(
-            "\nDifferent turns, different tools — that is the point of the\n"
-            "dynamic tier. A statically-built agent would carry all four\n"
-            "schemas through both turns.\n"
-            "\nNote turn one also pulled in `send_email`: top-k always returns\n"
-            "k, so with limit=2 the runner-up comes along whether or not it is\n"
-            "wanted. Lower `limit`, or configure a selector, if you want the\n"
-            "catalogue to be able to answer 'none of these'.\n"
-        )
-
-        if not os.getenv("OPENAI_API_KEY"):
-            print("Set OPENAI_API_KEY to run the agent itself.")
-            print("Everything above works without one.")
-            return
-
         try:
-            from langchain_core.messages import HumanMessage
-            from langchain_openai import ChatOpenAI
+            from langchain.agents import create_agent
+            from langgraph.checkpoint.memory import InMemorySaver
+            from langgraph.types import Command
         except ImportError as exc:
-            print(f"{exc}\nInstall the model integration: pip install langchain langchain-openai")
+            print(
+                f"The LangGraph demo needs langchain and langgraph ({exc}).\n"
+                "Install them with `pip install 'agent-gantry[langgraph]'`."
+            )
             return
 
-        # areact_agent installs the selection middleware. `limit` bounds how
-        # many tools reach the model on any given turn.
-        agent = await adapter.areact_agent(ChatOpenAI(model="gpt-5.5"), limit=2)
+        from agent_gantry.langgraph import LangGraphAdapter
 
-        print("--- running the agent; tools are re-selected per turn ---")
-        # Both turns, carrying the history forward, because one turn cannot
-        # show re-selection. The middleware re-runs retrieval on each call, so
-        # turn 2's refund request pulls a different slice than turn 1's
-        # documentation question — which is the whole point of the dynamic
-        # tier, and is invisible if only the first turn is sent.
-        history: list = []
-        for turn in TURNS:
-            result = await agent.ainvoke(
-                {"messages": history + [HumanMessage(content=turn)]}
-            )
-            history = result["messages"]
-            print(f"\n> {turn}")
-            print(f"{result['messages'][-1].content}")
+        adapter = LangGraphAdapter(gantry)
+
+        # 1. Per-turn selection ------------------------------------------- #
+        model = scripted([("lookup_customer", {"name": "Jo"})])
+        agent = create_agent(model, middleware=[await adapter.middleware(limit=1)])
+        await agent.ainvoke({"messages": [("user", "find the customer record for Jo")]})
+        print(f"[per-turn] tools offered at turn 1: {model.offered[0]}")
+        print(f"[per-turn] tools offered at turn 2: {model.offered[1]}  <- after the lookup\n")
+
+        # 2. Readable errors ---------------------------------------------- #
+        agent = create_agent(
+            scripted([("divide", {"a": 1, "b": 0})]),
+            middleware=[await adapter.middleware(limit=1)],
+        )
+        result = await agent.ainvoke({"messages": [("user", "divide 1 by 0")]})
+        print(f"[errors] the model sees: {tool_outputs(result)[0]!r}\n")
+
+        # 3. Approval ----------------------------------------------------- #
+        agent = create_agent(
+            scripted([("send_email", {"to": "jo@example.com"})]),
+            tools=await adapter.select("send an email message", limit=1),
+            checkpointer=InMemorySaver(),
+        )
+        config = {"configurable": {"thread_id": "demo"}}
+        paused = await agent.ainvoke({"messages": [("user", "email Jo")]}, config)
+        request = paused["__interrupt__"][0].value
+        print(f"[approval] paused for {request['tool']} {request['arguments']}")
+        resumed = await agent.ainvoke(Command(resume=True), config)
+        print(f"[approval] approved -> {tool_outputs(resumed)[-1]}\n")
+
+        # 4. Run context -------------------------------------------------- #
+        agent = create_agent(
+            scripted([("whoami", {})]),
+            tools=await adapter.select("who am I signed in as", limit=1),
+            context_schema=dict,
+        )
+        result = await agent.ainvoke({"messages": [("user", "who am I?")]}, context={"user": "Dan"})
+        print(f"[context] {tool_outputs(result)[0]}")
+
+        print(
+            "\nEvery tool call above went through gantry.execute, so the security "
+            "policy, retries, timeouts and circuit breakers all applied."
+        )
     finally:
         await gantry.close()
 
