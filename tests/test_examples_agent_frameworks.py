@@ -1,4 +1,3 @@
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -161,108 +160,14 @@ async def test_agent_framework_example_runs_with_fakes(monkeypatch, request):
 
 
 @pytest.mark.asyncio
-async def test_google_adk_example_runs_with_fakes(monkeypatch):
-    import sys
-    from types import ModuleType
-
-    # Stub google.adk modules so the example can import without them installed
-    # Always override with stub modules to avoid mutating real installed packages
-    for mod_name in [
-        "google", "google.adk", "google.adk.agents", "google.adk.runners",
-        "google.adk.sessions", "google.adk.tools", "google.genai",
-        "google.genai.types",
-    ]:
-        stub_module = ModuleType(mod_name)
-        monkeypatch.setitem(sys.modules, mod_name, stub_module)
-
-    google_mod = sys.modules["google"]
-    adk_mod = sys.modules["google.adk"]
-    # Use monkeypatch.setattr for attribute injection to guarantee cleanup
-    monkeypatch.setattr(google_mod, "adk", adk_mod, raising=False)  # type: ignore[attr-defined]
-    monkeypatch.setattr(adk_mod, "agents", sys.modules["google.adk.agents"], raising=False)  # type: ignore[attr-defined]
-    monkeypatch.setattr(adk_mod, "runners", sys.modules["google.adk.runners"], raising=False)  # type: ignore[attr-defined]
-    monkeypatch.setattr(adk_mod, "sessions", sys.modules["google.adk.sessions"], raising=False)  # type: ignore[attr-defined]
-    monkeypatch.setattr(adk_mod, "tools", sys.modules["google.adk.tools"], raising=False)  # type: ignore[attr-defined]
-
-    # Provide stub classes the example expects to import
-    class StubAgent:
-        pass
-    class StubRunner:
-        pass
-    class StubInMemorySessionService:
-        pass
-    class StubFunctionTool:
-        # GoogleADKAdapter.select calls FunctionTool(func=callable); store it so
-        # the fake runner can invoke the tool through Gantry.
-        def __init__(self, func, **kwargs):
-            self.func = func
-            self.name = getattr(func, "__name__", "tool")
-    class StubContent:
-        def __init__(self, *args, **kwargs):
-            pass
-    class StubPart:
-        def __init__(self, *args, **kwargs):
-            pass
-
-    monkeypatch.setattr(sys.modules["google.adk.agents"], "Agent", StubAgent, raising=False)  # type: ignore[attr-defined]
-    monkeypatch.setattr(sys.modules["google.adk.runners"], "Runner", StubRunner, raising=False)  # type: ignore[attr-defined]
-    monkeypatch.setattr(sys.modules["google.adk.sessions"], "InMemorySessionService", StubInMemorySessionService, raising=False)  # type: ignore[attr-defined]
-    monkeypatch.setattr(sys.modules["google.adk.tools"], "FunctionTool", StubFunctionTool, raising=False)  # type: ignore[attr-defined]
-    monkeypatch.setattr(sys.modules["google.genai"], "types", sys.modules["google.genai.types"], raising=False)  # type: ignore[attr-defined]
-    monkeypatch.setattr(sys.modules["google.genai.types"], "Content", StubContent, raising=False)  # type: ignore[attr-defined]
-    monkeypatch.setattr(sys.modules["google.genai.types"], "Part", StubPart, raising=False)  # type: ignore[attr-defined]
-
+async def test_google_adk_example_runs_offline(capsys):
+    """The ADK example drives a real ADK runner with a scripted model."""
+    pytest.importorskip("google.adk.runners")
     from examples.agent_frameworks import google_adk_example as mod
 
-    class FakeEvent:
-        def __init__(self, text: str):
-            self.content = SimpleNamespace(parts=[SimpleNamespace(text=text)])
-
-        def is_final_response(self) -> bool:
-            return True
-
-    class FakeRunner:
-        def __init__(self, *, agent, app_name, session_service):
-            self.agent = agent
-            self.app_name = app_name
-            self.session_service = session_service
-
-        def run_async(self, *, user_id: str, session_id: str, new_message: Any) -> Any:
-            async def _aiter():
-                # Execute the first tool to simulate ADK calling it. The Gantry
-                # adapter's callable uses keyword-only params (from the JSON
-                # schema), so call by name.
-                tool = self.agent.tools[0]
-                text = await tool.func(order_id="123")
-                yield FakeEvent(text)
-
-            return _aiter()
-
-    class FakeAgent:
-        def __init__(self, *, model, name, instruction, tools):
-            self.model = model
-            self.name = name
-            self.instruction = instruction
-            self.tools = tools
-
-    class FakeSessionService:
-        async def create_session(
-            self, *, app_name: str, user_id: str, session_id: str
-        ) -> dict[str, str]:
-            return {"app_name": app_name, "user_id": user_id, "session_id": session_id}
-
-    async def fake_execute(self, tool_call):
-        return _Result({"order_id": tool_call.arguments["order_id"], "status": "shipped"})
-
-    # The migrated example builds tools via GoogleADKAdapter.select -> the
-    # (stubbed) google.adk.tools.FunctionTool, so no module-level FunctionTool
-    # to patch.
-    monkeypatch.setattr(mod, "Agent", FakeAgent)
-    monkeypatch.setattr(mod, "Runner", FakeRunner)
-    monkeypatch.setattr(mod, "InMemorySessionService", FakeSessionService)
-    monkeypatch.setattr(mod.AgentGantry, "execute", fake_execute, raising=False)
-
-    resp = await mod.run_query("status please")
-    # The adapter returns the tool's raw result (here a dict); the fake runner
-    # surfaces it directly as the final response.
-    assert "shipped" in str(resp)
+    await mod.main()
+    out = capsys.readouterr().out
+    assert "tools offered at turn 2: ['lookup_customer', 'send_email']" in out
+    assert "{'error': 'ZeroDivisionError: division by zero'}" in out
+    assert "confirmed -> {'result': 'Email sent to jo@example.com.'}" in out
+    assert "You are signed in as Dan." in out

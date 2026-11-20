@@ -27,6 +27,23 @@ from agent_gantry.google_adk import GoogleADKAdapter, current_tool_context  # no
 from agent_gantry.integrations.frameworks.base import ToolExecutionError  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _real_anthropic_for_adk(monkeypatch):
+    """Lift the session-wide ``anthropic`` Mock out while ADK runs.
+
+    ``tests/test_anthropic_features.py`` and ``tests/test_anthropic_skills.py``
+    put a ``Mock`` in ``sys.modules["anthropic"]`` at import time and never
+    restore it; ADK imports ``anthropic`` lazily while building requests and
+    chokes on the Mock's types. The stub is put back after each test.
+    """
+    import sys
+    from unittest.mock import Mock
+
+    for name in [n for n in sys.modules if n == "anthropic" or n.startswith("anthropic.")]:
+        if isinstance(sys.modules[name], Mock):
+            monkeypatch.delitem(sys.modules, name)
+
+
 class ScriptedLlm(BaseLlm):
     """Issues scripted function calls and records the tools offered each turn."""
 
