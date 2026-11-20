@@ -81,6 +81,7 @@ from agent_gantry.integrations.frameworks.base import (
     QueryBoundsError,
     ToolSpec,
     _resolve_pins,
+    _with_native_names,
     check_query_bounds,
 )
 from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
@@ -269,12 +270,17 @@ class _Selector:
 
     def _pins(self) -> list[ToolSpec]:
         try:
-            return _resolve_pins(
+            # Native names as selection assigns them, so same-named pins from
+            # different namespaces stay distinct and keep their names.
+            return _with_native_names(
                 self._gantry,
-                [],
-                required=self._required,
-                always_include=self._always_include,
-                namespaces=self._namespaces,
+                _resolve_pins(
+                    self._gantry,
+                    [],
+                    required=self._required,
+                    always_include=self._always_include,
+                    namespaces=self._namespaces,
+                ),
             )
         except MissingRequiredToolError:
             raise
