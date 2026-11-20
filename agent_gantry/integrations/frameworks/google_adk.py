@@ -361,7 +361,13 @@ class GoogleADKAdapter(BaseFrameworkAdapter):
             ),
         )
 
-    def confirmation_toolset(self, *, namespaces: list[str] | None = None) -> Any:
+    def confirmation_toolset(
+        self,
+        *,
+        namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
+    ) -> Any:
         """An ADK toolset that lets confirmed per-turn calls resume.
 
         :meth:`agent` includes it already. Add it to your own
@@ -369,12 +375,15 @@ class GoogleADKAdapter(BaseFrameworkAdapter):
         hand and any Gantry tool can need confirmation: ADK resumes a confirmed
         call through the agent's own tools, and this toolset supplies the gated
         Gantry tools only on the invocation that answers the confirmation.
+        Pass the same ``namespaces`` / ``required`` / ``always_include`` as the
+        callback.
         """
         from agent_gantry.integrations.frameworks.google_adk_live import _confirmation_toolset
 
         return _confirmation_toolset(
             self._gantry,
             namespaces=namespaces,
+            pins=[*(required or []), *(always_include or [])],
             error_mode=self._error_mode,
             error_formatter=self._error_formatter,
         )

@@ -497,6 +497,7 @@ def _confirmation_toolset(
     gantry: AgentGantry,
     *,
     namespaces: list[str] | None = None,
+    pins: list[str] | None = None,
     error_mode: ErrorMode = "model",
     error_formatter: ErrorFormatter | None = None,
 ) -> Any:
@@ -507,7 +508,8 @@ def _confirmation_toolset(
     toolset returns the confirmation-gated Gantry tools, but only on an
     invocation whose user message answers an ``adk_request_confirmation`` --
     every other turn it returns nothing, so the model is never shown the whole
-    catalogue.
+    catalogue. ``pins`` (the agent's ``required`` / ``always_include``) are
+    looked up too, since a qualified pin can sit outside ``namespaces``.
     """
     try:
         from google.adk.tools.base_toolset import BaseToolset
@@ -525,14 +527,17 @@ def _confirmation_toolset(
             if readonly_context is None or not _answers_confirmation(readonly_context):
                 return []
             definitions = await gantry.list_tools()
-            specs = _with_native_names(
-                gantry,
-                [
-                    spec_from_tool(gantry, d)
-                    for d in definitions
-                    if not namespaces or d.namespace in namespaces
-                ],
+            in_scope = [
+                spec_from_tool(gantry, d)
+                for d in definitions
+                if not namespaces or d.namespace in namespaces
+            ]
+            # Pins are offered even outside the namespace filter, so they must
+            # resolve here too (always_include: a missing pin is not an error).
+            pinned = _resolve_pins(
+                gantry, in_scope, required=None, always_include=pins, namespaces=namespaces
             )
+            specs = _with_native_names(gantry, in_scope + pinned)
             return [
                 _spec_to_google_adk(s, error_mode=error_mode, error_formatter=error_formatter)
                 for s in specs
@@ -577,7 +582,11 @@ def _gantry_adk_agent(
     # Lets a confirmed call resume: ADK looks it up in the agent's own tools.
     tools.append(
         _confirmation_toolset(
-            gantry, namespaces=namespaces, error_mode=error_mode, error_formatter=error_formatter
+            gantry,
+            namespaces=namespaces,
+            pins=[*(required or []), *(always_include or [])],
+            error_mode=error_mode,
+            error_formatter=error_formatter,
         )
     )
     return agent_cls(

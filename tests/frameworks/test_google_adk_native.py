@@ -369,6 +369,33 @@ async def test_per_turn_agent_resumes_a_confirmed_call(gantry, confirmed):
     assert gantry.sent == (["bob@x"] if confirmed else [])
 
 
+async def test_confirmed_pin_outside_the_namespace_filter_resumes():
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+    sent: list[str] = []
+
+    @g.register(namespace="public")
+    def get_weather(city: str) -> str:
+        """Get the current weather forecast for a city."""
+        return f"sunny in {city}"
+
+    @g.register(namespace="admin", requires_confirmation=True)
+    def send_email(to: str) -> str:
+        """Send an email message to a recipient."""
+        sent.append(to)
+        return f"sent:{to}"
+
+    await g.sync()
+    try:
+        llm = _llm([("send_email", {"to": "bob@x"})])
+        agent = _agent(g, llm, limit=1, namespaces=["public"], required=["admin.send_email"])
+        run = await Run(agent).ask("send an email message to bob")
+        assert run.confirmations
+        await run.decide(True)
+        assert sent == ["bob@x"]
+    finally:
+        await g.close()
+
+
 def test_success_payload_with_a_null_error_still_feeds_retrieval():
     from types import SimpleNamespace
 
