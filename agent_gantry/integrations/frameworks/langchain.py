@@ -178,16 +178,15 @@ def _trace_ids() -> tuple[str | None, str | None]:
 
 
 def _is_approval(answer: Any) -> bool:
-    """Whether a ``Command(resume=...)`` value approves the call."""
+    """Whether a ``Command(resume=...)`` value approves the call.
+
+    Only ``True`` or a mapping with ``"approved": True`` approves; anything
+    else (strings included) rejects, so a loosely worded answer never runs a
+    gated tool.
+    """
     if answer is True:
         return True
-    if isinstance(answer, str):
-        return answer.strip().lower() in {"approve", "approved", "yes", "y"}
-    if isinstance(answer, Mapping):
-        if answer.get("approved") is True:
-            return True
-        return str(answer.get("type", "")).lower() in {"approve", "accept"}
-    return False
+    return isinstance(answer, Mapping) and answer.get("approved") is True
 
 
 def _ask_approval(spec: ToolSpec, arguments: Mapping[str, Any]) -> bool | None:
@@ -207,7 +206,13 @@ def _ask_approval(spec: ToolSpec, arguments: Mapping[str, Any]) -> bool | None:
     except RuntimeError:  # not inside a graph run
         return None
     if configurable.get("__pregel_checkpointer") is None:
-        return None  # an interrupt could never be resumed
+        # An interrupt could never be resumed, so the model is told instead.
+        logger.debug(
+            "Tool %r needs approval but this LangGraph run has no checkpointer; "
+            "reporting it as not run.",
+            spec.native_name,
+        )
+        return None
     answer = interrupt(
         {
             "type": "gantry_approval",

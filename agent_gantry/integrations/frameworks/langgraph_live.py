@@ -160,7 +160,12 @@ def _query_messages(messages: Iterable[Any], *, from_results: bool) -> list[Any]
     kept = []
     for message in messages:
         if _role(message) == "tool":
-            if not from_results or getattr(message, "status", None) == "error":
+            status = (
+                message.get("status")
+                if isinstance(message, dict)
+                else getattr(message, "status", None)
+            )
+            if not from_results or status == "error":
                 continue
         kept.append(message)
     return kept

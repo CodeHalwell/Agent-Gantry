@@ -178,7 +178,7 @@ async def test_error_mode_raise_propagates(gantry):
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.parametrize("decision", [True, {"approved": True}, False, "reject"])
+@pytest.mark.parametrize("decision", [True, {"approved": True}, False, "reject", "yes"])
 async def test_confirmation_gate_interrupts_and_resumes(gantry, decision):
     agent, _ = await _static_agent(
         gantry,
@@ -331,6 +331,18 @@ async def test_middleware_failed_output_never_feeds_retrieval(gantry):
         middleware_kwargs={"limit": 1},
     )
     assert queries and all("ZeroDivisionError" not in q for q in queries)
+
+
+def test_failed_dict_tool_messages_never_drive_the_query():
+    from agent_gantry.integrations.frameworks.langgraph_live import _query_from_state
+
+    state = {
+        "messages": [
+            {"role": "user", "content": "look up the customer record"},
+            {"role": "tool", "status": "error", "content": "Traceback: boom"},
+        ]
+    }
+    assert _query_from_state(state) == "look up the customer record"
 
 
 async def test_middleware_query_from_results_false(gantry):
