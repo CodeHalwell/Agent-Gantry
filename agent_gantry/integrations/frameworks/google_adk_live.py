@@ -387,6 +387,40 @@ async def _inject_selected_tools(
     return _append(llm_request, specs, error_mode=error_mode, error_formatter=error_formatter)
 
 
+#: Marks tools the confirmation toolset supplies only so a confirmed call can resume.
+_CONFIRMATION_ONLY = "_gantry_confirmation_only"
+
+
+def _hide_confirmation_only_tools(llm_request: Any, keep: set[str]) -> None:
+    """Drop confirmation-toolset tools this turn did not select from the request.
+
+    ADK resumes a confirmed call through ``agent.canonical_tools()``, so the
+    toolset's tools need not reach the model; advertising them would offer the
+    whole gated catalogue and bypass ``limit`` / ``max_offered``.
+    """
+    tools_dict = getattr(llm_request, "tools_dict", None) or {}
+    hidden = {
+        name
+        for name, tool in tools_dict.items()
+        if getattr(tool, _CONFIRMATION_ONLY, False) and name not in keep
+    }
+    if not hidden:
+        return
+    for name in hidden:
+        del tools_dict[name]
+    config = getattr(llm_request, "config", None)
+    for tool in getattr(config, "tools", None) or []:
+        declarations = getattr(tool, "function_declarations", None)
+        if declarations:
+            tool.function_declarations = [d for d in declarations if d.name not in hidden]
+    if config is not None and getattr(config, "tools", None):
+        config.tools = [
+            tool
+            for tool in config.tools
+            if getattr(tool, "function_declarations", None) is None or tool.function_declarations
+        ]
+
+
 def _append(
     llm_request: Any,
     specs: list[ToolSpec],
@@ -466,6 +500,7 @@ def _gantry_before_model_callback(
 
     async def _callback(callback_context: Any, llm_request: Any) -> None:
         specs = await selector.select(callback_context)
+        _hide_confirmation_only_tools(llm_request, {spec.native_name for spec in specs})
         _append(llm_request, specs, error_mode=error_mode, error_formatter=error_formatter)
         return None  # ADK proceeds with the mutated llm_request
 
@@ -538,11 +573,15 @@ def _confirmation_toolset(
                 gantry, in_scope, required=None, always_include=pins, namespaces=namespaces
             )
             specs = _with_native_names(gantry, in_scope + pinned)
-            return [
+            tools = [
                 _spec_to_google_adk(s, error_mode=error_mode, error_formatter=error_formatter)
                 for s in specs
                 if gantry.requires_confirmation(s.tool or s.name, s._namespace)
             ]
+            for tool in tools:
+                # The per-turn callback keeps these out of the model's request.
+                setattr(tool, _CONFIRMATION_ONLY, True)
+            return tools
 
         async def close(self) -> None:
             return None

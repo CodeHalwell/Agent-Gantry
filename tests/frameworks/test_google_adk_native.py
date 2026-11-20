@@ -369,6 +369,20 @@ async def test_per_turn_agent_resumes_a_confirmed_call(gantry, confirmed):
     assert gantry.sent == (["bob@x"] if confirmed else [])
 
 
+async def test_answering_a_confirmation_does_not_advertise_every_gated_tool():
+    g = await _build(security_policy=SecurityPolicy(require_confirmation=["delete_*"]))
+    try:
+        llm = _llm([("send_email", {"to": "bob@x"})])
+        run = await Run(_agent(g, llm, limit=1)).ask("send an email message to bob")
+        await run.decide(True)
+        assert g.sent == ["bob@x"]
+        # The resumed turn's model request offers this turn's selection, not
+        # the whole confirmation-gated catalogue (delete_record is gated too).
+        assert all("delete_record" not in offered for offered in llm.offered)
+    finally:
+        await g.close()
+
+
 async def test_confirmed_pin_outside_the_namespace_filter_resumes():
     g = AgentGantry(embedder=SimpleEmbedder(dimension=256))
     sent: list[str] = []
