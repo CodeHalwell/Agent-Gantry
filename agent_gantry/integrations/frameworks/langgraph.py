@@ -1,51 +1,66 @@
 """LangGraph native tool adapter for Agent-Gantry.
 
-LangGraph does not define its own tool object: a LangGraph graph (e.g. a
-``ToolNode`` or a prebuilt ReAct agent) consumes plain LangChain ``BaseTool``
-objects — the same ``StructuredTool`` instances produced by the LangChain
-adapter, so this module reuses that wrapper.
+LangGraph has no tool object of its own: graphs (``ToolNode``, ``create_agent``)
+run LangChain ``BaseTool`` objects, so this adapter builds on the LangChain one
+(errors as error ``ToolMessage``s, approval through ``interrupt()``, run context
+through :func:`~agent_gantry.integrations.frameworks.langchain.current_tool_runtime`)
+and adds per-turn selection: a ``create_agent`` middleware that re-selects the
+Gantry tools offered on every model turn.
 
-Public entry point: :class:`LangGraphAdapter` (static slice + a deep per-turn
-live ReAct agent that re-selects tools every model turn).
+Public entry point: :class:`LangGraphAdapter`.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from agent_gantry.integrations.frameworks.base import BaseFrameworkAdapter
-from agent_gantry.integrations.frameworks.langchain import _spec_to_langchain
-
-if TYPE_CHECKING:
-    from agent_gantry.integrations.frameworks.base import ToolSpec
+from agent_gantry.integrations.frameworks.langchain import LangChainAdapter
+from agent_gantry.integrations.frameworks.langgraph_live import LANGGRAPH_FRAMEWORK_NAME
+from agent_gantry.integrations.frameworks.native import ErrorMode
 
 
-class LangGraphAdapter(BaseFrameworkAdapter):
-    """Route Gantry-selected tools into LangGraph.
+class LangGraphAdapter(LangChainAdapter):
+    """Route Gantry tools into LangGraph, re-selected every model turn.
 
-    Static slice (LangChain ``BaseTool`` objects for a ``ToolNode`` / prebuilt
-    graph) plus a deep per-turn live ReAct agent that re-selects tools on every
-    model turn::
+    ::
 
+        from langchain.agents import create_agent
         from agent_gantry.langgraph import LangGraphAdapter
 
         adapter = LangGraphAdapter(gantry)
-        tools = await adapter.select("summarise the incident", limit=3)   # static
-        agent = await adapter.areact_agent(chat_model, limit=5)           # live
+        agent = create_agent(model, middleware=[await adapter.middleware(limit=5)])
 
-    :meth:`live` requires ``model=<BaseChatModel>`` and returns the compiled
-    agent from :meth:`react_agent`; any other keyword (``system_prompt``,
-    ``checkpointer``, ``middleware``, …) is forwarded to ``create_agent``.
+        # or, the same thing in one call
+        agent = await adapter.areact_agent(model, limit=5, checkpointer=InMemorySaver())
+
+        # or a static slice for your own graph's ToolNode
+        tools = await adapter.select("summarise the incident", limit=3)
+
+    :meth:`live` requires ``model=`` and returns :meth:`react_agent`'s agent;
+    other keywords (``system_prompt``, ``checkpointer``, ``middleware``, ...)
+    are forwarded to ``create_agent``.
     """
 
     live_tier = "per-turn"
     _live_delegate = "react_agent"
     _live_required_kwargs = ("model",)
+    _framework_name = LANGGRAPH_FRAMEWORK_NAME
 
-    @staticmethod
-    def convert(spec: ToolSpec) -> Any:
-        """Wrap a single :class:`ToolSpec` as a LangChain ``StructuredTool``."""
-        return _spec_to_langchain(spec)
+    def _agent_kwargs(
+        self,
+        limit: int | None,
+        score_threshold: float,
+        namespaces: list[str] | None,
+        required: list[str] | None,
+        always_include: list[str] | None,
+        error_mode: ErrorMode | None,
+    ) -> dict[str, Any]:
+        return {
+            **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
+            "error_mode": self._mode(error_mode),
+            "error_formatter": self._error_formatter,
+            "framework": self._framework_name,
+        }
 
     def react_agent(
         self,
@@ -56,12 +71,15 @@ class LangGraphAdapter(BaseFrameworkAdapter):
         namespaces: list[str] | None = None,
         required: list[str] | None = None,
         always_include: list[str] | None = None,
+        error_mode: ErrorMode | None = None,
         **agent_kwargs: Any,
     ) -> Any:
-        """Build a ReAct agent that re-selects tools every model turn (sync).
+        """Build a ``create_agent`` agent that re-selects tools every model turn (sync).
 
-        Resolves the tool superset on the sync bridge; safe from a running loop
-        but blocking. In an already-async context prefer :meth:`areact_agent`.
+        Blocks while it resolves the catalogue; in async code prefer
+        :meth:`areact_agent`. ``sticky``, ``max_offered`` and
+        ``query_from_results`` are accepted as in :meth:`middleware`; other
+        keywords go to ``create_agent``.
         """
         from agent_gantry.integrations.frameworks.langgraph_live import (
             _create_gantry_react_agent,
@@ -70,7 +88,9 @@ class LangGraphAdapter(BaseFrameworkAdapter):
         return _create_gantry_react_agent(
             model,
             self._gantry,
-            **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
+            **self._agent_kwargs(
+                limit, score_threshold, namespaces, required, always_include, error_mode
+            ),
             **agent_kwargs,
         )
 
@@ -83,9 +103,10 @@ class LangGraphAdapter(BaseFrameworkAdapter):
         namespaces: list[str] | None = None,
         required: list[str] | None = None,
         always_include: list[str] | None = None,
+        error_mode: ErrorMode | None = None,
         **agent_kwargs: Any,
     ) -> Any:
-        """Async-native :meth:`react_agent` (awaits the tool-superset enumeration)."""
+        """Async :meth:`react_agent`."""
         from agent_gantry.integrations.frameworks.langgraph_live import (
             _acreate_gantry_react_agent,
         )
@@ -93,7 +114,9 @@ class LangGraphAdapter(BaseFrameworkAdapter):
         return await _acreate_gantry_react_agent(
             model,
             self._gantry,
-            **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
+            **self._agent_kwargs(
+                limit, score_threshold, namespaces, required, always_include, error_mode
+            ),
             **agent_kwargs,
         )
 
@@ -106,8 +129,9 @@ class LangGraphAdapter(BaseFrameworkAdapter):
         namespaces: list[str] | None = None,
         required: list[str] | None = None,
         always_include: list[str] | None = None,
+        error_mode: ErrorMode | None = None,
     ) -> list[Any]:
-        """Re-select tools for a LangGraph agent ``state`` (per-turn primitive)."""
+        """Select tools for a LangGraph agent ``state`` once (no per-run state)."""
         from agent_gantry.integrations.frameworks.langgraph_live import (
             _select_tools_for_state,
         )
@@ -116,4 +140,6 @@ class LangGraphAdapter(BaseFrameworkAdapter):
             self._gantry,
             state,
             **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
+            error_mode=self._mode(error_mode),
+            error_formatter=self._error_formatter,
         )

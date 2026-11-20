@@ -48,16 +48,26 @@ dispatch rely on, the per-turn subset is always valid and executes correctly.
 The LLM on each turn sees exactly the tools Gantry chose for the *current*
 conversation — stale selections never accumulate.
 
+Selection state
+---------------
+:class:`GantryToolMiddleware` keeps per-run state keyed by the thread and the
+newest user message, so concurrent runs are independent and a run resumed after
+an approval ``interrupt()`` carries on where it was. Within a run it caches
+selections, keeps earlier tools offered up to ``max_offered`` (``sticky``), and
+on a retrieval failure keeps the previous turn's tools plus the pins. Failed
+tool results (``status="error"``) never feed the next query, and
+``query_from_results=False`` keeps tool output out of retrieval entirely.
+Tools the caller passed to ``create_agent`` themselves are never removed.
+
 Usage
 -----
 .. code-block:: python
 
-    from agent_gantry import AgentGantry
-    from agent_gantry.integrations.frameworks.langgraph_live import (
-        _create_gantry_react_agent,
-    )
+    from langchain.agents import create_agent
+    from agent_gantry.langgraph import LangGraphAdapter
 
-    agent = _create_gantry_react_agent(chat_model, gantry, limit=5)
+    adapter = LangGraphAdapter(gantry)
+    agent = create_agent(chat_model, middleware=[await adapter.middleware(limit=5)])
     result = await agent.ainvoke({"messages": [("user", "what's the weather?")]})
 
 The ``langchain`` / ``langgraph`` / ``langchain-core`` imports are lazy so
@@ -68,18 +78,30 @@ live agent is actually built.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections import OrderedDict
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import (
     DEFAULT_TOOL_LIMIT,
     GantryToolset,
     QueryBoundsError,
+    ToolSpec,
+    _resolve_pins,
+    _with_native_names,
     check_query_bounds,
     spec_from_tool,
 )
 from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
-from agent_gantry.integrations.frameworks.langchain import _spec_to_langchain
+from agent_gantry.integrations.frameworks.langchain import FRAMEWORK_NAME, _spec_to_langchain
+from agent_gantry.integrations.frameworks.native import (
+    ErrorFormatter,
+    ErrorMode,
+    carry_over,
+    check_error_mode,
+)
 from agent_gantry.query import latest_activity
 
 if TYPE_CHECKING:
@@ -87,20 +109,22 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+LANGGRAPH_FRAMEWORK_NAME = "langgraph"
+
+#: Runs whose selection state is kept at once (oldest dropped first).
+_MAX_RUNS = 256
+#: Distinct (query, used tools) selections cached per run.
+_MAX_CACHED_SELECTIONS = 32
+
 
 def _import_create_agent() -> tuple[Any, Any]:
     """Lazily import ``langchain.agents.create_agent`` and ``AgentMiddleware``.
 
     Deferred to call time so the module stays importable without LangChain /
-    LangGraph installed.
-
-    No fallback to the deprecated :func:`langgraph.prebuilt.create_react_agent`
-    is provided. This project's floors — ``langchain>=1.3.4`` and
-    ``langgraph>=1.2.4`` — are pinned together in the ``agent-frameworks``
-    extra (see ``pyproject.toml``), and ``langchain.agents.create_agent`` has
-    existed since ``langchain`` 1.0.0, so every supported install already has
-    the new API. A fallback would just be dead code that silently regresses to
-    an API LangGraph 2.0 removes outright.
+    LangGraph installed. No fallback to the deprecated
+    :func:`langgraph.prebuilt.create_react_agent` is kept: every supported
+    ``langchain`` (>= 1.0) has ``create_agent``, and LangGraph 2.0 removes the
+    old symbol.
 
     Raises:
         ImportError: If ``langchain`` / ``langgraph`` are not installed.
@@ -112,26 +136,89 @@ def _import_create_agent() -> tuple[Any, Any]:
         raise ImportError(
             "LangGraph live support requires `langchain` (>=1.0, for "
             "`langchain.agents.create_agent`) and `langgraph`. Install them with "
-            "`pip install langchain langgraph langchain-core` (or `uv add langchain langgraph langchain-core`)."
+            "`pip install 'agent-gantry[langgraph]'` (or `uv add 'agent-gantry[langgraph]'`)."
         ) from exc
     return create_agent, AgentMiddleware
 
 
-def _query_from_state(state: Any) -> str:
-    """Derive the per-turn retrieval query from a LangGraph agent state.
-
-    LangGraph's ReAct state is a mapping carrying a ``"messages"`` list. The
-    query is the latest *activity* in that history (new user request, or the
-    last tool result when the agent is chaining tools) via
-    :func:`~agent_gantry.query.latest_activity`. LangChain ``BaseMessage``
-    objects expose ``.content`` (and ``.type`` for the role), which
-    ``latest_activity`` already understands.
-    """
+def _messages(state: Any) -> list[Any]:
     if isinstance(state, dict):
         messages = state.get("messages")
     else:  # pragma: no cover - defensive for non-dict state schemas
         messages = getattr(state, "messages", None)
-    return latest_activity(messages) or ""
+    return list(messages or [])
+
+
+def _role(message: Any) -> str:
+    if isinstance(message, dict):
+        return str(message.get("role") or message.get("type") or "")
+    return str(getattr(message, "type", "") or "")
+
+
+def _query_messages(messages: Iterable[Any], *, from_results: bool) -> list[Any]:
+    """The messages that may drive retrieval: never a failed tool result."""
+    kept = []
+    for message in messages:
+        if _role(message) == "tool":
+            status = (
+                message.get("status")
+                if isinstance(message, dict)
+                else getattr(message, "status", None)
+            )
+            if not from_results or status == "error":
+                continue
+        kept.append(message)
+    return kept
+
+
+def _query_from_state(state: Any, *, from_results: bool = True) -> str:
+    """Derive the per-turn retrieval query from a LangGraph agent state.
+
+    The newest *activity* in ``state["messages"]`` (a new user request, or the
+    last successful tool result while the agent chains tools) via
+    :func:`~agent_gantry.query.latest_activity`. Failed tool results are
+    skipped; ``from_results=False`` skips every tool result.
+    """
+    return latest_activity(_query_messages(_messages(state), from_results=from_results)) or ""
+
+
+def _message_id(message: Any) -> str | None:
+    value = message.get("id") if isinstance(message, dict) else getattr(message, "id", None)
+    return value if isinstance(value, str) and value else None
+
+
+def _run_key(state: Any, config: Any) -> tuple[Any, str] | None:
+    """(thread id, anchor message id) for one run, or ``None`` when unidentifiable.
+
+    The anchor is the newest user message, or the first message when there is
+    none. LangGraph gives every message in a graph's state an id; without ids
+    there is nothing stable to keep state against, so the caller uses fresh
+    state for the turn rather than risk sharing it between runs.
+    """
+    thread_id = None
+    if isinstance(config, dict):
+        thread_id = (config.get("configurable") or {}).get("thread_id")
+    messages = _messages(state)
+    anchor = None
+    for message in messages:
+        if _role(message) in ("human", "user"):
+            anchor = _message_id(message)
+    if anchor is None and messages and not any(_role(m) in ("human", "user") for m in messages):
+        anchor = _message_id(messages[0])
+    return (thread_id, anchor) if anchor is not None else None
+
+
+def _used_tools(state: Any) -> list[str]:
+    """Tools the model has called since the newest user message."""
+    used: list[str] = []
+    for message in _messages(state):
+        if _role(message) in ("human", "user"):
+            used = []
+        for call in getattr(message, "tool_calls", None) or []:
+            name = call.get("name") if isinstance(call, dict) else getattr(call, "name", None)
+            if name and name not in used:
+                used.append(name)
+    return used
 
 
 async def _select_tools_for_state(
@@ -143,28 +230,15 @@ async def _select_tools_for_state(
     namespaces: list[str] | None = None,
     required: list[str] | None = None,
     always_include: list[str] | None = None,
+    error_mode: ErrorMode = "model",
+    error_formatter: ErrorFormatter | None = None,
 ) -> list[Any]:
-    """Re-select Gantry tools for the current turn and wrap them for LangChain.
+    """Select Gantry tools for a LangGraph ``state`` and wrap them for LangChain.
 
-    Derives the query from ``state["messages"]``, runs Gantry semantic
-    selection (via :meth:`~agent_gantry.integrations.frameworks.base.GantryToolset.select_or_empty`,
-    which returns no tools rather than selecting on an empty embedding when
-    there's no retrieval signal this turn), and returns the chosen tools as
-    LangChain ``StructuredTool`` objects (each routing execution through
-    ``gantry.execute``). Exposed separately from the model callable so it can
-    be unit-tested directly. ``required``/``always_include`` are forwarded to
-    ``select_or_empty`` and re-applied every turn.
-
-    Never raises on *transient* selection failure — a broken retrieval must
-    not break the agent's turn. ``create_agent``'s ``request.override(tools=...)``
-    is a fresh, stateless override applied every turn (there is no persisted
-    "previous turn's tools" to fall back to), so on failure this logs a
-    WARNING and degrades to "no tools this turn" (the model is called
-    unbound, mirroring the empty-selection branch above) — see "Per-turn
-    selection-failure policy" in ``integrations/frameworks/README.md``.
-    A :class:`~agent_gantry.integrations.frameworks.errors.MissingRequiredToolError`
-    or :class:`~agent_gantry.integrations.frameworks.base.QueryBoundsError`
-    is configuration, not a transient fault, and always propagates.
+    A stateless one-shot of what :class:`GantryToolMiddleware` does each turn.
+    Never raises on a transient retrieval failure: it logs a WARNING and
+    returns no tools. :class:`MissingRequiredToolError` and
+    :class:`QueryBoundsError` are configuration errors and propagate.
     """
     query = _query_from_state(state)
     try:
@@ -185,26 +259,202 @@ async def _select_tools_for_state(
             exc_info=True,
         )
         return []
-    return [_spec_to_langchain(s) for s in specs]
+    return [
+        _spec_to_langchain(s, error_mode=error_mode, error_formatter=error_formatter) for s in specs
+    ]
 
 
-async def _all_tools(gantry: AgentGantry) -> list[Any]:
-    """Wrap every registered Gantry tool as a LangChain ``StructuredTool``.
-
-    This is the static superset handed to ``create_agent(tools=...)`` so the
-    agent's ``ToolNode`` can execute *any* tool the per-turn selection might
-    pick (LangGraph requires the tools in each turn's ``ModelRequest`` to be a
-    subset of this set, by name).
-    """
+async def _catalogue(
+    gantry: AgentGantry,
+    *,
+    namespaces: list[str] | None = None,
+    required: list[str] | None = None,
+    always_include: list[str] | None = None,
+) -> tuple[list[ToolSpec], frozenset[str]]:
+    """In-scope tool specs (plus out-of-scope pins) and the pinned names."""
     definitions = await gantry.list_tools()
-    from agent_gantry.integrations.frameworks.base import _with_native_names
+    specs = [
+        spec_from_tool(gantry, d)
+        for d in definitions
+        if not namespaces or d.namespace in namespaces
+    ]
+    specs += _resolve_pins(gantry, specs, required=required, always_include=always_include)
+    specs = _with_native_names(gantry, specs)
+    pins = _resolve_pins(gantry, [], required=required, always_include=always_include)
+    pin_keys = {(pin._namespace, pin.name) for pin in pins}
+    pinned = frozenset(s.native_name for s in specs if (s._namespace, s.name) in pin_keys)
+    return specs, pinned
 
-    specs = _with_native_names(gantry, [spec_from_tool(gantry, d) for d in definitions])
-    return [_spec_to_langchain(spec) for spec in specs]
+
+async def _all_tools(
+    gantry: AgentGantry,
+    *,
+    error_mode: ErrorMode = "model",
+    error_formatter: ErrorFormatter | None = None,
+) -> list[Any]:
+    """Every registered Gantry tool as a LangChain ``StructuredTool``."""
+    specs, _ = await _catalogue(gantry)
+    return [
+        _spec_to_langchain(s, error_mode=error_mode, error_formatter=error_formatter) for s in specs
+    ]
 
 
-def _create_gantry_react_agent(
-    model: Any,
+class _RunState:
+    """One run's selection state."""
+
+    def __init__(self) -> None:
+        self.lock = asyncio.Lock()
+        self.cache: OrderedDict[tuple[str, tuple[str, ...]], list[ToolSpec]] = OrderedDict()
+        self.offered: dict[str, ToolSpec] = {}
+        self.last_selected: dict[str, int] = {}
+        self.step = 0
+        self.enabled: frozenset[str] = frozenset()
+
+
+class _Selector:
+    """Per-turn selection shared by every run of one middleware."""
+
+    def __init__(
+        self,
+        gantry: AgentGantry,
+        *,
+        limit: int,
+        score_threshold: float,
+        namespaces: list[str] | None,
+        required: list[str] | None,
+        always_include: list[str] | None,
+        sticky: bool,
+        max_offered: int,
+        query_from_results: bool,
+        pinned: frozenset[str],
+    ) -> None:
+        self._toolset = GantryToolset(gantry)
+        self._limit = limit
+        self._score_threshold = score_threshold
+        self._namespaces = namespaces
+        self._required = required
+        self._always_include = always_include
+        self._sticky = sticky
+        self._max_offered = max_offered
+        self._query_from_results = query_from_results
+        self._pinned = pinned
+        self._runs: OrderedDict[tuple[Any, Any], _RunState] = OrderedDict()
+
+    def _state(self, key: tuple[Any, Any]) -> _RunState:
+        state = self._runs.get(key)
+        if state is None:
+            state = self._runs[key] = _RunState()
+            while len(self._runs) > _MAX_RUNS:
+                self._runs.popitem(last=False)
+        else:
+            self._runs.move_to_end(key)
+        return state
+
+    async def enabled(self, state: Any, config: Any) -> frozenset[str]:
+        """The Gantry tool names to offer this turn."""
+        key = _run_key(state, config)
+        run = self._state(key) if key is not None else _RunState()
+        query = _query_from_state(state, from_results=self._query_from_results)
+        used = tuple(_used_tools(state))
+        async with run.lock:
+            specs = await self._select(run, query, used)
+            if specs is None:
+                # Retrieval failed: keep the previous tools plus the pins.
+                run.enabled = run.enabled | self._pinned
+                return run.enabled
+            if self._sticky:
+                run.step += 1
+                specs = carry_over(
+                    run.offered, run.last_selected, run.step, specs, self._max_offered
+                )
+            run.enabled = frozenset(s.native_name for s in specs)
+            return run.enabled
+
+    async def _select(
+        self, run: _RunState, query: str, used: tuple[str, ...]
+    ) -> list[ToolSpec] | None:
+        key = (query, used)
+        if key in run.cache:
+            run.cache.move_to_end(key)
+            return run.cache[key]
+        try:
+            specs = await self._toolset.select_or_empty(
+                query,
+                limit=self._limit,
+                score_threshold=self._score_threshold,
+                namespaces=self._namespaces,
+                tools_already_used=list(used),
+                required=self._required,
+                always_include=self._always_include,
+            )
+        except (MissingRequiredToolError, QueryBoundsError):
+            raise
+        except Exception:
+            logger.warning(
+                "GantryToolMiddleware: semantic retrieval failed; offering this run's "
+                "previous tools and the pins this turn.",
+                exc_info=True,
+            )
+            return None
+        run.cache[key] = specs
+        while len(run.cache) > _MAX_CACHED_SELECTIONS:
+            run.cache.popitem(last=False)
+        return specs
+
+
+def _middleware_class() -> type:
+    """``AgentMiddleware`` subclass, built lazily so LangChain stays optional."""
+    _, AgentMiddleware = _import_create_agent()  # noqa: N806
+
+    class GantryToolMiddleware(AgentMiddleware):  # type: ignore[misc, valid-type]
+        """Re-selects Gantry tools for every model turn of a ``create_agent`` agent.
+
+        Carries the in-scope Gantry catalogue as :attr:`tools`, so the agent's
+        ``ToolNode`` can run any of them, and on each model call narrows the
+        Gantry tools in ``request.tools`` to this turn's selection. Tools the
+        caller passed to ``create_agent`` directly are left alone.
+        """
+
+        def __init__(self, tools: list[Any], selector: _Selector) -> None:
+            super().__init__()
+            self.tools = tools
+            self._selector = selector
+            self._names = frozenset(t.name for t in tools)
+
+        def _narrow(self, request: Any, enabled: frozenset[str]) -> Any:
+            tools = [
+                t
+                for t in request.tools
+                if getattr(t, "name", None) not in self._names
+                or getattr(t, "name", None) in enabled
+            ]
+            return request.override(tools=tools)
+
+        async def awrap_model_call(self, request: Any, handler: Any) -> Any:
+            config = _current_config()
+            enabled = await self._selector.enabled(request.state, config)
+            return await handler(self._narrow(request, enabled))
+
+        def wrap_model_call(self, request: Any, handler: Any) -> Any:
+            from agent_gantry.integrations.frameworks.base import _run_coroutine_sync
+
+            config = _current_config()
+            enabled = _run_coroutine_sync(self._selector.enabled(request.state, config))
+            return handler(self._narrow(request, enabled))
+
+    return GantryToolMiddleware
+
+
+def _current_config() -> Any:
+    try:
+        from langgraph.config import get_config
+
+        return get_config()
+    except Exception:
+        return None
+
+
+async def build_middleware(
     gantry: AgentGantry,
     *,
     limit: int = DEFAULT_TOOL_LIMIT,
@@ -212,141 +462,109 @@ def _create_gantry_react_agent(
     namespaces: list[str] | None = None,
     required: list[str] | None = None,
     always_include: list[str] | None = None,
-    **agent_kwargs: Any,
+    error_mode: ErrorMode = "model",
+    error_formatter: ErrorFormatter | None = None,
+    sticky: bool = True,
+    max_offered: int | None = None,
+    query_from_results: bool = True,
+    framework: str = FRAMEWORK_NAME,
 ) -> Any:
-    """Build a LangGraph agent whose tools are re-selected every turn.
-
-    Unlike the static :meth:`~agent_gantry.integrations.frameworks.langgraph.LangGraphAdapter.select`
-    (tools fixed at construction), this wires Gantry in as a **live per-turn**
-    provider via a ``create_agent`` ``wrap_model_call`` middleware hook. On each
-    model turn the agent:
-
-    1. derives a retrieval query from the current ``state["messages"]``,
-    2. runs Gantry semantic selection (top-``limit`` tools), and
-    3. overrides the model request's tools with *only* that selection for the turn.
-
-    The full superset of registered tools is passed to ``tools=`` so the agent's
-    ``ToolNode`` can execute whatever was selected (LangGraph requires the
-    per-turn tools to be a subset, by name, of the static set).
+    """Build a ``GantryToolMiddleware`` (see the module docs).
 
     Args:
-        model: A LangChain ``BaseChatModel`` (or model identifier string) for
-            ``create_agent`` to bind Gantry-selected tools to each turn.
-        gantry: The :class:`~agent_gantry.core.gantry.AgentGantry` providing
-            semantic retrieval and execution.
-        limit: Maximum number of tools re-selected per turn. Defaults to ``5``.
-        score_threshold: Minimum semantic relevance score for selected tools.
-            Defaults to ``0.0`` (no filtering).
-        namespaces: Optional namespace filter applied to every per-turn
-            selection. Defaults to ``None`` (no filtering).
-        **agent_kwargs: Forwarded verbatim to ``create_agent`` (e.g.
-            ``system_prompt``, ``checkpointer``, ``state_schema``,
-            ``middleware`` — note the system-prompt kwarg is ``system_prompt``,
-            not the old ``create_react_agent``'s ``prompt``). Any ``middleware``
-            passed here is appended *after* Gantry's tool-selection middleware.
+        gantry: The registry to select from and execute against.
+        limit: Tools selected per turn (pins are extra).
+        score_threshold: Minimum relevance score.
+        namespaces: Restrict selection (and the catalogue) to these namespaces.
+        required: Tools offered every turn; a missing one raises.
+        always_include: Tools offered every turn when they exist.
+        error_mode: See :data:`~agent_gantry.integrations.frameworks.native.ErrorMode`.
+        error_formatter: Rewrites failure text before the model sees it.
+        sticky: Keep tools offered earlier in the run, up to ``max_offered``.
+        max_offered: Cap on sticky tools; defaults to ``3 * limit``.
+        query_from_results: Let successful tool output drive the next selection.
+        framework: Name recorded on each call's ``ToolInvocationContext``.
 
-    Note:
-        This is a **synchronous** factory; it resolves the (async) tool superset
-        on a worker thread via Gantry's sync bridge, so it is safe to call from a
-        running event loop but will block the calling thread until enumeration
-        completes. In already-async contexts (Jupyter, FastAPI startup) prefer
-        :func:`_acreate_gantry_react_agent`, which awaits the enumeration directly.
+    Raises:
+        ImportError: If ``langchain`` / ``langgraph`` are not installed.
+        ValueError: If ``max_offered`` is smaller than ``limit``.
+    """
+    check_query_bounds(limit=limit, score_threshold=score_threshold, owner="GantryToolMiddleware")
+    error_mode = check_error_mode(error_mode)
+    cap = 3 * limit if max_offered is None else max_offered
+    if cap < limit:
+        raise ValueError(f"max_offered ({cap}) must be at least limit ({limit})")
+    middleware_cls = _middleware_class()
+    try:
+        await gantry.ensure_synced()
+    except Exception:
+        logger.warning(
+            "GantryToolMiddleware: sync failed; building from the tools already registered.",
+            exc_info=True,
+        )
+    specs, pinned = await _catalogue(
+        gantry, namespaces=namespaces, required=required, always_include=always_include
+    )
+    tools = [
+        _spec_to_langchain(
+            s, error_mode=error_mode, error_formatter=error_formatter, framework=framework
+        )
+        for s in specs
+    ]
+    selector = _Selector(
+        gantry,
+        limit=limit,
+        score_threshold=score_threshold,
+        namespaces=namespaces,
+        required=required,
+        always_include=always_include,
+        sticky=sticky,
+        max_offered=cap,
+        query_from_results=query_from_results,
+        pinned=pinned,
+    )
+    return middleware_cls(tools, selector)
 
-    Returns:
-        The compiled LangGraph agent (a ``Pregel`` graph) ready for
-        ``.ainvoke`` / ``.invoke``.
+
+def _create_gantry_react_agent(model: Any, gantry: AgentGantry, **kwargs: Any) -> Any:
+    """Build a ``create_agent`` agent whose Gantry tools are re-selected every turn.
+
+    Synchronous: resolves the catalogue on Gantry's sync bridge, so it blocks
+    the calling thread. In async code prefer :func:`_acreate_gantry_react_agent`.
+    Selection keywords go to :func:`build_middleware`; everything else
+    (``system_prompt``, ``checkpointer``, ``middleware``, ...) to ``create_agent``.
     """
     from agent_gantry.integrations.frameworks.base import _run_coroutine_sync
 
-    superset = _run_coroutine_sync(_all_tools(gantry))
-    return _build_react_agent(
-        model,
-        gantry,
-        superset,
-        limit=limit,
-        score_threshold=score_threshold,
-        namespaces=namespaces,
-        required=required,
-        always_include=always_include,
-        **agent_kwargs,
-    )
+    return _run_coroutine_sync(_acreate_gantry_react_agent(model, gantry, **kwargs))
 
 
-async def _acreate_gantry_react_agent(
-    model: Any,
-    gantry: AgentGantry,
-    *,
-    limit: int = DEFAULT_TOOL_LIMIT,
-    score_threshold: float = 0.0,
-    namespaces: list[str] | None = None,
-    required: list[str] | None = None,
-    always_include: list[str] | None = None,
-    **agent_kwargs: Any,
-) -> Any:
-    """Async-native variant of :func:`_create_gantry_react_agent`.
-
-    Awaits the tool-superset enumeration directly (no sync bridge), so it is the
-    right choice inside an already-running event loop (Jupyter, FastAPI startup).
-    Behaviour is otherwise identical — tools are re-selected by Gantry on every
-    model turn via the ``create_agent`` ``wrap_model_call`` middleware hook.
-    """
-    superset = await _all_tools(gantry)
-    return _build_react_agent(
-        model,
-        gantry,
-        superset,
-        limit=limit,
-        score_threshold=score_threshold,
-        namespaces=namespaces,
-        required=required,
-        always_include=always_include,
-        **agent_kwargs,
-    )
+_MIDDLEWARE_KWARGS = frozenset(
+    {
+        "limit",
+        "score_threshold",
+        "namespaces",
+        "required",
+        "always_include",
+        "error_mode",
+        "error_formatter",
+        "sticky",
+        "max_offered",
+        "query_from_results",
+        "framework",
+    }
+)
 
 
-def _build_react_agent(
-    model: Any,
-    gantry: AgentGantry,
-    superset: list[Any],
-    *,
-    limit: int,
-    score_threshold: float,
-    namespaces: list[str] | None = None,
-    required: list[str] | None = None,
-    always_include: list[str] | None = None,
-    **agent_kwargs: Any,
-) -> Any:
-    """Compile the per-turn tool-selecting agent given a pre-resolved superset."""
-    check_query_bounds(limit=limit, score_threshold=score_threshold, owner="LangGraphAdapter")
-    create_agent, AgentMiddleware = _import_create_agent()  # noqa: N806
+async def _acreate_gantry_react_agent(model: Any, gantry: AgentGantry, **kwargs: Any) -> Any:
+    """Async :func:`_create_gantry_react_agent`."""
+    create_agent, _ = _import_create_agent()
+    selection = {k: kwargs.pop(k) for k in list(kwargs) if k in _MIDDLEWARE_KWARGS}
+    selection.setdefault("framework", LANGGRAPH_FRAMEWORK_NAME)
+    middleware = await build_middleware(gantry, **selection)
+    extra = list(kwargs.pop("middleware", ()) or ())
+    tools = list(kwargs.pop("tools", ()) or ())
+    return create_agent(model=model, tools=tools, middleware=[middleware, *extra], **kwargs)
 
-    class _GantryToolSelectionMiddleware(AgentMiddleware):  # type: ignore[misc, valid-type]
-        """Re-selects Gantry tools into ``request.tools`` on every model turn.
 
-        This is the ``create_agent`` equivalent of the dynamic-``model``
-        callable the deprecated ``create_react_agent`` used for per-turn tool
-        rebinding: ``awrap_model_call`` is invoked on *every* model turn before
-        the model is called, so overriding ``request.tools`` here reproduces
-        the exact per-turn re-selection semantics — the LLM sees exactly the
-        tools Gantry chose for the *current* turn, and stale selections never
-        accumulate.
-        """
-
-        async def awrap_model_call(self, request: Any, handler: Any) -> Any:
-            """Derive a query from the turn's state, re-select, and re-invoke."""
-            selected = await _select_tools_for_state(
-                gantry,
-                request.state,
-                limit=limit,
-                score_threshold=score_threshold,
-                namespaces=namespaces,
-                required=required,
-                always_include=always_include,
-            )
-            # ``selected`` is `[]` when there's no retrieval signal this turn;
-            # create_agent binds the model with no tools in that case (mirrors
-            # the old dynamic-model callable's "return model unbound" branch).
-            return await handler(request.override(tools=selected))
-
-    middleware = [_GantryToolSelectionMiddleware(), *agent_kwargs.pop("middleware", ())]
-    return create_agent(model=model, tools=superset, middleware=middleware, **agent_kwargs)
+__all__ = ["build_middleware"]

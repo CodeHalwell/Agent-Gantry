@@ -38,6 +38,7 @@ uv add "agent-gantry[mcp,a2a]"
 uv add "agent-gantry[agent-frameworks]"
 uv add "agent-gantry[pydantic-ai]"
 uv add "agent-gantry[openai-agents]"   # own environment: needs openai>=3, CrewAI pins <3
+uv add "agent-gantry[langgraph]"       # LangGraph + LangChain 1.x ([langchain] for LangChain alone)
 uv add "agent-gantry[all]"
 ```
 

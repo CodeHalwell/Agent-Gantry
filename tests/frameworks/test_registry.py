@@ -97,5 +97,5 @@ async def test_missing_sdk_still_has_install_instructions(gantry, monkeypatch):
         """Greet a person by their given name."""
         return name
 
-    with pytest.raises(ImportError, match="pip install langchain-core"):
+    with pytest.raises(ImportError, match=r"agent-gantry\[langchain\]"):
         await gantry.framework("langchain").select("greet someone")

@@ -2,39 +2,40 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="LangChain guide | Agent-Gantry">
+<DocsLayout title="LangChain guide | Agent-Gantry" description="Integrate Agent-Gantry with LangChain: native StructuredTools with readable errors, approval and run context, plus per-turn selection for create_agent.">
   <p class="eyebrow">Framework guide</p>
   <h1>LangChain</h1>
-  <p class="lead">Use Agent-Gantry with LangChain agents and LCEL chains. This page covers basic setup and the first production-friendly path; continue to the advanced page for dynamic retrieval, LLM calls, and operations.</p>
+  <p class="lead">Agent-Gantry hands LangChain native <code>StructuredTool</code>s. Every call goes through <code>gantry.execute</code>, failures reach the model as error <code>ToolMessage</code>s, and inside a <code>create_agent</code> agent a middleware picks each model turn's tools.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/langchain/advanced/">Advanced LangChain usage →</a></p>
 
-  <h2>Basic page: register once, adapt at the edge</h2>
-  <ol>
-    <li>Create a Gantry instance near application startup.</li>
-    <li>Register deterministic Python functions with descriptions and input schemas.</li>
-    <li>Export framework-native tools for LangChain immediately before constructing the agent, graph, pipeline, or crew.</li>
-    <li>Keep authorization, rate limits, and audit metadata in Gantry instead of duplicating it inside framework glue code.</li>
-  </ol>
+  <h2>Install</h2>
+  <CodeBlock lang="bash" code={`uv add "agent-gantry[langchain]"   # langchain, langchain-core >= 1.0`} />
 
-  <CodeBlock lang="python" code={`from agent_gantry import AgentGantry
+  <h2>Basic page: a selected slice of tools</h2>
+  <CodeBlock lang="python" code={`from langchain.chat_models import init_chat_model
+from agent_gantry import AgentGantry
 from agent_gantry.langchain import LangChainAdapter
 
 gantry = AgentGantry()
 
-@gantry.register(
-    tags=["support", "orders"],
-    examples=["where is my order", "has order 4471 shipped"],
-)
+@gantry.register(examples=["where is my order", "has order 4471 shipped"])
 def get_order_status(order_id: str) -> str:
     """Return the current shipping status for an order."""
     return "in_transit"
+
+await gantry.sync()
 adapter = LangChainAdapter(gantry)
-framework_tools = await adapter.select("check an order", limit=3)`} />
+tools = await adapter.select("has order 4471 shipped?", limit=3)
+llm = init_chat_model("openai:gpt-5.5").bind_tools(tools)`} />
 
-  <h2>First tool-calling loop</h2>
-  <p>Let LangChain own the conversation lifecycle while Gantry owns the tool catalog. Start with a small tool set and assert that the framework receives only safe, documented functions.</p>
-  <div class="callout"><strong>Basic testing checklist:</strong> verify tool names, JSON schemas, auth metadata, and a happy-path invocation before wiring a live model.</div>
+  <h2>An agent whose tools change every turn</h2>
+  <p>LangChain's <code>create_agent</code> accepts middleware. Gantry's middleware brings the catalogue with it and narrows the tools offered on each model turn to the ones relevant to the newest message or tool result.</p>
+  <CodeBlock lang="python" code={`from langchain.agents import create_agent
 
-  <h2>Basic LLM call guidance</h2>
-  <p>For early prototypes, use the model client already recommended by LangChain. Wrap that client with a thin policy function that records model name, prompt tokens, completion tokens, tool calls, and latency. Once the integration stabilizes, move the policy into Agent-Gantry's LLM adapter layer so other frameworks share the same rules.</p>
+agent = create_agent("openai:gpt-5.5", middleware=[await adapter.middleware(limit=5)])
+result = await agent.ainvoke({"messages": [("user", "Has order 4471 shipped?")]})`} />
+
+  <h2>What the model sees when a tool fails</h2>
+  <p>A failed call raises LangChain's <code>ToolException</code> and the tool sets <code>handle_tool_error=True</code>, so the model receives an error <code>ToolMessage</code> with <code>&lt;type&gt;: &lt;message&gt;</code>, capped at 2,000 characters.</p>
+  <div class="callout"><strong>Redact or opt out:</strong> <code>LangChainAdapter(gantry, error_formatter=redact)</code> rewrites the text the model sees; <code>error_mode="raise"</code> lets <code>ToolExecutionError</code> propagate instead.</div>
 </DocsLayout>

@@ -36,8 +36,8 @@ Install Gantry plus just the SDK you need:
 
 | `gantry.framework(name)` | Install | Minimal wiring |
 |---|---|---|
-| `langchain` | `pip install agent-gantry langchain-core` | `model.bind_tools(await adapter.select(query))` |
-| `langgraph` | `pip install agent-gantry langgraph` | `adapter.live(model=model)` builds the dynamic agent |
+| `langchain` | `pip install 'agent-gantry[langchain]'` | `model.bind_tools(await adapter.select(query))` — see [LangChain and LangGraph](#langchain-and-langgraph-first-class) |
+| `langgraph` | `pip install 'agent-gantry[langgraph]'` | `create_agent(model, middleware=[await adapter.middleware()])` — see [LangChain and LangGraph](#langchain-and-langgraph-first-class) |
 | `llamaindex` | `pip install agent-gantry llama-index-core` | `FunctionAgent(tool_retriever=adapter.live())` |
 | `crewai` | `pip install agent-gantry crewai` | `Agent(..., tools=await adapter.select(query))` |
 | `pydantic_ai` | `pip install 'agent-gantry[pydantic-ai]'` | `Agent(model, capabilities=[adapter.capability()])` — see [Pydantic AI](#pydantic-ai-first-class) |
@@ -348,7 +348,7 @@ these — the framework is only required when you use its provider).
 | Pydantic AI | `PydanticAIAdapter(gantry).toolset()` / `.deferred_toolset()` / `.tool_search()` / `.capability(mode="per-turn" \| "search")` | `AbstractToolset.get_tools()` + `for_run()`; `ToolSearch(strategy=…)`; `AbstractCapability` |
 | Google ADK | `GoogleADKAdapter(gantry).before_model_callback()` / `.agent()` | `Agent(before_model_callback=…)` |
 | Strands Agents | `StrandsAdapter(gantry).tool_hook()` / `.agent()` | `Agent(hooks=[…])` — `BeforeModelCallEvent` |
-| LangGraph | `LangGraphAdapter(gantry).react_agent(model)` / `.areact_agent(model)` / `.select_for_state(state)` | dynamic `model` callable (re-binds tools per turn) |
+| LangGraph | `LangGraphAdapter(gantry).middleware()` (recommended) / `.areact_agent(model)` / `.react_agent(model)` / `.select_for_state(state)` | `create_agent` `AgentMiddleware.wrap_model_call` (narrows `request.tools` each turn) |
 | OpenAI Agents SDK | `OpenAIAgentsAdapter(gantry).dynamic_tools()` (recommended) / `.run(agent, run_input)` / `.session(agent)` / `.run_hooks(agent)` | `FunctionTool.is_enabled` per turn; `RunHooks.on_llm_start` + per-run refresh |
 
 ```python
@@ -512,6 +512,61 @@ behaviours.
 span becomes the `ToolCall`'s `trace_id`/`parent_span_id`; otherwise an active
 OpenTelemetry span is used.
 
+## LangChain and LangGraph (first-class)
+
+`pip install 'agent-gantry[langchain]'` or `'agent-gantry[langgraph]'` (both pin
+`langchain`, `langchain-core` and, for LangGraph, `langgraph` at `>=1.0.0`; CI
+runs the tests on exactly the 1.0.0 releases and on the latest). Both adapters
+build `StructuredTool`s; LangGraph adds per-turn selection.
+
+| Mode | Build | Use when |
+|---|---|---|
+| Per-turn (recommended) | `create_agent(model, middleware=[await adapter.middleware(limit=5)])` | Agents; Gantry picks each model turn's tools |
+| One call | `await LangGraphAdapter(gantry).areact_agent(model, limit=5, checkpointer=...)` | The same agent, built for you |
+| Static slice | `await adapter.select(query)` → `model.bind_tools(...)` / `ToolNode(...)` | A fixed task or your own graph |
+
+**Per-turn selection.** The middleware carries the in-scope catalogue as its
+`tools` (so the agent's `ToolNode` can run any of them) and, in
+`wrap_model_call`, narrows the Gantry tools in `request.tools` to this turn's
+selection. Tools you pass to `create_agent` yourself are never removed. The
+query is the newest activity in `state["messages"]`: the user's request, or the
+last successful tool result (`query_from_results=False` keeps tool output out;
+a failed result, `status="error"`, never feeds it). State is per run, keyed by
+the thread and the newest user message, so concurrent runs are independent and
+a run resumed after an approval carries on. Within a run selections are cached,
+earlier tools stay offered up to `max_offered` (`sticky=True`, default
+`3 * limit`), and a retrieval failure keeps the previous turn's tools plus the
+pins.
+
+**Errors and approval.** A failed call raises LangChain's `ToolException` and
+the tool has `handle_tool_error=True`, so the model gets an error `ToolMessage`
+(`status="error"`) and the run continues. A confirmation-gated call (the tool's
+flag or a `SecurityPolicy` pattern, per `AgentGantry.requires_confirmation()`)
+pauses the graph with LangGraph's `interrupt()`:
+
+```python
+agent = await LangGraphAdapter(gantry).areact_agent(model, checkpointer=InMemorySaver())
+config = {"configurable": {"thread_id": "t1"}}
+result = await agent.ainvoke({"messages": [("user", "refund order 4471")]}, config)
+if "__interrupt__" in result:
+    request = result["__interrupt__"][0].value   # {"type": "gantry_approval", "tool", "arguments", ...}
+    result = await agent.ainvoke(Command(resume=True), config)   # False (or anything else) rejects
+```
+
+An approved call runs once through `gantry.execute` with only the confirmation
+gate cleared; a rejected one never runs and the model is told so. Approval needs
+a checkpointer (an interrupt can only be resumed from a checkpoint); without
+one, or outside a graph, the model is told the call needs approval and it is not
+run. `error_formatter=fn` rewrites failure text; `error_mode="raise"` opts out
+of both behaviours.
+
+**Run context and tracing.** Gantry handlers read the run with
+`agent_gantry.langgraph.current_tool_runtime()` (or `agent_gantry.langchain`):
+`.context` (the graph's `context=`), `.store`, `.config` and `.tool_call_id`;
+`current_tool_invocation().metadata` carries the `thread_id`. An active
+OpenTelemetry span, else the current LangSmith run, becomes the `ToolCall`'s
+`trace_id`/`parent_span_id`.
+
 ## Shared base
 
 `base.py` provides `GantryToolset` (selection, including the `required`/
@@ -569,7 +624,7 @@ policy refused it outright). Both are re-exported from
 `agent_gantry.integrations.frameworks`; catching `ToolExecutionError` still
 catches every outcome.
 
-**Every native adapter except Pydantic AI and the OpenAI Agents SDK lets this propagate uncaught** from the
+**Every native adapter except Pydantic AI, the OpenAI Agents SDK, LangChain and LangGraph lets this propagate uncaught** from the
 native tool object's own invocation entry point (`.func`, `._run`, `.forward`,
 `.entrypoint`, `.method`, `.on_invoke_tool`, …) — proven for all of them,
 including the sync wrappers, by
@@ -675,8 +730,8 @@ asserting no exception + a `WARNING` log record).
 
 | Framework | (a) Tool execution failure | (b) Selection failure (live/per-turn) |
 |---|---|---|
-| LangChain | Raises `ToolExecutionError` | *(per-call — see above)* |
-| LangGraph | Raises `ToolExecutionError` | Degrades to no tools this turn (stateless) + `WARNING` |
+| LangChain | **Deviation:** LangChain's `ToolException` (the tool has `handle_tool_error=True`, so the model gets an error `ToolMessage`), chained from `ToolExecutionError`; `error_mode="raise"` restores raising | *(per-call — see above)* |
+| LangGraph | **Deviation:** as LangChain | `middleware()`: degrades to this run's previous tools plus pins (per-run state) + `WARNING`; `select_for_state`: no tools + `WARNING` |
 | LlamaIndex | Raises `ToolExecutionError` | Degrades to no tools this step (stateless) + `WARNING` |
 | CrewAI | Raises `ToolExecutionError` | *(per-call — see above)* |
 | Pydantic AI | **Deviation:** `ModelRetry` / `ToolFailed` / `ApprovalRequired` (native), chained from `ToolExecutionError`; `error_mode="raise"` restores raising | Degrades to this run's earlier tools (per-run state) + `WARNING` |

@@ -2,38 +2,45 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Advanced LangGraph guide | Agent-Gantry">
+<DocsLayout title="Advanced LangGraph guide | Agent-Gantry" description="Approval with interrupt(), how per-turn selection works inside a run, tracing and error modes for the Agent-Gantry LangGraph integration.">
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced LangGraph</h1>
-  <p class="lead">Scale LangGraph from static tool demos to governed agent workloads with semantic selection, explicit LLM-call policy, tracing, and deployment boundaries.</p>
+  <p class="lead">Human approval, how per-turn selection works inside a run, tracing, and using Gantry tools in your own graph.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/langgraph/">← Basic LangGraph usage</a></p>
 
-  <h2>Advanced page: dynamic tool selection</h2>
-  <p>Before each LangGraph run, ask Gantry for a context-aware subset of tools. Combine request metadata, tenant policy, semantic similarity, and reranker results so the agent sees a concise, relevant tool surface.</p>
-  <CodeBlock lang="python" code={`candidate_tools = gantry.select_tools(
-    query=user_message,
-    tags=["support"],
-    limit=8,
-)
-framework_tools = [LangGraphAdapter.convert(spec) for spec in candidate_tools]
-`} />
+  <h2>Human approval</h2>
+  <p>A tool registered with <code>requires_confirmation=True</code>, or matched by a <code>SecurityPolicy(require_confirmation=[...])</code> pattern, pauses the graph with LangGraph's <code>interrupt()</code>. The interrupt value is <code>&#123;"type": "gantry_approval", "tool", "description", "arguments", "tool_call_id"&#125;</code>. Resume with <code>Command(resume=True)</code> (or <code>&#123;"approved": True&#125;</code>) to run the call once through <code>gantry.execute</code> with only the confirmation gate cleared; any other value rejects it and the model is told so.</p>
+  <CodeBlock lang="python" code={`from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
 
-  <h2>LLM calls and model policy</h2>
-  <p>Centralize LLM calls when LangGraph supports custom model clients; otherwise add middleware around the framework call. The policy should select the provider, enforce budget ceilings, redact sensitive fields, emit token metrics, and decide whether tool results should be summarized before returning to the model.</p>
-  <CodeBlock lang="python" code={`response = llm_policy.complete(
-    framework="LangGraph",
-    model="primary-or-fallback-model",
-    messages=messages,
-    tools=framework_tools,
-    trace_id=trace_id,
-)
-`} />
+agent = create_agent(model, middleware=[await adapter.middleware()], checkpointer=InMemorySaver())
+config = {"configurable": {"thread_id": "order-4471"}}
+result = await agent.ainvoke({"messages": [("user", "Refund order 4471")]}, config)
+if "__interrupt__" in result:
+    request = result["__interrupt__"][0].value
+    result = await agent.ainvoke(Command(resume=ask_a_human(request)), config)`} />
+  <p>Approval needs a checkpointer, since a paused graph resumes from its checkpoint. Without one, or when a tool is called outside a graph, the model is told the call needs approval and it is not run. <code>gantry.requires_confirmation(tool)</code> answers the same question without running anything.</p>
 
-  <h2>Production patterns</h2>
+  <h2>Per-turn selection inside a run</h2>
   <ul>
-    <li><strong>Observability:</strong> attach trace IDs to every LangGraph run, LLM call, and tool execution.</li>
-    <li><strong>Safety:</strong> keep high-risk tools behind explicit allowlists, human approval, or dry-run executors.</li>
-    <li><strong>Resilience:</strong> add provider fallback for LLM calls and executor fallback for remote MCP/A2A tools.</li>
-    <li><strong>Evaluation:</strong> replay representative prompts with fixed tool snapshots before broadening dynamic retrieval.</li>
+    <li><strong>Mechanism:</strong> the middleware carries the in-scope catalogue as its <code>tools</code>, so the agent's <code>ToolNode</code> can run any of them, and its <code>wrap_model_call</code> narrows the Gantry tools in <code>request.tools</code> each model turn.</li>
+    <li><strong>Query:</strong> the newest activity in <code>state["messages"]</code>: the user's request, or the last successful tool result. A failed result never feeds retrieval; <code>query_from_results=False</code> keeps all tool output out.</li>
+    <li><strong>State:</strong> per run, keyed by the thread and the newest user message, so concurrent runs are independent and a run resumed after an approval carries on.</li>
+    <li><strong>Stickiness:</strong> tools offered earlier in a run stay offered, up to <code>max_offered</code> (default <code>3 * limit</code>); the current selection and pinned tools always stay. Use <code>sticky=False</code> for a strict top-k.</li>
+    <li><strong>Failure:</strong> if retrieval fails, the turn keeps the run's previous tools plus the pins, and logs a warning.</li>
+    <li><strong>New tools:</strong> tools registered after <code>middleware()</code> is built are not in the catalogue; build it again.</li>
+  </ul>
+
+  <h2>Your own graph</h2>
+  <p><code>await adapter.select(query)</code> returns LangChain <code>StructuredTool</code>s for a <code>ToolNode</code> or <code>model.bind_tools(...)</code>, with the same error, approval and context behaviour. <code>await adapter.select_for_state(state)</code> selects once from a graph state.</p>
+
+  <h2>Tracing</h2>
+  <p>An active OpenTelemetry span, or else the current LangSmith run, becomes the Gantry <code>ToolCall</code>'s <code>trace_id</code> and <code>parent_span_id</code>, so <code>gantry.on_tool_call</code> events line up with the agent's trace. <code>current_tool_invocation().metadata</code> carries the <code>thread_id</code>.</p>
+
+  <h2>Production checklist</h2>
+  <ul>
+    <li>Use a checkpointer and handle <code>__interrupt__</code> on any agent that can reach a confirmation-gated tool.</li>
+    <li>Use an <code>error_formatter</code> if handler exception messages may contain internals.</li>
+    <li>Pin must-have tools with <code>required=[...]</code> or <code>always_include=[...]</code>; they stay offered even when retrieval fails.</li>
   </ul>
 </DocsLayout>

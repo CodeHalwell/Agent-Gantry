@@ -279,7 +279,7 @@ pydantic-ai = [
 # first is_enabled evaluation of a run, which 0.21.x-0.22.x did not do
 # (verified 2026-11-20 against 0.21.0-0.25.0). Older SDKs that other extras
 # pull in transitively (0.4.2 in the agent-frameworks env) still work for
-# static tools: the adapter feature-detects FunctionTool's fields. Part of
+# static tools: the adapter feature-detects FunctionTool's fields.
 # Deliberately NOT part of `all` or `agent-frameworks`: openai-agents>=0.23
 # requires openai>=3, while crewai (in agent-frameworks) pins openai<3, so the
 # two cannot share an environment. Declared as conflicting under [tool.uv]
@@ -287,6 +287,26 @@ pydantic-ai = [
 # CI job installs this extra and re-runs its tests on exactly 0.23.1.
 openai-agents = [
     "openai-agents>=0.23.1",
+]
+# LangChain and LangGraph, first-class (see CHANGELOG). Floor 1.0.0 for
+# langchain, langchain-core and langgraph: the adapters use StructuredTool with
+# handle_tool_error, ToolException, langgraph.types.interrupt /
+# langgraph.runtime.get_runtime, and the create_agent AgentMiddleware API
+# (wrap_model_call, ModelRequest.override, middleware-provided tools), all
+# present since the 1.0 releases (verified 2026-11-20 on exactly
+# langchain 1.0.0 / langchain-core 1.0.0 / langgraph 1.0.0, and on 1.4.2 /
+# 1.6.3 / 1.2.11). The `framework-adapters` CI job re-runs the LangChain and
+# LangGraph tests on exactly those floors. Both are already covered by
+# `agent-frameworks` (which carries newer floors for the main test matrix);
+# these extras are the minimal install for one framework.
+langchain = [
+    "langchain>=1.0.0",
+    "langchain-core>=1.0.0",
+]
+langgraph = [
+    "langchain>=1.0.0",
+    "langchain-core>=1.0.0",
+    "langgraph>=1.0.0",
 ]
 example-tools = [
     "beautifulsoup4>=4.12.0",

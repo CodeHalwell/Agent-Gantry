@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+LangChain and LangGraph become first-class integrations, using LangChain's
+`ToolException`, LangGraph's `interrupt()` and runtime, and `create_agent`
+middleware for per-turn selection.
+
+**Behaviour change (LangChain and LangGraph).** A failed Gantry execution no
+longer raises out of the tool: it raises LangChain's `ToolException` and the
+tool has `handle_tool_error=True`, so the model receives an error
+`ToolMessage` (`status="error"`) and the run continues. A confirmation-gated
+call now pauses a LangGraph run with `interrupt()` (resume with
+`Command(resume=True)`); without a checkpointer the model is told the call
+needs approval. Pass `error_mode="raise"` to `LangChainAdapter` /
+`LangGraphAdapter` to keep the previous behaviour. The LangGraph live agent's
+selection also changed: it keeps tools you pass to `create_agent` yourself,
+is sticky within a run, and on a retrieval failure keeps the previous tools
+and pins instead of offering none.
+
+### Added
+
+- `langchain` and `langgraph` extras (`pip install 'agent-gantry[langgraph]'`),
+  pinning `langchain`, `langchain-core` and `langgraph` at `>=1.0.0`. CI runs
+  the LangChain and LangGraph tests on exactly the 1.0.0 releases and on the
+  latest.
+- `LangChainAdapter.middleware()` / `LangGraphAdapter.middleware()`: a
+  `create_agent` middleware that carries the Gantry catalogue as its `tools`
+  and narrows the Gantry tools offered on each model turn, with per-run state
+  (keyed by thread and newest user message), caching, sticky tools capped by
+  `max_offered`, `query_from_results`, and pins that survive retrieval
+  failures. `react_agent` / `areact_agent` now build on it.
+- Native approval for LangChain and LangGraph through `interrupt()`; approving
+  replays the call once with only Gantry's confirmation gate cleared.
+- `agent_gantry.langchain.current_tool_runtime()` (also in
+  `agent_gantry.langgraph`): the run a Gantry tool is executing in (`config`,
+  `tool_call_id`, LangGraph `context` and `store`). Also exposed through
+  `current_tool_invocation()`, whose metadata carries the `thread_id`.
+- LangChain/LangGraph tool calls carry the active OpenTelemetry span, or the
+  current LangSmith run, as their trace.
+- `error_mode` and `error_formatter` on `LangChainAdapter` and
+  `LangGraphAdapter`.
+
+### Changed
+
+- LangChain/LangGraph install hints point at the new extras.
+- `uv.lock`: re-resolving for the new extras moved CrewAI from 1.15.22 to
+  1.15.28, and with it `chromadb` from 1.1.1 to 1.5.9, on Python below 3.14
+  (CrewAI 1.15.28 relaxed its `chromadb` pin).
+
+The OpenAI Agents SDK also becomes first-class (below).
+
 The OpenAI Agents SDK becomes a first-class integration, the second after
 Pydantic AI, using the SDK's own approval, per-turn tool enablement and run
 context. The building blocks both now share live in
