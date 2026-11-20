@@ -237,6 +237,11 @@ class AdapterCase:
             propagates :class:`~agent_gantry.integrations.frameworks.base.ToolExecutionError`
             uncaught, matching the documented default contract (see
             "Error-handling policy" in ``integrations/frameworks/README.md``).
+            ``"native_tool_output"`` (OpenAI Agents SDK) -- the failure is
+            returned as the tool's output text (``Error: ...``) for the model
+            to read, since the SDK has no retry exception and would otherwise
+            end the run with ``UserError``; ``error_mode="raise"`` restores
+            ``"raises"``.
             ``"native_tool_failed"`` (Pydantic AI) -- the failure is
             re-raised as the framework's own ``ToolFailed`` (``ModelRetry``
             for argument errors, ``ApprovalRequired`` for confirmation-gated
@@ -392,6 +397,7 @@ ADAPTERS: list[AdapterCase] = [
         stub_attrs=_stub_openai_agents_attrs,
         live_extra_kwargs=lambda: {"agent": object()},
         invoke_failure=_invoke_openai_agents_failure,
+        error_kind="native_tool_output",
     ),
     AdapterCase(
         "haystack",
@@ -718,6 +724,13 @@ async def test_adapter_tool_failure_matches_documented_error_kind(
         cause = native_info.value.__cause__
         assert isinstance(cause, ToolExecutionError)
         assert cause.tool_name == "explode"
+        return
+
+    if case.error_kind == "native_tool_output":
+        # Returned to the model as the tool's output instead of ending the run.
+        output = await case.invoke_failure(native)
+        assert isinstance(output, str) and output.startswith("Error: ")
+        assert "boom" in output
         return
 
     assert case.error_kind == "raises", f"{case.name}: unknown error_kind {case.error_kind!r}"

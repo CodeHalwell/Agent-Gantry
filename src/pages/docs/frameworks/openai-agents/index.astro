@@ -2,39 +2,60 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="OpenAI Agents SDK guide | Agent-Gantry">
+<DocsLayout title="OpenAI Agents SDK guide | Agent-Gantry" description="Integrate Agent-Gantry with the OpenAI Agents SDK: per-turn tool selection, native approvals, readable tool errors and run context.">
   <p class="eyebrow">Framework guide</p>
   <h1>OpenAI Agents SDK</h1>
-  <p class="lead">Use Agent-Gantry with handoffs, hosted tools, and function tools. This page covers basic setup and the first production-friendly path; continue to the advanced page for dynamic retrieval, LLM calls, and operations.</p>
+  <p class="lead">Agent-Gantry plugs into the OpenAI Agents SDK's own mechanisms: <code>FunctionTool.is_enabled</code> for per-turn tool selection, <code>needs_approval</code> for human approval, and the run's <code>ToolContext</code> for your dependencies. Failures come back to the model as readable tool output instead of ending the run.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/openai-agents/advanced/">Advanced OpenAI Agents SDK usage →</a></p>
 
-  <h2>Basic page: register once, adapt at the edge</h2>
+  <h2>Install</h2>
+  <CodeBlock lang="bash" code={`uv add "agent-gantry[openai-agents]"   # pins openai-agents>=0.23.1`} />
+  <div class="callout"><strong>Separate environment:</strong> <code>openai-agents</code> 0.23 and later need <code>openai&gt;=3</code>, while CrewAI (in the <code>agent-frameworks</code> extra) pins <code>openai&lt;3</code>, so install this extra on its own.</div>
+
+  <h2>Basic page: per-turn tools</h2>
   <ol>
-    <li>Create a Gantry instance near application startup.</li>
-    <li>Register deterministic Python functions with descriptions and input schemas.</li>
-    <li>Export framework-native tools for OpenAI Agents SDK immediately before constructing the agent, graph, pipeline, or crew.</li>
-    <li>Keep authorization, rate limits, and audit metadata in Gantry instead of duplicating it inside framework glue code.</li>
+    <li>Register tools with <code>@gantry.register</code> and <code>await gantry.sync()</code>.</li>
+    <li>Give the agent <code>await adapter.dynamic_tools()</code>.</li>
+    <li>Run it normally. Each turn the model is offered only the tools Gantry selects for the newest message or tool result.</li>
   </ol>
-  <CodeBlock lang="python" code={`from agent_gantry import AgentGantry
+  <CodeBlock lang="python" title="Per-turn tool selection" code={`import asyncio
+
+from agents import Agent, Runner
+from agent_gantry import AgentGantry
 from agent_gantry.openai_agents import OpenAIAgentsAdapter
 
 gantry = AgentGantry()
 
-@gantry.register(
-    tags=["support", "orders"],
-    examples=["where is my order", "has order 4471 shipped"],
-)
+@gantry.register(examples=["where is my order", "has order 4471 shipped"])
 def get_order_status(order_id: str) -> str:
     """Return the current shipping status for an order."""
     return "in_transit"
-adapter = OpenAIAgentsAdapter(gantry)
-framework_tools = await adapter.select("check an order", limit=3)  # Native OpenAI Agents SDK adapter export.
-`} />
 
-  <h2>First tool-calling loop</h2>
-  <p>Let OpenAI Agents SDK own the conversation lifecycle while Gantry owns the tool catalog. Start with a small tool set and assert that the framework receives only safe, documented functions.</p>
-  <div class="callout"><strong>Basic testing checklist:</strong> verify tool names, JSON schemas, auth metadata, and a happy-path invocation before wiring a live model.</div>
+@gantry.register(examples=["refund order 4471"], requires_confirmation=True)
+def refund_order(order_id: str) -> str:
+    """Refund an order in full."""
+    return "refunded"
 
-  <h2>Basic LLM call guidance</h2>
-  <p>For early prototypes, use the model client already recommended by OpenAI Agents SDK. Wrap that client with a thin policy function that records model name, prompt tokens, completion tokens, tool calls, and latency. Once the integration stabilizes, move the policy into Agent-Gantry's LLM adapter layer so other frameworks share the same rules.</p>
+async def main():
+    await gantry.sync()
+    adapter = OpenAIAgentsAdapter(gantry)
+    agent = Agent(name="support", tools=await adapter.dynamic_tools(limit=5))
+    result = await Runner.run(agent, "Has order 4471 shipped?")
+    print(result.final_output)
+
+asyncio.run(main())`} />
+
+  <h2>What the model sees when a tool fails</h2>
+  <p>The SDK has no retry exception, and an exception from a tool would end the run. Gantry returns the failure as the tool's output instead, <code>Error: &lt;type&gt;: &lt;message&gt;</code>, capped at 2,000 characters. The model reads it and can correct a bad argument or try something else.</p>
+  <div class="callout"><strong>Redact or opt out:</strong> <code>OpenAIAgentsAdapter(gantry, error_formatter=redact)</code> rewrites the text the model sees; <code>error_mode="raise"</code> lets <code>ToolExecutionError</code> propagate instead.</div>
+
+  <h2>Reading your context from a Gantry tool</h2>
+  <p>Whatever you pass to <code>Runner.run(..., context=...)</code> is available while the tool runs, without changing its schema.</p>
+  <CodeBlock lang="python" code={`from agent_gantry.openai_agents import current_run_context
+
+@gantry.register
+async def get_balance(account: str) -> str:
+    """Fetch an account balance for the signed-in user."""
+    ctx = current_run_context()   # the call's ToolContext, or None outside a run
+    return await ctx.context.bank.balance(account)`} />
 </DocsLayout>

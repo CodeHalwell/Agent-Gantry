@@ -38,7 +38,6 @@ from __future__ import annotations
 
 import copy
 import logging
-from collections.abc import Callable
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -49,39 +48,41 @@ from agent_gantry.integrations.frameworks.base import (
     GantryToolset,
     ToolConfirmationRequiredError,
     ToolExecutionError,
-    ToolPermissionDeniedError,
     ToolSpec,
     _coerce_arguments,
 )
+from agent_gantry.integrations.frameworks.native import (
+    MODEL_CORRECTABLE_ERRORS as _MODEL_CORRECTABLE_ERRORS,
+)
+from agent_gantry.integrations.frameworks.native import (
+    ErrorFormatter,
+    ErrorMode,
+    check_error_mode,
+    failure_text,
+)
+from agent_gantry.integrations.frameworks.native import otel_ids as _otel_ids
 from agent_gantry.schema.execution import ToolInvocationContext
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
 
-#: How a failed Gantry execution surfaces inside a Pydantic AI run.
-#:
-#: - ``"model"`` (default) -- Pydantic AI's own control flow: argument
-#:   validation errors raise ``ModelRetry`` (the model sees the error and
-#:   retries within the tool's retry budget), other failures raise
-#:   ``ToolFailed`` (the model sees a terminal failure and adapts), and a
-#:   confirmation-gated call raises ``ApprovalRequired``.
-#:
-#:   The model sees the failure's text (``error_type: message``), as it would
-#:   from a hand-written tool -- so an exception message carrying internals
-#:   (paths, connection strings) reaches the model and its logs. Raise
-#:   model-safe messages from handlers, or use ``"raise"``.
-#: - ``"raise"`` -- the cross-framework default contract: the
-#:   :class:`~agent_gantry.integrations.frameworks.base.ToolExecutionError`
-#:   family propagates and ends the run.
-ErrorMode = Literal["model", "raise"]
-
-#: Turns a failed execution into the text the model sees, e.g. to redact
-#: paths, hostnames or connection strings from handler exception messages.
-#: Applies to every model-facing failure (``ModelRetry``, ``ToolFailed`` and the
-#: pre-``ToolFailed`` fallback); the result is still capped. A formatter that
-#: raises is replaced by a generic message, so a bug in it cannot leak the
-#: original text.
-ErrorFormatter = Callable[[ToolExecutionError], str]
+# How a failed Gantry execution surfaces inside a Pydantic AI run.
+#
+# - ``"model"`` (default) -- Pydantic AI's own control flow: argument
+#   validation errors raise ``ModelRetry`` (the model sees the error and
+#   retries within the tool's retry budget), other failures raise
+#   ``ToolFailed`` (the model sees a terminal failure and adapts), and a
+#   confirmation-gated call raises ``ApprovalRequired``.
+#
+#   The model sees the failure's text (``error_type: message``), as it would
+#   from a hand-written tool -- so an exception message carrying internals
+#   (paths, connection strings) reaches the model and its logs. Raise
+#   model-safe messages from handlers, or use ``"raise"``.
+# - ``"raise"`` -- the cross-framework default contract: the
+#   :class:`~agent_gantry.integrations.frameworks.base.ToolExecutionError`
+#   family propagates and ends the run.
+# ``ErrorMode`` / ``ErrorFormatter`` and the failure-text helpers are shared by
+# every first-class adapter; see :mod:`agent_gantry.integrations.frameworks.native`.
 
 logger = logging.getLogger(__name__)
 
@@ -91,13 +92,6 @@ _INSTALL_HINT = (
     "Pydantic AI support requires `pydantic-ai` (2.x). Install it with "
     "`pip install 'agent-gantry[pydantic-ai]'` (or `uv add 'agent-gantry[pydantic-ai]'`)."
 )
-
-#: Executor ``error_type`` values the model can fix by changing its call.
-_MODEL_CORRECTABLE_ERRORS = frozenset({"ValidationError", "ToolNotFound"})
-
-#: Longest failure text shown to the model. Exception messages can carry
-#: stack-like detail or echoed payloads; the head is what the model needs.
-_MAX_ERROR_CHARS = 2000
 
 #: Key under ``ToolDefinition.metadata`` carrying Gantry's identity for a tool.
 METADATA_KEY = "agent_gantry"
@@ -110,29 +104,6 @@ def registry_token(gantry: AgentGantry) -> str:
     ``AgentGantry`` whose deferred toolset sits on the same agent.
     """
     return f"{id(gantry):x}"
-
-
-def check_error_mode(error_mode: str) -> ErrorMode:
-    """Validate an ``error_mode`` value early, at construction time."""
-    if error_mode not in ("model", "raise"):
-        raise ValueError(f"error_mode must be 'model' or 'raise', not {error_mode!r}")
-    return error_mode  # type: ignore[return-value]
-
-
-def _otel_ids() -> tuple[str | None, str | None]:
-    """The active OpenTelemetry span's trace/span ids, when one is recording.
-
-    Pydantic AI opens a span per tool call when instrumented; passing its ids
-    to ``gantry.execute`` puts Gantry's execution telemetry on the same trace.
-    """
-    try:
-        from opentelemetry import trace
-    except ImportError:
-        return None, None
-    span_context = trace.get_current_span().get_span_context()
-    if not span_context.is_valid:
-        return None, None
-    return format(span_context.trace_id, "032x"), format(span_context.span_id, "016x")
 
 
 def invocation_context(ctx: Any) -> ToolInvocationContext:
@@ -168,43 +139,6 @@ def current_run_context() -> Any:
     if invocation is None or invocation.framework != FRAMEWORK_NAME:
         return None
     return invocation.native_context
-
-
-def _capped(message: str) -> str:
-    if len(message) <= _MAX_ERROR_CHARS:
-        return message
-    return message[:_MAX_ERROR_CHARS] + " ... [truncated]"
-
-
-def _formatted(exc: ToolExecutionError, formatter: ErrorFormatter) -> str:
-    try:
-        return _capped(str(formatter(exc)))
-    except Exception:
-        logger.warning(
-            "Pydantic AI error_formatter raised; sending a generic failure message "
-            "to the model instead.",
-            exc_info=True,
-        )
-        return f"{exc.error_type or 'ToolError'}: the tool call failed."
-
-
-def failure_text(exc: ToolExecutionError, formatter: ErrorFormatter | None = None) -> str:
-    """The model-facing text for a failed execution (``error_type: message``, capped).
-
-    With ``formatter``, its output replaces the default text (see :data:`ErrorFormatter`).
-    """
-    if formatter is not None:
-        return _formatted(exc, formatter)
-    message = exc.error or "tool execution failed (no error message)"
-    if isinstance(exc, ToolPermissionDeniedError):
-        message = f"Permission denied: {message}"
-    elif (
-        exc.error_type
-        and exc.error_type not in message
-        and (exc.error_type not in _MODEL_CORRECTABLE_ERRORS)
-    ):
-        message = f"{exc.error_type}: {message}"
-    return _capped(message)
 
 
 def to_pydantic_ai_exception(

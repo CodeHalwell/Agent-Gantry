@@ -1,32 +1,26 @@
 """OpenAI Agents SDK + Agent-Gantry integration example.
 
-Demonstrates the tiers `OpenAIAgentsAdapter` exposes:
+Walks through each way Gantry plugs into the OpenAI Agents SDK:
 
-1. **Static tier** — ``OpenAIAgentsAdapter.select(query, limit=...)`` runs
-   semantic retrieval once and wraps the result as native
-   ``agents.FunctionTool`` objects, ready to hand to ``Agent(tools=[...])``.
-2. **Dynamic tier** — the SDK reads ``agent.tools`` fresh on every turn, so
-   Gantry can re-select mid-conversation via two complementary primitives:
+1. **Static tools** -- ``adapter.select(query)`` selects once and returns native
+   ``agents.FunctionTool`` objects for ``Agent(tools=[...])``.
+2. **Per-turn selection** -- ``adapter.dynamic_tools()`` gives the agent the
+   catalogue gated by ``FunctionTool.is_enabled``. After the CRM lookup returns,
+   the email tool appears mid-run because the next selection reads the output.
+3. **Readable errors** -- a failing tool returns ``Error: ...`` to the model
+   instead of ending the run.
+4. **Approval** -- a ``requires_confirmation`` tool pauses the run with
+   ``result.interruptions``; approving it executes it exactly once.
+5. **Run context** -- a Gantry tool reads ``Runner.run(context=...)`` through
+   ``current_run_context()``.
 
-   - ``OpenAIAgentsAdapter.refresh(agent, query_or_input)`` re-selects tools
-     for the given text/messages and rewrites ``agent.tools`` in place —
-     usable standalone, no LLM call required.
-   - ``OpenAIAgentsAdapter.run_hooks(agent)`` builds ``agents.RunHooks`` that
-     perform that same refresh automatically before every model call
-     (``on_llm_start``), giving intra-run, per-turn dynamism with zero
-     application code between turns.
+Everything runs **offline**: the SDK's own ``agents.testing.ScriptedModel``
+scripts the model's tool calls, so no API key is needed. Swap in a real model
+(drop ``model=...``) to use it for real.
 
-Building tools, refreshing ``agent.tools``, and constructing hooks all run
-**without any API key** — only the very last step (actually calling
-``agents.Runner.run`` against a real model) needs one, so that step is gated
-behind ``OPENAI_API_KEY``.
+Install (in its own environment; it cannot share one with CrewAI):
 
-The OpenAI Agents SDK is intentionally NOT part of any Agent-Gantry project
-extra (see the comment block in ``pyproject.toml`` below the ``agent-frameworks`` extra — it
-can't co-resolve with the combined ``agent-frameworks`` extra). Install it
-standalone:
-
-    pip install agent-gantry openai-agents
+    pip install 'agent-gantry[openai-agents]'
 
 Run:
 
@@ -36,108 +30,129 @@ Run:
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 
 from agent_gantry import AgentGantry
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 
+os.environ.setdefault("OPENAI_AGENTS_DISABLE_TRACING", "1")
+
 
 def build_gantry() -> AgentGantry:
     gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
 
-    @gantry.register(
-        tags=["weather"],
-        examples=[
-            "what's the weather in London",
-            "is it raining in Leeds",
-        ],
-    )
+    @gantry.register(tags=["weather"], examples=["what's the weather in London"])
     def get_weather(city: str) -> str:
-        """Get the current weather for a city."""
+        """Get the current weather forecast for a city."""
         return f"It is 21C and sunny in {city}."
 
-    @gantry.register(
-        tags=["email"],
-        examples=[
-            "email the team about the delay",
-            "send a message to Sam",
-        ],
-    )
-    def send_email(to: str, body: str = "") -> str:
-        """Compose and send an email message to a recipient."""
+    @gantry.register(tags=["crm"], examples=["find the customer record for Jo"])
+    def lookup_customer(name: str) -> str:
+        """Look up a customer record by name."""
+        return f"Customer {name} found. Next step: send an email message to jo@example.com"
+
+    @gantry.register(tags=["email"], examples=["email the team"], requires_confirmation=True)
+    def send_email(to: str) -> str:
+        """Send an email message to a recipient."""
         return f"Email sent to {to}."
 
-    @gantry.register(
-        tags=["finance"],
-        examples=[
-            "how much is 50 euros in pounds",
-            "convert 100 dollars to yen",
-        ],
-    )
-    def convert_currency(amount: float, frm: str, to: str) -> str:
-        """Convert an amount of money from one currency to another."""
-        return f"{amount} {frm} = {amount * 1.1:.2f} {to}"
+    @gantry.register(tags=["math"], examples=["divide 10 by 2"])
+    def divide(a: int, b: int) -> float:
+        """Divide integer a by integer b."""
+        return a / b
+
+    @gantry.register(tags=["identity"], examples=["who am I signed in as"])
+    def whoami() -> str:
+        """Return the name of the signed-in user."""
+        from agent_gantry.openai_agents import current_run_context
+
+        ctx = current_run_context()
+        return f"You are signed in as {ctx.context['user']}." if ctx else "Unknown user."
 
     return gantry
+
+
+def scripted(*steps):
+    """A ScriptedModel issuing ``steps`` of tool calls, then a final answer."""
+    from agents.testing import ScriptedModel, assistant_message, function_call
+
+    turns = [
+        [function_call(name, args, call_id=f"call_{i}_{j}") for j, (name, args) in enumerate(step)]
+        for i, step in enumerate(steps)
+    ]
+    return ScriptedModel([*turns, [assistant_message("done")]])
+
+
+def outputs(result) -> list[str]:
+    return [i.output for i in result.new_items if type(i).__name__ == "ToolCallOutputItem"]
 
 
 async def main() -> None:
     gantry = build_gantry()
     try:
         await gantry.sync()
-
         try:
-            from agents import Agent
+            from agents import Agent, Runner
+            from agents.testing import ScriptedModel  # noqa: F401  (SDK >= 0.21)
         except ImportError as exc:
             print(
-                f"The OpenAI Agents SDK is not installed ({exc}).\n"
-                "Install it with `pip install openai-agents` to run this example."
+                f"The OpenAI Agents SDK tools demo needs openai-agents>=0.23.1 ({exc}).\n"
+                "Install it with `pip install 'agent-gantry[openai-agents]'`."
             )
             return
 
-
         adapter = gantry.framework("openai_agents")
 
-        # --- 1. Static tier: select once, get native agents.FunctionTool -------- #
-        query = "what's the weather in Paris?"
-        static_tools = await adapter.select(query, limit=2)
-        print(f"[static] selected {len(static_tools)} tool(s) for {query!r}:")
-        for tool in static_tools:
-            print(f"  - {tool.name}: {tool.description}")
-
-        result = await static_tools[0].on_invoke_tool(None, json.dumps({"city": "Paris"}))
-        print(f"[static] direct on_invoke_tool call: {result}\n")
-
-        # --- 2. Dynamic tier: refresh + hooks re-select as the turn changes ----- #
-        agent = Agent(name="assistant", tools=[])
-
-        weather_tools = await adapter.refresh(
-            agent, "what's the weather in Tokyo?", limit=1
+        # 1. Static tools ---------------------------------------------------- #
+        tools = await adapter.select("what's the weather in Paris?", limit=1)
+        print(f"[static] selected tool(s): {[t.name for t in tools]}")
+        result = await Runner.run(
+            Agent(name="a", model=scripted([("get_weather", {"city": "Paris"})]), tools=tools),
+            "what's the weather in Paris?",
         )
-        print(f"[dynamic] weather turn -> agent.tools = {[t.name for t in weather_tools]}")
+        print(f"[static] {outputs(result)[0]}\n")
 
-        email_tools = await adapter.refresh(
-            agent, "send an email to my manager", limit=1
+        # 2. Per-turn selection ---------------------------------------------- #
+        dynamic = await adapter.dynamic_tools(limit=1)
+        model = scripted([("lookup_customer", {"name": "Jo"})])
+        await Runner.run(
+            Agent(name="a", model=model, tools=dynamic), "find the customer record for Jo"
         )
-        print(f"[dynamic] email turn   -> agent.tools = {[t.name for t in email_tools]}")
+        offered = [[t.name for t in call.tools] for call in model.calls]
+        print(f"[per-turn] tools offered at turn 1: {offered[0]}")
+        print(f"[per-turn] tools offered at turn 2: {offered[1]}  <- after the lookup output\n")
 
-        # RunHooks apply that same refresh automatically before every model call —
-        # build it here to show it's ready to hand to Runner.run(..., hooks=...).
-        hooks = adapter.run_hooks(agent, limit=1)
-        print(f"[dynamic] built {type(hooks).__name__} for intra-run per-turn re-selection\n")
+        # 3. Readable errors --------------------------------------------------- #
+        model = scripted([("divide", {"a": 1, "b": 0})])
+        result = await Runner.run(Agent(name="a", model=model, tools=dynamic), "divide 1 by 0")
+        print(f"[errors] the model sees: {outputs(result)[0]!r}\n")
 
-        # --- 3. Optional: an actual model run (needs a real LLM) ---------------- #
-        if os.environ.get("OPENAI_API_KEY"):
-            run_agent = Agent(name="assistant", tools=[])
-            # GantryAgentSession re-selects agent.tools before each run() call and
-            # installs the run_hooks above for intra-run dynamism.
-            session = adapter.session(run_agent, limit=2)
-            print("[live] running the OpenAI Agents SDK with Gantry-selected tools...")
-            run_result = await session.run(query)
-            print(f"[live] final_output: {run_result.final_output}")
-        else:
-            print("(Set OPENAI_API_KEY to also run a live agents.Runner.run(...) turn.)")
+        # 4. Approval ---------------------------------------------------------- #
+        agent = Agent(
+            name="a",
+            model=scripted([("send_email", {"to": "jo@example.com"})]),
+            tools=await adapter.select("send an email message", limit=1),
+        )
+        paused = await Runner.run(agent, "send an email message to Jo")
+        print(f"[approval] run paused for: {[i.name for i in paused.interruptions]}")
+        state = paused.to_state()
+        state.approve(paused.interruptions[0])
+        resumed = await Runner.run(agent, state)
+        print(f"[approval] approved -> {outputs(resumed)[-1]}\n")
+
+        # 5. Run context ------------------------------------------------------- #
+        tools = await adapter.select("who am I signed in as", limit=1)
+        result = await Runner.run(
+            Agent(name="a", model=scripted([("whoami", {})]), tools=tools),
+            "who am I?",
+            context={"user": "Dan"},
+        )
+        print(f"[context] {outputs(result)[0]}")
+
+        print(
+            "\nEvery tool call above went through gantry.execute, so the security "
+            "policy, retries, timeouts and circuit breakers all applied."
+        )
     finally:
         await gantry.close()
 
