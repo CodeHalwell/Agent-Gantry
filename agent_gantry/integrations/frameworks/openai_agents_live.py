@@ -71,17 +71,31 @@ Usage
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import weakref
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.integrations.frameworks.base import (
     DEFAULT_TOOL_LIMIT,
     GantryToolset,
     QueryBoundsError,
+    ToolSpec,
+    _with_native_names,
     check_query_bounds,
+    spec_from_tool,
 )
 from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
-from agent_gantry.integrations.frameworks.openai_agents import _spec_to_openai_agents
+from agent_gantry.integrations.frameworks.native import (
+    MAX_TOOL_RESULT_QUERY_CHARS,
+    ErrorFormatter,
+    ErrorMode,
+    carry_over,
+)
+from agent_gantry.integrations.frameworks.openai_agents import (
+    _INSTALL_HINT,
+    _spec_to_openai_agents,
+)
 from agent_gantry.query import latest_activity
 
 if TYPE_CHECKING:
@@ -89,10 +103,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_PIP_HINT = (
-    "The OpenAI Agents SDK is required for the live (per-turn) Gantry provider; "
-    "install it with `pip install openai-agents` (or `uv add openai-agents`)."
-)
+_PIP_HINT = _INSTALL_HINT
 
 
 def _require_agents() -> Any:
@@ -411,3 +422,239 @@ async def _run_with_gantry(
 
 
 __all__ = ["GantryAgentSession"]
+
+
+# --------------------------------------------------------------------------- #
+# Per-turn selection through ``FunctionTool.is_enabled``
+# --------------------------------------------------------------------------- #
+
+
+def _text_of(content: Any) -> str:
+    """Plain text of a Responses-style message ``content`` (str or parts list)."""
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, (list, tuple)):
+        parts = []
+        for part in content:
+            if isinstance(part, dict):
+                text = part.get("text")
+                if isinstance(text, str) and text.strip():
+                    parts.append(text.strip())
+            elif isinstance(part, str) and part.strip():
+                parts.append(part.strip())
+        return " ".join(parts)
+    return ""
+
+
+def _latest_user_text(turn_input: Any) -> str:
+    """The newest user message in a run's ``turn_input``."""
+    if isinstance(turn_input, str):
+        return turn_input.strip()
+    try:
+        items = list(turn_input or [])
+    except TypeError:
+        return ""
+    for item in reversed(items):
+        role = item.get("role") if isinstance(item, dict) else getattr(item, "role", None)
+        if role != "user":
+            continue
+        content = item.get("content") if isinstance(item, dict) else getattr(item, "content", None)
+        text = _text_of(content)
+        if text:
+            return text
+    return ""
+
+
+def _called_tools(turn_input: Any) -> list[str]:
+    """Names of function calls already present in the run's input history."""
+    names: dict[str, None] = {}
+    try:
+        items = list(turn_input or [])
+    except TypeError:
+        return []
+    for item in items:
+        if isinstance(item, dict) and item.get("type") == "function_call":
+            name = item.get("name")
+            if isinstance(name, str):
+                names[name] = None
+    return list(names)
+
+
+class _RunState:
+    """One run's selection state (cache, sticky surface, newest tool output)."""
+
+    def __init__(self) -> None:
+        self.lock = asyncio.Lock()
+        self.cache: dict[tuple[str, tuple[str, ...]], list[ToolSpec]] = {}
+        self.offered: dict[str, ToolSpec] = {}
+        self.last_selected: dict[str, int] = {}
+        self.step = 0
+        self.turn_key: tuple[Any, ...] | None = None
+        self.enabled: frozenset[str] = frozenset()
+        self.last_output = ""
+        self.outputs = 0
+        self.called: list[str] = []
+
+
+_MAX_CACHED_SELECTIONS = 32
+
+
+class GantryDynamicTools:
+    """Per-turn Gantry selection for the OpenAI Agents SDK via ``is_enabled``.
+
+    Built by :meth:`OpenAIAgentsAdapter.dynamic_tools`. :meth:`build` returns
+    the catalogue as ``FunctionTool`` objects whose ``is_enabled`` callbacks all
+    consult this selector. The SDK evaluates them at the start of every turn
+    with the run's ``RunContextWrapper``; the first evaluation in a turn runs one
+    Gantry selection (cached per query within the run) and the rest reuse it.
+
+    The selection query is the newest user message in ``turn_input``, or --
+    after a Gantry tool call in this run -- that message plus the tool's output
+    (first 2,000 characters), recorded by the tool itself. Run state is keyed
+    to the run's ``usage`` object, which the SDK shares between a run's
+    ``RunContextWrapper`` and every ``ToolContext`` in it, and is released with
+    the run, so concurrent runs of one agent never see each other's state.
+    """
+
+    def __init__(
+        self,
+        gantry: AgentGantry,
+        *,
+        limit: int = DEFAULT_TOOL_LIMIT,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
+        error_mode: ErrorMode = "model",
+        error_formatter: ErrorFormatter | None = None,
+        sticky: bool = True,
+        max_offered: int | None = None,
+        query_from_results: bool = True,
+    ) -> None:
+        check_query_bounds(limit=limit, score_threshold=score_threshold, owner="GantryDynamicTools")
+        if max_offered is not None and max_offered < 1:
+            raise ValueError("max_offered must be >= 1")
+        self._gantry = gantry
+        self._selector = GantryToolset(gantry)
+        self._limit = limit
+        self._score_threshold = score_threshold
+        self._namespaces = namespaces
+        self._required = required
+        self._always_include = always_include
+        self._error_mode = error_mode
+        self._error_formatter = error_formatter
+        self._sticky = sticky
+        self._max_offered = 3 * limit if max_offered is None else max_offered
+        self._query_from_results = query_from_results
+        self._states: dict[int, tuple[weakref.ref[Any], _RunState]] = {}
+
+    async def build(self) -> list[Any]:
+        """The catalogue (in-scope registry tools) as gated ``FunctionTool``s."""
+        _require_agents()
+        try:
+            await self._gantry.ensure_synced()
+        except Exception:
+            logger.warning(
+                "GantryDynamicTools: sync failed; building from the tools already registered.",
+                exc_info=True,
+            )
+        tools = [
+            t
+            for t in self._gantry.list_tools_sync()
+            if not self._namespaces or t.namespace in self._namespaces
+        ]
+        specs = _with_native_names(self._gantry, [spec_from_tool(self._gantry, t) for t in tools])
+        return [
+            _spec_to_openai_agents(
+                spec,
+                error_mode=self._error_mode,
+                error_formatter=self._error_formatter,
+                is_enabled=self._gate(spec.native_name),
+                on_output=self._record_output,
+            )
+            for spec in specs
+        ]
+
+    # -- per-run state ---------------------------------------------------- #
+    def _state(self, ctx: Any) -> _RunState:
+        anchor = getattr(ctx, "usage", None)
+        if anchor is None:  # pragma: no cover - every SDK context has usage
+            anchor = ctx
+        key = id(anchor)
+        entry = self._states.get(key)
+        if entry is not None and entry[0]() is anchor:
+            return entry[1]
+        state = _RunState()
+        states = self._states
+
+        def _drop(_ref: Any, key: int = key) -> None:
+            states.pop(key, None)
+
+        self._states[key] = (weakref.ref(anchor, _drop), state)
+        return state
+
+    def _record_output(self, ctx: Any, name: str, text: str) -> None:
+        state = self._state(ctx)
+        state.last_output = text[:MAX_TOOL_RESULT_QUERY_CHARS]
+        state.outputs += 1
+        state.called.append(name)
+
+    # -- selection -------------------------------------------------------- #
+    def _gate(self, name: str) -> Any:
+        async def is_enabled(ctx: Any, agent: Any) -> bool:
+            return name in await self._enabled(ctx)
+
+        is_enabled.__name__ = f"gantry_enabled_{name}"
+        return is_enabled
+
+    async def _enabled(self, ctx: Any) -> frozenset[str]:
+        state = self._state(ctx)
+        turn_input = getattr(ctx, "turn_input", None)
+        prompt = _latest_user_text(turn_input)
+        query = prompt
+        if self._query_from_results and state.last_output:
+            query = f"{prompt}\n{state.last_output}".strip()
+        used = tuple(dict.fromkeys([*_called_tools(turn_input), *state.called]))
+        turn_key = (query, used, state.outputs)
+        if state.turn_key == turn_key:
+            return state.enabled
+        async with state.lock:
+            if state.turn_key == turn_key:
+                return state.enabled
+            specs = await self._select(state, query, used)
+            if self._sticky:
+                state.step += 1
+                specs = carry_over(
+                    state.offered, state.last_selected, state.step, specs, self._max_offered
+                )
+            state.enabled = frozenset(spec.native_name for spec in specs)
+            state.turn_key = turn_key
+            return state.enabled
+
+    async def _select(self, state: _RunState, query: str, used: tuple[str, ...]) -> list[ToolSpec]:
+        key = (query, used)
+        if key in state.cache:
+            return state.cache[key]
+        try:
+            specs = await self._selector.select_or_empty(
+                query,
+                limit=self._limit,
+                score_threshold=self._score_threshold,
+                namespaces=self._namespaces,
+                tools_already_used=list(used),
+                required=self._required,
+                always_include=self._always_include,
+            )
+        except (MissingRequiredToolError, QueryBoundsError):
+            raise
+        except Exception:
+            logger.warning(
+                "GantryDynamicTools: semantic retrieval failed; offering this run's "
+                "previously offered tools (if any) this turn.",
+                exc_info=True,
+            )
+            return []
+        if len(state.cache) >= _MAX_CACHED_SELECTIONS:
+            state.cache.pop(next(iter(state.cache)))
+        state.cache[key] = specs
+        return specs

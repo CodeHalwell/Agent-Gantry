@@ -146,13 +146,23 @@ jobs:
       - name: Run adapter smoke tests
         run: |
           uv venv .venv-frameworks --python ${{ matrix.python-version }}
-          uv pip install --python .venv-frameworks ".[dev,pydantic-ai]" \
-            openai-agents haystack-ai agno "strands-agents>=1" "dspy<3.5"
+          uv pip install --python .venv-frameworks ".[dev,pydantic-ai,openai-agents]" \
+            haystack-ai agno "strands-agents>=1" "dspy<3.5"
           .venv-frameworks/bin/python -m pytest tests/frameworks/ -v
 
       # Pydantic AI is first-class with a declared floor (the `pydantic-ai`
       # extra, >=2.0.0). Re-run its tests on exactly the floor so a change
       # that needs a newer release is caught here, not by users. One cell.
+      # Same for the OpenAI Agents SDK (`openai-agents` extra, >=0.23.1).
+      - name: OpenAI Agents SDK floor (0.23.1)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: |
+          uv venv .venv-openai-agents-floor --python ${{ matrix.python-version }}
+          uv pip install --python .venv-openai-agents-floor ".[dev]" "openai-agents==0.23.1"
+          .venv-openai-agents-floor/bin/python -m pytest \
+            tests/frameworks/test_openai_agents.py tests/frameworks/test_openai_agents_live.py \
+            tests/frameworks/test_openai_agents_native.py -v
+
       - name: Pydantic AI floor (2.0.0)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         run: |

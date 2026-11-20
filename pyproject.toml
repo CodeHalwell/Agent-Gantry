@@ -272,6 +272,22 @@ agent-frameworks = [
 pydantic-ai = [
     "pydantic-ai-slim>=2.0.0",
 ]
+# OpenAI Agents SDK, first-class since 0.22.0 (see CHANGELOG). Floor 0.23.1:
+# the adapter uses FunctionTool.needs_approval / is_enabled, ToolContext and
+# RunState approvals (all present from 0.21), but per-turn selection through
+# is_enabled needs RunContextWrapper.turn_input to be populated before the
+# first is_enabled evaluation of a run, which 0.21.x-0.22.x did not do
+# (verified 2026-11-20 against 0.21.0-0.25.0). Older SDKs that other extras
+# pull in transitively (0.4.2 in the agent-frameworks env) still work for
+# static tools: the adapter feature-detects FunctionTool's fields. Part of
+# Deliberately NOT part of `all` or `agent-frameworks`: openai-agents>=0.23
+# requires openai>=3, while crewai (in agent-frameworks) pins openai<3, so the
+# two cannot share an environment. Declared as conflicting under [tool.uv]
+# so the universal lock resolves each side separately. The framework-adapters
+# CI job installs this extra and re-runs its tests on exactly 0.23.1.
+openai-agents = [
+    "openai-agents>=0.23.1",
+]
 example-tools = [
     "beautifulsoup4>=4.12.0",
     "cryptography>=41.0.0",
@@ -522,6 +538,12 @@ timeout_method = "thread"
 
 [tool.uv]
 prerelease = "if-necessary-or-explicit"
+# openai-agents>=0.23 needs openai>=3; crewai (agent-frameworks, and so all)
+# pins openai<3. Mutually exclusive extras, resolved separately in uv.lock.
+conflicts = [
+    [{ extra = "openai-agents" }, { extra = "agent-frameworks" }],
+    [{ extra = "openai-agents" }, { extra = "all" }],
+]
 # Force an onnxruntime version that ships cp310 wheels. onnxruntime >=1.24.0
 # dropped Python 3.10 support (only cp311/cp312/cp313 wheels are published),
 # but the resolver still picks it because the sdist metadata advertises

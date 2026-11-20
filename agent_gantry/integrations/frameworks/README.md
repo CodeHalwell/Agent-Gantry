@@ -41,7 +41,7 @@ Install Gantry plus just the SDK you need:
 | `llamaindex` | `pip install agent-gantry llama-index-core` | `FunctionAgent(tool_retriever=adapter.live())` |
 | `crewai` | `pip install agent-gantry crewai` | `Agent(..., tools=await adapter.select(query))` |
 | `pydantic_ai` | `pip install 'agent-gantry[pydantic-ai]'` | `Agent(model, capabilities=[adapter.capability()])` — see [Pydantic AI](#pydantic-ai-first-class) |
-| `openai_agents` | `pip install agent-gantry openai-agents` | `Agent(..., tools=await adapter.select(query))` |
+| `openai_agents` | `pip install 'agent-gantry[openai-agents]'` | `Agent(..., tools=await adapter.dynamic_tools())` — see [OpenAI Agents SDK](#openai-agents-sdk-first-class) |
 | `haystack` | `pip install agent-gantry haystack-ai` | `Agent(..., tools=await adapter.select(query))` |
 | `agno` | `pip install agent-gantry agno` | `Agent(..., tools=await adapter.select(query))` |
 | `google_adk` | `pip install agent-gantry google-adk` | `Agent(..., before_model_callback=adapter.live())` |
@@ -349,7 +349,7 @@ these — the framework is only required when you use its provider).
 | Google ADK | `GoogleADKAdapter(gantry).before_model_callback()` / `.agent()` | `Agent(before_model_callback=…)` |
 | Strands Agents | `StrandsAdapter(gantry).tool_hook()` / `.agent()` | `Agent(hooks=[…])` — `BeforeModelCallEvent` |
 | LangGraph | `LangGraphAdapter(gantry).react_agent(model)` / `.areact_agent(model)` / `.select_for_state(state)` | dynamic `model` callable (re-binds tools per turn) |
-| OpenAI Agents SDK | `OpenAIAgentsAdapter(gantry).run(agent, run_input)` / `.session(agent)` / `.run_hooks(agent)` | `RunHooks.on_llm_start` + per-run refresh |
+| OpenAI Agents SDK | `OpenAIAgentsAdapter(gantry).dynamic_tools()` (recommended) / `.run(agent, run_input)` / `.session(agent)` / `.run_hooks(agent)` | `FunctionTool.is_enabled` per turn; `RunHooks.on_llm_start` + per-run refresh |
 
 ```python
 from agent_gantry.llamaindex import LlamaIndexAdapter
@@ -457,6 +457,61 @@ backend), the active tool span's trace and span ids become the `ToolCall`'s
 `trace_id`/`parent_span_id`, so Gantry's execution telemetry joins the agent's
 trace.
 
+## OpenAI Agents SDK (first-class)
+
+`pip install 'agent-gantry[openai-agents]'` (pins `openai-agents>=0.23.1`; CI
+runs the adapter tests on 0.23.1 and on the latest release). The extra cannot
+share an environment with `agent-frameworks`: `openai-agents>=0.23` needs
+`openai>=3` while CrewAI pins `openai<3`. Older SDKs that arrive transitively
+still work for static tools (the adapter feature-detects `FunctionTool`).
+
+| Mode | Build | Use when |
+|---|---|---|
+| Per-turn (recommended) | `tools = await adapter.dynamic_tools(limit=5)` → `Agent(tools=tools)` | Most agents; Gantry picks each turn's tools |
+| Static slice | `await adapter.select(query)` → `Agent(tools=...)` | Fixed task, one selection |
+| Per-run helpers | `adapter.session(agent)` / `.run(agent, input)` / `.run_hooks(agent)` | Earlier API; rewrites `agent.tools`, so one run at a time per agent |
+
+**Per-turn selection.** `dynamic_tools()` returns the catalogue as
+`FunctionTool`s whose `is_enabled` callbacks share one selector. At the start
+of each turn the SDK asks every tool whether it is enabled; the first answer in
+a turn runs one Gantry selection and the rest reuse it. The query is the newest
+user message in the run's `turn_input`, or after a Gantry tool call that message
+plus the tool's output (first 2,000 characters; `query_from_results=False`
+keeps tool output out of retrieval). Selections are cached per run, tools stay
+offered for the rest of the run (`sticky=True`, capped by `max_offered`,
+default `3 * limit`), and state is keyed to the run (the SDK shares one `usage`
+object between a run's context and its tool contexts), so concurrent runs of
+one agent are independent and `agent.tools` is never rewritten. Tools
+registered after `dynamic_tools()` is called are not in the catalogue; call it
+again to pick them up.
+
+**Errors and approval.** Failures reach the model as tool output (see the
+[error-handling policy](#error-handling-policy)). Gantry's confirmation gate
+(the tool's `requires_confirmation` flag or a `SecurityPolicy` pattern, as
+reported by `AgentGantry.requires_confirmation()`) sets the SDK's
+`needs_approval`, so the run pauses with `result.interruptions`:
+
+```python
+result = await Runner.run(agent, "refund order 4471")
+if result.interruptions:
+    state = result.to_state()
+    for item in result.interruptions:
+        state.approve(item)          # or state.reject(item)
+    result = await Runner.run(agent, state)
+```
+
+The approved call runs once through `gantry.execute` with only the confirmation
+gate cleared. `OpenAIAgentsAdapter(gantry, error_formatter=fn)` rewrites
+failure text before the model sees it; `error_mode="raise"` opts out of both
+behaviours.
+
+**Run context and tracing.** Gantry handlers read the call's `ToolContext`
+(`context`, `tool_call_id`, `tool_name`) with
+`agent_gantry.openai_agents.current_run_context()` or
+`agent_gantry.current_tool_invocation()`. When the SDK is tracing, its current
+span becomes the `ToolCall`'s `trace_id`/`parent_span_id`; otherwise an active
+OpenTelemetry span is used.
+
 ## Shared base
 
 `base.py` provides `GantryToolset` (selection, including the `required`/
@@ -514,7 +569,7 @@ policy refused it outright). Both are re-exported from
 `agent_gantry.integrations.frameworks`; catching `ToolExecutionError` still
 catches every outcome.
 
-**Every native adapter except Pydantic AI lets this propagate uncaught** from the
+**Every native adapter except Pydantic AI and the OpenAI Agents SDK lets this propagate uncaught** from the
 native tool object's own invocation entry point (`.func`, `._run`, `.forward`,
 `.entrypoint`, `.method`, `.on_invoke_tool`, …) — proven for all of them,
 including the sync wrappers, by
@@ -541,6 +596,19 @@ characters.
 `error_mode="raise"` (on the adapter, `select`, `toolset`, `capability`, …)
 restores the raise contract above. Locked by the `native_tool_failed` case
 of the conformance matrix and `tests/frameworks/test_pydantic_ai.py`.
+
+**The OpenAI Agents SDK is the other.** The SDK has no retry exception, and
+an exception from a raw `FunctionTool` ends the run with `UserError` (its
+default error handler, used for decorated tools, hides the reason from the
+model). So by default (`error_mode="model"`) a failure is returned as the
+tool's output, `Error: <error_type>: <message>` (capped, rewritten by
+`error_formatter` when set), which the model reads and can act on, including
+correcting bad arguments. Confirmation-gated calls never get that far: the
+SDK's `needs_approval` pauses the run first (see the section above). A call
+stopped by a custom policy the pre-check could not predict is reported as
+not run. `error_mode="raise"` restores the raise contract. Locked by the
+`native_tool_output` case of the conformance matrix and
+`tests/frameworks/test_openai_agents_native.py`.
 
 Three deliberate deviations exist **one layer deeper** than `convert()`/
 `select()` — i.e. not in the wrapper this repo builds, but in a framework's
@@ -612,7 +680,7 @@ asserting no exception + a `WARNING` log record).
 | LlamaIndex | Raises `ToolExecutionError` | Degrades to no tools this step (stateless) + `WARNING` |
 | CrewAI | Raises `ToolExecutionError` | *(per-call — see above)* |
 | Pydantic AI | **Deviation:** `ModelRetry` / `ToolFailed` / `ApprovalRequired` (native), chained from `ToolExecutionError`; `error_mode="raise"` restores raising | Degrades to this run's earlier tools (per-run state) + `WARNING` |
-| OpenAI Agents SDK | Raises `ToolExecutionError` | Degrades to previous turn's `agent.tools` (stateful) + `WARNING` |
+| OpenAI Agents SDK | **Deviation:** returned to the model as `Error: ...` tool output; `error_mode="raise"` restores raising | `dynamic_tools`: degrades to this run's earlier tools (per-run state) + `WARNING`; `session`/`run_hooks`: previous turn's `agent.tools` + `WARNING` |
 | Haystack | Raises `ToolExecutionError` | *(per-call — see above)* |
 | Agno | Raises `ToolExecutionError` | *(per-call — see above)* |
 | Google ADK | Raises `ToolExecutionError` | Degrades to no tools this turn (stateless) + `WARNING` — the original precedent |

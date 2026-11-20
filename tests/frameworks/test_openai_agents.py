@@ -32,7 +32,11 @@ class _FakeFunctionTool:
         # Mirrors the real dataclass field, which defaults to True (verified
         # against openai-agents 0.22.0).
         strict_json_schema=True,
+        is_enabled=True,
+        needs_approval=False,
     ):
+        self.is_enabled = is_enabled
+        self.needs_approval = needs_approval
         self.name = name
         self.description = description
         self.params_json_schema = params_json_schema
@@ -112,7 +116,7 @@ async def test_missing_openai_agents_raises_helpful_error(monkeypatch, gantry):
     from agent_gantry.integrations.frameworks.openai_agents import OpenAIAgentsAdapter
 
     specs = await GantryToolset(gantry).select("send an email", limit=1)
-    with pytest.raises(ImportError, match="pip install openai-agents"):
+    with pytest.raises(ImportError, match=r"agent-gantry\[openai-agents\]"):
         OpenAIAgentsAdapter.convert(specs[0])
 
 

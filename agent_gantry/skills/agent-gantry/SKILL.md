@@ -19,7 +19,7 @@ This skill is the canonical reference for using the library. Read the section th
 | LlamaIndex | `LlamaIndexAdapter(gantry).select(...)` (static) or `.function_agent(llm)` (live) | [Native framework adapters](#native-framework-adapters) |
 | CrewAI | `CrewAIAdapter(gantry).select(...)` | [Native framework adapters](#native-framework-adapters) |
 | Pydantic AI (2.x) | `PydanticAIAdapter(gantry).capability()` (per-turn) / `.capability(mode="search")` (Gantry-backed `ToolSearch`), or `.toolset()` / `.select(...)` | [Pydantic AI](#pydantic-ai) |
-| OpenAI Agents SDK | `OpenAIAgentsAdapter(gantry).select(...)` (static) or `.run(agent, run_input)` (live) | [Native framework adapters](#native-framework-adapters) |
+| OpenAI Agents SDK (>=0.23.1) | `Agent(tools=await OpenAIAgentsAdapter(gantry).dynamic_tools())` (per-turn) or `.select(...)` (static) | [OpenAI Agents SDK](#openai-agents-sdk) |
 | Haystack | `HaystackAdapter(gantry).select(...)` | [Native framework adapters](#native-framework-adapters) |
 | Agno | `AgnoAdapter(gantry).select(...)` | [Native framework adapters](#native-framework-adapters) |
 | Strands Agents | `StrandsAdapter(gantry).select(...)` (static) or `.agent(...)` / `.tool_hook(...)` (live, per-turn) | [Native framework adapters](#native-framework-adapters) |
@@ -78,6 +78,7 @@ uv add "agent-gantry[nomic]"            # local embeddings (recommended)
 uv add "agent-gantry[openai]"           # OpenAI/Azure embeddings + custom OpenAI-compatible base_url
 uv add "agent-gantry[agent-frameworks]" # Microsoft AF, LangChain, LangGraph, CrewAI, LlamaIndex, Google ADK
 uv add "agent-gantry[pydantic-ai]"      # Pydantic AI (pydantic-ai-slim>=2.0.0)
+uv add "agent-gantry[openai-agents]"    # OpenAI Agents SDK (>=0.23.1); not with [agent-frameworks]/[all] (openai 3 vs crewai)
 uv add "agent-gantry[lancedb]"          # disk-persistent vector store
 uv add "agent-gantry[jev]"              # selection without embeddings (TypeSafe Jev)
 uv add "agent-gantry[mcp]"              # MCP client/server
@@ -330,6 +331,32 @@ async def get_balance(account: str) -> str:
 
 There is no `last_selection` on the Pydantic AI toolset; reproduce a step's selection with `await adapter.select(query, limit=...)` (same router, same pins), or spy with `gantry.on_tool_call`. In search mode, `search_tools` results appear as tool-return parts in `result.all_messages()`.
 
+## OpenAI Agents SDK
+
+Install with `uv add "agent-gantry[openai-agents]"` (pins `openai-agents>=0.23.1`; tested on 0.23.1 and the latest). It cannot share an environment with `[agent-frameworks]`/`[all]`: `openai-agents>=0.23` needs `openai>=3`, CrewAI pins `openai<3`.
+
+```python
+from agents import Agent, Runner
+from agent_gantry.openai_agents import OpenAIAgentsAdapter
+#   also: current_run_context, GantryDynamicTools; AgentGantry.requires_confirmation(tool)
+
+adapter = OpenAIAgentsAdapter(gantry)                 # error_formatter=... to redact failure text
+agent = Agent(name="assistant", tools=await adapter.dynamic_tools(limit=5))
+result = await Runner.run(agent, "refund order 4471", context=my_deps)
+if result.interruptions:                              # Gantry's confirmation gate -> needs_approval
+    state = result.to_state()
+    for item in result.interruptions:
+        state.approve(item)                           # or state.reject(item)
+    result = await Runner.run(agent, state)           # the approved call runs exactly once
+```
+
+- **Per-turn selection** (`dynamic_tools`): the catalogue as `FunctionTool`s gated by `is_enabled`. Each turn's query is the newest user message, or after a Gantry tool call that message plus the tool's output (`query_from_results=False` to keep output out of retrieval). Cached per run, sticky up to `max_offered` (default `3 * limit`), state keyed to the run, so concurrent runs are independent and `agent.tools` is never rewritten. Tools registered later need a fresh `dynamic_tools()` call.
+- **Errors**: returned to the model as tool output, `Error: <type>: <message>` (capped at 2,000 chars), so it can correct bad arguments. The SDK would otherwise end the run with `UserError`. `error_mode="raise"` restores `ToolExecutionError`.
+- **Approval**: `needs_approval` follows `gantry.requires_confirmation(tool)` (the tool's flag or a `SecurityPolicy` pattern). A custom policy that only decides at call time still blocks the call; the model is told it needs approval.
+- **Run context**: `agent_gantry.openai_agents.current_run_context()` returns the call's `ToolContext` (`.context` is what you passed to `Runner.run(context=...)`, plus `.tool_call_id`, `.tool_name`).
+- **Tracing**: the SDK's current span (when tracing) or an OpenTelemetry span becomes the `ToolCall`'s `trace_id`/`parent_span_id`.
+- The older `session` / `run` / `run_hooks` helpers rewrite `agent.tools`; use them for one run at a time per agent.
+
 ## Native framework adapters
 
 For LangChain, LangGraph, LlamaIndex, CrewAI, Pydantic AI, OpenAI Agents SDK, Haystack, Agno, Strands Agents, DSPy, and Google ADK, use the native `<Framework>Adapter` class. Its `.select(query, limit=...)` method selects the top-K relevant tools and returns the framework's **native tool objects**, with every call still routed through `gantry.execute`.
@@ -389,7 +416,7 @@ agent = LlamaIndexAdapter(gantry).function_agent(llm)   # re-selects tools each 
 | Google ADK | `GoogleADKAdapter(gantry).before_model_callback()` / `.agent(model=, name=)` | `Agent(before_model_callback=…)` |
 | Strands Agents | `StrandsAdapter(gantry).tool_hook()` / `.agent(...)` | `Agent(hooks=[…])` — `BeforeModelCallEvent` |
 | LangGraph | `LangGraphAdapter(gantry).react_agent(model)` / `.areact_agent(model)` | dynamic `model` callable (re-binds tools per turn) |
-| OpenAI Agents SDK | `OpenAIAgentsAdapter(gantry).run(agent, run_input)` / `.session(agent)` / `.run_hooks(agent)` | `RunHooks.on_llm_start` + per-run refresh |
+| OpenAI Agents SDK | `OpenAIAgentsAdapter(gantry).dynamic_tools()` (recommended) / `.run(agent, run_input)` / `.session(agent)` / `.run_hooks(agent)` | `FunctionTool.is_enabled` per turn; `RunHooks.on_llm_start` + per-run refresh |
 
 The returned live objects keep their classes, importable from the framework's `*_live` module for `isinstance` checks: `GantryToolRetriever` (`llamaindex_live`), `GantryToolset` / `GantryDeferredToolset` (`pydantic_ai_live`, also `agent_gantry.pydantic_ai`), `GantryAgentSession` (`openai_agents_live`) and `GantryStrandsToolHook` (`strands_live`). Google ADK and LangGraph return plain framework objects (a `before_model_callback` callable and a compiled agent), so there is no Gantry class to check for.
 
@@ -857,6 +884,9 @@ This catches the headline mistakes: a tool description that names another tool (
 | Pydantic AI search mode: model "can't see" a tool | Deferred tools are hidden until `search_tools` discovers them | Expected; pin must-have tools with `always_include=[...]` |
 | Pydantic AI `UserError` about a tool name conflict between two Gantry toolsets | Both toolsets selected the same tool | Give each a distinct `namespaces=` filter or `.prefixed(...)`, and a unique `id=` |
 | Pydantic AI tool calls `tool.function(...)` directly and gets a `TypeError` | Static tools take the `RunContext` first (`takes_ctx=True`) | Call `tool.function(ctx_or_None, **args)` |
+| `uv sync --all-extras` / `pip install 'agent-gantry[all,openai-agents]'` fails to resolve | `openai-agents>=0.23` needs `openai>=3`; CrewAI (in `[agent-frameworks]`/`[all]`) pins `openai<3` | Install `[openai-agents]` in its own environment |
+| OpenAI Agents run pauses with `result.interruptions` | A Gantry-gated tool (`requires_confirmation` or a `SecurityPolicy` pattern) needs approval | `state = result.to_state(); state.approve(item); await Runner.run(agent, state)` |
+| `ImportError: Per-turn Gantry selection needs openai-agents>=0.23.1` | An older SDK came in transitively | `pip install 'agent-gantry[openai-agents]'` |
 | MCP `find_relevant_tools` returns nothing (≤0.14.0) | The meta-tool inherited `ToolQuery`'s 0.5 absolute cutoff | Upgrade; the meta-tool now uses `score_threshold=0.0` like every other convenience layer |
 
 ## Persistent embedding cache

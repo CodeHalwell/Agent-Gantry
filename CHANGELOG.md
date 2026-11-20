@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+The OpenAI Agents SDK becomes a first-class integration, the second after
+Pydantic AI, using the SDK's own approval, per-turn tool enablement and run
+context. The building blocks both now share live in
+`integrations/frameworks/native.py`, ready for the remaining frameworks.
+
+**Behaviour change (OpenAI Agents SDK only).** A failed Gantry execution no
+longer ends the run with `UserError`: it is returned to the model as the
+tool's output (`Error: <type>: <message>`, capped at 2,000 characters), so the
+model can correct bad arguments or adapt. Confirmation-gated tools now set the
+SDK's `needs_approval`, so the run pauses with `result.interruptions` instead
+of failing. Pass `error_mode="raise"` to `OpenAIAgentsAdapter` to keep the
+previous behaviour.
+
+### Added
+
+- `openai-agents` extra (`pip install 'agent-gantry[openai-agents]'`, pinning
+  `openai-agents>=0.23.1`). It is not part of `all`: `openai-agents>=0.23`
+  needs `openai>=3` while CrewAI pins `openai<3`, so the two are declared as
+  conflicting extras and resolve separately in `uv.lock`. CI runs the adapter
+  tests on the latest release and on exactly 0.23.1.
+- `OpenAIAgentsAdapter.dynamic_tools()`: per-turn selection through the SDK's
+  `FunctionTool.is_enabled`. Each turn selects from the newest user message, or
+  after a Gantry tool call that message plus the tool's output, with per-run
+  caching, sticky tools capped by `max_offered`, and `query_from_results`.
+  State is keyed to the run, so concurrent runs of one agent are independent
+  and `agent.tools` is never rewritten.
+- Native approval for the OpenAI Agents SDK: Gantry's confirmation gate sets
+  `needs_approval`; approving with `state.approve(item)` replays the call once.
+- `AgentGantry.requires_confirmation(tool)`: whether a call would stop at
+  Gantry's confirmation gate, answered without running or charging anything.
+- `agent_gantry.openai_agents.current_run_context()` returns the call's SDK
+  `ToolContext` inside a Gantry handler; the SDK's current trace span (or an
+  OpenTelemetry span) becomes the `ToolCall`'s trace parent.
+- `OpenAIAgentsAdapter(error_mode=..., error_formatter=...)`, as for Pydantic AI.
+
+### Changed
+
+- `integrations/frameworks/native.py` holds the shared first-class pieces
+  (`ErrorMode`, `ErrorFormatter`, `failure_text`, `execute_spec`, `otel_ids`,
+  `carry_over`); the Pydantic AI adapter now uses them. No behaviour change.
+- The OpenAI Agents adapter feature-detects `FunctionTool`'s fields, so older
+  SDKs that other extras install transitively (0.4.2 alongside
+  `agent-frameworks`) keep working for static tools.
+- `uv.lock`: the new conflict split re-resolved a few transitive packages in
+  the main environment (`pyjwt` 2.15.1, `urllib3` 2.8.0, `python-multipart`
+  0.0.34, and `oauthlib` 4.0.1 on Python 3.14).
+
 ## [0.21.0] - 2026-11-19
 
 Pydantic AI becomes a first-class integration: Gantry now plugs into Pydantic

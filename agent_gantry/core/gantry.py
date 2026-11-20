@@ -2295,6 +2295,43 @@ class AgentGantry:
             out.append(tool)
         return out
 
+    def requires_confirmation(
+        self,
+        tool: ToolDefinition | str,
+        namespace: str | None = None,
+    ) -> bool:
+        """Whether a call to ``tool`` would stop at Gantry's confirmation gate.
+
+        Answers without executing or charging anything, so framework adapters can
+        route a call into their own human-approval flow *before* running it
+        (OpenAI Agents SDK ``needs_approval``, LangGraph interrupts, ...). True when
+        the tool sets ``requires_confirmation`` or its name matches one of the
+        security policy's ``require_confirmation`` patterns -- the two gates
+        :meth:`execute` applies up front. A custom policy that decides only at
+        call time is still enforced by :meth:`execute`, which then returns
+        ``PENDING_CONFIRMATION`` without running the tool.
+
+        Args:
+            tool: The tool definition, or its bare name to look up in the registry.
+            namespace: Namespace for a name lookup; ``None`` matches any.
+
+        Returns:
+            ``True`` if the call needs human approval first.
+        """
+        import fnmatch
+
+        if isinstance(tool, str):
+            name = tool
+            found = next((t for t in self.list_tools_sync(namespace) if t.name == name), None)
+            if found is not None and found.requires_confirmation:
+                return True
+        else:
+            name = tool.name
+            if tool.requires_confirmation:
+                return True
+        patterns = getattr(self._security_policy, "require_confirmation", None) or ()
+        return any(fnmatch.fnmatch(name, pattern) for pattern in patterns)
+
     async def preview(
         self,
         query: str,
