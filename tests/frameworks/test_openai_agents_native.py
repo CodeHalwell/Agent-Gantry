@@ -357,7 +357,8 @@ async def test_dynamic_tools_error_output_never_feeds_retrieval(gantry):
     assert all("ZeroDivisionError" not in q for q in queries)
 
 
-async def test_dynamic_tools_retrieval_failure_keeps_earlier_tools(gantry, caplog):
+@pytest.mark.parametrize("sticky", [True, False])
+async def test_dynamic_tools_retrieval_failure_keeps_earlier_tools(gantry, caplog, sticky):
     original = gantry.retrieve
     calls = {"n": 0}
 
@@ -368,7 +369,7 @@ async def test_dynamic_tools_retrieval_failure_keeps_earlier_tools(gantry, caplo
         return await original(query)
 
     gantry.retrieve = flaky
-    tools = await OpenAIAgentsAdapter(gantry).dynamic_tools(limit=1)
+    tools = await OpenAIAgentsAdapter(gantry).dynamic_tools(limit=1, sticky=sticky)
     with caplog.at_level("WARNING"):
         _, model = await _run(
             tools,
@@ -377,6 +378,14 @@ async def test_dynamic_tools_retrieval_failure_keeps_earlier_tools(gantry, caplo
         )
     assert _offered(model)[1] == ["lookup_customer"]
     assert "semantic retrieval failed" in caplog.text
+
+
+async def test_dynamic_tools_pins_outside_the_namespace_filter_are_offered(gantry):
+    adapter = OpenAIAgentsAdapter(gantry)
+    tools = await adapter.dynamic_tools(limit=1, namespaces=["elsewhere"], required=["get_weather"])
+    assert [t.name for t in tools] == ["get_weather"]
+    _, model = await _run(tools, [("get_weather", {"city": "Leeds"})], prompt="weather in Leeds")
+    assert _offered(model)[0] == ["get_weather"]
 
 
 async def test_dynamic_tools_validate_arguments(gantry):

@@ -81,6 +81,7 @@ from agent_gantry.integrations.frameworks.base import (
     GantryToolset,
     QueryBoundsError,
     ToolSpec,
+    _resolve_pins,
     _with_native_names,
     check_query_bounds,
     spec_from_tool,
@@ -560,7 +561,13 @@ class GantryDynamicTools:
             for t in self._gantry.list_tools_sync()
             if not self._namespaces or t.namespace in self._namespaces
         ]
-        specs = _with_native_names(self._gantry, [spec_from_tool(self._gantry, t) for t in tools])
+        specs = [spec_from_tool(self._gantry, t) for t in tools]
+        # Pins can sit outside ``namespaces``; the catalogue must still hold them
+        # or the selector would enable a name with no matching tool.
+        specs += _resolve_pins(
+            self._gantry, specs, required=self._required, always_include=self._always_include
+        )
+        specs = _with_native_names(self._gantry, specs)
         return [
             _spec_to_openai_agents(
                 spec,
@@ -621,6 +628,8 @@ class GantryDynamicTools:
             if state.turn_key == turn_key:
                 return state.enabled
             specs = await self._select(state, query, used)
+            if specs is None:  # retrieval failed: keep the last turn's tools, retry next turn
+                return state.enabled
             if self._sticky:
                 state.step += 1
                 specs = carry_over(
@@ -630,7 +639,9 @@ class GantryDynamicTools:
             state.turn_key = turn_key
             return state.enabled
 
-    async def _select(self, state: _RunState, query: str, used: tuple[str, ...]) -> list[ToolSpec]:
+    async def _select(
+        self, state: _RunState, query: str, used: tuple[str, ...]
+    ) -> list[ToolSpec] | None:
         key = (query, used)
         if key in state.cache:
             return state.cache[key]
@@ -652,7 +663,7 @@ class GantryDynamicTools:
                 "previously offered tools (if any) this turn.",
                 exc_info=True,
             )
-            return []
+            return None
         if len(state.cache) >= _MAX_CACHED_SELECTIONS:
             state.cache.pop(next(iter(state.cache)))
         state.cache[key] = specs
