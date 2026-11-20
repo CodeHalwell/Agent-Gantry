@@ -358,3 +358,21 @@ async def test_callback_validates_arguments(gantry):
         GoogleADKAdapter(gantry).before_model_callback(limit=3, max_offered=1)
     with pytest.raises(ValueError, match="error_mode"):
         GoogleADKAdapter(gantry, error_mode="explode")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("confirmed", [True, False])
+async def test_per_turn_agent_resumes_a_confirmed_call(gantry, confirmed):
+    llm = _llm([("send_email", {"to": "bob@x"})])
+    run = await Run(_agent(gantry, llm, limit=1)).ask("send an email message to bob")
+    assert run.confirmations, "the gated call should ask for confirmation"
+    await run.decide(confirmed)
+    assert gantry.sent == (["bob@x"] if confirmed else [])
+
+
+def test_success_payload_with_a_null_error_still_feeds_retrieval():
+    from types import SimpleNamespace
+
+    from agent_gantry.integrations.frameworks.google_adk_live import _response_text
+
+    assert _response_text(SimpleNamespace(response={"error": None, "data": "ok"})) is not None
+    assert _response_text(SimpleNamespace(response={"error": "boom"})) is None

@@ -608,7 +608,11 @@ await consume(runner.run_async(user_id=uid, session_id=sid,
 ```
 
 A confirmed call runs once through `gantry.execute` with only the confirmation
-gate cleared; ADK itself refuses a rejected one. `error_formatter=fn` rewrites
+gate cleared; ADK itself refuses a rejected one. ADK resumes a confirmed call
+through the agent's own tools, so `adapter.agent()` includes a small toolset
+that supplies the gated Gantry tools only on the turn answering a confirmation;
+when you wire `before_model_callback()` into your own `Agent`, add
+`tools=[adapter.confirmation_toolset()]`. `error_formatter=fn` rewrites
 failure text; `error_mode="raise"` opts out of both behaviours.
 
 **Run context and tracing.** Gantry handlers read the call's ADK `ToolContext`

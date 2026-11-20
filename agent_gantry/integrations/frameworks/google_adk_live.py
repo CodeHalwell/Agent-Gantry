@@ -83,6 +83,7 @@ from agent_gantry.integrations.frameworks.base import (
     _resolve_pins,
     _with_native_names,
     check_query_bounds,
+    spec_from_tool,
 )
 from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
 from agent_gantry.integrations.frameworks.google_adk import _INSTALL_HINT, _spec_to_google_adk
@@ -156,7 +157,7 @@ def _response_text(response: Any) -> str | None:
     """A successful function response as text, or ``None`` for an error response."""
     payload = getattr(response, "response", None)
     if isinstance(payload, dict):
-        if "error" in payload:
+        if payload.get("error"):
             return None
         payload = payload.get("result", payload)
     if payload is None:
@@ -471,6 +472,79 @@ def _gantry_before_model_callback(
     return _callback
 
 
+_CONFIRMATION_CALL = "adk_request_confirmation"
+
+
+def _answers_confirmation(readonly_context: Any) -> bool:
+    """Whether the newest user event answers an ``adk_request_confirmation``.
+
+    ADK resumes a confirmed call inside the original invocation, so the
+    context's ``user_content`` is still the first message; the answer is the
+    latest user-authored event in the session.
+    """
+    session = getattr(readonly_context, "session", None)
+    for event in reversed(list(getattr(session, "events", None) or [])):
+        if getattr(event, "author", None) != "user":
+            continue
+        return any(
+            getattr(response, "name", None) == _CONFIRMATION_CALL
+            for response in _function_responses(getattr(event, "content", None))
+        )
+    return False
+
+
+def _confirmation_toolset(
+    gantry: AgentGantry,
+    *,
+    namespaces: list[str] | None = None,
+    error_mode: ErrorMode = "model",
+    error_formatter: ErrorFormatter | None = None,
+) -> Any:
+    """An ADK ``BaseToolset`` that lets a confirmed per-turn call resume.
+
+    ADK resumes a confirmed call by looking the tool up in
+    ``agent.canonical_tools()``, which per-turn injection never touches. This
+    toolset returns the confirmation-gated Gantry tools, but only on an
+    invocation whose user message answers an ``adk_request_confirmation`` --
+    every other turn it returns nothing, so the model is never shown the whole
+    catalogue.
+    """
+    try:
+        from google.adk.tools.base_toolset import BaseToolset
+    except ImportError as exc:  # pragma: no cover - depends on install
+        raise ImportError(_INSTALL_HINT) from exc
+
+    class GantryConfirmationToolset(BaseToolset):  # type: ignore[misc, valid-type]
+        def __init__(self) -> None:
+            super().__init__()
+            # The answer arrives inside the same invocation, so a per-invocation
+            # cache would keep serving the earlier, empty result.
+            self._use_invocation_cache = False
+
+        async def get_tools(self, readonly_context: Any = None) -> list[Any]:
+            if readonly_context is None or not _answers_confirmation(readonly_context):
+                return []
+            definitions = await gantry.list_tools()
+            specs = _with_native_names(
+                gantry,
+                [
+                    spec_from_tool(gantry, d)
+                    for d in definitions
+                    if not namespaces or d.namespace in namespaces
+                ],
+            )
+            return [
+                _spec_to_google_adk(s, error_mode=error_mode, error_formatter=error_formatter)
+                for s in specs
+                if gantry.requires_confirmation(s.tool or s.name, s._namespace)
+            ]
+
+        async def close(self) -> None:
+            return None
+
+    return GantryConfirmationToolset()
+
+
 def _gantry_adk_agent(
     gantry: AgentGantry,
     *,
@@ -499,11 +573,18 @@ def _gantry_adk_agent(
         ImportError: If ``google-adk`` is not installed.
     """
     agent_cls = _import_adk()
+    tools = list(agent_kwargs.pop("tools", []) or [])
+    # Lets a confirmed call resume: ADK looks it up in the agent's own tools.
+    tools.append(
+        _confirmation_toolset(
+            gantry, namespaces=namespaces, error_mode=error_mode, error_formatter=error_formatter
+        )
+    )
     return agent_cls(
         model=model,
         name=name,
         instruction=instruction,
-        tools=agent_kwargs.pop("tools", []),
+        tools=tools,
         before_model_callback=_gantry_before_model_callback(
             gantry,
             limit=limit,
