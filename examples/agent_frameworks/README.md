@@ -122,7 +122,7 @@ others standalone alongside `agent-gantry`:
 ```bash
 pip install 'agent-gantry[pydantic-ai]'
 pip install 'agent-gantry[openai-agents]'
-pip install agent-gantry haystack-ai
+pip install 'agent-gantry[haystack]'
 pip install 'agent-gantry[agno]'
 pip install 'agent-gantry[strands]'
 pip install agent-gantry dspy

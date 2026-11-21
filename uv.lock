@@ -718,6 +718,11 @@ google-vertexai = [
 groq = [
     { name = "groq" },
 ]
+haystack = [
+    { name = "haystack-ai", version = "3.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "haystack-ai", version = "3.4.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "haystack-ai", version = "3.5.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+]
 jev = [
     { name = "typesafe-sdk" },
 ]
@@ -810,6 +815,7 @@ requires-dist = [
     { name = "google-cloud-aiplatform", marker = "extra == 'google-vertexai'", specifier = ">=1.70.0" },
     { name = "google-genai", marker = "extra == 'google-genai'", specifier = ">=1.75.0" },
     { name = "groq", marker = "extra == 'groq'", specifier = ">=1.6.0" },
+    { name = "haystack-ai", marker = "extra == 'haystack'", specifier = ">=3.0.0" },
     { name = "httpx", marker = "extra == 'a2a'", specifier = ">=0.24.0" },
     { name = "huggingface-hub", extras = ["hf-xet"], marker = "extra == 'example-tools'", specifier = ">=0.36.0" },
     { name = "jsonschema", marker = "extra == 'example-tools'", specifier = ">=4.18.0" },
@@ -867,7 +873,7 @@ requires-dist = [
     { name = "typesafe-sdk", marker = "extra == 'jev'", specifier = ">=0.7.0" },
     { name = "uvicorn", marker = "extra == 'a2a'", specifier = ">=0.24.0" },
 ]
-provides-extras = ["dev", "agent-frameworks", "pydantic-ai", "openai-agents", "langchain", "langgraph", "google-adk", "crewai", "llamaindex", "strands", "agno", "example-tools", "embeddings", "openai", "cohere", "jev", "qdrant", "chroma", "pgvector", "lancedb", "vector-stores", "nomic", "mcp", "a2a", "anthropic", "google-genai", "google-vertexai", "mistral", "groq", "llm-providers", "all"]
+provides-extras = ["dev", "agent-frameworks", "pydantic-ai", "openai-agents", "langchain", "langgraph", "google-adk", "crewai", "llamaindex", "strands", "agno", "haystack", "example-tools", "embeddings", "openai", "cohere", "jev", "qdrant", "chroma", "pgvector", "lancedb", "vector-stores", "nomic", "mcp", "a2a", "anthropic", "google-genai", "google-vertexai", "mistral", "groq", "llm-providers", "all"]
 
 [[package]]
 name = "agno"
@@ -1110,16 +1116,16 @@ wheels = [
 
 [[package]]
 name = "anyio"
-version = "4.13.0"
+version = "4.14.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
     { name = "idna" },
     { name = "typing-extensions", marker = "python_full_version < '3.13'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/19/14/2c5dd9f512b66549ae92767a9c7b330ae88e1932ca57876909410251fe13/anyio-4.13.0.tar.gz", hash = "sha256:334b70e641fd2221c1505b3890c69882fe4a2df910cba14d97019b90b24439dc", size = 231622, upload-time = "2026-03-24T12:59:09.671Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/61/cc/a381afa6efea9f496eff839d4a6a1aed3bfafc7b3ab4b0d1b243a12573dd/anyio-4.14.2.tar.gz", hash = "sha256:cfa139f3ed1a23ee8f88a145ddb5ac7605b8bbfd8592baacd7ce3d8bb4313c7f", size = 260176, upload-time = "2026-07-12T20:29:07.082Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/da/42/e921fccf5015463e32a3cf6ee7f980a6ed0f395ceeaa45060b61d86486c2/anyio-4.13.0-py3-none-any.whl", hash = "sha256:08b310f9e24a9594186fd75b4f73f4a4152069e3853f1ed8bfbf58369f4ad708", size = 114353, upload-time = "2026-03-24T12:59:08.246Z" },
+    { url = "https://files.pythonhosted.org/packages/da/35/f2287558c17e29fafc8ef3daf819bb9834061cfa43bff8014f7df7f63bdc/anyio-4.14.2-py3-none-any.whl", hash = "sha256:9f505dda5ac9f0c8309b5e8bd445a8c2bf7246f3ce950121e45ea15bc41d1494", size = 125813, upload-time = "2026-07-12T20:29:05.763Z" },
 ]
 
 [[package]]
@@ -1677,9 +1683,35 @@ wheels = [
 name = "certifi"
 version = "2026.2.25"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version < '3.11'",
+]
 sdist = { url = "https://files.pythonhosted.org/packages/af/2d/7bf41579a8986e348fa033a31cdd0e4121114f6bce2457e8876010b092dd/certifi-2026.2.25.tar.gz", hash = "sha256:e887ab5cee78ea814d3472169153c2d12cd43b14bd03329a39a9c6e2e80bfba7", size = 155029, upload-time = "2026-02-25T02:54:17.342Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9a/3c/c17fb3ca2d9c3acff52e30b309f538586f9f5b9c9cf454f3845fc9af4881/certifi-2026.2.25-py3-none-any.whl", hash = "sha256:027692e4402ad994f1c42e52a4997a9763c646b73e4096e4d5d6db8af1d6f0fa", size = 153684, upload-time = "2026-02-25T02:54:15.766Z" },
+]
+
+[[package]]
+name = "certifi"
+version = "2026.11.20"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14' and sys_platform == 'win32'",
+    "python_full_version >= '3.14' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+]
+sdist = { url = "https://files.pythonhosted.org/packages/51/33/4cd27639502f010084bcef7a2036391dd637439901341ce1a530f36f6e51/certifi-2026.11.20.tar.gz", hash = "sha256:af1cb240a8133f105aa52684a3a3258339d7f2fd0bd4e2812698ff5cf5588c4e", size = 128901, upload-time = "2026-11-20T23:37:49.522Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6d/39/5eec3296860b94ac20bb8ed807725b88f6adfab3f343df592afd975f5f86/certifi-2026.11.20-py3-none-any.whl", hash = "sha256:7422df25243767b9877031a2248cb14d09ddac9beee846f4cef3d5c9191d488f", size = 127913, upload-time = "2026-11-20T23:37:48.117Z" },
 ]
 
 [[package]]
@@ -2327,7 +2359,8 @@ version = "1.15.28"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "appdirs", marker = "python_full_version < '3.14'" },
-    { name = "certifi", marker = "python_full_version < '3.14'" },
+    { name = "certifi", version = "2026.2.25", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "certifi", version = "2026.11.20", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
     { name = "click", marker = "python_full_version < '3.14'" },
     { name = "crewai-core", marker = "python_full_version < '3.14'" },
     { name = "cryptography", marker = "python_full_version < '3.14'" },
@@ -3081,7 +3114,8 @@ name = "google-cloud-aiplatform"
 version = "1.165.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "certifi" },
+    { name = "certifi", version = "2026.2.25", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "certifi", version = "2026.11.20", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "docstring-parser" },
     { name = "google-api-core", extra = ["grpc"] },
     { name = "google-auth" },
@@ -3714,6 +3748,128 @@ wheels = [
 ]
 
 [[package]]
+name = "haystack-ai"
+version = "3.3.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version < '3.11'",
+]
+dependencies = [
+    { name = "anyio" },
+    { name = "docstring-parser" },
+    { name = "filetype" },
+    { name = "httpx" },
+    { name = "jinja2" },
+    { name = "jsonschema" },
+    { name = "lazy-imports" },
+    { name = "markupsafe" },
+    { name = "more-itertools", version = "11.1.0", source = { registry = "https://pypi.org/simple" } },
+    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" } },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" } },
+    { name = "openai", version = "2.53.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai' or extra != 'extra-12-agent-gantry-openai-agents'" },
+    { name = "openai", version = "3.57.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "posthog" },
+    { name = "pydantic" },
+    { name = "python-dateutil" },
+    { name = "pyyaml" },
+    { name = "tenacity" },
+    { name = "tqdm" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6d/b8/89a9afbafad781e85ada3a3c7ce99e2df5eec9447290ac8eee1ce44b96c3/haystack_ai-3.3.0.tar.gz", hash = "sha256:c4376ea13a95fe1e1df3efe383ad7b6af60ae0c971072eb1be53e3b0ccc9d96f", size = 533129, upload-time = "2026-10-01T10:39:37.579Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/51/98/d798624a3a24439c8a2fd9d4c98432095112421d0d16f29855bb1c5f850a/haystack_ai-3.3.0-py3-none-any.whl", hash = "sha256:dc9d6e953babcfd67547159b2758eac42789dc6b0778a8bf3c3e91b576152bc7", size = 737985, upload-time = "2026-10-01T10:39:35.92Z" },
+]
+
+[[package]]
+name = "haystack-ai"
+version = "3.4.1"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14' and sys_platform == 'win32'",
+    "python_full_version >= '3.14' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+]
+dependencies = [
+    { name = "anyio", marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "certifi", version = "2026.11.20", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "docstring-parser", marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "filetype", marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "httpx", marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "jinja2", marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "jsonschema", marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "lazy-imports", marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "markupsafe", marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "more-itertools", version = "11.2.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "openai", version = "2.53.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "posthog", marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "pydantic", marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "python-dateutil", marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "pyyaml", marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "tenacity", marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "tqdm", marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5e/76/8924698e18dad371b0f081ad3f6b34d323db541249c0e081351b108eb6da/haystack_ai-3.4.1.tar.gz", hash = "sha256:95b57e672264584a9c437857e4ca4c89bf2137dab80fc972553df491349d811b", size = 543777, upload-time = "2026-10-21T19:10:51.848Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/29/b6/60d85784f117fdb26796e4b8ff3425ebc5c14ac8cb66c6162fd5835025b3/haystack_ai-3.4.1-py3-none-any.whl", hash = "sha256:f9093156d534adcf92ef68d03601c11b67f0945e81b00e999504b68bce4fdd80", size = 751565, upload-time = "2026-10-21T19:10:50.167Z" },
+]
+
+[[package]]
+name = "haystack-ai"
+version = "3.5.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14' and sys_platform == 'win32'",
+    "python_full_version >= '3.14' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+]
+dependencies = [
+    { name = "anyio", marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "certifi", version = "2026.11.20", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "docstring-parser", marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "filetype", marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "httpx", marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "jinja2", marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "jsonschema", marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "lazy-imports", marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "markupsafe", marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "more-itertools", version = "11.2.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "openai", version = "3.57.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "posthog", marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "pydantic", marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "python-dateutil", marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "pyyaml", marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "tenacity", marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "tqdm", marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/65/8d/84d94814e67679323a09a148a599d08fd92f10a436a10ecd0ec9b4f5c6a5/haystack_ai-3.5.0.tar.gz", hash = "sha256:afa27213cfa06ddf2283d06cf98e0c66c1f9500ba30196cf67c5b37612d22df5", size = 570805, upload-time = "2026-11-10T12:34:33.741Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ac/5f/96d140d9748fe6a85321f49b02b68f7791834e8a033babb369f748a77d54/haystack_ai-3.5.0-py3-none-any.whl", hash = "sha256:b0328db32cc7e33867296127afa501b47d20a88b22713c6b33338004f3eeb06c", size = 785673, upload-time = "2026-11-10T12:34:32.015Z" },
+]
+
+[[package]]
 name = "hf-xet"
 version = "1.4.3"
 source = { registry = "https://pypi.org/simple" }
@@ -3759,7 +3915,8 @@ name = "httpcore"
 version = "1.0.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "certifi" },
+    { name = "certifi", version = "2026.2.25", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "certifi", version = "2026.11.20", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "h11" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/06/94/82699a10bca87a5556c9c59b5963f2d039dbd239f25bc2a63907a05a14cb/httpcore-1.0.9.tar.gz", hash = "sha256:6e34463af53fd2ab5d807f399a9b45ea31c3dfa2276f15a2c3f00afff6e176e8", size = 85484, upload-time = "2025-04-24T22:06:22.219Z" }
@@ -3829,7 +3986,8 @@ version = "0.28.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
-    { name = "certifi" },
+    { name = "certifi", version = "2026.2.25", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "certifi", version = "2026.11.20", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "httpcore" },
     { name = "idna" },
 ]
@@ -4608,7 +4766,8 @@ name = "kubernetes"
 version = "35.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "certifi" },
+    { name = "certifi", version = "2026.2.25", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "certifi", version = "2026.11.20", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "durationpy" },
     { name = "python-dateutil" },
     { name = "pyyaml" },
@@ -4714,7 +4873,8 @@ name = "langchain-openai"
 version = "1.6.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "certifi" },
+    { name = "certifi", version = "2026.2.25", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "certifi", version = "2026.11.20", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
     { name = "langchain-core" },
     { name = "openai", version = "2.53.0", source = { registry = "https://pypi.org/simple" } },
     { name = "tiktoken" },
@@ -4822,6 +4982,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/da/34/28fff3ab31ccff1fd4f6c7c7b0ceb2b6968d8ea4950663eadcb5720591a0/lark-1.3.1.tar.gz", hash = "sha256:b426a7a6d6d53189d318f2b6236ab5d6429eaf09259f1ca33eb716eed10d2905", size = 382732, upload-time = "2025-10-27T18:25:56.653Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/82/3d/14ce75ef66813643812f3093ab17e46d3a206942ce7376d31ec2d36229e7/lark-1.3.1-py3-none-any.whl", hash = "sha256:c629b661023a014c37da873b4ff58a817398d12635d3bbb2c5a03be7fe5d1e12", size = 113151, upload-time = "2025-10-27T18:25:54.882Z" },
+]
+
+[[package]]
+name = "lazy-imports"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/25/67/04432aae0c1e2729bff14e1841f4a3fb63a9e354318e66622251487760c3/lazy_imports-1.2.0.tar.gz", hash = "sha256:3c546b3c1e7c4bf62a07f897f6179d9feda6118e71ef6ecc47a339cab3d2e2d9", size = 24470, upload-time = "2025-12-28T13:51:51.218Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cd/62/60ed24fa8707f10c1c5aef94791252b820be3dd6bdfc6e2fcdb08bc8912f/lazy_imports-1.2.0-py3-none-any.whl", hash = "sha256:97134d6552e2ba16f1a278e316f05313ab73b360e848e40d593d08a5c2406fdf", size = 18681, upload-time = "2025-12-28T13:51:49.802Z" },
 ]
 
 [[package]]
@@ -5554,6 +5723,41 @@ wheels = [
 ]
 
 [[package]]
+name = "more-itertools"
+version = "11.1.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version < '3.11'",
+]
+sdist = { url = "https://files.pythonhosted.org/packages/de/1d/f4da6f02cdffe04d6362210b807146a26044c88d839208aec273bb0d9184/more_itertools-11.1.0.tar.gz", hash = "sha256:48e8f4d9e7e5878571ecf6f2b4e57634f93cd474cc8cfbd2376f2d11b396e30d", size = 145772, upload-time = "2026-05-22T14:14:29.909Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e8/3d/1087453384dbde46a8c7f9356eead2c58be8a7bf156bca40243377c85715/more_itertools-11.1.0-py3-none-any.whl", hash = "sha256:4b65538ae22f6fed0ce4874efd317463a7489796a0939fa66824dd542125a192", size = 72226, upload-time = "2026-05-22T14:14:28.824Z" },
+]
+
+[[package]]
+name = "more-itertools"
+version = "11.2.1"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14' and sys_platform == 'win32'",
+    "python_full_version >= '3.14' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+]
+sdist = { url = "https://files.pythonhosted.org/packages/52/b8/c63995bebbb9ac9c059350e0fb8c82c2420c85aeca7d34e40aecf3df9281/more_itertools-11.2.1.tar.gz", hash = "sha256:cbf08fd0af284dc69718b9b76a8e6203df624d70209ea511e4219d350c856f63", size = 154133, upload-time = "2026-10-14T18:50:30.407Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5d/57/3c4b1c6f2e0cc29ba023802458ea3d2a996f87085559e4a5f2192d549532/more_itertools-11.2.1-py3-none-any.whl", hash = "sha256:35a7377edd1dd6608dcb2cdf534ded55ea32d49448875ad042cd3f879fb1ded0", size = 74405, upload-time = "2026-10-14T18:50:29.116Z" },
+]
+
+[[package]]
 name = "mpmath"
 version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -5650,7 +5854,8 @@ version = "0.7.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "azure-core" },
-    { name = "certifi" },
+    { name = "certifi", version = "2026.2.25", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "certifi", version = "2026.11.20", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
     { name = "isodate" },
     { name = "requests" },
     { name = "requests-oauthlib" },
@@ -8821,7 +9026,8 @@ name = "requests"
 version = "2.33.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "certifi" },
+    { name = "certifi", version = "2026.2.25", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "certifi", version = "2026.11.20", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "charset-normalizer" },
     { name = "idna" },
     { name = "urllib3" },

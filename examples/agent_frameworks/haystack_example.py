@@ -1,33 +1,23 @@
-"""Haystack + Agent-Gantry integration example (haystack 2.x and 3.x).
+"""Haystack + Agent-Gantry integration example (haystack-ai >= 3.0).
 
-Demonstrates the tiers `HaystackAdapter` exposes:
+Runs offline: a small scripted chat generator stands in for an LLM and issues
+the tool calls, so Haystack's real ``Agent`` loop does the rest. It shows:
 
-1. **Static tier** — ``HaystackAdapter.select(query, limit=...)`` runs
-   semantic retrieval once and wraps the result as native
-   ``haystack.tools.Tool`` objects, ready to hand to an
-   ``OpenAIChatGenerator`` (or a ``ToolInvoker`` on haystack 2.x).
-2. **Dynamic tier** — Haystack fixes a tool-execution component's tools at
-   construction time (there is no native per-turn hook), so Gantry offers two
-   per-call primitives:
+1. ``HaystackAdapter.agent()`` — Gantry re-selects tools after every tool
+   step: looking up a customer surfaces the email tool for the next step.
+2. A failing tool — the Agent records an error tool result
+   (``"<type>: <message>"``) and the model gets another step.
+3. A confirmation-gated tool — Haystack's ``ConfirmationHook`` asks a
+   ``ConfirmationUI`` (here a scripted one; ``SimpleConsoleUI()`` asks in the
+   terminal) about the gated call only, and it runs once when confirmed.
+4. Run context — a Gantry tool reads the Agent's ``State`` through
+   ``current_agent_state()``.
 
-   - ``HaystackAdapter.live_tools(query, limit=...)`` re-selects the raw
-     ``Tool`` list for a given call — usable standalone.
-   - ``HaystackAdapter.tool_invoker_builder(...)`` returns a
-     ``GantryLiveHaystackToolInvoker`` that rebuilds a *fresh* ``ToolInvoker``
-     per call via ``await builder.build(query)`` on haystack 2.x. Haystack 3.0
-     removed ``ToolInvoker``, so there ``build`` returns a fresh
-     ``haystack.components.agents.Agent`` and needs ``chat_generator=...``.
+Set ``OPENAI_API_KEY`` to also run one turn on a real model.
 
-Tool selection and native-tool wrapping run with no API key. Actually running
-an ``OpenAIChatGenerator`` (the LLM turn that decides which tool to call)
-needs a real key, so that step is gated behind ``OPENAI_API_KEY``.
+Install:
 
-Haystack is intentionally NOT part of any Agent-Gantry project extra (see the
-comment block in ``pyproject.toml`` below the ``agent-frameworks`` extra — it can't
-co-resolve with the combined ``agent-frameworks`` extra). Install it
-standalone:
-
-    pip install agent-gantry haystack-ai
+    pip install 'agent-gantry[haystack]'
 
 Run:
 
@@ -38,136 +28,149 @@ from __future__ import annotations
 
 import asyncio
 import os
+from typing import Any
 
 from agent_gantry import AgentGantry
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 
 
 def build_gantry() -> AgentGantry:
+    from agent_gantry.haystack import current_agent_state
+
     gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
 
-    @gantry.register(
-        tags=["weather"],
-        examples=[
-            "what's the weather in London",
-            "is it raining in Leeds",
-        ],
-    )
-    def get_weather(city: str) -> str:
-        """Get the current weather for a city."""
-        return f"It is 21C and sunny in {city}."
+    @gantry.register(examples=["look up the customer record", "find customer details"])
+    def lookup_customer(name: str) -> str:
+        """Look up a customer's record by name."""
+        return f"{name} prefers to be contacted by email message"
+
+    @gantry.register(examples=["how much is 50 euros in pounds", "convert 100 dollars to yen"])
+    def convert_currency(amount: float, frm: str, to: str) -> str:
+        """Convert an amount of money from one currency to another."""
+        if frm == to:
+            raise ValueError("pick two different currencies")
+        return f"{amount} {frm} = {amount * 1.1:.2f} {to}"
 
     @gantry.register(
-        tags=["email"],
-        examples=[
-            "email the team about the delay",
-            "send a message to Sam",
-        ],
+        requires_confirmation=True,
+        examples=["email the team about the delay", "send an email message to Sam"],
     )
     def send_email(to: str, body: str = "") -> str:
         """Compose and send an email message to a recipient."""
         return f"Email sent to {to}."
 
-    @gantry.register(
-        tags=["finance"],
-        examples=[
-            "how much is 50 euros in pounds",
-            "convert 100 dollars to yen",
-        ],
-    )
-    def convert_currency(amount: float, frm: str, to: str) -> str:
-        """Convert an amount of money from one currency to another."""
-        return f"{amount} {frm} = {amount * 1.1:.2f} {to}"
+    @gantry.register(examples=["who am I", "which account is this"])
+    def whoami() -> str:
+        """Say which user this run belongs to."""
+        return f"user {current_agent_state().get('user')}"
 
     return gantry
 
 
+def scripted_generator(*steps: list[tuple[str, dict[str, Any]]]) -> Any:
+    """A tiny offline chat generator: issues the scripted tool calls, then answers."""
+    from haystack import component
+    from haystack.dataclasses import ChatMessage, ToolCall
+
+    @component
+    class ScriptedGenerator:
+        def __init__(self) -> None:
+            self.steps = list(steps)
+            self.offered: list[list[str]] = []
+
+        @component.output_types(replies=list[ChatMessage])
+        def run(self, messages: list[ChatMessage], tools: Any = None, **kwargs: Any) -> dict:
+            self.offered.append(sorted(tool.name for tool in tools or []))
+            step = self.steps.pop(0) if self.steps else None
+            if not step:
+                return {"replies": [ChatMessage.from_assistant("All done.")]}
+            calls = [
+                ToolCall(tool_name=name, arguments=args, id=f"call_{len(self.offered)}_{i}")
+                for i, (name, args) in enumerate(step)
+            ]
+            return {"replies": [ChatMessage.from_assistant(tool_calls=calls)]}
+
+    return ScriptedGenerator()
+
+
+class ApproveEverything:
+    """A ConfirmationUI that approves and prints what it was asked."""
+
+    def get_user_confirmation(self, tool_name: str, tool_description: str, tool_params: dict):
+        from haystack.hooks.human_in_the_loop import ConfirmationUIResult
+
+        print(f"[approve] asked about {tool_name}({tool_params}) -> confirm")
+        return ConfirmationUIResult(action="confirm")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {}
+
+
+def tool_results(result: dict) -> list[Any]:
+    return [r for message in result["messages"] for r in message.tool_call_results or []]
+
+
 async def main() -> None:
+    try:
+        from haystack.dataclasses import ChatMessage
+        from haystack.hooks.protocol import VALID_HOOK_POINTS  # noqa: F401 - haystack >= 3.0
+    except ImportError as exc:
+        print(
+            f"Haystack 3.x is not installed ({exc}).\n"
+            "Install it with `pip install 'agent-gantry[haystack]'`."
+        )
+        return
+
+    from agent_gantry.haystack import HaystackAdapter
+
     gantry = build_gantry()
     try:
         await gantry.sync()
+        adapter = HaystackAdapter(gantry)
 
-        try:
-            import haystack  # noqa: F401
-        except ImportError as exc:
-            print(
-                f"Haystack is not installed ({exc}).\n"
-                "Install it with `pip install haystack-ai` to run this example."
-            )
-            return
+        # --- 1. Tools re-selected after every tool step --------------------- #
+        generator = scripted_generator([("lookup_customer", {"name": "Jo"})])
+        agent = adapter.agent(chat_generator=generator, limit=1, sticky=False)
+        agent.run(messages=[ChatMessage.from_user("look up the customer record for Jo")])
+        print(f"[per-step] tools offered per step: {generator.offered}")
 
-
-        adapter = gantry.framework("haystack")
-
-        # --- 1. Static tier: select once, get native haystack.tools.Tool -------- #
-        query = "what's the weather in Paris?"
-        static_tools = await adapter.select(query, limit=2)
-        print(f"[static] selected {len(static_tools)} tool(s) for {query!r}:")
-        for tool in static_tools:
-            print(f"  - {tool.name}: {tool.description}")
-
-        # Tools are directly callable — no invoker/model needed.
-        print(f"[static] direct function() call: {static_tools[0].function(city='Paris')}\n")
-
-        # --- 2. Dynamic tier: per-call live_tools + ToolInvoker builder --------- #
-        weather_tools = await adapter.live_tools(
-            "what's the weather in Tokyo?", limit=1
+        # --- 2. A failing tool: the model sees it and carries on ------------- #
+        generator = scripted_generator(
+            [("convert_currency", {"amount": 5, "frm": "EUR", "to": "EUR"})]
         )
-        print(f"[dynamic] weather query -> {[t.name for t in weather_tools]}")
-
-        email_tools = await adapter.live_tools(
-            "send an email to my manager", limit=1
+        result = adapter.agent(chat_generator=generator, limit=1).run(
+            messages=[ChatMessage.from_user("convert 5 euros to euros")]
         )
-        print(f"[dynamic] email query   -> {[t.name for t in email_tools]}")
+        [failed] = tool_results(result)
+        print(f"[error]    error={failed.error}, model saw: {failed.result!r}")
 
-        # haystack 3.0 removed ToolInvoker (the Agent component owns tool
-        # execution), so the per-call builder behaves differently by version:
-        # 2.x -> a fresh ToolInvoker; 3.x -> a fresh Agent (needs chat_generator).
-        try:
-            from haystack.components.tools import ToolInvoker  # noqa: F401
+        # --- 3. A gated tool is confirmed before it runs -------------------- #
+        generator = scripted_generator([("send_email", {"to": "sam@example.com"})])
+        agent = adapter.agent(
+            chat_generator=generator, limit=1, confirmation_ui=ApproveEverything()
+        )
+        result = await agent.run_async(
+            messages=[ChatMessage.from_user("send an email message to Sam")]
+        )
+        print(f"[approve]  after confirming: {tool_results(result)[0].result!r}")
 
-            haystack_has_tool_invoker = True
-        except ImportError:
-            haystack_has_tool_invoker = False
+        # --- 4. The Agent's State reaches the Gantry tool ------------------- #
+        generator = scripted_generator([("whoami", {})])
+        agent = adapter.agent(
+            chat_generator=generator, limit=1, state_schema={"user": {"type": str}}
+        )
+        result = agent.run(messages=[ChatMessage.from_user("who am I")], user="dan")
+        print(f"[context]  {tool_results(result)[0].result!r}")
 
-        if haystack_has_tool_invoker:
-            invoker_builder = adapter.tool_invoker_builder(limit=2)
-            invoker = await invoker_builder.build(query)
-            print(f"[dynamic] built a fresh ToolInvoker with tools: {[t.name for t in invoker.tools]}\n")
-        else:
-            print(
-                "[dynamic] haystack >= 3.0 removed ToolInvoker; pass "
-                "chat_generator=... to tool_invoker_builder() to build a "
-                "per-call Agent instead (see the live section below).\n"
-            )
-
-        # --- 3. Optional: a real Haystack chat + tool-invocation round ---------- #
+        # --- Optional: one turn on a real model ----------------------------- #
         if os.environ.get("OPENAI_API_KEY"):
             from haystack.components.generators.chat import OpenAIChatGenerator
-            from haystack.dataclasses import ChatMessage
 
-            generator = OpenAIChatGenerator(model="gpt-5.5")
-            if haystack_has_tool_invoker:
-                print("[live] asking the model, offering Gantry-selected tools...")
-                reply = generator.run(messages=[ChatMessage.from_user(query)], tools=static_tools)
-                replies = reply["replies"]
-                if replies and replies[0].tool_calls:
-                    invocation = invoker.run(messages=replies)
-                    print(f"[live] tool invocation results: {invocation['tool_messages']}")
-                else:
-                    print(f"[live] model replied directly: {replies[0].text}")
-            else:
-                # haystack >= 3.0: the builder constructs a per-call Agent that
-                # both selects and executes the Gantry tools.
-                agent_builder = adapter.tool_invoker_builder(
-                    limit=2, chat_generator=generator
-                )
-                agent = await agent_builder.build(query)
-                print("[live] running a per-call haystack Agent with Gantry-selected tools...")
-                result = agent.run(messages=[ChatMessage.from_user(query)])
-                print(f"[live] agent reply: {result['last_message'].text}")
+            live = adapter.agent(chat_generator=OpenAIChatGenerator(model="gpt-5.5"), limit=2)
+            result = live.run(messages=[ChatMessage.from_user("Convert 50 EUR to GBP.")])
+            print(f"[live]     {result['last_message'].text}")
         else:
-            print("(Set OPENAI_API_KEY to also run a live chat + tool-invocation round.)")
+            print("(Set OPENAI_API_KEY to also run a turn on a real model.)")
     finally:
         await gantry.close()
 

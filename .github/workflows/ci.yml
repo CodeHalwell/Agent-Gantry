@@ -146,8 +146,8 @@ jobs:
       - name: Run adapter smoke tests
         run: |
           uv venv .venv-frameworks --python ${{ matrix.python-version }}
-          uv pip install --python .venv-frameworks ".[dev,pydantic-ai,openai-agents,strands,agno]" \
-            haystack-ai "dspy<3.5"
+          uv pip install --python .venv-frameworks ".[dev,pydantic-ai,openai-agents,strands,agno,haystack]" \
+            "dspy<3.5"
           .venv-frameworks/bin/python -m pytest tests/frameworks/ -v
 
       # Pydantic AI is first-class with a declared floor (the `pydantic-ai`
@@ -156,7 +156,7 @@ jobs:
       # Same for the OpenAI Agents SDK (`openai-agents` extra, >=0.23.1)
       # LangChain / LangGraph (`langchain` / `langgraph` extras, >=1.0.0)
       # Google ADK (`google-adk` extra, >=2.6.1), CrewAI (`crewai`, >=1.15.22), LlamaIndex (`llamaindex`, >=0.13.0),
-      # Strands (`strands`, >=1.38.0) and Agno (`agno`, >=2.6.10).
+      # Strands (`strands`, >=1.38.0), Agno (`agno`, >=2.6.10) and Haystack (`haystack`, >=3.0.0).
       - name: OpenAI Agents SDK floor (0.23.1)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         run: |
@@ -218,6 +218,15 @@ jobs:
           uv pip install --python .venv-agno-floor ".[dev]" "agno==2.6.10"
           .venv-agno-floor/bin/python -m pytest \
             tests/frameworks/test_agno.py tests/frameworks/test_agno_native.py -v
+
+      - name: Haystack floor (3.0.0)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: |
+          uv venv .venv-haystack-floor --python ${{ matrix.python-version }}
+          uv pip install --python .venv-haystack-floor ".[dev]" "haystack-ai==3.0.0"
+          .venv-haystack-floor/bin/python -m pytest \
+            tests/frameworks/test_haystack.py tests/frameworks/test_haystack_build_live.py \
+            tests/frameworks/test_haystack_native.py -v
 
       - name: Pydantic AI floor (2.0.0)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'

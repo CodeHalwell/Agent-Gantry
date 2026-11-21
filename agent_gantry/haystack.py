@@ -10,6 +10,16 @@ lazily when you call an adapter method.
 
 from __future__ import annotations
 
-from agent_gantry.integrations.frameworks.haystack import HaystackAdapter
+from agent_gantry.integrations.frameworks.haystack import (
+    GantryConfirmationHook,
+    HaystackAdapter,
+    HaystackToolError,
+    current_agent_state,
+)
 
-__all__ = ["HaystackAdapter"]
+__all__ = [
+    "GantryConfirmationHook",
+    "HaystackAdapter",
+    "HaystackToolError",
+    "current_agent_state",
+]

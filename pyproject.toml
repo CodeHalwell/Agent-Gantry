@@ -361,6 +361,15 @@ strands = [
 agno = [
     "agno>=2.6.10",
 ]
+# Haystack, first-class (see CHANGELOG). Floor 3.0.0: HaystackAdapter.agent()
+# uses the Agent's hooks (before_run / after_tool / before_tool), the per-step
+# re-flattening of toolsets, ConfirmationHook with a ConfirmationUI, State
+# injection into tools and Tool(async_function=); haystack 2.x has none of the
+# hook API. Verified 2026-11-20 on exactly 3.0.0, 3.4.0 and 3.5.0. The
+# `framework-adapters` CI job re-runs the Haystack tests on exactly 3.0.0.
+haystack = [
+    "haystack-ai>=3.0.0",
+]
 example-tools = [
     "beautifulsoup4>=4.12.0",
     "cryptography>=41.0.0",

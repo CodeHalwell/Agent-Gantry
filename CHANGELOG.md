@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Haystack becomes a first-class integration, using the Haystack `Agent`'s hooks
+and dynamic toolsets for per-step selection, `ConfirmationHook` for approval,
+error tool results and `State` injection.
+
+**Behaviour change (Haystack).** A failed call raises `HaystackToolError`
+(still a `ToolExecutionError`), so the model's error tool result reads
+`"<type>: <message>"` instead of Haystack's `Failed to invoke Tool ... with
+parameters {...}` wrapper. Gantry tools now take the Agent's `State` through an
+injected `gantry_state` parameter, hidden from the model's schema. Pass
+`error_mode="raise"` to `HaystackAdapter` to keep the previous error behaviour.
+
+### Added
+
+- `haystack` extra (`pip install 'agent-gantry[haystack]'`, `>=3.0.0`). CI runs
+  the Haystack tests on exactly 3.0.0 and on the latest.
+- `HaystackAdapter.agent(chat_generator=...)`: a Haystack `Agent` whose tools
+  Gantry re-selects before the first step and after every tool step (sticky up
+  to `max_offered`, `query_from_results`, previous tools plus pins when
+  retrieval fails).
+- `HaystackAdapter.confirmation_hook(ui)` / `agent(confirmation_ui=...)`: a
+  `before_tool` hook on Haystack's `ConfirmationHook` that asks a
+  `ConfirmationUI` about gated Gantry tools only; a confirmed or modified call
+  runs once.
+- `agent_gantry.haystack.current_agent_state()`: the call's Agent `State`, also
+  on `current_tool_invocation()` (`deps` is `state.data`).
+- Gantry Haystack tools get a native `async_function`, so `Agent.run_async`
+  no longer blocks on them.
+- `error_mode` and `error_formatter` on `HaystackAdapter`; `HaystackToolError`.
+- `examples/agent_frameworks/haystack_example.py` now runs offline.
+
 Agno becomes a first-class integration, using Agno's `requires_confirmation`
 pause, `RunContext` injection, failed tool results and a callable `tools`
 factory for per-run selection.

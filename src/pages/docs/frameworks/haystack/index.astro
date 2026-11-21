@@ -2,39 +2,46 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Haystack guide | Agent-Gantry">
+<DocsLayout title="Haystack guide | Agent-Gantry" description="Integrate Agent-Gantry with the Haystack Agent: tools re-selected every step through Agent hooks, error tool results, approval through ConfirmationHook, and the Agent State.">
   <p class="eyebrow">Framework guide</p>
   <h1>Haystack</h1>
-  <p class="lead">Use Agent-Gantry with pipeline components and agent tools. This page covers basic setup and the first production-friendly path; continue to the advanced page for dynamic retrieval, LLM calls, and operations.</p>
+  <p class="lead">Agent-Gantry plugs into the Haystack <code>Agent</code>'s own mechanisms: hooks and a dynamic <code>Toolset</code> that pick each step's tools, error tool results for failures, <code>ConfirmationHook</code> for human approval, and the <code>State</code> for your run data.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/haystack/advanced/">Advanced Haystack usage →</a></p>
 
-  <h2>Basic page: register once, adapt at the edge</h2>
-  <ol>
-    <li>Create a Gantry instance near application startup.</li>
-    <li>Register deterministic Python functions with descriptions and input schemas.</li>
-    <li>Export framework-native tools for Haystack immediately before constructing the agent, graph, pipeline, or crew.</li>
-    <li>Keep authorization, rate limits, and audit metadata in Gantry instead of duplicating it inside framework glue code.</li>
-  </ol>
+  <h2>Install</h2>
+  <CodeBlock lang="bash" code={`uv add "agent-gantry[haystack]"   # haystack-ai >= 3.0`} />
+
+  <h2>Basic page: tools picked every step</h2>
   <CodeBlock lang="python" code={`from agent_gantry import AgentGantry
 from agent_gantry.haystack import HaystackAdapter
+from haystack.components.generators.chat import OpenAIChatGenerator
+from haystack.dataclasses import ChatMessage
 
 gantry = AgentGantry()
 
-@gantry.register(
-    tags=["support", "orders"],
-    examples=["where is my order", "has order 4471 shipped"],
-)
+@gantry.register(examples=["where is my order", "has order 4471 shipped"])
 def get_order_status(order_id: str) -> str:
     """Return the current shipping status for an order."""
     return "in_transit"
-adapter = HaystackAdapter(gantry)
-framework_tools = await adapter.select("check an order", limit=3)  # Native Haystack adapter export.
-`} />
 
-  <h2>First tool-calling loop</h2>
-  <p>Let Haystack own the conversation lifecycle while Gantry owns the tool catalog. Start with a small tool set and assert that the framework receives only safe, documented functions.</p>
-  <div class="callout"><strong>Basic testing checklist:</strong> verify tool names, JSON schemas, auth metadata, and a happy-path invocation before wiring a live model.</div>
+await gantry.sync()
+agent = HaystackAdapter(gantry).agent(chat_generator=OpenAIChatGenerator(), limit=5)
+result = agent.run(messages=[ChatMessage.from_user("Has order 4471 shipped?")])   # or run_async`} />
+  <p>For a fixed set, pass <code>Agent(tools=await adapter.select(query))</code> instead.</p>
 
-  <h2>Basic LLM call guidance</h2>
-  <p>For early prototypes, use the model client already recommended by Haystack. Wrap that client with a thin policy function that records model name, prompt tokens, completion tokens, tool calls, and latency. Once the integration stabilizes, move the policy into Agent-Gantry's LLM adapter layer so other frameworks share the same rules.</p>
+  <h2>What the model sees when a tool fails</h2>
+  <p>A failed call becomes an error tool result with the text <code>"&lt;type&gt;: &lt;message&gt;"</code>, capped at 2,000 characters, so the model can correct a bad argument or try something else.</p>
+  <div class="callout"><strong>Redact or opt out:</strong> <code>HaystackAdapter(gantry, error_formatter=redact)</code> rewrites the text; <code>error_mode="raise"</code> raises the plain <code>ToolExecutionError</code> instead.</div>
+
+  <h2>Reading run state from a Gantry tool</h2>
+  <CodeBlock lang="python" code={`from agent_gantry.haystack import current_agent_state
+
+@gantry.register
+def get_balance(account: str) -> str:
+    """Fetch an account balance for the signed-in user."""
+    state = current_agent_state()            # the Agent's State, or None outside a run
+    return bank.balance(state.get("user"), account)
+
+# agent = adapter.agent(chat_generator=..., state_schema={"user": {"type": str}})
+# agent.run(messages=[...], user="dan")`} />
 </DocsLayout>
