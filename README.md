@@ -45,6 +45,7 @@ uv add "agent-gantry[llamaindex]"      # LlamaIndex (llama-index-core 0.13+)
 uv add "agent-gantry[strands]"         # Strands Agents 1.38+
 uv add "agent-gantry[agno]"            # Agno 2.6.10+
 uv add "agent-gantry[haystack]"        # Haystack 3.x
+uv add "agent-gantry[dspy]"            # DSPy 3.5+
 uv add "agent-gantry[all]"
 ```
 

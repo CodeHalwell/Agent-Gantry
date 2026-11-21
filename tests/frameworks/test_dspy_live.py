@@ -93,7 +93,7 @@ async def test_missing_optional_arg_uses_tool_default(gantry):
 
 async def test_tool_failure_surfaces_as_tool_execution_error(gantry):
     """``dspy.Tool.__call__``/``.acall`` never swallow the error -- see
-    ``test_react_forward_absorbs_tool_failure_into_trajectory`` below for the
+    ``test_react_records_tool_failure_as_an_error_result`` below for the
     *different* behaviour of ``dspy.ReAct`` itself, one layer up.
     """
 
@@ -114,20 +114,29 @@ async def test_tool_failure_surfaces_as_tool_execution_error(gantry):
         await tool.acall()
 
 
-async def test_react_forward_absorbs_tool_failure_into_trajectory(gantry):
-    """Documents a deliberate deviation that lives in DSPy's own code, not ours.
+def _calls(*calls):
+    """One DummyLM turn issuing ``calls`` (``(name, args)`` pairs) through ``tool_calls``."""
+    return {
+        "next_thought": "next",
+        "tool_calls": {"tool_calls": [{"name": n, "args": a} for n, a in calls]},
+    }
 
-    ``dspy.Tool.__call__``/``.acall`` (proven above) never swallow
-    ``ToolExecutionError`` -- but ``dspy.ReAct.forward``/``aforward``
-    (DSPy's *own* agentic driver, installed dspy 3.2.1 and 3.3.0) wrap each tool call
-    in a bare ``except Exception`` and fold it into the trajectory as an
-    ``"Execution error in <tool>: ..."`` observation string instead of
-    raising -- the same absorption pattern as a standard ReAct loop feeding
-    a tool failure back to the model as an observation. Since
-    ``DSPyAdapter.agent_builder``/``.live()`` hand the user exactly this
-    ``dspy.ReAct``, this is the failure behaviour most DSPy users actually
-    see -- see "Error-handling policy" in
-    ``integrations/frameworks/README.md``.
+
+def _results(pred):
+    """Every non-submit ``ToolCallResult`` in a ``dspy.ReAct`` prediction's history."""
+    return [
+        result
+        for event in pred.history.messages
+        if event.get("tool_calls") is not None
+        for result in event["tool_calls"].tool_call_results.tool_call_results
+        if result.name != "submit"
+    ]
+
+
+async def test_react_records_tool_failure_as_an_error_result(gantry):
+    """``dspy.ReAct`` turns a raising tool into an ``is_error`` result, not an exception.
+
+    DSPy adds its own short traceback; the text it ends with is Gantry's.
     """
 
     @gantry.register(tags=["danger"])
@@ -138,29 +147,23 @@ async def test_react_forward_absorbs_tool_failure_into_trajectory(gantry):
     await gantry.sync()
 
     tools = await DSPyAdapter(gantry).select("always raises", limit=1)
-    react = dspy.ReAct("question -> answer", tools=tools, max_iters=1)
+    react = dspy.ReAct("question -> answer", tools=tools, max_iters=2)
 
     adapter = ChatAdapter()
     lm = DummyLM(
-        [
-            {"next_thought": "call it", "next_tool_name": "explode", "next_tool_args": {}},
-            {"reasoning": "it failed", "answer": "could not complete"},
-        ],
+        [_calls(("explode", {})), _calls(("submit", {"answer": "could not complete"}))],
         adapter=adapter,
     )
     # `dspy.context(...)` (not `dspy.configure(...)`): only one async task per
-    # process may ever call `dspy.configure`, so a second test using it here
-    # would break whichever of the two tests in this file runs second.
-    # `dspy.context` is the safe, callable-from-any-task, block-scoped form.
+    # process may ever call `dspy.configure`.
     with dspy.context(lm=lm, adapter=adapter):
         pred = react(question="please explode")
 
-    # No exception escaped `react(...)`; the failure is folded into the
-    # trajectory as an observation instead.
     assert pred.answer == "could not complete"
-    observation = pred.trajectory["observation_0"]
-    assert observation.startswith("Execution error in explode:")
-    assert "boom" in observation
+    [result] = _results(pred)
+    assert result.is_error
+    assert result.value.startswith("Execution error in explode:")
+    assert result.value.splitlines()[-1] == "agent_gantry.dspy.DSPyToolError: RuntimeError: boom"
 
 
 async def test_agent_builder_builds_real_react_no_lm_required(gantry):
@@ -178,29 +181,16 @@ async def test_agent_builder_builds_real_react_no_lm_required(gantry):
 
 
 async def test_react_end_to_end_with_dummy_lm_sync_call(gantry):
-    """Full offline ``dspy.ReAct`` run: DummyLM scripts tool-call then finish.
+    """Full offline ``dspy.ReAct`` run through the SYNCHRONOUS ``react(...)`` entry point.
 
-    Uses the SYNCHRONOUS ``react(question=...)`` call (not ``await
-    react.acall(...)``) -- the default DSPy entry point -- to prove the
-    adapter's sync-bridged tools work under it with zero DSPy configuration
-    (no ``allow_tool_async_sync_conversion``). No network access or API key.
-
-    Uses ``dspy.context(...)`` rather than ``dspy.configure(...)``: only one
-    async task per process may ever call ``dspy.configure`` (DSPy raises for
-    every subsequent caller from a different task), so with more than one
-    test in this module needing a scripted LM, ``dspy.context`` -- callable
-    from any task, scoped to the ``with`` block -- is the only safe choice.
+    Proves the sync-bridged tools work with zero DSPy configuration (no
+    ``allow_tool_async_sync_conversion``). No network access or API key.
     """
     adapter = ChatAdapter()
     lm = DummyLM(
         [
-            {
-                "next_thought": "I should send the email",
-                "next_tool_name": "send_email",
-                "next_tool_args": {"to": "boss@x.com"},
-            },
-            {"next_thought": "Done", "next_tool_name": "finish", "next_tool_args": {}},
-            {"reasoning": "The email was sent successfully.", "answer": "Email sent to boss@x.com."},
+            _calls(("send_email", {"to": "boss@x.com"})),
+            _calls(("submit", {"answer": "Email sent to boss@x.com."})),
         ],
         adapter=adapter,
     )
@@ -210,5 +200,7 @@ async def test_react_end_to_end_with_dummy_lm_sync_call(gantry):
 
         pred = react(question="Please email my boss.")
 
-        assert pred.answer == "Email sent to boss@x.com."
-        assert pred.trajectory["observation_0"] == "sent:boss@x.com"
+    assert pred.answer == "Email sent to boss@x.com."
+    assert pred.termination_reason == "submit"
+    [result] = _results(pred)
+    assert (result.value, result.is_error) == ("sent:boss@x.com", False)

@@ -674,6 +674,9 @@ dev = [
     { name = "ruff" },
     { name = "typesafe-sdk" },
 ]
+dspy = [
+    { name = "dspy" },
+]
 embeddings = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -807,6 +810,7 @@ requires-dist = [
     { name = "crewai", marker = "python_full_version < '3.14' and extra == 'agent-frameworks'", specifier = ">=1.15.22" },
     { name = "crewai", marker = "python_full_version < '3.14' and extra == 'crewai'", specifier = ">=1.15.22" },
     { name = "cryptography", marker = "extra == 'example-tools'", specifier = ">=41.0.0" },
+    { name = "dspy", marker = "extra == 'dspy'", specifier = ">=3.5.0" },
     { name = "einops", marker = "extra == 'example-tools'", specifier = ">=0.8.1" },
     { name = "einops", marker = "extra == 'nomic'", specifier = ">=0.8.1" },
     { name = "fastapi", marker = "extra == 'a2a'", specifier = ">=0.104.0" },
@@ -873,7 +877,7 @@ requires-dist = [
     { name = "typesafe-sdk", marker = "extra == 'jev'", specifier = ">=0.7.0" },
     { name = "uvicorn", marker = "extra == 'a2a'", specifier = ">=0.24.0" },
 ]
-provides-extras = ["dev", "agent-frameworks", "pydantic-ai", "openai-agents", "langchain", "langgraph", "google-adk", "crewai", "llamaindex", "strands", "agno", "haystack", "example-tools", "embeddings", "openai", "cohere", "jev", "qdrant", "chroma", "pgvector", "lancedb", "vector-stores", "nomic", "mcp", "a2a", "anthropic", "google-genai", "google-vertexai", "mistral", "groq", "llm-providers", "all"]
+provides-extras = ["dev", "agent-frameworks", "pydantic-ai", "openai-agents", "langchain", "langgraph", "google-adk", "crewai", "llamaindex", "strands", "agno", "haystack", "dspy", "example-tools", "embeddings", "openai", "cohere", "jev", "qdrant", "chroma", "pgvector", "lancedb", "vector-stores", "nomic", "mcp", "a2a", "anthropic", "google-genai", "google-vertexai", "mistral", "groq", "llm-providers", "all"]
 
 [[package]]
 name = "agno"
@@ -1663,6 +1667,41 @@ wheels = [
 ]
 
 [[package]]
+name = "cachetools"
+version = "7.3.3"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version < '3.11'",
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1c/48/a5abcdd3c3b2aac71fb4379b451ac832cb1c988ed050cccd9ca1bd0c9c46/cachetools-7.3.3.tar.gz", hash = "sha256:46e92905f580cb137c499b9ec6acd73d569c2c3542ddfeb286618685e55cb340", size = 51165, upload-time = "2026-11-19T17:49:11.203Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/35/a3/62e2d09a9e1e45a9b586f3b4a2cb47196315617d4251c83f4c93baee4b7c/cachetools-7.3.3-py3-none-any.whl", hash = "sha256:32305addec0581cae6d4f7952d01d078dbc521f922650eba395b9d25b7481843", size = 20106, upload-time = "2026-11-19T17:49:09.462Z" },
+]
+
+[[package]]
+name = "cachetools"
+version = "8.0.2"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14' and sys_platform == 'win32'",
+    "python_full_version >= '3.14' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+]
+sdist = { url = "https://files.pythonhosted.org/packages/75/28/eb1ac766e4c0c439506a654186de8e2cfcd99035218a9393986103a0fdf0/cachetools-8.0.2.tar.gz", hash = "sha256:30ac523adfc118b51d2b2e7bad8a0ddb31370dfe2700c7f10ca224f36ccf81e0", size = 51441, upload-time = "2026-11-18T21:18:28.225Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f6/35/0dca79b22cd3ad3fc4bfbd91ea85f259903e7ce5fe956647916df8f691f4/cachetools-8.0.2-py3-none-any.whl", hash = "sha256:502bf3c17c6e35d78ccdaa70da8c7001b28634541f5cde0dee33c93bb252277d", size = 19334, upload-time = "2026-11-18T21:18:26.889Z" },
+]
+
+[[package]]
 name = "cel-python"
 version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1681,34 +1720,8 @@ wheels = [
 
 [[package]]
 name = "certifi"
-version = "2026.2.25"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version < '3.11'",
-]
-sdist = { url = "https://files.pythonhosted.org/packages/af/2d/7bf41579a8986e348fa033a31cdd0e4121114f6bce2457e8876010b092dd/certifi-2026.2.25.tar.gz", hash = "sha256:e887ab5cee78ea814d3472169153c2d12cd43b14bd03329a39a9c6e2e80bfba7", size = 155029, upload-time = "2026-02-25T02:54:17.342Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9a/3c/c17fb3ca2d9c3acff52e30b309f538586f9f5b9c9cf454f3845fc9af4881/certifi-2026.2.25-py3-none-any.whl", hash = "sha256:027692e4402ad994f1c42e52a4997a9763c646b73e4096e4d5d6db8af1d6f0fa", size = 153684, upload-time = "2026-02-25T02:54:15.766Z" },
-]
-
-[[package]]
-name = "certifi"
 version = "2026.11.20"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.14' and sys_platform == 'win32'",
-    "python_full_version >= '3.14' and sys_platform == 'emscripten'",
-    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-    "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-]
 sdist = { url = "https://files.pythonhosted.org/packages/51/33/4cd27639502f010084bcef7a2036391dd637439901341ce1a530f36f6e51/certifi-2026.11.20.tar.gz", hash = "sha256:af1cb240a8133f105aa52684a3a3258339d7f2fd0bd4e2812698ff5cf5588c4e", size = 128901, upload-time = "2026-11-20T23:37:49.522Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/6d/39/5eec3296860b94ac20bb8ed807725b88f6adfab3f343df592afd975f5f86/certifi-2026.11.20-py3-none-any.whl", hash = "sha256:7422df25243767b9877031a2248cb14d09ddac9beee846f4cef3d5c9191d488f", size = 127913, upload-time = "2026-11-20T23:37:48.117Z" },
@@ -1972,6 +1985,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/57/75/31212c6bf2503fdf920d87fee5d7a86a2e3bcf444984126f13d8e4016804/click-8.3.2.tar.gz", hash = "sha256:14162b8b3b3550a7d479eafa77dfd3c38d9dc8951f6f69c78913a8f9a7540fd5", size = 302856, upload-time = "2026-04-03T19:14:45.118Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e4/20/71885d8b97d4f3dde17b1fdb92dbd4908b00541c5a3379787137285f602e/click-8.3.2-py3-none-any.whl", hash = "sha256:1924d2c27c5653561cd2cae4548d1406039cb79b858b747cfea24924bbc1616d", size = 108379, upload-time = "2026-04-03T19:14:43.505Z" },
+]
+
+[[package]]
+name = "cloudpickle"
+version = "3.1.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/59/df/0bf7ef6c2534c140bb4c3d787e1557542e50a96b393659efaa4f39f9a45a/cloudpickle-3.1.3.tar.gz", hash = "sha256:cbe9fde14429a5db009ea05ce94e5182cf998c97b96918d50c10f73f9c2f4f33", size = 22576, upload-time = "2026-11-18T10:27:18.82Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a4/42/3b121b42b114919ffc6195a81c1c7065a465f62f46477fbdb87a07699e51/cloudpickle-3.1.3-py3-none-any.whl", hash = "sha256:1654f4f18e416447210a63c5c25a135d65a292156aa5fa519dfa4baf7726dddb", size = 22399, upload-time = "2026-11-18T10:27:17.534Z" },
 ]
 
 [[package]]
@@ -2359,8 +2381,7 @@ version = "1.15.28"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "appdirs", marker = "python_full_version < '3.14'" },
-    { name = "certifi", version = "2026.2.25", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "certifi", version = "2026.11.20", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "certifi", marker = "python_full_version < '3.14'" },
     { name = "click", marker = "python_full_version < '3.14'" },
     { name = "crewai-core", marker = "python_full_version < '3.14'" },
     { name = "cryptography", marker = "python_full_version < '3.14'" },
@@ -2545,6 +2566,15 @@ wheels = [
 ]
 
 [[package]]
+name = "diskcache"
+version = "5.6.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/3f/21/1c1ffc1a039ddcc459db43cc108658f32c57d271d7289a2794e401d0fdb6/diskcache-5.6.3.tar.gz", hash = "sha256:2c3a3fa2743d8535d832ec61c2054a1641f41775aa7c556758a109941e33e4fc", size = 67916, upload-time = "2023-08-31T06:12:00.316Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3f/27/4570e78fc0bf5ea0ca45eb1de3818a23787af9b390c0b0a0033a1b8236f9/diskcache-5.6.3-py3-none-any.whl", hash = "sha256:5e31b2d5fbad117cc363ebaf6b689474db18a1f6438bc82358b024abd4c2ca19", size = 45550, upload-time = "2023-08-31T06:11:58.822Z" },
+]
+
+[[package]]
 name = "distro"
 version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2560,6 +2590,32 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/b2/9d/c3b43da9515bd270df0f80548d9944e389870713cc1fe2b8fb35fe2bcefd/docstring_parser-0.17.0.tar.gz", hash = "sha256:583de4a309722b3315439bb31d64ba3eebada841f2e2cee23b99df001434c912", size = 27442, upload-time = "2025-07-21T07:35:01.868Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/55/e2/2537ebcff11c1ee1ff17d8d0b6f4db75873e3b0fb32c2d4a2ee31ecb310a/docstring_parser-0.17.0-py3-none-any.whl", hash = "sha256:cf2569abd23dce8099b300f9b4fa8191e9582dda731fd533daf54c4551658708", size = 36896, upload-time = "2025-07-21T07:35:00.684Z" },
+]
+
+[[package]]
+name = "dspy"
+version = "3.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "cachetools", version = "7.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "cachetools", version = "8.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "certifi" },
+    { name = "cloudpickle" },
+    { name = "diskcache" },
+    { name = "gepa" },
+    { name = "json-repair" },
+    { name = "jsonschema" },
+    { name = "orjson" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+    { name = "regex" },
+    { name = "requests" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/38/02/61d7b473b32d304900f504c8d3321583265585a793a7d7cd28e11f4e4375/dspy-3.5.0.tar.gz", hash = "sha256:1ffb057e45ea5e0e16217680fd48794164c7eac6119bb9b1bc9a122c1d658036", size = 1070847, upload-time = "2026-11-10T16:24:10.63Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/67/ab/0104d0ffed26493858758f378777747bb8e205b339443dbc6f7a636e0d48/dspy-3.5.0-py3-none-any.whl", hash = "sha256:4e7b7eb62058b614f8debcbd907aa4252b539fccd555b077068b050141ab6fdd", size = 1188661, upload-time = "2026-11-10T16:24:08.845Z" },
 ]
 
 [[package]]
@@ -3010,6 +3066,15 @@ wheels = [
 ]
 
 [[package]]
+name = "gepa"
+version = "0.1.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/95/56/925779e5690971f1b022f7d107caf015c33ec09560261273ec137e23a8f2/gepa-0.1.4.tar.gz", hash = "sha256:6dd153a676ae5481764860d19286a9c0e8ddb5ef70d7f13044faf24978bdb6b8", size = 351343, upload-time = "2026-07-15T14:53:59.929Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fd/77/5b3a281cfd9caaa9e68349b434cf27f1ca448003ee0067a1ae2184dc52d1/gepa-0.1.4-py3-none-any.whl", hash = "sha256:12b971039599625c156d2231f6d72a29c31a22e9c237689459b5f1a3c353f532", size = 290167, upload-time = "2026-07-15T14:53:58.422Z" },
+]
+
+[[package]]
 name = "github-copilot-sdk"
 version = "0.1.32"
 source = { registry = "https://pypi.org/simple" }
@@ -3114,8 +3179,7 @@ name = "google-cloud-aiplatform"
 version = "1.165.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "certifi", version = "2026.2.25", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "certifi", version = "2026.11.20", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "certifi" },
     { name = "docstring-parser" },
     { name = "google-api-core", extra = ["grpc"] },
     { name = "google-auth" },
@@ -3801,7 +3865,7 @@ resolution-markers = [
 ]
 dependencies = [
     { name = "anyio", marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "certifi", version = "2026.11.20", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "certifi", marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
     { name = "docstring-parser", marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
     { name = "filetype", marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
     { name = "httpx", marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
@@ -3845,7 +3909,7 @@ resolution-markers = [
 ]
 dependencies = [
     { name = "anyio", marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "certifi", version = "2026.11.20", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "certifi", marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
     { name = "docstring-parser", marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
     { name = "filetype", marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
     { name = "httpx", marker = "(python_full_version >= '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
@@ -3915,8 +3979,7 @@ name = "httpcore"
 version = "1.0.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "certifi", version = "2026.2.25", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "certifi", version = "2026.11.20", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "certifi" },
     { name = "h11" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/06/94/82699a10bca87a5556c9c59b5963f2d039dbd239f25bc2a63907a05a14cb/httpcore-1.0.9.tar.gz", hash = "sha256:6e34463af53fd2ab5d807f399a9b45ea31c3dfa2276f15a2c3f00afff6e176e8", size = 85484, upload-time = "2025-04-24T22:06:22.219Z" }
@@ -3986,8 +4049,7 @@ version = "0.28.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
-    { name = "certifi", version = "2026.2.25", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "certifi", version = "2026.11.20", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "certifi" },
     { name = "httpcore" },
     { name = "idna" },
 ]
@@ -4766,8 +4828,7 @@ name = "kubernetes"
 version = "35.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "certifi", version = "2026.2.25", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "certifi", version = "2026.11.20", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "certifi" },
     { name = "durationpy" },
     { name = "python-dateutil" },
     { name = "pyyaml" },
@@ -4873,8 +4934,7 @@ name = "langchain-openai"
 version = "1.6.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "certifi", version = "2026.2.25", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "certifi", version = "2026.11.20", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "certifi" },
     { name = "langchain-core" },
     { name = "openai", version = "2.53.0", source = { registry = "https://pypi.org/simple" } },
     { name = "tiktoken" },
@@ -5854,8 +5914,7 @@ version = "0.7.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "azure-core" },
-    { name = "certifi", version = "2026.2.25", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "certifi", version = "2026.11.20", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "certifi" },
     { name = "isodate" },
     { name = "requests" },
     { name = "requests-oauthlib" },
@@ -9026,8 +9085,7 @@ name = "requests"
 version = "2.33.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "certifi", version = "2026.2.25", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "certifi", version = "2026.11.20", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "certifi" },
     { name = "charset-normalizer" },
     { name = "idna" },
     { name = "urllib3" },

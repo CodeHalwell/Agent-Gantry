@@ -17,6 +17,12 @@ call an adapter method.
 
 from __future__ import annotations
 
-from agent_gantry.integrations.frameworks.dspy import DSPyAdapter
+from agent_gantry.integrations.frameworks.dspy import (
+    ApprovalRequest,
+    Approver,
+    DSPyAdapter,
+    DSPyToolError,
+    current_dspy_module,
+)
 
-__all__ = ["DSPyAdapter"]
+__all__ = ["ApprovalRequest", "Approver", "DSPyAdapter", "DSPyToolError", "current_dspy_module"]
