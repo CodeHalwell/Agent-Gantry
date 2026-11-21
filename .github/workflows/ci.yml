@@ -155,7 +155,7 @@ jobs:
       # that needs a newer release is caught here, not by users. One cell.
       # Same for the OpenAI Agents SDK (`openai-agents` extra, >=0.23.1)
       # LangChain / LangGraph (`langchain` / `langgraph` extras, >=1.0.0)
-      # Google ADK (`google-adk` extra, >=2.6.1) and CrewAI (`crewai`, >=1.15.22).
+      # Google ADK (`google-adk` extra, >=2.6.1), CrewAI (`crewai`, >=1.15.22) and LlamaIndex (`llamaindex`, >=0.13.0).
       - name: OpenAI Agents SDK floor (0.23.1)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         run: |
@@ -191,6 +191,15 @@ jobs:
           uv pip install --python .venv-crewai-floor ".[dev]" "crewai==1.15.22"
           .venv-crewai-floor/bin/python -m pytest \
             tests/frameworks/test_crewai.py tests/frameworks/test_crewai_native.py -v
+
+      - name: LlamaIndex floor (0.13.0)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: |
+          uv venv .venv-llamaindex-floor --python ${{ matrix.python-version }}
+          uv pip install --python .venv-llamaindex-floor ".[dev]" "llama-index-core==0.13.0"
+          .venv-llamaindex-floor/bin/python -m pytest \
+            tests/frameworks/test_llamaindex.py tests/frameworks/test_llamaindex_live.py \
+            tests/frameworks/test_llamaindex_native.py -v
 
       - name: Pydantic AI floor (2.0.0)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'

@@ -329,6 +329,16 @@ google-adk = [
 crewai = [
     "crewai>=1.15.22; python_version < '3.14'",
 ]
+# LlamaIndex, first-class (see CHANGELOG). Floor 0.13.0: the adapter uses
+# FunctionTool context injection (a `ctx: Context` parameter plus
+# partial_params), workflow Context.wait_for_event(waiter_event=...) with
+# InputRequiredEvent/HumanResponseEvent, and FunctionAgent's tool errors as
+# ToolOutput(is_error=True) (verified 2026-11-20 on exactly 0.13.0, and on
+# 0.12.52, 0.14.23 and 0.14.24). The `framework-adapters` CI job re-runs the
+# LlamaIndex tests on exactly 0.13.0.
+llamaindex = [
+    "llama-index-core>=0.13.0",
+]
 example-tools = [
     "beautifulsoup4>=4.12.0",
     "cryptography>=41.0.0",

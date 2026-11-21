@@ -38,10 +38,17 @@ from agent_gantry.integrations.frameworks.base import (
     DEFAULT_TOOL_LIMIT,
     GantryToolset,
     QueryBoundsError,
+    _resolve_pins,
+    _with_native_names,
     check_query_bounds,
 )
 from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
 from agent_gantry.integrations.frameworks.llamaindex import _spec_to_llamaindex
+from agent_gantry.integrations.frameworks.native import (
+    ErrorFormatter,
+    ErrorMode,
+    check_error_mode,
+)
 from agent_gantry.query import latest_activity
 
 if TYPE_CHECKING:
@@ -61,7 +68,8 @@ def _import_object_retriever() -> type:
     except ImportError as exc:  # pragma: no cover - exercised when absent
         raise ImportError(
             "LlamaIndex is required for the live per-turn tool provider; "
-            "install it with `pip install llama-index-core` (or `uv add llama-index-core`)."
+            "install it with `pip install 'agent-gantry[llamaindex]'` (or "
+            "`uv add 'agent-gantry[llamaindex]'`)."
         ) from exc
     return ObjectRetriever
 
@@ -119,6 +127,8 @@ def _retriever_class(object_retriever: type) -> type:
             namespaces: list[str] | None = None,
             required: list[str] | None = None,
             always_include: list[str] | None = None,
+            error_mode: ErrorMode = "model",
+            error_formatter: ErrorFormatter | None = None,
         ) -> None:
             # Intentionally do NOT call super().__init__(): the base class wires
             # a static BaseRetriever + BaseObjectNodeMapping over a pre-indexed
@@ -134,6 +144,34 @@ def _retriever_class(object_retriever: type) -> type:
             self._namespaces = namespaces
             self._required = required
             self._always_include = always_include
+            self._error_mode = check_error_mode(error_mode)
+            self._error_formatter = error_formatter
+
+        def _tools(self, specs: list[Any]) -> list:
+            return [
+                _spec_to_llamaindex(
+                    spec, error_mode=self._error_mode, error_formatter=self._error_formatter
+                )
+                for spec in specs
+            ]
+
+        def _pins(self) -> list[Any]:
+            """The pinned tools alone: they never depend on retrieval."""
+            try:
+                return _with_native_names(
+                    self._gantry,
+                    _resolve_pins(
+                        self._gantry,
+                        [],
+                        required=self._required,
+                        always_include=self._always_include,
+                        namespaces=self._namespaces,
+                    ),
+                )
+            except MissingRequiredToolError:
+                raise
+            except Exception:  # pragma: no cover - registry lookup failing too
+                return []
 
         @property
         def gantry(self) -> AgentGantry:
@@ -155,11 +193,11 @@ def _retriever_class(object_retriever: type) -> type:
             """Re-select tools for the current step and return ``FunctionTool``s.
 
             Never raises on selection failure — a broken retrieval must not
-            break the agent's step. ``FunctionAgent`` calls this fresh every
-            step with no persisted "previous step's tools" for this retriever
-            to fall back to, so on failure this logs a WARNING and degrades to
-            "no tools this step" — see "Per-turn selection-failure policy" in
-            ``integrations/frameworks/README.md``.
+            break the agent's step. ``FunctionAgent`` calls this with only the
+            query (no run identity to keep earlier tools against), so on
+            failure this logs a WARNING and offers the pinned tools alone,
+            which never depend on retrieval — see "Per-turn selection-failure
+            policy" in ``integrations/frameworks/README.md``.
             """
             query = _query_from(str_or_query_bundle)
             try:
@@ -176,11 +214,11 @@ def _retriever_class(object_retriever: type) -> type:
             except Exception:
                 logger.warning(
                     "GantryToolRetriever.aretrieve: semantic retrieval failed; "
-                    "continuing with no tools this step.",
+                    "offering only the pinned tools this step.",
                     exc_info=True,
                 )
-                return []
-            return [_spec_to_llamaindex(spec) for spec in specs]
+                return self._tools(self._pins())
+            return self._tools(specs)
 
         def retrieve(self, str_or_query_bundle: Any) -> list:
             """Synchronous counterpart to :meth:`aretrieve` (loop-safe bridge)."""
@@ -199,6 +237,8 @@ def _gantry_tool_retriever(
     namespaces: list[str] | None = None,
     required: list[str] | None = None,
     always_include: list[str] | None = None,
+    error_mode: ErrorMode = "model",
+    error_formatter: ErrorFormatter | None = None,
 ) -> Any:
     """Build a ``GantryToolRetriever`` for ``gantry``.
 
@@ -212,6 +252,8 @@ def _gantry_tool_retriever(
         namespaces=namespaces,
         required=required,
         always_include=always_include,
+        error_mode=error_mode,
+        error_formatter=error_formatter,
     )
 
 
@@ -225,6 +267,8 @@ def _gantry_function_agent(
     namespaces: list[str] | None = None,
     required: list[str] | None = None,
     always_include: list[str] | None = None,
+    error_mode: ErrorMode = "model",
+    error_formatter: ErrorFormatter | None = None,
     **agent_kwargs: Any,
 ) -> Any:
     """Build a ``FunctionAgent`` wired to a live per-turn gantry retriever.
@@ -242,11 +286,14 @@ def _gantry_function_agent(
         ImportError: If ``llama-index-core`` is not installed.
     """
     try:
-        from llama_index.core.agent.workflow import FunctionAgent
+        from agent_gantry.integrations.frameworks.llamaindex import gantry_function_agent_class
+
+        FunctionAgent = gantry_function_agent_class()  # noqa: N806
     except ImportError as exc:  # pragma: no cover - exercised when absent
         raise ImportError(
             "LlamaIndex is required for LlamaIndexAdapter.function_agent; "
-            "install it with `pip install llama-index-core` (or `uv add llama-index-core`)."
+            "install it with `pip install 'agent-gantry[llamaindex]'` (or "
+            "`uv add 'agent-gantry[llamaindex]'`)."
         ) from exc
 
     return FunctionAgent(
@@ -259,6 +306,8 @@ def _gantry_function_agent(
             namespaces=namespaces,
             required=required,
             always_include=always_include,
+            error_mode=error_mode,
+            error_formatter=error_formatter,
         ),
         **agent_kwargs,
     )
