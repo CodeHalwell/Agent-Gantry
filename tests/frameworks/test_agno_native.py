@@ -292,6 +292,32 @@ async def test_new_runs_still_select_while_paused_runs_fill_the_cache(gantry, mo
     assert model.offered[-1] == ["get_weather"]
 
 
+async def test_unreadable_stored_input_is_logged(gantry, caplog):
+    from agent_gantry.integrations.frameworks.agno import _stored_input
+
+    class BrokenAgent:
+        def get_run_output(self, **kwargs):
+            raise RuntimeError("db offline")
+
+    with caplog.at_level("WARNING"):
+        assert _stored_input(BrokenAgent(), None) == ""
+    assert "could not read run" in caplog.text
+
+
+def test_one_agent_serves_runs_from_many_threads(gantry):
+    from concurrent.futures import ThreadPoolExecutor
+
+    agent = AgnoAdapter(gantry).agent(model=ScriptedModel(), limit=1)
+
+    def one(i: int) -> None:
+        agent.run(f"what's the weather forecast for city {i}")
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(one, range(40)))
+    selector = agent.tools.__self__
+    assert not selector._tools and not selector._queries
+
+
 async def test_finished_runs_are_forgotten(gantry):
     agent = AgnoAdapter(gantry).agent(model=ScriptedModel(), limit=1)
     selector = agent.tools.__self__

@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import threading
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
@@ -243,7 +244,9 @@ class _RunSelector:
     for it and remembers the result, so a run resumed after an approval is
     offered the same tools. A post-hook forgets each run when it finishes
     (Agno skips post-hooks while a run is paused), and eviction spares runs
-    offered a confirmation-gated tool, which may still be paused.
+    offered a confirmation-gated tool, which may still be paused. One lock
+    guards both stores (never held while selecting), so one agent can serve
+    concurrent runs from several threads.
     """
 
     def __init__(self, adapter: AgnoAdapter, select_kwargs: dict[str, Any]) -> None:
@@ -251,6 +254,7 @@ class _RunSelector:
         self._select_kwargs = select_kwargs
         self._queries: OrderedDict[str, str] = OrderedDict()
         self._tools: OrderedDict[str, list[Any]] = OrderedDict()
+        self._lock = threading.Lock()
 
     def _may_be_paused(self, run_id: str) -> bool:
         tools = self._tools.get(run_id)
@@ -259,6 +263,7 @@ class _RunSelector:
         )
 
     def _remember(self, store: OrderedDict[str, Any], key: str, value: Any) -> None:
+        """Store ``value`` (call with the lock held)."""
         store[key] = value
         store.move_to_end(key)
         while len(store) > _MAX_REMEMBERED_RUNS:
@@ -267,13 +272,20 @@ class _RunSelector:
                 if len(store) <= _MAX_REMEMBERED_GATED_RUNS:
                     return
                 victim = next(iter(store))
+                logger.warning(
+                    "Agno: over %d runs may be awaiting approval; forgetting the "
+                    "oldest (%s), which will re-select its tools if continued.",
+                    _MAX_REMEMBERED_GATED_RUNS,
+                    victim,
+                )
             del store[victim]
 
     def forget(self, run_context: Any = None) -> None:
         """Agno post-hook: the run finished, so it will not be continued."""
         run_id = getattr(run_context, "run_id", None)
-        self._queries.pop(run_id, None)
-        self._tools.pop(run_id, None)
+        with self._lock:
+            self._queries.pop(run_id, None)
+            self._tools.pop(run_id, None)
 
     def record_input(self, run_input: Any = None, run_context: Any = None) -> None:
         """Agno pre-hook: remember this run's input as its selection query."""
@@ -282,20 +294,23 @@ class _RunSelector:
             return
         reader = getattr(run_input, "input_content_string", None)
         query = reader() if callable(reader) else str(getattr(run_input, "input_content", ""))
-        self._remember(self._queries, run_id, query or "")
+        with self._lock:
+            self._remember(self._queries, run_id, query or "")
 
     def tools(self, agent: Any = None, run_context: Any = None) -> list[Any]:
         """Agno tools factory: the tools selected for this run."""
         run_id = getattr(run_context, "run_id", None)
-        if run_id is not None and run_id in self._tools:
-            return list(self._tools[run_id])
-        query = self._queries.get(run_id, "") if run_id is not None else ""
+        with self._lock:
+            if run_id is not None and run_id in self._tools:
+                return list(self._tools[run_id])
+            query = self._queries.get(run_id, "") if run_id is not None else ""
         if not query:
             query = _stored_input(agent, run_context)
         tools = _run_coroutine_sync(self._select(query))
         if run_id is not None:
-            self._remember(self._tools, run_id, tools)
-            self._queries.pop(run_id, None)  # only needed until the tools are chosen
+            with self._lock:
+                self._remember(self._tools, run_id, tools)
+                self._queries.pop(run_id, None)  # only needed until the tools are chosen
         return list(tools)
 
     async def _select(self, query: str) -> list[Any]:
@@ -336,6 +351,12 @@ def _stored_input(agent: Any, run_context: Any) -> str:
         run_input = getattr(run, "input", None)
         return run_input.input_content_string() if run_input is not None else ""
     except Exception:
+        logger.warning(
+            "Agno: could not read run %s's input from the agent's db; "
+            "selecting its tools without a query",
+            getattr(run_context, "run_id", None),
+            exc_info=True,
+        )
         return ""
 
 
