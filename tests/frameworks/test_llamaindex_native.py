@@ -337,6 +337,19 @@ async def test_an_unexpected_failure_after_approval_never_hangs_replays(gantry, 
     assert outputs and all(o.is_error for o in outputs)
 
 
+async def test_a_reused_call_id_in_a_later_turn_still_asks_and_runs(gantry):
+    """Some backends reuse tool-call ids across turns; each turn's call is its own."""
+    # The scripted LLM numbers calls per step, so both steps send "call_0".
+    llm = _llm([("send_email", {"to": "bob@x"})], [("send_email", {"to": "carol@x"})])
+    agent = LlamaIndexAdapter(gantry).function_agent(llm, limit=1)
+    outputs, requests = await asyncio.wait_for(
+        _run(agent, "send an email message", respond="yes"), timeout=30
+    )
+    assert len(requests) == 2
+    assert gantry.sent == ["bob@x", "carol@x"]
+    assert {o.content for o in outputs} == {"sent:bob@x", "sent:carol@x"}
+
+
 async def test_a_tool_argument_named_ctx_is_passed_through():
     g = AgentGantry(embedder=SimpleEmbedder(dimension=256))
 

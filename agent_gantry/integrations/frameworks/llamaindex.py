@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import hashlib
 import inspect
 import json
 import weakref
@@ -76,7 +77,32 @@ _REJECTED_TEXT = "The user rejected this tool call, so it was not run."
 _TOOL_CALL_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "agent_gantry_llamaindex_tool_call_id", default=None
 )
+#: The model turn the call belongs to (Gantry's ``FunctionAgent`` counts them per run).
+_TOOL_CALL_TURN: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "agent_gantry_llamaindex_tool_call_turn", default=None
+)
 _AGENT_CLASS: Any = None
+
+#: Per workflow run (its state store): model turns started so far. Some backends
+#: reuse call ids ("call_0") on every turn, so an id alone names a call only
+#: within one turn.
+_TURNS: weakref.WeakKeyDictionary[Any, int] = weakref.WeakKeyDictionary()
+
+
+def _run_key(ctx: Any) -> Any:
+    return getattr(ctx, "store", None) or ctx
+
+
+def _turn(ctx: Any, *, advance: bool = False) -> int:
+    key = _run_key(ctx)
+    try:
+        turn = _TURNS.get(key, 0) + (1 if advance else 0)
+        if advance:
+            _TURNS[key] = turn
+        return turn
+    except TypeError:  # pragma: no cover - a store that cannot be weakly referenced
+        return 0
+
 
 #: Per workflow run (its state store): waiter id -> the approved call's result future.
 #: LlamaIndex can replay a waiting step while the approved call is still
@@ -89,7 +115,7 @@ _CLAIMS: weakref.WeakKeyDictionary[Any, dict[str, asyncio.Future[Any]]] = (
 def _claims(ctx: Any) -> dict[str, asyncio.Future[Any]]:
     # Every step invocation gets its own Context object; the run's state store
     # is the one object they all share.
-    owner = getattr(ctx, "store", None) or ctx
+    owner = _run_key(ctx)
     try:
         return _CLAIMS.setdefault(owner, {})
     except TypeError:  # pragma: no cover - a Context that cannot be weakly referenced
@@ -113,14 +139,28 @@ def gantry_function_agent_class() -> Any:
     global _AGENT_CLASS
     if _AGENT_CLASS is None:
         from llama_index.core.agent.workflow import FunctionAgent, ToolCall, ToolCallResult
+        from llama_index.core.agent.workflow.workflow_events import AgentOutput, AgentSetup
         from llama_index.core.workflow import Context, step
 
         class GantryFunctionAgent(FunctionAgent):  # type: ignore[misc, valid-type]
+            async def run_agent_step(self, ctx: Any, ev: Any) -> Any:
+                _turn(ctx, advance=True)  # a new model turn: its call ids are new
+                return await FunctionAgent.run_agent_step(self, ctx, ev)
+
+            run_agent_step.__annotations__ = {
+                "ctx": Context,
+                "ev": AgentSetup,
+                "return": AgentOutput,
+            }
+            run_agent_step = step(run_agent_step)
+
             async def call_tool(self, ctx: Any, ev: Any) -> Any:
                 token = _TOOL_CALL_ID.set(getattr(ev, "tool_id", None))
+                turn_token = _TOOL_CALL_TURN.set(_turn(ctx))
                 try:
                     return await FunctionAgent.call_tool(self, ctx, ev)
                 finally:
+                    _TOOL_CALL_TURN.reset(turn_token)
                     _TOOL_CALL_ID.reset(token)
 
             # Real types: the workflow validates step signatures at runtime.
@@ -164,7 +204,12 @@ def _waiter_id(name: str, arguments: dict[str, Any]) -> str:
     """One logical wait per call: the model's call id, else the exact arguments."""
     call_id = _TOOL_CALL_ID.get()
     if call_id:
-        return f"gantry-approval:{name}:{call_id}"
+        # Turn and arguments too: backends that reuse ids across turns (or for
+        # two different calls) must never share an approval.
+        digest = hashlib.sha256(
+            json.dumps(arguments, sort_keys=True, default=str).encode()
+        ).hexdigest()[:16]
+        return f"gantry-approval:{name}:{_TOOL_CALL_TURN.get()}:{call_id}:{digest}"
     return f"gantry-approval:{name}:{json.dumps(arguments, sort_keys=True, default=str)}"
 
 
