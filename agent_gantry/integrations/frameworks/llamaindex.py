@@ -13,9 +13,11 @@ mechanisms:
 - **Approval** -- a confirmation-gated call (``requires_confirmation=True`` or a
   ``SecurityPolicy(require_confirmation=[...])`` pattern) running in a
   workflow agent waits with ``ctx.wait_for_event(HumanResponseEvent,
-  waiter_event=InputRequiredEvent(...))``. Answer ``HumanResponseEvent(response="yes")``
-  to run it exactly once; anything else rejects it. Outside a workflow the
-  model is told the call needs approval.
+  waiter_event=InputRequiredEvent(...))``. Answer
+  ``HumanResponseEvent(response="yes", gantry_approval_id=request.gantry_approval_id)``
+  to run it exactly once; anything else rejects it. The approval id ties each
+  answer to its own request, so with several calls pending an answer never
+  decides another. Outside a workflow the model is told the call needs approval.
 - **Run context** -- the workflow ``Context`` is injected (an extra ``ctx``
   parameter, hidden from the schema) and readable with
   :func:`current_workflow_context` or :func:`agent_gantry.current_tool_invocation`.
@@ -321,8 +323,12 @@ def _spec_to_llamaindex(
                     prefix=f"Approve the call to {spec.native_name!r}?",
                     gantry_tool=spec.native_name,
                     gantry_arguments=arguments,
+                    gantry_approval_id=waiter_id,
                 ),
                 waiter_id=waiter_id,
+                # Only a response naming this request decides it, so an answer
+                # meant for one pending call never approves another.
+                requirements={"gantry_approval_id": waiter_id},
             )
             if not _is_approval(response):
                 raise LlamaIndexToolError(None, _REJECTED_TEXT, tool_name=spec.native_name)

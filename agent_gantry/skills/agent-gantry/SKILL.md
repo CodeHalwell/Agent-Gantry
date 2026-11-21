@@ -439,12 +439,12 @@ agent = LlamaIndexAdapter(gantry).function_agent(llm, limit=5)   # error_formatt
 handler = agent.run(user_msg="refund order 4471")
 async for event in handler.stream_events():
     if isinstance(event, InputRequiredEvent):                     # a Gantry-gated call waiting
-        handler.ctx.send_event(HumanResponseEvent(response="yes"))   # anything else rejects
+        handler.ctx.send_event(HumanResponseEvent(response="yes", gantry_approval_id=event.gantry_approval_id))
 result = await handler
 ```
 
 - **Errors**: `LlamaIndexToolError` (text `<type>: <message>`), shown to the model as `ToolOutput(is_error=True)`.
-- **Approval**: gated calls `ctx.wait_for_event(HumanResponseEvent, waiter_event=InputRequiredEvent(gantry_tool=..., gantry_arguments=...))`; "yes"/"y"/"approve"/"approved" runs once. Direct `tool.call` reports "needs approval".
+- **Approval**: gated calls `ctx.wait_for_event(HumanResponseEvent, waiter_event=InputRequiredEvent(gantry_tool=..., gantry_arguments=..., gantry_approval_id=...))`; answer with a `HumanResponseEvent` echoing `gantry_approval_id` (so an answer only decides its own call); "yes"/"y"/"approve"/"approved" runs once. Direct `tool.call` reports "needs approval".
 - **Run context**: hidden `ctx` parameter; `current_workflow_context()` returns the workflow `Context` (`.store` for state).
 - **Per step**: `tool_retriever()` re-selects each step; on a retrieval failure only the pins are offered.
 
@@ -980,7 +980,7 @@ This catches the headline mistakes: a tool description that names another tool (
 | `ImportError: Per-turn Gantry selection needs openai-agents>=0.23.1` | An older SDK came in transitively | `pip install 'agent-gantry[openai-agents]'` |
 | LangGraph run returns `__interrupt__` | A Gantry-gated tool needs approval | `await agent.ainvoke(Command(resume=True), config)` with the same `thread_id` |
 | CrewAI gated tool says it "requires human approval and was not run" | No approver configured | `CrewAIAdapter(gantry, approve=fn)` or `approve="console"` |
-| LlamaIndex run waits forever on a gated tool | Nobody answered the `InputRequiredEvent` | Stream events and `handler.ctx.send_event(HumanResponseEvent(response="yes"))` |
+| LlamaIndex run waits forever on a gated tool | Nobody answered the `InputRequiredEvent`, or the answer lacks its `gantry_approval_id` | Stream events and `handler.ctx.send_event(HumanResponseEvent(response="yes", gantry_approval_id=event.gantry_approval_id))` |
 | ADK run stops with an `adk_request_confirmation` function call | A Gantry-gated tool needs approval | Send `FunctionResponse(name="adk_request_confirmation", id=call.id, response={"confirmed": True})` as the next message |
 | LangGraph gated tool says it "requires human approval and was not run" | No checkpointer, so the interrupt could never be resumed | Pass `checkpointer=` to `create_agent` / `areact_agent` |
 | A LangChain tool error became a `ToolMessage` instead of raising | `handle_tool_error=True` in the default `error_mode="model"` | `LangChainAdapter(gantry, error_mode="raise")` |

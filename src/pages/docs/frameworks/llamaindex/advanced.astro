@@ -16,9 +16,11 @@ handler = agent.run(user_msg="Refund order 4471")
 async for event in handler.stream_events():
     if isinstance(event, InputRequiredEvent):
         answer = "yes" if ask_a_human(event.gantry_tool, event.gantry_arguments) else "no"
-        handler.ctx.send_event(HumanResponseEvent(response=answer))
+        handler.ctx.send_event(
+            HumanResponseEvent(response=answer, gantry_approval_id=event.gantry_approval_id)
+        )
 result = await handler`} />
-  <p><code>"yes"</code>, <code>"y"</code>, <code>"approve"</code> or <code>"approved"</code> runs the call once through <code>gantry.execute</code> with only the confirmation gate cleared; anything else rejects it and the model is told. A tool called directly, outside a workflow, reports that it needs approval.</p>
+  <p>Echo the request's <code>gantry_approval_id</code>: each call waits only for a response naming it, so with several gated calls pending an answer never decides the wrong one. <code>"yes"</code>, <code>"y"</code>, <code>"approve"</code> or <code>"approved"</code> runs the call once through <code>gantry.execute</code> with only the confirmation gate cleared; anything else rejects it and the model is told. A tool called directly, outside a workflow, reports that it needs approval.</p>
 
   <h2>Context injection</h2>
   <p>Each Gantry tool has a hidden <code>ctx</code> parameter annotated with the workflow <code>Context</code>, so <code>FunctionAgent</code> injects the run's context. It is kept out of the tool's schema, and a direct <code>tool.call(...)</code> gets <code>None</code>. <code>current_workflow_context()</code> and <code>current_tool_invocation()</code> expose it, with <code>deps</code> set to <code>ctx.store</code>.</p>

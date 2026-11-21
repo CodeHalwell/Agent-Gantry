@@ -690,11 +690,15 @@ human-in-the-loop events:
 handler = agent.run(user_msg="refund order 4471")
 async for event in handler.stream_events():
     if isinstance(event, InputRequiredEvent):          # event.gantry_tool, event.gantry_arguments
-        handler.ctx.send_event(HumanResponseEvent(response="yes"))   # anything else rejects
+        handler.ctx.send_event(                        # "yes" approves; anything else rejects
+            HumanResponseEvent(response="yes", gantry_approval_id=event.gantry_approval_id)
+        )
 result = await handler
 ```
 
-`"yes"`, `"y"`, `"approve"` or `"approved"` (or an event with `approved=True`)
+The response must echo the request's `gantry_approval_id`: each call waits only
+for a response naming it, so with several gated calls pending an answer never
+decides another. `"yes"`, `"y"`, `"approve"` or `"approved"` (or an event with `approved=True`)
 runs the call once with only the confirmation gate cleared. Outside a workflow
 (a direct `tool.call`), the model is told the call needs approval.
 

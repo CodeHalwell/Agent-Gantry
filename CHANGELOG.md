@@ -24,8 +24,9 @@ none. `error_mode="raise"` keeps the previous error type.
   `llama-index-core>=0.13.0`). CI runs the LlamaIndex tests on exactly 0.13.0
   and on the latest.
 - LlamaIndex approval: gated calls `ctx.wait_for_event(HumanResponseEvent,
-  waiter_event=InputRequiredEvent(...))`; an approving response runs the call
-  once.
+  waiter_event=InputRequiredEvent(...))`; an approving `HumanResponseEvent`
+  that echoes the request's `gantry_approval_id` runs the call once, and an
+  answer never decides a different pending call.
 - `agent_gantry.llamaindex.current_workflow_context()`: the workflow `Context`
   (injected through a hidden `ctx` parameter), also on
   `current_tool_invocation()`.

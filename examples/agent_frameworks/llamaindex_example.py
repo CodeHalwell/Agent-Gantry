@@ -134,7 +134,9 @@ async def run(agent: Any, prompt: str, ctx: Any = None) -> list[Any]:
             outputs.append(event.tool_output)
         if isinstance(event, InputRequiredEvent):
             print(f"[approval] {event.prefix} {event.gantry_arguments} -> answering yes")
-            handler.ctx.send_event(HumanResponseEvent(response="yes"))
+            handler.ctx.send_event(
+                HumanResponseEvent(response="yes", gantry_approval_id=event.gantry_approval_id)
+            )
     await handler
     return outputs
 

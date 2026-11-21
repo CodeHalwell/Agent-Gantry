@@ -162,7 +162,10 @@ async def _run(agent: Any, prompt: str = "go", *, respond: Any = None, ctx: Any 
             results.append(event.tool_output)
         if isinstance(event, InputRequiredEvent):
             requests.append(event)
-            handler.ctx.send_event(HumanResponseEvent(response=respond))
+            answer = respond(event) if callable(respond) else respond
+            handler.ctx.send_event(
+                HumanResponseEvent(response=answer, gantry_approval_id=event.gantry_approval_id)
+            )
     await handler
     return results, requests
 
@@ -266,6 +269,32 @@ async def test_two_identical_gated_calls_each_wait_for_their_own_approval(gantry
     # LlamaIndex replays a waiting step when a response arrives and may re-emit
     # its result; the replay joins the call that already ran.
     assert {o.content for o in outputs} == {"sent:bob@x"}
+
+
+async def test_each_response_only_decides_its_own_call():
+    """With two gated calls pending, an answer for one never decides the other."""
+    g = await _build(security_policy=SecurityPolicy(require_confirmation=["delete_*"]))
+    try:
+        llm = _llm([("send_email", {"to": "bob@x"}), ("delete_record", {"record_id": "r1"})])
+        agent = LlamaIndexAdapter(g).function_agent(llm, limit=1, always_include=["delete_record"])
+        handler = agent.run(user_msg="send an email message to bob")
+        pending = []
+        async for event in handler.stream_events():
+            if isinstance(event, InputRequiredEvent):
+                pending.append(event)
+                if len(pending) == 2:
+                    # Reject the deletion first, then approve the email.
+                    for request in sorted(pending, key=lambda r: r.gantry_tool):
+                        answer = "no" if request.gantry_tool == "delete_record" else "yes"
+                        handler.ctx.send_event(
+                            HumanResponseEvent(
+                                response=answer, gantry_approval_id=request.gantry_approval_id
+                            )
+                        )
+        await asyncio.wait_for(handler, timeout=30)
+        assert g.sent == ["bob@x"]  # the email ran; the rejected deletion never did
+    finally:
+        await g.close()
 
 
 async def test_a_tool_argument_named_ctx_is_passed_through():
