@@ -319,6 +319,16 @@ langgraph = [
 google-adk = [
     "google-adk>=2.6.1",
 ]
+# CrewAI, first-class (see CHANGELOG). Floor 1.15.22, the same as the
+# agent-frameworks floor: the adapter returns crewai.tools.ToolFailure and
+# registers a crewai.hooks before_tool_call hook for run context and approval,
+# both present in 1.15.22 (verified 2026-11-20 on exactly 1.15.22 and on
+# 1.15.28). CrewAI declares Python <3.14 and pins openai<3, so this extra
+# conflicts with `openai-agents` (declared under [tool.uv] below). The
+# `framework-adapters` CI job re-runs the CrewAI tests on exactly 1.15.22.
+crewai = [
+    "crewai>=1.15.22; python_version < '3.14'",
+]
 example-tools = [
     "beautifulsoup4>=4.12.0",
     "cryptography>=41.0.0",
@@ -574,6 +584,7 @@ prerelease = "if-necessary-or-explicit"
 conflicts = [
     [{ extra = "openai-agents" }, { extra = "agent-frameworks" }],
     [{ extra = "openai-agents" }, { extra = "all" }],
+    [{ extra = "openai-agents" }, { extra = "crewai" }],
 ]
 # Force an onnxruntime version that ships cp310 wheels. onnxruntime >=1.24.0
 # dropped Python 3.10 support (only cp311/cp312/cp313 wheels are published),

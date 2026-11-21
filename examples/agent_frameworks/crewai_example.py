@@ -1,142 +1,146 @@
-"""
-CrewAI + Agent-Gantry: each agent in the crew gets only the tools it needs.
+"""CrewAI + Agent-Gantry, through CrewAI's own mechanisms.
 
-CrewAI crews often share one big tool list across every agent, which means the
-researcher carries the refund tool and the support agent carries the SQL tool.
-Gantry lets you select per agent from the same catalogue, so each one's prompt
-stays small and it cannot reach for something outside its job.
+1. **Selected tools** -- ``adapter.select(query)`` hands an agent only the
+   relevant slice of the catalogue, as native ``BaseTool``s.
+2. **Readable errors** -- a failing tool returns CrewAI's ``ToolFailure``: the
+   agent reads it and CrewAI records it on ``TaskOutput.tool_failures``.
+3. **Approval** -- a ``requires_confirmation`` tool goes through the adapter's
+   approver (CrewAI ``before_tool_call`` hook); a refused call is blocked.
+4. **Run context** -- a Gantry tool reads the CrewAI agent and task through
+   ``current_crew_context()``.
 
-Selection runs **without an API key**; only the crew kickoff needs one.
+Everything runs **offline**: a scripted LLM answers in CrewAI's ReAct format,
+so no API key is needed. Pass ``llm="openai/gpt-5.5"`` (with ``OPENAI_API_KEY``)
+to use a real model.
 
-Run with::
+Install and run (Python 3.10-3.13)::
 
-    pip install agent-gantry crewai
-    export OPENAI_API_KEY=...        # only needed for the kickoff
+    pip install 'agent-gantry[crewai]'
     python examples/agent_frameworks/crewai_example.py
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import re
+from typing import Any
 
 from agent_gantry import AgentGantry
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 
-RESEARCH_BRIEF = "Look up the customer john@example.com and their recent orders"
-SUPPORT_BRIEF = "Refund the customer's last order and email them to confirm"
+os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
+os.environ.setdefault("CREWAI_TRACING_ENABLED", "false")
+
+
+def build_gantry() -> AgentGantry:
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+
+    @gantry.register(tags=["math"], examples=["divide 10 by 2"])
+    def divide(a: int, b: int) -> float:
+        """Divide integer a by integer b."""
+        return a / b
+
+    @gantry.register(tags=["email"], examples=["email the team"], requires_confirmation=True)
+    def send_email(to: str) -> str:
+        """Send an email message to a recipient."""
+        return f"Email sent to {to}."
+
+    @gantry.register(tags=["identity"], examples=["who is doing this task"])
+    def whoami() -> str:
+        """Report which agent and task are making this call."""
+        from agent_gantry.crewai import current_crew_context
+
+        ctx = current_crew_context()
+        return f"Agent {ctx.agent.role!r} on task {ctx.task.name!r}." if ctx else "Unknown."
+
+    return gantry
+
+
+def scripted(*calls: tuple[str, dict[str, Any]]) -> Any:
+    """A CrewAI LLM that makes ``calls`` (ReAct format), then answers."""
+    from crewai.llms.base_llm import BaseLLM
+
+    class Scripted(BaseLLM):
+        script: list[str] = []
+        seen: list[str] = []
+
+        def call(self, messages: Any, *args: Any, **kwargs: Any) -> str:
+            self.seen.append(json.dumps(messages, default=str))
+            return self.script.pop(0) if self.script else "Thought: done\nFinal Answer: done"
+
+        def supports_function_calling(self) -> bool:
+            return False
+
+        def supports_stop_words(self) -> bool:
+            return True
+
+        def get_context_window_size(self) -> int:
+            return 8000
+
+    script = [
+        f"Thought: use {name}\nAction: {name}\nAction Input: {json.dumps(args)}"
+        for name, args in calls
+    ]
+    return Scripted(model="scripted", script=script, seen=[])
+
+
+async def run(adapter: Any, query: str, *calls: tuple[str, dict[str, Any]]) -> tuple[Any, Any]:
+    from crewai import Agent, Crew, Task
+
+    llm = scripted(*calls)
+    tools = await adapter.select(query, limit=1)
+    agent = Agent(role="clerk", goal="help", backstory="Uses Gantry tools.", llm=llm, tools=tools)
+    task = Task(name="chores", description=query, expected_output="done", agent=agent)
+    output = await Crew(agents=[agent], tasks=[task]).kickoff_async()
+    return output, llm
 
 
 async def main() -> None:
-    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+    gantry = build_gantry()
     try:
-        # `examples=[...]` is the strongest routing signal a tool can carry —
-        # more than the description, and more than a bigger embedding model.
-        @gantry.register(
-            tags=["crm"],
-            examples=["look up this customer", "who is john@example.com"],
-        )
-        def get_customer_info(email: str) -> dict:
-            """Retrieve customer details from the CRM."""
-            return {"name": "John Doe", "tier": "Gold", "email": email}
-
-        @gantry.register(
-            tags=["crm"],
-            examples=["what did they order", "show recent orders"],
-        )
-        def list_orders(email: str) -> list[str]:
-            """List a customer's recent orders."""
-            return ["order-4471 (Gold subscription, 79.00)"]
-
-        @gantry.register(
-            tags=["billing"],
-            examples=["refund this order", "give them their money back"],
-        )
-        def refund_order(order_id: str) -> str:
-            """Issue a refund against a customer order."""
-            return f"Refunded {order_id}."
-
-        @gantry.register(
-            tags=["comms"],
-            examples=["email the customer", "confirm by email"],
-        )
-        def send_email(to: str, body: str) -> str:
-            """Send an email to a customer."""
-            return f"Emailed {to}."
-
         await gantry.sync()
-
-        adapter = gantry.framework("crewai")
-
-        # Two agents, one catalogue, different slices. No score_threshold: it
-        # defaults to 0.0, and raising it silently drops tools on longer queries.
         try:
-            research_tools = await adapter.select(RESEARCH_BRIEF, limit=2)
-            support_tools = await adapter.select(SUPPORT_BRIEF, limit=2)
+            from agent_gantry.crewai import CrewAIAdapter
+        except ImportError as exc:  # pragma: no cover
+            print(f"Agent-Gantry import failed: {exc}")
+            return
+        try:
+            import crewai  # noqa: F401
         except ImportError as exc:
-            print(exc)
+            print(
+                f"The CrewAI demo needs crewai ({exc}).\n"
+                "Install it with `pip install 'agent-gantry[crewai]'` (Python 3.10-3.13)."
+            )
             return
 
-        print("Catalogue: 4 tools. What each crew member gets:\n")
-        print(f"  researcher -> {[t.name for t in research_tools]}")
-        print(f"  support    -> {[t.name for t in support_tools]}")
+        approvals: list[str] = []
+
+        def approve(request: Any) -> bool:
+            approvals.append(f"{request.tool_name}({request.arguments})")
+            return True  # a real app would ask a person here
+
+        adapter = CrewAIAdapter(gantry, approve=approve)
+
+        # 1 + 2. Selected tools and readable errors ------------------------- #
+        output, _ = await run(adapter, "divide 1 by 0", ("divide", {"a": 1, "b": 0}))
+        failure = output.tasks_output[0].tool_failures[0].failure
+        print(f"[errors] ToolFailure code={failure.code!r} message={failure.message!r}\n")
+
+        # 3. Approval ------------------------------------------------------ #
+        await run(adapter, "send an email message to Jo", ("send_email", {"to": "jo@example.com"}))
+        print(f"[approval] approver was asked about: {approvals}\n")
+
+        # 4. Run context --------------------------------------------------- #
+        _, llm = await run(adapter, "who is doing this task", ("whoami", {}))
+        seen = re.search(r"Agent .clerk. on task .chores.\.", llm.seen[-1])
+        print(f"[context] the tool replied: {seen.group(0) if seen else '(not found)'}")
+
         print(
-            "\nThe researcher never sees `refund_order`, so it cannot call it —\n"
-            "selection doubles as a blast radius limit, not just a token saving.\n"
+            "\nEvery tool call above went through gantry.execute, so the security "
+            "policy, retries, timeouts and circuit breakers all applied."
         )
-
-        if not os.getenv("OPENAI_API_KEY"):
-            print("Set OPENAI_API_KEY to run the crew itself.")
-            print("Everything above works without one.")
-            return
-
-        try:
-            from crewai import LLM, Agent, Crew, Process, Task
-        except ImportError as exc:
-            print(f"{exc}\nInstall the model integration: pip install crewai")
-            return
-
-        llm = LLM(model="openai/gpt-5.5")
-        researcher = Agent(
-            role="Customer Success Researcher",
-            goal="Find and summarise customer information",
-            backstory="You are an expert in CRM systems and customer data.",
-            tools=research_tools,
-            llm=llm,
-            verbose=True,
-        )
-        support = Agent(
-            role="Customer Support Operative",
-            goal="Resolve the customer's issue and confirm what was done",
-            backstory="You handle refunds and customer correspondence.",
-            tools=support_tools,
-            llm=llm,
-            verbose=True,
-        )
-        research_task = Task(
-            description=RESEARCH_BRIEF,
-            expected_output="A summary of the customer's profile and tier.",
-            agent=researcher,
-        )
-        # Both agents run, each holding only its own slice. This is the point
-        # of the example: `support` can refund because `refund_order` was
-        # selected for its brief, and `researcher` cannot, because it was not
-        # selected for that one.
-        support_task = Task(
-            description=SUPPORT_BRIEF,
-            expected_output="Confirmation of the refund and the email sent.",
-            agent=support,
-            context=[research_task],
-        )
-        crew = Crew(
-            agents=[researcher, support],
-            tasks=[research_task, support_task],
-            process=Process.sequential,
-        )
-
-        print("--- running the crew ---")
-        result = await crew.kickoff_async()
-        print(f"\n{result}")
     finally:
         await gantry.close()
 

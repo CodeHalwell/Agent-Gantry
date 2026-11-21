@@ -155,7 +155,7 @@ jobs:
       # that needs a newer release is caught here, not by users. One cell.
       # Same for the OpenAI Agents SDK (`openai-agents` extra, >=0.23.1)
       # LangChain / LangGraph (`langchain` / `langgraph` extras, >=1.0.0)
-      # and Google ADK (`google-adk` extra, >=2.6.1).
+      # Google ADK (`google-adk` extra, >=2.6.1) and CrewAI (`crewai`, >=1.15.22).
       - name: OpenAI Agents SDK floor (0.23.1)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         run: |
@@ -183,6 +183,14 @@ jobs:
           .venv-google-adk-floor/bin/python -m pytest \
             tests/frameworks/test_google_adk.py tests/frameworks/test_google_adk_live.py \
             tests/frameworks/test_google_adk_native.py -v
+
+      - name: CrewAI floor (1.15.22)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: |
+          uv venv .venv-crewai-floor --python ${{ matrix.python-version }}
+          uv pip install --python .venv-crewai-floor ".[dev]" "crewai==1.15.22"
+          .venv-crewai-floor/bin/python -m pytest \
+            tests/frameworks/test_crewai.py tests/frameworks/test_crewai_native.py -v
 
       - name: Pydantic AI floor (2.0.0)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
