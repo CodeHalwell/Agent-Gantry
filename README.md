@@ -41,6 +41,7 @@ uv add "agent-gantry[openai-agents]"   # own environment: needs openai>=3, CrewA
 uv add "agent-gantry[langgraph]"       # LangGraph + LangChain 1.x ([langchain] for LangChain alone)
 uv add "agent-gantry[google-adk]"      # Google ADK 2.x
 uv add "agent-gantry[crewai]"          # CrewAI (Python 3.10-3.13; not with openai-agents)
+uv add "agent-gantry[llamaindex]"      # LlamaIndex (llama-index-core 0.13+)
 uv add "agent-gantry[all]"
 ```
 

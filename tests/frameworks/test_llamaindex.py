@@ -125,5 +125,5 @@ def test_spec_to_llamaindex_missing_dependency(
 
             return _fn
 
-    with pytest.raises(ImportError, match="pip install llama-index-core"):
+    with pytest.raises(ImportError, match=r"agent-gantry\[llamaindex\]"):
         LlamaIndexAdapter.convert(_DummySpec())

@@ -10,6 +10,17 @@ imported lazily when you call an adapter method.
 
 from __future__ import annotations
 
-from agent_gantry.integrations.frameworks.llamaindex import LlamaIndexAdapter
+from agent_gantry.integrations.frameworks.llamaindex import (
+    LlamaIndexAdapter,
+    LlamaIndexToolError,
+    current_workflow_context,
+)
+from agent_gantry.integrations.frameworks.native import ErrorFormatter, ErrorMode
 
-__all__ = ["LlamaIndexAdapter"]
+__all__ = [
+    "ErrorFormatter",
+    "ErrorMode",
+    "LlamaIndexAdapter",
+    "LlamaIndexToolError",
+    "current_workflow_context",
+]

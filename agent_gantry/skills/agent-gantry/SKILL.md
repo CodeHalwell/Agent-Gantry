@@ -16,7 +16,7 @@ This skill is the canonical reference for using the library. Read the section th
 | Microsoft Agent Framework (AF 1.x) | `AgentFrameworkAdapter(gantry).context_provider(top_k=...)` (dynamic, per-turn or per-call) or `.tool_bridge()` (static) | [Microsoft Agent Framework](#microsoft-agent-framework) |
 | LangChain (>=1.0) | `LangChainAdapter(gantry).select(query, limit=...)` → `bind_tools`, or `create_agent(model, middleware=[await adapter.middleware()])` | [LangChain and LangGraph](#langchain-and-langgraph) |
 | LangGraph (>=1.0) | `create_agent(model, middleware=[await LangGraphAdapter(gantry).middleware()])` (per-turn), `.areact_agent(model)`, or `.select(...)` (static) | [LangChain and LangGraph](#langchain-and-langgraph) |
-| LlamaIndex | `LlamaIndexAdapter(gantry).select(...)` (static) or `.function_agent(llm)` (live) | [Native framework adapters](#native-framework-adapters) |
+| LlamaIndex (>=0.13) | `LlamaIndexAdapter(gantry).function_agent(llm)` (per step) or `.select(...)` (static) | [LlamaIndex](#llamaindex) |
 | CrewAI (>=1.15.22) | `CrewAIAdapter(gantry, approve=...).select(...)` or `.agent_builder(...)` (per call) | [CrewAI](#crewai) |
 | Pydantic AI (2.x) | `PydanticAIAdapter(gantry).capability()` (per-turn) / `.capability(mode="search")` (Gantry-backed `ToolSearch`), or `.toolset()` / `.select(...)` | [Pydantic AI](#pydantic-ai) |
 | OpenAI Agents SDK (>=0.23.1) | `Agent(tools=await OpenAIAgentsAdapter(gantry).dynamic_tools())` (per-turn) or `.select(...)` (static) | [OpenAI Agents SDK](#openai-agents-sdk) |
@@ -82,6 +82,7 @@ uv add "agent-gantry[openai-agents]"    # OpenAI Agents SDK (>=0.23.1); not with
 uv add "agent-gantry[langgraph]"        # LangGraph + LangChain (>=1.0); [langchain] for LangChain alone
 uv add "agent-gantry[google-adk]"       # Google ADK (>=2.6.1)
 uv add "agent-gantry[crewai]"           # CrewAI (>=1.15.22, Python <3.14); not with [openai-agents]
+uv add "agent-gantry[llamaindex]"       # LlamaIndex (llama-index-core>=0.13)
 uv add "agent-gantry[lancedb]"          # disk-persistent vector store
 uv add "agent-gantry[jev]"              # selection without embeddings (TypeSafe Jev)
 uv add "agent-gantry[mcp]"              # MCP client/server
@@ -425,6 +426,27 @@ output.tasks_output[0].tool_failures                  # Gantry failures recorded
 - **Errors**: `_run` returns CrewAI's `ToolFailure` (`code` = error type, `retryable` for argument errors); `tool_failure_policy` on the agent/task decides whether to abort. `error_mode="raise"` restores `ToolExecutionError`.
 - **Approval**: a `before_tool_call` hook (registered once per process) asks `approve(request) -> bool` for gated tools (`gantry.requires_confirmation`); refused calls are blocked by CrewAI; no approver means "needs approval, not run".
 - **Run context**: `current_crew_context()` returns CrewAI's `ToolCallHookContext` (`.agent`, `.task`, `.crew`).
+
+## LlamaIndex
+
+Install with `uv add "agent-gantry[llamaindex]"` (pins `llama-index-core>=0.13.0`; tested on 0.13.0 and the latest).
+
+```python
+from llama_index.core.workflow import HumanResponseEvent, InputRequiredEvent
+from agent_gantry.llamaindex import LlamaIndexAdapter, current_workflow_context
+
+agent = LlamaIndexAdapter(gantry).function_agent(llm, limit=5)   # error_formatter=... on the adapter
+handler = agent.run(user_msg="refund order 4471")
+async for event in handler.stream_events():
+    if isinstance(event, InputRequiredEvent):                     # a Gantry-gated call waiting
+        handler.ctx.send_event(HumanResponseEvent(response="yes"))   # anything else rejects
+result = await handler
+```
+
+- **Errors**: `LlamaIndexToolError` (text `<type>: <message>`), shown to the model as `ToolOutput(is_error=True)`.
+- **Approval**: gated calls `ctx.wait_for_event(HumanResponseEvent, waiter_event=InputRequiredEvent(gantry_tool=..., gantry_arguments=...))`; "yes"/"y"/"approve"/"approved" runs once. Direct `tool.call` reports "needs approval".
+- **Run context**: hidden `ctx` parameter; `current_workflow_context()` returns the workflow `Context` (`.store` for state).
+- **Per step**: `tool_retriever()` re-selects each step; on a retrieval failure only the pins are offered.
 
 ## Native framework adapters
 
@@ -958,6 +980,7 @@ This catches the headline mistakes: a tool description that names another tool (
 | `ImportError: Per-turn Gantry selection needs openai-agents>=0.23.1` | An older SDK came in transitively | `pip install 'agent-gantry[openai-agents]'` |
 | LangGraph run returns `__interrupt__` | A Gantry-gated tool needs approval | `await agent.ainvoke(Command(resume=True), config)` with the same `thread_id` |
 | CrewAI gated tool says it "requires human approval and was not run" | No approver configured | `CrewAIAdapter(gantry, approve=fn)` or `approve="console"` |
+| LlamaIndex run waits forever on a gated tool | Nobody answered the `InputRequiredEvent` | Stream events and `handler.ctx.send_event(HumanResponseEvent(response="yes"))` |
 | ADK run stops with an `adk_request_confirmation` function call | A Gantry-gated tool needs approval | Send `FunctionResponse(name="adk_request_confirmation", id=call.id, response={"confirmed": True})` as the next message |
 | LangGraph gated tool says it "requires human approval and was not run" | No checkpointer, so the interrupt could never be resumed | Pass `checkpointer=` to `create_agent` / `areact_agent` |
 | A LangChain tool error became a `ToolMessage` instead of raising | `handle_tool_error=True` in the default `error_mode="model"` | `LangChainAdapter(gantry, error_mode="raise")` |

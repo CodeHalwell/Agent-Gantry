@@ -6,13 +6,13 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version < '3.11'",
 ]
@@ -187,10 +187,10 @@ resolution-markers = [
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version < '3.11'",
 ]
@@ -432,10 +432,10 @@ name = "agent-framework-hyperlight"
 version = "1.0.0b260507"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "agent-framework-core" },
-    { name = "hyperlight-sandbox" },
+    { name = "agent-framework-core", marker = "python_full_version < '3.11' or sys_platform != 'emscripten'" },
+    { name = "hyperlight-sandbox", marker = "python_full_version < '3.11' or sys_platform != 'emscripten'" },
     { name = "hyperlight-sandbox-backend-wasm", marker = "python_full_version < '3.14' and ((platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32'))" },
-    { name = "hyperlight-sandbox-python-guest" },
+    { name = "hyperlight-sandbox-python-guest", marker = "python_full_version < '3.11' or sys_platform != 'emscripten'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/42/1f/52a2541d4a0bc5657ca9c2ef4f85885fb323682052da3fc1451eabafb73d/agent_framework_hyperlight-1.0.0b260507.tar.gz", hash = "sha256:845baab7439ac7b94ee53805cf3d32d0eea3b77a040d0f1b367f0a395fd8c08b", size = 19057, upload-time = "2026-05-08T00:09:56.056Z" }
 wheels = [
@@ -731,6 +731,9 @@ langgraph = [
     { name = "langchain-core" },
     { name = "langgraph" },
 ]
+llamaindex = [
+    { name = "llama-index-core" },
+]
 llm-providers = [
     { name = "anthropic" },
     { name = "google-cloud-aiplatform" },
@@ -813,6 +816,7 @@ requires-dist = [
     { name = "langgraph", marker = "extra == 'agent-frameworks'", specifier = ">=1.2.10" },
     { name = "langgraph", marker = "extra == 'langgraph'", specifier = ">=1.0.0" },
     { name = "llama-index-core", marker = "extra == 'agent-frameworks'", specifier = ">=0.14.23" },
+    { name = "llama-index-core", marker = "extra == 'llamaindex'", specifier = ">=0.13.0" },
     { name = "llama-index-llms-openai", marker = "extra == 'agent-frameworks'", specifier = ">=0.7.10" },
     { name = "matplotlib", marker = "extra == 'example-tools'", specifier = ">=3.7.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.27.2,<3" },
@@ -855,7 +859,7 @@ requires-dist = [
     { name = "typesafe-sdk", marker = "extra == 'jev'", specifier = ">=0.7.0" },
     { name = "uvicorn", marker = "extra == 'a2a'", specifier = ">=0.24.0" },
 ]
-provides-extras = ["dev", "agent-frameworks", "pydantic-ai", "openai-agents", "langchain", "langgraph", "google-adk", "crewai", "example-tools", "embeddings", "openai", "cohere", "jev", "qdrant", "chroma", "pgvector", "lancedb", "vector-stores", "nomic", "mcp", "a2a", "anthropic", "google-genai", "google-vertexai", "mistral", "groq", "llm-providers", "all"]
+provides-extras = ["dev", "agent-frameworks", "pydantic-ai", "openai-agents", "langchain", "langgraph", "google-adk", "crewai", "llamaindex", "example-tools", "embeddings", "openai", "cohere", "jev", "qdrant", "chroma", "pgvector", "lancedb", "vector-stores", "nomic", "mcp", "a2a", "anthropic", "google-genai", "google-vertexai", "mistral", "groq", "llm-providers", "all"]
 
 [[package]]
 name = "aiofiles"
@@ -1047,9 +1051,9 @@ dependencies = [
     { name = "distro" },
     { name = "docstring-parser" },
     { name = "httpx" },
-    { name = "jiter", version = "0.13.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "jiter", version = "0.13.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
     { name = "jiter", version = "0.18.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' or extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "jiter", version = "0.19.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and python_full_version < '3.14' and extra == 'extra-12-agent-gantry-openai-agents' or python_full_version >= '3.14' and extra != 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "jiter", version = "0.19.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' or python_full_version >= '3.11' and python_full_version < '3.14' and extra == 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
     { name = "pydantic" },
     { name = "sniffio" },
     { name = "typing-extensions" },
@@ -1357,10 +1361,10 @@ resolution-markers = [
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version < '3.11'",
 ]
@@ -1612,11 +1616,11 @@ name = "cel-python"
 version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "google-re2", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "jmespath", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "lark", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "pendulum", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "pyyaml", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "google-re2", marker = "python_full_version < '3.14'" },
+    { name = "jmespath", marker = "python_full_version < '3.14'" },
+    { name = "lark", marker = "python_full_version < '3.14'" },
+    { name = "pendulum", marker = "python_full_version < '3.14'" },
+    { name = "pyyaml", marker = "python_full_version < '3.14'" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/61/4e/f821948a5bbd7a98a218720f831a62216f79a98e43b13d9ab2f98e37c5f8/cel_python-0.5.0.tar.gz", hash = "sha256:3eb0a619e8df0f338d0430cda01427a742e77e3c433a1c7c3ebd409cd804c45a", size = 13364027, upload-time = "2026-01-31T19:07:13.436Z" }
@@ -2024,13 +2028,13 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
@@ -2234,38 +2238,38 @@ name = "crewai"
 version = "1.15.28"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "aiofiles", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "aiosqlite", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "appdirs", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "cel-python", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "chromadb", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "click", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "crewai-cli", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "crewai-core", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "httpx", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "instructor", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "json-repair", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "json5", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "jsonref", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "lancedb", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "mcp", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "oauthlib", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "openai", version = "2.53.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "openpyxl", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "opentelemetry-api", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "opentelemetry-exporter-otlp-proto-http", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "opentelemetry-sdk", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "pdfplumber", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "portalocker", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "pydantic", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "pydantic-settings", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "pyjwt", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "python-dotenv", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "pyyaml", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "regex", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "tokenizers", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "tomli", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "tomli-w", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "aiofiles", marker = "python_full_version < '3.14'" },
+    { name = "aiosqlite", marker = "python_full_version < '3.14'" },
+    { name = "appdirs", marker = "python_full_version < '3.14'" },
+    { name = "cel-python", marker = "python_full_version < '3.14'" },
+    { name = "chromadb", marker = "python_full_version < '3.14'" },
+    { name = "click", marker = "python_full_version < '3.14'" },
+    { name = "crewai-cli", marker = "python_full_version < '3.14'" },
+    { name = "crewai-core", marker = "python_full_version < '3.14'" },
+    { name = "httpx", marker = "python_full_version < '3.14'" },
+    { name = "instructor", marker = "python_full_version < '3.14'" },
+    { name = "json-repair", marker = "python_full_version < '3.14'" },
+    { name = "json5", marker = "python_full_version < '3.14'" },
+    { name = "jsonref", marker = "python_full_version < '3.14'" },
+    { name = "lancedb", marker = "python_full_version < '3.14'" },
+    { name = "mcp", marker = "python_full_version < '3.14'" },
+    { name = "oauthlib", marker = "python_full_version < '3.14'" },
+    { name = "openai", version = "2.53.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
+    { name = "openpyxl", marker = "python_full_version < '3.14'" },
+    { name = "opentelemetry-api", marker = "python_full_version < '3.14'" },
+    { name = "opentelemetry-exporter-otlp-proto-http", marker = "python_full_version < '3.14'" },
+    { name = "opentelemetry-sdk", marker = "python_full_version < '3.14'" },
+    { name = "pdfplumber", marker = "python_full_version < '3.14'" },
+    { name = "portalocker", marker = "python_full_version < '3.14'" },
+    { name = "pydantic", marker = "python_full_version < '3.14'" },
+    { name = "pydantic-settings", marker = "python_full_version < '3.14'" },
+    { name = "pyjwt", marker = "python_full_version < '3.14'" },
+    { name = "python-dotenv", marker = "python_full_version < '3.14'" },
+    { name = "pyyaml", marker = "python_full_version < '3.14'" },
+    { name = "regex", marker = "python_full_version < '3.14'" },
+    { name = "tokenizers", marker = "python_full_version < '3.14'" },
+    { name = "tomli", marker = "python_full_version < '3.14'" },
+    { name = "tomli-w", marker = "python_full_version < '3.14'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f5/d1/3d5614ec64a9985cfcb2824388d95cd0551cebe426e50357ce3797623066/crewai-1.15.28.tar.gz", hash = "sha256:af906c5a49cb5488d0d3aea413f4e958dca1472f7cb458cce118c7a41d933c66", size = 8288833, upload-time = "2026-10-14T04:47:39.602Z" }
 wheels = [
@@ -2277,22 +2281,22 @@ name = "crewai-cli"
 version = "1.15.28"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "appdirs", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "certifi", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "click", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "crewai-core", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "cryptography", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "httpx", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "packaging", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "pydantic", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "pydantic-settings", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "pyjwt", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "python-dotenv", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "rich", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "textual", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "tomli", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "tomli-w", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "uv", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "appdirs", marker = "python_full_version < '3.14'" },
+    { name = "certifi", marker = "python_full_version < '3.14'" },
+    { name = "click", marker = "python_full_version < '3.14'" },
+    { name = "crewai-core", marker = "python_full_version < '3.14'" },
+    { name = "cryptography", marker = "python_full_version < '3.14'" },
+    { name = "httpx", marker = "python_full_version < '3.14'" },
+    { name = "packaging", marker = "python_full_version < '3.14'" },
+    { name = "pydantic", marker = "python_full_version < '3.14'" },
+    { name = "pydantic-settings", marker = "python_full_version < '3.14'" },
+    { name = "pyjwt", marker = "python_full_version < '3.14'" },
+    { name = "python-dotenv", marker = "python_full_version < '3.14'" },
+    { name = "rich", marker = "python_full_version < '3.14'" },
+    { name = "textual", marker = "python_full_version < '3.14'" },
+    { name = "tomli", marker = "python_full_version < '3.14'" },
+    { name = "tomli-w", marker = "python_full_version < '3.14'" },
+    { name = "uv", marker = "python_full_version < '3.14'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/2a/a5/6b512c57236471f347f732f73875ec124bf1a277aea0a643436944fbfb02/crewai_cli-1.15.28.tar.gz", hash = "sha256:29eab94c97bf43a5130d7866d4ef28def5793cf146462d28cfd049b115176690", size = 315077, upload-time = "2026-10-14T04:47:42.8Z" }
 wheels = [
@@ -2304,18 +2308,18 @@ name = "crewai-core"
 version = "1.15.28"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "appdirs", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "cryptography", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "httpx", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "opentelemetry-api", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "opentelemetry-exporter-otlp-proto-http", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "opentelemetry-sdk", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "packaging", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "portalocker", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "pydantic", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "pyjwt", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "rich", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "tomli", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "appdirs", marker = "python_full_version < '3.14'" },
+    { name = "cryptography", marker = "python_full_version < '3.14'" },
+    { name = "httpx", marker = "python_full_version < '3.14'" },
+    { name = "opentelemetry-api", marker = "python_full_version < '3.14'" },
+    { name = "opentelemetry-exporter-otlp-proto-http", marker = "python_full_version < '3.14'" },
+    { name = "opentelemetry-sdk", marker = "python_full_version < '3.14'" },
+    { name = "packaging", marker = "python_full_version < '3.14'" },
+    { name = "portalocker", marker = "python_full_version < '3.14'" },
+    { name = "pydantic", marker = "python_full_version < '3.14'" },
+    { name = "pyjwt", marker = "python_full_version < '3.14'" },
+    { name = "rich", marker = "python_full_version < '3.14'" },
+    { name = "tomli", marker = "python_full_version < '3.14'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/8b/d4/1de4e8e7324ccbad3ef0ced0e80b1594e2a958eb36ea6f7fad518b477353/crewai_core-1.15.28.tar.gz", hash = "sha256:996edf242015e6dee8e6c4ab6d154950ac626cc5d95dfc0331b97ff41acbf6e1", size = 1268547, upload-time = "2026-10-14T04:47:45.665Z" }
 wheels = [
@@ -2909,13 +2913,13 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
@@ -3109,10 +3113,10 @@ version = "2.19.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version < '3.11'",
 ]
@@ -3411,13 +3415,13 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/36/e2/0f5d8ed08766bc6dcd3eebf5a6623d83cbca33a6e4c90aef57156ce745ad/griffelib-2.4.1.tar.gz", hash = "sha256:40c028dd2e623f464423f0e11e3c553158f1cf4f1368239a370534d73e1407ff", size = 245153, upload-time = "2026-10-22T11:20:03.705Z" }
@@ -3464,13 +3468,13 @@ version = "1.80.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version < '3.11'",
 ]
@@ -3603,13 +3607,13 @@ version = "1.71.2"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version < '3.11'",
 ]
@@ -3971,17 +3975,17 @@ name = "instructor"
 version = "1.15.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "aiohttp", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "docstring-parser", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "jinja2", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "jiter", version = "0.13.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "openai", version = "2.53.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "pydantic", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "pydantic-core", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "requests", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "rich", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "tenacity", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "typer", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "aiohttp", marker = "python_full_version < '3.14'" },
+    { name = "docstring-parser", marker = "python_full_version < '3.14'" },
+    { name = "jinja2", marker = "python_full_version < '3.14'" },
+    { name = "jiter", version = "0.13.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
+    { name = "openai", version = "2.53.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
+    { name = "pydantic", marker = "python_full_version < '3.14'" },
+    { name = "pydantic-core", marker = "python_full_version < '3.14'" },
+    { name = "requests", marker = "python_full_version < '3.14'" },
+    { name = "rich", marker = "python_full_version < '3.14'" },
+    { name = "tenacity", marker = "python_full_version < '3.14'" },
+    { name = "typer", marker = "python_full_version < '3.14'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/dc/a4/832cfb15420360e26d2d85bd9d5fe1e4b839d52587574d389bc31284bf6f/instructor-1.15.1.tar.gz", hash = "sha256:c72406469d9025b742e83cf0c13e914b317db2089d08d889944e74fcd659ef94", size = 69948370, upload-time = "2026-04-03T01:51:30.107Z" }
 wheels = [
@@ -4014,17 +4018,14 @@ name = "jiter"
 version = "0.13.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.14' and sys_platform == 'win32'",
-    "python_full_version >= '3.14' and sys_platform == 'emscripten'",
-    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version < '3.11'",
 ]
@@ -4232,13 +4233,13 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/67/de/8dfd06a2153d8ab6a83a8ca8f8ae3ff860ce2fe324ee6a5d05294b621c2a/jiter-0.19.0.tar.gz", hash = "sha256:ba3064f8be276d7cfb83c2fb85c858be533da2c2f80f9b048c3781b45a57a195", size = 665248, upload-time = "2026-11-06T15:03:33.462Z" }
@@ -4783,7 +4784,7 @@ name = "linkify-it-py"
 version = "2.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "uc-micro-py", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "uc-micro-py", marker = "python_full_version < '3.14'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/2e/c9/06ea13676ef354f0af6169587ae292d3e2406e212876a413bf9eece4eb23/linkify_it_py-2.1.0.tar.gz", hash = "sha256:43360231720999c10e9328dc3691160e27a718e280673d444c38d7d3aaa3b98b", size = 29158, upload-time = "2026-03-01T07:48:47.683Z" }
 wheels = [
@@ -4806,18 +4807,18 @@ dependencies = [
     { name = "httpx" },
     { name = "llama-index-workflows" },
     { name = "nest-asyncio" },
-    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "nltk" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pillow" },
     { name = "platformdirs" },
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "requests" },
     { name = "setuptools" },
-    { name = "sqlalchemy", extra = ["asyncio"], marker = "extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai' or extra != 'extra-12-agent-gantry-openai-agents'" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "tenacity" },
     { name = "tiktoken" },
     { name = "tinytag" },
@@ -5012,7 +5013,7 @@ wheels = [
 
 [package.optional-dependencies]
 linkify = [
-    { name = "linkify-it-py", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "linkify-it-py", marker = "python_full_version < '3.14'" },
 ]
 
 [[package]]
@@ -5218,7 +5219,7 @@ name = "mdit-py-plugins"
 version = "0.6.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "markdown-it-py", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "markdown-it-py", marker = "python_full_version < '3.14'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/59/fc/f8d0863f8862f25602c0404d75568e89fb6b4109804645e5cdfb1be5cf56/mdit_py_plugins-0.6.1.tar.gz", hash = "sha256:a2bca0f039f39dbd35fb74ae1b5f998608c437463371f0ff7f49a19a17a114d0", size = 56114, upload-time = "2026-05-13T09:03:38.91Z" }
 wheels = [
@@ -5791,13 +5792,13 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/6a/51/63fe664f3908c97be9d2e4f1158eb633317598cfa6e1fc14af5383f17512/networkx-3.6.1.tar.gz", hash = "sha256:26b7c357accc0c8cde558ad486283728b65b6a95d85ee1cd66bafab4c8168509", size = 2517025, upload-time = "2025-12-08T17:02:39.908Z" }
@@ -5894,13 +5895,13 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d7/9f/b8cef5bffa569759033adda9481211426f12f53299629b410340795c2514/numpy-2.4.4.tar.gz", hash = "sha256:2d390634c5182175533585cc89f3608a4682ccb173cc9bb940b2881c8d6f8fa0", size = 20731587, upload-time = "2026-03-29T13:22:01.298Z" }
@@ -6183,10 +6184,10 @@ resolution-markers = [
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version < '3.11'",
 ]
@@ -6194,8 +6195,8 @@ dependencies = [
     { name = "anyio", marker = "extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai' or extra != 'extra-12-agent-gantry-openai-agents'" },
     { name = "distro", marker = "extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai' or extra != 'extra-12-agent-gantry-openai-agents'" },
     { name = "httpx", marker = "extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai' or extra != 'extra-12-agent-gantry-openai-agents'" },
-    { name = "jiter", version = "0.13.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "jiter", version = "0.19.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and extra != 'extra-12-agent-gantry-agent-frameworks' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "jiter", version = "0.13.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "jiter", version = "0.19.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
     { name = "pydantic", marker = "extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai' or extra != 'extra-12-agent-gantry-openai-agents'" },
     { name = "sniffio", marker = "extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai' or extra != 'extra-12-agent-gantry-openai-agents'" },
     { name = "tqdm", marker = "extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai' or extra != 'extra-12-agent-gantry-openai-agents'" },
@@ -6215,13 +6216,13 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version < '3.11'",
 ]
@@ -6251,10 +6252,10 @@ resolution-markers = [
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version < '3.11'",
 ]
@@ -6281,13 +6282,13 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version < '3.11'",
 ]
@@ -6333,7 +6334,7 @@ name = "openpyxl"
 version = "3.1.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "et-xmlfile", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "et-xmlfile", marker = "python_full_version < '3.14'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/3d/f9/88d94a75de065ea32619465d2f77b29a0469500e99012523b91cc4141cd1/openpyxl-3.1.5.tar.gz", hash = "sha256:cf0e3cf56142039133628b5acffe8ef0c12bc902d2aadd3e0fe5878dc08d1050", size = 186464, upload-time = "2024-06-28T14:03:44.161Z" }
 wheels = [
@@ -6946,13 +6947,13 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
@@ -7016,8 +7017,8 @@ name = "pdfminer-six"
 version = "20251230"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "charset-normalizer", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "cryptography", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "charset-normalizer", marker = "python_full_version < '3.14'" },
+    { name = "cryptography", marker = "python_full_version < '3.14'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/46/9a/d79d8fa6d47a0338846bb558b39b9963b8eb2dfedec61867c138c1b17eeb/pdfminer_six-20251230.tar.gz", hash = "sha256:e8f68a14c57e00c2d7276d26519ea64be1b48f91db1cdc776faa80528ca06c1e", size = 8511285, upload-time = "2025-12-30T15:49:13.104Z" }
 wheels = [
@@ -7029,9 +7030,9 @@ name = "pdfplumber"
 version = "0.11.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pdfminer-six", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "pillow", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "pypdfium2", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "pdfminer-six", marker = "python_full_version < '3.14'" },
+    { name = "pillow", marker = "python_full_version < '3.14'" },
+    { name = "pypdfium2", marker = "python_full_version < '3.14'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/38/37/9ca3519e92a8434eb93be570b131476cc0a4e840bb39c62ddb7813a39d53/pdfplumber-0.11.9.tar.gz", hash = "sha256:481224b678b2bbdbf376e2c39bf914144eef7c3d301b4a28eebf0f7f6109d6dc", size = 102768, upload-time = "2026-01-05T08:10:29.072Z" }
 wheels = [
@@ -7043,8 +7044,8 @@ name = "pendulum"
 version = "3.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "python-dateutil", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "tzdata", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "python-dateutil", marker = "python_full_version < '3.14'" },
+    { name = "tzdata", marker = "python_full_version < '3.14'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/cb/72/9a51afa0a822b09e286c4cb827ed7b00bc818dac7bd11a5f161e493a217d/pendulum-3.2.0.tar.gz", hash = "sha256:e80feda2d10fa3ff8b1526715f7d33dcb7e08494b3088f2c8a3ac92d4a4331ce", size = 86912, upload-time = "2026-01-30T11:22:24.093Z" }
 wheels = [
@@ -7232,13 +7233,13 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
@@ -7453,13 +7454,13 @@ version = "5.29.6"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version < '3.11'",
 ]
@@ -7837,13 +7838,13 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
@@ -8006,13 +8007,13 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
@@ -8370,13 +8371,13 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7e/c0/c753d487a83d873f6946cee6cbc26cea3fe59a476ad0de99a14938a2fbd8/python_multipart-0.0.34.tar.gz", hash = "sha256:b998ae90ca6e1e363261ce2e0e230281b8af53867b757970abd69ee9edcd843a", size = 52456, upload-time = "2026-11-16T10:40:38.261Z" }
@@ -9026,13 +9027,13 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
@@ -9149,13 +9150,13 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
@@ -9434,12 +9435,12 @@ name = "textual"
 version = "8.2.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "markdown-it-py", extra = ["linkify"], marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "mdit-py-plugins", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "platformdirs", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "pygments", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "rich", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
-    { name = "typing-extensions", marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or extra == 'extra-12-agent-gantry-agent-frameworks' or (extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "markdown-it-py", extra = ["linkify"], marker = "python_full_version < '3.14' and extra != 'extra-12-agent-gantry-openai-agents' or (extra == 'extra-12-agent-gantry-agent-frameworks' or extra == 'extra-12-agent-gantry-all' or extra == 'extra-12-agent-gantry-crewai') and extra == 'extra-12-agent-gantry-openai-agents'" },
+    { name = "mdit-py-plugins", marker = "python_full_version < '3.14'" },
+    { name = "platformdirs", marker = "python_full_version < '3.14'" },
+    { name = "pygments", marker = "python_full_version < '3.14'" },
+    { name = "rich", marker = "python_full_version < '3.14'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.14'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/00/21/39a76b01bd5eea82a04baaca7580e105d8c59450df03998345bb2cfb307b/textual-8.2.8.tar.gz", hash = "sha256:3f106a9fbc73e39dd266c9712432087de78a6d644084c7c241d6a25c3169115b", size = 1860502, upload-time = "2026-06-30T06:51:24.495Z" }
 wheels = [

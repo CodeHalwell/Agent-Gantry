@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+LlamaIndex becomes a first-class integration, using workflow
+human-in-the-loop events and `Context` injection.
+
+**Behaviour change (LlamaIndex).** A failed Gantry execution now raises
+`LlamaIndexToolError`, a `ToolExecutionError` whose text is the model-facing
+`<type>: <message>` (capped, redactable with `error_formatter`), so agents show
+the model a clean error `ToolOutput`. Confirmation-gated calls inside a
+workflow agent wait for a `HumanResponseEvent` instead of failing. On a
+retrieval failure the tool retriever now offers the pinned tools instead of
+none. `error_mode="raise"` keeps the previous error type.
+
+### Added
+
+- `llamaindex` extra (`pip install 'agent-gantry[llamaindex]'`,
+  `llama-index-core>=0.13.0`). CI runs the LlamaIndex tests on exactly 0.13.0
+  and on the latest.
+- LlamaIndex approval: gated calls `ctx.wait_for_event(HumanResponseEvent,
+  waiter_event=InputRequiredEvent(...))`; an approving response runs the call
+  once.
+- `agent_gantry.llamaindex.current_workflow_context()`: the workflow `Context`
+  (injected through a hidden `ctx` parameter), also on
+  `current_tool_invocation()`.
+- `error_mode` and `error_formatter` on `LlamaIndexAdapter`, threaded through
+  `tool_retriever()` and `function_agent()`.
+
 CrewAI becomes a first-class integration, using CrewAI's `ToolFailure` and
 `before_tool_call` hooks.
 

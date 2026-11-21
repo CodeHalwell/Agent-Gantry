@@ -38,7 +38,7 @@ Install Gantry plus just the SDK you need:
 |---|---|---|
 | `langchain` | `pip install 'agent-gantry[langchain]'` | `model.bind_tools(await adapter.select(query))` — see [LangChain and LangGraph](#langchain-and-langgraph-first-class) |
 | `langgraph` | `pip install 'agent-gantry[langgraph]'` | `create_agent(model, middleware=[await adapter.middleware()])` — see [LangChain and LangGraph](#langchain-and-langgraph-first-class) |
-| `llamaindex` | `pip install agent-gantry llama-index-core` | `FunctionAgent(tool_retriever=adapter.live())` |
+| `llamaindex` | `pip install 'agent-gantry[llamaindex]'` | `FunctionAgent(tool_retriever=adapter.live())` — see [LlamaIndex](#llamaindex-first-class) |
 | `crewai` | `pip install 'agent-gantry[crewai]'` | `Agent(..., tools=await adapter.select(query))` — see [CrewAI](#crewai-first-class) |
 | `pydantic_ai` | `pip install 'agent-gantry[pydantic-ai]'` | `Agent(model, capabilities=[adapter.capability()])` — see [Pydantic AI](#pydantic-ai-first-class) |
 | `openai_agents` | `pip install 'agent-gantry[openai-agents]'` | `Agent(..., tools=await adapter.dynamic_tools())` — see [OpenAI Agents SDK](#openai-agents-sdk-first-class) |
@@ -666,6 +666,47 @@ approval and it is not run.
 (`deps` is the crew; `metadata` carries `agent_role`, `task_name`, `task_id`).
 An active OpenTelemetry span becomes the `ToolCall`'s trace.
 
+## LlamaIndex (first-class)
+
+`pip install 'agent-gantry[llamaindex]'` (pins `llama-index-core>=0.13.0`; CI runs
+the tests on exactly 0.13.0 and on the latest).
+
+| Mode | Build | Use when |
+|---|---|---|
+| Per step (recommended) | `adapter.function_agent(llm)`, or `FunctionAgent(tool_retriever=adapter.tool_retriever(), llm=llm)` | Agents; Gantry picks each step's tools |
+| Static slice | `FunctionAgent(tools=await adapter.select(query), llm=llm)` | A fixed task |
+
+**Errors.** A failed call raises `LlamaIndexToolError` (a `ToolExecutionError`
+whose text is `<type>: <message>`, capped); LlamaIndex agents turn it into
+`ToolOutput(is_error=True)` for the model and the run continues.
+`error_formatter=fn` rewrites the text; `error_mode="raise"` raises the plain
+`ToolExecutionError` (LlamaIndex still shows its message to the model).
+
+**Approval.** In a workflow agent, a confirmation-gated call (per
+`AgentGantry.requires_confirmation()`) waits with LlamaIndex's
+human-in-the-loop events:
+
+```python
+handler = agent.run(user_msg="refund order 4471")
+async for event in handler.stream_events():
+    if isinstance(event, InputRequiredEvent):          # event.gantry_tool, event.gantry_arguments
+        handler.ctx.send_event(HumanResponseEvent(response="yes"))   # anything else rejects
+result = await handler
+```
+
+`"yes"`, `"y"`, `"approve"` or `"approved"` (or an event with `approved=True`)
+runs the call once with only the confirmation gate cleared. Outside a workflow
+(a direct `tool.call`), the model is told the call needs approval.
+
+**Run context.** The workflow `Context` is injected through a hidden `ctx`
+parameter (kept out of the tool schema; direct calls get `None`) and readable
+with `agent_gantry.llamaindex.current_workflow_context()` or
+`current_tool_invocation()` (`deps` is `ctx.store`).
+
+**Per-step selection.** `tool_retriever()` re-selects for every step's query.
+`FunctionAgent` passes only the query, so there is no per-run state to be
+sticky with; when retrieval fails the step offers the pinned tools alone.
+
 ## Shared base
 
 `base.py` provides `GantryToolset` (selection, including the `required`/
@@ -723,7 +764,7 @@ policy refused it outright). Both are re-exported from
 `agent_gantry.integrations.frameworks`; catching `ToolExecutionError` still
 catches every outcome.
 
-**Every native adapter except Pydantic AI, the OpenAI Agents SDK, LangChain, LangGraph, Google ADK and CrewAI lets this propagate uncaught** from the
+**Every native adapter except Pydantic AI, the OpenAI Agents SDK, LangChain, LangGraph, Google ADK, CrewAI and LlamaIndex lets this propagate uncaught** from the
 native tool object's own invocation entry point (`.func`, `._run`, `.forward`,
 `.entrypoint`, `.method`, `.on_invoke_tool`, …) — proven for all of them,
 including the sync wrappers, by
@@ -831,7 +872,7 @@ asserting no exception + a `WARNING` log record).
 |---|---|---|
 | LangChain | **Deviation:** LangChain's `ToolException` (the tool has `handle_tool_error=True`, so the model gets an error `ToolMessage`), chained from `ToolExecutionError`; `error_mode="raise"` restores raising | *(per-call — see above)* |
 | LangGraph | **Deviation:** as LangChain | `middleware()`: degrades to this run's previous tools plus pins (per-run state) + `WARNING`; `select_for_state`: no tools + `WARNING` |
-| LlamaIndex | Raises `ToolExecutionError` | Degrades to no tools this step (stateless) + `WARNING` |
+| LlamaIndex | Raises `LlamaIndexToolError` (a `ToolExecutionError` whose text is the model-facing failure); agents show it as `ToolOutput(is_error=True)` | Degrades to the pinned tools alone this step (stateless) + `WARNING` |
 | CrewAI | **Deviation:** `_run` returns CrewAI's `ToolFailure` (recorded on `TaskOutput.tool_failures`); `error_mode="raise"` restores raising | *(per-call — see above)* |
 | Pydantic AI | **Deviation:** `ModelRetry` / `ToolFailed` / `ApprovalRequired` (native), chained from `ToolExecutionError`; `error_mode="raise"` restores raising | Degrades to this run's earlier tools (per-run state) + `WARNING` |
 | OpenAI Agents SDK | **Deviation:** returned to the model as `Error: ...` tool output; `error_mode="raise"` restores raising | `dynamic_tools`: degrades to this run's earlier tools (per-run state) + `WARNING`; `session`/`run_hooks`: previous turn's `agent.tools` + `WARNING` |

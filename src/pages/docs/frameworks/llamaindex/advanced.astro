@@ -2,38 +2,34 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Advanced LlamaIndex guide | Agent-Gantry">
+<DocsLayout title="Advanced LlamaIndex guide | Agent-Gantry" description="Human-in-the-loop approval, context injection, per-step selection and error modes for the Agent-Gantry LlamaIndex integration.">
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced LlamaIndex</h1>
-  <p class="lead">Scale LlamaIndex from static tool demos to governed agent workloads with semantic selection, explicit LLM-call policy, tracing, and deployment boundaries.</p>
+  <p class="lead">Approval, context injection and how per-step selection behaves.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/llamaindex/">← Basic LlamaIndex usage</a></p>
 
-  <h2>Advanced page: dynamic tool selection</h2>
-  <p>Before each LlamaIndex run, ask Gantry for a context-aware subset of tools. Combine request metadata, tenant policy, semantic similarity, and reranker results so the agent sees a concise, relevant tool surface.</p>
-  <CodeBlock lang="python" code={`candidate_tools = gantry.select_tools(
-    query=user_message,
-    tags=["support"],
-    limit=8,
-)
-framework_tools = [LlamaIndexAdapter.convert(spec) for spec in candidate_tools]
-`} />
+  <h2>Human-in-the-loop approval</h2>
+  <p>In a workflow agent, a confirmation-gated call (<code>requires_confirmation=True</code> or a <code>SecurityPolicy(require_confirmation=[...])</code> pattern) waits with <code>ctx.wait_for_event(HumanResponseEvent, waiter_event=InputRequiredEvent(...))</code>. The waiting event carries <code>gantry_tool</code> and <code>gantry_arguments</code>.</p>
+  <CodeBlock lang="python" code={`from llama_index.core.workflow import HumanResponseEvent, InputRequiredEvent
 
-  <h2>LLM calls and model policy</h2>
-  <p>Centralize LLM calls when LlamaIndex supports custom model clients; otherwise add middleware around the framework call. The policy should select the provider, enforce budget ceilings, redact sensitive fields, emit token metrics, and decide whether tool results should be summarized before returning to the model.</p>
-  <CodeBlock lang="python" code={`response = llm_policy.complete(
-    framework="LlamaIndex",
-    model="primary-or-fallback-model",
-    messages=messages,
-    tools=framework_tools,
-    trace_id=trace_id,
-)
-`} />
+handler = agent.run(user_msg="Refund order 4471")
+async for event in handler.stream_events():
+    if isinstance(event, InputRequiredEvent):
+        answer = "yes" if ask_a_human(event.gantry_tool, event.gantry_arguments) else "no"
+        handler.ctx.send_event(HumanResponseEvent(response=answer))
+result = await handler`} />
+  <p><code>"yes"</code>, <code>"y"</code>, <code>"approve"</code> or <code>"approved"</code> runs the call once through <code>gantry.execute</code> with only the confirmation gate cleared; anything else rejects it and the model is told. A tool called directly, outside a workflow, reports that it needs approval.</p>
 
-  <h2>Production patterns</h2>
+  <h2>Context injection</h2>
+  <p>Each Gantry tool has a hidden <code>ctx</code> parameter annotated with the workflow <code>Context</code>, so <code>FunctionAgent</code> injects the run's context. It is kept out of the tool's schema, and a direct <code>tool.call(...)</code> gets <code>None</code>. <code>current_workflow_context()</code> and <code>current_tool_invocation()</code> expose it, with <code>deps</code> set to <code>ctx.store</code>.</p>
+
+  <h2>Per-step selection</h2>
   <ul>
-    <li><strong>Observability:</strong> attach trace IDs to every LlamaIndex run, LLM call, and tool execution.</li>
-    <li><strong>Safety:</strong> keep high-risk tools behind explicit allowlists, human approval, or dry-run executors.</li>
-    <li><strong>Resilience:</strong> add provider fallback for LLM calls and executor fallback for remote MCP/A2A tools.</li>
-    <li><strong>Evaluation:</strong> replay representative prompts with fixed tool snapshots before broadening dynamic retrieval.</li>
+    <li><strong>Mechanism:</strong> <code>tool_retriever()</code> is an <code>ObjectRetriever</code>; <code>FunctionAgent</code> asks it for tools with each step's query.</li>
+    <li><strong>No per-run state:</strong> the retriever receives only the query, so there is nothing to keep earlier tools against.</li>
+    <li><strong>Failure:</strong> if retrieval fails, the step offers the pinned tools alone (<code>required</code> / <code>always_include</code>) and logs a warning.</li>
   </ul>
+
+  <h2>Tracing</h2>
+  <p>An active OpenTelemetry span becomes the Gantry <code>ToolCall</code>'s <code>trace_id</code> and <code>parent_span_id</code>.</p>
 </DocsLayout>
