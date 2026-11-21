@@ -151,7 +151,15 @@ def _spec_to_strands(
             and gantry.requires_confirmation(spec.tool or spec.name, spec._namespace)
         )
 
-    async def _call(tool_context: Any = None, **kwargs: Any) -> Any:
+    signature = signature_fn.__signature__  # type: ignore[attr-defined]
+    # Strands injects its ToolContext under this name; it must not clash with
+    # one of the tool's own parameters (a tool may well have ``tool_context``).
+    context_name = "gantry_tool_context"
+    while context_name in signature.parameters:
+        context_name = f"_{context_name}"
+
+    async def _call(**kwargs: Any) -> Any:
+        tool_context = kwargs.pop(context_name, None)
         if aliases:
             kwargs = {aliases.get(key, key): value for key, value in kwargs.items()}
         approved = False
@@ -191,8 +199,7 @@ def _spec_to_strands(
                 return _error_result(_PENDING_APPROVAL_TEXT)
             return _error_result(failure_text(exc, error_formatter))
 
-    signature = signature_fn.__signature__  # type: ignore[attr-defined]
-    context_param = inspect.Parameter("tool_context", inspect.Parameter.KEYWORD_ONLY, default=None)
+    context_param = inspect.Parameter(context_name, inspect.Parameter.KEYWORD_ONLY, default=None)
     params = list(signature.parameters.values())
     positional = [p for p in params if p.kind is not inspect.Parameter.KEYWORD_ONLY]
     keyword = [p for p in params if p.kind is inspect.Parameter.KEYWORD_ONLY]
@@ -206,7 +213,7 @@ def _spec_to_strands(
         name=spec.native_name,
         description=spec.description,
         inputSchema={"json": spec.aliased_parameters()},
-        context=True,
+        context=context_name,
     )(_call)
 
 

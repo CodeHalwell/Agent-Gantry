@@ -231,3 +231,23 @@ async def test_per_turn_hook_tools_interrupt_for_approval(gantry):
         [{"interruptResponse": {"interruptId": interrupt.id, "response": "yes"}}]
     )
     assert gantry.sent == ["bob@x"]
+
+
+async def test_a_tool_argument_named_tool_context_is_kept():
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+
+    @g.register
+    def annotate(tool_context: str) -> str:
+        """Annotate the given tool context string."""
+        ctx = current_tool_context()
+        return f"note:{tool_context}:{getattr(ctx, 'agent', None) is not None}"
+
+    await g.sync()
+    try:
+        [tool] = await StrandsAdapter(g).select("annotate the tool context string", limit=1)
+        model = ScriptedModel([("annotate", {"tool_context": "hello"})])
+        agent = Agent(name="clerk", model=model, tools=[tool], callback_handler=None)
+        await agent.invoke_async("annotate hello")
+        assert _results(agent)[0]["content"][0]["text"] == "note:hello:True"
+    finally:
+        await g.close()
