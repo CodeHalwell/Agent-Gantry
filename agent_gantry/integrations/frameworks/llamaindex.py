@@ -348,6 +348,17 @@ def _spec_to_llamaindex(
                 claim.set_exception(error)
                 claim.exception()  # retrieved: replays re-raise it themselves
             raise error from exc
+        except BaseException as exc:
+            # Anything else (a bug, a cancellation): never leave a replay
+            # waiting on this claim, and let a later retry ask again.
+            if claim is not None and not claim.done():
+                _claims(ctx).pop(waiter_id, None)
+                if isinstance(exc, Exception):
+                    claim.set_exception(exc)
+                    claim.exception()
+                else:
+                    claim.cancel()
+            raise
         if claim is not None:
             claim.set_result(result)
         return result

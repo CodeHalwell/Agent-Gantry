@@ -321,6 +321,22 @@ async def test_gantry_function_agent_takes_static_tools(gantry):
     assert gantry.sent == ["bob@x", "bob@x"]
 
 
+async def test_an_unexpected_failure_after_approval_never_hangs_replays(gantry, monkeypatch):
+    from agent_gantry.integrations.frameworks import llamaindex as module
+
+    async def broken(*args, **kwargs):
+        raise RuntimeError("tool runner broke")
+
+    monkeypatch.setattr(module, "execute_spec", broken)
+    llm = _llm([("send_email", {"to": "bob@x"}), ("send_email", {"to": "carol@x"})])
+    agent = LlamaIndexAdapter(gantry).function_agent(llm, limit=1)
+    outputs, requests = await asyncio.wait_for(
+        _run(agent, "send an email message", respond="yes"), timeout=30
+    )
+    assert len(requests) == 2
+    assert outputs and all(o.is_error for o in outputs)
+
+
 async def test_a_tool_argument_named_ctx_is_passed_through():
     g = AgentGantry(embedder=SimpleEmbedder(dimension=256))
 
