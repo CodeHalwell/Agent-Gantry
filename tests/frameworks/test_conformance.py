@@ -247,7 +247,9 @@ class AdapterCase:
             the tool sets ``handle_tool_error=True``, so the model receives an
             error ``ToolMessage`` instead of the run ending.
             ``error_mode="raise"`` restores ``"raises"``.
-            ``"native_tool_output"`` (OpenAI Agents SDK) -- the failure is
+            ``"native_tool_output"`` (OpenAI Agents SDK; CrewAI, whose real
+            ``_run`` returns a ``ToolFailure`` and falls back to ``Error: ...``
+            text when that class is missing, as with this matrix's stub) -- the failure is
             returned as the tool's output text (``Error: ...``) for the model
             to read, since the SDK has no retry exception and would otherwise
             end the run with ``UserError``; ``error_mode="raise"`` restores
@@ -388,6 +390,7 @@ ADAPTERS: list[AdapterCase] = [
         live_delegate="agent_builder",
         stub_attrs=_stub_crewai_attrs,
         invoke_failure=_invoke_crewai_failure,
+        error_kind="native_tool_output",
     ),
     AdapterCase(
         "pydantic_ai",

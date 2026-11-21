@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+CrewAI becomes a first-class integration, using CrewAI's `ToolFailure` and
+`before_tool_call` hooks.
+
+**Behaviour change (CrewAI).** A failed Gantry execution no longer raises out
+of the tool: `_run` returns CrewAI's `ToolFailure`, so the agent reads it and
+CrewAI records it on `TaskOutput.tool_failures` (its `tool_failure_policy`
+decides whether to abort). Pass `error_mode="raise"` to `CrewAIAdapter` to
+keep the previous behaviour.
+
+### Added
+
+- `crewai` extra (`pip install 'agent-gantry[crewai]'`, `>=1.15.22`, Python
+  3.10-3.13), declared as conflicting with `openai-agents`. CI runs the CrewAI
+  tests on exactly 1.15.22 and on the latest.
+- CrewAI approval: `CrewAIAdapter(gantry, approve=fn)` (or `"console"` for
+  CrewAI's `request_human_input`) decides confirmation-gated calls in a
+  `before_tool_call` hook; an approved call runs once, a refused one is
+  blocked.
+- `agent_gantry.crewai.current_crew_context()`: the call's CrewAI agent, task
+  and crew, also on `current_tool_invocation()`.
+- `error_mode` and `error_formatter` on `CrewAIAdapter`; `agent_builder`
+  uses the adapter's settings.
+
 Google ADK becomes a first-class integration, using ADK's tool confirmation,
 `ToolContext` and `{"error": ...}` function responses.
 

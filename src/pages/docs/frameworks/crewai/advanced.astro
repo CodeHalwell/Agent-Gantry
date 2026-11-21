@@ -2,38 +2,34 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Advanced CrewAI guide | Agent-Gantry">
+<DocsLayout title="Advanced CrewAI guide | Agent-Gantry" description="Approval through CrewAI's before_tool_call hook, agent/task context, failure policy and per-call selection for the Agent-Gantry CrewAI integration.">
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced CrewAI</h1>
-  <p class="lead">Scale CrewAI from static tool demos to governed agent workloads with semantic selection, explicit LLM-call policy, tracing, and deployment boundaries.</p>
+  <p class="lead">Approval, run context, failure policy and per-call selection.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/crewai/">← Basic CrewAI usage</a></p>
 
-  <h2>Advanced page: dynamic tool selection</h2>
-  <p>Before each CrewAI run, ask Gantry for a context-aware subset of tools. Combine request metadata, tenant policy, semantic similarity, and reranker results so the agent sees a concise, relevant tool surface.</p>
-  <CodeBlock lang="python" code={`candidate_tools = gantry.select_tools(
-    query=user_message,
-    tags=["support"],
-    limit=8,
-)
-framework_tools = [CrewAIAdapter.convert(spec) for spec in candidate_tools]
-`} />
+  <h2>Approval</h2>
+  <p>CrewAI has no pause-and-resume for a tool call; its native gate is a <code>before_tool_call</code> hook. Gantry registers one, once per process, and asks the adapter's approver about every confirmation-gated call (<code>requires_confirmation=True</code> or a <code>SecurityPolicy(require_confirmation=[...])</code> pattern).</p>
+  <CodeBlock lang="python" code={`from agent_gantry.crewai import ApprovalRequest, CrewAIAdapter
 
-  <h2>LLM calls and model policy</h2>
-  <p>Centralize LLM calls when CrewAI supports custom model clients; otherwise add middleware around the framework call. The policy should select the provider, enforce budget ceilings, redact sensitive fields, emit token metrics, and decide whether tool results should be summarized before returning to the model.</p>
-  <CodeBlock lang="python" code={`response = llm_policy.complete(
-    framework="CrewAI",
-    model="primary-or-fallback-model",
-    messages=messages,
-    tools=framework_tools,
-    trace_id=trace_id,
-)
-`} />
+def approve(request: ApprovalRequest) -> bool:
+    # request.tool_name, request.arguments, request.agent, request.task, request.crew
+    return reviewer.allow(request.tool_name, request.arguments)
 
-  <h2>Production patterns</h2>
+adapter = CrewAIAdapter(gantry, approve=approve)
+# or CrewAIAdapter(gantry, approve="console") to use CrewAI's request_human_input prompt`} />
+  <p>An approved call runs once through <code>gantry.execute</code> with only the confirmation gate cleared; a refused one is blocked by CrewAI. With no approver, the agent is told the call needs approval and it is not run. If the approver raises, the call is blocked.</p>
+
+  <h2>Run context</h2>
+  <p><code>current_crew_context()</code> returns CrewAI's <code>ToolCallHookContext</code> for the call: <code>.agent</code>, <code>.task</code> and <code>.crew</code>. <code>current_tool_invocation()</code> carries the same object, with <code>deps</code> set to the crew and <code>metadata</code> holding <code>agent_role</code>, <code>task_name</code> and <code>task_id</code>.</p>
+
+  <h2>Failures and policy</h2>
   <ul>
-    <li><strong>Observability:</strong> attach trace IDs to every CrewAI run, LLM call, and tool execution.</li>
-    <li><strong>Safety:</strong> keep high-risk tools behind explicit allowlists, human approval, or dry-run executors.</li>
-    <li><strong>Resilience:</strong> add provider fallback for LLM calls and executor fallback for remote MCP/A2A tools.</li>
-    <li><strong>Evaluation:</strong> replay representative prompts with fixed tool snapshots before broadening dynamic retrieval.</li>
+    <li><strong>Default:</strong> failures return <code>ToolFailure(message, code=error_type, retryable=...)</code>; argument errors are marked retryable.</li>
+    <li><strong>Policy:</strong> CrewAI's <code>tool_failure_policy</code> (<code>ignore</code>, <code>warn</code>, <code>raise</code>) on the agent or task decides whether the run continues.</li>
+    <li><strong><code>error_mode="raise"</code>:</strong> <code>ToolExecutionError</code> propagates, and CrewAI records it as an exception failure.</li>
   </ul>
+
+  <h2>Per-call selection</h2>
+  <p>CrewAI builds an agent's tool list once and exposes no hook to change it between model turns, so Gantry re-selects per call: <code>adapter.agent_builder(...)</code> returns a builder whose <code>build(query)</code> makes a fresh agent with that task's tools, using the adapter's error mode, formatter and approver.</p>
 </DocsLayout>

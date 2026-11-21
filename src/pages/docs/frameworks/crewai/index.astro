@@ -2,39 +2,38 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="CrewAI guide | Agent-Gantry">
+<DocsLayout title="CrewAI guide | Agent-Gantry" description="Integrate Agent-Gantry with CrewAI: selected BaseTools, failures as CrewAI ToolFailure, approval through a before_tool_call hook, and agent/task context.">
   <p class="eyebrow">Framework guide</p>
   <h1>CrewAI</h1>
-  <p class="lead">Use Agent-Gantry with role-based crews and task handoffs. This page covers basic setup and the first production-friendly path; continue to the advanced page for dynamic retrieval, LLM calls, and operations.</p>
+  <p class="lead">Agent-Gantry hands each CrewAI agent only the tools relevant to its task, as native <code>BaseTool</code>s. Failures come back as CrewAI's own <code>ToolFailure</code>, confirmation-gated tools go through a <code>before_tool_call</code> hook, and tools can read the agent, task and crew they are running for.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/crewai/advanced/">Advanced CrewAI usage →</a></p>
 
-  <h2>Basic page: register once, adapt at the edge</h2>
-  <ol>
-    <li>Create a Gantry instance near application startup.</li>
-    <li>Register deterministic Python functions with descriptions and input schemas.</li>
-    <li>Export framework-native tools for CrewAI immediately before constructing the agent, graph, pipeline, or crew.</li>
-    <li>Keep authorization, rate limits, and audit metadata in Gantry instead of duplicating it inside framework glue code.</li>
-  </ol>
-  <CodeBlock lang="python" code={`from agent_gantry import AgentGantry
+  <h2>Install</h2>
+  <CodeBlock lang="bash" code={`uv add "agent-gantry[crewai]"   # crewai >= 1.15.22, Python 3.10-3.13`} />
+  <div class="callout"><strong>Separate from the OpenAI Agents SDK:</strong> CrewAI pins <code>openai&lt;3</code>, while <code>openai-agents</code> 0.23 and later need <code>openai&gt;=3</code>, so the two extras cannot share an environment.</div>
+
+  <h2>Basic page: select tools per agent</h2>
+  <CodeBlock lang="python" code={`from crewai import Agent, Crew, Task
+from agent_gantry import AgentGantry
 from agent_gantry.crewai import CrewAIAdapter
 
 gantry = AgentGantry()
 
-@gantry.register(
-    tags=["support", "orders"],
-    examples=["where is my order", "has order 4471 shipped"],
-)
+@gantry.register(examples=["where is my order", "has order 4471 shipped"])
 def get_order_status(order_id: str) -> str:
     """Return the current shipping status for an order."""
     return "in_transit"
+
+await gantry.sync()
 adapter = CrewAIAdapter(gantry)
-framework_tools = await adapter.select("check an order", limit=3)  # Native CrewAI adapter export.
-`} />
+query = "Has order 4471 shipped?"
+agent = Agent(role="support", goal="Answer order questions", backstory="...",
+              tools=await adapter.select(query, limit=3))
+task = Task(description=query, expected_output="A short answer", agent=agent)
+result = await Crew(agents=[agent], tasks=[task]).kickoff_async()`} />
+  <p>CrewAI fixes an agent's tools when it is built. To re-select per task, use <code>adapter.agent_builder(role=..., llm=...)</code> and call <code>await builder.build(query)</code> before each one.</p>
 
-  <h2>First tool-calling loop</h2>
-  <p>Let CrewAI own the conversation lifecycle while Gantry owns the tool catalog. Start with a small tool set and assert that the framework receives only safe, documented functions.</p>
-  <div class="callout"><strong>Basic testing checklist:</strong> verify tool names, JSON schemas, auth metadata, and a happy-path invocation before wiring a live model.</div>
-
-  <h2>Basic LLM call guidance</h2>
-  <p>For early prototypes, use the model client already recommended by CrewAI. Wrap that client with a thin policy function that records model name, prompt tokens, completion tokens, tool calls, and latency. Once the integration stabilizes, move the policy into Agent-Gantry's LLM adapter layer so other frameworks share the same rules.</p>
+  <h2>What the agent sees when a tool fails</h2>
+  <p>A failed call returns CrewAI's <code>ToolFailure</code> with the error type as its <code>code</code>. The agent reads the message, capped at 2,000 characters, and CrewAI records the failure on <code>TaskOutput.tool_failures</code>. Set <code>tool_failure_policy="raise"</code> on the agent or task to abort instead.</p>
+  <div class="callout"><strong>Redact or opt out:</strong> <code>CrewAIAdapter(gantry, error_formatter=redact)</code> rewrites the text; <code>error_mode="raise"</code> lets <code>ToolExecutionError</code> propagate into CrewAI's own exception handling.</div>
 </DocsLayout>

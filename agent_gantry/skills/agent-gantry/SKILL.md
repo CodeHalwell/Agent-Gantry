@@ -17,7 +17,7 @@ This skill is the canonical reference for using the library. Read the section th
 | LangChain (>=1.0) | `LangChainAdapter(gantry).select(query, limit=...)` → `bind_tools`, or `create_agent(model, middleware=[await adapter.middleware()])` | [LangChain and LangGraph](#langchain-and-langgraph) |
 | LangGraph (>=1.0) | `create_agent(model, middleware=[await LangGraphAdapter(gantry).middleware()])` (per-turn), `.areact_agent(model)`, or `.select(...)` (static) | [LangChain and LangGraph](#langchain-and-langgraph) |
 | LlamaIndex | `LlamaIndexAdapter(gantry).select(...)` (static) or `.function_agent(llm)` (live) | [Native framework adapters](#native-framework-adapters) |
-| CrewAI | `CrewAIAdapter(gantry).select(...)` | [Native framework adapters](#native-framework-adapters) |
+| CrewAI (>=1.15.22) | `CrewAIAdapter(gantry, approve=...).select(...)` or `.agent_builder(...)` (per call) | [CrewAI](#crewai) |
 | Pydantic AI (2.x) | `PydanticAIAdapter(gantry).capability()` (per-turn) / `.capability(mode="search")` (Gantry-backed `ToolSearch`), or `.toolset()` / `.select(...)` | [Pydantic AI](#pydantic-ai) |
 | OpenAI Agents SDK (>=0.23.1) | `Agent(tools=await OpenAIAgentsAdapter(gantry).dynamic_tools())` (per-turn) or `.select(...)` (static) | [OpenAI Agents SDK](#openai-agents-sdk) |
 | Haystack | `HaystackAdapter(gantry).select(...)` | [Native framework adapters](#native-framework-adapters) |
@@ -81,6 +81,7 @@ uv add "agent-gantry[pydantic-ai]"      # Pydantic AI (pydantic-ai-slim>=2.0.0)
 uv add "agent-gantry[openai-agents]"    # OpenAI Agents SDK (>=0.23.1); not with [agent-frameworks]/[all] (openai 3 vs crewai)
 uv add "agent-gantry[langgraph]"        # LangGraph + LangChain (>=1.0); [langchain] for LangChain alone
 uv add "agent-gantry[google-adk]"       # Google ADK (>=2.6.1)
+uv add "agent-gantry[crewai]"           # CrewAI (>=1.15.22, Python <3.14); not with [openai-agents]
 uv add "agent-gantry[lancedb]"          # disk-persistent vector store
 uv add "agent-gantry[jev]"              # selection without embeddings (TypeSafe Jev)
 uv add "agent-gantry[mcp]"              # MCP client/server
@@ -405,6 +406,25 @@ runner = InMemoryRunner(agent=agent, app_name="app")
 - **Approval**: `gantry.requires_confirmation(tool)` drives ADK's `require_confirmation`; a confirmed call runs exactly once, ADK refuses a rejected one. A hand-built `Agent(before_model_callback=adapter.before_model_callback())` also needs `tools=[adapter.confirmation_toolset()]` so the confirmed call can resume (`adapter.agent()` adds it).
 - **Run context**: `current_tool_context()` returns the ADK `ToolContext` (`.state`, `.user_id`, `.invocation_id`, `.function_call_id`, artifacts, memory).
 - **Tracing**: ADK's OpenTelemetry span becomes the `ToolCall`'s `trace_id`/`parent_span_id`.
+
+## CrewAI
+
+Install with `uv add "agent-gantry[crewai]"` (pins `crewai>=1.15.22`, Python 3.10–3.13; tested on 1.15.22 and the latest). Not with `[openai-agents]` (openai 3 vs CrewAI's `openai<3`).
+
+```python
+from crewai import Agent, Crew, Task
+from agent_gantry.crewai import ApprovalRequest, CrewAIAdapter, current_crew_context
+
+adapter = CrewAIAdapter(gantry, approve=lambda req: ask_a_human(req))   # or approve="console"
+agent = Agent(role="support", goal="...", backstory="...", tools=await adapter.select(task_text))
+output = await Crew(agents=[agent], tasks=[Task(description=task_text, expected_output="...", agent=agent)]).kickoff_async()
+output.tasks_output[0].tool_failures                  # Gantry failures recorded as CrewAI ToolFailure
+```
+
+- **Selection**: per call (`select` per agent, or `agent_builder(...).build(query)` per task); CrewAI has no hook to swap tools between model turns.
+- **Errors**: `_run` returns CrewAI's `ToolFailure` (`code` = error type, `retryable` for argument errors); `tool_failure_policy` on the agent/task decides whether to abort. `error_mode="raise"` restores `ToolExecutionError`.
+- **Approval**: a `before_tool_call` hook (registered once per process) asks `approve(request) -> bool` for gated tools (`gantry.requires_confirmation`); refused calls are blocked by CrewAI; no approver means "needs approval, not run".
+- **Run context**: `current_crew_context()` returns CrewAI's `ToolCallHookContext` (`.agent`, `.task`, `.crew`).
 
 ## Native framework adapters
 
@@ -937,6 +957,7 @@ This catches the headline mistakes: a tool description that names another tool (
 | OpenAI Agents run pauses with `result.interruptions` | A Gantry-gated tool (`requires_confirmation` or a `SecurityPolicy` pattern) needs approval | `state = result.to_state(); state.approve(item); await Runner.run(agent, state)` |
 | `ImportError: Per-turn Gantry selection needs openai-agents>=0.23.1` | An older SDK came in transitively | `pip install 'agent-gantry[openai-agents]'` |
 | LangGraph run returns `__interrupt__` | A Gantry-gated tool needs approval | `await agent.ainvoke(Command(resume=True), config)` with the same `thread_id` |
+| CrewAI gated tool says it "requires human approval and was not run" | No approver configured | `CrewAIAdapter(gantry, approve=fn)` or `approve="console"` |
 | ADK run stops with an `adk_request_confirmation` function call | A Gantry-gated tool needs approval | Send `FunctionResponse(name="adk_request_confirmation", id=call.id, response={"confirmed": True})` as the next message |
 | LangGraph gated tool says it "requires human approval and was not run" | No checkpointer, so the interrupt could never be resumed | Pass `checkpointer=` to `create_agent` / `areact_agent` |
 | A LangChain tool error became a `ToolMessage` instead of raising | `handle_tool_error=True` in the default `error_mode="model"` | `LangChainAdapter(gantry, error_mode="raise")` |

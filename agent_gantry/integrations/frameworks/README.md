@@ -39,7 +39,7 @@ Install Gantry plus just the SDK you need:
 | `langchain` | `pip install 'agent-gantry[langchain]'` | `model.bind_tools(await adapter.select(query))` — see [LangChain and LangGraph](#langchain-and-langgraph-first-class) |
 | `langgraph` | `pip install 'agent-gantry[langgraph]'` | `create_agent(model, middleware=[await adapter.middleware()])` — see [LangChain and LangGraph](#langchain-and-langgraph-first-class) |
 | `llamaindex` | `pip install agent-gantry llama-index-core` | `FunctionAgent(tool_retriever=adapter.live())` |
-| `crewai` | `pip install agent-gantry crewai` | `Agent(..., tools=await adapter.select(query))` |
+| `crewai` | `pip install 'agent-gantry[crewai]'` | `Agent(..., tools=await adapter.select(query))` — see [CrewAI](#crewai-first-class) |
 | `pydantic_ai` | `pip install 'agent-gantry[pydantic-ai]'` | `Agent(model, capabilities=[adapter.capability()])` — see [Pydantic AI](#pydantic-ai-first-class) |
 | `openai_agents` | `pip install 'agent-gantry[openai-agents]'` | `Agent(..., tools=await adapter.dynamic_tools())` — see [OpenAI Agents SDK](#openai-agents-sdk-first-class) |
 | `haystack` | `pip install agent-gantry haystack-ai` | `Agent(..., tools=await adapter.select(query))` |
@@ -623,6 +623,49 @@ memory) with `agent_gantry.google_adk.current_tool_context()` or
 `agent_name`, `user_id`, `session_id`). ADK traces with OpenTelemetry, so its
 active span becomes the `ToolCall`'s `trace_id`/`parent_span_id`.
 
+## CrewAI (first-class)
+
+`pip install 'agent-gantry[crewai]'` (pins `crewai>=1.15.22` on Python 3.10–3.13;
+CI runs the tests on exactly 1.15.22 and on the latest). It cannot share an
+environment with `openai-agents` (CrewAI pins `openai<3`).
+
+| Mode | Build | Use when |
+|---|---|---|
+| Static slice | `Agent(tools=await adapter.select(query))` | Most crews; select per agent |
+| Per call | `builder = adapter.agent_builder(role=..., llm=...)` → `await builder.build(query)` per task | Tools should follow each new task |
+
+CrewAI fixes an agent's tools when it is built and has no hook to change them
+between model turns, so selection is per call rather than per turn.
+
+**Errors.** A failed call returns CrewAI's `ToolFailure` (`message`, the error
+type as `code`, `retryable` for argument errors), so the agent reads the
+failure and CrewAI records it on `TaskOutput.tool_failures`; the agent's or
+task's `tool_failure_policy` (`ignore` / `warn` / `raise`) decides whether the
+run carries on. `error_formatter=fn` rewrites the text; `error_mode="raise"`
+lets `ToolExecutionError` propagate into CrewAI's own exception handling.
+
+**Approval.** CrewAI has no pause-and-resume for tool calls; its native gate is
+a `before_tool_call` hook. Gantry registers one (once per process) and, for a
+confirmation-gated tool (per `AgentGantry.requires_confirmation()`), asks the
+adapter's approver:
+
+```python
+def approve(request: ApprovalRequest) -> bool:      # tool_name, arguments, agent, task, crew
+    return ask_a_human(request)
+
+adapter = CrewAIAdapter(gantry, approve=approve)      # or approve="console" for request_human_input
+```
+
+An approved call runs once with only the confirmation gate cleared; a refused
+one is blocked by CrewAI. Without an approver the agent is told the call needs
+approval and it is not run.
+
+**Run context and tracing.** Gantry handlers read the call's CrewAI
+`ToolCallHookContext` (`agent`, `task`, `crew`) with
+`agent_gantry.crewai.current_crew_context()` or `current_tool_invocation()`
+(`deps` is the crew; `metadata` carries `agent_role`, `task_name`, `task_id`).
+An active OpenTelemetry span becomes the `ToolCall`'s trace.
+
 ## Shared base
 
 `base.py` provides `GantryToolset` (selection, including the `required`/
@@ -680,7 +723,7 @@ policy refused it outright). Both are re-exported from
 `agent_gantry.integrations.frameworks`; catching `ToolExecutionError` still
 catches every outcome.
 
-**Every native adapter except Pydantic AI, the OpenAI Agents SDK, LangChain, LangGraph and Google ADK lets this propagate uncaught** from the
+**Every native adapter except Pydantic AI, the OpenAI Agents SDK, LangChain, LangGraph, Google ADK and CrewAI lets this propagate uncaught** from the
 native tool object's own invocation entry point (`.func`, `._run`, `.forward`,
 `.entrypoint`, `.method`, `.on_invoke_tool`, …) — proven for all of them,
 including the sync wrappers, by
@@ -789,7 +832,7 @@ asserting no exception + a `WARNING` log record).
 | LangChain | **Deviation:** LangChain's `ToolException` (the tool has `handle_tool_error=True`, so the model gets an error `ToolMessage`), chained from `ToolExecutionError`; `error_mode="raise"` restores raising | *(per-call — see above)* |
 | LangGraph | **Deviation:** as LangChain | `middleware()`: degrades to this run's previous tools plus pins (per-run state) + `WARNING`; `select_for_state`: no tools + `WARNING` |
 | LlamaIndex | Raises `ToolExecutionError` | Degrades to no tools this step (stateless) + `WARNING` |
-| CrewAI | Raises `ToolExecutionError` | *(per-call — see above)* |
+| CrewAI | **Deviation:** `_run` returns CrewAI's `ToolFailure` (recorded on `TaskOutput.tool_failures`); `error_mode="raise"` restores raising | *(per-call — see above)* |
 | Pydantic AI | **Deviation:** `ModelRetry` / `ToolFailed` / `ApprovalRequired` (native), chained from `ToolExecutionError`; `error_mode="raise"` restores raising | Degrades to this run's earlier tools (per-run state) + `WARNING` |
 | OpenAI Agents SDK | **Deviation:** returned to the model as `Error: ...` tool output; `error_mode="raise"` restores raising | `dynamic_tools`: degrades to this run's earlier tools (per-run state) + `WARNING`; `session`/`run_hooks`: previous turn's `agent.tools` + `WARNING` |
 | Haystack | Raises `ToolExecutionError` | *(per-call — see above)* |

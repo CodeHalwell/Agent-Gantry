@@ -10,6 +10,19 @@ imported lazily when you call an adapter method.
 
 from __future__ import annotations
 
-from agent_gantry.integrations.frameworks.crewai import CrewAIAdapter
+from agent_gantry.integrations.frameworks.crewai import (
+    ApprovalRequest,
+    Approver,
+    CrewAIAdapter,
+    current_crew_context,
+)
+from agent_gantry.integrations.frameworks.native import ErrorFormatter, ErrorMode
 
-__all__ = ["CrewAIAdapter"]
+__all__ = [
+    "ApprovalRequest",
+    "Approver",
+    "CrewAIAdapter",
+    "ErrorFormatter",
+    "ErrorMode",
+    "current_crew_context",
+]
