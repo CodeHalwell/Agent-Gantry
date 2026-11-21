@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Agno becomes a first-class integration, using Agno's `requires_confirmation`
+pause, `RunContext` injection, failed tool results and a callable `tools`
+factory for per-run selection.
+
+**Behaviour change (Agno).** Confirmation-gated tools are now
+`Function(requires_confirmation=True)`, so the run pauses for approval
+(`run.active_requirements`, then `continue_run`) instead of the call failing
+as not approved. A failed call raises `AgnoToolError` (still a
+`ToolExecutionError`) whose text is `"<type>: <message>"`, so the model sees
+that rather than Gantry's internal status message. Pass `error_mode="raise"`
+to `AgnoAdapter` to keep the previous behaviour.
+
+### Added
+
+- `agno` extra (`pip install 'agent-gantry[agno]'`, `>=2.6.10`). CI runs the
+  Agno tests on exactly 2.6.10 and on the latest.
+- `AgnoAdapter.agent(model=...)`: one Agno `Agent` that re-selects Gantry
+  tools for every run through Agno's callable `tools` factory, keeps the
+  selection for `continue_run`, reads a resumed run's input back from the
+  agent's `db`, and still offers pinned tools when retrieval fails.
+- `agent_gantry.agno.current_run_context()`: the call's Agno `RunContext`
+  (dependencies, session state, user, session, run), also on
+  `current_tool_invocation()` (`deps` is `run_context.dependencies`).
+- `error_mode` and `error_formatter` on `AgnoAdapter`; `AgnoToolError`.
+- `examples/agent_frameworks/agno_example.py` now runs offline.
+
 Strands Agents becomes a first-class integration, using Strands interrupts
 and `ToolContext`.
 

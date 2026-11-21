@@ -2,38 +2,34 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Advanced Agno guide | Agent-Gantry">
+<DocsLayout title="Advanced Agno guide | Agent-Gantry" description="Approval through requires_confirmation and continue_run, per-run selection, run context and error modes for the Agent-Gantry Agno integration.">
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced Agno</h1>
-  <p class="lead">Scale Agno from static tool demos to governed agent workloads with semantic selection, explicit LLM-call policy, tracing, and deployment boundaries.</p>
+  <p class="lead">Approval with <code>continue_run</code>, how per-run selection works, and run context.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/agno/">← Basic Agno usage</a></p>
 
-  <h2>Advanced page: dynamic tool selection</h2>
-  <p>Before each Agno run, ask Gantry for a context-aware subset of tools. Combine request metadata, tenant policy, semantic similarity, and reranker results so the agent sees a concise, relevant tool surface.</p>
-  <CodeBlock lang="python" code={`candidate_tools = gantry.select_tools(
-    query=user_message,
-    tags=["support"],
-    limit=8,
-)
-framework_tools = [AgnoAdapter.convert(spec) for spec in candidate_tools]
-`} />
+  <h2>Approval with requires_confirmation</h2>
+  <p>A confirmation-gated tool (<code>requires_confirmation=True</code> or a <code>SecurityPolicy(require_confirmation=[...])</code> pattern) becomes an Agno <code>Function(requires_confirmation=True)</code>. When the model calls it, the run pauses with a requirement for each pending call.</p>
+  <CodeBlock lang="python" code={`run = await agent.arun("Refund order 4471")
+if run.is_paused:
+    for requirement in run.active_requirements:
+        call = requirement.tool_execution            # .tool_name, .tool_args
+        if ask_a_human(call.tool_name, call.tool_args):
+            requirement.confirm()
+        else:
+            requirement.reject()
+    run = await agent.acontinue_run(run_response=run)`} />
+  <p>A confirmed call runs once through <code>gantry.execute</code> with only the confirmation gate cleared; a rejected one never runs and the model is told. A tool called directly, outside an agent, reports that it needs approval. With <code>error_mode="raise"</code> there is no pause and gated calls report as not run.</p>
 
-  <h2>LLM calls and model policy</h2>
-  <p>Centralize LLM calls when Agno supports custom model clients; otherwise add middleware around the framework call. The policy should select the provider, enforce budget ceilings, redact sensitive fields, emit token metrics, and decide whether tool results should be summarized before returning to the model.</p>
-  <CodeBlock lang="python" code={`response = llm_policy.complete(
-    framework="Agno",
-    model="primary-or-fallback-model",
-    messages=messages,
-    tools=framework_tools,
-    trace_id=trace_id,
-)
-`} />
-
-  <h2>Production patterns</h2>
+  <h2>Per-run selection</h2>
   <ul>
-    <li><strong>Observability:</strong> attach trace IDs to every Agno run, LLM call, and tool execution.</li>
-    <li><strong>Safety:</strong> keep high-risk tools behind explicit allowlists, human approval, or dry-run executors.</li>
-    <li><strong>Resilience:</strong> add provider fallback for LLM calls and executor fallback for remote MCP/A2A tools.</li>
-    <li><strong>Evaluation:</strong> replay representative prompts with fixed tool snapshots before broadening dynamic retrieval.</li>
+    <li><strong>Mechanism:</strong> <code>agent()</code> gives the <code>Agent</code> a callable <code>tools</code> factory (<code>cache_callables=False</code>) plus a pre-hook that records the run's input, so Agno itself asks Gantry for each run's tools.</li>
+    <li><strong>Query:</strong> the run's input.</li>
+    <li><strong>Resuming:</strong> the selection is kept per <code>run_id</code>, so <code>continue_run</code> after an approval sees the same tools. Another agent object resuming the run reads its input back from the shared <code>db</code>.</li>
+    <li><strong>Failure:</strong> if retrieval fails the pinned tools (<code>required</code> / <code>always_include</code>) are still offered and a warning is logged.</li>
+    <li>Your own <code>pre_hooks</code> still run. Tools are synchronous, so <code>agent.run()</code> and <code>agent.arun()</code> both work.</li>
   </ul>
+
+  <h2>Run context and tracing</h2>
+  <p><code>current_run_context()</code> returns Agno's <code>RunContext</code>: <code>.dependencies</code>, <code>.session_state</code>, <code>.user_id</code>, <code>.session_id</code>, <code>.run_id</code> and <code>.metadata</code>. <code>current_tool_invocation()</code> carries it too, with <code>deps</code> set to <code>dependencies</code>, <code>tool_call_id</code> to the model's call id and metadata <code>agent_name</code>, <code>session_id</code> and <code>user_id</code>. The active OpenTelemetry span becomes the Gantry <code>ToolCall</code>'s trace.</p>
 </DocsLayout>

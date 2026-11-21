@@ -21,7 +21,7 @@ This skill is the canonical reference for using the library. Read the section th
 | Pydantic AI (2.x) | `PydanticAIAdapter(gantry).capability()` (per-turn) / `.capability(mode="search")` (Gantry-backed `ToolSearch`), or `.toolset()` / `.select(...)` | [Pydantic AI](#pydantic-ai) |
 | OpenAI Agents SDK (>=0.23.1) | `Agent(tools=await OpenAIAgentsAdapter(gantry).dynamic_tools())` (per-turn) or `.select(...)` (static) | [OpenAI Agents SDK](#openai-agents-sdk) |
 | Haystack | `HaystackAdapter(gantry).select(...)` | [Native framework adapters](#native-framework-adapters) |
-| Agno | `AgnoAdapter(gantry).select(...)` | [Native framework adapters](#native-framework-adapters) |
+| Agno (>=2.6.10) | `AgnoAdapter(gantry).agent(model=...)` (per-run) or `.select(...)` (static) | [Agno](#agno) |
 | Strands Agents (>=1.38) | `StrandsAdapter(gantry).agent(model=...)` / `.tool_hook()` (per-turn) or `.select(...)` (static) | [Strands Agents](#strands-agents) |
 | DSPy | `DSPyAdapter(gantry).select(...)` (static) or `.agent_builder(signature, ...)` (per-call) | [Native framework adapters](#native-framework-adapters) |
 | Google ADK (>=2.6.1) | `GoogleADKAdapter(gantry).agent(model=, name=)` (per-turn) or `.select(...)` (static) | [Google ADK](#google-adk) |
@@ -84,6 +84,7 @@ uv add "agent-gantry[google-adk]"       # Google ADK (>=2.6.1)
 uv add "agent-gantry[crewai]"           # CrewAI (>=1.15.22, Python <3.14); not with [openai-agents]
 uv add "agent-gantry[llamaindex]"       # LlamaIndex (llama-index-core>=0.13)
 uv add "agent-gantry[strands]"          # Strands Agents (>=1.38)
+uv add "agent-gantry[agno]"             # Agno (>=2.6.10)
 uv add "agent-gantry[lancedb]"          # disk-persistent vector store
 uv add "agent-gantry[jev]"              # selection without embeddings (TypeSafe Jev)
 uv add "agent-gantry[mcp]"              # MCP client/server
@@ -467,6 +468,26 @@ if result.stop_reason == "interrupt":                            # a Gantry-gate
 - **Approval**: gated tools call `tool_context.interrupt("gantry-approval", reason=...)`; "yes"/`True`/`{"approved": True}` runs once on resume, anything else rejects. Direct calls report "needs approval".
 - **Run context**: `current_tool_context()` gives Strands' `ToolContext` (`.invocation_state` = kwargs passed to `agent(...)`, `.agent`, `.tool_use`).
 - **Per-turn**: `tool_hook()` swaps the tool registry in `BeforeModelCallEvent`; on a retrieval failure the previous turn's tools stay.
+
+## Agno
+
+Install with `uv add "agent-gantry[agno]"` (pins `agno>=2.6.10`; tested on 2.6.10 and the latest).
+
+```python
+from agent_gantry.agno import AgnoAdapter, current_run_context
+
+agent = AgnoAdapter(gantry).agent(model=my_model, limit=5)   # error_formatter=... on the adapter
+run = await agent.arun("refund order 4471", user_id="dan", dependencies={"db": db})
+if run.is_paused:                                             # a Gantry-gated call
+    for requirement in run.active_requirements:
+        requirement.confirm()
+    run = await agent.acontinue_run(run_response=run)
+```
+
+- **Errors**: `AgnoToolError` (a `ToolExecutionError`), which Agno records as a failed tool result showing `"<type>: <message>"`; `error_mode="raise"` raises the plain `ToolExecutionError`.
+- **Approval**: gated tools are `Function(requires_confirmation=True)`; a confirmed requirement runs the call once on `continue_run`, a rejected one never runs. Direct calls report "needs approval".
+- **Run context**: `current_run_context()` gives Agno's `RunContext` (`.dependencies`, `.session_state`, `.user_id`, `.session_id`, `.run_id`).
+- **Per-run**: `agent()` re-selects inside Agno (callable `tools` factory) for each run and keeps the selection for `continue_run`; works with `run()` and `arun()`.
 
 ## Native framework adapters
 
@@ -1002,6 +1023,7 @@ This catches the headline mistakes: a tool description that names another tool (
 | CrewAI gated tool says it "requires human approval and was not run" | No approver configured | `CrewAIAdapter(gantry, approve=fn)` or `approve="console"` |
 | LlamaIndex run waits forever on a gated tool | Nobody answered the `InputRequiredEvent`, or the answer lacks its `gantry_approval_id` | Stream events and `handler.ctx.send_event(HumanResponseEvent(response="yes", gantry_approval_id=event.gantry_approval_id))` |
 | Strands run ends with `stop_reason == "interrupt"` | A Gantry-gated tool needs approval | Resume with `agent.invoke_async([{"interruptResponse": {"interruptId": i.id, "response": "yes"}}])` |
+| Agno run returns with `run.is_paused` | A Gantry-gated tool needs approval | `requirement.confirm()` for each of `run.active_requirements`, then `agent.acontinue_run(run_response=run)` |
 | ADK run stops with an `adk_request_confirmation` function call | A Gantry-gated tool needs approval | Send `FunctionResponse(name="adk_request_confirmation", id=call.id, response={"confirmed": True})` as the next message |
 | LangGraph gated tool says it "requires human approval and was not run" | No checkpointer, so the interrupt could never be resumed | Pass `checkpointer=` to `create_agent` / `areact_agent` |
 | A LangChain tool error became a `ToolMessage` instead of raising | `handle_tool_error=True` in the default `error_mode="model"` | `LangChainAdapter(gantry, error_mode="raise")` |

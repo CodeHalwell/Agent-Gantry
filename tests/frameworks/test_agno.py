@@ -104,5 +104,5 @@ async def test_missing_agno_raises_helpful_error(monkeypatch, gantry):
     from agent_gantry.integrations.frameworks.base import GantryToolset
 
     specs = await GantryToolset(gantry).select("send an email", limit=1)
-    with pytest.raises(ImportError, match="pip install agno"):
+    with pytest.raises(ImportError, match=r"agent-gantry\[agno\]"):
         AgnoAdapter.convert(specs[0])
