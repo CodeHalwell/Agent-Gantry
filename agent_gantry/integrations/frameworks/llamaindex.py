@@ -30,8 +30,11 @@ Public entry point: :class:`LlamaIndexAdapter`.
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import inspect
 import json
+import weakref
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.core.invocation import current_tool_invocation
@@ -67,6 +70,69 @@ _PENDING_APPROVAL_TEXT = (
 )
 _REJECTED_TEXT = "The user rejected this tool call, so it was not run."
 
+#: The model's id for the tool call being run, set by Gantry's ``FunctionAgent``.
+_TOOL_CALL_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "agent_gantry_llamaindex_tool_call_id", default=None
+)
+_AGENT_CLASS: Any = None
+
+#: Per workflow run (its state store): waiter id -> the approved call's result future.
+#: LlamaIndex can replay a waiting step while the approved call is still
+#: running; the replay joins that call instead of running the tool again.
+_CLAIMS: weakref.WeakKeyDictionary[Any, dict[str, asyncio.Future[Any]]] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _claims(ctx: Any) -> dict[str, asyncio.Future[Any]]:
+    # Every step invocation gets its own Context object; the run's state store
+    # is the one object they all share.
+    owner = getattr(ctx, "store", None) or ctx
+    try:
+        return _CLAIMS.setdefault(owner, {})
+    except TypeError:  # pragma: no cover - a Context that cannot be weakly referenced
+        claims = getattr(ctx, "_gantry_claims", None)
+        if claims is None:
+            claims = {}
+            try:
+                ctx._gantry_claims = claims
+            except Exception:
+                return {}
+        return claims
+
+
+def gantry_function_agent_class() -> Any:
+    """``FunctionAgent`` that tells Gantry tools the id of the call they are running.
+
+    With it, each gated call waits under its own ``waiter_id`` (stable across
+    the step's replay), so two identical calls in one step get one approval
+    request each. :meth:`LlamaIndexAdapter.function_agent` uses it.
+    """
+    global _AGENT_CLASS
+    if _AGENT_CLASS is None:
+        from llama_index.core.agent.workflow import FunctionAgent, ToolCall, ToolCallResult
+        from llama_index.core.workflow import Context, step
+
+        class GantryFunctionAgent(FunctionAgent):  # type: ignore[misc, valid-type]
+            async def call_tool(self, ctx: Any, ev: Any) -> Any:
+                token = _TOOL_CALL_ID.set(getattr(ev, "tool_id", None))
+                try:
+                    return await FunctionAgent.call_tool(self, ctx, ev)
+                finally:
+                    _TOOL_CALL_ID.reset(token)
+
+            # Real types: the workflow validates step signatures at runtime.
+            call_tool.__annotations__ = {
+                "ctx": Context,
+                "ev": ToolCall,
+                "return": ToolCallResult,
+            }
+            call_tool = step(call_tool)
+
+        _AGENT_CLASS = GantryFunctionAgent
+    return _AGENT_CLASS
+
+
 #: ``HumanResponseEvent.response`` values that approve a gated call.
 _APPROVALS = frozenset({"y", "yes", "approve", "approved"})
 
@@ -90,6 +156,14 @@ class LlamaIndexToolError(ToolExecutionError):
 
     def __str__(self) -> str:
         return self.text
+
+
+def _waiter_id(name: str, arguments: dict[str, Any]) -> str:
+    """One logical wait per call: the model's call id, else the exact arguments."""
+    call_id = _TOOL_CALL_ID.get()
+    if call_id:
+        return f"gantry-approval:{name}:{call_id}"
+    return f"gantry-approval:{name}:{json.dumps(arguments, sort_keys=True, default=str)}"
 
 
 def current_workflow_context() -> Any:
@@ -213,6 +287,7 @@ def _spec_to_llamaindex(
             framework=FRAMEWORK_NAME,
             native_context=ctx,
             deps=getattr(ctx, "store", None) if ctx is not None else None,
+            tool_call_id=_TOOL_CALL_ID.get(),
             approved=approved,
         )
 
@@ -228,10 +303,16 @@ def _spec_to_llamaindex(
     async def _async_fn(**kwargs: Any) -> Any:
         ctx, kwargs = _split(kwargs)
         approved = False
+        claim: asyncio.Future[Any] | None = None
         types = _context_types()
         if ctx is not None and types is not None and _needs_approval():
             _, human_response, input_required = types
             arguments = dict(kwargs)
+            waiter_id = _waiter_id(spec.native_name, arguments)
+            claims = _claims(ctx)
+            if waiter_id in claims:
+                # A replay of a step whose approved call already ran (or is running).
+                return await asyncio.shield(claims[waiter_id])
             # The step re-runs from the top once the response arrives, so
             # nothing before this wait may have side effects.
             response = await ctx.wait_for_event(
@@ -241,16 +322,26 @@ def _spec_to_llamaindex(
                     gantry_tool=spec.native_name,
                     gantry_arguments=arguments,
                 ),
-                waiter_id=f"gantry-approval:{spec.native_name}:"
-                f"{json.dumps(arguments, sort_keys=True, default=str)}",
+                waiter_id=waiter_id,
             )
             if not _is_approval(response):
                 raise LlamaIndexToolError(None, _REJECTED_TEXT, tool_name=spec.native_name)
+            if waiter_id in claims:  # another replay claimed it while this one waited
+                return await asyncio.shield(claims[waiter_id])
+            # Claimed with no await in between, so exactly one replay runs the call.
+            claim = claims[waiter_id] = asyncio.get_running_loop().create_future()
             approved = True
         try:
-            return await _run(ctx, kwargs, approved)
+            result = await _run(ctx, kwargs, approved)
         except ToolExecutionError as exc:
-            raise _error(exc) from exc
+            error = _error(exc)
+            if claim is not None:
+                claim.set_exception(error)
+                claim.exception()  # retrieved: replays re-raise it themselves
+            raise error from exc
+        if claim is not None:
+            claim.set_result(result)
+        return result
 
     def _sync_fn(**kwargs: Any) -> Any:
         ctx, kwargs = _split(kwargs)

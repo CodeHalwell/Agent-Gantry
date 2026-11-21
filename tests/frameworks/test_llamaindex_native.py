@@ -7,6 +7,7 @@ human-in-the-loop events run offline.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -252,6 +253,19 @@ async def test_tools_still_work_when_called_directly(gantry):
     [tool] = await LlamaIndexAdapter(gantry).select("weather forecast for Paris", limit=1)
     assert (await tool.acall(city="Paris")).content == "sunny in Paris"
     assert "ctx" not in tool.metadata.get_parameters_dict()["properties"]
+
+
+async def test_two_identical_gated_calls_each_wait_for_their_own_approval(gantry):
+    llm = _llm([("send_email", {"to": "bob@x"}), ("send_email", {"to": "bob@x"})])
+    agent = LlamaIndexAdapter(gantry).function_agent(llm, limit=1)
+    outputs, requests = await asyncio.wait_for(
+        _run(agent, "send an email message to bob", respond="yes"), timeout=30
+    )
+    assert len(requests) == 2  # one approval request per call, no shared waiter
+    assert gantry.sent == ["bob@x", "bob@x"]  # each approved call ran exactly once
+    # LlamaIndex replays a waiting step when a response arrives and may re-emit
+    # its result; the replay joins the call that already ran.
+    assert {o.content for o in outputs} == {"sent:bob@x"}
 
 
 async def test_a_tool_argument_named_ctx_is_passed_through():

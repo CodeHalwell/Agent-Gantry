@@ -286,7 +286,9 @@ def _gantry_function_agent(
         ImportError: If ``llama-index-core`` is not installed.
     """
     try:
-        from llama_index.core.agent.workflow import FunctionAgent
+        from agent_gantry.integrations.frameworks.llamaindex import gantry_function_agent_class
+
+        FunctionAgent = gantry_function_agent_class()  # noqa: N806
     except ImportError as exc:  # pragma: no cover - exercised when absent
         raise ImportError(
             "LlamaIndex is required for LlamaIndexAdapter.function_agent; "
