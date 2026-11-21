@@ -254,6 +254,26 @@ async def test_tools_still_work_when_called_directly(gantry):
     assert "ctx" not in tool.metadata.get_parameters_dict()["properties"]
 
 
+async def test_a_tool_argument_named_ctx_is_passed_through():
+    g = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+
+    @g.register
+    def echo(ctx: str) -> str:
+        """Echo the given context string."""
+        return f"echo:{ctx}"
+
+    await g.sync()
+    try:
+        [tool] = await LlamaIndexAdapter(g).select("echo the context string", limit=1)
+        assert (await tool.acall(ctx="hello")).content == "echo:hello"
+        assert tool.call(ctx="hi").content == "echo:hi"
+        agent = FunctionAgent(tools=[tool], llm=_llm([("echo", {"ctx": "from-model"})]))
+        [output], _ = await _run(agent)
+        assert output.content == "echo:from-model"
+    finally:
+        await g.close()
+
+
 async def test_tool_retriever_offers_pins_when_retrieval_fails(gantry, caplog):
     retriever = LlamaIndexAdapter(gantry).tool_retriever(limit=1, always_include=["get_weather"])
 

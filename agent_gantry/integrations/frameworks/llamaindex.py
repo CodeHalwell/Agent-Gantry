@@ -216,7 +216,17 @@ def _spec_to_llamaindex(
             approved=approved,
         )
 
-    async def _async_fn(ctx: Any = None, **kwargs: Any) -> Any:
+    signature = async_fn.__signature__  # type: ignore[attr-defined]
+    # A tool with its own ``ctx`` argument keeps it; no workflow context then.
+    inject_ctx = _context_types() is not None and "ctx" not in signature.parameters
+
+    def _split(kwargs: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
+        if not inject_ctx:
+            return None, kwargs
+        return kwargs.pop("ctx", None), kwargs
+
+    async def _async_fn(**kwargs: Any) -> Any:
+        ctx, kwargs = _split(kwargs)
         approved = False
         types = _context_types()
         if ctx is not None and types is not None and _needs_approval():
@@ -242,17 +252,17 @@ def _spec_to_llamaindex(
         except ToolExecutionError as exc:
             raise _error(exc) from exc
 
-    def _sync_fn(ctx: Any = None, **kwargs: Any) -> Any:
+    def _sync_fn(**kwargs: Any) -> Any:
+        ctx, kwargs = _split(kwargs)
         try:
             return _run_coroutine_sync(_run(ctx, kwargs, False))
         except ToolExecutionError as exc:
             raise _error(exc) from exc
 
-    signature = async_fn.__signature__  # type: ignore[attr-defined]
     annotations = dict(getattr(async_fn, "__annotations__", {}))
     partial_params: dict[str, Any] = {}
     types = _context_types()
-    if types is not None and "ctx" not in signature.parameters:
+    if inject_ctx and types is not None:
         context_cls = types[0]
         ctx_param = inspect.Parameter(
             "ctx", inspect.Parameter.KEYWORD_ONLY, default=None, annotation=context_cls
