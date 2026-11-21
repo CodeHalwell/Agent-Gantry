@@ -300,6 +300,22 @@ async def test_a_tool_argument_named_state_keeps_the_approval_path(gantry):
     assert gantry.sent == ["Jo@CA"]
 
 
+async def test_raise_mode_warns_that_the_confirmation_ui_is_not_asked(gantry, caplog):
+    adapter = HaystackAdapter(gantry, error_mode="raise")
+    with caplog.at_level("WARNING"):
+        adapter.agent(chat_generator=ScriptedGenerator([]), limit=1, confirmation_ui=ScriptedUI())
+        adapter.confirmation_hook(ScriptedUI())
+    assert caplog.text.count("confirmation UI is never asked") == 2
+
+
+async def test_model_mode_with_a_confirmation_ui_does_not_warn(gantry, caplog):
+    with caplog.at_level("WARNING"):
+        HaystackAdapter(gantry).agent(
+            chat_generator=ScriptedGenerator([]), limit=1, confirmation_ui=ScriptedUI()
+        )
+    assert "confirmation UI is never asked" not in caplog.text
+
+
 async def test_per_step_agent_uses_the_adapter_settings(gantry):
     generator = ScriptedGenerator([("divide", {"a": 1, "b": 0})])
     agent = HaystackAdapter(gantry, error_formatter=lambda exc: "[redacted]").agent(

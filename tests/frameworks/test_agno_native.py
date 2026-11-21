@@ -343,6 +343,64 @@ async def test_another_agent_object_resumes_from_the_shared_db(gantry):
     assert model.offered == [["send_email"]]
 
 
+async def test_another_agent_object_resumes_from_a_shared_async_db(gantry, tmp_path):
+    for module in ("aiosqlite", "sqlalchemy", "greenlet"):  # AsyncSqliteDb's own deps
+        pytest.importorskip(module)
+    from agno.db.sqlite import AsyncSqliteDb
+
+    db_file = str(tmp_path / "runs.db")
+    first = AgnoAdapter(gantry).agent(
+        model=ScriptedModel(steps=[[("send_email", {"to": "bob@x"})]]),
+        limit=1,
+        db=AsyncSqliteDb(db_file=db_file),
+    )
+    run = await first.arun("send an email message to bob", session_id="s1")
+    [requirement] = run.active_requirements
+    requirement.confirm()
+
+    model = ScriptedModel()
+    second = AgnoAdapter(gantry).agent(model=model, limit=1, db=AsyncSqliteDb(db_file=db_file))
+    await second.acontinue_run(run_id=run.run_id, session_id="s1", requirements=run.requirements)
+    assert gantry.sent == ["bob@x"]
+    assert model.offered == [["send_email"]]
+
+
+async def test_an_async_db_input_is_read_on_the_run_loop(gantry):
+    from agno.db.base import AsyncBaseDb
+
+    from agent_gantry.integrations.frameworks.agno import _RunSelector
+
+    class AnyAsyncDb(AsyncBaseDb):  # only its type matters here
+        pass
+
+    AnyAsyncDb.__abstractmethods__ = frozenset()
+
+    class StoredRun:
+        class input:  # noqa: N801 - mirrors RunOutput.input
+            @staticmethod
+            def input_content_string() -> str:
+                return "what's the weather forecast for Paris"
+
+    class ResumingAgent:
+        db = AnyAsyncDb.__new__(AnyAsyncDb)
+
+        async def aget_run_output(self, run_id, session_id):
+            return StoredRun()
+
+        def get_run_output(self, **kwargs):
+            raise AssertionError("an async db must not be read synchronously")
+
+    class Context:
+        run_id = "r1"
+        session_id = "s1"
+
+    selector = _RunSelector(AgnoAdapter(gantry), {"limit": 1})
+    pending = selector.tools(agent=ResumingAgent(), run_context=Context())
+    tools = await pending
+    assert [tool.name for tool in tools] == ["get_weather"]
+    assert selector.tools(agent=ResumingAgent(), run_context=Context()) == tools
+
+
 async def test_per_run_agent_uses_the_adapter_settings(gantry):
     model = ScriptedModel(steps=[[("divide", {"a": 1, "b": 0})]])
     agent = AgnoAdapter(gantry, error_formatter=lambda exc: "[redacted]").agent(

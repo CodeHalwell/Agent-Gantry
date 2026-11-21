@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import logging
 from collections import Counter
 from typing import TYPE_CHECKING, Any
 
@@ -56,6 +57,15 @@ from agent_gantry.integrations.frameworks.native import (
     execute_spec,
     failure_text,
     otel_ids,
+)
+
+logger = logging.getLogger(__name__)
+
+#: Logged when a confirmation UI is given to an adapter in ``error_mode="raise"``.
+RAISE_MODE_UI_WARNING = (
+    "Haystack: error_mode='raise' turns off Gantry's confirmation hook, so the "
+    "confirmation UI is never asked and confirmation-gated tools report that they "
+    "were not run. Use error_mode='model' to confirm them."
 )
 
 if TYPE_CHECKING:
@@ -446,8 +456,11 @@ class HaystackAdapter(BaseFrameworkAdapter):
         ``confirmation_ui`` is any Haystack ``ConfirmationUI`` (``SimpleConsoleUI()``,
         ``RichConsoleUI()`` or your own). Register it with
         ``Agent(hooks={"before_tool": [hook]})``; :meth:`agent` does that for you
-        when given ``confirmation_ui=``.
+        when given ``confirmation_ui=``. With ``error_mode="raise"`` no tool is
+        gated through it (a ``WARNING`` says so).
         """
+        if self._error_mode == "raise":
+            logger.warning(RAISE_MODE_UI_WARNING)
         return GantryConfirmationHook(confirmation_ui)
 
     def agent(

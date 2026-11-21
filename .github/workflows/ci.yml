@@ -212,7 +212,9 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         run: |
           uv venv .venv-agno-floor --python ${{ matrix.python-version }}
-          uv pip install --python .venv-agno-floor ".[dev]" "agno==2.6.10"
+          # aiosqlite + sqlalchemy[asyncio]: AsyncSqliteDb, for the async-db resume test.
+          uv pip install --python .venv-agno-floor ".[dev]" "agno==2.6.10" \
+            aiosqlite "sqlalchemy[asyncio]"
           .venv-agno-floor/bin/python -m pytest \
             tests/frameworks/test_agno.py tests/frameworks/test_agno_native.py -v
 
