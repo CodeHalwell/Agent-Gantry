@@ -698,7 +698,12 @@ result = await handler
 
 The response must echo the request's `gantry_approval_id`: each call waits only
 for a response naming it, so with several gated calls pending an answer never
-decides another. `"yes"`, `"y"`, `"approve"` or `"approved"` (or an event with `approved=True`)
+decides another. Run gated tools in `adapter.function_agent(...)` or
+`agent_gantry.llamaindex.GantryFunctionAgent(tools=..., llm=...)` (a
+`FunctionAgent` that passes each call's id to its tool): there, two identical
+calls in one step get one request each and an approved call runs exactly once
+even when LlamaIndex replays the step. In a plain `FunctionAgent` the request is
+identified by the tool and its arguments. `"yes"`, `"y"`, `"approve"` or `"approved"` (or an event with `approved=True`)
 runs the call once with only the confirmation gate cleared. Outside a workflow
 (a direct `tool.call`), the model is told the call needs approval.
 

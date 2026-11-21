@@ -444,7 +444,7 @@ result = await handler
 ```
 
 - **Errors**: `LlamaIndexToolError` (text `<type>: <message>`), shown to the model as `ToolOutput(is_error=True)`.
-- **Approval**: gated calls `ctx.wait_for_event(HumanResponseEvent, waiter_event=InputRequiredEvent(gantry_tool=..., gantry_arguments=..., gantry_approval_id=...))`; answer with a `HumanResponseEvent` echoing `gantry_approval_id` (so an answer only decides its own call); "yes"/"y"/"approve"/"approved" runs once. Direct `tool.call` reports "needs approval".
+- **Approval**: gated calls `ctx.wait_for_event(HumanResponseEvent, waiter_event=InputRequiredEvent(gantry_tool=..., gantry_arguments=..., gantry_approval_id=...))`; answer with a `HumanResponseEvent` echoing `gantry_approval_id` (so an answer only decides its own call); "yes"/"y"/"approve"/"approved" runs once. Use `function_agent()` or `GantryFunctionAgent(tools=...)` for gated tools, so each call has its own request. Direct `tool.call` reports "needs approval".
 - **Run context**: hidden `ctx` parameter; `current_workflow_context()` returns the workflow `Context` (`.store` for state).
 - **Per step**: `tool_retriever()` re-selects each step; on a retrieval failure only the pins are offered.
 

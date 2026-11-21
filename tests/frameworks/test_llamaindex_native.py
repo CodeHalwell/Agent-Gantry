@@ -297,6 +297,30 @@ async def test_each_response_only_decides_its_own_call():
         await g.close()
 
 
+async def test_a_later_identical_call_asks_and_runs_again(gantry):
+    """A cached approval is only reused by replays of the same call."""
+    agent, _ = await _static(
+        gantry,
+        "send an email message",
+        [("send_email", {"to": "bob@x"})],
+        [("send_email", {"to": "bob@x"})],
+    )
+    outputs, requests = await asyncio.wait_for(_run(agent, respond="yes"), timeout=30)
+    assert len(requests) == 2
+    assert gantry.sent == ["bob@x", "bob@x"]
+
+
+async def test_gantry_function_agent_takes_static_tools(gantry):
+    from agent_gantry.llamaindex import GantryFunctionAgent
+
+    tools = await LlamaIndexAdapter(gantry).select("send an email message", limit=6)
+    llm = _llm([("send_email", {"to": "bob@x"}), ("send_email", {"to": "bob@x"})])
+    agent = GantryFunctionAgent(tools=tools, llm=llm)
+    _, requests = await asyncio.wait_for(_run(agent, respond="yes"), timeout=30)
+    assert len(requests) == 2
+    assert gantry.sent == ["bob@x", "bob@x"]
+
+
 async def test_a_tool_argument_named_ctx_is_passed_through():
     g = AgentGantry(embedder=SimpleEmbedder(dimension=256))
 

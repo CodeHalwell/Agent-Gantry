@@ -311,7 +311,9 @@ def _spec_to_llamaindex(
             _, human_response, input_required = types
             arguments = dict(kwargs)
             waiter_id = _waiter_id(spec.native_name, arguments)
-            claims = _claims(ctx)
+            # Only a call id tells a replay from a new, identical call; without
+            # one (a hand-built agent) every call asks and runs on its own.
+            claims = _claims(ctx) if _TOOL_CALL_ID.get() else {}
             if waiter_id in claims:
                 # A replay of a step whose approved call already ran (or is running).
                 return await asyncio.shield(claims[waiter_id])
@@ -334,8 +336,9 @@ def _spec_to_llamaindex(
                 raise LlamaIndexToolError(None, _REJECTED_TEXT, tool_name=spec.native_name)
             if waiter_id in claims:  # another replay claimed it while this one waited
                 return await asyncio.shield(claims[waiter_id])
-            # Claimed with no await in between, so exactly one replay runs the call.
-            claim = claims[waiter_id] = asyncio.get_running_loop().create_future()
+            if _TOOL_CALL_ID.get():
+                # Claimed with no await in between, so exactly one replay runs the call.
+                claim = claims[waiter_id] = asyncio.get_running_loop().create_future()
             approved = True
         try:
             result = await _run(ctx, kwargs, approved)
