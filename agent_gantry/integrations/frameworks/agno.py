@@ -262,7 +262,7 @@ class _RunSelector:
         store[key] = value
         store.move_to_end(key)
         while len(store) > _MAX_REMEMBERED_RUNS:
-            victim = next((k for k in store if not self._may_be_paused(k)), None)
+            victim = next((k for k in store if k != key and not self._may_be_paused(k)), None)
             if victim is None:
                 if len(store) <= _MAX_REMEMBERED_GATED_RUNS:
                     return
@@ -295,6 +295,7 @@ class _RunSelector:
         tools = _run_coroutine_sync(self._select(query))
         if run_id is not None:
             self._remember(self._tools, run_id, tools)
+            self._queries.pop(run_id, None)  # only needed until the tools are chosen
         return list(tools)
 
     async def _select(self, query: str) -> list[Any]:

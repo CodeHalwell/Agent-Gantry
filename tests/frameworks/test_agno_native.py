@@ -279,6 +279,19 @@ async def test_paused_run_outlives_many_later_runs(gantry, monkeypatch):
     assert model.offered[-1] == ["send_email"]
 
 
+async def test_new_runs_still_select_while_paused_runs_fill_the_cache(gantry, monkeypatch):
+    from agent_gantry.integrations.frameworks import agno as agno_module
+
+    monkeypatch.setattr(agno_module, "_MAX_REMEMBERED_RUNS", 2)
+    steps = [[("send_email", {"to": f"user{i}@x"})] for i in range(3)]
+    model = ScriptedModel(steps=steps)
+    agent = AgnoAdapter(gantry).agent(model=model, limit=1)
+    for _ in range(3):
+        assert (await agent.arun("send an email message to bob")).is_paused
+    await agent.arun("what's the weather forecast for Paris")
+    assert model.offered[-1] == ["get_weather"]
+
+
 async def test_finished_runs_are_forgotten(gantry):
     agent = AgnoAdapter(gantry).agent(model=ScriptedModel(), limit=1)
     selector = agent.tools.__self__
