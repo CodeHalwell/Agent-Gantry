@@ -7,8 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-11-21
+
+Every agent framework Agent-Gantry supports is now first-class. Gantry plugs
+into each framework's own error, approval and run-context mechanisms instead of
+handing it plain callables, selects tools per turn, step or run where the
+framework allows, and gives each framework its own extra with a version floor
+that CI tests exactly. Pydantic AI led in 0.21.0; this release covers the
+OpenAI Agents SDK, LangChain and LangGraph, Google ADK, CrewAI, LlamaIndex,
+Strands Agents, Agno, Haystack and DSPy. It is a minor release because tool
+failures and confirmation-gated calls behave differently in each of them, as
+the sections below describe.
+
+**Migrating.** To keep 0.21.0 behaviour for a framework, construct its adapter
+with `error_mode="raise"`: failures raise `ToolExecutionError` again, and gated
+calls are reported as not run instead of entering the framework's approval
+flow. Otherwise:
+
+- review what your tool handlers' exception messages reveal, since models now
+  see them (capped at 2,000 characters), or pass `error_formatter=` to the
+  adapter to redact them;
+- handle the framework's approval pause or hook for confirmation-gated tools
+  (each section below names it), or those calls report that they need approval;
+- install frameworks through the new extras (`agent-gantry[<framework>]`),
+  which pin the tested floors; DSPy now needs `dspy>=3.5`.
+
 ### Fixed
 
+Fixes that apply across frameworks or came after their own sections:
+
+- A bare-name pin (`required=["ping"]`) under a `namespaces` filter now
+  resolves to the in-scope registration when the same tool name exists in
+  another namespace too, in selection and in the per-turn catalogues and
+  fallbacks of Pydantic AI, the OpenAI Agents SDK, LangGraph and Google ADK.
+  Previously the first registration anywhere won, so the required tool could
+  be missing from the turn.
 - Agno: an agent object resuming another's paused run from an async `db`
   (`AsyncSqliteDb`, `AsyncPostgresDb`, ...) now reads the run's input with
   `aget_run_output` on the run's own event loop, so the approved tool is
@@ -16,6 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Haystack: `error_mode="raise"` with `confirmation_ui=` (or
   `confirmation_hook()`) now logs a `WARNING` that the confirmation UI is never
   asked, rather than skipping it silently.
+
+### DSPy
 
 DSPy becomes a first-class integration for DSPy 3.5's redesigned `dspy.ReAct`
 (native `tool_calls` and a `submit` tool), with error tool results, an
@@ -29,7 +64,7 @@ into the traceback DSPy shows the model. A confirmation-gated call without an
 approver now tells the model it needs approval. Pass `error_mode="raise"` to
 `DSPyAdapter` to raise the plain `ToolExecutionError`.
 
-### Added
+#### Added
 
 - `dspy` extra (`pip install 'agent-gantry[dspy]'`, `>=3.5.0`). CI runs the
   DSPy tests on exactly 3.5.0 and on the latest.
@@ -44,6 +79,8 @@ approver now tells the model it needs approval. Pass `error_mode="raise"` to
 - `examples/agent_frameworks/dspy_example.py` now covers errors, approval and
   run context, offline on DSPy 3.5.
 
+### Haystack
+
 Haystack becomes a first-class integration, using the Haystack `Agent`'s hooks
 and dynamic toolsets for per-step selection, `ConfirmationHook` for approval,
 error tool results and `State` injection.
@@ -55,7 +92,7 @@ parameters {...}` wrapper. Gantry tools now take the Agent's `State` through an
 injected `gantry_state` parameter, hidden from the model's schema. Pass
 `error_mode="raise"` to `HaystackAdapter` to keep the previous error behaviour.
 
-### Added
+#### Added
 
 - `haystack` extra (`pip install 'agent-gantry[haystack]'`, `>=3.0.0`). CI runs
   the Haystack tests on exactly 3.0.0 and on the latest.
@@ -74,6 +111,8 @@ injected `gantry_state` parameter, hidden from the model's schema. Pass
 - `error_mode` and `error_formatter` on `HaystackAdapter`; `HaystackToolError`.
 - `examples/agent_frameworks/haystack_example.py` now runs offline.
 
+### Agno
+
 Agno becomes a first-class integration, using Agno's `requires_confirmation`
 pause, `RunContext` injection, failed tool results and a callable `tools`
 factory for per-run selection.
@@ -86,7 +125,7 @@ as not approved. A failed call raises `AgnoToolError` (still a
 that rather than Gantry's internal status message. Pass `error_mode="raise"`
 to `AgnoAdapter` to keep the previous behaviour.
 
-### Added
+#### Added
 
 - `agno` extra (`pip install 'agent-gantry[agno]'`, `>=2.6.10`). CI runs the
   Agno tests on exactly 2.6.10 and on the latest.
@@ -100,6 +139,8 @@ to `AgnoAdapter` to keep the previous behaviour.
 - `error_mode` and `error_formatter` on `AgnoAdapter`; `AgnoToolError`.
 - `examples/agent_frameworks/agno_example.py` now runs offline.
 
+### Strands Agents
+
 Strands Agents becomes a first-class integration, using Strands interrupts
 and `ToolContext`.
 
@@ -110,7 +151,7 @@ raising `ToolExecutionError`. Confirmation-gated calls raise a Strands
 interrupt (`"gantry-approval"`) instead of failing. `error_mode="raise"`
 restores raising.
 
-### Added
+#### Added
 
 - `strands` extra (`pip install 'agent-gantry[strands]'`,
   `strands-agents>=1.38.0`). Not part of `agent-frameworks` or `all`; CI runs
@@ -123,6 +164,8 @@ restores raising.
 - `error_mode` and `error_formatter` on `StrandsAdapter`, threaded through
   `tool_hook()` and `agent()`.
 
+### LlamaIndex
+
 LlamaIndex becomes a first-class integration, using workflow
 human-in-the-loop events and `Context` injection.
 
@@ -134,7 +177,7 @@ workflow agent wait for a `HumanResponseEvent` instead of failing. On a
 retrieval failure the tool retriever now offers the pinned tools instead of
 none. `error_mode="raise"` keeps the previous error type.
 
-### Added
+#### Added
 
 - `llamaindex` extra (`pip install 'agent-gantry[llamaindex]'`,
   `llama-index-core>=0.13.0`). CI runs the LlamaIndex tests on exactly 0.13.0
@@ -149,6 +192,8 @@ none. `error_mode="raise"` keeps the previous error type.
 - `error_mode` and `error_formatter` on `LlamaIndexAdapter`, threaded through
   `tool_retriever()` and `function_agent()`.
 
+### CrewAI
+
 CrewAI becomes a first-class integration, using CrewAI's `ToolFailure` and
 `before_tool_call` hooks.
 
@@ -158,7 +203,7 @@ CrewAI records it on `TaskOutput.tool_failures` (its `tool_failure_policy`
 decides whether to abort). Pass `error_mode="raise"` to `CrewAIAdapter` to
 keep the previous behaviour.
 
-### Added
+#### Added
 
 - `crewai` extra (`pip install 'agent-gantry[crewai]'`, `>=1.15.22`, Python
   3.10-3.13), declared as conflicting with `openai-agents`. CI runs the CrewAI
@@ -172,6 +217,8 @@ keep the previous behaviour.
 - `error_mode` and `error_formatter` on `CrewAIAdapter`; `agent_builder`
   uses the adapter's settings.
 
+### Google ADK
+
 Google ADK becomes a first-class integration, using ADK's tool confirmation,
 `ToolContext` and `{"error": ...}` function responses.
 
@@ -184,7 +231,7 @@ is sticky within a run and keeps the previous tools plus pins when retrieval
 fails, instead of injecting none. Pass `error_mode="raise"` to
 `GoogleADKAdapter` to keep the previous error behaviour.
 
-### Added
+#### Added
 
 - `google-adk` extra (`pip install 'agent-gantry[google-adk]'`, `>=2.6.1`).
   CI runs the ADK tests on exactly 2.6.1 and on the latest.
@@ -198,19 +245,13 @@ fails, instead of injecting none. Pass `error_mode="raise"` to
   the query) and pins that survive retrieval failures.
 - `error_mode` and `error_formatter` on `GoogleADKAdapter`.
 
-### Changed
+#### Changed
 
-- `uv.lock`: re-resolving for the new extra settled `chromadb` on 1.5.9 and
-  `oauthlib` on 4.0.1 in every environment.
+- `uv.lock`, for every environment: re-resolving for the new extra settled
+  `chromadb` on 1.5.9 and `oauthlib` on 4.0.1.
 
-### Fixed
 
-- A bare-name pin (`required=["ping"]`) under a `namespaces` filter now
-  resolves to the in-scope registration when the same tool name exists in
-  another namespace too, in selection and in the per-turn catalogues and
-  fallbacks of Pydantic AI, the OpenAI Agents SDK, LangGraph and Google ADK.
-  Previously the first registration anywhere won, so the required tool could
-  be missing from the turn.
+### LangChain and LangGraph
 
 LangChain and LangGraph become first-class integrations, using LangChain's
 `ToolException`, LangGraph's `interrupt()` and runtime, and `create_agent`
@@ -228,7 +269,7 @@ selection also changed: it keeps tools you pass to `create_agent` yourself,
 is sticky within a run, and on a retrieval failure keeps the previous tools
 and pins instead of offering none.
 
-### Added
+#### Added
 
 - `langchain` and `langgraph` extras (`pip install 'agent-gantry[langgraph]'`),
   pinning `langchain`, `langchain-core` and `langgraph` at `>=1.0.0`. CI runs
@@ -251,14 +292,14 @@ and pins instead of offering none.
 - `error_mode` and `error_formatter` on `LangChainAdapter` and
   `LangGraphAdapter`.
 
-### Changed
+#### Changed
 
 - LangChain/LangGraph install hints point at the new extras.
 - `uv.lock`: re-resolving for the new extras moved CrewAI from 1.15.22 to
   1.15.28, and with it `chromadb` from 1.1.1 to 1.5.9, on Python below 3.14
   (CrewAI 1.15.28 relaxed its `chromadb` pin).
 
-The OpenAI Agents SDK also becomes first-class (below).
+### OpenAI Agents SDK
 
 The OpenAI Agents SDK becomes a first-class integration, the second after
 Pydantic AI, using the SDK's own approval, per-turn tool enablement and run
@@ -273,7 +314,7 @@ SDK's `needs_approval`, so the run pauses with `result.interruptions` instead
 of failing. Pass `error_mode="raise"` to `OpenAIAgentsAdapter` to keep the
 previous behaviour.
 
-### Added
+#### Added
 
 - `openai-agents` extra (`pip install 'agent-gantry[openai-agents]'`, pinning
   `openai-agents>=0.23.1`). It is not part of `all`: `openai-agents>=0.23`
@@ -295,7 +336,7 @@ previous behaviour.
   OpenTelemetry span) becomes the `ToolCall`'s trace parent.
 - `OpenAIAgentsAdapter(error_mode=..., error_formatter=...)`, as for Pydantic AI.
 
-### Changed
+#### Changed
 
 - `integrations/frameworks/native.py` holds the shared first-class pieces
   (`ErrorMode`, `ErrorFormatter`, `failure_text`, `execute_spec`, `otel_ids`,
@@ -5197,7 +5238,10 @@ adapters, and the provider dialects agree with it.
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.21.0...v0.22.0
+[0.21.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.20.0...v0.21.0
+[0.20.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.17.0...v0.18.0
