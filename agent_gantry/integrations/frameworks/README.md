@@ -45,7 +45,7 @@ Install Gantry plus just the SDK you need:
 | `haystack` | `pip install agent-gantry haystack-ai` | `Agent(..., tools=await adapter.select(query))` |
 | `agno` | `pip install agent-gantry agno` | `Agent(..., tools=await adapter.select(query))` |
 | `google_adk` | `pip install 'agent-gantry[google-adk]'` | `adapter.agent(model=..., name=...)` — see [Google ADK](#google-adk-first-class) |
-| `strands` | `pip install agent-gantry 'strands-agents>=1'` | `Agent(hooks=[adapter.live()])` |
+| `strands` | `pip install 'agent-gantry[strands]'` | `Agent(hooks=[adapter.live()])` — see [Strands Agents](#strands-agents-first-class) |
 | `dspy` | `pip install agent-gantry dspy` | `dspy.ReAct(signature, tools=await adapter.select(query))` |
 | `agent_framework` | `pip install agent-gantry agent-framework-core` | `provider = adapter.live(); provider.attach_to(agent)` |
 
@@ -716,6 +716,47 @@ with `agent_gantry.llamaindex.current_workflow_context()` or
 `FunctionAgent` passes only the query, so there is no per-run state to be
 sticky with; when retrieval fails the step offers the pinned tools alone.
 
+## Strands Agents (first-class)
+
+`pip install 'agent-gantry[strands]'` (pins `strands-agents>=1.38.0`; CI runs the
+tests on exactly 1.38.0 and on the latest).
+
+| Mode | Build | Use when |
+|---|---|---|
+| Per-turn (recommended) | `adapter.agent(model=...)`, or `Agent(tools=[], hooks=[adapter.tool_hook()])` | Agents; Gantry picks each model call's tools |
+| Static slice | `Agent(tools=await adapter.select(query))` | A fixed task |
+
+**Errors.** A failed call returns an error `ToolResult`
+(`{"status": "error", "content": [{"text": "<type>: <message>"}]}`, capped), so
+the model reads it and the run continues, whether the tool runs in the agent
+loop or is called directly. `error_formatter=fn` rewrites the text;
+`error_mode="raise"` raises `ToolExecutionError` (Strands' loop then reports
+its own `Error: ...` result).
+
+**Approval.** A confirmation-gated call (per `AgentGantry.requires_confirmation()`)
+raises a Strands interrupt from inside the tool
+(`tool_context.interrupt("gantry-approval", reason={...})`), so the run stops:
+
+```python
+result = await agent.invoke_async("refund order 4471")
+if result.stop_reason == "interrupt":
+    [interrupt] = result.interrupts            # interrupt.reason: tool, arguments, description
+    result = await agent.invoke_async(
+        [{"interruptResponse": {"interruptId": interrupt.id, "response": "yes"}}]
+    )
+```
+
+`"yes"`, `"y"`, `"approve"`, `"approved"`, `True` or `{"approved": True}` runs
+the call once with only the confirmation gate cleared; anything else rejects it.
+A direct call (no agent) reports that it needs approval.
+
+**Run context and tracing.** Gantry handlers read the Strands `ToolContext`
+(`tool_use`, `agent`, `invocation_state` — the keyword arguments passed to
+`agent(...)`) with `agent_gantry.strands.current_tool_context()` or
+`current_tool_invocation()` (`deps` is `invocation_state`, `tool_call_id` the
+`toolUseId`). Strands traces with OpenTelemetry, so its span becomes the
+`ToolCall`'s trace.
+
 ## Shared base
 
 `base.py` provides `GantryToolset` (selection, including the `required`/
@@ -825,15 +866,12 @@ own downstream consumption of it:
    failed."` string when `include_detailed_errors` is off (the AF default),
    destroying the root cause — returning it as tool output lets the LLM see
    and react to the real error.
-2. **AWS Strands Agents' real `Agent` tool-execution loop**
-   (`strands.tools.decorator.DecoratedFunctionTool.stream`, Strands' own code,
-   not this adapter's) catches any exception and converts it into an error
-   `ToolResult` (`status="error"`). This is Strands' native contract for
-   *every* function-based tool, not something `StrandsAdapter` opts into —
-   calling the tool directly via `__call__`/`.acall` (bypassing Strands' own
-   dispatch) still raises `ToolExecutionError` untouched; only `.stream()`
-   (what the real agent loop calls for a model-issued tool call) absorbs it.
-   See `tests/frameworks/test_strands_live.py::test_stream_absorbs_tool_failure_into_error_tool_result`.
+2. **AWS Strands Agents** tools return an error `ToolResult`
+   (`status="error"`, `<type>: <message>`) for a failed call, both in the
+   agent loop (`.stream()`) and when called directly; `error_mode="raise"`
+   raises `ToolExecutionError` instead, which Strands' loop then turns into
+   its own error result. See
+   `tests/frameworks/test_strands_live.py::test_tool_failure_is_an_error_tool_result`.
 
 A fourth case looks similar but is **DSPy's own behaviour, not a Gantry
 deviation**: `dspy.Tool.__call__`/`.acall` never swallow the error (verified
@@ -888,8 +926,7 @@ asserting no exception + a `WARNING` log record).
 | Haystack | Raises `ToolExecutionError` | *(per-call — see above)* |
 | Agno | Raises `ToolExecutionError` | *(per-call — see above)* |
 | Google ADK | **Deviation:** `FunctionTool.run_async` returns `{"error": ...}` (ADK's convention; the raw `.func` still raises); `error_mode="raise"` restores raising | Degrades to this run's previous tools plus pins (per-run state) + `WARNING` |
-| Strands Agents (`__call__`/`.acall`) | Raises `ToolExecutionError` | — |
-| Strands Agents (real agent loop, `.stream()`) | **Deviation:** error `ToolResult(status="error")`, not raised (Strands' own contract) | Degrades to previous turn's registered tools (stateful) + `WARNING` — the other precedent |
+| Strands Agents | **Deviation:** error `ToolResult(status="error")` from both `__call__` and the agent loop; `error_mode="raise"` restores raising | Degrades to previous turn's registered tools (stateful) + `WARNING` — the other precedent |
 | DSPy (`dspy.Tool.__call__`/`.acall`) | Raises `ToolExecutionError` | *(per-call — see above)* |
 | DSPy (`dspy.ReAct.forward`/`.aforward`) | **DSPy's own behaviour** (not a Gantry deviation): folded into the trajectory as an `"Execution error in <tool>: ..."` observation | *(per-call — see above)* |
 | Microsoft Agent Framework | **Deviation:** JSON `{"error": ...}` string returned to the model, not raised | *(`GantryToolBridge`/`ContextProvider` selection is a separate mechanism from `GantryToolset`, outside this audit's scope)* |

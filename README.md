@@ -42,6 +42,7 @@ uv add "agent-gantry[langgraph]"       # LangGraph + LangChain 1.x ([langchain] 
 uv add "agent-gantry[google-adk]"      # Google ADK 2.x
 uv add "agent-gantry[crewai]"          # CrewAI (Python 3.10-3.13; not with openai-agents)
 uv add "agent-gantry[llamaindex]"      # LlamaIndex (llama-index-core 0.13+)
+uv add "agent-gantry[strands]"         # Strands Agents 1.38+
 uv add "agent-gantry[all]"
 ```
 

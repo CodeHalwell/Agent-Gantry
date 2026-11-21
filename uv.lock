@@ -772,6 +772,9 @@ pydantic-ai = [
 qdrant = [
     { name = "qdrant-client" },
 ]
+strands = [
+    { name = "strands-agents" },
+]
 vector-stores = [
     { name = "asyncpg" },
     { name = "chromadb" },
@@ -854,12 +857,13 @@ requires-dist = [
     { name = "scikit-learn", marker = "extra == 'example-tools'", specifier = ">=1.3.0" },
     { name = "sentence-transformers", marker = "extra == 'embeddings'", specifier = ">=2.2.0" },
     { name = "sentence-transformers", marker = "extra == 'nomic'", specifier = ">=2.2.0" },
+    { name = "strands-agents", marker = "extra == 'strands'", specifier = ">=1.38.0" },
     { name = "sympy", marker = "extra == 'example-tools'", specifier = ">=1.14.0" },
     { name = "textblob", marker = "extra == 'example-tools'", specifier = ">=0.18.0" },
     { name = "typesafe-sdk", marker = "extra == 'jev'", specifier = ">=0.7.0" },
     { name = "uvicorn", marker = "extra == 'a2a'", specifier = ">=0.24.0" },
 ]
-provides-extras = ["dev", "agent-frameworks", "pydantic-ai", "openai-agents", "langchain", "langgraph", "google-adk", "crewai", "llamaindex", "example-tools", "embeddings", "openai", "cohere", "jev", "qdrant", "chroma", "pgvector", "lancedb", "vector-stores", "nomic", "mcp", "a2a", "anthropic", "google-genai", "google-vertexai", "mistral", "groq", "llm-providers", "all"]
+provides-extras = ["dev", "agent-frameworks", "pydantic-ai", "openai-agents", "langchain", "langgraph", "google-adk", "crewai", "llamaindex", "strands", "example-tools", "embeddings", "openai", "cohere", "jev", "qdrant", "chroma", "pgvector", "lancedb", "vector-stores", "nomic", "mcp", "a2a", "anthropic", "google-genai", "google-vertexai", "mistral", "groq", "llm-providers", "all"]
 
 [[package]]
 name = "aiofiles"
@@ -6586,6 +6590,20 @@ wheels = [
 ]
 
 [[package]]
+name = "opentelemetry-instrumentation-threading"
+version = "0.64b0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/26/ef/d4a16eb4a0f0971e351ec2ff95846b501b66a619d07d90822942d70a3adc/opentelemetry_instrumentation_threading-0.64b0.tar.gz", hash = "sha256:0a07d7329f69dfae5036a7cb184f502c8b91cb0538012f5304bd32ffe9ade451", size = 9080, upload-time = "2026-06-24T15:19:43.22Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ab/b3/8838d5f3db35b3854516ccfbf8ec26138d40388d828407182c890c3aa9d0/opentelemetry_instrumentation_threading-0.64b0-py3-none-any.whl", hash = "sha256:a285ffa750a958f7d368e947f5679a0214d588242cbffba0f5934cb02e9a17f4", size = 8487, upload-time = "2026-06-24T15:19:00.813Z" },
+]
+
+[[package]]
 name = "opentelemetry-instrumentation-urllib"
 version = "0.64b0"
 source = { registry = "https://pypi.org/simple" }
@@ -9382,6 +9400,30 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b5/b4/205b0d5241d934e8add0c38aa924c4f9fb7330834ff11e5444db964ec3f9/starlette-1.6.0.tar.gz", hash = "sha256:d4e3ac5e546444960c710297a3c9fc3f7ebae1b7e963f3d36173b49da535be9b", size = 2716969, upload-time = "2026-08-08T18:27:57.512Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c8/cb/6a6a47d5b464bd08695d254f3da6e7986cc70c9fa5d778eda57538edfe56/starlette-1.6.0-py3-none-any.whl", hash = "sha256:a86dd39d14bb45f85a3d18525215a9ef0cfd1f192ac793220e72598c90335f0c", size = 75969, upload-time = "2026-08-08T18:27:56.196Z" },
+]
+
+[[package]]
+name = "strands-agents"
+version = "1.65.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "boto3" },
+    { name = "botocore" },
+    { name = "docstring-parser" },
+    { name = "httpx" },
+    { name = "jsonschema" },
+    { name = "mcp" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation-threading" },
+    { name = "opentelemetry-sdk" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+    { name = "typing-extensions" },
+    { name = "watchdog" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c4/31/ccfa8d64b4df059f3c6c82c726c3f2c5630f412daa8409a681da76919db8/strands_agents-1.65.0.tar.gz", hash = "sha256:cf0c348b98798723a0bf8bc001dc065e3d7a960ac09e6dfce98c2d7338fc5514", size = 2005369, upload-time = "2026-11-13T18:46:16.969Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/37/fb/375afbd6b85410fc5f572639804e690dbad7b4f02a9625092c531e07acb5/strands_agents-1.65.0-py3-none-any.whl", hash = "sha256:5e8dd8538fea593763f9da9aecf72f5b71f421413ba8fafbeef1b2ccd3093658", size = 1012483, upload-time = "2026-11-13T18:46:14.9Z" },
 ]
 
 [[package]]

@@ -2,42 +2,43 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Strands Agents guide | Agent-Gantry">
+<DocsLayout title="Strands Agents guide | Agent-Gantry" description="Integrate Agent-Gantry with AWS Strands Agents: per-turn tool selection through BeforeModelCallEvent, error ToolResults, approval through Strands interrupts, and the tool context.">
   <p class="eyebrow">Framework guide</p>
   <h1>AWS Strands Agents</h1>
-  <p class="lead">Use Agent-Gantry with Strands' model-driven agent loop. This page covers basic setup and the first production-friendly path; continue to the advanced page for per-turn dynamic retrieval, LLM calls, and operations.</p>
+  <p class="lead">Agent-Gantry plugs into Strands' own mechanisms: a <code>BeforeModelCallEvent</code> hook that picks each model call's tools, error <code>ToolResult</code>s for failures, Strands interrupts for human approval, and the <code>ToolContext</code> for your run state.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/strands/advanced/">Advanced Strands usage →</a></p>
 
-  <h2>Basic page: register once, adapt at the edge</h2>
-  <ol>
-    <li>Create a Gantry instance near application startup.</li>
-    <li>Register deterministic Python functions with descriptions and input schemas.</li>
-    <li>Export framework-native tools for Strands immediately before constructing the agent.</li>
-    <li>Keep authorization, rate limits, and audit metadata in Gantry instead of duplicating it inside framework glue code.</li>
-  </ol>
+  <h2>Install</h2>
+  <CodeBlock lang="bash" code={`uv add "agent-gantry[strands]"   # strands-agents >= 1.38`} />
+
+  <h2>Basic page: tools picked every model call</h2>
   <CodeBlock lang="python" code={`from agent_gantry import AgentGantry
 from agent_gantry.strands import StrandsAdapter
-from strands import Agent
 
 gantry = AgentGantry()
 
-@gantry.register(
-    tags=["support", "orders"],
-    examples=["where is my order", "has order 4471 shipped"],
-)
+@gantry.register(examples=["where is my order", "has order 4471 shipped"])
 def get_order_status(order_id: str) -> str:
     """Return the current shipping status for an order."""
     return "in_transit"
-adapter = StrandsAdapter(gantry)
-framework_tools = await adapter.select("check an order", limit=3)  # Native DecoratedFunctionTool objects.
 
-agent = Agent(tools=framework_tools)
-`} />
+await gantry.sync()
+agent = StrandsAdapter(gantry).agent(limit=5)     # Bedrock by default; pass model=... for others
+result = await agent.invoke_async("Has order 4471 shipped?")`} />
+  <p>For a fixed set, pass <code>Agent(tools=await adapter.select(query))</code> instead.</p>
 
-  <h2>First tool-calling loop</h2>
-  <p>Let Strands own the conversation lifecycle while Gantry owns the tool catalog. Start with a small tool set and assert that the framework receives only safe, documented functions.</p>
-  <div class="callout"><strong>Basic testing checklist:</strong> verify tool names, JSON schemas, auth metadata, and a happy-path invocation before wiring a live model.</div>
+  <h2>What the model sees when a tool fails</h2>
+  <p>A failed call returns <code>&#123;"status": "error", "content": [&#123;"text": "&lt;type&gt;: &lt;message&gt;"&#125;]&#125;</code>, capped at 2,000 characters, so the model can correct a bad argument or try something else.</p>
+  <div class="callout"><strong>Redact or opt out:</strong> <code>StrandsAdapter(gantry, error_formatter=redact)</code> rewrites the text; <code>error_mode="raise"</code> raises <code>ToolExecutionError</code> instead.</div>
 
-  <h2>Basic LLM call guidance</h2>
-  <p>For early prototypes, use the model provider already recommended by Strands (Amazon Bedrock by default; Anthropic, OpenAI, and others via <code>strands.models</code>). Wrap that client with a thin policy function that records model name, prompt tokens, completion tokens, tool calls, and latency. Once the integration stabilizes, move the policy into Agent-Gantry's LLM adapter layer so other frameworks share the same rules.</p>
+  <h2>Reading run state from a Gantry tool</h2>
+  <CodeBlock lang="python" code={`from agent_gantry.strands import current_tool_context
+
+@gantry.register
+def get_balance(account: str) -> str:
+    """Fetch an account balance for the signed-in user."""
+    ctx = current_tool_context()            # Strands ToolContext, or None outside a run
+    return bank.balance(ctx.invocation_state["user"], account)
+
+# await agent.invoke_async("What's my balance?", user=current_user)`} />
 </DocsLayout>

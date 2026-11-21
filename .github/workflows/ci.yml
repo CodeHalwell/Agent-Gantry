@@ -146,8 +146,8 @@ jobs:
       - name: Run adapter smoke tests
         run: |
           uv venv .venv-frameworks --python ${{ matrix.python-version }}
-          uv pip install --python .venv-frameworks ".[dev,pydantic-ai,openai-agents]" \
-            haystack-ai agno "strands-agents>=1" "dspy<3.5"
+          uv pip install --python .venv-frameworks ".[dev,pydantic-ai,openai-agents,strands]" \
+            haystack-ai agno "dspy<3.5"
           .venv-frameworks/bin/python -m pytest tests/frameworks/ -v
 
       # Pydantic AI is first-class with a declared floor (the `pydantic-ai`
@@ -155,7 +155,8 @@ jobs:
       # that needs a newer release is caught here, not by users. One cell.
       # Same for the OpenAI Agents SDK (`openai-agents` extra, >=0.23.1)
       # LangChain / LangGraph (`langchain` / `langgraph` extras, >=1.0.0)
-      # Google ADK (`google-adk` extra, >=2.6.1), CrewAI (`crewai`, >=1.15.22) and LlamaIndex (`llamaindex`, >=0.13.0).
+      # Google ADK (`google-adk` extra, >=2.6.1), CrewAI (`crewai`, >=1.15.22), LlamaIndex (`llamaindex`, >=0.13.0)
+      # and Strands (`strands`, >=1.38.0).
       - name: OpenAI Agents SDK floor (0.23.1)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         run: |
@@ -200,6 +201,15 @@ jobs:
           .venv-llamaindex-floor/bin/python -m pytest \
             tests/frameworks/test_llamaindex.py tests/frameworks/test_llamaindex_live.py \
             tests/frameworks/test_llamaindex_native.py -v
+
+      - name: Strands Agents floor (1.38.0)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: |
+          uv venv .venv-strands-floor --python ${{ matrix.python-version }}
+          uv pip install --python .venv-strands-floor ".[dev]" "strands-agents==1.38.0"
+          .venv-strands-floor/bin/python -m pytest \
+            tests/frameworks/test_strands.py tests/frameworks/test_strands_live.py \
+            tests/frameworks/test_strands_native.py -v
 
       - name: Pydantic AI floor (2.0.0)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'

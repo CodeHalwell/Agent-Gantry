@@ -22,7 +22,7 @@ This skill is the canonical reference for using the library. Read the section th
 | OpenAI Agents SDK (>=0.23.1) | `Agent(tools=await OpenAIAgentsAdapter(gantry).dynamic_tools())` (per-turn) or `.select(...)` (static) | [OpenAI Agents SDK](#openai-agents-sdk) |
 | Haystack | `HaystackAdapter(gantry).select(...)` | [Native framework adapters](#native-framework-adapters) |
 | Agno | `AgnoAdapter(gantry).select(...)` | [Native framework adapters](#native-framework-adapters) |
-| Strands Agents | `StrandsAdapter(gantry).select(...)` (static) or `.agent(...)` / `.tool_hook(...)` (live, per-turn) | [Native framework adapters](#native-framework-adapters) |
+| Strands Agents (>=1.38) | `StrandsAdapter(gantry).agent(model=...)` / `.tool_hook()` (per-turn) or `.select(...)` (static) | [Strands Agents](#strands-agents) |
 | DSPy | `DSPyAdapter(gantry).select(...)` (static) or `.agent_builder(signature, ...)` (per-call) | [Native framework adapters](#native-framework-adapters) |
 | Google ADK (>=2.6.1) | `GoogleADKAdapter(gantry).agent(model=, name=)` (per-turn) or `.select(...)` (static) | [Google ADK](#google-adk) |
 | Any framework, re-select every turn | `ToolRefresher(gantry).refresh(messages)` | [Multi-turn re-selection](#multi-turn-re-selection-toolrefresher) |
@@ -83,6 +83,7 @@ uv add "agent-gantry[langgraph]"        # LangGraph + LangChain (>=1.0); [langch
 uv add "agent-gantry[google-adk]"       # Google ADK (>=2.6.1)
 uv add "agent-gantry[crewai]"           # CrewAI (>=1.15.22, Python <3.14); not with [openai-agents]
 uv add "agent-gantry[llamaindex]"       # LlamaIndex (llama-index-core>=0.13)
+uv add "agent-gantry[strands]"          # Strands Agents (>=1.38)
 uv add "agent-gantry[lancedb]"          # disk-persistent vector store
 uv add "agent-gantry[jev]"              # selection without embeddings (TypeSafe Jev)
 uv add "agent-gantry[mcp]"              # MCP client/server
@@ -447,6 +448,25 @@ result = await handler
 - **Approval**: gated calls `ctx.wait_for_event(HumanResponseEvent, waiter_event=InputRequiredEvent(gantry_tool=..., gantry_arguments=..., gantry_approval_id=...))`; answer with a `HumanResponseEvent` echoing `gantry_approval_id` (so an answer only decides its own call); "yes"/"y"/"approve"/"approved" runs once. Use `function_agent()` or `GantryFunctionAgent(tools=...)` for gated tools, so each call has its own request. Direct `tool.call` reports "needs approval".
 - **Run context**: hidden `ctx` parameter; `current_workflow_context()` returns the workflow `Context` (`.store` for state).
 - **Per step**: `tool_retriever()` re-selects each step; on a retrieval failure only the pins are offered.
+
+## Strands Agents
+
+Install with `uv add "agent-gantry[strands]"` (pins `strands-agents>=1.38.0`; tested on 1.38.0 and the latest).
+
+```python
+from agent_gantry.strands import StrandsAdapter, current_tool_context
+
+agent = StrandsAdapter(gantry).agent(model=my_model, limit=5)   # error_formatter=... on the adapter
+result = await agent.invoke_async("refund order 4471", user=current_user)
+if result.stop_reason == "interrupt":                            # a Gantry-gated call
+    [interrupt] = result.interrupts
+    result = await agent.invoke_async([{"interruptResponse": {"interruptId": interrupt.id, "response": "yes"}}])
+```
+
+- **Errors**: error `ToolResult` (`{"status": "error", "content": [{"text": "<type>: <message>"}]}`) everywhere; `error_mode="raise"` raises `ToolExecutionError`.
+- **Approval**: gated tools call `tool_context.interrupt("gantry-approval", reason=...)`; "yes"/`True`/`{"approved": True}` runs once on resume, anything else rejects. Direct calls report "needs approval".
+- **Run context**: `current_tool_context()` gives Strands' `ToolContext` (`.invocation_state` = kwargs passed to `agent(...)`, `.agent`, `.tool_use`).
+- **Per-turn**: `tool_hook()` swaps the tool registry in `BeforeModelCallEvent`; on a retrieval failure the previous turn's tools stay.
 
 ## Native framework adapters
 
@@ -981,6 +1001,7 @@ This catches the headline mistakes: a tool description that names another tool (
 | LangGraph run returns `__interrupt__` | A Gantry-gated tool needs approval | `await agent.ainvoke(Command(resume=True), config)` with the same `thread_id` |
 | CrewAI gated tool says it "requires human approval and was not run" | No approver configured | `CrewAIAdapter(gantry, approve=fn)` or `approve="console"` |
 | LlamaIndex run waits forever on a gated tool | Nobody answered the `InputRequiredEvent`, or the answer lacks its `gantry_approval_id` | Stream events and `handler.ctx.send_event(HumanResponseEvent(response="yes", gantry_approval_id=event.gantry_approval_id))` |
+| Strands run ends with `stop_reason == "interrupt"` | A Gantry-gated tool needs approval | Resume with `agent.invoke_async([{"interruptResponse": {"interruptId": i.id, "response": "yes"}}])` |
 | ADK run stops with an `adk_request_confirmation` function call | A Gantry-gated tool needs approval | Send `FunctionResponse(name="adk_request_confirmation", id=call.id, response={"confirmed": True})` as the next message |
 | LangGraph gated tool says it "requires human approval and was not run" | No checkpointer, so the interrupt could never be resumed | Pass `checkpointer=` to `create_agent` / `areact_agent` |
 | A LangChain tool error became a `ToolMessage` instead of raising | `handle_tool_error=True` in the default `error_mode="model"` | `LangChainAdapter(gantry, error_mode="raise")` |

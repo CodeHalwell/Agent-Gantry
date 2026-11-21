@@ -142,8 +142,8 @@ async def test_for_strands_returns_tool_list(fake_strands, gantry):
     assert "send_email" in names
 
 
-async def test_select_routes_through_gantry_execute_and_raises_on_failure(fake_strands, gantry):
-    """A tool call that fails Gantry execution surfaces as ToolExecutionError, not a silent result."""
+async def test_select_routes_through_gantry_execute_and_reports_failure(fake_strands, gantry):
+    """A failed Gantry execution is an error ToolResult by default; error_mode="raise" raises."""
     from agent_gantry.integrations.frameworks.base import GantryToolset
     from agent_gantry.strands import StrandsAdapter
 
@@ -155,10 +155,12 @@ async def test_select_routes_through_gantry_execute_and_raises_on_failure(fake_s
     await gantry.sync()
 
     specs = await GantryToolset(gantry).select("always raises", limit=1)
-    tool = StrandsAdapter.convert(specs[0])
+    result = await StrandsAdapter.convert(specs[0])()
+    assert result["status"] == "error"
+    assert "boom" in result["content"][0]["text"]
 
     with pytest.raises(ToolExecutionError):
-        await tool()
+        await StrandsAdapter.convert(specs[0], error_mode="raise")()
 
 
 async def test_missing_strands_raises_helpful_error(monkeypatch, gantry):
@@ -169,7 +171,7 @@ async def test_missing_strands_raises_helpful_error(monkeypatch, gantry):
     from agent_gantry.strands import StrandsAdapter
 
     specs = await GantryToolset(gantry).select("send an email", limit=1)
-    with pytest.raises(ImportError, match="pip install 'strands-agents>=1'"):
+    with pytest.raises(ImportError, match=r"agent-gantry\[strands\]"):
         StrandsAdapter.convert(specs[0])
 
 
@@ -186,5 +188,5 @@ async def test_tool_hook_and_agent_builders_require_strands(monkeypatch, gantry)
     hook = adapter.tool_hook(limit=2)
     assert hook is not None
 
-    with pytest.raises(ImportError, match="pip install 'strands-agents>=1'"):
+    with pytest.raises(ImportError, match=r"agent-gantry\[strands\]"):
         adapter.agent()
