@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Strands Agents becomes a first-class integration, using Strands interrupts
+and `ToolContext`.
+
+**Behaviour change (Strands).** A failed Gantry execution returns an error
+`ToolResult` (`<type>: <message>`, capped, redactable with `error_formatter`)
+from the tool itself, including when it is called directly, instead of
+raising `ToolExecutionError`. Confirmation-gated calls raise a Strands
+interrupt (`"gantry-approval"`) instead of failing. `error_mode="raise"`
+restores raising.
+
+### Added
+
+- `strands` extra (`pip install 'agent-gantry[strands]'`,
+  `strands-agents>=1.38.0`). Not part of `agent-frameworks` or `all`; CI runs
+  the Strands tests on exactly 1.38.0 and on the latest, and the framework
+  job now installs this extra.
+- Strands approval through `tool_context.interrupt()`; resuming with an
+  approving response runs the call once.
+- `agent_gantry.strands.current_tool_context()`: the Strands `ToolContext`
+  (`invocation_state`, `agent`, `tool_use`), also on `current_tool_invocation()`.
+- `error_mode` and `error_formatter` on `StrandsAdapter`, threaded through
+  `tool_hook()` and `agent()`.
+
 LlamaIndex becomes a first-class integration, using workflow
 human-in-the-loop events and `Context` injection.
 

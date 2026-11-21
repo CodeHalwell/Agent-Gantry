@@ -15,6 +15,8 @@ drives ``AbstractToolset`` with a hand-built ``RunContext``.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 pytest.importorskip("strands")
@@ -160,17 +162,13 @@ async def test_empty_query_retracts_stale_tools(gantry):
     assert list(agent.tool_registry.registry) == []
 
 
-async def test_stream_absorbs_tool_failure_into_error_tool_result(gantry):
-    """Documents a deliberate deviation that lives in Strands' own code, not ours.
+async def test_tool_failure_is_an_error_tool_result(gantry):
+    """A failed Gantry call returns an error ``ToolResult`` the model can read.
 
-    ``DecoratedFunctionTool.__call__`` (proven below to still raise directly)
-    is a bypass for manual/direct calls, not what Strands' own agent event
-    loop uses for a model-issued tool call -- that's ``.stream()``, which
-    wraps the call in a bare ``except Exception`` and converts it into an
-    error ``ToolResult`` (``status="error"``) instead of raising. That is
-    Strands' own native tool-execution contract (every function-based tool
-    behaves this way, not just Gantry's), not overridden by this adapter --
-    see "Error-handling policy" in ``integrations/frameworks/README.md``.
+    Both a direct call and ``.stream()`` (what the Strands agent loop uses for
+    a model-issued call) get ``{"status": "error", ...}`` with the
+    ``<type>: <message>`` text; ``error_mode="raise"`` raises instead, which
+    ``.stream()`` then turns into Strands' own error result.
     """
     from agent_gantry.integrations.frameworks.base import ToolExecutionError
     from agent_gantry.strands import StrandsAdapter
@@ -182,19 +180,19 @@ async def test_stream_absorbs_tool_failure_into_error_tool_result(gantry):
 
     await gantry.sync()
 
-    tools = await StrandsAdapter(gantry).select("always raises", limit=1)
-    tool = tools[0]
+    [tool] = await StrandsAdapter(gantry).select("always raises", limit=1)
+    direct = await tool()
+    assert direct["status"] == "error"
+    assert direct["content"][0]["text"] == "RuntimeError: boom"
 
-    # __call__ bypasses Strands' own tool-use dispatch -- still raises directly.
-    with pytest.raises(ToolExecutionError):
-        await tool()
-
-    # .stream() is what the real Strands agent loop calls for a model-issued
-    # tool call -- it absorbs the error into a ToolResult instead of raising.
     tool_use = {"toolUseId": "t1", "name": "explode", "input": {}}
-    events = [event async for event in tool.stream(tool_use, {})]
-    result_event = events[-1]
+    state = {"agent": SimpleNamespace(name="a")}  # the agent loop always supplies it
+    events = [event async for event in tool.stream(tool_use, state)]
+    assert events[-1].tool_result["status"] == "error"
+    assert events[-1].tool_result["content"][0]["text"] == "RuntimeError: boom"
 
-    assert result_event.tool_result["status"] == "error"
-    assert "boom" in result_event.tool_result["content"][0]["text"]
-    assert isinstance(result_event.exception, ToolExecutionError)
+    [raising] = await StrandsAdapter(gantry, error_mode="raise").select("always raises", limit=1)
+    with pytest.raises(ToolExecutionError):
+        await raising()
+    events = [event async for event in raising.stream(tool_use, state)]
+    assert isinstance(events[-1].exception, ToolExecutionError)

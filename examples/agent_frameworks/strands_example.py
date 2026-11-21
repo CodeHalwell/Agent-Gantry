@@ -1,144 +1,161 @@
+"""Strands Agents + Agent-Gantry, through Strands' own mechanisms.
+
+1. **Per-turn selection** -- ``adapter.agent(model=...)`` builds a Strands
+   ``Agent`` whose ``BeforeModelCallEvent`` hook re-selects Gantry tools for the
+   latest user message before every model call.
+2. **Readable errors** -- a failing tool returns an error ``ToolResult`` the
+   model can react to.
+3. **Approval** -- a ``requires_confirmation`` tool raises a Strands interrupt;
+   resuming with "yes" runs it exactly once.
+4. **Run context** -- a Gantry tool reads the keyword arguments passed to
+   ``agent(...)`` through ``current_tool_context()``.
+
+Everything runs **offline**: a scripted ``Model`` streams the tool calls, so no
+AWS credentials are needed. Drop ``model=`` (Bedrock is Strands' default) or
+pass any Strands model to use it for real.
+
+Install and run::
+
+    pip install 'agent-gantry[strands]'
+    python examples/agent_frameworks/strands_example.py
 """
-AWS Strands Agents + Agent-Gantry integration example.
 
-Demonstrates both re-selection tiers Agent-Gantry offers for Strands:
-
-1. **Static** — ``gantry.framework("strands").select(query, limit=...)`` selects and
-   converts a fixed slice of tools in one call, ready for ``Agent(tools=[...])``.
-2. **Deep, per-turn** — ``gantry.framework("strands").agent(...)`` builds an
-   ``Agent`` with *no* statically registered tools; a
-   ``strands.hooks.BeforeModelCallEvent`` hook re-runs Gantry's semantic router
-   before every model call and swaps the agent's tool registry in place. This
-   is the deepest tool re-selection Strands supports (Strands reads the
-   registry only *after* the hook fires), matching the depth of Google ADK's
-   ``before_model_callback``.
-
-Actually *running* the agent (i.e. calling the model) requires a configured
-Strands model provider — Amazon Bedrock by default, needing AWS credentials.
-Without credentials this example still builds both integration paths and
-prints the selected tools, so it is useful to run with no keys configured at
-all (e.g. in CI).
-"""
+from __future__ import annotations
 
 import asyncio
-import os
+import json
+from typing import Any
 
 from agent_gantry import AgentGantry
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 
-# Framework SDK imports are deferred until selection, with a setup hint below.
+
+def build_gantry() -> AgentGantry:
+    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+
+    @gantry.register(tags=["crm"], examples=["find the customer record for Jo"])
+    def lookup_customer(name: str) -> str:
+        """Look up a customer record by name."""
+        return f"Customer {name} found. Next step: send an email message to jo@example.com"
+
+    @gantry.register(tags=["email"], examples=["email the team"], requires_confirmation=True)
+    def send_email(to: str) -> str:
+        """Send an email message to a recipient."""
+        return f"Email sent to {to}."
+
+    @gantry.register(tags=["math"], examples=["divide 10 by 2"])
+    def divide(a: int, b: int) -> float:
+        """Divide integer a by integer b."""
+        return a / b
+
+    @gantry.register(tags=["identity"], examples=["who am I signed in as"])
+    def whoami() -> str:
+        """Return the name of the signed-in user."""
+        from agent_gantry.strands import current_tool_context
+
+        ctx = current_tool_context()
+        return f"You are signed in as {ctx.invocation_state['user']}." if ctx else "Unknown user."
+
+    return gantry
 
 
-def _has_model_credentials() -> bool:
-    """Best-effort check for a configured Strands model provider.
+def scripted(*steps: list[tuple[str, dict[str, Any]]]) -> Any:
+    """A Strands model that streams ``steps`` of tool calls, then answers."""
+    from strands.models.model import Model
 
-    Strands defaults to Amazon Bedrock, so running the agent (not just
-    building it) needs AWS credentials — or another provider's key if the
-    agent is built with a non-default ``model=``.
+    class Scripted(Model):
+        def __init__(self) -> None:
+            self.steps = list(steps)
+            self.offered: list[list[str]] = []
 
-    Deliberately only a *fast path*: the presence of a variable says nothing
-    about whether the credential is valid, in the right region, or entitled to
-    the model. A machine with unrelated AWS keys in its environment passes this
-    check and is then rejected by Bedrock, so the live run below also catches
-    the provider error rather than trusting this answer.
-    """
-    return bool(
-        os.getenv("AWS_ACCESS_KEY_ID")
-        or os.getenv("AWS_PROFILE")
-        or os.getenv("AWS_BEARER_TOKEN_BEDROCK")
-        or os.getenv("ANTHROPIC_API_KEY")
-        or os.getenv("OPENAI_API_KEY")
-    )
+        def update_config(self, **kwargs: Any) -> None:
+            pass
+
+        def get_config(self) -> dict[str, Any]:
+            return {}
+
+        async def structured_output(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        async def stream(self, messages: Any, tool_specs: Any = None, *args: Any, **kwargs: Any):
+            self.offered.append(sorted(spec["name"] for spec in tool_specs or []))
+            step = self.steps.pop(0) if self.steps else None
+            yield {"messageStart": {"role": "assistant"}}
+            for i, (name, args_) in enumerate(step or []):
+                use = {"toolUseId": f"t{len(self.offered)}_{i}", "name": name}
+                yield {"contentBlockStart": {"start": {"toolUse": use}}}
+                yield {"contentBlockDelta": {"delta": {"toolUse": {"input": json.dumps(args_)}}}}
+                yield {"contentBlockStop": {}}
+            if not step:
+                yield {"contentBlockStart": {"start": {}}}
+                yield {"contentBlockDelta": {"delta": {"text": "done"}}}
+                yield {"contentBlockStop": {}}
+            yield {"messageStop": {"stopReason": "tool_use" if step else "end_turn"}}
+
+    return Scripted()
+
+
+def results(agent: Any) -> list[dict[str, Any]]:
+    return [b["toolResult"] for m in agent.messages for b in m["content"] if "toolResult" in b]
 
 
 async def main() -> None:
-    # 1. Initialize Agent-Gantry and register tools.
-    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+    gantry = build_gantry()
     try:
-
-        @gantry.register(
-            tags=["weather"],
-            examples=[
-                "what's the weather in London",
-                "is it raining in Leeds",
-            ],
-        )
-        def get_weather(location: str) -> str:
-            """Get the current weather in a given location."""
-            return f"The weather in {location} is sunny and 25C."
-
-        @gantry.register(
-            tags=["finance"],
-            examples=[
-                "what's Apple trading at",
-                "current share price for MSFT",
-            ],
-        )
-        def get_stock_price(symbol: str) -> str:
-            """Get the current stock price for a symbol."""
-            return f"The stock price for {symbol} is $150.00."
-
         await gantry.sync()
-
-        user_query = "What's the weather in London and the stock price for AAPL?"
-
-        # 2. Static path: select + convert the top-k relevant tools in one call.
-        #    The `strands` package is only imported lazily, right here -- catch that
-        #    gracefully so the example is useful to run even without it installed.
         try:
-            strands_tools = await gantry.framework("strands").select(
-                user_query, limit=2
-            )
+            from strands import Agent
         except ImportError as exc:
-            print(f"{exc}")
+            print(
+                f"The Strands demo needs strands-agents ({exc}).\n"
+                "Install it with `pip install 'agent-gantry[strands]'`."
+            )
             return
-        print(f"Gantry retrieved {len(strands_tools)} tools via the static .select(...) path:")
-        for native_tool in strands_tools:
-            print(f"  - {native_tool.tool_name}: {native_tool.tool_spec['description']}")
 
-        # 3. Deep path: build an Agent with NO static tools. StrandsAdapter wires a
-        #    BeforeModelCallEvent hook that re-selects Gantry tools before every
-        #    model call, so the tool surface tracks the conversation turn by turn.
-        live_agent = gantry.framework("strands").agent(
-            limit=2,
-            system_prompt="You are a helpful assistant with access to weather and finance tools.",
+        from agent_gantry.strands import StrandsAdapter
+
+        adapter = StrandsAdapter(gantry)
+
+        # 1. Per-turn selection ------------------------------------------- #
+        model = scripted([("lookup_customer", {"name": "Jo"})])
+        agent = adapter.agent(model=model, limit=1, callback_handler=None)
+        await agent.invoke_async("find the customer record for Jo")
+        print(f"[per-turn] tools selected before each model call: {model.offered}\n")
+
+        # 2. Readable errors ---------------------------------------------- #
+        tools = await adapter.select("divide 10 by 2", limit=1)
+        agent = Agent(
+            model=scripted([("divide", {"a": 1, "b": 0})]), tools=tools, callback_handler=None
+        )
+        await agent.invoke_async("divide 1 by 0")
+        error = results(agent)[0]
+        print(f"[errors] status={error['status']} text={error['content'][0]['text']!r}\n")
+
+        # 3. Approval ----------------------------------------------------- #
+        tools = await adapter.select("send an email message", limit=1)
+        agent = Agent(
+            model=scripted([("send_email", {"to": "jo@example.com"})]),
+            tools=tools,
             callback_handler=None,
         )
-        static_tool_count = len(list(live_agent.tool_registry.registry))
-        print(
-            f"\nBuilt a live Strands Agent with {static_tool_count} statically "
-            "registered tools (0 expected -- the hook injects the relevant slice "
-            "before every model call)."
+        paused = await agent.invoke_async("email Jo")
+        [interrupt] = paused.interrupts
+        print(f"[approval] stop_reason={paused.stop_reason} for {interrupt.reason['tool']}")
+        await agent.invoke_async(
+            [{"interruptResponse": {"interruptId": interrupt.id, "response": "yes"}}]
         )
+        print(f"[approval] approved -> {results(agent)[-1]['content'][0]['text']}\n")
 
-        # 4. Only actually run the agent (which calls the model) when credentials
-        #    look configured, so this example completes cleanly with no keys set.
-        if not _has_model_credentials():
-            print(
-                "\nNo model credentials detected (AWS/Anthropic/OpenAI) -- skipping "
-                "the live agent run. The tool selection above already demonstrates "
-                "both integration paths end to end."
-            )
-            return
+        # 4. Run context -------------------------------------------------- #
+        tools = await adapter.select("who am I signed in as", limit=1)
+        agent = Agent(model=scripted([("whoami", {})]), tools=tools, callback_handler=None)
+        await agent.invoke_async("who am I?", user="Dan")
+        print(f"[context] {results(agent)[0]['content'][0]['text']}")
 
-        print("\n--- Running Strands Agent with Gantry-sourced tools ---")
-        try:
-            result = await live_agent.invoke_async(user_query)
-        except Exception as exc:
-            # Credentials that exist but are not usable for the configured provider
-            # are the common case here — unrelated AWS keys in the environment, the
-            # wrong region, or no Bedrock model entitlement. A raw botocore
-            # traceback makes that look like a Gantry fault, which it is not.
-            print(f"\nThe model provider rejected the call: {type(exc).__name__}: {exc}")
-            print(
-                "\nEverything above this line — selection, conversion and the live "
-                "tool hook — ran fine; only the model call failed. Strands defaults "
-                "to Amazon Bedrock, so you need AWS credentials entitled to the "
-                "model in your region, or build the agent with an explicit "
-                "`model=` for a provider you do have."
-            )
-            return
-        print(f"\nFinal Response: {result}")
+        print(
+            "\nEvery tool call above went through gantry.execute, so the security "
+            "policy, retries, timeouts and circuit breakers all applied."
+        )
     finally:
         await gantry.close()
 

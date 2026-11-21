@@ -339,6 +339,17 @@ crewai = [
 llamaindex = [
     "llama-index-core>=0.13.0",
 ]
+# Strands Agents, first-class (see CHANGELOG). Floor 1.38.0: the adapter
+# builds @tool(context=True) tools that raise ToolContext.interrupt() for
+# confirmation-gated calls and return error ToolResults, and the per-turn hook
+# swaps the tool registry in BeforeModelCallEvent (verified 2026-11-20: all
+# Strands tests pass on exactly 1.38.0 and on 1.39-1.65; 1.37.0 and older
+# fail). Not part of `agent-frameworks` or `all` (Strands stays out of the
+# main test matrix); the `framework-adapters` CI job installs this extra and
+# re-runs the Strands tests on exactly 1.38.0.
+strands = [
+    "strands-agents>=1.38.0",
+]
 example-tools = [
     "beautifulsoup4>=4.12.0",
     "cryptography>=41.0.0",

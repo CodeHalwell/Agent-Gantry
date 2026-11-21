@@ -87,7 +87,7 @@ For per-step (multi-turn) re-selection within one run, use `ToolRefresher`
 - `llamaindex_example.py`: runs offline with a scripted function-calling LLM. A `FunctionAgent` re-selects tools each step, a failing tool comes back as `ToolOutput(is_error=True)`, a confirmation-gated tool waits for a `HumanResponseEvent`, and a tool reads the workflow state through `current_workflow_context()`.
 - `generic_adapters_example.py`: The framework-neutral `GantryToolset.select` → `ToolSpec` path (`name`, `description`, JSON-Schema `parameters`, `ainvoke`) for hand-wiring a framework that has no dedicated adapter yet. Needs no framework and no key.
 - `dspy_example.py`: `DSPyAdapter` — static `select` → native `dspy.Tool` (schema passed through DSPy's own `convert_input_schema_to_tool_args` bridge), plus the per-call tier via `adapter.agent_builder(signature)` (rebuilds a fresh `dspy.ReAct` per call).
-- `strands_example.py`: `StrandsAdapter` — static `select` → native `DecoratedFunctionTool`, plus the genuine per-turn tier via `adapter.tool_hook()` / `adapter.agent()` (Strands' `BeforeModelCallEvent` fires before every model call, so the registry swap lands on the very call about to happen).
+- `strands_example.py`: runs offline with a scripted Strands model. `adapter.agent()` re-selects tools before every model call (`BeforeModelCallEvent`), a failing tool returns an error `ToolResult`, a confirmation-gated tool raises a Strands interrupt that resumes with "yes", and a tool reads the `agent(...)` keyword arguments through `current_tool_context()`.
 - `pydantic_ai_example.py`: `PydanticAIAdapter` — static `select` → native `pydantic_ai.Tool`; `adapter.capability()` re-selecting tools mid-run from a tool result; a confirmation-gated tool pausing with `DeferredToolRequests` and running once on approval; `deps` read via `current_run_context()`; and `capability(mode="search")` with Gantry-backed `ToolSearch`. Runs fully offline with `FunctionModel` — no API key needed anywhere in the file.
 - `openai_agents_example.py`: `OpenAIAgentsAdapter` — static `select` → native `agents.FunctionTool`; `adapter.dynamic_tools()` re-selecting per turn through `FunctionTool.is_enabled`, surfacing the email tool after a lookup's output; a failing tool returning `Error: ...` to the model; a confirmation-gated tool pausing with `result.interruptions` and running once on approval; and `Runner.run(context=...)` read via `current_run_context()`. Runs fully offline with the SDK's `agents.testing.ScriptedModel`.
 - `haystack_example.py`: `HaystackAdapter` — static `select` → native `haystack.tools.Tool`, plus the per-call tier via `adapter.live_tools(...)` and `adapter.tool_invoker_builder(...)` (rebuilds a fresh `ToolInvoker` per call on haystack 2.x; on haystack >=3.0, which removed `ToolInvoker`, it builds a per-call `Agent` when given `chat_generator=...`). Tool selection runs with no API key; a live chat + tool-invocation round is gated behind `OPENAI_API_KEY`.
@@ -124,7 +124,7 @@ pip install 'agent-gantry[pydantic-ai]'
 pip install 'agent-gantry[openai-agents]'
 pip install agent-gantry haystack-ai
 pip install agent-gantry agno
-pip install agent-gantry 'strands-agents>=1'
+pip install 'agent-gantry[strands]'
 pip install agent-gantry dspy
 ```
 
@@ -143,7 +143,7 @@ OPENAI_API_KEY=sk-...          # most examples
 AZURE_OPENAI_ENDPOINT=...      # agent_framework_* examples accept these
 AZURE_OPENAI_API_KEY=...       # in place of OPENAI_API_KEY
 GOOGLE_API_KEY=...             # to run google_adk_example.py on Gemini (or GEMINI_API_KEY)
-AWS_ACCESS_KEY_ID=...          # strands_example.py — Strands defaults to Bedrock,
+AWS_ACCESS_KEY_ID=...          # strands_example.py on Bedrock (it runs offline otherwise),
 AWS_SECRET_ACCESS_KEY=...      # so the credential must be entitled to the model
 ```
 

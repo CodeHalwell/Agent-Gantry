@@ -247,6 +247,9 @@ class AdapterCase:
             the tool sets ``handle_tool_error=True``, so the model receives an
             error ``ToolMessage`` instead of the run ending.
             ``error_mode="raise"`` restores ``"raises"``.
+            ``"native_tool_result"`` (Strands) -- the tool returns an error
+            ``ToolResult`` (``{"status": "error", "content": [...]}``);
+            ``error_mode="raise"`` restores ``"raises"``.
             ``"native_tool_output"`` (OpenAI Agents SDK; CrewAI, whose real
             ``_run`` returns a ``ToolFailure`` and falls back to ``Error: ...``
             text when that class is missing, as with this matrix's stub) -- the failure is
@@ -449,6 +452,7 @@ ADAPTERS: list[AdapterCase] = [
         live_delegate="tool_hook",
         stub_attrs=_stub_strands_attrs,
         invoke_failure=_invoke_strands_failure,
+        error_kind="native_tool_result",
     ),
     AdapterCase(
         "dspy",
@@ -749,6 +753,13 @@ async def test_adapter_tool_failure_matches_documented_error_kind(
         assert type(native_info.value).__name__ in {"ToolException", "_StubToolException"}
         assert "boom" in str(native_info.value)
         assert isinstance(native_info.value.__cause__, ToolExecutionError)
+        return
+
+    if case.error_kind == "native_tool_result":
+        # Strands: an error ToolResult dict for the model, not an exception.
+        output = await case.invoke_failure(native)
+        assert output["status"] == "error"
+        assert "boom" in output["content"][0]["text"]
         return
 
     if case.error_kind == "native_tool_output":

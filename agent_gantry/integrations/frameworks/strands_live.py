@@ -60,18 +60,17 @@ from agent_gantry.integrations.frameworks.base import (
     check_query_bounds,
 )
 from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
-from agent_gantry.integrations.frameworks.strands import _spec_to_strands
+from agent_gantry.integrations.frameworks.native import (
+    ErrorFormatter,
+    ErrorMode,
+    check_error_mode,
+)
+from agent_gantry.integrations.frameworks.strands import _INSTALL_HINT, _spec_to_strands
 
 if TYPE_CHECKING:
     from agent_gantry.core.gantry import AgentGantry
 
 logger = logging.getLogger(__name__)
-
-_INSTALL_HINT = (
-    "Strands Agents support requires `strands-agents`. "
-    "Install it with `pip install 'strands-agents>=1'` "
-    "(or `uv add 'strands-agents>=1'`)."
-)
 
 
 def _import_strands_agent() -> Any:
@@ -144,10 +143,14 @@ class GantryStrandsToolHook:
         namespaces: list[str] | None = None,
         required: list[str] | None = None,
         always_include: list[str] | None = None,
+        error_mode: ErrorMode = "model",
+        error_formatter: ErrorFormatter | None = None,
     ) -> None:
         check_query_bounds(
             limit=limit, score_threshold=score_threshold, owner="GantryStrandsToolHook"
         )
+        self._error_mode = check_error_mode(error_mode)
+        self._error_formatter = error_formatter
         self._gantry = gantry
         self._limit = limit
         self._score_threshold = score_threshold
@@ -213,7 +216,10 @@ class GantryStrandsToolHook:
                 exc_info=True,
             )
             return
-        tools = [_spec_to_strands(s) for s in specs]
+        tools = [
+            _spec_to_strands(s, error_mode=self._error_mode, error_formatter=self._error_formatter)
+            for s in specs
+        ]
 
         tool_registry = event.agent.tool_registry
         new_names = {t.tool_name for t in tools}
@@ -239,6 +245,8 @@ def _gantry_strands_agent(
     namespaces: list[str] | None = None,
     required: list[str] | None = None,
     always_include: list[str] | None = None,
+    error_mode: ErrorMode = "model",
+    error_formatter: ErrorFormatter | None = None,
     **agent_kwargs: Any,
 ) -> Any:
     """Build a ``strands.Agent`` wired for per-turn dynamic tool selection.
@@ -271,6 +279,8 @@ def _gantry_strands_agent(
         namespaces=namespaces,
         required=required,
         always_include=always_include,
+        error_mode=error_mode,
+        error_formatter=error_formatter,
     )
     return agent_cls(tools=[], hooks=[hook], **agent_kwargs)
 
