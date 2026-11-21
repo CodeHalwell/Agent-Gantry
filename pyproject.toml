@@ -350,6 +350,17 @@ llamaindex = [
 strands = [
     "strands-agents>=1.38.0",
 ]
+# Agno, first-class (see CHANGELOG). Floor 2.6.10: the adapter's tools take
+# Agno's `_agno_run_context` / `_agno_agent` injection, which first shipped in
+# 2.6.10 (2.6.9 and earlier only inject `run_context` / `agent`, names a tool's
+# own arguments can collide with). Function(requires_confirmation=) with
+# run.active_requirements / continue_run and the callable `tools` factory
+# behind AgnoAdapter.agent() are older. Verified 2026-11-20 on exactly 2.6.10,
+# 2.9.0, 3.0.0 and 3.2.1. The `framework-adapters` CI job re-runs the Agno
+# tests on exactly 2.6.10.
+agno = [
+    "agno>=2.6.10",
+]
 example-tools = [
     "beautifulsoup4>=4.12.0",
     "cryptography>=41.0.0",

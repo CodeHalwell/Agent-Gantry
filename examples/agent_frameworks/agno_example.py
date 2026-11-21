@@ -1,27 +1,23 @@
 """Agno (formerly Phidata) + Agent-Gantry integration example.
 
-Demonstrates both tiers `AgnoAdapter` exposes:
+Runs offline: a small scripted Agno ``Model`` stands in for an LLM and issues
+the tool calls, so Agno's real run loop does the rest. It shows:
 
-1. **Static tier** — ``AgnoAdapter.select(query, limit=...)`` runs semantic
-   retrieval once and wraps the result as native ``agno.tools.function.
-   Function`` objects, ready to hand to ``agno.agent.Agent(tools=[...])``.
-2. **Dynamic tier** — ``AgnoAdapter.agent_builder(...)`` returns a
-   ``GantryLiveAgnoAgent``. Agno fixes an agent's tools at construction time
-   (there is no native per-turn hook), so this builder rebuilds a *fresh*
-   ``agno.agent.Agent`` for every call via ``await builder.build(query)``,
-   re-selecting tools for that call's query each time — as dynamic as Agno
-   permits.
+1. ``AgnoAdapter.agent()`` — one Agno ``Agent`` whose tools are a callable
+   factory, so Agno asks Gantry for each run's tools (two runs, two different
+   tool slices).
+2. A failing tool — Agno records the failed result (``"<type>: <message>"``)
+   and the model gets another turn.
+3. A confirmation-gated tool — the run pauses (``run.is_paused``); confirming
+   the requirement and calling ``continue_run`` runs it exactly once.
+4. Run context — a Gantry tool reads Agno's ``RunContext`` (``user_id``,
+   ``dependencies``) through ``current_run_context()``.
 
-Tool selection and native-tool wrapping run with no API key. Building an Agno
-model and actually running the agent (``agent.arun(...)``) needs a real LLM,
-so that step is gated behind ``OPENAI_API_KEY``.
+Set ``OPENAI_API_KEY`` to also run one turn on a real model.
 
-Agno is intentionally NOT part of any Agent-Gantry project extra (see the
-comment block in ``pyproject.toml`` below the ``agent-frameworks`` extra — it can't
-co-resolve with the combined ``agent-frameworks`` extra). Install it
-standalone:
+Install:
 
-    pip install agent-gantry agno
+    pip install 'agent-gantry[agno]'
 
 Run:
 
@@ -31,103 +27,156 @@ Run:
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+from dataclasses import dataclass, field
+from typing import Any
 
 from agent_gantry import AgentGantry
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 
 
 def build_gantry() -> AgentGantry:
+    from agent_gantry.agno import current_run_context
+
     gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
 
-    @gantry.register(
-        tags=["weather"],
-        examples=[
-            "what's the weather in London",
-            "is it raining in Leeds",
-        ],
-    )
+    @gantry.register(examples=["what's the weather in London", "is it raining in Leeds"])
     def get_weather(city: str) -> str:
         """Get the current weather for a city."""
         return f"It is 21C and sunny in {city}."
 
+    @gantry.register(examples=["how much is 50 euros in pounds", "convert 100 dollars to yen"])
+    def convert_currency(amount: float, frm: str, to: str) -> str:
+        """Convert an amount of money from one currency to another."""
+        if frm == to:
+            raise ValueError("pick two different currencies")
+        return f"{amount} {frm} = {amount * 1.1:.2f} {to}"
+
     @gantry.register(
-        tags=["email"],
-        examples=[
-            "email the team about the delay",
-            "send a message to Sam",
-        ],
+        requires_confirmation=True,
+        examples=["email the team about the delay", "send a message to Sam"],
     )
     def send_email(to: str, body: str = "") -> str:
         """Compose and send an email message to a recipient."""
         return f"Email sent to {to}."
 
-    @gantry.register(
-        tags=["finance"],
-        examples=[
-            "how much is 50 euros in pounds",
-            "convert 100 dollars to yen",
-        ],
-    )
-    def convert_currency(amount: float, frm: str, to: str) -> str:
-        """Convert an amount of money from one currency to another."""
-        return f"{amount} {frm} = {amount * 1.1:.2f} {to}"
+    @gantry.register(examples=["who am I", "which account is this"])
+    def whoami() -> str:
+        """Say which user this run belongs to."""
+        ctx = current_run_context()
+        return f"user {ctx.user_id} on the {ctx.dependencies['plan']} plan"
 
     return gantry
 
 
+def scripted_model(*steps: list[tuple[str, dict[str, Any]]]) -> Any:
+    """A tiny offline Agno model: issues the scripted tool calls, then answers."""
+    from agno.models.base import Model
+    from agno.models.response import ModelResponse
+
+    @dataclass
+    class ScriptedModel(Model):
+        id: str = "scripted"
+        name: str = "scripted"
+        provider: str = "scripted"
+        steps: list[Any] = field(default_factory=list)
+        offered: list[list[str]] = field(default_factory=list)
+
+        def _reply(self, tools: Any) -> ModelResponse:
+            self.offered.append(sorted((t.get("function") or t)["name"] for t in tools or []))
+            step = self.steps.pop(0) if self.steps else None
+            if not step:
+                return ModelResponse(role="assistant", content="All done.")
+            calls = [
+                {
+                    "id": f"call_{len(self.offered)}_{i}",
+                    "type": "function",
+                    "function": {"name": name, "arguments": json.dumps(args)},
+                }
+                for i, (name, args) in enumerate(step)
+            ]
+            return ModelResponse(role="assistant", content="", tool_calls=calls)
+
+        def invoke(self, *args: Any, tools: Any = None, **kwargs: Any) -> ModelResponse:
+            return self._reply(tools)
+
+        async def ainvoke(self, *args: Any, tools: Any = None, **kwargs: Any) -> ModelResponse:
+            return self._reply(tools)
+
+        def invoke_stream(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        async def ainvoke_stream(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+        def _parse_provider_response(self, response: Any, **kwargs: Any) -> ModelResponse:
+            return response
+
+        def _parse_provider_response_delta(self, *args: Any, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+    return ScriptedModel(steps=list(steps))
+
+
 async def main() -> None:
+    try:
+        import agno  # noqa: F401
+    except ImportError as exc:
+        print(
+            f"Agno is not installed ({exc}).\nInstall it with `pip install 'agent-gantry[agno]'`."
+        )
+        return
+
+    from agent_gantry.agno import AgnoAdapter
+
     gantry = build_gantry()
     try:
         await gantry.sync()
+        adapter = AgnoAdapter(gantry)
 
-        try:
-            import agno  # noqa: F401
-        except ImportError as exc:
-            print(
-                f"Agno is not installed ({exc}).\n"
-                "Install it with `pip install agno` to run this example."
-            )
-            return
+        # --- 1. One agent, tools re-selected for every run ------------------ #
+        model = scripted_model([("get_weather", {"city": "Paris"})])
+        agent = adapter.agent(model=model, name="assistant", limit=1)
+        await agent.arun("what's the weather in Paris?")
+        await agent.arun("convert 50 euros to pounds")
+        print(f"[per-run] tools offered per model call: {model.offered}")
 
+        # --- 2. A failing tool: the model sees it and carries on ------------- #
+        model = scripted_model([("convert_currency", {"amount": 5, "frm": "EUR", "to": "EUR"})])
+        run = await adapter.agent(model=model, limit=1).arun("convert 5 euros to euros")
+        [tool] = run.tools
+        print(f"[error]   tool_call_error={tool.tool_call_error}, model saw: {tool.result!r}")
 
-        adapter = gantry.framework("agno")
+        # --- 3. A gated tool pauses the run until it is confirmed ------------ #
+        model = scripted_model([("send_email", {"to": "sam@example.com"})])
+        agent = adapter.agent(model=model, limit=1)
+        run = await agent.arun("send a message to Sam about the delay")
+        print(
+            f"[approve] paused={run.is_paused}, waiting on "
+            f"{[r.tool_execution.tool_name for r in run.active_requirements]}"
+        )
+        for requirement in run.active_requirements:
+            requirement.confirm()
+        run = await agent.acontinue_run(run_response=run)
+        print(f"[approve] after confirming: {run.tools[0].result!r}")
 
-        # --- 1. Static tier: select once, get native agno.tools.function.Function #
-        query = "what's the weather in Paris?"
-        static_tools = await adapter.select(query, limit=2)
-        print(f"[static] selected {len(static_tools)} tool(s) for {query!r}:")
-        for tool in static_tools:
-            print(f"  - {tool.name}: {tool.description}")
+        # --- 4. Run context reaches the Gantry tool ------------------------- #
+        model = scripted_model([("whoami", {})])
+        run = await adapter.agent(model=model, limit=1).arun(
+            "who am I", user_id="dan", dependencies={"plan": "team"}
+        )
+        print(f"[context] {run.tools[0].result!r}")
 
-        # Functions are directly callable — no agent/model needed.
-        print(f"[static] direct entrypoint call: {static_tools[0].entrypoint(city='Paris')}\n")
-
-        # --- 2. Dynamic tier: per-call agent builder re-selects tools ----------- #
-        # Agno freezes an agent's tools at construction, so the builder rebuilds a
-        # fresh Agent per call. Here we just inspect the re-selected tool set
-        # (select_tools) without building a full model-backed Agent.
-        builder = adapter.agent_builder(limit=1)
-
-        weather_tools = await builder.select_tools("what's the weather in Tokyo?")
-        print(f"[dynamic] weather query -> {[t.name for t in weather_tools]}")
-
-        email_tools = await builder.select_tools("send an email to my manager")
-        print(f"[dynamic] email query   -> {[t.name for t in email_tools]}\n")
-
-        # --- 3. Optional: build + run a real Agno agent (needs an LLM) ---------- #
+        # --- Optional: one turn on a real model ----------------------------- #
         if os.environ.get("OPENAI_API_KEY"):
             from agno.models.openai import OpenAIChat
 
-            live_builder = adapter.agent_builder(
-                model=OpenAIChat(id="gpt-5.5"), limit=2
-            )
-            live_agent = await live_builder.build(query)
-            print("[live] running an Agno agent with Gantry-selected tools...")
-            response = await live_agent.arun(query)
-            print(f"[live] response.content: {response.content}")
+            live = adapter.agent(model=OpenAIChat(id="gpt-5.5"), limit=2)
+            response = await live.arun("what's the weather in Leeds?")
+            print(f"[live]    {response.content}")
         else:
-            print("(Set OPENAI_API_KEY to also run a live Agno agent turn.)")
+            print("(Set OPENAI_API_KEY to also run a turn on a real model.)")
     finally:
         await gantry.close()
 

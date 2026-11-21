@@ -43,7 +43,7 @@ Install Gantry plus just the SDK you need:
 | `pydantic_ai` | `pip install 'agent-gantry[pydantic-ai]'` | `Agent(model, capabilities=[adapter.capability()])` — see [Pydantic AI](#pydantic-ai-first-class) |
 | `openai_agents` | `pip install 'agent-gantry[openai-agents]'` | `Agent(..., tools=await adapter.dynamic_tools())` — see [OpenAI Agents SDK](#openai-agents-sdk-first-class) |
 | `haystack` | `pip install agent-gantry haystack-ai` | `Agent(..., tools=await adapter.select(query))` |
-| `agno` | `pip install agent-gantry agno` | `Agent(..., tools=await adapter.select(query))` |
+| `agno` | `pip install 'agent-gantry[agno]'` | `adapter.agent(model=...)` — see [Agno](#agno-first-class) |
 | `google_adk` | `pip install 'agent-gantry[google-adk]'` | `adapter.agent(model=..., name=...)` — see [Google ADK](#google-adk-first-class) |
 | `strands` | `pip install 'agent-gantry[strands]'` | `Agent(hooks=[adapter.live()])` — see [Strands Agents](#strands-agents-first-class) |
 | `dspy` | `pip install agent-gantry dspy` | `dspy.ReAct(signature, tools=await adapter.select(query))` |
@@ -316,7 +316,7 @@ documented, framework-idiomatic path; `live()` just delegates to one of them):
 | Pydantic AI | per-turn | `toolset` | `GantryToolset` (`AbstractToolset`) | `Agent(model, toolsets=[<result>])` |
 | OpenAI Agents SDK | per-turn | `session` (requires `agent=`) | `GantryAgentSession` | `await session.run(run_input)` per turn |
 | Haystack | per-call | `tool_invoker_builder` | `GantryLiveHaystackToolInvoker` builder (ToolInvoker on haystack 2.x, Agent on >=3.0) | `await builder.build(query)` per call |
-| Agno | per-call | `agent_builder` | `GantryLiveAgnoAgent` builder | `await builder.build(query)` per run |
+| Agno | per-call | `agent_builder` | `GantryLiveAgnoAgent` builder | `await builder.build(query)` per run (or one `adapter.agent()` that re-selects inside Agno per run) |
 | Google ADK | per-turn | `before_model_callback` | async `(callback_context, llm_request) -> None` | `Agent(tools=[], before_model_callback=<result>)` |
 | Strands Agents | per-turn | `tool_hook` | `GantryStrandsToolHook` (`HookProvider`) | `Agent(tools=[], hooks=[<result>])` |
 | DSPy | per-call | `agent_builder` (requires `signature=`) | `GantryLiveDSPyReAct` builder | `await builder.build(query)` per task |
@@ -356,10 +356,11 @@ from agent_gantry.llamaindex import LlamaIndexAdapter
 agent = LlamaIndexAdapter(gantry).function_agent(llm)   # LlamaIndex agent that re-selects tools each step
 ```
 
-Frameworks whose tool list is **fixed at agent construction** (CrewAI, Agno,
+Frameworks whose tool list is **fixed for a run** (CrewAI, Agno,
 Haystack, DSPy) can't re-advertise tools mid-run; their "live" wrappers —
 obtained via `CrewAIAdapter(gantry).agent_builder(...)`,
-`AgnoAdapter(gantry).agent_builder(...)`,
+`AgnoAdapter(gantry).agent_builder(...)` (or `AgnoAdapter(gantry).agent(...)`, one
+Agent whose callable `tools` factory re-selects for each run),
 `DSPyAdapter(gantry).agent_builder(signature, ...)`,
 and `HaystackAdapter(gantry).tool_invoker_builder(...)` (or `HaystackAdapter(gantry).live_tools(query)`
 for tools alone) — re-select and rebuild the agent on each top-level call —
@@ -757,6 +758,55 @@ A direct call (no agent) reports that it needs approval.
 `toolUseId`). Strands traces with OpenTelemetry, so its span becomes the
 `ToolCall`'s trace.
 
+## Agno (first-class)
+
+`pip install 'agent-gantry[agno]'` (pins `agno>=2.6.10`; CI runs the tests on
+exactly 2.6.10 and on the latest).
+
+| Mode | Build | Use when |
+|---|---|---|
+| Per-run (recommended) | `adapter.agent(model=...)` | One agent; Gantry picks each run's tools |
+| Static slice | `Agent(tools=await adapter.select(query))` | A fixed task |
+| Per-call builder | `await adapter.agent_builder(model=...).build(query)` | A fresh `Agent` per query |
+
+`adapter.agent()` gives the `Agent` a callable `tools` factory (with
+`cache_callables=False`) and a pre-hook that records each run's input, so Agno
+itself asks Gantry for that run's tools. The selection is kept per `run_id`, so
+`continue_run` after an approval is offered the same tools; an agent object
+resuming another's paused run reads the input back from the shared `db`. If
+retrieval fails the pinned tools are still offered (with a `WARNING`). Tools
+use a synchronous entrypoint, so they work under both `agent.run()` and
+`agent.arun()`.
+
+**Errors.** A failed call raises `AgnoToolError`, a `ToolExecutionError` whose
+`str()` is `"<type>: <message>"` (capped). Agno records it as the tool's
+failed result (`tool_call_error=True`) and shows the model that text, so the
+run continues. `error_formatter=fn` rewrites the text; `error_mode="raise"`
+raises the plain `ToolExecutionError`.
+
+**Approval.** A confirmation-gated tool (per `AgentGantry.requires_confirmation()`)
+becomes a `Function(requires_confirmation=True)`, so the run pauses:
+
+```python
+run = await agent.arun("refund order 4471")
+if run.is_paused:
+    for requirement in run.active_requirements:   # .tool_execution: tool_name, tool_args
+        requirement.confirm()                     # or requirement.reject()
+    run = await agent.acontinue_run(run_response=run)
+```
+
+A confirmed call runs once with only the confirmation gate cleared; a
+rejected one never runs. A direct call (no agent) reports that it needs
+approval. `error_mode="raise"` turns the pause off (gated calls report as not
+run).
+
+**Run context and tracing.** Gantry handlers read Agno's `RunContext`
+(`run_id`, `session_id`, `user_id`, `session_state`, `dependencies`,
+`metadata`) with `agent_gantry.agno.current_run_context()` or
+`current_tool_invocation()` (`deps` is `run_context.dependencies`,
+`tool_call_id` the model's call id, metadata `agent_name` / `session_id` /
+`user_id`). The active OpenTelemetry span becomes the `ToolCall`'s trace.
+
 ## Shared base
 
 `base.py` provides `GantryToolset` (selection, including the `required`/
@@ -924,7 +974,7 @@ asserting no exception + a `WARNING` log record).
 | Pydantic AI | **Deviation:** `ModelRetry` / `ToolFailed` / `ApprovalRequired` (native), chained from `ToolExecutionError`; `error_mode="raise"` restores raising | Degrades to this run's earlier tools (per-run state) + `WARNING` |
 | OpenAI Agents SDK | **Deviation:** returned to the model as `Error: ...` tool output; `error_mode="raise"` restores raising | `dynamic_tools`: degrades to this run's earlier tools (per-run state) + `WARNING`; `session`/`run_hooks`: previous turn's `agent.tools` + `WARNING` |
 | Haystack | Raises `ToolExecutionError` | *(per-call — see above)* |
-| Agno | Raises `ToolExecutionError` | *(per-call — see above)* |
+| Agno | Raises `AgnoToolError` (a `ToolExecutionError` whose text is the model-facing failure), which Agno records as a failed tool result; `error_mode="raise"` raises the plain `ToolExecutionError` | Per-run `agent()`: degrades to the pinned tools + `WARNING` |
 | Google ADK | **Deviation:** `FunctionTool.run_async` returns `{"error": ...}` (ADK's convention; the raw `.func` still raises); `error_mode="raise"` restores raising | Degrades to this run's previous tools plus pins (per-run state) + `WARNING` |
 | Strands Agents | **Deviation:** error `ToolResult(status="error")` from both `__call__` and the agent loop; `error_mode="raise"` restores raising | Degrades to previous turn's registered tools (stateful) + `WARNING` — the other precedent |
 | DSPy (`dspy.Tool.__call__`/`.acall`) | Raises `ToolExecutionError` | *(per-call — see above)* |
