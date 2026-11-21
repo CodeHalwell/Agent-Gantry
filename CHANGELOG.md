@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+DSPy becomes a first-class integration for DSPy 3.5's redesigned `dspy.ReAct`
+(native `tool_calls` and a `submit` tool), with error tool results, an
+approver for confirmation-gated calls and the running module as run context.
+
+**Behaviour change (DSPy).** The adapter now targets `dspy>=3.5.0`; the
+`dspy<3.5` CI cap is gone. A failed call raises `DSPyToolError` (still a
+`ToolExecutionError`) whose text is `"<type>: <message>"`, which `dspy.ReAct`
+records as an error tool result; the original Gantry error is no longer chained
+into the traceback DSPy shows the model. A confirmation-gated call without an
+approver now tells the model it needs approval. Pass `error_mode="raise"` to
+`DSPyAdapter` to raise the plain `ToolExecutionError`.
+
+### Added
+
+- `dspy` extra (`pip install 'agent-gantry[dspy]'`, `>=3.5.0`). CI runs the
+  DSPy tests on exactly 3.5.0 and on the latest.
+- `DSPyAdapter(gantry, approve=fn)`: `fn` gets an `ApprovalRequest` (tool
+  name, arguments, description, module) for gated calls; `True` runs the call
+  once with only the confirmation gate cleared.
+- `agent_gantry.dspy.current_dspy_module()`: the module running the call
+  (normally the `dspy.ReAct`), also `current_tool_invocation().native_context`.
+- `error_mode` and `error_formatter` on `DSPyAdapter`; `DSPyToolError`.
+- `DSPyAdapter.agent_builder()` uses the adapter's settings and offers the
+  pinned tools when retrieval fails.
+- `examples/agent_frameworks/dspy_example.py` now covers errors, approval and
+  run context, offline on DSPy 3.5.
+
 Haystack becomes a first-class integration, using the Haystack `Agent`'s hooks
 and dynamic toolsets for per-step selection, `ConfirmationHook` for approval,
 error tool results and `State` injection.

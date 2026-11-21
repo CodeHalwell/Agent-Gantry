@@ -137,17 +137,13 @@ jobs:
       # experimental class).
       # strands-agents 0.0.1 is an empty placeholder. Without a real-version
       # floor, uv can select it to keep a newer MCP dependency on Python 3.10/3.11.
-      # dspy<3.5 (2026-11-19): DSPy 3.5.0 redesigned ReAct (native
-      # `tool_calls` + a `submit` tool instead of next_tool_name /
-      # next_tool_args), which breaks the scripted-LM ReAct tests in
-      # tests/frameworks/test_dspy_live.py and may affect the DSPy live
-      # wrapper. Remove the cap once the DSPy adapter supports 3.5 -- the
-      # latest-frameworks workflow keeps testing the newest release meanwhile.
+      # DSPy comes from its own extra (floor 3.5.0, the redesigned ReAct with
+      # native `tool_calls` and a `submit` tool); the earlier dspy<3.5 cap is gone.
       - name: Run adapter smoke tests
         run: |
           uv venv .venv-frameworks --python ${{ matrix.python-version }}
-          uv pip install --python .venv-frameworks ".[dev,pydantic-ai,openai-agents,strands,agno,haystack]" \
-            "dspy<3.5"
+          uv pip install --python .venv-frameworks \
+            ".[dev,pydantic-ai,openai-agents,strands,agno,haystack,dspy]"
           .venv-frameworks/bin/python -m pytest tests/frameworks/ -v
 
       # Pydantic AI is first-class with a declared floor (the `pydantic-ai`
@@ -156,7 +152,8 @@ jobs:
       # Same for the OpenAI Agents SDK (`openai-agents` extra, >=0.23.1)
       # LangChain / LangGraph (`langchain` / `langgraph` extras, >=1.0.0)
       # Google ADK (`google-adk` extra, >=2.6.1), CrewAI (`crewai`, >=1.15.22), LlamaIndex (`llamaindex`, >=0.13.0),
-      # Strands (`strands`, >=1.38.0), Agno (`agno`, >=2.6.10) and Haystack (`haystack`, >=3.0.0).
+      # Strands (`strands`, >=1.38.0), Agno (`agno`, >=2.6.10), Haystack (`haystack`, >=3.0.0)
+      # and DSPy (`dspy`, >=3.5.0).
       - name: OpenAI Agents SDK floor (0.23.1)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         run: |
@@ -227,6 +224,15 @@ jobs:
           .venv-haystack-floor/bin/python -m pytest \
             tests/frameworks/test_haystack.py tests/frameworks/test_haystack_build_live.py \
             tests/frameworks/test_haystack_native.py -v
+
+      - name: DSPy floor (3.5.0)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: |
+          uv venv .venv-dspy-floor --python ${{ matrix.python-version }}
+          uv pip install --python .venv-dspy-floor ".[dev]" "dspy==3.5.0"
+          .venv-dspy-floor/bin/python -m pytest \
+            tests/frameworks/test_dspy.py tests/frameworks/test_dspy_live.py \
+            tests/frameworks/test_dspy_native.py -v
 
       - name: Pydantic AI floor (2.0.0)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'

@@ -23,7 +23,7 @@ This skill is the canonical reference for using the library. Read the section th
 | Haystack (>=3.0) | `HaystackAdapter(gantry).agent(chat_generator=...)` (per-step) or `.select(...)` (static) | [Haystack](#haystack) |
 | Agno (>=2.6.10) | `AgnoAdapter(gantry).agent(model=...)` (per-run) or `.select(...)` (static) | [Agno](#agno) |
 | Strands Agents (>=1.38) | `StrandsAdapter(gantry).agent(model=...)` / `.tool_hook()` (per-turn) or `.select(...)` (static) | [Strands Agents](#strands-agents) |
-| DSPy | `DSPyAdapter(gantry).select(...)` (static) or `.agent_builder(signature, ...)` (per-call) | [Native framework adapters](#native-framework-adapters) |
+| DSPy (>=3.5) | `DSPyAdapter(gantry).select(...)` (static) or `.agent_builder(signature, ...)` (per-call) | [DSPy](#dspy) |
 | Google ADK (>=2.6.1) | `GoogleADKAdapter(gantry).agent(model=, name=)` (per-turn) or `.select(...)` (static) | [Google ADK](#google-adk) |
 | Any framework, re-select every turn | `ToolRefresher(gantry).refresh(messages)` | [Multi-turn re-selection](#multi-turn-re-selection-toolrefresher) |
 | Plain OpenAI / Anthropic / Gemini SDK | `OpenAIAdapter(gantry).tools(query)` (or `@with_semantic_tools(dialect=...)`) | [LLM-SDK direct](#llm-sdk-direct) |
@@ -86,6 +86,7 @@ uv add "agent-gantry[llamaindex]"       # LlamaIndex (llama-index-core>=0.13)
 uv add "agent-gantry[strands]"          # Strands Agents (>=1.38)
 uv add "agent-gantry[agno]"             # Agno (>=2.6.10)
 uv add "agent-gantry[haystack]"         # Haystack (>=3.0)
+uv add "agent-gantry[dspy]"             # DSPy (>=3.5)
 uv add "agent-gantry[lancedb]"          # disk-persistent vector store
 uv add "agent-gantry[jev]"              # selection without embeddings (TypeSafe Jev)
 uv add "agent-gantry[mcp]"              # MCP client/server
@@ -508,6 +509,25 @@ result = agent.run(messages=[ChatMessage.from_user("refund order 4471")])
 - **Approval**: `confirmation_hook(ui)` (added by `agent(confirmation_ui=...)`) asks a Haystack `ConfirmationUI` about gated Gantry tools only; confirm/modify runs the call once, reject never runs it. Without a UI, gated calls report "needs approval".
 - **Run context**: `current_agent_state()` gives the Agent's `State` (`.get(key)`, `.data`); `current_tool_invocation().deps` is `state.data`.
 - **Per-step**: `agent()` re-selects before the first step and after every tool step (dynamic `Toolset` + `before_run`/`after_tool` hooks); sticky up to `max_offered`; previous tools plus pins on a retrieval failure.
+
+## DSPy
+
+Install with `uv add "agent-gantry[dspy]"` (pins `dspy>=3.5.0`, the redesigned `dspy.ReAct` with native `tool_calls` and a `submit` tool; tested on 3.5.0 and the latest).
+
+```python
+import dspy
+from agent_gantry.dspy import DSPyAdapter, current_dspy_module
+
+adapter = DSPyAdapter(gantry, approve=lambda request: request.tool_name != "delete_account")
+react = dspy.ReAct("question -> answer", tools=await adapter.select("refund order 4471", limit=5))
+pred = react(question="refund order 4471")          # or: await react.acall(...)
+builder = adapter.agent_builder("question -> answer")  # per call: react = await builder.build(query)
+```
+
+- **Errors**: `DSPyToolError` (a `ToolExecutionError`), which `dspy.ReAct` records as an error tool result (`is_error=True`); the text ends with `"<type>: <message>"` after DSPy's own short traceback, with no chained original error, so `error_formatter` redaction holds. `error_mode="raise"` raises the plain `ToolExecutionError`.
+- **Approval**: DSPy has no HITL, so `approve=fn` decides gated calls (`ApprovalRequest`: `tool_name`, `arguments`, `description`, `module`); `True` runs the call once, anything else (or a raising approver) blocks it. Without an approver, gated calls report "needs approval".
+- **Run context**: `current_dspy_module()` gives the module running the call (normally the `dspy.ReAct`). DSPy has no run or call ids.
+- **Per-call**: `dspy.ReAct` fixes its tools at construction, so `agent_builder()` builds a fresh one per query; pins are offered if retrieval fails.
 
 ## Native framework adapters
 

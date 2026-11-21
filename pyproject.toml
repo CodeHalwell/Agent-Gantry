@@ -225,10 +225,12 @@ agent-frameworks = [
     "google-adk>=2.6.1,<2.8",
 ]
 # NOTE: the native-tool-adapter frameworks (pydantic-ai, openai-agents,
-# haystack-ai, agno, strands-agents, dspy) are NOT a project extra. They are
-# installed directly (in an isolated env) by the `framework-adapters` CI job,
-# which runs tests/frameworks/test_real_packages.py to guard each adapter
-# against real-API drift. langchain/langgraph/llamaindex/crewai/google-adk are
+# haystack-ai, agno, strands-agents, dspy) are kept out of the main test
+# matrix. Each now has its own first-class extra (see the EXCEPTION notes and
+# the extras below), and the `framework-adapters` CI job installs those extras
+# in an isolated env, runs tests/frameworks/ (including test_real_packages.py
+# for real-API drift) and re-runs each adapter's tests on its exact floor. The
+# history below explains why they were once not extras at all. langchain/langgraph/llamaindex/crewai/google-adk are
 # validated by the main matrix via `agent-frameworks`.
 #
 # The original reason was a resolution conflict: openai-agents requires
@@ -369,6 +371,15 @@ agno = [
 # `framework-adapters` CI job re-runs the Haystack tests on exactly 3.0.0.
 haystack = [
     "haystack-ai>=3.0.0",
+]
+# DSPy, first-class (see CHANGELOG). Floor 3.5.0: DSPy 3.5 redesigned
+# dspy.ReAct around native `tool_calls`, a reserved `submit` tool and
+# error tool results (`is_error`), which the adapter's error mapping and the
+# scripted-LM tests target; 3.4 and older use next_tool_name / next_tool_args.
+# Verified 2026-11-21 on exactly 3.5.0. The `framework-adapters` CI job
+# re-runs the DSPy tests on exactly 3.5.0.
+dspy = [
+    "dspy>=3.5.0",
 ]
 example-tools = [
     "beautifulsoup4>=4.12.0",

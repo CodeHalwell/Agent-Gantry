@@ -86,7 +86,7 @@ For per-step (multi-turn) re-selection within one run, use `ToolRefresher`
 - `crewai_example.py`: runs offline with a scripted CrewAI LLM. A failing tool comes back as a CrewAI `ToolFailure` (recorded on `tool_failures`), a confirmation-gated tool goes through the adapter's approver, and a tool reads the agent and task through `current_crew_context()`.
 - `llamaindex_example.py`: runs offline with a scripted function-calling LLM. A `FunctionAgent` re-selects tools each step, a failing tool comes back as `ToolOutput(is_error=True)`, a confirmation-gated tool waits for a `HumanResponseEvent`, and a tool reads the workflow state through `current_workflow_context()`.
 - `generic_adapters_example.py`: The framework-neutral `GantryToolset.select` → `ToolSpec` path (`name`, `description`, JSON-Schema `parameters`, `ainvoke`) for hand-wiring a framework that has no dedicated adapter yet. Needs no framework and no key.
-- `dspy_example.py`: `DSPyAdapter` — static `select` → native `dspy.Tool` (schema passed through DSPy's own `convert_input_schema_to_tool_args` bridge), plus the per-call tier via `adapter.agent_builder(signature)` (rebuilds a fresh `dspy.ReAct` per call).
+- `dspy_example.py`: runs offline with DSPy's scripted `DummyLM` (DSPy 3.5+). `DSPyAdapter.select` feeds a real `dspy.ReAct`, a failing tool comes back as an error tool result (`is_error=True`), a confirmation-gated tool goes through the adapter's approver, a tool reads the running `dspy.ReAct` through `current_dspy_module()`, and `agent_builder(signature)` builds a fresh ReAct per call.
 - `strands_example.py`: runs offline with a scripted Strands model. `adapter.agent()` re-selects tools before every model call (`BeforeModelCallEvent`), a failing tool returns an error `ToolResult`, a confirmation-gated tool raises a Strands interrupt that resumes with "yes", and a tool reads the `agent(...)` keyword arguments through `current_tool_context()`.
 - `pydantic_ai_example.py`: `PydanticAIAdapter` — static `select` → native `pydantic_ai.Tool`; `adapter.capability()` re-selecting tools mid-run from a tool result; a confirmation-gated tool pausing with `DeferredToolRequests` and running once on approval; `deps` read via `current_run_context()`; and `capability(mode="search")` with Gantry-backed `ToolSearch`. Runs fully offline with `FunctionModel` — no API key needed anywhere in the file.
 - `openai_agents_example.py`: `OpenAIAgentsAdapter` — static `select` → native `agents.FunctionTool`; `adapter.dynamic_tools()` re-selecting per turn through `FunctionTool.is_enabled`, surfacing the email tool after a lookup's output; a failing tool returning `Error: ...` to the model; a confirmation-gated tool pausing with `result.interruptions` and running once on approval; and `Runner.run(context=...)` read via `current_run_context()`. Runs fully offline with the SDK's `agents.testing.ScriptedModel`.
@@ -114,10 +114,9 @@ uv sync --extra agent-frameworks
 **pydantic_ai / openai_agents / haystack / agno / strands / dspy are
 intentionally NOT part of `agent-frameworks`** — they are kept out of the
 main test matrix (see the note below the `agent-frameworks` extra in
-`pyproject.toml`). Pydantic AI and the OpenAI Agents SDK have their own
-extras with supported version floors (install `[openai-agents]` in its own
-environment: it needs `openai>=3`, CrewAI pins `openai<3`); install the
-others standalone alongside `agent-gantry`:
+`pyproject.toml`). Each has its own extra with a supported version floor
+(install `[openai-agents]` in its own environment: it needs `openai>=3`,
+CrewAI pins `openai<3`):
 
 ```bash
 pip install 'agent-gantry[pydantic-ai]'
@@ -125,7 +124,7 @@ pip install 'agent-gantry[openai-agents]'
 pip install 'agent-gantry[haystack]'
 pip install 'agent-gantry[agno]'
 pip install 'agent-gantry[strands]'
-pip install agent-gantry dspy
+pip install 'agent-gantry[dspy]'
 ```
 
 **Note on Python version:** CI exercises the adapter suite on **Python 3.10, 3.11, 3.12, 3.13 and 3.14** (ubuntu, plus a macOS 3.12 cell). Agent-Gantry supports Python 3.10–3.14.

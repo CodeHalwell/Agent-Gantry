@@ -213,7 +213,7 @@ async def test_missing_dspy_raises_helpful_error(monkeypatch, gantry):
     from agent_gantry.integrations.frameworks.base import GantryToolset
 
     specs = await GantryToolset(gantry).select("send an email", limit=1)
-    with pytest.raises(ImportError, match="pip install dspy"):
+    with pytest.raises(ImportError, match=r"agent-gantry\[dspy\]"):
         DSPyAdapter.convert(specs[0])
 
 
@@ -297,5 +297,5 @@ async def test_agent_builder_build_requires_dspy(monkeypatch, gantry):
     from agent_gantry.dspy import DSPyAdapter
 
     builder = DSPyAdapter(gantry).agent_builder("question -> answer")
-    with pytest.raises(ImportError, match="pip install dspy"):
+    with pytest.raises(ImportError, match=r"agent-gantry\[dspy\]"):
         await builder.build("send an email")

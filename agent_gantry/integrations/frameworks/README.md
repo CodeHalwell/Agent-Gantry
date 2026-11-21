@@ -46,7 +46,7 @@ Install Gantry plus just the SDK you need:
 | `agno` | `pip install 'agent-gantry[agno]'` | `adapter.agent(model=...)` — see [Agno](#agno-first-class) |
 | `google_adk` | `pip install 'agent-gantry[google-adk]'` | `adapter.agent(model=..., name=...)` — see [Google ADK](#google-adk-first-class) |
 | `strands` | `pip install 'agent-gantry[strands]'` | `Agent(hooks=[adapter.live()])` — see [Strands Agents](#strands-agents-first-class) |
-| `dspy` | `pip install agent-gantry dspy` | `dspy.ReAct(signature, tools=await adapter.select(query))` |
+| `dspy` | `pip install 'agent-gantry[dspy]'` | `dspy.ReAct(signature, tools=await adapter.select(query))` — see [DSPy](#dspy-first-class) |
 | `agent_framework` | `pip install agent-gantry agent-framework-core` | `provider = adapter.live(); provider.attach_to(agent)` |
 
 Each row assumes `adapter = gantry.framework(name)` and the framework's native
@@ -369,8 +369,7 @@ the deepest those frameworks allow. DSPy's `dspy.ReAct` bakes each tool's
 name/description into its instruction prompt at construction and has no
 runtime hook (`dspy.utils.callback.BaseCallback`'s `on_tool_start`/
 `on_module_start` fire around an already-selected call, not before the model
-picks the next tool) — see the module docstring in
-`agent_gantry/integrations/frameworks/dspy.py` for the full analysis.
+picks the next tool) — see [DSPy](#dspy-first-class).
 
 ## Pydantic AI (first-class)
 
@@ -859,6 +858,53 @@ tool reports that it needs approval.
 `Agent.run_async` does not block. The active OpenTelemetry span becomes the
 `ToolCall`'s trace.
 
+## DSPy (first-class)
+
+`pip install 'agent-gantry[dspy]'` (pins `dspy>=3.5.0`, the redesigned
+`dspy.ReAct` with native `tool_calls` and a `submit` tool; CI runs the tests on
+exactly 3.5.0 and on the latest).
+
+| Mode | Build | Use when |
+|---|---|---|
+| Static slice | `dspy.ReAct(signature, tools=await adapter.select(query))` | A fixed task |
+| Per-call builder | `await adapter.agent_builder(signature).build(query)` | A fresh `ReAct` per query |
+
+`dspy.ReAct` fixes its tools, and bakes their names into its instructions, at
+construction, and DSPy has no hook before each model call, so selection is per
+call. The builder offers the pinned tools if retrieval fails (with a
+`WARNING`). Tool bodies are synchronous, so they work under both `react(...)`
+and `await react.acall(...)` with no DSPy setting.
+
+**Errors.** A failed call raises `DSPyToolError`, a `ToolExecutionError` whose
+`str()` is `"<type>: <message>"` (capped). `dspy.ReAct` records it as an error
+tool result (`is_error=True`, `"Execution error in <tool>: ..."`) and the model
+gets another turn. DSPy adds its own short traceback to every tool error; it
+ends with Gantry's text, and the original error is not chained onto it, so
+`error_formatter=fn` redaction holds. `error_mode="raise"` raises the plain
+`ToolExecutionError`.
+
+**Approval.** DSPy has no human-in-the-loop mechanism, so the adapter takes an
+approver for confirmation-gated calls (per `AgentGantry.requires_confirmation()`):
+
+```python
+from agent_gantry.dspy import DSPyAdapter
+
+def approve(request):  # ApprovalRequest: tool_name, arguments, description, module
+    return input(f"Run {request.tool_name}({request.arguments})? [y/N] ") == "y"
+
+tools = await DSPyAdapter(gantry, approve=approve).select("refund order 4471")
+```
+
+`True` runs the call once with only the confirmation gate cleared; anything
+else (or an approver that raises) blocks it and tells the model it was
+declined. Without an approver a gated call reports that it needs approval.
+`error_mode="raise"` never asks the approver.
+
+**Run context and tracing.** Gantry handlers read the DSPy module running the
+call (normally the `dspy.ReAct`) with `agent_gantry.dspy.current_dspy_module()`
+or `current_tool_invocation().native_context`. DSPy has no run or call ids to
+pass on. The active OpenTelemetry span becomes the `ToolCall`'s trace.
+
 ## Shared base
 
 `base.py` provides `GantryToolset` (selection, including the `required`/
@@ -975,16 +1021,10 @@ own downstream consumption of it:
    its own error result. See
    `tests/frameworks/test_strands_live.py::test_tool_failure_is_an_error_tool_result`.
 
-A fourth case looks similar but is **DSPy's own behaviour, not a Gantry
-deviation**: `dspy.Tool.__call__`/`.acall` never swallow the error (verified
-in `tests/frameworks/test_dspy_live.py::test_tool_failure_surfaces_as_tool_execution_error`)
-— but `dspy.ReAct.forward`/`.aforward` (DSPy's own agentic driver, what
-`DSPyAdapter.agent_builder`/`.live()` hand you) wrap each tool call in a bare
-`except Exception` and fold it into the trajectory as an `"Execution error in
-<tool>: ..."` observation string instead of raising — see
-`test_react_forward_absorbs_tool_failure_into_trajectory`. It is listed here
-for completeness (it's what most DSPy users actually see) but isn't a
-Gantry-adapter contract at all.
+DSPy tools raise `DSPyToolError` (a `ToolExecutionError`) when called
+directly; `dspy.ReAct` itself turns any raising tool into an error tool result
+(`is_error=True`) and carries on — see
+`tests/frameworks/test_dspy_live.py::test_react_records_tool_failure_as_an_error_result`.
 
 ### 2. Selection failure (live/per-turn mode) — always degrades, never raises
 
@@ -1029,6 +1069,5 @@ asserting no exception + a `WARNING` log record).
 | Agno | Raises `AgnoToolError` (a `ToolExecutionError` whose text is the model-facing failure), which Agno records as a failed tool result; `error_mode="raise"` raises the plain `ToolExecutionError` | Per-run `agent()`: degrades to the pinned tools + `WARNING` |
 | Google ADK | **Deviation:** `FunctionTool.run_async` returns `{"error": ...}` (ADK's convention; the raw `.func` still raises); `error_mode="raise"` restores raising | Degrades to this run's previous tools plus pins (per-run state) + `WARNING` |
 | Strands Agents | **Deviation:** error `ToolResult(status="error")` from both `__call__` and the agent loop; `error_mode="raise"` restores raising | Degrades to previous turn's registered tools (stateful) + `WARNING` — the other precedent |
-| DSPy (`dspy.Tool.__call__`/`.acall`) | Raises `ToolExecutionError` | *(per-call — see above)* |
-| DSPy (`dspy.ReAct.forward`/`.aforward`) | **DSPy's own behaviour** (not a Gantry deviation): folded into the trajectory as an `"Execution error in <tool>: ..."` observation | *(per-call — see above)* |
+| DSPy | Raises `DSPyToolError` (a `ToolExecutionError` whose text is the model-facing failure), which `dspy.ReAct` records as an error tool result; `error_mode="raise"` raises the plain `ToolExecutionError` | Per-call builder: degrades to the pinned tools + `WARNING` |
 | Microsoft Agent Framework | **Deviation:** JSON `{"error": ...}` string returned to the model, not raised | *(`GantryToolBridge`/`ContextProvider` selection is a separate mechanism from `GantryToolset`, outside this audit's scope)* |

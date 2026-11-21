@@ -38,13 +38,13 @@ python examples/agent_frameworks/langchain_example.py    # no key needed to see 
 | Haystack | [`agent_frameworks/haystack_example.py`](agent_frameworks/haystack_example.py) | `pip install 'agent-gantry[haystack]'` (runs offline) |
 | Agno | [`agent_frameworks/agno_example.py`](agent_frameworks/agno_example.py) | `pip install 'agent-gantry[agno]'` (runs offline) |
 | Strands | [`agent_frameworks/strands_example.py`](agent_frameworks/strands_example.py) | `pip install 'agent-gantry[strands]'` (runs offline) |
-| DSPy | [`agent_frameworks/dspy_example.py`](agent_frameworks/dspy_example.py) | `pip install dspy` |
+| DSPy | [`agent_frameworks/dspy_example.py`](agent_frameworks/dspy_example.py) | `pip install 'agent-gantry[dspy]'` (runs offline) |
 | *(none yet)* | [`agent_frameworks/generic_adapters_example.py`](agent_frameworks/generic_adapters_example.py) | — |
 
 Install only the SDK for the framework you use. The `agent-frameworks` extra
-contains the first six frameworks. Pydantic AI and the OpenAI Agents SDK
-have their own extras (`pydantic-ai`, `openai-agents`); Haystack, Agno, Strands
-and DSPy are installed separately to keep their dependency trees out of the main test matrix. See
+contains the first six frameworks. Pydantic AI, the OpenAI Agents SDK, Haystack, Agno,
+Strands and DSPy have their own extras (`pydantic-ai`, `openai-agents`, `haystack`,
+`agno`, `strands`, `dspy`), kept out of the main test matrix. See
 [`agent_frameworks/README.md`](agent_frameworks/README.md).
 
 No adapter for your framework? [`agent_frameworks/generic_adapters_example.py`](agent_frameworks/generic_adapters_example.py) shows the

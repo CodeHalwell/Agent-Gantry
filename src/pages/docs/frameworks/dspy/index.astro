@@ -2,44 +2,38 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="DSPy guide | Agent-Gantry">
+<DocsLayout title="DSPy guide | Agent-Gantry" description="Integrate Agent-Gantry with dspy.ReAct: Gantry-selected dspy.Tool objects, error tool results, an approver for gated calls, and the running module as run context.">
   <p class="eyebrow">Framework guide</p>
   <h1>DSPy</h1>
-  <p class="lead">Use Agent-Gantry with DSPy's <code>ReAct</code> tool-calling module. This page covers basic setup and the first production-friendly path; continue to the advanced page for per-call dynamic retrieval, LLM calls, and operations.</p>
+  <p class="lead">Agent-Gantry hands <code>dspy.ReAct</code> the relevant <code>dspy.Tool</code> objects for each task. Failures become DSPy error tool results, an approver decides confirmation-gated calls, and a tool can read the module running it.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/dspy/advanced/">Advanced DSPy usage →</a></p>
 
-  <h2>Basic page: register once, adapt at the edge</h2>
-  <ol>
-    <li>Create a Gantry instance near application startup.</li>
-    <li>Register deterministic Python functions with descriptions and input schemas.</li>
-    <li>Export framework-native tools for DSPy immediately before constructing <code>dspy.ReAct</code>.</li>
-    <li>Keep authorization, rate limits, and audit metadata in Gantry instead of duplicating it inside framework glue code.</li>
-  </ol>
+  <h2>Install</h2>
+  <CodeBlock lang="bash" code={`uv add "agent-gantry[dspy]"   # dspy >= 3.5 (ReAct with native tool_calls and submit)`} />
+
+  <h2>Basic page: tools picked for the task</h2>
   <CodeBlock lang="python" code={`import dspy
 from agent_gantry import AgentGantry
 from agent_gantry.dspy import DSPyAdapter
 
-dspy.configure(lm=dspy.LM("openai/gpt-4o-mini"))
+dspy.configure(lm=dspy.LM("openai/gpt-5.5"))
 gantry = AgentGantry()
 
-@gantry.register(
-    tags=["support", "orders"],
-    examples=["where is my order", "has order 4471 shipped"],
-)
+@gantry.register(examples=["where is my order", "has order 4471 shipped"])
 def get_order_status(order_id: str) -> str:
     """Return the current shipping status for an order."""
     return "in_transit"
-adapter = DSPyAdapter(gantry)
-framework_tools = await adapter.select("check an order", limit=3)  # Native dspy.Tool objects.
 
-react = dspy.ReAct("question -> answer", tools=framework_tools)
-pred = react(question="What is the status of order 42?")
-`} />
+await gantry.sync()
+tools = await DSPyAdapter(gantry).select("check an order", limit=3)   # dspy.Tool objects
+react = dspy.ReAct("question -> answer", tools=tools)
+pred = react(question="Has order 4471 shipped?")                     # or await react.acall(...)`} />
+  <p>Tools run synchronously through Gantry, so both <code>react(...)</code> and <code>await react.acall(...)</code> work with no DSPy setting.</p>
 
-  <h2>First tool-calling loop</h2>
-  <p>Let DSPy own the reasoning loop while Gantry owns the tool catalog. Start with a small tool set and assert that the framework receives only safe, documented functions.</p>
-  <div class="callout"><strong>Basic testing checklist:</strong> verify tool names, JSON schemas, auth metadata, and a happy-path invocation before wiring a live model. DSPy ships <code>dspy.utils.dummies.DummyLM</code> — a scripted, offline stand-in LM — which is useful for exercising a full <code>ReAct</code> run in tests without an API key.</div>
+  <h2>What the model sees when a tool fails</h2>
+  <p>A failed call raises <code>DSPyToolError</code>, and <code>dspy.ReAct</code> records it as an error tool result (<code>is_error=True</code>) so the model gets another turn. DSPy adds its own short traceback to every tool error; the text ends with Gantry's <code>"&lt;type&gt;: &lt;message&gt;"</code>, capped at 2,000 characters, and the original error is not chained onto it.</p>
+  <div class="callout"><strong>Redact or opt out:</strong> <code>DSPyAdapter(gantry, error_formatter=redact)</code> rewrites the text; <code>error_mode="raise"</code> raises the plain <code>ToolExecutionError</code> instead.</div>
 
-  <h2>Basic LLM call guidance</h2>
-  <p>For early prototypes, use <code>dspy.LM(...)</code> (LiteLLM-backed — OpenAI, Anthropic, and dozens of other providers) already recommended by DSPy. Wrap that client with a thin policy function that records model name, prompt tokens, completion tokens, tool calls, and latency. Once the integration stabilizes, move the policy into Agent-Gantry's LLM adapter layer so other frameworks share the same rules.</p>
+  <h2>Testing offline</h2>
+  <p>DSPy's <code>dspy.utils.dummies.DummyLM</code> scripts each turn's <code>tool_calls</code> (finishing with a <code>submit</code> call), so a test can run a full <code>ReAct</code> loop, with Gantry tools really executing, and no API key. <code>examples/agent_frameworks/dspy_example.py</code> does exactly that.</p>
 </DocsLayout>
