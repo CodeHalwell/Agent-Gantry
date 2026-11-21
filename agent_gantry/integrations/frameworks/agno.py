@@ -297,16 +297,26 @@ class _RunSelector:
         with self._lock:
             self._remember(self._queries, run_id, query or "")
 
-    def tools(self, agent: Any = None, run_context: Any = None) -> list[Any]:
+    def tools(self, agent: Any = None, run_context: Any = None) -> Any:
         """Agno tools factory: the tools selected for this run."""
         run_id = getattr(run_context, "run_id", None)
         with self._lock:
             if run_id is not None and run_id in self._tools:
                 return list(self._tools[run_id])
             query = self._queries.get(run_id, "") if run_id is not None else ""
+        if not query and _has_async_db(agent):
+            # An async db only works under ``arun``/``acontinue_run``, where Agno
+            # awaits a factory's coroutine result: read the input on that loop.
+            return self._aselect_stored(agent, run_context)
         if not query:
             query = _stored_input(agent, run_context)
-        tools = _run_coroutine_sync(self._select(query))
+        return self._keep(run_id, _run_coroutine_sync(self._select(query)))
+
+    async def _aselect_stored(self, agent: Any, run_context: Any) -> list[Any]:
+        query = await _astored_input(agent, run_context)
+        return self._keep(getattr(run_context, "run_id", None), await self._select(query))
+
+    def _keep(self, run_id: str | None, tools: list[Any]) -> list[Any]:
         if run_id is not None:
             with self._lock:
                 self._remember(self._tools, run_id, tools)
@@ -338,26 +348,60 @@ class _RunSelector:
         return [adapter._convert(spec) for spec in specs]
 
 
+def _has_async_db(agent: Any) -> bool:
+    """Whether the agent stores runs in an Agno ``AsyncBaseDb``."""
+    try:
+        from agno.db.base import AsyncBaseDb
+    except ImportError:  # pragma: no cover - agno without async dbs
+        return False
+    return isinstance(getattr(agent, "db", None), AsyncBaseDb)
+
+
+def _input_of(run: Any) -> str:
+    run_input = getattr(run, "input", None)
+    return run_input.input_content_string() if run_input is not None else ""
+
+
+def _lost_input(run_context: Any) -> str:
+    logger.warning(
+        "Agno: could not read run %s's input from the agent's db; "
+        "selecting its tools without a query",
+        getattr(run_context, "run_id", None),
+        exc_info=True,
+    )
+    return ""
+
+
 def _stored_input(agent: Any, run_context: Any) -> str:
     """A resumed run's input from the agent's storage (another process paused it)."""
     reader = getattr(agent, "get_run_output", None)
     if not callable(reader):
         return ""
     try:
-        run = reader(
-            run_id=getattr(run_context, "run_id", None),
-            session_id=getattr(run_context, "session_id", None),
+        return _input_of(
+            reader(
+                run_id=getattr(run_context, "run_id", None),
+                session_id=getattr(run_context, "session_id", None),
+            )
         )
-        run_input = getattr(run, "input", None)
-        return run_input.input_content_string() if run_input is not None else ""
     except Exception:
-        logger.warning(
-            "Agno: could not read run %s's input from the agent's db; "
-            "selecting its tools without a query",
-            getattr(run_context, "run_id", None),
-            exc_info=True,
-        )
+        return _lost_input(run_context)
+
+
+async def _astored_input(agent: Any, run_context: Any) -> str:
+    """:func:`_stored_input` for an async db, read on the run's own event loop."""
+    reader = getattr(agent, "aget_run_output", None)
+    if not callable(reader):
         return ""
+    try:
+        return _input_of(
+            await reader(
+                run_id=getattr(run_context, "run_id", None),
+                session_id=getattr(run_context, "session_id", None),
+            )
+        )
+    except Exception:
+        return _lost_input(run_context)
 
 
 class AgnoAdapter(BaseFrameworkAdapter):

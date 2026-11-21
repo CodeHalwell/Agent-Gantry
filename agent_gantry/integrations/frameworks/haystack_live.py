@@ -278,6 +278,10 @@ def _gantry_haystack_agent(
     }
     for point, entries in selector.hooks().items():
         hooks[point] = [*entries, *hooks.get(point, [])]
+    if confirmation_ui is not None and adapter._error_mode == "raise":
+        from agent_gantry.integrations.frameworks.haystack import RAISE_MODE_UI_WARNING
+
+        logger.warning(RAISE_MODE_UI_WARNING)
     if confirmation_ui is not None and adapter._error_mode == "model":
         hooks["before_tool"] = [
             adapter.confirmation_hook(confirmation_ui),

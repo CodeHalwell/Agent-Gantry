@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Agno: an agent object resuming another's paused run from an async `db`
+  (`AsyncSqliteDb`, `AsyncPostgresDb`, ...) now reads the run's input with
+  `aget_run_output` on the run's own event loop, so the approved tool is
+  offered again. It previously fell back to an empty query.
+- Haystack: `error_mode="raise"` with `confirmation_ui=` (or
+  `confirmation_hook()`) now logs a `WARNING` that the confirmation UI is never
+  asked, rather than skipping it silently.
+
 DSPy becomes a first-class integration for DSPy 3.5's redesigned `dspy.ReAct`
 (native `tool_calls` and a `submit` tool), with error tool results, an
 approver for confirmation-gated calls and the running module as run context.

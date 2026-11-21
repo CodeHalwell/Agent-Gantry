@@ -773,7 +773,8 @@ exactly 2.6.10 and on the latest).
 `cache_callables=False`) and a pre-hook that records each run's input, so Agno
 itself asks Gantry for that run's tools. The selection is kept per `run_id`, so
 `continue_run` after an approval is offered the same tools; an agent object
-resuming another's paused run reads the input back from the shared `db`. If
+resuming another's paused run reads the input back from the shared `db`
+(through `aget_run_output` on the run's own loop for an async db). If
 retrieval fails the pinned tools are still offered (with a `WARNING`). Tools
 use a synchronous entrypoint, so they work under both `agent.run()` and
 `agent.arun()`.
@@ -849,7 +850,9 @@ A confirmed call runs once with only the confirmation gate cleared, a
 modified one runs once with the new arguments, and a rejected one never runs
 (Haystack tells the model). The approval is tied to the exact call on the
 run's `State`. Without a confirmation UI, or when called directly, a gated
-tool reports that it needs approval.
+tool reports that it needs approval. With `error_mode="raise"` the hook is off: a
+confirmation UI passed in is never asked (a `WARNING` says so) and gated calls
+report that they were not run.
 
 **Run context and tracing.** Each call gets the Agent's live `State`
 (Haystack injects it; the model's schema never shows it), readable with
