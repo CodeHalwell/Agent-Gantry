@@ -20,7 +20,7 @@ This skill is the canonical reference for using the library. Read the section th
 | CrewAI (>=1.15.22) | `CrewAIAdapter(gantry, approve=...).select(...)` or `.agent_builder(...)` (per call) | [CrewAI](#crewai) |
 | Pydantic AI (2.x) | `PydanticAIAdapter(gantry).capability()` (per-turn) / `.capability(mode="search")` (Gantry-backed `ToolSearch`), or `.toolset()` / `.select(...)` | [Pydantic AI](#pydantic-ai) |
 | OpenAI Agents SDK (>=0.23.1) | `Agent(tools=await OpenAIAgentsAdapter(gantry).dynamic_tools())` (per-turn) or `.select(...)` (static) | [OpenAI Agents SDK](#openai-agents-sdk) |
-| Haystack | `HaystackAdapter(gantry).select(...)` | [Native framework adapters](#native-framework-adapters) |
+| Haystack (>=3.0) | `HaystackAdapter(gantry).agent(chat_generator=...)` (per-step) or `.select(...)` (static) | [Haystack](#haystack) |
 | Agno (>=2.6.10) | `AgnoAdapter(gantry).agent(model=...)` (per-run) or `.select(...)` (static) | [Agno](#agno) |
 | Strands Agents (>=1.38) | `StrandsAdapter(gantry).agent(model=...)` / `.tool_hook()` (per-turn) or `.select(...)` (static) | [Strands Agents](#strands-agents) |
 | DSPy | `DSPyAdapter(gantry).select(...)` (static) or `.agent_builder(signature, ...)` (per-call) | [Native framework adapters](#native-framework-adapters) |
@@ -85,6 +85,7 @@ uv add "agent-gantry[crewai]"           # CrewAI (>=1.15.22, Python <3.14); not 
 uv add "agent-gantry[llamaindex]"       # LlamaIndex (llama-index-core>=0.13)
 uv add "agent-gantry[strands]"          # Strands Agents (>=1.38)
 uv add "agent-gantry[agno]"             # Agno (>=2.6.10)
+uv add "agent-gantry[haystack]"         # Haystack (>=3.0)
 uv add "agent-gantry[lancedb]"          # disk-persistent vector store
 uv add "agent-gantry[jev]"              # selection without embeddings (TypeSafe Jev)
 uv add "agent-gantry[mcp]"              # MCP client/server
@@ -489,6 +490,25 @@ if run.is_paused:                                             # a Gantry-gated c
 - **Run context**: `current_run_context()` gives Agno's `RunContext` (`.dependencies`, `.session_state`, `.user_id`, `.session_id`, `.run_id`).
 - **Per-run**: `agent()` re-selects inside Agno (callable `tools` factory) for each run and keeps the selection for `continue_run`; works with `run()` and `arun()`.
 
+## Haystack
+
+Install with `uv add "agent-gantry[haystack]"` (pins `haystack-ai>=3.0.0`; tested on 3.0.0 and the latest).
+
+```python
+from agent_gantry.haystack import HaystackAdapter, current_agent_state
+from haystack.hooks.human_in_the_loop import SimpleConsoleUI
+
+agent = HaystackAdapter(gantry).agent(
+    chat_generator=generator, limit=5, confirmation_ui=SimpleConsoleUI()  # error_formatter=... on the adapter
+)
+result = agent.run(messages=[ChatMessage.from_user("refund order 4471")])
+```
+
+- **Errors**: `HaystackToolError` (a `ToolExecutionError`), which the Agent turns into an error tool result showing `"<type>: <message>"`; `error_mode="raise"` raises the plain `ToolExecutionError`.
+- **Approval**: `confirmation_hook(ui)` (added by `agent(confirmation_ui=...)`) asks a Haystack `ConfirmationUI` about gated Gantry tools only; confirm/modify runs the call once, reject never runs it. Without a UI, gated calls report "needs approval".
+- **Run context**: `current_agent_state()` gives the Agent's `State` (`.get(key)`, `.data`); `current_tool_invocation().deps` is `state.data`.
+- **Per-step**: `agent()` re-selects before the first step and after every tool step (dynamic `Toolset` + `before_run`/`after_tool` hooks); sticky up to `max_offered`; previous tools plus pins on a retrieval failure.
+
 ## Native framework adapters
 
 For LangChain, LangGraph, LlamaIndex, CrewAI, Pydantic AI, OpenAI Agents SDK, Haystack, Agno, Strands Agents, DSPy, and Google ADK, use the native `<Framework>Adapter` class. Its `.select(query, limit=...)` method selects the top-K relevant tools and returns the framework's **native tool objects**, with every call still routed through `gantry.execute`.
@@ -554,7 +574,7 @@ The returned live objects keep their classes, importable from the framework's `*
 
 Pydantic AI goes further than the other adapters (native retries, approval, `deps`, tool search, a `Capability`) — see [Pydantic AI](#pydantic-ai).
 
-Frameworks whose tool list is **fixed at agent construction** (CrewAI, Agno, Haystack, DSPy) can't re-advertise tools mid-run. Build a self-rebuilding agent with `<Adapter>(gantry).agent_builder(...)` (Haystack: `HaystackAdapter(gantry).tool_invoker_builder(...)`; DSPy: `DSPyAdapter(gantry).agent_builder(signature, ...)`, since `dspy.ReAct` needs a task signature); it re-selects and rebuilds on each top-level call. For a one-shot fresh slice of native tools, call `<Adapter>(gantry).live_tools(query)` (async, not available on DSPy — use `.select(query)` instead).
+Frameworks whose tool list is **fixed at agent construction** (CrewAI, Agno, DSPy, and Haystack outside `HaystackAdapter.agent()`) can't re-advertise tools mid-run. Build a self-rebuilding agent with `<Adapter>(gantry).agent_builder(...)` (Haystack: `HaystackAdapter(gantry).tool_invoker_builder(...)`; DSPy: `DSPyAdapter(gantry).agent_builder(signature, ...)`, since `dspy.ReAct` needs a task signature); it re-selects and rebuilds on each top-level call. For a one-shot fresh slice of native tools, call `<Adapter>(gantry).live_tools(query)` (async, not available on DSPy — use `.select(query)` instead).
 
 ## Selection without embeddings (Jev)
 
@@ -1024,6 +1044,7 @@ This catches the headline mistakes: a tool description that names another tool (
 | LlamaIndex run waits forever on a gated tool | Nobody answered the `InputRequiredEvent`, or the answer lacks its `gantry_approval_id` | Stream events and `handler.ctx.send_event(HumanResponseEvent(response="yes", gantry_approval_id=event.gantry_approval_id))` |
 | Strands run ends with `stop_reason == "interrupt"` | A Gantry-gated tool needs approval | Resume with `agent.invoke_async([{"interruptResponse": {"interruptId": i.id, "response": "yes"}}])` |
 | Agno run returns with `run.is_paused` | A Gantry-gated tool needs approval | `requirement.confirm()` for each of `run.active_requirements`, then `agent.acontinue_run(run_response=run)` |
+| Haystack gated tool says it "requires human approval and was not run" | No confirmation hook on the Agent | `adapter.agent(..., confirmation_ui=SimpleConsoleUI())` or `hooks={"before_tool": [adapter.confirmation_hook(ui)]}` |
 | ADK run stops with an `adk_request_confirmation` function call | A Gantry-gated tool needs approval | Send `FunctionResponse(name="adk_request_confirmation", id=call.id, response={"confirmed": True})` as the next message |
 | LangGraph gated tool says it "requires human approval and was not run" | No checkpointer, so the interrupt could never be resumed | Pass `checkpointer=` to `create_agent` / `areact_agent` |
 | A LangChain tool error became a `ToolMessage` instead of raising | `handle_tool_error=True` in the default `error_mode="model"` | `LangChainAdapter(gantry, error_mode="raise")` |

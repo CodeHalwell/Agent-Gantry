@@ -35,7 +35,7 @@ python examples/agent_frameworks/langchain_example.py    # no key needed to see 
 | Microsoft Agent Framework | [`agent_frameworks/agent_framework_provider_example.py`](agent_frameworks/agent_framework_provider_example.py) | `pip install agent-framework-core agent-framework-openai agent-framework-orchestrations` |
 | OpenAI Agents SDK | [`agent_frameworks/openai_agents_example.py`](agent_frameworks/openai_agents_example.py) | `pip install 'agent-gantry[openai-agents]'` |
 | Pydantic AI | [`agent_frameworks/pydantic_ai_example.py`](agent_frameworks/pydantic_ai_example.py) | `pip install 'agent-gantry[pydantic-ai]'` |
-| Haystack | [`agent_frameworks/haystack_example.py`](agent_frameworks/haystack_example.py) | `pip install haystack-ai` |
+| Haystack | [`agent_frameworks/haystack_example.py`](agent_frameworks/haystack_example.py) | `pip install 'agent-gantry[haystack]'` (runs offline) |
 | Agno | [`agent_frameworks/agno_example.py`](agent_frameworks/agno_example.py) | `pip install 'agent-gantry[agno]'` (runs offline) |
 | Strands | [`agent_frameworks/strands_example.py`](agent_frameworks/strands_example.py) | `pip install 'agent-gantry[strands]'` (runs offline) |
 | DSPy | [`agent_frameworks/dspy_example.py`](agent_frameworks/dspy_example.py) | `pip install dspy` |

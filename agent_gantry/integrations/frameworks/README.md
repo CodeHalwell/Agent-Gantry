@@ -42,7 +42,7 @@ Install Gantry plus just the SDK you need:
 | `crewai` | `pip install 'agent-gantry[crewai]'` | `Agent(..., tools=await adapter.select(query))` — see [CrewAI](#crewai-first-class) |
 | `pydantic_ai` | `pip install 'agent-gantry[pydantic-ai]'` | `Agent(model, capabilities=[adapter.capability()])` — see [Pydantic AI](#pydantic-ai-first-class) |
 | `openai_agents` | `pip install 'agent-gantry[openai-agents]'` | `Agent(..., tools=await adapter.dynamic_tools())` — see [OpenAI Agents SDK](#openai-agents-sdk-first-class) |
-| `haystack` | `pip install agent-gantry haystack-ai` | `Agent(..., tools=await adapter.select(query))` |
+| `haystack` | `pip install 'agent-gantry[haystack]'` | `adapter.agent(chat_generator=...)` — see [Haystack](#haystack-first-class) |
 | `agno` | `pip install 'agent-gantry[agno]'` | `adapter.agent(model=...)` — see [Agno](#agno-first-class) |
 | `google_adk` | `pip install 'agent-gantry[google-adk]'` | `adapter.agent(model=..., name=...)` — see [Google ADK](#google-adk-first-class) |
 | `strands` | `pip install 'agent-gantry[strands]'` | `Agent(hooks=[adapter.live()])` — see [Strands Agents](#strands-agents-first-class) |
@@ -315,7 +315,7 @@ documented, framework-idiomatic path; `live()` just delegates to one of them):
 | CrewAI | per-call | `agent_builder` | `GantryLiveCrewAgent` builder | `await builder.build(query)` per task |
 | Pydantic AI | per-turn | `toolset` | `GantryToolset` (`AbstractToolset`) | `Agent(model, toolsets=[<result>])` |
 | OpenAI Agents SDK | per-turn | `session` (requires `agent=`) | `GantryAgentSession` | `await session.run(run_input)` per turn |
-| Haystack | per-call | `tool_invoker_builder` | `GantryLiveHaystackToolInvoker` builder (ToolInvoker on haystack 2.x, Agent on >=3.0) | `await builder.build(query)` per call |
+| Haystack | per-call | `tool_invoker_builder` | `GantryLiveHaystackToolInvoker` builder (ToolInvoker on haystack 2.x, Agent on >=3.0) | `adapter.agent()` re-selects every step instead; `await builder.build(query)` per call |
 | Agno | per-call | `agent_builder` | `GantryLiveAgnoAgent` builder | `await builder.build(query)` per run (or one `adapter.agent()` that re-selects inside Agno per run) |
 | Google ADK | per-turn | `before_model_callback` | async `(callback_context, llm_request) -> None` | `Agent(tools=[], before_model_callback=<result>)` |
 | Strands Agents | per-turn | `tool_hook` | `GantryStrandsToolHook` (`HookProvider`) | `Agent(tools=[], hooks=[<result>])` |
@@ -357,7 +357,8 @@ agent = LlamaIndexAdapter(gantry).function_agent(llm)   # LlamaIndex agent that 
 ```
 
 Frameworks whose tool list is **fixed for a run** (CrewAI, Agno,
-Haystack, DSPy) can't re-advertise tools mid-run; their "live" wrappers —
+DSPy, and Haystack outside `HaystackAdapter.agent()`, which re-selects every
+step through Agent hooks) can't re-advertise tools mid-run; their "live" wrappers —
 obtained via `CrewAIAdapter(gantry).agent_builder(...)`,
 `AgnoAdapter(gantry).agent_builder(...)` (or `AgnoAdapter(gantry).agent(...)`, one
 Agent whose callable `tools` factory re-selects for each run),
@@ -807,6 +808,57 @@ run).
 `tool_call_id` the model's call id, metadata `agent_name` / `session_id` /
 `user_id`). The active OpenTelemetry span becomes the `ToolCall`'s trace.
 
+
+## Haystack (first-class)
+
+`pip install 'agent-gantry[haystack]'` (pins `haystack-ai>=3.0.0`; CI runs the
+tests on exactly 3.0.0 and on the latest).
+
+| Mode | Build | Use when |
+|---|---|---|
+| Per-step (recommended) | `adapter.agent(chat_generator=..., confirmation_ui=...)` | Agents; Gantry picks each step's tools |
+| Static slice | `Agent(tools=await adapter.select(query), hooks={"before_tool": [adapter.confirmation_hook(ui)]})` | A fixed task |
+
+`adapter.agent()` gives the `Agent` a dynamic `Toolset` and `before_run` /
+`after_tool` hooks. Gantry selects tools for the latest user message before
+the first step and again after each tool step (joining the latest successful
+tool result to the query), and Haystack re-flattens the toolset at the start
+of every step, so the next model call sees the new selection. `sticky=True`
+keeps earlier tools up to `max_offered` (default `3 * limit`); if retrieval
+fails the run keeps its previous tools plus pins (with a `WARNING`). Per-run
+state travels in a context variable, so concurrent runs of one Agent stay
+apart. Your own `hooks` still run.
+
+**Errors.** A failed call raises `HaystackToolError`, a `ToolExecutionError`
+whose `str()` is `"<type>: <message>"` (capped). The Agent turns it into an
+error tool result with exactly that text (Gantry's `Tool` subclass drops
+Haystack's echo of the call's arguments) and the run continues. `error_formatter=fn` rewrites the text; `error_mode="raise"`
+raises the plain `ToolExecutionError`.
+
+**Approval.** `adapter.confirmation_hook(confirmation_ui)` is a `before_tool`
+hook built on Haystack's `ConfirmationHook`: it asks the `ConfirmationUI`
+(`SimpleConsoleUI()`, `RichConsoleUI()` or your own) about confirmation-gated
+Gantry tools only, per `AgentGantry.requires_confirmation()`.
+
+```python
+from haystack.hooks.human_in_the_loop import SimpleConsoleUI
+
+agent = HaystackAdapter(gantry).agent(chat_generator=generator, confirmation_ui=SimpleConsoleUI())
+```
+
+A confirmed call runs once with only the confirmation gate cleared, a
+modified one runs once with the new arguments, and a rejected one never runs
+(Haystack tells the model). The approval is tied to the exact call on the
+run's `State`. Without a confirmation UI, or when called directly, a gated
+tool reports that it needs approval.
+
+**Run context and tracing.** Each call gets the Agent's live `State`
+(Haystack injects it; the model's schema never shows it), readable with
+`agent_gantry.haystack.current_agent_state()` or `current_tool_invocation()`
+(`deps` is `state.data`). Tools have a native `async_function`, so
+`Agent.run_async` does not block. The active OpenTelemetry span becomes the
+`ToolCall`'s trace.
+
 ## Shared base
 
 `base.py` provides `GantryToolset` (selection, including the `required`/
@@ -973,7 +1025,7 @@ asserting no exception + a `WARNING` log record).
 | CrewAI | **Deviation:** `_run` returns CrewAI's `ToolFailure` (recorded on `TaskOutput.tool_failures`); `error_mode="raise"` restores raising | *(per-call — see above)* |
 | Pydantic AI | **Deviation:** `ModelRetry` / `ToolFailed` / `ApprovalRequired` (native), chained from `ToolExecutionError`; `error_mode="raise"` restores raising | Degrades to this run's earlier tools (per-run state) + `WARNING` |
 | OpenAI Agents SDK | **Deviation:** returned to the model as `Error: ...` tool output; `error_mode="raise"` restores raising | `dynamic_tools`: degrades to this run's earlier tools (per-run state) + `WARNING`; `session`/`run_hooks`: previous turn's `agent.tools` + `WARNING` |
-| Haystack | Raises `ToolExecutionError` | *(per-call — see above)* |
+| Haystack | Raises `HaystackToolError` (a `ToolExecutionError` whose text is the model-facing failure), which the Agent turns into an error tool result; `error_mode="raise"` raises the plain `ToolExecutionError` | Per-step `agent()`: keeps the run's previous tools plus pins + `WARNING` |
 | Agno | Raises `AgnoToolError` (a `ToolExecutionError` whose text is the model-facing failure), which Agno records as a failed tool result; `error_mode="raise"` raises the plain `ToolExecutionError` | Per-run `agent()`: degrades to the pinned tools + `WARNING` |
 | Google ADK | **Deviation:** `FunctionTool.run_async` returns `{"error": ...}` (ADK's convention; the raw `.func` still raises); `error_mode="raise"` restores raising | Degrades to this run's previous tools plus pins (per-run state) + `WARNING` |
 | Strands Agents | **Deviation:** error `ToolResult(status="error")` from both `__call__` and the agent loop; `error_mode="raise"` restores raising | Degrades to previous turn's registered tools (stateful) + `WARNING` — the other precedent |
