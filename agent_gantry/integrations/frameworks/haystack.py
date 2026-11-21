@@ -192,7 +192,8 @@ def _spec_to_haystack(
 
     The tool has a synchronous ``function`` (Gantry's sync bridge) and, where
     Haystack supports it, a native ``async_function`` for ``Agent.run_async``.
-    Both take the Agent's ``State`` through a ``state: State`` parameter that
+    Both take the Agent's ``State`` through a ``State``-annotated parameter
+    (``gantry_state``, renamed if a tool argument uses that name) that
     Haystack injects and the model's schema never shows. The ``haystack``
     import happens here, lazily, so callers without Haystack installed only hit
     the error when they actually export a tool.
@@ -210,7 +211,13 @@ def _spec_to_haystack(
     parameters = spec.aliased_parameters()
     aliases = spec.parameter_aliases()
     state_cls = _state_class()
-    inject_state = state_cls is not None and "state" not in (parameters.get("properties") or {})
+    inject_state = state_cls is not None
+    # Haystack injects State into any parameter annotated State, whatever its
+    # name; pick one no tool argument uses, so a tool's own ``state`` argument
+    # (e.g. a US state) still gets the Agent State and its approvals.
+    state_param = "gantry_state"
+    while state_param in (parameters.get("properties") or {}):
+        state_param = f"_{state_param}"
     gantry = spec._gantry
     gated = (
         model_mode
@@ -219,7 +226,7 @@ def _spec_to_haystack(
     )
 
     def _prepare(kwargs: dict[str, Any]) -> tuple[Any, dict[str, Any], bool]:
-        state = kwargs.pop("state", None) if inject_state else None
+        state = kwargs.pop(state_param, None) if inject_state else None
         approved = gated and state is not None and _take_approval(state, spec.native_name, kwargs)
         if aliases:
             kwargs = {aliases.get(key, key): value for key, value in kwargs.items()}
@@ -264,12 +271,15 @@ def _spec_to_haystack(
             fn.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
                 [
                     inspect.Parameter(
-                        "state", inspect.Parameter.KEYWORD_ONLY, default=None, annotation=state_cls
+                        state_param,
+                        inspect.Parameter.KEYWORD_ONLY,
+                        default=None,
+                        annotation=state_cls,
                     ),
                     inspect.Parameter("kwargs", inspect.Parameter.VAR_KEYWORD),
                 ]
             )
-            fn.__annotations__ = {"state": state_cls}
+            fn.__annotations__ = {state_param: state_cls}
 
     kwargs: dict[str, Any] = {
         "name": spec.native_name,

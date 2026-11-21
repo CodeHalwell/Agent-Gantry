@@ -284,6 +284,22 @@ async def test_per_step_agent_asks_before_a_gated_call(gantry, action):
     assert gantry.sent == (["bob@x"] if action == "confirm" else [])
 
 
+async def test_a_tool_argument_named_state_keeps_the_approval_path(gantry):
+    @gantry.register(requires_confirmation=True, examples=["register a voter in a US state"])
+    def register_voter(name: str, state: str) -> str:
+        """Register a voter in a US state."""
+        gantry.sent.append(f"{name}@{state}")
+        return f"registered {name} in {state}"
+
+    await gantry.sync()
+    ui = ScriptedUI("confirm")
+    generator = ScriptedGenerator([("register_voter", {"name": "Jo", "state": "CA"})])
+    agent = HaystackAdapter(gantry).agent(chat_generator=generator, limit=1, confirmation_ui=ui)
+    agent.run(messages=_ask("register a voter in a US state"))
+    assert ui.asked == [("register_voter", {"name": "Jo", "state": "CA"})]
+    assert gantry.sent == ["Jo@CA"]
+
+
 async def test_per_step_agent_uses_the_adapter_settings(gantry):
     generator = ScriptedGenerator([("divide", {"a": 1, "b": 0})])
     agent = HaystackAdapter(gantry, error_formatter=lambda exc: "[redacted]").agent(

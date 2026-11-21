@@ -15,8 +15,8 @@ error tool results and `State` injection.
 (still a `ToolExecutionError`), so the model's error tool result reads
 `"<type>: <message>"` instead of Haystack's `Failed to invoke Tool ... with
 parameters {...}` wrapper. Gantry tools now take the Agent's `State` through an
-injected `state` parameter. Pass `error_mode="raise"` to `HaystackAdapter` to
-keep the previous error behaviour.
+injected `gantry_state` parameter, hidden from the model's schema. Pass
+`error_mode="raise"` to `HaystackAdapter` to keep the previous error behaviour.
 
 ### Added
 
