@@ -81,8 +81,13 @@ _PENDING_APPROVAL_TEXT = (
     "approve it, or continue without it."
 )
 
-#: Runs whose selection :meth:`AgnoAdapter.agent` remembers (for ``continue_run``).
+#: Unfinished runs whose selection :meth:`AgnoAdapter.agent` remembers (for
+#: ``continue_run``). Finished runs are forgotten by a post-hook; past this
+#: count the oldest run that cannot be awaiting approval goes first.
 _MAX_REMEMBERED_RUNS = 256
+
+#: Hard bound, reached only when every remembered run could be awaiting approval.
+_MAX_REMEMBERED_GATED_RUNS = 4 * _MAX_REMEMBERED_RUNS
 
 #: Parameters Agno fills in itself: the run context, the agent, the call.
 _INJECTED = ("_agno_run_context", "_agno_agent", "fc")
@@ -236,7 +241,9 @@ class _RunSelector:
     ``tools`` factory, and resolves the factory again under the same ``run_id``
     on ``continue_run``. The hook records each run's input; the factory selects
     for it and remembers the result, so a run resumed after an approval is
-    offered the same tools.
+    offered the same tools. A post-hook forgets each run when it finishes
+    (Agno skips post-hooks while a run is paused), and eviction spares runs
+    offered a confirmation-gated tool, which may still be paused.
     """
 
     def __init__(self, adapter: AgnoAdapter, select_kwargs: dict[str, Any]) -> None:
@@ -245,12 +252,28 @@ class _RunSelector:
         self._queries: OrderedDict[str, str] = OrderedDict()
         self._tools: OrderedDict[str, list[Any]] = OrderedDict()
 
-    @staticmethod
-    def _remember(store: OrderedDict[str, Any], key: str, value: Any) -> None:
+    def _may_be_paused(self, run_id: str) -> bool:
+        tools = self._tools.get(run_id)
+        return tools is not None and any(
+            getattr(tool, "requires_confirmation", False) is True for tool in tools
+        )
+
+    def _remember(self, store: OrderedDict[str, Any], key: str, value: Any) -> None:
         store[key] = value
         store.move_to_end(key)
         while len(store) > _MAX_REMEMBERED_RUNS:
-            store.popitem(last=False)
+            victim = next((k for k in store if not self._may_be_paused(k)), None)
+            if victim is None:
+                if len(store) <= _MAX_REMEMBERED_GATED_RUNS:
+                    return
+                victim = next(iter(store))
+            del store[victim]
+
+    def forget(self, run_context: Any = None) -> None:
+        """Agno post-hook: the run finished, so it will not be continued."""
+        run_id = getattr(run_context, "run_id", None)
+        self._queries.pop(run_id, None)
+        self._tools.pop(run_id, None)
 
     def record_input(self, run_input: Any = None, run_context: Any = None) -> None:
         """Agno pre-hook: remember this run's input as its selection query."""
@@ -407,7 +430,7 @@ class AgnoAdapter(BaseFrameworkAdapter):
         """Build one ``agno.agent.Agent`` that re-selects Gantry tools for every run.
 
         ``agent_kwargs`` (``model``, ``name``, ``instructions``, ``db``, ...) are
-        forwarded to ``Agent``; any ``pre_hooks`` you pass still run. The tools
+        forwarded to ``Agent``; any ``pre_hooks``/``post_hooks`` you pass still run. The tools
         are an Agno callable factory (with ``cache_callables=False``), selected
         for each run's input and kept for that run so ``continue_run`` after an
         approval is offered the same tools. A run resumed by a different agent
@@ -433,10 +456,12 @@ class AgnoAdapter(BaseFrameworkAdapter):
         )
         selector = _RunSelector(self, selection)
         pre_hooks = list(agent_kwargs.pop("pre_hooks", None) or [])
+        post_hooks = list(agent_kwargs.pop("post_hooks", None) or [])
         agent_kwargs.setdefault("cache_callables", False)
         return Agent(
             tools=selector.tools,
             pre_hooks=[selector.record_input, *pre_hooks],
+            post_hooks=[selector.forget, *post_hooks],
             **agent_kwargs,
         )
 

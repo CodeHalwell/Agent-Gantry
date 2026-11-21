@@ -263,6 +263,29 @@ async def test_per_run_agent_resumes_an_approved_call(gantry, approve):
     assert model.offered == [["send_email"], ["send_email"]]
 
 
+async def test_paused_run_outlives_many_later_runs(gantry, monkeypatch):
+    from agent_gantry.integrations.frameworks import agno as agno_module
+
+    monkeypatch.setattr(agno_module, "_MAX_REMEMBERED_RUNS", 2)
+    model = ScriptedModel(steps=[[("send_email", {"to": "bob@x"})]])
+    agent = AgnoAdapter(gantry).agent(model=model, limit=1)
+    run = await agent.arun("send an email message to bob")
+    for _ in range(5):
+        await agent.arun("what's the weather forecast for Paris")
+    [requirement] = run.active_requirements
+    requirement.confirm()
+    await agent.acontinue_run(run_response=run)
+    assert gantry.sent == ["bob@x"]
+    assert model.offered[-1] == ["send_email"]
+
+
+async def test_finished_runs_are_forgotten(gantry):
+    agent = AgnoAdapter(gantry).agent(model=ScriptedModel(), limit=1)
+    selector = agent.tools.__self__
+    await agent.arun("what's the weather forecast for Paris")
+    assert not selector._tools and not selector._queries
+
+
 async def test_another_agent_object_resumes_from_the_shared_db(gantry):
     from agno.db.in_memory import InMemoryDb
 
@@ -294,6 +317,15 @@ async def test_per_run_agent_keeps_user_pre_hooks(gantry):
     seen = []
     agent = AgnoAdapter(gantry).agent(
         model=ScriptedModel(), limit=1, pre_hooks=[lambda run_input: seen.append(run_input)]
+    )
+    await agent.arun("weather in Paris")
+    assert len(seen) == 1
+
+
+async def test_per_run_agent_keeps_user_post_hooks(gantry):
+    seen = []
+    agent = AgnoAdapter(gantry).agent(
+        model=ScriptedModel(), limit=1, post_hooks=[lambda run_output: seen.append(run_output)]
     )
     await agent.arun("weather in Paris")
     assert len(seen) == 1
