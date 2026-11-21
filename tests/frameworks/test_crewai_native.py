@@ -199,6 +199,28 @@ async def test_agent_builder_uses_the_adapter_settings(gantry):
     assert output.tasks_output[0].tool_failures[0].failure.message == "[redacted]"
 
 
+async def test_each_adapter_keeps_its_own_approver(gantry):
+    """Two adapters exposing the same tool name never decide each other's calls."""
+    refusing = await CrewAIAdapter(gantry, approve=lambda r: False).select(
+        "send an email message", limit=6
+    )
+    await CrewAIAdapter(gantry, approve=lambda r: True).select("send an email message", limit=6)
+
+    async def kickoff(tools):
+        llm = _llm(("send_email", {"to": "bob@x"}))
+        agent = Agent(role="clerk", goal="help", backstory="b", llm=llm, tools=tools, max_iter=5)
+        task = Task(description="email bob", expected_output="done", agent=agent)
+        await Crew(agents=[agent], tasks=[task]).kickoff_async()
+
+    await kickoff(refusing)  # built first; the approving adapter's tools came later
+    assert gantry.sent == []
+
+
+async def test_crew_context_reaches_handlers_in_raise_mode_too(gantry):
+    _, llm = await _kickoff(gantry, "who is making this call", ("whoami", {}), error_mode="raise")
+    assert "role=clerk;fw=crewai;task=chores" in _observations(llm)
+
+
 def test_approve_is_validated(gantry):
     with pytest.raises(ValueError, match="approve"):
         CrewAIAdapter(gantry, approve="always")  # type: ignore[arg-type]

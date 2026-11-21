@@ -37,7 +37,7 @@ import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from agent_gantry.core.invocation import current_tool_invocation
 from agent_gantry.integrations.frameworks.base import (
@@ -104,14 +104,16 @@ Approver = Callable[[ApprovalRequest], bool]
 _HOOK_CONTEXT: contextvars.ContextVar[Any] = contextvars.ContextVar(
     "agent_gantry_crewai_hook_context", default=None
 )
-#: Name of the tool whose next call the approver just allowed. CrewAI runs the
+#: The tool instance whose next call the approver just allowed. CrewAI runs the
 #: hook and then the tool in the same context, so this is consumed by that call.
-_APPROVED: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+_APPROVED: contextvars.ContextVar[Any] = contextvars.ContextVar(
     "agent_gantry_crewai_approved", default=None
 )
 
-#: native tool name -> (gated check, approver) for every Gantry CrewAI tool built.
-_GATES: dict[str, tuple[Callable[[], bool], Approver | None, str]] = {}
+#: Class attribute on each Gantry CrewAI tool: ``(gated check, approver, description)``.
+#: Kept on the tool itself, so two adapters exposing the same tool name never
+#: decide each other's calls.
+_GATE_ATTR = "_gantry_gate"
 _HOOK_LOCK = threading.Lock()
 _HOOK_INSTALLED = False
 
@@ -140,13 +142,22 @@ def _console_approver(request: ApprovalRequest) -> bool:
     return str(answer).strip().lower() in {"y", "yes"}
 
 
+def _gantry_tool(context: Any) -> Any:
+    """The Gantry ``BaseTool`` behind a hook context's structured tool, if any."""
+    tool = getattr(getattr(context, "tool", None), "_original_tool", None)
+    return tool if getattr(type(tool), _GATE_ATTR, None) is not None else None
+
+
 def _gantry_before_tool_call(context: Any) -> bool | None:
     """CrewAI ``before_tool_call`` hook: run context and the approval gate."""
     _HOOK_CONTEXT.set(context)
     _APPROVED.set(None)
+    tool = _gantry_tool(context)
+    if tool is None:
+        return None
     name = getattr(context, "tool_name", None)
-    gate = _GATES.get(name) if isinstance(name, str) else None
-    if gate is None:
+    gate = getattr(type(tool), _GATE_ATTR)
+    if gate is False:  # error_mode="raise": run context only
         return None
     needs_approval, approver, description = gate
     if approver is None or not needs_approval():
@@ -168,7 +179,7 @@ def _gantry_before_tool_call(context: Any) -> bool | None:
         approved = False
     if not approved:
         return False  # CrewAI blocks the call and tells the agent
-    _APPROVED.set(name)
+    _APPROVED.set(tool)
     return None
 
 
@@ -242,6 +253,7 @@ def _spec_to_crewai(
     model_mode = error_mode == "model"
     approver: Approver | None = _console_approver if approve == "console" else approve  # type: ignore[assignment]
     gantry = spec._gantry
+    gate: Any = False  # run context only
     if model_mode and gantry is not None:
         tool_ref = spec.tool or spec.name
         namespace = spec._namespace
@@ -249,14 +261,14 @@ def _spec_to_crewai(
         def _needs_approval() -> bool:
             return gantry.requires_confirmation(tool_ref, namespace)
 
-        _GATES[spec.native_name] = (_needs_approval, approver, spec.description)
-        _install_hook()
+        gate = (_needs_approval, approver, spec.description)
+    _install_hook()
 
-    def _execute(kwargs: dict[str, Any]) -> Any:
+    def _execute(tool: Any, kwargs: dict[str, Any]) -> Any:
         context = _HOOK_CONTEXT.get()
-        if context is not None and getattr(context, "tool_name", None) != spec.native_name:
+        if context is not None and _gantry_tool(context) is not tool:
             context = None  # a stale context from another tool's call
-        approved = model_mode and _APPROVED.get() == spec.native_name
+        approved = model_mode and _APPROVED.get() is tool
         coro = execute_spec(
             spec,
             kwargs,
@@ -279,8 +291,10 @@ def _spec_to_crewai(
     # declared fields and MUST be set via the constructor. ``_run`` closes over
     # ``spec``; the generated ``args_schema`` surfaces the real parameters.
     class GantryCrewAITool(BaseTool):  # type: ignore[misc, valid-type]
+        _gantry_gate: ClassVar[Any] = gate
+
         def _run(self, **kwargs: Any) -> Any:
-            return _execute(kwargs)
+            return _execute(self, kwargs)
 
     kwargs: dict[str, Any] = {"name": spec.native_name, "description": spec.description}
     args_schema = _build_args_schema(spec)
