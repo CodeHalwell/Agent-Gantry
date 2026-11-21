@@ -80,7 +80,7 @@ For per-step (multi-turn) re-selection within one run, use `ToolRefresher`
   3. `bridge.build_workflow([specs], edges=[...])` — fan-out/handoff routing where each participating agent receives its own semantically-selected Gantry tool subset.
 - `agent_framework_orchestration_example.py`: Multi-agent orchestration patterns (Sequential / Concurrent / Handoff) on AF 1.5.0+, each participating agent receiving its own semantically selected Gantry tool slice. Since AF 1.2.2, the terminal output of sequential/concurrent workflows is an `AgentResponse` (str-coercible) rather than a bare string — extract text with `str(result)` or `result.text`.
 - `agent_framework_harness_example.py`: AF background-agent harness integration (see the file's docstring for the AF version gates it exercises).
-- `google_adk_example.py`: Google Agent Development Kit (ADK) integration using `Agent` + `Runner`.
+- `google_adk_example.py`: runs offline with a scripted ADK model. Per-turn selection through `before_model_callback` (the email tool appears after the CRM lookup), failures returned as `{"error": ...}` responses, a confirmation-gated tool answered with `adk_request_confirmation`, and a tool reading the session state through `current_tool_context()`.
 - `langchain_example.py`: `LangChainAdapter.select` feeding `langchain.agents.create_agent` (LangChain 1.x; the old `langgraph.prebuilt.create_react_agent` is deprecated and removed in LangGraph 2.0).
 - `langgraph_example.py`: runs offline with a scripted chat model. `LangGraphAdapter.middleware()` re-selects tools every model turn (the email tool appears after the CRM lookup returns), failures come back as error `ToolMessage`s, a confirmation-gated tool pauses with `interrupt()` and runs once on `Command(resume=True)`, and a tool reads the graph's `context=` through `current_tool_runtime()`.
 - `crewai_example.py`: `CrewAIAdapter.select` once per agent — two crew members each holding a different static slice of one catalogue (run with `kickoff_async`).
@@ -142,7 +142,7 @@ runs without them.
 OPENAI_API_KEY=sk-...          # most examples
 AZURE_OPENAI_ENDPOINT=...      # agent_framework_* examples accept these
 AZURE_OPENAI_API_KEY=...       # in place of OPENAI_API_KEY
-GOOGLE_API_KEY=...             # google_adk_example.py (or GEMINI_API_KEY)
+GOOGLE_API_KEY=...             # to run google_adk_example.py on Gemini (or GEMINI_API_KEY)
 AWS_ACCESS_KEY_ID=...          # strands_example.py — Strands defaults to Bedrock,
 AWS_SECRET_ACCESS_KEY=...      # so the credential must be entitled to the model
 ```

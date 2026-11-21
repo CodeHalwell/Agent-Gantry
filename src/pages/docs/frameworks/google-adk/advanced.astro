@@ -2,38 +2,47 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Advanced Google ADK guide | Agent-Gantry">
+<DocsLayout title="Advanced Google ADK guide | Agent-Gantry" description="Tool confirmation, how per-turn selection works inside a run, tracing and error modes for the Agent-Gantry Google ADK integration.">
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced Google ADK</h1>
-  <p class="lead">Scale Google ADK from static tool demos to governed agent workloads with semantic selection, explicit LLM-call policy, tracing, and deployment boundaries.</p>
+  <p class="lead">Tool confirmation, how per-turn selection works inside a run, and tracing.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/google-adk/">← Basic Google ADK usage</a></p>
 
-  <h2>Advanced page: dynamic tool selection</h2>
-  <p>Before each Google ADK run, ask Gantry for a context-aware subset of tools. Combine request metadata, tenant policy, semantic similarity, and reranker results so the agent sees a concise, relevant tool surface.</p>
-  <CodeBlock lang="python" code={`candidate_tools = gantry.select_tools(
-    query=user_message,
-    tags=["support"],
-    limit=8,
-)
-framework_tools = [GoogleADKAdapter.convert(spec) for spec in candidate_tools]
-`} />
+  <h2>Tool confirmation</h2>
+  <p>A tool registered with <code>requires_confirmation=True</code>, or matched by a <code>SecurityPolicy(require_confirmation=[...])</code> pattern, sets ADK's <code>require_confirmation</code>. The run emits an <code>adk_request_confirmation</code> function call; answer it with a function response to continue.</p>
+  <CodeBlock lang="python" code={`pending = None
+async for event in runner.run_async(user_id=uid, session_id=sid, new_message=message):
+    for part in (event.content.parts if event.content else None) or []:
+        if part.function_call and part.function_call.name == "adk_request_confirmation":
+            pending = part.function_call
 
-  <h2>LLM calls and model policy</h2>
-  <p>Centralize LLM calls when Google ADK supports custom model clients; otherwise add middleware around the framework call. The policy should select the provider, enforce budget ceilings, redact sensitive fields, emit token metrics, and decide whether tool results should be summarized before returning to the model.</p>
-  <CodeBlock lang="python" code={`response = llm_policy.complete(
-    framework="Google ADK",
-    model="primary-or-fallback-model",
-    messages=messages,
-    tools=framework_tools,
-    trace_id=trace_id,
-)
-`} />
+if pending is not None:
+    reply = types.FunctionResponse(
+        name="adk_request_confirmation", id=pending.id,
+        response={"confirmed": ask_a_human(pending.args["originalFunctionCall"])},
+    )
+    message = types.Content(role="user", parts=[types.Part(function_response=reply)])
+    async for event in runner.run_async(user_id=uid, session_id=sid, new_message=message):
+        ...`} />
+  <p>A confirmed call runs once through <code>gantry.execute</code> with only the confirmation gate cleared; ADK refuses a rejected one itself. <code>gantry.requires_confirmation(tool)</code> answers the same question without running anything.</p>
+  <p>ADK resumes a confirmed call through the agent's own tools. <code>adapter.agent()</code> includes a toolset that supplies the gated Gantry tools only on the turn answering a confirmation; if you wire <code>before_model_callback()</code> into your own agent, add <code>tools=[adapter.confirmation_toolset()]</code>.</p>
 
-  <h2>Production patterns</h2>
+  <h2>Per-turn selection inside a run</h2>
   <ul>
-    <li><strong>Observability:</strong> attach trace IDs to every Google ADK run, LLM call, and tool execution.</li>
-    <li><strong>Safety:</strong> keep high-risk tools behind explicit allowlists, human approval, or dry-run executors.</li>
-    <li><strong>Resilience:</strong> add provider fallback for LLM calls and executor fallback for remote MCP/A2A tools.</li>
-    <li><strong>Evaluation:</strong> replay representative prompts with fixed tool snapshots before broadening dynamic retrieval.</li>
+    <li><strong>Mechanism:</strong> before each model request the callback selects tools and injects them with <code>LlmRequest.append_tools</code>, which also registers them so ADK can run them that turn.</li>
+    <li><strong>Query:</strong> the newest user message, plus the latest successful tool result after it (first 2,000 characters). An <code>&#123;"error": ...&#125;</code> response never feeds retrieval; <code>query_from_results=False</code> keeps all tool output out.</li>
+    <li><strong>State:</strong> keyed by the ADK invocation, so concurrent runs are independent.</li>
+    <li><strong>Stickiness:</strong> tools offered earlier in a run stay offered, up to <code>max_offered</code> (default <code>3 * limit</code>); the current selection and pinned tools always stay. Use <code>sticky=False</code> for a strict top-k.</li>
+    <li><strong>Failure:</strong> if retrieval fails, the turn keeps the run's previous tools plus the pins, and logs a warning.</li>
+  </ul>
+
+  <h2>Run context and tracing</h2>
+  <p><code>current_tool_context()</code> returns the call's ADK <code>ToolContext</code>: session <code>state</code>, <code>user_id</code>, <code>invocation_id</code>, <code>function_call_id</code>, artifacts and memory. <code>current_tool_invocation()</code> carries the same object, with <code>deps</code> set to the session state. ADK traces with OpenTelemetry, so its active span becomes the Gantry <code>ToolCall</code>'s <code>trace_id</code> and <code>parent_span_id</code>.</p>
+
+  <h2>Production checklist</h2>
+  <ul>
+    <li>Handle <code>adk_request_confirmation</code> on any agent that can reach a confirmation-gated tool.</li>
+    <li>Use an <code>error_formatter</code> if handler exception messages may contain internals.</li>
+    <li>Pin must-have tools with <code>required=[...]</code> or <code>always_include=[...]</code>; they stay offered even when retrieval fails.</li>
   </ul>
 </DocsLayout>

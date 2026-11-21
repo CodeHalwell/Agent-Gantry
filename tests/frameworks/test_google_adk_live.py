@@ -145,7 +145,12 @@ async def test_gantry_adk_agent_builds_agent_with_no_static_tools(gantry):
 
     assert isinstance(agent, Agent)
     assert agent.name == "assistant"
-    # The agent ships with no statically registered tools; the callback injects
-    # the relevant slice before each model request.
-    assert list(agent.tools) == []
+    # No statically registered tools: the callback injects the relevant slice
+    # before each model request. The one entry is the confirmation toolset,
+    # which supplies gated tools only on the turn that answers a confirmation.
+    from google.adk.tools.base_toolset import BaseToolset
+
+    [toolset] = agent.tools
+    assert isinstance(toolset, BaseToolset)
+    assert await toolset.get_tools(None) == []
     assert agent.before_model_callback is not None

@@ -154,7 +154,8 @@ jobs:
       # extra, >=2.0.0). Re-run its tests on exactly the floor so a change
       # that needs a newer release is caught here, not by users. One cell.
       # Same for the OpenAI Agents SDK (`openai-agents` extra, >=0.23.1)
-      # and LangChain / LangGraph (`langchain` / `langgraph` extras, >=1.0.0).
+      # LangChain / LangGraph (`langchain` / `langgraph` extras, >=1.0.0)
+      # and Google ADK (`google-adk` extra, >=2.6.1).
       - name: OpenAI Agents SDK floor (0.23.1)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         run: |
@@ -173,6 +174,15 @@ jobs:
           .venv-langchain-floor/bin/python -m pytest \
             tests/frameworks/test_langchain.py tests/frameworks/test_langgraph.py \
             tests/frameworks/test_langgraph_live.py tests/frameworks/test_langgraph_native.py -v
+
+      - name: Google ADK floor (2.6.1)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: |
+          uv venv .venv-google-adk-floor --python ${{ matrix.python-version }}
+          uv pip install --python .venv-google-adk-floor ".[dev]" "google-adk==2.6.1"
+          .venv-google-adk-floor/bin/python -m pytest \
+            tests/frameworks/test_google_adk.py tests/frameworks/test_google_adk_live.py \
+            tests/frameworks/test_google_adk_native.py -v
 
       - name: Pydantic AI floor (2.0.0)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'

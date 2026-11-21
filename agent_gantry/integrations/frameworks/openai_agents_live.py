@@ -600,11 +600,19 @@ class GantryDynamicTools:
         # Pins can sit outside ``namespaces``; the catalogue must still hold them
         # or the selector would enable a name with no matching tool.
         specs += _resolve_pins(
-            self._gantry, specs, required=self._required, always_include=self._always_include
+            self._gantry,
+            specs,
+            required=self._required,
+            always_include=self._always_include,
+            namespaces=self._namespaces,
         )
         specs = _with_native_names(self._gantry, specs)
         pins = _resolve_pins(
-            self._gantry, [], required=self._required, always_include=self._always_include
+            self._gantry,
+            [],
+            required=self._required,
+            always_include=self._always_include,
+            namespaces=self._namespaces,
         )
         pin_keys = {(pin._namespace, pin.name) for pin in pins}
         self._pinned = frozenset(

@@ -1,148 +1,178 @@
-"""
-Google ADK + Agent-Gantry: native FunctionTools from a routed catalogue.
+"""Google ADK + Agent-Gantry, through ADK's own mechanisms.
 
-``GoogleADKAdapter.select`` returns real ``google.adk`` FunctionTools, already
-wired to execute through ``gantry.execute`` — so retries, timeouts, circuit
-breakers and the security policy still apply to every call the agent makes.
+1. **Per-turn selection** -- ``adapter.agent(...)`` builds an ADK ``Agent`` whose
+   ``before_model_callback`` picks each model request's tools. After the CRM
+   lookup returns, the email tool appears because the next selection reads
+   the lookup's output.
+2. **Readable errors** -- a failing tool returns ``{"error": ...}``, ADK's way of
+   telling the model a call failed, instead of ending the run.
+3. **Approval** -- a ``requires_confirmation`` tool emits ADK's
+   ``adk_request_confirmation`` call; confirming it runs the tool exactly once.
+4. **Run context** -- a Gantry tool reads the ADK session state through
+   ``current_tool_context()``.
 
-Selection runs **without an API key**; only the agent run needs one
-(``GOOGLE_API_KEY`` or ``GEMINI_API_KEY``).
+Everything runs **offline**: a scripted ``BaseLlm`` stands in for Gemini, so no
+API key is needed. Pass ``model="gemini-2.5-flash"`` (with ``GOOGLE_API_KEY``
+set) to use it for real.
 
-Run with::
+Install and run::
 
-    pip install agent-gantry google-adk
-    export GOOGLE_API_KEY=...        # only needed for the agent run
+    pip install 'agent-gantry[google-adk]'
     python examples/agent_frameworks/google_adk_example.py
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
-
-from google.adk.agents import Agent
-from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
-from google.genai import types
+from typing import Any
 
 from agent_gantry import AgentGantry
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 
-APP_NAME = "gantry_adk_app"
-USER_ID = "demo_user"
-SESSION_ID = "demo_session"
 
-USER_QUERY = "What's the status of order 12345?"
-
-
-async def build_gantry() -> AgentGantry:
+def build_gantry() -> AgentGantry:
     gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
 
-    # `examples=[...]` is the text the router actually embeds — the single
-    # highest-value field on a tool definition.
-    @gantry.register(
-        tags=["orders"],
-        examples=["where is my order", "has order 12345 shipped"],
-    )
-    def get_order_status(order_id: str) -> dict[str, str]:
-        """Look up the current status for an order ID."""
-        return {"order_id": order_id, "status": "shipped", "carrier": "DHL"}
+    @gantry.register(tags=["crm"], examples=["find the customer record for Jo"])
+    def lookup_customer(name: str) -> str:
+        """Look up a customer record by name."""
+        return f"Customer {name} found. Next step: send an email message to jo@example.com"
 
-    @gantry.register(
-        tags=["orders"],
-        examples=["cancel my order", "stop that order going out"],
-    )
-    def cancel_order(order_id: str) -> str:
-        """Cancel an order that has not yet dispatched."""
-        return f"Cancelled {order_id}."
+    @gantry.register(tags=["email"], examples=["email the team"], requires_confirmation=True)
+    def send_email(to: str) -> str:
+        """Send an email message to a recipient."""
+        return f"Email sent to {to}."
 
-    @gantry.register(
-        tags=["billing"],
-        examples=["refund me", "I want my money back"],
-    )
-    def refund_order(order_id: str) -> str:
-        """Issue a refund against an order."""
-        return f"Refunded {order_id}."
+    @gantry.register(tags=["math"], examples=["divide 10 by 2"])
+    def divide(a: int, b: int) -> float:
+        """Divide integer a by integer b."""
+        return a / b
 
-    await gantry.sync()
+    @gantry.register(tags=["identity"], examples=["who am I signed in as"])
+    def whoami() -> str:
+        """Return the name of the signed-in user."""
+        from agent_gantry.google_adk import current_tool_context
+
+        ctx = current_tool_context()
+        return f"You are signed in as {ctx.state['user']}." if ctx else "Unknown user."
+
     return gantry
 
 
-async def run_query(query: str, gantry: AgentGantry | None = None) -> str:
-    """Select tools for ``query``, build an ADK agent, and run it.
+def scripted(*steps: list[tuple[str, dict[str, Any]]]) -> Any:
+    """An ADK model that issues ``steps`` of function calls, then answers."""
+    from google.adk.models.base_llm import BaseLlm
+    from google.adk.models.llm_response import LlmResponse
+    from google.genai import types
 
-    Kept as its own function so the agent path stays callable — and testable —
-    independently of ``main``'s credential check.
-    """
-    own_gantry = gantry is None
-    gantry = gantry or await build_gantry()
-    try:
-        # No score_threshold: it defaults to 0.0, and raising it is a
-        # silent-drop trap on longer queries.
-        adk_tools = await gantry.framework("google_adk").select(query, limit=1)
+    class Scripted(BaseLlm):
+        model: str = "scripted"
+        script: list[Any] = []
+        offered: list[list[str]] = []
 
-        adk_agent = Agent(
-            model="gemini-2.5-flash",
-            name="order_status_agent",
-            instruction="You are a helpful agent that looks up order status via tools.",
-            tools=adk_tools,
-        )
-
-        session_service = InMemorySessionService()
-        await session_service.create_session(
-            app_name=APP_NAME, user_id=USER_ID, session_id=SESSION_ID
-        )
-        runner = Runner(
-            agent=adk_agent, app_name=APP_NAME, session_service=session_service
-        )
-
-        events = runner.run_async(
-            user_id=USER_ID,
-            session_id=SESSION_ID,
-            new_message=types.Content(role="user", parts=[types.Part(text=query)]),
-        )
-
-        final_text = ""
-        async for event in events:
-            if not event.is_final_response():
-                continue
-            # ADK emits control events with `content=None`, and a content event
-            # can carry zero parts or a part whose `text` is None (a function
-            # call, say). Reaching straight for `.parts[0].text` crashes on all
-            # three, so walk the parts and take the first that has text.
-            content = getattr(event, "content", None)
-            parts = getattr(content, "parts", None) or []
-            final_text = next(
-                (p.text for p in parts if getattr(p, "text", None)),
-                "",
+        async def generate_content_async(self, llm_request: Any, stream: bool = False):
+            self.offered.append(sorted(llm_request.tools_dict))
+            step = self.script.pop(0) if self.script else None
+            parts = (
+                [
+                    types.Part(function_call=types.FunctionCall(name=n, args=a, id=f"c{i}"))
+                    for i, (n, a) in enumerate(step)
+                ]
+                if step
+                else [types.Part(text="done")]
             )
-            if final_text:
-                break
+            yield LlmResponse(content=types.Content(role="model", parts=parts))
 
-        return final_text
-    finally:
-        if own_gantry:
-            await gantry.close()
+    return Scripted(script=list(steps), offered=[])
+
+
+async def run(agent: Any, text: str, state: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Run one turn; return the function responses and any confirmation request."""
+    from google.adk.runners import InMemoryRunner
+    from google.genai import types
+
+    runner = InMemoryRunner(agent=agent, app_name="demo")
+    session = await runner.session_service.create_session(app_name="demo", user_id="u", state=state)
+    out: dict[str, Any] = {
+        "runner": runner,
+        "session": session.id,
+        "responses": [],
+        "pending": None,
+    }
+
+    async def drive(message: Any) -> None:
+        async for event in runner.run_async(
+            user_id="u", session_id=session.id, new_message=message
+        ):
+            for part in (event.content.parts if event.content else None) or []:
+                call = part.function_call
+                if call and call.name == "adk_request_confirmation":
+                    out["pending"] = call
+                if part.function_response:
+                    out["responses"].append(part.function_response.response)
+
+    out["drive"] = drive
+    await drive(types.Content(role="user", parts=[types.Part(text=text)]))
+    return out
 
 
 async def main() -> None:
-    gantry = await build_gantry()
+    gantry = build_gantry()
     try:
-        selected = await gantry.framework("google_adk").select(USER_QUERY, limit=1)
-        print(f"Catalogue: 3 tools. Gantry selected {len(selected)} for this query:")
-        for tool in selected:
-            print(f"  - {tool.name}")
-        print("\nThe agent is built with only that slice, so it cannot call")
-        print("`refund_order` for a status question.\n")
-
-        if not (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")):
-            print("Set GOOGLE_API_KEY (or GEMINI_API_KEY) to run the agent itself.")
-            print("Everything above works without one.")
+        await gantry.sync()
+        try:
+            from google.adk.agents import LlmAgent
+            from google.genai import types
+        except ImportError as exc:
+            print(
+                f"The Google ADK demo needs google-adk ({exc}).\n"
+                "Install it with `pip install 'agent-gantry[google-adk]'`."
+            )
             return
 
-        print("--- running the ADK agent ---")
-        text = await run_query(USER_QUERY, gantry)
-        print(f"\n{text or '(the model returned no text)'}")
+        from agent_gantry.google_adk import GoogleADKAdapter
+
+        adapter = GoogleADKAdapter(gantry)
+
+        # 1. Per-turn selection ------------------------------------------- #
+        model = scripted([("lookup_customer", {"name": "Jo"})])
+        await run(
+            adapter.agent(model=model, name="crm", limit=1), "find the customer record for Jo"
+        )
+        print(f"[per-turn] tools offered at turn 1: {model.offered[0]}")
+        print(f"[per-turn] tools offered at turn 2: {model.offered[1]}  <- after the lookup\n")
+
+        # 2. Readable errors ---------------------------------------------- #
+        model = scripted([("divide", {"a": 1, "b": 0})])
+        result = await run(adapter.agent(model=model, name="maths", limit=1), "divide 1 by 0")
+        print(f"[errors] the model sees: {result['responses'][0]}\n")
+
+        # 3. Approval ----------------------------------------------------- #
+        tools = await adapter.select("send an email message", limit=1)
+        model = scripted([("send_email", {"to": "jo@example.com"})])
+        result = await run(LlmAgent(name="mail", model=model, tools=tools), "email Jo")
+        pending = result["pending"]
+        print(f"[approval] paused for {pending.args['originalFunctionCall']['name']}")
+        reply = types.FunctionResponse(
+            name="adk_request_confirmation", id=pending.id, response={"confirmed": True}
+        )
+        await result["drive"](
+            types.Content(role="user", parts=[types.Part(function_response=reply)])
+        )
+        print(f"[approval] confirmed -> {result['responses'][-1]}\n")
+
+        # 4. Run context -------------------------------------------------- #
+        tools = await adapter.select("who am I signed in as", limit=1)
+        model = scripted([("whoami", {})])
+        result = await run(
+            LlmAgent(name="id", model=model, tools=tools), "who am I?", {"user": "Dan"}
+        )
+        print(f"[context] {result['responses'][0]}")
+
+        print(
+            "\nEvery tool call above went through gantry.execute, so the security "
+            "policy, retries, timeouts and circuit breakers all applied."
+        )
     finally:
         await gantry.close()
 
