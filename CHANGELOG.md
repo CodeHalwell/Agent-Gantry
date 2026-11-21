@@ -32,8 +32,16 @@ flow. Otherwise:
 - install frameworks through the new extras (`agent-gantry[<framework>]`),
   which pin the tested floors; DSPy now needs `dspy>=3.5`.
 
-### Fixed since the framework changes
+### Fixed
 
+Fixes that apply across frameworks or came after their own sections:
+
+- A bare-name pin (`required=["ping"]`) under a `namespaces` filter now
+  resolves to the in-scope registration when the same tool name exists in
+  another namespace too, in selection and in the per-turn catalogues and
+  fallbacks of Pydantic AI, the OpenAI Agents SDK, LangGraph and Google ADK.
+  Previously the first registration anywhere won, so the required tool could
+  be missing from the turn.
 - Agno: an agent object resuming another's paused run from an async `db`
   (`AsyncSqliteDb`, `AsyncPostgresDb`, ...) now reads the run's input with
   `aget_run_output` on the run's own event loop, so the approved tool is
@@ -239,17 +247,9 @@ fails, instead of injecting none. Pass `error_mode="raise"` to
 
 #### Changed
 
-- `uv.lock`: re-resolving for the new extra settled `chromadb` on 1.5.9 and
-  `oauthlib` on 4.0.1 in every environment.
+- `uv.lock`, for every environment: re-resolving for the new extra settled
+  `chromadb` on 1.5.9 and `oauthlib` on 4.0.1.
 
-#### Fixed
-
-- A bare-name pin (`required=["ping"]`) under a `namespaces` filter now
-  resolves to the in-scope registration when the same tool name exists in
-  another namespace too, in selection and in the per-turn catalogues and
-  fallbacks of Pydantic AI, the OpenAI Agents SDK, LangGraph and Google ADK.
-  Previously the first registration anywhere won, so the required tool could
-  be missing from the turn.
 
 ### LangChain and LangGraph
 
@@ -5238,7 +5238,10 @@ adapters, and the provider dialects agree with it.
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.21.0...v0.22.0
+[0.21.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.20.0...v0.21.0
+[0.20.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.18.1...v0.19.0
 [0.18.1]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.17.0...v0.18.0
