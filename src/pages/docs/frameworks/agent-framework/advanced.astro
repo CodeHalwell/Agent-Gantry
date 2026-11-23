@@ -2,29 +2,29 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Advanced Microsoft Agent Framework guide | Agent-Gantry" description="Per-call tool routing, orchestration, middleware, and production patterns for Microsoft Agent Framework + Agent-Gantry.">
+<DocsLayout title="Advanced Microsoft Agent Framework guide | Agent-Gantry" description="Per-turn tool routing, orchestration, middleware, and production patterns for Microsoft Agent Framework + Agent-Gantry.">
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced Microsoft Agent Framework</h1>
   <p class="lead">Scale from per-run retrieval to multi-step agents that re-select tools every chat round, wire multi-agent workflows, and add governance middleware without leaving AF's native APIs.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/agent-framework/">← Basic Agent Framework usage</a></p>
 
-  <h2>Per-call mode: re-select tools every chat round</h2>
-  <p>Use <code>query_strategy="per_call"</code> when the agent chains multiple tool calls in one run and needs a different tool surface at each stage. The paired chat middleware is <strong>required</strong> — without it, per-call mode silently degrades to per-run and Gantry logs a one-time warning.</p>
+  <h2>Per-turn mode: re-select tools every chat round</h2>
+  <p>Use <code>query_strategy="per_turn"</code> when the agent chains multiple tool calls in one run and needs a different tool surface at each stage. The paired chat middleware is <strong>required</strong> — without it, per-turn mode silently degrades to per-run and Gantry logs a one-time warning.</p>
 
-  <CodeBlock lang="python" title="Per-call routing with middleware" code={`from agent_framework import Agent
+  <CodeBlock lang="python" title="Per-turn routing with middleware" code={`from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
 from agent_gantry.agent_framework import AgentFrameworkAdapter
 
 provider = AgentFrameworkAdapter(gantry).context_provider(
     top_k=3,
-    query_strategy="per_call",
+    query_strategy="per_turn",
 )
 
 agent = Agent(
     OpenAIChatClient(),
     "You are a multi-step assistant.",
     context_providers=[provider],
-    middleware=[provider.as_chat_middleware()],  # required for per_call
+    middleware=[provider.as_chat_middleware()],  # required for per_turn
 )
 
 # Or attach in one call:
@@ -113,6 +113,6 @@ disable_af_instrumentation()  # before constructing concurrent workflow agents`}
     <li><strong>Observability:</strong> use <code>provider.attach_to(agent, trace=True)</code> for built-in console trace middleware, or <code>gantry.on_tool_call(...)</code> event hooks.</li>
     <li><strong>Selection history:</strong> inspect <code>provider.selections</code> after multi-step runs to debug routing.</li>
     <li><strong>Score thresholds:</strong> start with <code>score_threshold=0.0</code>; use <code>score_threshold="relative:0.8"</code> for length-robust filtering on long prompts.</li>
-    <li><strong>Evaluation:</strong> replay representative prompts with fixed tool snapshots before enabling dynamic per-call retrieval in production.</li>
+    <li><strong>Evaluation:</strong> replay representative prompts with fixed tool snapshots before enabling dynamic per-turn retrieval in production.</li>
   </ul>
 </DocsLayout>

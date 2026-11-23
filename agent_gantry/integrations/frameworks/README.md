@@ -234,7 +234,7 @@ when they are being awaited.
 
 ## Multi-turn re-selection — autonomous *and* conversational
 
-`ToolRefresher` generalizes the Microsoft Agent Framework provider's per-call
+`ToolRefresher` generalizes the Microsoft Agent Framework provider's per-turn
 retrieval to any framework: re-rank the whole registry on every turn so the
 agent can pivot to a different tool as the task changes. It is the
 **standalone** utility for hand-rolled agent loops (a raw LLM SDK call in a
@@ -293,16 +293,30 @@ framework-agnostic code against it meant knowing 14 different method names.
 of those bespoke methods (which are **not** removed or renamed — they stay the
 documented, framework-idiomatic path; `live()` just delegates to one of them):
 
-- **`adapter.live_tier`** — `"per-turn"` or `"per-call"`, the deepest dynamic
+- **`adapter.live_tier`** — `"per-turn"` or `"per-run"`, the deepest dynamic
   re-selection tier that framework supports (see `LiveTier` /
   `BaseFrameworkAdapter.live_tier` in `base.py`).
   - `"per-turn"` — the framework calls back into Gantry (directly, or via a
     Gantry-built hook/toolset/provider) on every model turn / reasoning step,
     so the tool surface can change *mid-run*.
-  - `"per-call"` — the framework fixes its tool list at agent-construction
+  - `"per-run"` — the framework fixes its tool list at agent-construction
     time with no native mid-run hook, so the deepest Gantry can do is rebuild
-    a fresh agent/tool list before each new top-level call (see
+    a fresh agent/tool list before each new top-level run (see
     `live_wrappers.py`).
+
+  One vocabulary holds across the library: a **turn** is one model step and a
+  **run** is one top-level invocation, the same words
+  `GantryContextProvider(query_strategy="per_turn" | "per_run")` uses. Before
+  0.24.0 this tier was spelled `"per-call"` while `query_strategy="per_call"`
+  meant the opposite granularity (every model step). Both old spellings still
+  work with a `DeprecationWarning`: `live_tier == "per-call"` still compares
+  equal, and `query_strategy="per_call"` is accepted as `"per_turn"`.
+
+  The tier describes the framework's deepest path, which is not always the
+  object `live()` returns: `OpenAIAgentsAdapter.live()` returns a per-run
+  session (the per-turn path is `dynamic_tools()`), and LangChain and Haystack
+  are listed as per-run by `live()`'s delegate although `middleware()` and
+  `agent()` re-select every model turn.
 - **`adapter.live(*, limit=None, score_threshold=0.0, namespaces=None,
   required=None, always_include=None, **framework_kwargs)`** — returns the
   framework-appropriate live object (the hook / toolset / provider / builder
@@ -315,18 +329,18 @@ documented, framework-idiomatic path; `live()` just delegates to one of them):
 
 | Framework | `live_tier` | `live()` delegates to | `live()` returns | Plug into |
 |---|---|---|---|---|
-| LangChain | per-call | `select` (bound alias) | async `query -> list[StructuredTool]` callable | rebuild `AgentExecutor` / `.bind_tools()` before each call |
+| LangChain | per-run | `select` (bound alias) | async `query -> list[StructuredTool]` callable | rebuild `AgentExecutor` / `.bind_tools()` before each call |
 | LangGraph | per-turn | `react_agent` (requires `model=`) | compiled LangGraph agent (`Pregel`) | call `.ainvoke()` / `.invoke()` directly |
 | LlamaIndex | per-turn | `tool_retriever` | `GantryToolRetriever` (`ObjectRetriever`) | `FunctionAgent(tool_retriever=<result>)` |
-| CrewAI | per-call | `agent_builder` | `GantryLiveCrewAgent` builder | `await builder.build(query)` per task |
+| CrewAI | per-run | `agent_builder` | `GantryLiveCrewAgent` builder | `await builder.build(query)` per task |
 | Pydantic AI | per-turn | `toolset` | `GantryToolset` (`AbstractToolset`) | `Agent(model, toolsets=[<result>])` |
 | OpenAI Agents SDK | per-turn | `session` (requires `agent=`) | `GantryAgentSession` | `await session.run(run_input)` per turn |
-| Haystack | per-call | `tool_invoker_builder` | `GantryLiveHaystackToolInvoker` builder (ToolInvoker on haystack 2.x, Agent on >=3.0) | `adapter.agent()` re-selects every step instead; `await builder.build(query)` per call |
-| Agno | per-call | `agent_builder` | `GantryLiveAgnoAgent` builder | `await builder.build(query)` per run (or one `adapter.agent()` that re-selects inside Agno per run) |
+| Haystack | per-run | `tool_invoker_builder` | `GantryLiveHaystackToolInvoker` builder (ToolInvoker on haystack 2.x, Agent on >=3.0) | `adapter.agent()` re-selects every step instead; `await builder.build(query)` per call |
+| Agno | per-run | `agent_builder` | `GantryLiveAgnoAgent` builder | `await builder.build(query)` per run (or one `adapter.agent()` that re-selects inside Agno per run) |
 | Google ADK | per-turn | `before_model_callback` | async `(callback_context, llm_request) -> None` | `Agent(tools=[], before_model_callback=<result>)` |
 | Strands Agents | per-turn | `tool_hook` | `GantryStrandsToolHook` (`HookProvider`) | `Agent(tools=[], hooks=[<result>])` |
-| DSPy | per-call | `agent_builder` (requires `signature=`) | `GantryLiveDSPyReAct` builder | `await builder.build(query)` per task |
-| Microsoft Agent Framework | per-turn | `context_provider` (`query_strategy="per_call"`) | `GantryContextProvider` | `Agent(context_providers=[<result>])` + `<result>.as_chat_middleware()`, or `<result>.attach_to(agent)` |
+| DSPy | per-run | `agent_builder` (requires `signature=`) | `GantryLiveDSPyReAct` builder | `await builder.build(query)` per task |
+| Microsoft Agent Framework | per-turn | `context_provider` (`query_strategy="per_turn"`) | `GantryContextProvider` | `Agent(context_providers=[<result>])` + `<result>.as_chat_middleware()`, or `<result>.attach_to(agent)` |
 
 `AgentFrameworkAdapter` uses the shared `select`/`convert` surface and retains
 its AF-specific provider and middleware factories — see `agent_framework_adapter.py`.
@@ -793,7 +807,7 @@ exactly 2.6.10 and on the latest).
 |---|---|---|
 | Per-run (recommended) | `adapter.agent(model=...)` | One agent; Gantry picks each run's tools |
 | Static slice | `Agent(tools=await adapter.select(query))` | A fixed task |
-| Per-call builder | `await adapter.agent_builder(model=...).build(query)` | A fresh `Agent` per query |
+| Per-run builder | `await adapter.agent_builder(model=...).build(query)` | A fresh `Agent` per query |
 
 `adapter.agent()` gives the `Agent` a callable `tools` factory (with
 `cache_callables=False`) and a pre-hook that records each run's input, so Agno
@@ -896,7 +910,7 @@ exactly 3.5.0 and on the latest).
 | Mode | Build | Use when |
 |---|---|---|
 | Static slice | `dspy.ReAct(signature, tools=await adapter.select(query))` | A fixed task |
-| Per-call builder | `await adapter.agent_builder(signature).build(query)` | A fresh `ReAct` per query |
+| Per-run builder | `await adapter.agent_builder(signature).build(query)` | A fresh `ReAct` per query |
 
 `dspy.ReAct` fixes its tools, and bakes their names into its instructions, at
 construction, and DSPy has no hook before each model call, so selection is per
@@ -1074,8 +1088,8 @@ surface is stateless-per-turn or persists across turns:
   place**, so a transient retrieval blip doesn't strip a working agent of
   tools it already has: OpenAI Agents SDK, Strands.
 
-This does not apply to the five `per-call` adapters (LangChain, CrewAI, Agno,
-Haystack) or DSPy's per-call builder: their "live" surface is a
+This does not apply to the five `per-run` adapters (LangChain, CrewAI, Agno,
+Haystack) or DSPy's per-run builder: their "live" surface is a
 builder whose `.build(query)` the *caller* awaits directly before each new
 top-level call — an ordinary Python call the caller can wrap in `try`/`except`
 itself, not a framework-internal hook invoked deep inside someone else's loop.
@@ -1088,15 +1102,15 @@ asserting no exception + a `WARNING` log record).
 
 | Framework | (a) Tool execution failure | (b) Selection failure (live/per-turn) |
 |---|---|---|
-| LangChain | **Deviation:** LangChain's `ToolException` (the tool has `handle_tool_error=True`, so the model gets an error `ToolMessage`), chained from `ToolExecutionError`; `error_mode="raise"` restores raising | *(per-call — see above)* |
+| LangChain | **Deviation:** LangChain's `ToolException` (the tool has `handle_tool_error=True`, so the model gets an error `ToolMessage`), chained from `ToolExecutionError`; `error_mode="raise"` restores raising | *(per-run — see above)* |
 | LangGraph | **Deviation:** as LangChain | `middleware()`: degrades to this run's previous tools plus pins (per-run state) + `WARNING`; `select_for_state`: no tools + `WARNING` |
 | LlamaIndex | Raises `LlamaIndexToolError` (a `ToolExecutionError` whose text is the model-facing failure); agents show it as `ToolOutput(is_error=True)` | Degrades to the pinned tools alone this step (stateless) + `WARNING` |
-| CrewAI | **Deviation:** `_run` returns CrewAI's `ToolFailure` (recorded on `TaskOutput.tool_failures`); `error_mode="raise"` restores raising | *(per-call — see above)* |
+| CrewAI | **Deviation:** `_run` returns CrewAI's `ToolFailure` (recorded on `TaskOutput.tool_failures`); `error_mode="raise"` restores raising | *(per-run — see above)* |
 | Pydantic AI | **Deviation:** `ModelRetry` / `ToolFailed` / `ApprovalRequired` (native), chained from `ToolExecutionError`; `error_mode="raise"` restores raising | Degrades to this run's earlier tools (per-run state) + `WARNING` |
 | OpenAI Agents SDK | **Deviation:** returned to the model as `Error: ...` tool output; `error_mode="raise"` restores raising | `dynamic_tools`: degrades to this run's earlier tools (per-run state) + `WARNING`; `session`/`run_hooks`: previous turn's `agent.tools` + `WARNING` |
 | Haystack | Raises `HaystackToolError` (a `ToolExecutionError` whose text is the model-facing failure), which the Agent turns into an error tool result; `error_mode="raise"` raises the plain `ToolExecutionError` | Per-step `agent()`: keeps the run's previous tools plus pins + `WARNING` |
 | Agno | Raises `AgnoToolError` (a `ToolExecutionError` whose text is the model-facing failure), which Agno records as a failed tool result; `error_mode="raise"` raises the plain `ToolExecutionError` | Per-run `agent()`: degrades to the pinned tools + `WARNING` |
 | Google ADK | **Deviation:** `FunctionTool.run_async` returns `{"error": ...}` (ADK's convention; the raw `.func` still raises); `error_mode="raise"` restores raising | Degrades to this run's previous tools plus pins (per-run state) + `WARNING` |
 | Strands Agents | **Deviation:** error `ToolResult(status="error")` from both `__call__` and the agent loop; `error_mode="raise"` restores raising | Degrades to previous turn's registered tools (stateful) + `WARNING` — the other precedent |
-| DSPy | Raises `DSPyToolError` (a `ToolExecutionError` whose text is the model-facing failure), which `dspy.ReAct` records as an error tool result; `error_mode="raise"` raises the plain `ToolExecutionError` | Per-call builder: degrades to the pinned tools + `WARNING` |
+| DSPy | Raises `DSPyToolError` (a `ToolExecutionError` whose text is the model-facing failure), which `dspy.ReAct` records as an error tool result; `error_mode="raise"` raises the plain `ToolExecutionError` | Per-run builder: degrades to the pinned tools + `WARNING` |
 | Microsoft Agent Framework | **Deviation:** JSON `{"error": ...}` string returned to the model, not raised | *(`GantryToolBridge`/`ContextProvider` selection is a separate mechanism from `GantryToolset`, outside this audit's scope)* |

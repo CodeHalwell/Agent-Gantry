@@ -1,11 +1,11 @@
-"""Per-call tool routing with the built-in trace + event hooks (AF 1.5+).
+"""Per-turn tool routing with the built-in trace + event hooks (AF 1.5+).
 
 This is the idiomatic version of the "register a pile of tools, route to the
 right one each round, and watch what happens" pattern. It mirrors a hand-rolled
 demo where you'd normally wire up your own tracing middleware and result
 stringifier — except every piece of that glue now ships in the library:
 
-* ``provider.attach_to(agent, trace=True)`` installs the per-call retrieval
+* ``provider.attach_to(agent, trace=True)`` installs the per-turn retrieval
   middleware **and** a console trace that prints, for every tool the model
   calls, the round number, the call, the set the router surfaced, and a short
   preview of the result. No bespoke ``@function_middleware`` needed.
@@ -23,7 +23,7 @@ the log level, so there's nothing to silence. If you *want* Gantry's INFO lines
 on the console, opt in with ``agent_gantry.enable_console_logging()``.
 
 The task — "generate a password, then hash it" — is a genuine two-step where
-step 2 depends on step 1's output, which is exactly what ``per_call`` retrieval
+step 2 depends on step 1's output, which is exactly what ``per_turn`` retrieval
 (driven by the previous tool's result) is for: round 1 surfaces the password
 tool, round 2 surfaces the hashing tool.
 """
@@ -162,13 +162,13 @@ async def main() -> None:
     try:
         await gantry.sync()
 
-        # Per-call routing: retrieval re-runs every chat round, so the tool surface
-        # adapts as the agent reasons. The default per_call query generator is driven
+        # Per-turn routing: retrieval re-runs every chat round, so the tool surface
+        # adapts as the agent reasons. The default per_turn query generator is driven
         # by the previous tool's result, which is what makes step 2 (hashing) find
         # the hash tool after step 1 (password generation) runs.
         provider = gantry.framework("agent_framework").context_provider(
             top_k=3,
-            query_strategy="per_call",
+            query_strategy="per_turn",
         )
 
         task = (
@@ -176,7 +176,7 @@ async def main() -> None:
         )
 
         # Round 1's selection, visible without a client: `dry_run_retrieve` runs
-        # the exact retrieval path the per-call middleware uses. Later rounds
+        # the exact retrieval path the per-turn middleware uses. Later rounds
         # re-select from the previous tool's result, so they need the live run.
         decision = await provider.dry_run_retrieve(task)
         print(f"Catalogue: 6 tools. Round 1 would surface: {', '.join(decision.injected)}\n")
@@ -218,7 +218,7 @@ async def main() -> None:
             ),
         )
 
-        # One call wires up the context provider, the per-call retrieval middleware,
+        # One call wires up the context provider, the per-turn retrieval middleware,
         # AND the console trace middleware (trace=True) — no hand-rolled glue.
         provider.attach_to(agent, trace=True)
 

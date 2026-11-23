@@ -47,6 +47,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import ValidationError
 
+from agent_gantry._deprecation import RenamedValue
 from agent_gantry.integrations.frameworks.errors import MissingRequiredToolError
 from agent_gantry.schema.base import RECONSTRUCTED_STRING_FORMATS, schema_declares_null
 from agent_gantry.schema.execution import ExecutionStatus, ToolCall
@@ -77,11 +78,24 @@ DEFAULT_TOOL_LIMIT = 5
 #:   so the tool surface can change *mid-run* (LangGraph, LlamaIndex,
 #:   Pydantic AI, OpenAI Agents SDK, Google ADK, Strands, Microsoft Agent
 #:   Framework).
-#: - ``"per-call"`` — the framework fixes its tool list at agent-construction
+#: - ``"per-run"`` — the framework fixes its tool list at agent-construction
 #:   time with no native mid-run hook, so the deepest Gantry can do is rebuild
-#:   a fresh agent/tool list before each new top-level call (LangChain,
+#:   a fresh agent/tool list before each new top-level run (LangChain,
 #:   CrewAI, Agno, Haystack — see ``live_wrappers.py``).
-LiveTier = Literal["per-turn", "per-call"]
+#:
+#: One vocabulary across the library: a *turn* is one model step, a *run* one
+#: top-level invocation, as in ``GantryContextProvider(query_strategy=
+#: "per_turn" | "per_run")``. ``"per-run"`` was spelled ``"per-call"`` before
+#: 0.24.0, when ``query_strategy="per_call"`` meant the opposite granularity
+#: (every model step); comparing a tier with ``"per-call"`` still matches,
+#: with a ``DeprecationWarning`` (see :data:`PER_RUN_TIER`).
+LiveTier = Literal["per-turn", "per-run"]
+
+#: The ``"per-run"`` tier as adapters declare it: equal to ``"per-run"``, and
+#: still equal to the pre-0.24.0 ``"per-call"`` with a ``DeprecationWarning``.
+PER_RUN_TIER: LiveTier = RenamedValue(  # type: ignore[assignment]
+    "per-run", old="per-call", what="live_tier"
+)
 
 
 class ToolExecutionError(RuntimeError):
@@ -1416,7 +1430,7 @@ class BaseFrameworkAdapter:
         self._default_limit = default_limit
 
     #: The deepest dynamic re-selection tier this adapter's framework
-    #: supports — ``"per-turn"`` or ``"per-call"`` (see :data:`LiveTier`).
+    #: supports — ``"per-turn"`` or ``"per-run"`` (see :data:`LiveTier`).
     live_tier: ClassVar[LiveTier]
 
     #: Name of the bespoke method :meth:`live` delegates to.

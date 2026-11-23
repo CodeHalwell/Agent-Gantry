@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any
 from agent_gantry.core.invocation import current_tool_invocation
 from agent_gantry.integrations.frameworks.base import (
     DEFAULT_TOOL_LIMIT,
+    PER_RUN_TIER,
     BaseFrameworkAdapter,
     ToolConfirmationRequiredError,
     ToolExecutionError,
@@ -409,7 +410,7 @@ class LangChainAdapter(BaseFrameworkAdapter):
         error_formatter: Rewrites failure text before the model sees it.
     """
 
-    live_tier = "per-call"
+    live_tier = PER_RUN_TIER
     _live_delegate = "_bound_select"
     _framework_name = FRAMEWORK_NAME
 
@@ -502,7 +503,7 @@ class LangChainAdapter(BaseFrameworkAdapter):
         )
 
     def _bound_select(self, **select_kwargs: Any) -> Callable[[str], Awaitable[list[Any]]]:
-        """The per-call live object: :meth:`select` bound to the selection keywords."""
+        """The per-run live object: :meth:`select` bound to the selection keywords."""
         return functools.partial(self.select, **select_kwargs)
 
 

@@ -13,6 +13,12 @@ import CodeBlock from '../../components/CodeBlock.astro';
   </div>
   <h2>Runtime flow</h2>
   <CodeBlock lang="text" code={`User prompt → semantic query → vector candidates → rerank / threshold → provider schema → model call → ToolCall → secure execution → telemetry/result`} />
+  <h2>Choosing how tools are selected</h2>
+  <ul>
+    <li><strong>Semantic routing</strong> (the default) embeds the query and returns the top-k tools. It always returns k, whether or not any of them fit.</li>
+    <li><strong>A reranker</strong> (<code>CohereReranker</code>, <code>CrossEncoderReranker</code>, <code>SystemOneReranker</code>) reorders that shortlist. It only reorders: its scores are never compared with a threshold, so it also returns tools for a query no tool can serve.</li>
+    <li><strong>A selector</strong> (<code>SystemOneSelector</code>) replaces the search and asks a decision model about each entry, keeping those above <code>threshold</code>. It is the only one of the three that can return nothing, so choose it when declining matters. It sends the whole catalogue on every query, which suits tens to a few hundred entries.</li>
+  </ul>
   <h2>Deployment modes</h2>
   <ul>
     <li><strong>Library-only:</strong> import AgentGantry into an app and decorate existing tools.</li>

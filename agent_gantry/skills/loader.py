@@ -28,6 +28,7 @@ nothing.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from collections.abc import Iterator
 from pathlib import Path
@@ -289,7 +290,17 @@ def iter_skill_files(root: str | Path, *, recursive: bool = True) -> Iterator[Pa
     """Yield every ``SKILL.md`` under ``root`` (``root`` itself may be a skill dir).
 
     Sorted for deterministic ordering. Hidden directories (``.git``,
-    ``.venv``) are skipped.
+    ``.venv``) are skipped, by their name under ``root``.
+
+    Symlinked directories are followed, so a skill installed as a link is
+    found like any other. That is the usual way to share one skill library
+    between several agents (``~/.claude/skills/pdf -> ~/.agents/skills/pdf``),
+    and :meth:`pathlib.Path.glob`'s ``**`` does not descend into links, so
+    those skills were silently missing. Each real directory is visited once:
+    a link that leads back into a directory already walked (a parent linked
+    into its own child) ends there rather than looping, and a directory
+    reachable by two paths yields its skills once, under whichever path the
+    walk reaches first. A link whose target is missing is ignored.
     """
     base = Path(root).expanduser()
     if base.is_file():
@@ -299,13 +310,34 @@ def iter_skill_files(root: str | Path, *, recursive: bool = True) -> Iterator[Pa
         yield base / SKILL_FILE_NAME
         if not recursive:
             return
-    pattern = f"**/{SKILL_FILE_NAME}" if recursive else f"*/{SKILL_FILE_NAME}"
-    for file in sorted(base.glob(pattern)):
-        if file == base / SKILL_FILE_NAME:
-            continue
-        if any(part.startswith(".") for part in file.relative_to(base).parts[:-1]):
-            continue
-        yield file
+    yield from sorted(_walk_skill_files(base, recursive=recursive))
+
+
+def _real(path: Path) -> str:
+    """``path`` with every symlink resolved, as a key for "already visited"."""
+    return os.path.realpath(path)
+
+
+def _walk_skill_files(base: Path, *, recursive: bool) -> Iterator[Path]:
+    """``SKILL.md`` files below ``base`` (not ``base``'s own), links followed."""
+    seen = {_real(base)}
+    for current, dirnames, _filenames in os.walk(base, followlinks=True):
+        here = Path(current)
+        keep: list[str] = []
+        # Sorted, so which of two paths to one directory is walked does not
+        # depend on the order the file system lists them in.
+        for name in sorted(dirnames):
+            if name.startswith("."):
+                continue
+            real = _real(here / name)
+            if real in seen:
+                continue
+            seen.add(real)
+            keep.append(name)
+            if (here / name / SKILL_FILE_NAME).is_file():
+                yield here / name / SKILL_FILE_NAME
+        # Pruned in place: ``os.walk`` descends only into what is left.
+        dirnames[:] = keep if recursive else []
 
 
 def load_skills_from_directory(

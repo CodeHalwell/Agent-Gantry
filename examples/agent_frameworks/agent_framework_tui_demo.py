@@ -10,7 +10,7 @@ time, BBC News, UUID, password) using the same ``GantryContextProvider.dry_run_r
 path the live middleware uses.
 
 **Live agent (requires chat credentials):** press ``L`` or click *Run live* to
-drive a real AF ``Agent`` with ``query_strategy="per_call"``. Set ``OPENAI_API_KEY``
+drive a real AF ``Agent`` with ``query_strategy="per_turn"``. Set ``OPENAI_API_KEY``
 (for OpenAI) or ``AZURE_OPENAI_ENDPOINT`` / ``AZURE_OPENAI_BASE_URL`` plus
 ``AZURE_OPENAI_API_KEY`` (for Azure OpenAI). A ``.env`` file in the repo root is
 loaded automatically.
@@ -239,7 +239,7 @@ async def prepare_session(*, embedder_kind: str = "simple") -> tuple[
     gantry = build_gantry(embedder_kind=embedder_kind)
     provider = AgentFrameworkAdapter(gantry).context_provider(
         top_k=3,
-        query_strategy="per_call",
+        query_strategy="per_turn",
     )
     await gantry.sync()
     registry_names = sorted(tool.name for tool in await gantry.list_tools())

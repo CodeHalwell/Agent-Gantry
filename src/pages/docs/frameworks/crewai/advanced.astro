@@ -2,10 +2,10 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Advanced CrewAI guide | Agent-Gantry" description="Approval through CrewAI's before_tool_call hook, agent/task context, failure policy and per-call selection for the Agent-Gantry CrewAI integration.">
+<DocsLayout title="Advanced CrewAI guide | Agent-Gantry" description="Approval through CrewAI's before_tool_call hook, agent/task context, failure policy and per-run selection for the Agent-Gantry CrewAI integration.">
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced CrewAI</h1>
-  <p class="lead">Approval, run context, failure policy and per-call selection.</p>
+  <p class="lead">Approval, run context, failure policy and per-run selection.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/crewai/">← Basic CrewAI usage</a></p>
 
   <h2>Approval</h2>
@@ -30,6 +30,6 @@ adapter = CrewAIAdapter(gantry, approve=approve)
     <li><strong><code>error_mode="raise"</code>:</strong> <code>ToolExecutionError</code> propagates, and CrewAI records it as an exception failure.</li>
   </ul>
 
-  <h2>Per-call selection</h2>
+  <h2>Per-run selection</h2>
   <p>CrewAI builds an agent's tool list once and exposes no hook to change it between model turns, so Gantry re-selects per call: <code>adapter.agent_builder(...)</code> returns a builder whose <code>build(query)</code> makes a fresh agent with that task's tools, using the adapter's error mode, formatter and approver.</p>
 </DocsLayout>

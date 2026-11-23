@@ -1,6 +1,6 @@
 """Multi-turn semantic tool selection within a single agent run.
 
-This benchmark proves the property the README calls "per-call retrieval": in
+This benchmark proves the property the README calls "per-turn retrieval": in
 *one* agent run the registry is queried fresh on every turn, so the agent can
 pick a tool, read its result, then **change direction** and pick a completely
 different tool driven purely by the semantics of the new sub-task — not by a
@@ -9,7 +9,7 @@ fixed, pre-bound tool list.
 It simulates the agent loop directly against the public Gantry API:
 
     for each turn:
-        query  = query_generator(conversation_so_far)   # per-call
+        query  = query_generator(conversation_so_far)   # per-turn
         tools  = gantry.retrieve_tools(query, limit=3)   # re-rank the WHOLE registry
         pick   = first tool the (simulated) model chooses
         result = gantry.execute(ToolCall(pick, args))    # real execution
@@ -32,13 +32,12 @@ import asyncio
 import json
 from typing import Any
 
+from benchmark_tool_selection import TOOLS, _make_tool, build_embedder
+
 from agent_gantry import AgentGantry
 from agent_gantry.query.strategies import fallback_chain, last_tool_result, last_user_text
 from agent_gantry.schema.execution import ToolCall
 from agent_gantry.schema.query import ConversationContext, ToolQuery
-
-from benchmark_tool_selection import TOOLS, _make_tool, build_embedder
-
 
 # A single "agent run": an ordered list of (user utterance, expected tool).
 # Note how the direction lurches across domains turn to turn — weather, then
@@ -69,7 +68,7 @@ async def run(embedder_kind: str, limit: int) -> dict[str, Any]:
         gantry.register(_make_tool(name, desc), tags=tags)
     await gantry.sync()
 
-    # Per-call query generator: prefer the latest tool result (to detect when
+    # Per-turn query generator: prefer the latest tool result (to detect when
     # the conversation has moved on), else fall back to the latest user text.
     query_gen = fallback_chain(last_user_text, last_tool_result)
 

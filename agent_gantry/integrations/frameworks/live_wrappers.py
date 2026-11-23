@@ -1,4 +1,4 @@
-"""Per-call "live" builders for frameworks that fix an agent's tool list at construction.
+"""Per-run "live" builders for frameworks that fix an agent's tool list at construction.
 
 CrewAI, Agno and Haystack expose no per-turn hook to re-advertise tools
 mid-run (compare LlamaIndex's ``tool_retriever`` in ``llamaindex_live``), so
@@ -150,7 +150,7 @@ class GantryLiveHaystackToolInvoker(_PerCallBuilder):
 
     :meth:`build` returns a ``ToolInvoker`` on haystack 2.x. haystack >= 3.0
     removed ``ToolInvoker`` (the ``Agent`` component owns tool execution): there
-    it returns a per-call ``haystack.components.agents.Agent`` when a
+    it returns a per-run ``haystack.components.agents.Agent`` when a
     ``chat_generator`` was supplied in the builder kwargs, and raises
     ``RuntimeError`` otherwise.
 
@@ -180,7 +180,7 @@ class GantryLiveHaystackToolInvoker(_PerCallBuilder):
                     "haystack-ai >= 3.0 removed ToolInvoker; the Agent component "
                     "now owns tool execution. Pass chat_generator=... to "
                     "tool_invoker_builder(...) so build() can construct a "
-                    "per-call haystack Agent with the selected tools, or use "
+                    "per-run haystack Agent with the selected tools, or use "
                     "HaystackAdapter.live_tools() and wire the tools into your "
                     "own haystack.components.agents.Agent."
                 ) from exc

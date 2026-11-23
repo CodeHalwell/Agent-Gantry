@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Any
 from agent_gantry.core.invocation import current_tool_invocation
 from agent_gantry.integrations.frameworks.base import (
     DEFAULT_TOOL_LIMIT,
+    PER_RUN_TIER,
     BaseFrameworkAdapter,
     GantryToolset,
     ToolConfirmationRequiredError,
@@ -367,7 +368,7 @@ class HaystackAdapter(BaseFrameworkAdapter):
     """Route Gantry-selected tools into Haystack.
 
     Static slice (``haystack.tools.Tool`` objects), a per-step :meth:`agent`
-    and the per-call :meth:`tool_invoker_builder`. Every call routes through
+    and the per-run :meth:`tool_invoker_builder`. Every call routes through
     ``gantry.execute`` so retries, timeouts, circuit breakers, and the security
     policy all apply::
 
@@ -395,7 +396,7 @@ class HaystackAdapter(BaseFrameworkAdapter):
             capped).
     """
 
-    live_tier = "per-call"
+    live_tier = PER_RUN_TIER
     _live_delegate = "tool_invoker_builder"
 
     def __init__(
@@ -447,7 +448,7 @@ class HaystackAdapter(BaseFrameworkAdapter):
     async def live_tools(
         self, query: str, *, limit: int | None = None, **select_kwargs: Any
     ) -> list[Any]:
-        """Re-select Haystack ``Tool``s for THIS call's ``query`` (per-call selection)."""
+        """Re-select Haystack ``Tool``s for THIS call's ``query`` (per-run selection)."""
         return await self.select(query, limit=limit, **select_kwargs)
 
     def confirmation_hook(self, confirmation_ui: Any) -> Any:

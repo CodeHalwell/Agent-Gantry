@@ -87,10 +87,10 @@ class _FakeChatClient(af.FunctionInvocationLayer, af.BaseChatClient):  # type: i
     ``function_result`` content back.
     """
 
-    def __init__(self, tool_name: str, arguments_per_call: list[dict[str, Any]]) -> None:
+    def __init__(self, tool_name: str, arguments_per_turn: list[dict[str, Any]]) -> None:
         super().__init__()
         self._tool_name = tool_name
-        self._arguments_per_call = arguments_per_call
+        self._arguments_per_turn = arguments_per_turn
         self._n = 0
 
     def _inner_get_response(  # type: ignore[override]
@@ -108,7 +108,7 @@ class _FakeChatClient(af.FunctionInvocationLayer, af.BaseChatClient):  # type: i
                     af.Content.from_function_call(
                         call_id=f"c{i}", name=self._tool_name, arguments=args
                     )
-                    for i, args in enumerate(self._arguments_per_call)
+                    for i, args in enumerate(self._arguments_per_turn)
                 ]
                 return af.ChatResponse(
                     messages=[af.Message("assistant", contents)],
@@ -177,7 +177,7 @@ def _extract_tool_results(resp: Any) -> list[Any]:
 
 def _run_agent_request(
     tool_name: str,
-    arguments_per_call: list[dict[str, Any]],
+    arguments_per_turn: list[dict[str, Any]],
     function_tools: list[Any],
 ) -> list[Any]:
     """One DurableAIAgentWorker-style request: build the agent fresh,
@@ -185,7 +185,7 @@ def _run_agent_request(
     constructs a fresh event loop on a worker thread — exactly how
     ``DurableAIAgentWorker._handle_request`` runs each request.
     """
-    client = _FakeChatClient(tool_name, arguments_per_call)
+    client = _FakeChatClient(tool_name, arguments_per_turn)
     agent = af.RawAgent(
         client=client, instructions="exec tools", tools=function_tools
     )

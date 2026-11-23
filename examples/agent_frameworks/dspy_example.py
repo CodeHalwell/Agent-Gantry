@@ -163,7 +163,7 @@ async def main() -> None:
         # --- 5. A fresh ReAct per call, tools selected for each query -------- #
         builder = adapter.agent_builder("question -> answer", max_iters=3, limit=1)
         finance = await builder.build("What's the stock price for AAPL?")
-        print(f"[per-call] tools: {[name for name in finance.tools if name != 'submit']}")
+        print(f"[per-run] tools: {[name for name in finance.tools if name != 'submit']}")
 
         # --- Optional: one question on a real model ------------------------- #
         if os.environ.get("OPENAI_API_KEY"):

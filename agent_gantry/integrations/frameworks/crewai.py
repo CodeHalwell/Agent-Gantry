@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from agent_gantry.core.invocation import current_tool_invocation
 from agent_gantry.integrations.frameworks.base import (
     DEFAULT_TOOL_LIMIT,
+    PER_RUN_TIER,
     BaseFrameworkAdapter,
     ToolConfirmationRequiredError,
     ToolExecutionError,
@@ -343,7 +344,7 @@ class CrewAIAdapter(BaseFrameworkAdapter):
     """Route Gantry-selected tools into CrewAI through its native mechanisms.
 
     Static slice (``crewai.tools.BaseTool`` objects from :meth:`select`) plus a
-    per-call live builder (CrewAI fixes an agent's tools at construction, so
+    per-run live builder (CrewAI fixes an agent's tools at construction, so
     :meth:`agent_builder` rebuilds a fresh agent per call). Every call routes
     through ``gantry.execute``; see the module docs for errors, approval, run
     context and tracing.
@@ -362,7 +363,7 @@ class CrewAIAdapter(BaseFrameworkAdapter):
             ``None`` (default) tells the agent the call needs approval.
     """
 
-    live_tier = "per-call"
+    live_tier = PER_RUN_TIER
     _live_delegate = "agent_builder"
 
     def __init__(
@@ -428,7 +429,7 @@ class CrewAIAdapter(BaseFrameworkAdapter):
     async def live_tools(
         self, query: str, *, limit: int | None = None, **select_kwargs: Any
     ) -> list[Any]:
-        """Re-select CrewAI ``BaseTool``s for THIS call's ``query`` (per-call selection)."""
+        """Re-select CrewAI ``BaseTool``s for THIS call's ``query`` (per-run selection)."""
         return await self.select(query, limit=limit, **select_kwargs)
 
     def agent_builder(

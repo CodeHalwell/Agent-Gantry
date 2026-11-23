@@ -1318,16 +1318,16 @@ async def test_context_provider_reroutes_per_user_turn() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 20. Tool surface updates *within* a single agent.run (per-call re-routing)
+# 20. Tool surface updates *within* a single agent.run (per-turn re-routing)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_context_provider_per_call_refresh_mechanism() -> None:
-    """Drive the per-call refresher directly with two synthetic chat contexts
+async def test_context_provider_per_turn_refresh_mechanism() -> None:
+    """Drive the per-turn refresher directly with two synthetic chat contexts
     to prove the routing-update *mechanism*: when the second round's message
     stream shifts topic, the rewritten ``options['tools']`` reflects the new
-    query. Complementary to ``test_context_provider_per_call_end_to_end``,
+    query. Complementary to ``test_context_provider_per_turn_end_to_end``,
     which exercises the same code path through ``agent.run``.
     """
     from agent_gantry import GantryContextProvider
@@ -1361,7 +1361,7 @@ async def test_context_provider_per_call_refresh_mechanism() -> None:
         gantry,
         top_k=2,
         score_threshold=0.0,
-        query_strategy="per_call",
+        query_strategy="per_turn",
         query_generator=concatenate_recent,
     )
 
@@ -1420,7 +1420,7 @@ async def test_context_provider_per_call_refresh_mechanism() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 21. End-to-end per-call refresh through agent.run (the function-invocation
+# 21. End-to-end per-turn refresh through agent.run (the function-invocation
 #     inner loop). This is the real proof that chat_middleware fires on
 #     every round inside one agent.run AND that the freshly-injected tools
 #     are actually executable by AF's function-invocation layer.
@@ -1428,9 +1428,9 @@ async def test_context_provider_per_call_refresh_mechanism() -> None:
 
 
 @pytest.mark.asyncio
-async def test_context_provider_per_call_end_to_end() -> None:
+async def test_context_provider_per_turn_end_to_end() -> None:
     """A single ``agent.run`` makes 2 LLM rounds (function_call → result →
-    final text). With ``query_strategy='per_call'`` + ``as_chat_middleware``
+    final text). With ``query_strategy='per_turn'`` + ``as_chat_middleware``
     the provider must run *between* the rounds and the tools it injects
     must be visible to AF's function executor on round 1.
 
@@ -1460,7 +1460,7 @@ async def test_context_provider_per_call_end_to_end() -> None:
         gantry,
         top_k=2,
         score_threshold=0.0,
-        query_strategy="per_call",
+        query_strategy="per_turn",
         query_generator=concatenate_recent,
     )
 
@@ -1523,7 +1523,7 @@ async def test_context_provider_per_call_end_to_end() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 22. SkillsProvider co-existence: Gantry's per-call refresh must not strip
+# 22. SkillsProvider co-existence: Gantry's per-turn refresh must not strip
 #     skill tools (load_skill, read_skill_resource, run_skill_script) that
 #     another provider injected.
 # ---------------------------------------------------------------------------
@@ -1533,7 +1533,7 @@ async def test_context_provider_per_call_end_to_end() -> None:
 async def test_context_provider_preserves_skill_tools_across_refresh() -> None:
     """``SkillsProvider`` injects its own tools (``load_skill`` et al.) via
     ``context.extend_tools(self.source_id, tools)`` in ``before_run``. The
-    Gantry per-call refresh must preserve those tools — only Gantry-owned
+    Gantry per-turn refresh must preserve those tools — only Gantry-owned
     tools should be dropped & re-injected.
 
     Rather than spin up a real SkillsProvider (which needs a skills source
@@ -1565,7 +1565,7 @@ async def test_context_provider_preserves_skill_tools_across_refresh() -> None:
         gantry,
         top_k=2,
         score_threshold=0.0,
-        query_strategy="per_call",
+        query_strategy="per_turn",
         query_generator=concatenate_recent,
     )
 
@@ -1683,7 +1683,7 @@ class _KeywordEmbedder:
 
 
 @pytest.mark.asyncio
-async def test_context_provider_per_call_surface_adapts_to_tool_result() -> None:
+async def test_context_provider_per_turn_surface_adapts_to_tool_result() -> None:
     """End-to-end proof of per-round routing adaptation.
 
     The user asks a weather question. Round 1's router (driven by the
@@ -1735,7 +1735,7 @@ async def test_context_provider_per_call_surface_adapts_to_tool_result() -> None
         gantry,
         top_k=2,
         score_threshold=0.0,
-        query_strategy="per_call",
+        query_strategy="per_turn",
         query_generator=query_gen,
     )
 
@@ -1805,7 +1805,7 @@ def test_last_tool_result_extracts_text_from_af_function_result_message() -> Non
     tool-role Message — ``Message.text`` is empty in that case and the
     payload lives in ``Content.items[].text``. ``_msg_text`` must walk
     ``contents`` to surface it, otherwise ``last_tool_result`` returns
-    "" and the per-call refresh's query collapses back to the original
+    "" and the per-turn refresh's query collapses back to the original
     user prompt across the entire run.
     """
     from agent_gantry.query import last_tool_result
@@ -1898,7 +1898,7 @@ async def test_context_provider_refresh_mutates_non_dict_options_in_place() -> N
     )
 
     provider = GantryContextProvider(
-        gantry, top_k=2, score_threshold=0.0, query_strategy="per_call",
+        gantry, top_k=2, score_threshold=0.0, query_strategy="per_turn",
     )
     await provider._refresh_tools_on_chat_context(ctx)
 

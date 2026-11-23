@@ -2,7 +2,7 @@
 
 Agent-Gantry's core value is surfacing a *small, relevant* slice of tools
 instead of dumping the whole registry into the prompt. The Microsoft Agent
-Framework provider already does this *per call* (``query_strategy="per_call"``
+Framework provider already does this *per turn* (``query_strategy="per_turn"``
 in :mod:`agent_gantry.integrations.agent_framework_provider`), re-selecting
 tools on every chat-completion round so the agent's tool surface tracks where
 its reasoning is heading rather than staying frozen on the first user message.
@@ -18,7 +18,7 @@ Where this sits next to ``adapter.live()``
 -------------------------------------------
 Every ``<Framework>Adapter`` in :mod:`agent_gantry.integrations.frameworks`
 exposes a uniform :meth:`~agent_gantry.integrations.frameworks.base.BaseFrameworkAdapter.live`
-method that delegates to that framework's *native* per-turn/per-call hook
+method that delegates to that framework's *native* per-turn/per-run hook
 (LangGraph middleware, a Pydantic AI ``AbstractToolset``, a Strands
 ``HookProvider``, …) — see ``integrations/frameworks/README.md`` for the full
 table. Each of those hooks derives its retrieval query from that framework's
@@ -89,7 +89,7 @@ class ToolRefresher:
     **Standalone utility, not a framework hook.** If you're using one of the
     supported frameworks (see ``integrations/frameworks/README.md``), prefer
     ``<Framework>Adapter(gantry).live(...)`` instead — it wires Gantry into
-    that framework's own per-turn/per-call lifecycle so re-selection happens
+    that framework's own per-turn/per-run lifecycle so re-selection happens
     automatically. Reach for ``ToolRefresher`` when you're driving a
     hand-rolled agent loop (a raw LLM SDK call in a ``while`` loop) with no
     framework underneath to hook into.

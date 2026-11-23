@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING, Any
 from agent_gantry.core.invocation import current_tool_invocation
 from agent_gantry.integrations.frameworks.base import (
     DEFAULT_TOOL_LIMIT,
+    PER_RUN_TIER,
     BaseFrameworkAdapter,
     GantryToolset,
     ToolConfirmationRequiredError,
@@ -409,7 +410,7 @@ class AgnoAdapter(BaseFrameworkAdapter):
 
     Static slice (``agno.tools.function.Function`` objects for
     ``Agent(tools=[...])``), a per-run :meth:`agent` (one Agent that re-selects
-    for every run) and the per-call :meth:`agent_builder`. Every call routes
+    for every run) and the per-run :meth:`agent_builder`. Every call routes
     through ``gantry.execute`` so retries, timeouts, circuit breakers, and the
     security policy all apply::
 
@@ -434,7 +435,7 @@ class AgnoAdapter(BaseFrameworkAdapter):
             capped).
     """
 
-    live_tier = "per-call"
+    live_tier = PER_RUN_TIER
     _live_delegate = "agent_builder"
 
     def __init__(

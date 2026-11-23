@@ -279,7 +279,7 @@ async def test_select_or_empty_nonblank_query_behaves_like_select(gantry) -> Non
 class _EchoAdapter(BaseFrameworkAdapter):
     """Minimal concrete adapter for exercising the shared ``select()`` plumbing."""
 
-    live_tier = "per-call"
+    live_tier = "per-run"
 
     @staticmethod
     def convert(spec: ToolSpec) -> ToolSpec:

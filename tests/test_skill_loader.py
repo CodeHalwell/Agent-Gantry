@@ -297,3 +297,97 @@ def test_an_empty_frontmatter_block_is_accepted() -> None:
     """``---`` immediately followed by ``---`` is an empty mapping, not an
     unterminated block."""
     assert parse_skill_markdown("---\n---\nbody") == ({}, "body")
+
+
+# ---------------------------------------------------------------------------
+# Symlinked skill directories. Sharing one skill library between agents means
+# linking each skill into every agent's directory
+# (``~/.claude/skills/pdf -> ~/.agents/skills/pdf``). ``Path.glob("**/...")``
+# does not descend into linked directories, so those skills were silently
+# absent from a recursive load while a non-recursive one found them.
+# ---------------------------------------------------------------------------
+
+
+def _symlink(link: Path, target: Path | str) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:  # Windows without the privilege
+        pytest.skip(f"cannot create symlinks here: {exc}")
+
+
+def _skill_md(name: str) -> str:
+    return f"---\nname: {name}\ndescription: A linked skill called {name}.\n---\nBody of {name}."
+
+
+def test_symlinked_skill_directories_are_loaded(tmp_path: Path) -> None:
+    library = tmp_path / "library"  # the canonical copies, outside the root
+    root = tmp_path / "skills"
+    _write_skill(library, "absolute-link", _skill_md("absolute-link"))
+    _write_skill(library, "relative-link", _skill_md("relative-link"))
+    _write_skill(library, "pack/inner", _skill_md("inner"))
+    _write_skill(root, "real", _skill_md("real"))
+    _symlink(root / "absolute-link", library / "absolute-link")
+    _symlink(root / "relative-link", Path("..") / "library" / "relative-link")
+    _symlink(root / "pack", library / "pack")  # a linked directory *of* skills
+
+    found = [f.relative_to(root).parent.as_posix() for f in iter_skill_files(root)]
+    assert found == sorted(["absolute-link", "relative-link", "pack/inner", "real"])
+    assert {s.name for s in load_skills_from_directory(root)} == {
+        "absolute-link",
+        "relative-link",
+        "inner",
+        "real",
+    }
+    # Both modes agree on a linked skill directly under the root.
+    flat = {f.parent.name for f in iter_skill_files(root, recursive=False)}
+    assert flat == {"absolute-link", "relative-link", "real"}
+
+
+def test_a_link_into_a_hidden_directory_is_followed(tmp_path: Path) -> None:
+    """Hidden means the name under the root, not where a link happens to lead:
+    the shared library usually lives in a dot-directory (``~/.agents``)."""
+    root = tmp_path / "skills"
+    _write_skill(tmp_path / ".agents", "pdf", _skill_md("pdf"))
+    _write_skill(root, ".cache/stale", _skill_md("stale"))
+    _symlink(root / "pdf", tmp_path / ".agents" / "pdf")
+
+    assert [f.parent.name for f in iter_skill_files(root)] == ["pdf"]
+
+
+def test_symlink_cycles_end_instead_of_looping(tmp_path: Path) -> None:
+    root = tmp_path / "skills"
+    _write_skill(root, "outer", _skill_md("outer"))
+    _write_skill(root, "outer/inner", _skill_md("inner"))
+    _symlink(root / "outer" / "inner" / "back-to-root", root)
+    _symlink(root / "outer" / "inner" / "back-to-parent", root / "outer")
+    _symlink(root / "self", root / "self")  # resolves to nothing
+
+    # Each skill once, and the walk ends. Compared without order: paths sort
+    # case-insensitively on Windows, which puts ``outer/inner/SKILL.md`` ahead
+    # of ``outer/SKILL.md`` there and behind it on POSIX.
+    found = [f.relative_to(root).parent.as_posix() for f in iter_skill_files(root)]
+    assert sorted(found) == ["outer", "outer/inner"]
+
+
+def test_a_directory_reached_by_two_paths_is_loaded_once(tmp_path: Path) -> None:
+    root = tmp_path / "skills"
+    _write_skill(root, "pdf", _skill_md("pdf"))
+    _symlink(root / "pdf-alias", root / "pdf")
+
+    assert len(list(iter_skill_files(root))) == 1
+    assert [s.name for s in load_skills_from_directory(root)] == ["pdf"]
+
+
+def test_a_broken_link_is_ignored(tmp_path: Path) -> None:
+    root = tmp_path / "skills"
+    _write_skill(root, "real", _skill_md("real"))
+    _symlink(root / "gone", tmp_path / "no-such-directory")
+
+    assert [f.parent.name for f in iter_skill_files(root)] == ["real"]
+
+
+def test_a_symlinked_root_is_walked(tmp_path: Path) -> None:
+    _write_skill(tmp_path / "library", "pdf", _skill_md("pdf"))
+    _symlink(tmp_path / "skills", tmp_path / "library")
+
+    assert [f.parent.name for f in iter_skill_files(tmp_path / "skills")] == ["pdf"]

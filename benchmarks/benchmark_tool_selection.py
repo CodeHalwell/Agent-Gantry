@@ -36,7 +36,6 @@ from typing import Any
 
 from agent_gantry import AgentGantry
 
-
 # --------------------------------------------------------------------------- #
 # 50-tool registry across 10 domains. Each entry: (name, description, tags).
 # --------------------------------------------------------------------------- #

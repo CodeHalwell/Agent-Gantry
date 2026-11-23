@@ -1,6 +1,6 @@
 """Tests for the DSPy native tool adapter against the *real* installed ``dspy``.
 
-Exercises :class:`DSPyAdapter` (tool conversion + the per-call
+Exercises :class:`DSPyAdapter` (tool conversion + the per-run
 ``agent_builder``) against the actual ``dspy`` package, skipped everywhere it
 isn't installed. No API keys are required: ``dspy.ReAct`` construction never
 touches an LM (only an actual reasoning call does), and

@@ -2,7 +2,7 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Advanced DSPy guide | Agent-Gantry" description="Approving gated calls, per-call selection, run context and error modes for the Agent-Gantry DSPy integration.">
+<DocsLayout title="Advanced DSPy guide | Agent-Gantry" description="Approving gated calls, per-run selection, run context and error modes for the Agent-Gantry DSPy integration.">
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced DSPy</h1>
   <p class="lead">Approving confirmation-gated calls, selecting tools per call, and run context.</p>
@@ -19,7 +19,7 @@ def approve(request: ApprovalRequest) -> bool:
 tools = await DSPyAdapter(gantry, approve=approve).select("refund an order")`} />
   <p><code>True</code> runs the call once, with only Gantry's confirmation gate cleared; every other policy check still applies. Anything else, or an approver that raises, blocks the call and tells the model it was declined. With no approver, a gated call reports that it needs approval. <code>error_mode="raise"</code> never asks the approver.</p>
 
-  <h2>Per-call selection</h2>
+  <h2>Per-run selection</h2>
   <p><code>dspy.ReAct</code> fixes its tools, and writes their names into its instructions, when it is constructed, and DSPy has no hook before each model call. So selection is per call: <code>agent_builder()</code> builds a fresh <code>ReAct</code> with tools picked for each query, using the adapter's <code>error_formatter</code> and <code>approve</code>. If retrieval fails, the pinned tools are still offered (with a <code>WARNING</code>).</p>
   <CodeBlock lang="python" code={`builder = DSPyAdapter(gantry, approve=approve).agent_builder(
     "question -> answer", max_iters=5, always_include=["get_order_status"]

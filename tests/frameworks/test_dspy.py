@@ -270,7 +270,7 @@ async def test_real_dspy_validates_nullable_parameters(gantry):
 
 
 async def test_agent_builder_rebuilds_dspy_react_with_reselected_tools(fake_dspy, gantry):
-    """``agent_builder(...)`` returns a per-call builder; ``.build(query)`` makes a fresh ReAct."""
+    """``agent_builder(...)`` returns a per-run builder; ``.build(query)`` makes a fresh ReAct."""
     from agent_gantry.dspy import DSPyAdapter
     from agent_gantry.integrations.frameworks.dspy import GantryLiveDSPyReAct
 
