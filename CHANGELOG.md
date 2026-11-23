@@ -61,6 +61,13 @@ wording. Nothing breaks for existing callers.
   the same way; the skill-catalogue ceiling message changes with it.
 - `SystemOneSelector` logs its `max_candidates` ceiling at `WARNING` once per
   catalogue size and at `DEBUG` after that, where it warned on every call.
+- `SystemOneClient` logs a provider failure (`System One selection failed,
+  falling back: ...`) at `WARNING` when it starts and again if it recurs after
+  an answer, and at `DEBUG` while the same failure repeats, where it warned
+  on every request. This also applies when the client backs
+  `SystemOneReranker`. The first occurrence is still logged by both layers:
+  the client says what the provider did, the gantry says what retrieval did
+  about it.
 
 ### Fixed
 

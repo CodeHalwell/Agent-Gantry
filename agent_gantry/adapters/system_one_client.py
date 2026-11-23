@@ -181,6 +181,9 @@ class SystemOneClient:
         self._client_lock: asyncio.Lock | None = None
         self._api_key = api_key
         self._timeout = timeout
+        # The failure last warned about, so an outage is logged at WARNING
+        # when it starts and not again on every request while it lasts.
+        self._failure_warned: str | None = None
 
         if client is None:
             # Import eagerly enough to fail at construction with a useful
@@ -320,16 +323,20 @@ class SystemOneClient:
                 # batch that failed — a worse outcome than not ranking at all.
                 if isinstance(result, asyncio.CancelledError):
                     raise result
-                logger.warning(f"System One selection failed, falling back: {result}")
-                return SystemOneVerdict(
-                    fallback=True,
-                    reason=f"{type(result).__name__}: {result}",
-                    requests=len(batches),
-                )
+                reason = f"{type(result).__name__}: {result}"
+                # WARNING for a new failure, DEBUG for a repeat of the last
+                # one: this client is asked on every retrieval, so a provider
+                # that stays down would otherwise warn once per request.
+                log = logger.debug if self._failure_warned == reason else logger.warning
+                self._failure_warned = reason
+                log(f"System One selection failed, falling back: {result}")
+                return SystemOneVerdict(fallback=True, reason=reason, requests=len(batches))
             scores, usage_in, usage_out = result
             verdict.scores.update(scores)
             verdict.input_tokens += usage_in
             verdict.output_tokens += usage_out
+        # Answered: the next failure, even the same one, is news again.
+        self._failure_warned = None
         return verdict
 
     async def _score_batch(

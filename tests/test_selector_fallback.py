@@ -253,6 +253,53 @@ async def test_the_selectors_own_ceiling_warning_is_once_per_size(
     assert levels == ["WARNING", "DEBUG", "WARNING"]
 
 
+async def test_the_shipped_client_warns_once_per_outage_not_once_per_request(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The gantry's once-per-reason line is no use if the client underneath it
+    warns on every request for as long as the provider stays down."""
+    pytest.importorskip("typesafe_sdk")
+    from agent_gantry.adapters.selectors.system_one import SystemOneSelector
+    from agent_gantry.adapters.system_one_client import SystemOneClient
+
+    class Sdk:
+        """A stand-in TypeSafe client that is down, then up, then down again."""
+
+        def __init__(self) -> None:
+            self.down = True
+
+        async def system_one(self, *, state: Any, questions: dict[str, Any]) -> Any:
+            if self.down:
+                raise ConnectionError("endpoint unreachable")
+            answers = {key: type("Answer", (), {"noul": 0.9})() for key in questions}
+            return type("Response", (), {"answers": answers, "usage": None})()
+
+    sdk = Sdk()
+    gantry = _gantry(SystemOneSelector(client=SystemOneClient(client=sdk)))
+    try:
+        with caplog.at_level(logging.DEBUG, logger="agent_gantry"):
+            for _ in range(3):
+                assert (await gantry.retrieve(_query())).selector_fallback is True
+            sdk.down = False
+            assert (await gantry.retrieve(_query())).backend == "selector"
+            sdk.down = True
+            assert (await gantry.retrieve(_query())).selector_fallback is True
+
+        def warnings_from(logger_name: str, text: str) -> int:
+            return sum(
+                record.levelno == logging.WARNING
+                for record in caplog.records
+                if record.name == logger_name and text in record.getMessage()
+            )
+
+        # One when the outage starts and one when it recurs after an answer,
+        # from each layer; five failed-or-not requests would have been four.
+        assert warnings_from("agent_gantry.adapters.system_one_client", "selection failed") == 2
+        assert warnings_from(GANTRY_LOG, "Selector failed") == 2
+    finally:
+        await gantry.close()
+
+
 # ---------------------------------------------------------------------------
 # 3. Strict mode: fail loudly instead of failing open
 # ---------------------------------------------------------------------------
