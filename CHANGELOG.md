@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.1] - 2026-11-23
+
+A patch release: one bug fix in skill loading, and the bundled skill
+reorganised so it fits the limit this library applies to skills. No API
+changes and nothing to migrate.
+
 ### Fixed
 
 - **`add_skills_from_directory` skipped symlinked skill directories.** The
@@ -38,6 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The selector-versus-reranker contrast added in 0.23.0 (a selector can return
   nothing; a reranker only reorders) is now also in the README's feature list,
   the docs site's Architecture page and the top of the bundled skill.
+- A note the 0.23.0 entry left out: since that release the published JSON
+  schema of `SelectorConfig.type` and `RerankerConfig.type` lists
+  `"system_one"` only. `"jev"` is still accepted when a config is loaded, with
+  a `DeprecationWarning`.
 
 ## [0.23.0] - 2026-11-23
 
@@ -5385,7 +5395,8 @@ adapters, and the provider dialects agree with it.
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.23.1...HEAD
+[0.23.1]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.23.0...v0.23.1
 [0.23.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.20.0...v0.21.0
