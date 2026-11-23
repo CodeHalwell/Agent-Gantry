@@ -7,6 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-11-23
+
+A selector that cannot answer still fails open to semantic routing, but no
+longer silently: the result says which backend produced it, the fallback is
+logged once at `WARNING`, and an opt-in strict mode raises instead. It is a
+minor release because it adds public API and changes a log line's level and
+wording. Nothing breaks for existing callers.
+
+**Migrating.** Nothing to change. Two things to know:
+
+- anything matching the gantry's old log line, `Selector declined (...)` at
+  `DEBUG`, should match `Selector failed for <kind> selection (...)` at
+  `WARNING` instead;
+- an eval or CI job that configures a selector should assert
+  `result.selector_fallback is False`, or construct the gantry with
+  `on_selector_fallback="raise"`, so it cannot pass on semantic routing.
+
+### Added
+
+- **A retrieval result says which backend produced it.** With a selector
+  configured, a result that came from the semantic router instead (because the
+  selector failed, was over its candidate ceiling, or had nothing to work
+  with) was indistinguishable from one the selector served: `fallback` and
+  `reason` were on `SelectionResult` and dropped at the gantry boundary.
+  `RetrievalResult` now carries `backend` (`"selector"` or `"semantic"`),
+  `selector_fallback` and `selector_fallback_reason`, and `RetrievalDecision`
+  carries the same three, so `provider.last_selection`, `provider.selections`
+  and `dry_run_retrieve()` report it and `as_span_attributes()` includes it.
+  A selector that answers with no tools is a decline, not a fallback:
+  `backend == "selector"` and `selector_fallback is False`. The console
+  telemetry adapter logs the three fields with each retrieval.
+- **Strict mode for selectors.** `AgentGantry(selector=...,
+  on_selector_fallback="raise")`, or `SelectorConfig(on_fallback="raise")`,
+  raises the new `SelectorFallbackError` (with `.kind` and `.reason`) when the
+  selector is asked and does not answer, for tool, skill and MCP-server
+  selection. The default, `"semantic"`, still fails open. An empty query or
+  an empty catalogue is reported on the result and never raised.
+  `on_selector_fallback` is keyword-only. The error ends an agent run too:
+  `with_semantic_tools`, `GantryContextProvider` and the framework adapters'
+  per-turn hooks carry on without (or with the previous) tools after any other
+  retrieval failure, and let this one through.
+- `SystemOneClient` and `SelectorFallbackError` are importable from
+  `agent_gantry`, beside `SystemOneSelector` and `SystemOneReranker`.
+
+### Changed
+
+- **A selector fallback is logged at `WARNING`, once per reason.** The gantry
+  logged it at `DEBUG` as `Selector declined (...)`, which used the library's
+  word for the useful thing a selector does (choose nothing) for a failure.
+  It now logs `Selector failed for <kind> selection (<reason>); using semantic
+  routing` at `WARNING` the first time a reason is seen, and again if it
+  recurs after the selector has answered; repeats are at `DEBUG`. A selector
+  that was not consulted because there was nothing to select on is logged at
+  `DEBUG` as `Selector not consulted ...`. Skill and MCP-server selection log
+  the same way; the skill-catalogue ceiling message changes with it.
+- `SystemOneSelector` logs its `max_candidates` ceiling at `WARNING` once per
+  catalogue size and at `DEBUG` after that, where it warned on every call.
+- `SystemOneClient` logs a provider failure (`System One selection failed,
+  falling back: ...`) at `WARNING` when it starts and again if it recurs after
+  an answer, and at `DEBUG` while the same failure repeats, where it warned
+  on every request. This also applies when the client backs
+  `SystemOneReranker`. The first occurrence is still logged by both layers:
+  the client says what the provider did, the gantry says what retrieval did
+  about it.
+
+### Fixed
+
+- The `DeprecationWarning` for comparing a renamed value with its old spelling
+  (`live_tier != "per-call"`, `query_strategy != "per_call"`) is attributed to
+  the caller's line for `!=` as it already was for `==` and `in`. It was
+  attributed one frame short, to `agent_gantry/_deprecation.py`.
+
 ## [0.24.0] - 2026-11-23
 
 One vocabulary for how often tools are re-selected, a bug fix in skill
@@ -5443,7 +5515,8 @@ adapters, and the provider dialects agree with it.
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.21.0...v0.22.0

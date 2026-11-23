@@ -6,7 +6,7 @@ Models for conversation context, tool queries, and retrieval results.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -126,6 +126,20 @@ class RetrievalResult(BaseModel):
     filtered_count: int
 
     trace_id: str
+
+    #: Which backend produced ``tools``: ``"selector"`` when the configured
+    #: selector answered, ``"semantic"`` when the router did. With a selector
+    #: configured, ``"semantic"`` means it was not the one that answered, and
+    #: the two fields below say why.
+    backend: Literal["semantic", "selector"] = "semantic"
+    #: ``True`` when a selector is configured but this result came from the
+    #: semantic router instead: the selector failed, was over its candidate
+    #: ceiling, or had nothing to work with. Always ``False`` when no selector
+    #: is configured, and when the selector answered -- including when it
+    #: answered with no tools, which is a decline, not a fallback.
+    selector_fallback: bool = False
+    #: Why the selector did not answer, when ``selector_fallback`` is set.
+    selector_fallback_reason: str | None = None
 
     model_config = ConfigDict(validate_assignment=True)
 

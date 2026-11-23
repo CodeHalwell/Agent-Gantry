@@ -524,6 +524,28 @@ def test_per_run_tier_still_equals_its_old_spelling() -> None:
             assert compare()
 
 
+def test_the_old_spelling_warning_points_at_the_comparison() -> None:
+    """Every comparison form attributes its DeprecationWarning to the caller's
+    line. ``!=`` used to go through ``__eq__`` and land one frame short, inside
+    the library, where the default filter also hides it."""
+    import warnings
+
+    from agent_gantry.integrations.frameworks.base import PER_RUN_TIER
+
+    forms = {
+        "==": lambda: PER_RUN_TIER == "per-call",
+        "reflected ==": lambda: "per-call" == PER_RUN_TIER,
+        "!=": lambda: PER_RUN_TIER != "per-call",
+        "in": lambda: PER_RUN_TIER in ("per-turn", "per-call"),
+    }
+    for form, compare in forms.items():
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            compare()
+        assert [w.category for w in caught] == [DeprecationWarning], form
+        assert caught[0].filename == __file__, f"{form}: attributed to {caught[0].filename}"
+
+
 @pytest.mark.parametrize("case", ADAPTERS, ids=[c.name for c in ADAPTERS])
 def test_adapter_tier_still_matches_the_old_per_call_spelling(case: AdapterCase) -> None:
     if case.live_tier != "per-run":

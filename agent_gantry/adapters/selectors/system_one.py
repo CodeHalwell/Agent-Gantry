@@ -130,6 +130,7 @@ class SystemOneSelector(SelectorAdapter):
         self._max_candidates = max(1, int(max_candidates))
         self._group_after = max(1, int(group_after))
         self._max_groups = max(1, int(max_groups))
+        self._ceiling_warned: int | None = None
         self._client = (
             client
             if client is not None
@@ -179,10 +180,17 @@ class SystemOneSelector(SelectorAdapter):
             # reporting success, so a tool registered after the ceiling could
             # never be retrieved however relevant it was — and semantic
             # routing, which has no such ceiling, would never get a look in.
-            logger.warning(
+            # A configuration mismatch, not a transient fault: it recurs on
+            # every call for as long as the catalogue stays this size. Say it
+            # at WARNING once per size, then at DEBUG, so it is seen without
+            # flooding the log.
+            log = logger.debug if self._ceiling_warned == len(candidates) else logger.warning
+            self._ceiling_warned = len(candidates)
+            log(
                 f"System One selection saw {len(candidates)} candidates, over the "
-                f"{self._max_candidates} ceiling; falling back to semantic routing. Raise "
-                "max_candidates, or use the reranker over semantic search at this size."
+                f"{self._max_candidates} ceiling; not selecting, so every call falls back "
+                "to semantic routing. Raise max_candidates, or use the reranker over "
+                "semantic search at this size."
             )
             return SelectionResult(
                 fallback=True,
@@ -214,6 +222,10 @@ class SystemOneSelector(SelectorAdapter):
         """Score every candidate and keep those over the threshold."""
         verdict = await self._client.score(query, candidates, self._question_for(kind))
         if verdict.fallback:
+            # ``SystemOneClient`` has already logged the provider failure; a
+            # custom client may not have, and the caller of ``select()`` gets
+            # the reason on the result either way.
+            logger.debug(f"System One selection got no verdict ({verdict.reason}); falling back")
             return SelectionResult(
                 fallback=True,
                 reason=verdict.reason,

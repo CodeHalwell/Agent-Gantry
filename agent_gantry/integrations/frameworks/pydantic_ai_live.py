@@ -36,6 +36,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from agent_gantry.adapters.selectors.base import SelectorFallbackError
 from agent_gantry.integrations.frameworks.base import (
     DEFAULT_TOOL_LIMIT,
     QueryBoundsError,
@@ -423,7 +424,7 @@ def _toolset_classes(abstract_toolset: type) -> tuple[type, type]:
             """
             try:
                 specs = await self._select(ctx)
-            except (MissingRequiredToolError, QueryBoundsError):
+            except (MissingRequiredToolError, QueryBoundsError, SelectorFallbackError):
                 raise
             except Exception:
                 logger.warning(
@@ -470,7 +471,7 @@ def _toolset_classes(abstract_toolset: type) -> tuple[type, type]:
                 return self._offered[name]
             try:
                 specs = await self._select(ctx)
-            except (MissingRequiredToolError, QueryBoundsError):
+            except (MissingRequiredToolError, QueryBoundsError, SelectorFallbackError):
                 raise
             except Exception:
                 # Same policy as get_tools: a retrieval outage must not surface

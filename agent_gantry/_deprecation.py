@@ -51,6 +51,8 @@ class RenamedValue(str):
     def _is_old(self, other: object) -> bool:
         if not isinstance(other, str) or str.__ne__(other, self._old):
             return False
+        # Three frames up: this method, ``__eq__`` or ``__ne__``, then the
+        # comparison in the caller's code, which is where the warning belongs.
         warnings.warn(
             f"{self._what} {self._old!r} is now {str(self)!r}; comparing against "
             f"{self._old!r} is deprecated and will stop matching in a future release.",
@@ -63,7 +65,9 @@ class RenamedValue(str):
         return self._is_old(other) or str.__eq__(self, other) is True
 
     def __ne__(self, other: object) -> bool:
-        return not self.__eq__(other)
+        # Not ``not self.__eq__(other)``: that puts one more frame between the
+        # warning and the caller, so it was attributed to this module.
+        return not (self._is_old(other) or str.__eq__(self, other) is True)
 
     __hash__ = str.__hash__
 

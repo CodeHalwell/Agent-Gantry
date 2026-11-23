@@ -13,6 +13,7 @@ import logging
 import uuid
 import warnings
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Literal, overload
@@ -20,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 from agent_gantry.adapters.embedders.base import embed_query
 from agent_gantry.adapters.embedders.openai import OpenAIEmbedder
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+from agent_gantry.adapters.selectors.base import SelectorFallbackError
 from agent_gantry.core.executor import ExecutionEngine
 from agent_gantry.core.factories import (
     build_embedder,
@@ -66,6 +68,13 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _SelectorFallback:
+    """A selector is configured, and the semantic router is answering instead."""
+
+    reason: str
 
 #: Ceiling on how many skills are read into memory for selection. Well above
 #: any selector's own ``max_candidates`` (512 by default), so in practice the
@@ -126,6 +135,10 @@ class AgentGantry:
         # A caller passing telemetry fifth would have had it stored as the
         # selector, and retrieval would then have called ``.select()`` on it.
         selector: SelectorAdapter | None = None,
+        # Keyword-only from here on, for the reason above: nothing added after
+        # this point can ever shift what a positional argument means.
+        *,
+        on_selector_fallback: Literal["semantic", "raise"] | None = None,
     ) -> None:
         """
         Initialize AgentGantry.
@@ -140,15 +153,36 @@ class AgentGantry:
             selector: Custom selector adapter. A selector replaces semantic
                 matching: the catalogue is put to a decision model directly,
                 with no embeddings and no vector search. Retrieval falls back
-                to the semantic router whenever it declines or fails. Last in
+                to the semantic router whenever it cannot answer, and the
+                result says so (``RetrievalResult.selector_fallback``). Last in
                 the list to keep existing positional calls meaning what they
                 did; pass it by keyword.
+            on_selector_fallback: What retrieval does when the selector is
+                asked and does not answer. ``"semantic"`` fails open to the
+                semantic router (the default, from
+                ``config.selector.on_fallback``); the result then says so in
+                ``RetrievalResult.selector_fallback``. ``"raise"`` raises
+                :class:`~agent_gantry.adapters.selectors.base.SelectorFallbackError`
+                instead, for evals and CI that must not pass on a different
+                backend. Keyword-only.
+
+        Raises:
+            ValueError: If ``on_selector_fallback`` is not one of the two values.
         """
         self._config = config or AgentGantryConfig()
         self._vector_store = vector_store or build_vector_store(self._config.vector_store)
         self._embedder = embedder or build_embedder(self._config.embedder)
         self._reranker = reranker or build_reranker(self._config.reranker)
         self._selector = selector or build_selector(self._config.selector)
+        self._on_selector_fallback = on_selector_fallback or self._config.selector.on_fallback
+        if self._on_selector_fallback not in ("semantic", "raise"):
+            raise ValueError(
+                "on_selector_fallback must be 'semantic' or 'raise', "
+                f"got {on_selector_fallback!r}"
+            )
+        # The reason last warned about, per catalogue kind, so a selector that
+        # cannot answer says so once rather than on every retrieval.
+        self._selector_fallback_warned: dict[str, str] = {}
         self._telemetry = telemetry or build_telemetry(self._config.telemetry)
         self._security_policy = security_policy or SecurityPolicy()
         self._registry = ToolRegistry()
@@ -450,6 +484,7 @@ class AgentGantry:
         selector: SelectorAdapter | None = None,
         telemetry: TelemetryAdapter | None = None,
         security_policy: SecurityPolicy | None = None,
+        on_selector_fallback: Literal["semantic", "raise"] | None = None,
     ) -> AgentGantry:
         """
         Build a Gantry instance and populate it by importing tool-bearing modules.
@@ -457,7 +492,8 @@ class AgentGantry:
         Args:
             modules: Iterable of module paths (dot-notation) to import.
             attr: Attribute on each module that holds an AgentGantry instance (default "tools").
-            config/vector_store/embedder/reranker/selector/telemetry/security_policy:
+            config/vector_store/embedder/reranker/selector/telemetry/security_policy/
+            on_selector_fallback:
                 Optional overrides for the constructed gantry instance.
 
         Returns:
@@ -472,6 +508,7 @@ class AgentGantry:
             selector=selector,
             telemetry=telemetry,
             security_policy=security_policy,
+            on_selector_fallback=on_selector_fallback,
         )
         await gantry.collect_tools_from_modules(modules, module_attr=attr)
         return gantry
@@ -929,21 +966,73 @@ class AgentGantry:
     # Selection — the alternative to semantic matching.
     #
     # A selector puts the catalogue to a decision model directly: no query
-    # embedding, no vector search, no sync. Each helper returns ``None`` when
-    # the selector is absent, has nothing to work with, or declined to answer,
-    # and the caller then takes the semantic path unchanged. Falling back is
-    # the normal case, not an error path: a provider hiccup must cost
-    # precision, never the catalogue.
+    # embedding, no vector search, no sync. Each helper hands the semantic
+    # path the work when the selector is absent, has nothing to work with, or
+    # could not answer. Failing open is the default, not an error path: a
+    # provider hiccup must cost precision, never the catalogue. But it is
+    # never silent. Two words are kept apart throughout:
+    #
+    # - a selector *declines* when it answers with nothing: it looked at the
+    #   catalogue and found no entry that serves the query. That is a result.
+    # - a selector *falls back* when it did not answer at all. That is
+    #   reported to the caller, logged, and in strict mode raised.
     # ------------------------------------------------------------------
+
+    def _selector_fell_back(
+        self, kind: str, reason: str | None, *, failed: bool
+    ) -> _SelectorFallback:
+        """Record that the semantic path is answering instead of the selector.
+
+        Args:
+            kind: ``"tool"``, ``"skill"`` or ``"mcp_server"``.
+            reason: Why the selector did not answer.
+            failed: ``True`` when the selector was asked and did not answer, or
+                could not be asked because the catalogue is over a ceiling: a
+                fault or a misconfiguration, logged at WARNING and raised in
+                strict mode. ``False`` when there was simply nothing to select
+                on (an empty query, an empty catalogue), which is logged at
+                DEBUG and never raised.
+
+        Raises:
+            SelectorFallbackError: When ``failed`` and
+                ``on_selector_fallback="raise"``.
+        """
+        reason = reason or "no reason given"
+        if not failed:
+            logger.debug(
+                f"Selector not consulted for {kind} selection ({reason}); using semantic routing"
+            )
+            return _SelectorFallback(reason)
+        if self._on_selector_fallback == "raise":
+            raise SelectorFallbackError(kind, reason)
+        message = f"Selector failed for {kind} selection ({reason}); using semantic routing"
+        if self._selector_fallback_warned.get(kind) != reason:
+            # Once per reason, not once per call: a catalogue over the
+            # selector's ceiling falls back on every retrieval, for good, and
+            # must be visible without burying everything else in the log.
+            self._selector_fallback_warned[kind] = reason
+            logger.warning(
+                f"{message}. Results say so in selector_fallback; repeats of this "
+                "reason are logged at DEBUG."
+            )
+        else:
+            logger.debug(message)
+        return _SelectorFallback(reason)
+
+    def _selector_answered(self, kind: str) -> None:
+        """The selector answered: a later fallback is news again."""
+        self._selector_fallback_warned.pop(kind, None)
 
     async def _select_tools(
         self, query: ToolQuery
-    ) -> tuple[list[ScoredTool], float, int] | None:
+    ) -> tuple[list[ScoredTool], float, int] | _SelectorFallback | None:
         """Choose tools with the configured selector.
 
         Returns:
-            ``(scored tools, selection milliseconds, candidates considered)``,
-            or ``None`` to fall back to semantic routing.
+            ``(scored tools, selection milliseconds, candidates considered)``
+            when the selector answered; a :class:`_SelectorFallback` when one
+            is configured but the semantic router must answer instead; ``None``
+            when no selector is configured.
         """
         if self._selector is None:
             return None
@@ -951,7 +1040,7 @@ class AgentGantry:
         if not text.strip():
             # No signal to select on, and unlike a zero vector this would put
             # the whole catalogue to the model at full price.
-            return None
+            return self._selector_fell_back("tool", "the query is empty", failed=False)
 
         # Lazy ``modules=`` are normally imported by ``sync()``, but a selector
         # that answers means ``sync()`` is never reached — so without this the
@@ -986,7 +1075,9 @@ class AgentGantry:
             # Nothing registered in memory at all. The store may still hold
             # tools from an earlier process, and only the semantic path can
             # see those, so this is a genuine "cannot answer".
-            return None
+            return self._selector_fell_back(
+                "tool", "no tools are registered in memory", failed=False
+            )
 
         # Through the router's own filter, not a second copy of it: a selector
         # surfacing a deprecated or circuit-broken tool that the semantic path
@@ -1009,8 +1100,8 @@ class AgentGantry:
         result = await self._selector.select(text, candidates, query.limit)
         elapsed_ms = (perf_counter() - start) * 1000
         if result.fallback:
-            logger.debug(f"Selector declined ({result.reason}); using semantic routing")
-            return None
+            return self._selector_fell_back("tool", result.reason, failed=True)
+        self._selector_answered("tool")
 
         # Not ``query.score_threshold``: that is a cosine cutoff, and its
         # schema default of 0.5 is kept for direct ``ToolQuery`` callers. Read
@@ -1100,8 +1191,10 @@ class AgentGantry:
             # Selecting over a prefix here would be the truncation this loop
             # exists to avoid, so hand it to the semantic path, which has no
             # such ceiling.
-            logger.warning(
-                f"Skill catalogue exceeds {_MAX_SELECTABLE_SKILLS}; using semantic search."
+            self._selector_fell_back(
+                "skill",
+                f"the skill catalogue exceeds {_MAX_SELECTABLE_SKILLS} entries",
+                failed=True,
             )
             return None
 
@@ -1122,8 +1215,9 @@ class AgentGantry:
         candidates = [SelectionCandidate.from_skill(skill) for skill in skills]
         result = await self._selector.select(query, candidates, limit, kind="skill")
         if result.fallback:
-            logger.debug(f"Selector declined ({result.reason}); using semantic skill search")
+            self._selector_fell_back("skill", result.reason, failed=True)
             return None
+        self._selector_answered("skill")
 
         threshold = score_threshold or 0.0
         return [
@@ -1159,8 +1253,9 @@ class AgentGantry:
         candidates = [SelectionCandidate.from_mcp_server(server) for server in servers]
         result = await self._selector.select(query, candidates, limit, kind="mcp_server")
         if result.fallback:
-            logger.debug(f"Selector declined ({result.reason}); using semantic MCP routing")
+            self._selector_fell_back("mcp_server", result.reason, failed=True)
             return None
+        self._selector_answered("mcp_server")
 
         threshold = score_threshold or 0.0
         return [
@@ -1231,6 +1326,9 @@ class AgentGantry:
 
         async with self._telemetry.span("tool_retrieval", {"query": query.context.query}):
             selection = await self._select_tools(query)
+            fell_back = selection if isinstance(selection, _SelectorFallback) else None
+            if fell_back is not None:
+                selection = None
             if selection is None:
                 # Only now: syncing embeds every changed tool into the vector
                 # store, and a selector that answers has just made that work
@@ -1259,6 +1357,7 @@ class AgentGantry:
                 candidate_count=candidate_count,
                 filtered_count=len(selected),
                 trace_id=str(uuid.uuid4()),
+                backend="selector",
             )
             await self._telemetry.record_retrieval(query, retrieval)
             return retrieval
@@ -1284,6 +1383,10 @@ class AgentGantry:
             candidate_count=routing_result.candidate_count,
             filtered_count=routing_result.filtered_count,
             trace_id=str(uuid.uuid4()),
+            # A selector is configured and this is still the router's answer:
+            # say so, so a caller can tell which backend it is looking at.
+            selector_fallback=fell_back is not None,
+            selector_fallback_reason=fell_back.reason if fell_back is not None else None,
         )
         await self._telemetry.record_retrieval(query, retrieval)
         return retrieval

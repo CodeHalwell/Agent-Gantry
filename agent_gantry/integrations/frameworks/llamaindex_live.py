@@ -34,6 +34,7 @@ import functools
 import logging
 from typing import TYPE_CHECKING, Any
 
+from agent_gantry.adapters.selectors.base import SelectorFallbackError
 from agent_gantry.integrations.frameworks.base import (
     DEFAULT_TOOL_LIMIT,
     GantryToolset,
@@ -209,7 +210,7 @@ def _retriever_class(object_retriever: type) -> type:
                     required=self._required,
                     always_include=self._always_include,
                 )
-            except (MissingRequiredToolError, QueryBoundsError):
+            except (MissingRequiredToolError, QueryBoundsError, SelectorFallbackError):
                 raise
             except Exception:
                 logger.warning(

@@ -754,8 +754,16 @@ async def test_positional_constructor_arguments_still_mean_what_they_did() -> No
     from agent_gantry import AgentGantry
     from agent_gantry.observability.console import NoopTelemetryAdapter
 
-    names = list(inspect.signature(AgentGantry.__init__).parameters)
-    assert names[-1] == "selector", f"selector must stay last; got {names}"
+    parameters = inspect.signature(AgentGantry.__init__).parameters
+    positional = [
+        name
+        for name, parameter in parameters.items()
+        if parameter.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+    ]
+    assert positional[-1] == "selector", f"selector must stay last; got {positional}"
+    # Anything added since is keyword-only, so it cannot shift a positional.
+    later = list(parameters)[list(parameters).index("selector") + 1 :]
+    assert all(parameters[name].kind is inspect.Parameter.KEYWORD_ONLY for name in later), later
 
     telemetry = NoopTelemetryAdapter()
     gantry = AgentGantry(None, None, None, None, telemetry)  # 5th positional

@@ -42,6 +42,7 @@ import threading
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
+from agent_gantry.adapters.selectors.base import SelectorFallbackError
 from agent_gantry.core.invocation import current_tool_invocation
 from agent_gantry.integrations.frameworks.base import (
     DEFAULT_TOOL_LIMIT,
@@ -329,7 +330,7 @@ class _RunSelector:
         kwargs = self._select_kwargs
         try:
             specs = await GantryToolset(adapter._gantry).select_or_empty(query, **kwargs)
-        except MissingRequiredToolError:
+        except (MissingRequiredToolError, SelectorFallbackError):
             raise
         except Exception:
             # A broken retrieval must not drop the pinned tools too.

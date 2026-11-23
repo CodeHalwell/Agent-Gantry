@@ -148,6 +148,9 @@ class ConsoleTelemetryAdapter:
                 "tools_found": len(result.tools),
                 "total_time_ms": result.total_time_ms,
                 "trace_id": result.trace_id,
+                "backend": result.backend,
+                "selector_fallback": result.selector_fallback,
+                "selector_fallback_reason": result.selector_fallback_reason,
             },
         )
 
