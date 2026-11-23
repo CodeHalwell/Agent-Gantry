@@ -44,7 +44,10 @@ wording. Nothing breaks for existing callers.
   selector is asked and does not answer, for tool, skill and MCP-server
   selection. The default, `"semantic"`, still fails open. An empty query or
   an empty catalogue is reported on the result and never raised.
-  `on_selector_fallback` is keyword-only.
+  `on_selector_fallback` is keyword-only. The error ends an agent run too:
+  `with_semantic_tools`, `GantryContextProvider` and the framework adapters'
+  per-turn hooks carry on without (or with the previous) tools after any other
+  retrieval failure, and let this one through.
 - `SystemOneClient` and `SelectorFallbackError` are importable from
   `agent_gantry`, beside `SystemOneSelector` and `SystemOneReranker`.
 

@@ -27,6 +27,7 @@ import re
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+from agent_gantry.adapters.selectors.base import SelectorFallbackError
 from agent_gantry.integrations.frameworks.base import DEFAULT_TOOL_LIMIT
 from agent_gantry.integrations.frameworks.base import GantryToolset as _BaseToolset
 from agent_gantry.integrations.frameworks.pydantic_ai import (
@@ -179,6 +180,8 @@ def gantry_search_strategy(
                             namespaces=namespaces,
                         )
                     )
+                except SelectorFallbackError:
+                    raise  # strict mode: never search on a different backend
                 except Exception:
                     # Keep the queries that did succeed; only if every one fails
                     # do Gantry's tools fall back to keyword matching (below).
@@ -266,6 +269,8 @@ def _capability_class(abstract_capability: type) -> type:
                     return await self._gantry.retrieve_skills_as_prompt(
                         query, limit=self._skills, namespace=self._skill_namespaces
                     )
+                except SelectorFallbackError:
+                    raise  # strict mode: never retrieve on a different backend
                 except Exception:
                     logger.warning(
                         "GantryCapability: skill retrieval failed; continuing without "

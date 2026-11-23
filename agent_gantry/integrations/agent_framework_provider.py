@@ -72,6 +72,7 @@ from itertools import count
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry._deprecation import RenamedValue, warn_renamed
+from agent_gantry.adapters.selectors.base import SelectorFallbackError
 from agent_gantry.integrations.agent_framework_bridge import (
     GantryToolBridge,
     RetrievalDecision,
@@ -578,6 +579,8 @@ def _build_impl_class(base: type) -> type:
             async def _per_turn_retrieval(context: Any, call_next: Any) -> None:
                 try:
                     await provider._refresh_tools_on_chat_context(context)
+                except SelectorFallbackError:
+                    raise  # strict mode outranks "never break the run"
                 except Exception:
                     logger.exception(
                         "GantryContextProvider: per-turn retrieval failed; "
@@ -757,6 +760,12 @@ def _build_impl_class(base: type) -> type:
                                 **self._query_kwargs,
                             )
                         )
+                    except SelectorFallbackError:
+                        # ``on_selector_fallback="raise"`` is the caller asking
+                        # for the run to stop rather than proceed without the
+                        # selector's answer; swallowing it here would make
+                        # strict mode hold for dry runs only.
+                        raise
                     except Exception:
                         logger.exception(
                             "GantryContextProvider: semantic retrieval failed; "

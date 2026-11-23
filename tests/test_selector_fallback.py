@@ -470,3 +470,164 @@ async def test_a_provider_dry_run_reports_the_fallback() -> None:
         assert decision.selector_fallback_reason == "catalogue of 600 exceeds max_candidates=512"
     finally:
         await gantry.close()
+
+
+# ---------------------------------------------------------------------------
+# Strict mode holds through the wrappers that otherwise survive a failure
+# ---------------------------------------------------------------------------
+#
+# Every integration catches a retrieval failure and carries on without (or
+# with the previous) tools, so that a broken vector store cannot end a run.
+# ``on_selector_fallback="raise"`` is the caller asking for the opposite. An
+# integration that swallowed it would leave strict mode holding for direct
+# ``retrieve()`` calls only, and an eval run through an agent would pass with
+# no tools at all.
+
+
+async def test_strict_mode_reaches_the_caller_of_with_semantic_tools() -> None:
+    from agent_gantry import with_semantic_tools
+
+    gantry = _gantry(_Selector("ConnectError: unreachable"), on_selector_fallback="raise")
+    called: list[Any] = []
+    try:
+
+        @with_semantic_tools(gantry, limit=2)
+        async def generate(prompt: str, *, tools: list[Any] | None = None) -> str:
+            called.append(tools)
+            return "ok"
+
+        with pytest.raises(SelectorFallbackError, match="ConnectError: unreachable"):
+            await generate("add two numbers")
+        assert called == []  # the model was never called without the selector
+    finally:
+        await gantry.close()
+
+
+def test_strict_mode_reaches_the_caller_of_a_sync_with_semantic_tools() -> None:
+    from agent_gantry import with_semantic_tools
+
+    gantry = _gantry(_Selector("ConnectError: unreachable"), on_selector_fallback="raise")
+    called: list[Any] = []
+
+    @with_semantic_tools(gantry, limit=2)
+    def generate(prompt: str, *, tools: list[Any] | None = None) -> str:
+        called.append(tools)
+        return "ok"
+
+    with pytest.raises(SelectorFallbackError, match="ConnectError: unreachable"):
+        generate("add two numbers")
+    assert called == []
+
+
+async def test_a_fail_open_gantry_still_survives_through_with_semantic_tools() -> None:
+    """The default is untouched: the fallback serves the call, and says so."""
+    from agent_gantry import with_semantic_tools
+
+    gantry = _gantry(_Selector("ConnectError: unreachable"))
+    called: list[Any] = []
+    try:
+
+        @with_semantic_tools(gantry, limit=2)
+        async def generate(prompt: str, *, tools: list[Any] | None = None) -> str:
+            called.append(tools)
+            return "ok"
+
+        assert await generate("add two numbers") == "ok"
+        assert called and called[0]  # the semantic router's tools were injected
+    finally:
+        await gantry.close()
+
+
+async def test_strict_mode_ends_a_context_provider_run() -> None:
+    af = pytest.importorskip("agent_framework")
+    from agent_gantry import GantryContextProvider
+
+    gantry = _gantry(_Selector("ConnectError: unreachable"), on_selector_fallback="raise")
+    try:
+        provider = GantryContextProvider(gantry, top_k=2, score_threshold=0.0)
+        context = af.SessionContext(
+            input_messages=[af.Message(role="user", contents=["add two numbers"])]
+        )
+        with pytest.raises(SelectorFallbackError):
+            await provider.before_run(agent=None, session=None, context=context, state={})
+        assert provider.last_selection is None
+    finally:
+        await gantry.close()
+
+
+async def test_strict_mode_reaches_the_per_turn_hooks() -> None:
+    """Two hooks that need no framework installed; the guard below covers the rest."""
+    import types
+
+    from agent_gantry.integrations.frameworks.google_adk_live import _inject_selected_tools
+    from agent_gantry.integrations.frameworks.langgraph_live import _select_tools_for_state
+
+    gantry = _gantry(_Selector("ConnectError: unreachable"), on_selector_fallback="raise")
+    try:
+        state = {"messages": [{"role": "user", "content": "add two numbers"}]}
+        with pytest.raises(SelectorFallbackError):
+            await _select_tools_for_state(gantry, state, limit=2, score_threshold=0.0)
+        with pytest.raises(SelectorFallbackError):
+            await _inject_selected_tools(
+                gantry, "add two numbers", types.SimpleNamespace(), limit=2, score_threshold=0.0
+            )
+    finally:
+        await gantry.close()
+
+
+#: Calls that reach ``AgentGantry.retrieve`` (or its skill twin) from an
+#: integration. A ``try`` around one of these that also catches ``Exception``
+#: is a place where strict mode can be swallowed.
+_RETRIEVAL_CALLS = {
+    "select",
+    "select_or_empty",
+    "_select",
+    "retrieve",
+    "retrieve_tools",
+    "_retrieve_tools",
+    "retrieve_skills",
+    "retrieve_skills_as_prompt",
+    "get_tools_with_decision",
+    "_refresh_tools_on_chat_context",
+}
+
+
+def _swallowing_handlers() -> list[str]:
+    """``file:line`` of each broad handler around retrieval that strict mode cannot pass."""
+    import ast
+    from pathlib import Path
+
+    import agent_gantry
+
+    def names(node: ast.expr | None) -> set[str]:
+        return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)} if node else set()
+
+    offenders: list[str] = []
+    root = Path(agent_gantry.__file__).parent / "integrations"
+    for path in sorted(root.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.Try):
+                continue
+            retrieves = any(
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Attribute)
+                and call.func.attr in _RETRIEVAL_CALLS
+                for statement in node.body
+                for call in ast.walk(statement)
+            )
+            if not retrieves:
+                continue
+            let_through = False
+            for handler in node.handlers:
+                caught = names(handler.type)
+                if "SelectorFallbackError" in caught:
+                    let_through = len(handler.body) == 1 and isinstance(handler.body[0], ast.Raise)
+                elif handler.type is None or caught & {"Exception", "BaseException"}:
+                    if not let_through:
+                        offenders.append(f"{path.relative_to(root).as_posix()}:{handler.lineno}")
+                    break
+    return offenders
+
+
+def test_no_integration_swallows_strict_mode() -> None:
+    assert _swallowing_handlers() == []

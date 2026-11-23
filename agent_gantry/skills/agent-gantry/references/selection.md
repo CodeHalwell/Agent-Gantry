@@ -100,8 +100,10 @@ returns `backend` (`"selector"` or `"semantic"`), `selector_fallback` and
 `provider.selections`, `dry_run_retrieve()`) carries the same three. In an eval
 that configures a selector, assert `selector_fallback is False`, or construct
 the gantry with `on_selector_fallback="raise"` so a fallback raises
-`SelectorFallbackError` instead of passing on semantic routing. Production
-should keep the default and fail open.
+`SelectorFallbackError` instead of passing on semantic routing. That error also
+ends an agent run: `with_semantic_tools`, `GantryContextProvider` and the
+framework adapters' per-turn hooks survive other retrieval failures but let
+this one through. Production should keep the default and fail open.
 
 A selector *declines* when it answers with nothing (a result: `backend ==
 "selector"`, no tools); it *falls back* when it does not answer. The log line

@@ -20,6 +20,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from agent_gantry.adapters.selectors.base import SelectorFallbackError
 from agent_gantry.integrations.frameworks.base import (
     GantryToolset,
     QueryBoundsError,
@@ -169,7 +170,7 @@ class GantryHaystackSelector:
             specs = await GantryToolset(self._adapter._gantry).select_or_empty(
                 query, tools_already_used=list(used), **self._selection
             )
-        except (MissingRequiredToolError, QueryBoundsError):
+        except (MissingRequiredToolError, QueryBoundsError, SelectorFallbackError):
             raise
         except Exception:
             logger.warning(

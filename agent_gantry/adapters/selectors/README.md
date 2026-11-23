@@ -141,7 +141,10 @@ catalogue and no entry served the query. That is a result (`backend == "selector
   pass on a backend you did not configure. `AgentGantry(selector=..., on_selector_fallback="raise")`
   (or `SelectorConfig(on_fallback="raise")`) raises `SelectorFallbackError` instead of falling back,
   for tools, skills and MCP servers. An empty query, or nothing registered, is not a selector failure:
-  it is reported on the result and never raised.
+  it is reported on the result and never raised. The error also passes through the integrations that
+  otherwise survive a retrieval failure (`with_semantic_tools`, `GantryContextProvider`, the framework
+  adapters' per-turn hooks), so in strict mode it ends the agent run rather than leaving it without
+  tools.
 - **Plain lists carry no provenance.** `retrieve_tools()` and the framework adapters' `select()`
   return tool lists with nowhere to put it. Use `retrieve()`, a `RetrievalDecision`, or strict mode
   when you need to know.

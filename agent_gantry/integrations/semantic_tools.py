@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, overload
 
 from pydantic import ValidationError
 
+from agent_gantry.adapters.selectors.base import SelectorFallbackError
 from agent_gantry.integrations.frameworks.base import check_query_bounds
 from agent_gantry.query.strategies import last_user_text
 from agent_gantry.utils.async_utils import is_coroutine_function
@@ -369,6 +370,10 @@ class SemanticToolSelector:
                     # not a transient retrieval failure — swallowing it called
                     # the model with no tools on every request.
                     raise
+                except SelectorFallbackError:
+                    # Strict mode (``on_selector_fallback="raise"``) is the caller
+                    # asking not to go on without the selector's answer.
+                    raise
                 except Exception as e:
                     # If tool retrieval fails, call function without tools
                     _logger.warning("Tool retrieval failed, proceeding without tools: %s", e)
@@ -435,6 +440,10 @@ class SemanticToolSelector:
                 except ValidationError:
                     # Same as the async wrapper: an invalid query is a
                     # configuration error and must not be swallowed.
+                    raise
+                except SelectorFallbackError:
+                    # Strict mode (``on_selector_fallback="raise"``) is the caller
+                    # asking not to go on without the selector's answer.
                     raise
                 except Exception as e:
                     # If tool retrieval fails, call function without tools

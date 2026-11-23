@@ -55,6 +55,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from agent_gantry.adapters.selectors.base import SelectorFallbackError
 from agent_gantry.core.invocation import current_tool_invocation
 from agent_gantry.integrations.frameworks.base import (
     DEFAULT_TOOL_LIMIT,
@@ -447,7 +448,7 @@ class GantryLiveDSPyReAct(_PerCallBuilder):
         kwargs = self._select_kwargs
         try:
             specs = await GantryToolset(adapter._gantry).select_or_empty(query, **kwargs)
-        except MissingRequiredToolError:
+        except (MissingRequiredToolError, SelectorFallbackError):
             raise
         except Exception:
             logger.warning(
