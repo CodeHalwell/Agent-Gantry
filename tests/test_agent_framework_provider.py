@@ -492,6 +492,15 @@ class TestGantryContextProvider:
         with pytest.raises(ValueError, match="'per_run' or 'per_turn'"):
             GantryContextProvider(gantry_with_tools, query_strategy="per_step")
 
+        # Handing one provider's reported strategy to another is not a use of
+        # the old spelling, although that value also equals it.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            copy = GantryContextProvider(
+                gantry_with_tools, top_k=1, query_strategy=new.query_strategy
+            )
+            assert copy.query_strategy == "per_turn"
+
     @pytest.mark.asyncio
     async def test_per_turn_with_last_user_text_warns(
         self,

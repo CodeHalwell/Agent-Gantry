@@ -1069,6 +1069,12 @@ class GantryContextProvider:
         verbose: bool = False,
         **query_kwargs: Any,
     ) -> Any:
+        if isinstance(query_strategy, str):
+            # A plain string from here on. Another provider's reported
+            # ``query_strategy`` is a ``RenamedValue`` that also equals the
+            # old spelling, so handing it back in must not read as someone
+            # writing "per_call".
+            query_strategy = str(query_strategy)
         if query_strategy == _DEPRECATED_PER_TURN:
             # Renamed in 0.24.0. "per_call" named the *finest* granularity
             # here while ``live_tier="per-call"`` named the coarsest; one
