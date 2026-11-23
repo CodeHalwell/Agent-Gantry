@@ -40,7 +40,7 @@ works under both ``react(...)`` (``dspy.Tool.__call__``) and ``await
 react.acall(...)`` (``dspy.Tool.acall`` returns a non-coroutine result as is)
 with no ``allow_tool_async_sync_conversion`` setting.
 
-Per-call selection
+Per-run selection
 ------------------
 ``dspy.ReAct`` fixes its tools, and bakes their names into its instructions,
 at construction. :meth:`DSPyAdapter.agent_builder` therefore builds a fresh
@@ -58,6 +58,7 @@ from typing import TYPE_CHECKING, Any
 from agent_gantry.core.invocation import current_tool_invocation
 from agent_gantry.integrations.frameworks.base import (
     DEFAULT_TOOL_LIMIT,
+    PER_RUN_TIER,
     BaseFrameworkAdapter,
     GantryToolset,
     ToolConfirmationRequiredError,
@@ -293,7 +294,7 @@ def _spec_to_dspy(
 class DSPyAdapter(BaseFrameworkAdapter):
     """Route Gantry-selected tools into DSPy.
 
-    Static slice (``dspy.Tool`` objects) plus a per-call builder (a fresh
+    Static slice (``dspy.Tool`` objects) plus a per-run builder (a fresh
     ``dspy.ReAct`` per call). Every call routes through ``gantry.execute`` so
     retries, timeouts, circuit breakers, and the security policy all apply::
 
@@ -327,7 +328,7 @@ class DSPyAdapter(BaseFrameworkAdapter):
             (default) tells the model the call needs approval.
     """
 
-    live_tier = "per-call"
+    live_tier = PER_RUN_TIER
     _live_delegate = "agent_builder"
     _live_required_kwargs = ("signature",)
 

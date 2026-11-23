@@ -12,7 +12,7 @@ This skill is the canonical reference for using the library. This file holds wha
 
 | User's framework | API to use | Read |
 |---|---|---|
-| Microsoft Agent Framework (AF 1.x) | `AgentFrameworkAdapter(gantry).context_provider(top_k=...)` (dynamic, per-turn or per-call) or `.tool_bridge()` (static) | [Microsoft Agent Framework](references/microsoft-agent-framework.md) |
+| Microsoft Agent Framework (AF 1.x) | `AgentFrameworkAdapter(gantry).context_provider(top_k=...)` (dynamic, per-run or per-turn) or `.tool_bridge()` (static) | [Microsoft Agent Framework](references/microsoft-agent-framework.md) |
 | LangChain (>=1.0) | `LangChainAdapter(gantry).select(query, limit=...)` → `bind_tools`, or `create_agent(model, middleware=[await adapter.middleware()])` | [LangChain and LangGraph](references/langchain-langgraph.md) |
 | LangGraph (>=1.0) | `create_agent(model, middleware=[await LangGraphAdapter(gantry).middleware()])` (per-turn), `.areact_agent(model)`, or `.select(...)` (static) | [LangChain and LangGraph](references/langchain-langgraph.md) |
 | LlamaIndex (>=0.13) | `LlamaIndexAdapter(gantry).function_agent(llm)` (per step) or `.select(...)` (static) | [LlamaIndex](references/llamaindex.md) |
@@ -22,7 +22,7 @@ This skill is the canonical reference for using the library. This file holds wha
 | Haystack (>=3.0) | `HaystackAdapter(gantry).agent(chat_generator=...)` (per-step) or `.select(...)` (static) | [Haystack](references/haystack.md) |
 | Agno (>=2.6.10) | `AgnoAdapter(gantry).agent(model=...)` (per-run) or `.select(...)` (static) | [Agno](references/agno.md) |
 | Strands Agents (>=1.38) | `StrandsAdapter(gantry).agent(model=...)` / `.tool_hook()` (per-turn) or `.select(...)` (static) | [Strands Agents](references/strands.md) |
-| DSPy (>=3.5) | `DSPyAdapter(gantry).select(...)` (static) or `.agent_builder(signature, ...)` (per-call) | [DSPy](references/dspy.md) |
+| DSPy (>=3.5) | `DSPyAdapter(gantry).select(...)` (static) or `.agent_builder(signature, ...)` (per-run) | [DSPy](references/dspy.md) |
 | Google ADK (>=2.6.1) | `GoogleADKAdapter(gantry).agent(model=, name=)` (per-turn) or `.select(...)` (static) | [Google ADK](references/google-adk.md) |
 | Any framework, re-select every turn | `ToolRefresher(gantry).refresh(messages)` | [Multi-turn re-selection](#multi-turn-re-selection-toolrefresher) |
 | Plain OpenAI / Anthropic / Gemini SDK | `OpenAIAdapter(gantry).tools(query)` (or `@with_semantic_tools(dialect=...)`) | [LLM-SDK direct](#llm-sdk-direct) |
@@ -47,7 +47,7 @@ handler reaches the framework's run context.
 
 | File | Read it for |
 |---|---|
-| `references/microsoft-agent-framework.md` | `GantryContextProvider` (`per_run` / `per_call`), `GantryToolBridge`, workflows |
+| `references/microsoft-agent-framework.md` | `GantryContextProvider` (`per_run` / `per_turn`), `GantryToolBridge`, workflows |
 | `references/pydantic-ai.md` | `capability()`, `toolset()`, tool search, `ModelRetry` / `ApprovalRequired` |
 | `references/openai-agents.md` | `dynamic_tools()`, `needs_approval`, the first-request rules for older SDKs |
 | `references/langchain-langgraph.md` | `middleware()`, `StructuredTool` errors, `interrupt()` approval |
@@ -89,7 +89,7 @@ Two facts from those files worth carrying everywhere:
 
 4. **`score_threshold` is opt-in filtering.** Default is `0.0` (no filtering). Use `score_threshold="relative:0.8"` for length-robust filtering — that keeps anything within 80% of the top score. Fixed absolute cutoffs degrade badly on long, instruction-style queries because the embedding gets diluted.
 
-5. **`query_strategy="per_call"` re-runs retrieval every chat-completion round.** This is the right choice for multi-step agents. Pair it with `provider.attach_to(agent)` or `middleware=[provider.as_chat_middleware()]`. Without the middleware, `per_call` silently degrades to `per_run` and the provider will warn you once.
+5. **`query_strategy="per_turn"` re-runs retrieval every chat-completion round.** This is the right choice for multi-step agents. Pair it with `provider.attach_to(agent)` or `middleware=[provider.as_chat_middleware()]`. Without the middleware, `per_turn` silently degrades to `per_run` and the provider will warn you once.
 
 6. **Observability ships built-in — don't hand-roll it.** `provider.trace()` (or `provider.attach_to(agent, trace=True)`) prints a readable per-round line of what was called and surfaced; `provider.selections` keeps the per-round retrieval history; `gantry.on_tool_call(cb)` fires a `ToolCallEvent` after every `gantry.execute` for framework-agnostic logging/metrics; `render_result(...)` stringifies any tool result. See [Observability & tracing](#observability--tracing).
 
@@ -157,7 +157,7 @@ asyncio.run(main())
 
 ## Multi-turn re-selection (ToolRefresher)
 
-`ToolRefresher` generalizes the per-call retrieval pattern to **any** framework without a native live hook: re-rank the whole registry on every turn so the agent can pivot tools as the task changes.
+`ToolRefresher` generalizes the per-turn retrieval pattern to **any** framework without a native live hook: re-rank the whole registry on every turn so the agent can pivot tools as the task changes.
 
 ```python
 from agent_gantry.integrations import ToolRefresher
@@ -339,10 +339,10 @@ As of 0.8.0 the library ships the tracing/logging glue you'd otherwise hand-roll
 
 ### Console trace — one readable line per tool call
 
-`provider.trace()` returns an AF *function* middleware; `attach_to(agent, trace=True)` installs it (plus the per-call retrieval middleware) in one call. For every tool the model invokes it prints the round, the call, the router's surfaced set, and a preview of the result:
+`provider.trace()` returns an AF *function* middleware; `attach_to(agent, trace=True)` installs it (plus the per-turn retrieval middleware) in one call. For every tool the model invokes it prints the round, the call, the router's surfaced set, and a preview of the result:
 
 ```python
-provider = AgentFrameworkAdapter(gantry).context_provider(top_k=3, query_strategy="per_call")
+provider = AgentFrameworkAdapter(gantry).context_provider(top_k=3, query_strategy="per_turn")
 agent = Agent(OpenAIChatClient(), "...")
 provider.attach_to(agent, trace=True)
 # >>> round 1: generate_password({'length': 20})  [surfaced: generate_password:0.62, ...]
@@ -475,14 +475,14 @@ from agent_gantry.query import keyword_focused, truncated, last_user_text
 
 provider = GantryContextProvider(
     gantry,
-    query_strategy="per_call",
+    query_strategy="per_turn",
     query_generator=keyword_focused,       # drops scaffolding tokens
 )
 
 # Or cap the query length, biasing toward the latest tool output:
 provider = GantryContextProvider(
     gantry,
-    query_strategy="per_call",
+    query_strategy="per_turn",
     query_generator=truncated(last_user_text, max_chars=200, keep="tail"),
 )
 ```
@@ -507,11 +507,11 @@ This catches the headline mistakes: a tool description that names another tool (
 | Symptom | Cause | Fix |
 |---|---|---|
 | Empty tool surface | `score_threshold` too aggressive for query length | Lower to `0.0` or use `"relative:0.8"` |
-| `per_call` not adapting | `as_chat_middleware()` not attached | Use `provider.attach_to(agent)` or add to `middleware=[...]` |
-| `per_call` set but identical surface each round | An explicit `query_generator=last_user_text` returns the same text every round | The default is `latest_activity` (newest user message, plus the tool result when one is newer); drop the override |
-| `per_call` ignores the user's new message once a tool has run | `fallback_chain(last_tool_result, last_user_text)` prefers a tool result anywhere in the session | Use the `latest_activity` default; keep the chain only for a pipeline with no user turns mid-run |
-| `per_call` drops useful tools after an opaque result | A password, bare number, or ID carries no semantic retrieval signal | `latest_activity` falls back to the latest user text for opaque results; use a custom generator if identifiers should drive routing |
-| `per_call` routed on a tool's output and lost the rest of the task (pre-0.23.0) | The query was the bare result (`"desserts"`, a fetched document), which says nothing about the request | Upgrade: `latest_activity` now queries on the latest user message plus the result |
+| `per_turn` not adapting | `as_chat_middleware()` not attached | Use `provider.attach_to(agent)` or add to `middleware=[...]` |
+| `per_turn` set but identical surface each round | An explicit `query_generator=last_user_text` returns the same text every round | The default is `latest_activity` (newest user message, plus the tool result when one is newer); drop the override |
+| `per_turn` ignores the user's new message once a tool has run | `fallback_chain(last_tool_result, last_user_text)` prefers a tool result anywhere in the session | Use the `latest_activity` default; keep the chain only for a pipeline with no user turns mid-run |
+| `per_turn` drops useful tools after an opaque result | A password, bare number, or ID carries no semantic retrieval signal | `latest_activity` falls back to the latest user text for opaque results; use a custom generator if identifiers should drive routing |
+| `per_turn` routed on a tool's output and lost the rest of the task (pre-0.23.0) | The query was the bare result (`"desserts"`, a fetched document), which says nothing about the request | Upgrade: `latest_activity` now queries on the latest user message plus the result |
 | After a tool call the tool that just ran still ranks first | The request stays in the query and still matches it; the next tool is just behind | Expected at `limit` 3-5 (the model chooses). For result-led pipelines or `limit=1`: `query_generator=partial(latest_activity, include_request=False)` |
 | OpenAI Agents: the model answered without calling a tool on a one-turn task | `openai-agents<0.23.1` lists tools before it records the turn's input, so request one had none | Use `adapter.run()` / `.session().run()` / `.refresh()` there, or upgrade; `dynamic_tools()` raises on those SDKs from 0.23.0. Assert the handler ran, not just the answer |
 | A reranker setup returns tools for a query nothing serves | Rerankers order the shortlist and return top-k; scores are never thresholded | Only `SystemOneSelector` (gated by `threshold`) can return nothing |
@@ -519,6 +519,7 @@ This catches the headline mistakes: a tool description that names another tool (
 | `top_k=6` but I see 8 tools | Skills / `always_include` / `static_tools` add on top of dynamic top_k | Expected; subtract those |
 | `add_skills_from_directory` loaded fewer skills than `find -name SKILL.md` counts (0.23.0 and earlier) | The recursive walk did not follow symlinked skill directories | Upgrade; or pass the real directory the links point at |
 | `Skill '...' body is N characters; truncated to 50000` | The `SKILL.md` body is over the storage cap, so only its start is stored and injected | Move detail into `references/*.md` beside it and link to them |
+| `DeprecationWarning` about `"per_call"` or `"per-call"` | Renamed in 0.24.0 so one vocabulary covers both: a turn is a model step, a run a top-level invocation | `query_strategy="per_turn"` (was `"per_call"`); `live_tier == "per-run"` (was `"per-call"`). The old spellings still work |
 | Cold-start re-embeds every time | Default `InMemoryVectorStore` is ephemeral | Wrap embedder in `CachedEmbedder` or use `[lancedb]` |
 | OpenAI embedder can't reach my proxy | Custom base_url not configured | Pass `api_base=...` in `EmbedderConfig` or set `OPENAI_BASE_URL` |
 | No telemetry / INFO logs appear (0.8.0+) | Library no longer configures logging by default | Call `enable_console_logging()` or configure your own handler on the `agent_gantry` logger |
@@ -571,9 +572,9 @@ Cache is keyed by `(embedder_id, sha256(text))` — different models / dimension
 | `fallback_chain(*gens)` | Try each in order until one returns non-empty |
 | `keyword_focused` | Long instructional queries dilute the signal |
 | `truncated(gen, max_chars=200)` | Cap the query length, defaults to keeping the tail |
-| `latest_activity` (default for `per_call` and `ToolRefresher`) | Recency-aware: the newest user text, or — when a tool result is newer — that user text plus the result |
+| `latest_activity` (default for `per_turn` and `ToolRefresher`) | Recency-aware: the newest user text, or — when a tool result is newer — that user text plus the result |
 | `tool_names_used` | Not a query generator: lists every tool the history shows being called, for `tools_already_used` |
 
-Both `query_strategy="per_call"` and `ToolRefresher` default to `latest_activity`, which serves autonomous and conversational agents alike: a new user message pivots the surface, and while the agent chains tools the previous result, appended to that message, steers the next selection. `fallback_chain(last_tool_result, last_user_text)` — the former `per_call` default — prefers a tool result anywhere in the history, so a session that carries an earlier run's result stops following new user requests; use it only for a fixed pipeline with no user turns in between.
+Both `query_strategy="per_turn"` and `ToolRefresher` default to `latest_activity`, which serves autonomous and conversational agents alike: a new user message pivots the surface, and while the agent chains tools the previous result, appended to that message, steers the next selection. `fallback_chain(last_tool_result, last_user_text)` — the former `per_turn` default — prefers a tool result anywhere in the history, so a session that carries an earlier run's result stops following new user requests; use it only for a fixed pipeline with no user turns in between.
 
 Every generator reads the common SDK shapes: role/content dicts, OpenAI Chat Completions `tool` messages, OpenAI Responses items (`function_call` / `function_call_output`), Anthropic `tool_result` turns (a `user`-role message of result blocks), LangChain messages and Agent Framework `contents`.

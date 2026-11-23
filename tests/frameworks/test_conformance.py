@@ -217,7 +217,7 @@ class AdapterCase:
             not installed"; installing real stub modules there (via
             ``stub_attrs``) simulates "framework installed" cheaply.
         live_tier: The adapter's documented ``live_tier`` — ``"per-turn"`` or
-            ``"per-call"``. Locked against ``<Framework>Adapter.live_tier``
+            ``"per-run"``. Locked against ``<Framework>Adapter.live_tier``
             and cross-referenced with ``integrations/frameworks/README.md``'s
             table (see ``test_adapter_live_tier_matches_capability_table``).
         live_delegate: Name of the bespoke method ``adapter.live()`` delegates
@@ -359,7 +359,7 @@ ADAPTERS: list[AdapterCase] = [
         "langchain",
         F.LangChainAdapter,
         ["langchain_core", "langchain_core.tools"],
-        live_tier="per-call",
+        live_tier="per-run",
         live_delegate="select",
         stub_attrs=_stub_langchain_attrs,
         invoke_failure=_invoke_langchain_failure,
@@ -389,7 +389,7 @@ ADAPTERS: list[AdapterCase] = [
         "crewai",
         F.CrewAIAdapter,
         ["crewai", "crewai.tools"],
-        live_tier="per-call",
+        live_tier="per-run",
         live_delegate="agent_builder",
         stub_attrs=_stub_crewai_attrs,
         invoke_failure=_invoke_crewai_failure,
@@ -421,7 +421,7 @@ ADAPTERS: list[AdapterCase] = [
         "haystack",
         F.HaystackAdapter,
         ["haystack", "haystack.tools"],
-        live_tier="per-call",
+        live_tier="per-run",
         live_delegate="tool_invoker_builder",
         stub_attrs=_stub_haystack_attrs,
         invoke_failure=_invoke_haystack_failure,
@@ -430,7 +430,7 @@ ADAPTERS: list[AdapterCase] = [
         "agno",
         F.AgnoAdapter,
         ["agno", "agno.tools", "agno.tools.function"],
-        live_tier="per-call",
+        live_tier="per-run",
         live_delegate="agent_builder",
         stub_attrs=_stub_agno_attrs,
         invoke_failure=_invoke_agno_failure,
@@ -458,7 +458,7 @@ ADAPTERS: list[AdapterCase] = [
         "dspy",
         F.DSPyAdapter,
         ["dspy", "dspy.adapters", "dspy.adapters.types", "dspy.adapters.types.tool"],
-        live_tier="per-call",
+        live_tier="per-run",
         live_delegate="agent_builder",
         live_extra_kwargs=lambda: {"signature": "question -> answer"},
         stub_attrs=_stub_dspy_attrs,
@@ -491,10 +491,51 @@ def test_adapter_exposes_uniform_surface(case: AdapterCase) -> None:
 # --------------------------------------------------------------------------- #
 
 
+def test_per_run_tier_still_equals_its_old_spelling() -> None:
+    """``"per-run"`` was ``"per-call"`` before 0.24.0, when
+    ``query_strategy="per_call"`` named the opposite granularity. Code that
+    branches on the old value keeps working and is told what to write."""
+    import copy
+    import json
+    import pickle
+    import warnings
+
+    from agent_gantry.integrations.frameworks.base import PER_RUN_TIER
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # the new spelling never warns
+        assert PER_RUN_TIER == "per-run" and "per-run" == PER_RUN_TIER
+        assert not (PER_RUN_TIER != "per-run") and PER_RUN_TIER != "per-turn"
+        assert PER_RUN_TIER in ("per-turn", "per-run")
+        assert str(PER_RUN_TIER) == "per-run" and repr(PER_RUN_TIER) == "'per-run'"
+        assert json.dumps(PER_RUN_TIER) == '"per-run"'
+        assert {"per-run": 1}[PER_RUN_TIER] == 1
+        assert PER_RUN_TIER != 3 and PER_RUN_TIER is not None
+        assert type(copy.deepcopy(PER_RUN_TIER)) is str
+        assert pickle.loads(pickle.dumps(PER_RUN_TIER)) == "per-run"
+
+    for compare in (
+        lambda: PER_RUN_TIER == "per-call",
+        lambda: "per-call" == PER_RUN_TIER,
+        lambda: not (PER_RUN_TIER != "per-call"),
+        lambda: PER_RUN_TIER in ("per-turn", "per-call"),
+    ):
+        with pytest.warns(DeprecationWarning, match="'per-call' is now 'per-run'"):
+            assert compare()
+
+
+@pytest.mark.parametrize("case", ADAPTERS, ids=[c.name for c in ADAPTERS])
+def test_adapter_tier_still_matches_the_old_per_call_spelling(case: AdapterCase) -> None:
+    if case.live_tier != "per-run":
+        pytest.skip("only the renamed tier has an old spelling")
+    with pytest.warns(DeprecationWarning):
+        assert case.adapter_cls.live_tier == "per-call"
+
+
 @pytest.mark.parametrize("case", ADAPTERS, ids=[c.name for c in ADAPTERS])
 def test_adapter_exposes_live_tier_and_live(case: AdapterCase) -> None:
     """Every adapter declares a valid ``live_tier`` and a callable ``live``."""
-    assert getattr(case.adapter_cls, "live_tier", None) in ("per-turn", "per-call"), (
+    assert getattr(case.adapter_cls, "live_tier", None) in ("per-turn", "per-run"), (
         f"{case.name}: {case.adapter_cls.__name__}.live_tier missing or invalid "
         f"(got {getattr(case.adapter_cls, 'live_tier', None)!r})"
     )
@@ -513,7 +554,7 @@ def test_adapter_live_tier_matches_capability_table(case: AdapterCase) -> None:
     genuinely re-select tools on every model turn (``"per-turn"``); LangChain,
     CrewAI, Agno, and Haystack fix their tool list at agent
     construction with no native mid-run hook, so the deepest Gantry can do is
-    rebuild before each new top-level call (``"per-call"``).
+    rebuild before each new top-level call (``"per-run"``).
     """
     assert case.adapter_cls.live_tier == case.live_tier, (
         f"{case.name}: expected live_tier={case.live_tier!r}, got {case.adapter_cls.live_tier!r}"
@@ -993,7 +1034,7 @@ def test_agent_framework_adapter_exposes_live_tier_and_live() -> None:
     """AgentFrameworkAdapter also participates in the uniform live_tier/live()
     facade (see AdapterCase docstring and ADAPTERS above for the 13
     BaseFrameworkAdapter subclasses) — AF genuinely supports per-round
-    (``query_strategy="per_call"``) dynamic tool re-selection, so its tier is
+    (``query_strategy="per_turn"``) dynamic tool re-selection, so its tier is
     ``"per-turn"``, matching LangGraph/LlamaIndex/Pydantic AI/etc.
     """
     assert AgentFrameworkAdapter.live_tier == "per-turn"
@@ -1003,7 +1044,7 @@ def test_agent_framework_adapter_exposes_live_tier_and_live() -> None:
 def test_agent_framework_adapter_live_delegates_to_context_provider(monkeypatch) -> None:
     """``live()`` delegates to :meth:`AgentFrameworkAdapter.context_provider`,
     forwarding ``limit`` as ``top_k`` and defaulting ``query_strategy`` to
-    ``"per_call"`` (the deepest tier) rather than :meth:`context_provider`'s
+    ``"per_turn"`` (the deepest tier) rather than :meth:`context_provider`'s
     own back-compatible ``"per_run"`` default.
     """
     sentinel = object()
@@ -1022,7 +1063,7 @@ def test_agent_framework_adapter_live_delegates_to_context_provider(monkeypatch)
     assert len(calls) == 1
     assert calls[0]["top_k"] == 7
     assert calls[0]["score_threshold"] == 0.3
-    assert calls[0]["query_strategy"] == "per_call"
+    assert calls[0]["query_strategy"] == "per_turn"
     assert calls[0]["namespaces"] == ["ns1"]
 
     # An explicit query_strategy in framework_kwargs is respected, not overridden.
@@ -1117,7 +1158,7 @@ def test_adapter_live_missing_required_kwarg_is_a_type_error(case: AdapterCase) 
 
 async def test_live_hooks_and_builders_propagate_bounds_errors(gantry: AgentGantry) -> None:
     """Per-turn hooks re-raise ``QueryBoundsError`` (unlike a transient
-    retrieval failure) and per-call builders reject it at construction."""
+    retrieval failure) and per-run builders reject it at construction."""
     from agent_gantry.integrations.frameworks.base import QueryBoundsError
     from agent_gantry.integrations.frameworks.google_adk_live import _inject_selected_tools
     from agent_gantry.integrations.frameworks.langgraph_live import _select_tools_for_state

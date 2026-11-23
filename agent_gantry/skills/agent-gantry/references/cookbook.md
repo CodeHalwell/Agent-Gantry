@@ -2,7 +2,7 @@
 
 Recipes for the patterns that come up most often when building real agents with Agent-Gantry. Each section is self-contained — jump to the one matching the user's question.
 
-## Recipe 1: Multi-step pipeline with per-call retrieval
+## Recipe 1: Multi-step pipeline with per-turn retrieval
 
 Goal: an agent that runs a fixed N-step pipeline (e.g. fetch → transform → validate → write), where each step needs a different tool, and the user wants the LLM to see only the relevant tool at each step.
 
@@ -19,8 +19,8 @@ gantry = AgentGantry()
 provider = GantryContextProvider(
     gantry,
     top_k=3,
-    query_strategy="per_call",
-    # The per_call default (latest_activity) already follows each tool's
+    query_strategy="per_turn",
+    # The per_turn default (latest_activity) already follows each tool's
     # output. Pinning last_tool_result first is right for this pipeline only
     # because no user turn arrives mid-run — with one, the chain would keep
     # following the earlier result instead of the new request.
@@ -324,11 +324,11 @@ def log_call(event: ToolCallEvent) -> None:
 gantry.on_tool_call(log_call)   # returns an unsubscribe() callable
 
 provider = AgentFrameworkAdapter(gantry).context_provider(
-    top_k=3, query_strategy="per_call",
+    top_k=3, query_strategy="per_turn",
 )
 agent = Agent(OpenAIChatClient(), "You are a helpful assistant.")
 
-# One call wires the provider, the per-call retrieval middleware, AND a console
+# One call wires the provider, the per-turn retrieval middleware, AND a console
 # trace ("round N: tool(args) [surfaced: ...] -> result preview").
 provider.attach_to(agent, trace=True)
 

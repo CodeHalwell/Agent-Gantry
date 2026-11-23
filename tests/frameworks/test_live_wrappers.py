@@ -1,9 +1,9 @@
-"""Tests for the best-effort "live" per-call wrappers (``live_wrappers``).
+"""Tests for the best-effort "live" per-run wrappers (``live_wrappers``).
 
 CrewAI, Agno and Haystack all freeze an agent's tool list at
 construction time, so the wrappers re-run Gantry selection for the query of
 *each* top-level call and (re)build the agent / tool set for that call. These
-tests exercise that per-call re-selection against the **real** installed
+tests exercise that per-run re-selection against the **real** installed
 frameworks (each is ``pytest.importorskip``-ed): for every wrapper, selecting
 for a weather query must surface the weather tool, and selecting for an email
 query must surface the email tool.
@@ -70,7 +70,7 @@ def _names(tools) -> set[str]:
 # --------------------------------------------------------------------------- #
 # CrewAI
 # --------------------------------------------------------------------------- #
-async def test_crewai_reselects_tools_per_call(gantry):
+async def test_crewai_reselects_tools_per_turn(gantry):
     pytest.importorskip("crewai")
 
     agent_builder = GantryLiveCrewAgent(gantry, limit=1)
@@ -105,7 +105,7 @@ async def test_crewai_build_constructs_fresh_agent(gantry):
 # --------------------------------------------------------------------------- #
 # Agno
 # --------------------------------------------------------------------------- #
-async def test_agno_reselects_tools_per_call(gantry):
+async def test_agno_reselects_tools_per_turn(gantry):
     pytest.importorskip("agno")
 
     agent_builder = GantryLiveAgnoAgent(gantry, limit=1)
@@ -120,7 +120,7 @@ async def test_agno_reselects_tools_per_call(gantry):
 # --------------------------------------------------------------------------- #
 # Haystack
 # --------------------------------------------------------------------------- #
-async def test_haystack_reselects_tools_per_call(gantry):
+async def test_haystack_reselects_tools_per_turn(gantry):
     pytest.importorskip("haystack")
 
     weather_tools = await HaystackAdapter(gantry).live_tools(WEATHER_QUERY, limit=1)

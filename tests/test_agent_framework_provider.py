@@ -234,10 +234,10 @@ class TestGantryContextProvider:
         assert len(ctx.tools) > 1
 
     @pytest.mark.asyncio
-    async def test_per_call_refresh_preserves_foreign_skill_tools(
+    async def test_per_turn_refresh_preserves_foreign_skill_tools(
         self, gantry_with_tools: AgentGantry
     ) -> None:
-        """The per-call refresh must keep tools from other providers.
+        """The per-turn refresh must keep tools from other providers.
 
         This is the load-bearing guarantee for coexisting with AF
         ``SkillsProvider``: every chat round the middleware rebuilds the tool
@@ -246,7 +246,7 @@ class TestGantryContextProvider:
         must survive untouched so skills keep working.
         """
         provider = GantryContextProvider(
-            gantry_with_tools, top_k=2, query_strategy="per_call"
+            gantry_with_tools, top_k=2, query_strategy="per_turn"
         )
 
         class _SkillTool:
@@ -369,23 +369,23 @@ class TestGantryContextProvider:
         assert "af_native_tool" in names
 
     @pytest.mark.asyncio
-    async def test_per_call_default_generator_is_latest_activity(
+    async def test_per_turn_default_generator_is_latest_activity(
         self, gantry_with_tools: AgentGantry
     ) -> None:
-        """per_call mode must pick a generator that actually adapts each
+        """per_turn mode must pick a generator that actually adapts each
         round; the per_run default (last_user_text) would silently
-        disable the very thing per_call enables."""
+        disable the very thing per_turn enables."""
         from agent_gantry.query import last_user_text, latest_activity
 
         provider = GantryContextProvider(
-            gantry_with_tools, top_k=1, query_strategy="per_call"
+            gantry_with_tools, top_k=1, query_strategy="per_turn"
         )
         # The selected generator is *not* the bare last_user_text default.
         assert provider._query_generator is not last_user_text  # type: ignore[attr-defined]
         assert provider._query_generator is latest_activity  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
-    async def test_per_call_new_user_message_outranks_stale_tool_result(
+    async def test_per_turn_new_user_message_outranks_stale_tool_result(
         self, gantry_with_tools: AgentGantry
     ) -> None:
         """A session carrying an earlier tool result still follows a new request.
@@ -396,7 +396,7 @@ class TestGantryContextProvider:
         surface stayed on the previous task.
         """
         provider = GantryContextProvider(
-            gantry_with_tools, top_k=1, query_strategy="per_call"
+            gantry_with_tools, top_k=1, query_strategy="per_turn"
         )
 
         class _ChatCtx:
@@ -431,7 +431,7 @@ class TestGantryContextProvider:
         assert provider.last_selection.query == "book a flight to Tokyo\nflight booked"
 
     @pytest.mark.asyncio
-    async def test_per_call_keeps_the_request_beside_a_bare_tool_result(
+    async def test_per_turn_keeps_the_request_beside_a_bare_tool_result(
         self, gantry_with_tools: AgentGantry
     ) -> None:
         """A two-step task's second round must not query on the first result alone.
@@ -441,7 +441,7 @@ class TestGantryContextProvider:
         the one the rest of the request still needed.
         """
         provider = GantryContextProvider(
-            gantry_with_tools, top_k=2, query_strategy="per_call"
+            gantry_with_tools, top_k=2, query_strategy="per_turn"
         )
 
         class _ChatCtx:
@@ -464,12 +464,41 @@ class TestGantryContextProvider:
         assert provider.last_selection.query == f"{task}\ndesserts"
 
     @pytest.mark.asyncio
-    async def test_per_call_with_last_user_text_warns(
+    async def test_per_call_is_accepted_as_per_turn(self, gantry_with_tools: AgentGantry) -> None:
+        """``query_strategy="per_call"`` was renamed ``"per_turn"`` in 0.24.0.
+
+        It named the finest granularity here while ``live_tier="per-call"``
+        named the coarsest. The old spelling still builds the same provider,
+        and the reported strategy still compares equal to it.
+        """
+        import warnings
+
+        from agent_gantry.query import latest_activity
+
+        with pytest.warns(DeprecationWarning, match='query_strategy="per_turn"'):
+            old = GantryContextProvider(gantry_with_tools, top_k=1, query_strategy="per_call")
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            new = GantryContextProvider(gantry_with_tools, top_k=1, query_strategy="per_turn")
+            assert new.query_strategy == "per_turn"
+            assert old.query_strategy == "per_turn"
+            per_run = GantryContextProvider(gantry_with_tools, top_k=1)
+            assert per_run.query_strategy == "per_run"
+            assert per_run.query_strategy != "per_call"  # a plain str: no warning
+        assert old._query_generator is latest_activity  # type: ignore[attr-defined]
+        with pytest.warns(DeprecationWarning, match="'per_call' is now 'per_turn'"):
+            assert new.query_strategy == "per_call"
+
+        with pytest.raises(ValueError, match="'per_run' or 'per_turn'"):
+            GantryContextProvider(gantry_with_tools, query_strategy="per_step")
+
+    @pytest.mark.asyncio
+    async def test_per_turn_with_last_user_text_warns(
         self,
         gantry_with_tools: AgentGantry,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Explicitly pairing per_call with last_user_text — the
+        """Explicitly pairing per_turn with last_user_text — the
         misconfiguration the issue calls out — must warn."""
         import logging
 
@@ -478,18 +507,18 @@ class TestGantryContextProvider:
         with caplog.at_level(logging.WARNING):
             GantryContextProvider(
                 gantry_with_tools,
-                query_strategy="per_call",
+                query_strategy="per_turn",
                 query_generator=last_user_text,
             )
-        assert "per_call" in caplog.text and "last_user_text" in caplog.text
+        assert "per_turn" in caplog.text and "last_user_text" in caplog.text
 
     @pytest.mark.asyncio
-    async def test_per_call_warns_when_chat_middleware_not_attached(
+    async def test_per_turn_warns_when_chat_middleware_not_attached(
         self,
         gantry_with_tools: AgentGantry,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """per_call mode without the chat middleware on the agent must
+        """per_turn mode without the chat middleware on the agent must
         warn so the user knows retrieval is silently per_run-only."""
         import logging
 
@@ -497,7 +526,7 @@ class TestGantryContextProvider:
             middleware: list = []
 
         provider = GantryContextProvider(
-            gantry_with_tools, top_k=1, query_strategy="per_call"
+            gantry_with_tools, top_k=1, query_strategy="per_turn"
         )
         ctx = af.SessionContext(input_messages=[_user_msg("weather")])
         with caplog.at_level(logging.WARNING):
@@ -510,7 +539,7 @@ class TestGantryContextProvider:
     async def test_attach_to_appends_provider_and_middleware(
         self, gantry_with_tools: AgentGantry
     ) -> None:
-        """attach_to is the one-call setup helper for the per_call flow."""
+        """attach_to is the one-call setup helper for the per_turn flow."""
 
         class FakeAgent:
             context_providers: list = []
@@ -518,7 +547,7 @@ class TestGantryContextProvider:
 
         agent = FakeAgent()
         provider = GantryContextProvider(
-            gantry_with_tools, query_strategy="per_call"
+            gantry_with_tools, query_strategy="per_turn"
         )
         provider.attach_to(agent)
         assert provider in agent.context_providers
@@ -543,10 +572,10 @@ class TestSelectionsAndTrace:
     ) -> None:
         """Within one run, each chat round appends to the selection history."""
         provider = GantryContextProvider(
-            gantry_with_tools, top_k=2, query_strategy="per_call"
+            gantry_with_tools, top_k=2, query_strategy="per_turn"
         )
 
-        # Run start: before_run resets; per_call doesn't retrieve here.
+        # Run start: before_run resets; per_turn doesn't retrieve here.
         ctx = af.SessionContext(input_messages=[_user_msg("weather in Paris")])
         await provider.before_run(agent=None, session=None, context=ctx, state={})
         assert provider.selections == ()
@@ -697,11 +726,11 @@ class TestSelectionsAndTrace:
         per_run.attach_to(FakeAgent(), trace=True)
 
         agent = FakeAgent()
-        per_call = GantryContextProvider(
-            gantry_with_tools, query_strategy="per_call"
+        per_turn = GantryContextProvider(
+            gantry_with_tools, query_strategy="per_turn"
         )
-        per_call.attach_to(agent, trace=True)
-        # per_call attaches both the chat refresher and the trace middleware.
+        per_turn.attach_to(agent, trace=True)
+        # per_turn attaches both the chat refresher and the trace middleware.
         assert len(agent.middleware) == 2
 
     @pytest.mark.asyncio
@@ -854,7 +883,7 @@ async def test_required_qualified_name_resolves_per_request(monkeypatch):
 
 @pytest.mark.parametrize("name", ["lookup", "x" * 128])
 @pytest.mark.parametrize("as_function_tool", [False, True])
-async def test_per_call_refresh_removes_stale_native_aliases(
+async def test_per_turn_refresh_removes_stale_native_aliases(
     name, as_function_tool, monkeypatch
 ):
     """Switch namespaces without accumulating tools or dropping foreign tools."""
@@ -875,7 +904,7 @@ async def test_per_call_refresh_removes_stale_native_aliases(
         aliases = _tool_names(wrappers)
         assert len(set(aliases)) == 2
         assert all(alias != name and len(alias) <= 64 for alias in aliases)
-        provider = GantryContextProvider(gantry, top_k=1, query_strategy="per_call")
+        provider = GantryContextProvider(gantry, top_k=1, query_strategy="per_turn")
         monkeypatch.setattr(
             provider._bridge,
             "get_tools_with_decision",
@@ -891,7 +920,7 @@ async def test_per_call_refresh_removes_stale_native_aliases(
             assert context.options["tools"] == expected
 
 
-@pytest.mark.parametrize("strategy", ["per_run", "per_call"])
+@pytest.mark.parametrize("strategy", ["per_run", "per_turn"])
 @pytest.mark.parametrize("static_name_kind", ["authored", "native"])
 async def test_static_tools_deduplicate_against_emitted_names(strategy, static_name_kind):
     """Authored names used for pins must not hide a distinct AF-native tool."""

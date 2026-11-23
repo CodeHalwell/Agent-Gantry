@@ -123,7 +123,7 @@ class TestOnToolCall:
         assert len(events) == 1
 
     @pytest.mark.asyncio
-    async def test_batch_emits_per_call_in_order(self, gantry: AgentGantry) -> None:
+    async def test_batch_emits_per_turn_in_order(self, gantry: AgentGantry) -> None:
         events: list[ToolCallEvent] = []
         gantry.on_tool_call(events.append)
 

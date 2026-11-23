@@ -16,7 +16,7 @@ Two retrieval modes are supported:
 - ``query_strategy="per_run"`` (default, back-compatible): retrieval happens
   once at the start of each ``agent.run(...)``. Tool selection is fixed for
   the whole reasoning loop.
-- ``query_strategy="per_call"``: retrieval re-runs on every chat-completion
+- ``query_strategy="per_turn"``: retrieval re-runs on every chat-completion
   round. Use this for multi-step agents whose tool needs evolve as they
   reason. The provider exposes a chat middleware via
   :meth:`GantryContextProvider.as_chat_middleware` that the integrator
@@ -45,10 +45,10 @@ Both APIs coexist intentionally:
     provider = GantryContextProvider(gantry, top_k=5)
     agent = Agent(client, "...", context_providers=[provider])
 
-    # Dynamic per-call — top-k re-selected every chat round from whatever
+    # Dynamic per-turn — top-k re-selected every chat round from whatever
     # happened most recently: the user's new message, or the last tool's
     # result while the agent is chaining tools (``latest_activity``):
-    provider = GantryContextProvider(gantry, top_k=3, query_strategy="per_call")
+    provider = GantryContextProvider(gantry, top_k=3, query_strategy="per_turn")
     agent = Agent(
         client,
         "...",
@@ -71,6 +71,7 @@ from contextvars import ContextVar
 from itertools import count
 from typing import TYPE_CHECKING, Any
 
+from agent_gantry._deprecation import RenamedValue, warn_renamed
 from agent_gantry.integrations.agent_framework_bridge import (
     GantryToolBridge,
     RetrievalDecision,
@@ -97,6 +98,12 @@ if TYPE_CHECKING:
     from agent_gantry.integrations.anthropic_skills import SkillRegistry
 
 logger = logging.getLogger(__name__)
+
+#: ``query_strategy="per_turn"`` as the provider reports it. It was spelled
+#: ``"per_call"`` before 0.24.0; that spelling is still accepted, and still
+#: compares equal to this value, with a ``DeprecationWarning``.
+_DEPRECATED_PER_TURN = "per_call"
+_PER_TURN = RenamedValue("per_turn", old=_DEPRECATED_PER_TURN, what="query_strategy")
 
 # ``MissingRequiredToolError`` is re-exported from ``__all__`` so the
 # historical import path from this module keeps working.
@@ -263,7 +270,7 @@ def _build_impl_class(base: type) -> type:
             """The most recent retrieval decision, or ``None``.
 
             Cleared/replaced on every ``before_run`` (per_run mode) or
-            every chat-middleware tick (per_call mode). Read this from
+            every chat-middleware tick (per_turn mode). Read this from
             middleware, tests, or interactive sessions to diagnose
             "why did the LLM not see tool X this round?".
 
@@ -318,25 +325,25 @@ def _build_impl_class(base: type) -> type:
             # Run boundary: scope the selection history to this run so a
             # shared provider doesn't carry the previous run's (or user's)
             # selections forward. Reset both the context-local var and the
-            # cross-task plain snapshot; per_run appends below, per_call
+            # cross-task plain snapshot; per_run appends below, per_turn
             # appends via the chat middleware. last_selection is the single
             # latest decision and is deliberately not reset.
             self._selections_var.set(())
             self._selections_plain = ()
 
-            # per_call mode requires the chat middleware to do the
+            # per_turn mode requires the chat middleware to do the
             # actual per-round refresh. If the user forgot to attach
             # it, the agent silently degrades to per_run behaviour
             # with extra plumbing — warn once so the misconfiguration
             # is visible without strangers reading the source.
             if (
-                self._query_strategy == "per_call"
+                self._query_strategy == "per_turn"
                 and not self._warned_about_missing_chat_middleware
                 and not self._chat_middleware_attached(agent)
             ):
                 self._warned_about_missing_chat_middleware = True
                 logger.warning(
-                    "GantryContextProvider: query_strategy='per_call' is "
+                    "GantryContextProvider: query_strategy='per_turn' is "
                     "enabled but as_chat_middleware() does not appear to "
                     "be attached to the agent — the provider will fall "
                     "back to per_run behaviour. Pass "
@@ -344,7 +351,7 @@ def _build_impl_class(base: type) -> type:
                     "Agent(...) or use provider.attach_to(agent)."
                 )
 
-            # In per_call mode, the chat_middleware does the dynamic
+            # In per_turn mode, the chat_middleware does the dynamic
             # retrieval per LLM round; we still inject always_include /
             # skill tools at run-start so they are present even if the
             # middleware is not attached.
@@ -365,14 +372,14 @@ def _build_impl_class(base: type) -> type:
         def attach_to(self, agent: Any, *, trace: bool = False) -> Any:
             """Register this provider and its middleware on ``agent``.
 
-            Single-call helper for the common ``per_call`` setup. Does
+            Single-call helper for the common ``per_turn`` setup. Does
             the dance of appending to ``agent.context_providers`` and
             ``agent.middleware`` (whichever attribute the AF version
             exposes), creating the lists if missing. Returns
             ``agent`` for chaining.
 
             The chat middleware is only attached when
-            ``query_strategy='per_call'`` — in ``per_run`` mode it's
+            ``query_strategy='per_turn'`` — in ``per_run`` mode it's
             a no-op and would just add overhead. The context
             provider is always attached.
 
@@ -409,11 +416,11 @@ def _build_impl_class(base: type) -> type:
                     type(agent).__name__,
                 )
 
-            # middleware: per-call chat refresher (per_call only) plus the
+            # middleware: per-turn chat refresher (per_turn only) plus the
             # console trace (when requested). Both live in AF's single
             # `middleware` list and attach together.
             to_add: list[Any] = []
-            if self._query_strategy == "per_call":
+            if self._query_strategy == "per_turn":
                 to_add.append(self.as_chat_middleware())
             if trace:
                 to_add.append(self.trace())
@@ -527,7 +534,7 @@ def _build_impl_class(base: type) -> type:
             """Best-effort check for ``as_chat_middleware`` on the agent.
 
             Heuristic: look for any middleware whose qualified name
-            contains the provider's sentinel ``_per_call_retrieval``.
+            contains the provider's sentinel ``_per_turn_retrieval``.
             AF wraps the decorated coroutine into different objects
             across versions, so we just match on the name.
             """
@@ -547,16 +554,16 @@ def _build_impl_class(base: type) -> type:
                     type(m).__name__,
                 )
                 for c in candidates:
-                    if isinstance(c, str) and "_per_call_retrieval" in c:
+                    if isinstance(c, str) and "_per_turn_retrieval" in c:
                         return True
             return False
 
-        # ----- Per-call middleware factory ---------------------------
+        # ----- Per-turn middleware factory ---------------------------
         def as_chat_middleware(self) -> Any:
             """Return an AF chat_middleware that refreshes tools each round.
 
             Use with ``Agent(middleware=[provider.as_chat_middleware()])``
-            in conjunction with ``query_strategy="per_call"``. The
+            in conjunction with ``query_strategy="per_turn"``. The
             returned middleware reads ``context.messages`` (or
             ``context.options`` as appropriate), runs the configured
             query generator, retrieves a fresh top-k from the gantry,
@@ -568,17 +575,17 @@ def _build_impl_class(base: type) -> type:
             provider = self
 
             @chat_middleware_decorator
-            async def _per_call_retrieval(context: Any, call_next: Any) -> None:
+            async def _per_turn_retrieval(context: Any, call_next: Any) -> None:
                 try:
                     await provider._refresh_tools_on_chat_context(context)
                 except Exception:
                     logger.exception(
-                        "GantryContextProvider: per-call retrieval failed; "
+                        "GantryContextProvider: per-turn retrieval failed; "
                         "continuing with existing tools."
                     )
                 await call_next()
 
-            return _per_call_retrieval
+            return _per_turn_retrieval
 
         async def _refresh_tools_on_chat_context(self, context: Any) -> None:
             """Mutate ``context.options['tools']`` for the current round.
@@ -624,7 +631,7 @@ def _build_impl_class(base: type) -> type:
             )
             fresh = await self._collect_tools(messages, include_dynamic=True)
             # _collect_tools updates the last-selection / selections
-            # ContextVars on every dynamic refresh, so the per-call
+            # ContextVars on every dynamic refresh, so the per-turn
             # middleware path automatically exposes the latest decision via
             # the provider's `last_selection` / `selections` properties.
             gantry_names = self._all_known_tool_names()
@@ -699,7 +706,7 @@ def _build_impl_class(base: type) -> type:
                         )
 
             logger.debug(
-                "GantryContextProvider: refreshed tools per-call "
+                "GantryContextProvider: refreshed tools per-turn "
                 "(%d preserved + %d gantry, %d stale dropped, %d total)",
                 len(preserved),
                 len(fresh),
@@ -943,16 +950,18 @@ class GantryContextProvider:
             anything within 80% of the top score) for length-robust
             filtering.
         query_strategy: ``"per_run"`` (default) refreshes the tool selection
-            once at the start of ``agent.run()``. ``"per_call"`` re-runs
+            once at the start of ``agent.run()``. ``"per_turn"`` re-runs
             retrieval on every chat-completion round; pair this mode with
             :meth:`as_chat_middleware` to install the per-round refresher.
+            ``"per_turn"`` was spelled ``"per_call"`` before 0.24.0; that
+            spelling is still accepted, with a ``DeprecationWarning``.
         query_generator: Callable used to derive the retrieval query string
             from the conversation messages. When ``None`` the default
             depends on ``query_strategy``: ``last_user_text`` for
             ``per_run`` (back-compat), and ``latest_activity`` for
-            ``per_call`` — recency-aware, so a new user message *or* the
+            ``per_turn`` — recency-aware, so a new user message *or* the
             latest tool result drives each round, which is what makes
-            ``per_call`` actually adapt across rounds. Sync or async are
+            ``per_turn`` actually adapt across rounds. Sync or async are
             both accepted. See :mod:`agent_gantry.query` for the built-in
             alternatives.
         skills: When ``True``, every invocation also injects the union of
@@ -991,7 +1000,7 @@ class GantryContextProvider:
             round's surface. Unlike ``always_include`` — which pins
             *gantry-registered* tools by name — ``static_tools`` is for
             tools that live outside the gantry registry. They are never
-            filtered by the per-call refresh.
+            filtered by the per-turn refresh.
         verbose: When ``True`` (default ``False``), the provider logs a
             one-line INFO summary of every retrieval round:
             ``gantry: query="…" → top5: [name:0.61, …]``.
@@ -1028,7 +1037,7 @@ class GantryContextProvider:
             provider = GantryContextProvider(
                 gantry,
                 top_k=3,
-                query_strategy="per_call",
+                query_strategy="per_turn",
                 query_generator=last_tool_result,
                 required=["validate_boundaries"],
             )
@@ -1060,10 +1069,25 @@ class GantryContextProvider:
         verbose: bool = False,
         **query_kwargs: Any,
     ) -> Any:
-        if query_strategy not in ("per_run", "per_call"):
-            raise ValueError(
-                f"query_strategy must be 'per_run' or 'per_call', got {query_strategy!r}"
+        if query_strategy == _DEPRECATED_PER_TURN:
+            # Renamed in 0.24.0. "per_call" named the *finest* granularity
+            # here while ``live_tier="per-call"`` named the coarsest; one
+            # vocabulary now covers both (a turn is a model step, a run a
+            # top-level invocation).
+            warn_renamed(
+                f'query_strategy="{_DEPRECATED_PER_TURN}"',
+                'query_strategy="per_turn"',
+                stacklevel=2,
             )
+            query_strategy = "per_turn"
+        if query_strategy not in ("per_run", "per_turn"):
+            raise ValueError(
+                f"query_strategy must be 'per_run' or 'per_turn', got {query_strategy!r}"
+            )
+        if query_strategy == "per_turn":
+            # Reported back through ``provider.query_strategy``; still equal
+            # to the old spelling, with a DeprecationWarning.
+            query_strategy = _PER_TURN
 
         context_provider_cls = _import_context_provider()
 
@@ -1076,20 +1100,20 @@ class GantryContextProvider:
         required = list(required or [])
         static_tools_list: list[Any] = list(static_tools or [])
 
-        # Default query generator depends on strategy: per_call wants
+        # Default query generator depends on strategy: per_turn wants
         # round-to-round adaptation, so the historical last_user_text
         # default (which returns the same string every round) would
-        # silently disable the very thing per_call enables.
+        # silently disable the very thing per_turn enables.
         if query_generator is None:
-            query_generator = latest_activity if query_strategy == "per_call" else last_user_text
+            query_generator = latest_activity if query_strategy == "per_turn" else last_user_text
         elif (
-            query_strategy == "per_call"
+            query_strategy == "per_turn"
             and query_generator is last_user_text
         ):
             logger.warning(
-                "GantryContextProvider: query_strategy='per_call' was set "
+                "GantryContextProvider: query_strategy='per_turn' was set "
                 "but query_generator=last_user_text returns the same string "
-                "every round, defeating per-call adaptation. Consider "
+                "every round, defeating per-turn adaptation. Consider "
                 "latest_activity (the default) instead."
             )
 

@@ -2,7 +2,7 @@
 Query generation strategies for semantic tool retrieval.
 
 When Agent-Gantry retrieves tools per chat round (via the
-``query_strategy="per_call"`` mode of
+``query_strategy="per_turn"`` mode of
 :class:`agent_gantry.GantryContextProvider`), it needs a way to derive a
 retrieval query from the *current* conversation state — not just the original
 user message. This module ships the common deterministic strategies; an
@@ -20,7 +20,7 @@ tail handled by the caller). The signature is:
 Built-in strategies:
 
 - :func:`latest_activity` — whichever is newer of the latest user message and
-  the latest tool result (the ``per_call`` and ``ToolRefresher`` default).
+  the latest tool result (the ``per_turn`` and ``ToolRefresher`` default).
   Serves conversational agents, whose user pivots each turn, and autonomous
   agents, whose next tool follows the previous tool's output. A tool result
   is appended to the latest user message rather than replacing it, so the
@@ -54,7 +54,7 @@ Example — always follow the last tool's output, even after a new user message:
 
     provider = GantryContextProvider(
         gantry,
-        query_strategy="per_call",
+        query_strategy="per_turn",
         query_generator=fallback_chain(last_tool_result, last_user_text),
     )
 """

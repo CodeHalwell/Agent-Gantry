@@ -1,6 +1,6 @@
 """DSPy first-class behaviour through a real ``dspy.ReAct`` (``dspy>=3.5``).
 
-Error results, ``error_formatter``, the approver, run context and the per-call
+Error results, ``error_formatter``, the approver, run context and the per-run
 builder, all driven offline by DSPy's own scripted ``DummyLM``.
 """
 

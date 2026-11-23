@@ -18,4 +18,4 @@ builder = adapter.agent_builder("question -> answer")  # per call: react = await
 - **Errors**: `DSPyToolError` (a `ToolExecutionError`), which `dspy.ReAct` records as an error tool result (`is_error=True`); the text ends with `"<type>: <message>"` after DSPy's own short traceback, with no chained original error, so `error_formatter` redaction holds. `error_mode="raise"` raises the plain `ToolExecutionError`.
 - **Approval**: DSPy has no HITL, so `approve=fn` decides gated calls (`ApprovalRequest`: `tool_name`, `arguments`, `description`, `module`); `True` runs the call once, anything else (or a raising approver) blocks it. Without an approver, gated calls report "needs approval".
 - **Run context**: `current_dspy_module()` gives the module running the call (normally the `dspy.ReAct`). DSPy has no run or call ids.
-- **Per-call**: `dspy.ReAct` fixes its tools at construction, so `agent_builder()` builds a fresh one per query; pins are offered if retrieval fails.
+- **Per-run**: `dspy.ReAct` fixes its tools at construction, so `agent_builder()` builds a fresh one per query; pins are offered if retrieval fails.

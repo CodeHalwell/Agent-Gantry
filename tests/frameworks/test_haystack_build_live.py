@@ -1,9 +1,9 @@
 """Real-package tests for ``GantryLiveHaystackToolInvoker.build()``.
 
-Guards the per-call builder across the haystack 2.x -> 3.0 split: haystack
+Guards the per-run builder across the haystack 2.x -> 3.0 split: haystack
 3.0 removed ``ToolInvoker`` (the ``Agent`` component owns tool execution),
 so ``build()`` returns a ``ToolInvoker`` on 2.x and, on 3.x, either a
-per-call ``Agent`` (when the builder was given a ``chat_generator``) or a
+per-run ``Agent`` (when the builder was given a ``chat_generator``) or a
 clear error. The stubbed suites never exercised ``build()`` against the real
 package, which is how the 3.0 break slipped past them.
 """

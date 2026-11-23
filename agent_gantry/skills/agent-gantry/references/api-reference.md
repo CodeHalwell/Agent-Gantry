@@ -6,7 +6,7 @@
 ```python
 from agent_gantry import (
     AgentGantry,                  # main facade
-    GantryContextProvider,        # AF native provider (per-run / per-call)
+    GantryContextProvider,        # AF native provider (per-run / per-turn)
     MissingRequiredToolError,     # raised when required=[...] tool absent
     RetrievalDecision,            # introspection: what the bridge surfaced
     RetrievalCandidate,           # one row in RetrievalDecision.candidates

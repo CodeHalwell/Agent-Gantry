@@ -5,7 +5,7 @@ Agent Framework (AF 1.x) integration, mirroring the per-framework
 ``<Framework>Adapter`` classes. Bound to a single gantry, it constructs the
 underlying Gantry AF primitives on demand:
 
-- :meth:`context_provider` → ``GantryContextProvider`` (per-run / per-call
+- :meth:`context_provider` → ``GantryContextProvider`` (per-run / per-turn
   dynamic tool injection — the first-class AF ``ContextProvider``),
 - :meth:`tool_bridge` → ``GantryToolBridge`` (query-time tool retrieval and
   agent building),
@@ -57,8 +57,8 @@ class AgentFrameworkAdapter(BaseFrameworkAdapter):
         provider = af.context_provider(top_k=5)
         agent = Agent(OpenAIChatClient(), "...", context_providers=[provider])
 
-        # Per-call (multi-step) tool injection:
-        provider = af.context_provider(top_k=3, query_strategy="per_call")
+        # Per-turn (multi-step) tool injection:
+        provider = af.context_provider(top_k=3, query_strategy="per_turn")
         provider.attach_to(agent)
 
     :meth:`select` and :meth:`convert` share the native-adapter selection API,
@@ -67,7 +67,7 @@ class AgentFrameworkAdapter(BaseFrameworkAdapter):
     """
 
     #: AF's ``GantryContextProvider`` supports genuine per-round re-selection
-    #: (``query_strategy="per_call"``), matching the other per-turn adapters.
+    #: (``query_strategy="per_turn"``), matching the other per-turn adapters.
     live_tier = "per-turn"
 
     def __init__(self, gantry: AgentGantry, *, default_top_k: int = DEFAULT_TOOL_LIMIT) -> None:
@@ -108,18 +108,18 @@ class AgentFrameworkAdapter(BaseFrameworkAdapter):
         forwarded as an ordinary AF ``query_kwargs`` entry, to
         ``GantryToolBridge.get_tools``). Unlike calling
         :meth:`context_provider` directly, this defaults ``query_strategy``
-        to ``"per_call"`` (not :meth:`context_provider`'s own
+        to ``"per_turn"`` (not :meth:`context_provider`'s own
         back-compatible ``"per_run"`` default) — ``live()`` is meant to
-        surface the *deepest* tier AF supports, and per-call is what makes
-        AF's re-selection genuinely per-turn. Pass ``query_strategy="per_run"``
+        surface the *deepest* tier AF supports, and ``per_turn`` re-selects on
+        every model step rather than once per run. Pass ``query_strategy="per_run"``
         in ``framework_kwargs`` to opt back out.
 
         Returns a ``GantryContextProvider``. Plug it into
-        ``Agent(context_providers=[<result>])`` and, for ``per_call``, also
+        ``Agent(context_providers=[<result>])`` and, for ``per_turn``, also
         attach ``<result>.as_chat_middleware()`` — or call
         ``<result>.attach_to(agent)`` to do both in one step.
         """
-        framework_kwargs.setdefault("query_strategy", "per_call")
+        framework_kwargs.setdefault("query_strategy", "per_turn")
         if namespaces is not None:
             framework_kwargs.setdefault("namespaces", namespaces)
         return self.context_provider(
@@ -127,7 +127,7 @@ class AgentFrameworkAdapter(BaseFrameworkAdapter):
         )
 
     def context_provider(self, *, top_k: int | None = None, **kwargs: Any) -> Any:
-        """Build a ``GantryContextProvider`` (per-run / per-call tool injection).
+        """Build a ``GantryContextProvider`` (per-run / per-turn tool injection).
 
         ``top_k`` defaults to the adapter's ``default_top_k``. Every other keyword
         is forwarded to the provider (``query_strategy``, ``score_threshold``,

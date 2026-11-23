@@ -5,7 +5,7 @@ Clean per-framework import::
     from agent_gantry.agent_framework import AgentFrameworkAdapter
 
 ``AgentFrameworkAdapter`` is the one-class entry point — its methods build the
-``GantryContextProvider`` (per-run / per-call dynamic tool injection), the
+``GantryContextProvider`` (per-run / per-turn dynamic tool injection), the
 ``GantryToolBridge``, and the approval / observability / tool-choice middleware.
 Those underlying types are also re-exported here for type annotations and for
 holding the objects the adapter returns.
