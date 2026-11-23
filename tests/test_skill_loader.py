@@ -362,8 +362,11 @@ def test_symlink_cycles_end_instead_of_looping(tmp_path: Path) -> None:
     _symlink(root / "outer" / "inner" / "back-to-parent", root / "outer")
     _symlink(root / "self", root / "self")  # resolves to nothing
 
+    # Each skill once, and the walk ends. Compared without order: paths sort
+    # case-insensitively on Windows, which puts ``outer/inner/SKILL.md`` ahead
+    # of ``outer/SKILL.md`` there and behind it on POSIX.
     found = [f.relative_to(root).parent.as_posix() for f in iter_skill_files(root)]
-    assert found == ["outer", "outer/inner"]
+    assert sorted(found) == ["outer", "outer/inner"]
 
 
 def test_a_directory_reached_by_two_paths_is_loaded_once(tmp_path: Path) -> None:
