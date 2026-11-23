@@ -621,6 +621,24 @@ def test_latest_activity_include_request_false_returns_the_result_alone():
     assert result_only(messages) == "now email it"
 
 
+def test_latest_activity_reads_a_one_shot_iterator_once():
+    """``messages`` is typed ``Iterable``: a generator must not lose the request.
+
+    The walk from the end consumed the iterator, so the second look for the
+    latest user message found nothing and the result came back alone (and an
+    opaque result came back as an empty query).
+    """
+    from agent_gantry.query import latest_activity
+
+    history = [
+        {"role": "user", "content": "build a model from the data"},
+        {"role": "tool", "name": "clean_dataset", "content": "dataset ready to train a model"},
+    ]
+    assert latest_activity(iter(history)) == latest_activity(history)
+    history[-1]["content"] = "8841"
+    assert latest_activity(iter(history)) == "build a model from the data"
+
+
 def test_latest_activity_tool_result_alone_without_a_user_message():
     """No request in the history: the result is all there is to go on."""
     from agent_gantry.query import latest_activity

@@ -421,7 +421,10 @@ def latest_activity(
     """
     if not messages:
         return ""
-    for msg in reversed(list(messages)):
+    # Read once: ``messages`` may be a one-shot iterator, and the fallbacks
+    # below look through the history again.
+    messages = list(messages)
+    for msg in reversed(messages):
         role = _msg_role(msg)
         if role in ("user", ""):
             text = _msg_text(msg)
