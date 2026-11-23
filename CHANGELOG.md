@@ -20,9 +20,14 @@ renamed; both old spellings keep working.
 - compare `adapter.live_tier` with `"per-run"` where you compared it with
   `"per-call"`.
 
-Each old spelling emits a `DeprecationWarning` naming the new one. One case is
-not bridged: a `dict` or `set` keyed by `"per-call"` or `"per_call"` will not
-find the new value, because the two strings hash differently.
+Each old spelling emits a `DeprecationWarning` naming the new one. Two cases
+are not bridged:
+
+- a `dict` or `set` keyed by `"per-call"` or `"per_call"` will not find the
+  new value, because the two strings hash differently;
+- Agent Framework log messages that said "per-call" now say "per-turn" (for
+  example `per-turn retrieval failed; continuing with existing tools`), so
+  anything matching on that log text needs the new wording.
 
 ### Changed
 
@@ -42,6 +47,16 @@ find the new value, because the two strings hash differently.
   `AgentFrameworkAdapter.live()` defaults to `query_strategy="per_turn"`. The
   log lines and docs that said "per-call" for either meaning now say which
   one. This is naming only: the object each `live()` returns is unchanged.
+
+- **The bundled skill is split into a hub and reference files.** Its
+  `SKILL.md` body was 80,000 characters, over the 50,000-character cap this
+  library applies to skills it loads, so a registry that indexed it stored and
+  injected only the first two-thirds (`Skill 'agent-gantry' body is ...
+  truncated to 50000 for storage`). The per-framework guides, the System One
+  selection guide and the API quick-card now live in `references/` (14 new
+  files), and `SKILL.md` (about 41,000 characters) keeps what applies everywhere
+  plus an index of them. No content was removed. `agent-gantry install-skill`
+  and the wheel's `share/claude/skills/` copy include the new files.
 
 ### Deprecated
 
@@ -65,18 +80,6 @@ find the new value, because the two strings hash differently.
   is loaded once. A link whose target is missing is ignored. Hidden
   directories are still skipped by their name under the root, so a link that
   leads into a dot-directory is followed.
-
-### Changed
-
-- **The bundled skill is split into a hub and reference files.** Its
-  `SKILL.md` body was 80,000 characters, over the 50,000-character cap this
-  library applies to skills it loads, so a registry that indexed it stored and
-  injected only the first two-thirds (`Skill 'agent-gantry' body is ...
-  truncated to 50000 for storage`). The per-framework guides, the System One
-  selection guide and the API quick-card now live in `references/` (14 new
-  files), and `SKILL.md` (about 41,000 characters) keeps what applies everywhere
-  plus an index of them. No content was removed. `agent-gantry install-skill`
-  and the wheel's `share/claude/skills/` copy include the new files.
 
 ### Documentation
 

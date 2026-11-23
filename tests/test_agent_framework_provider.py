@@ -553,6 +553,39 @@ class TestGantryContextProvider:
         assert provider in agent.context_providers
         assert len(agent.middleware) == 1
 
+    @pytest.mark.asyncio
+    async def test_the_deprecated_per_call_spelling_wires_up_like_per_turn(
+        self, gantry_with_tools: AgentGantry, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """``query_strategy="per_call"`` must still install the per-turn
+        middleware, be recognised as attached, and warn when it is not."""
+
+        class FakeAgent:
+            def __init__(self) -> None:
+                self.context_providers: list = []
+                self.middleware: list = []
+
+        with pytest.warns(DeprecationWarning):
+            provider = GantryContextProvider(gantry_with_tools, query_strategy="per_call")
+
+        agent = FakeAgent()
+        provider.attach_to(agent)
+        assert provider in agent.context_providers
+        assert len(agent.middleware) == 1
+        assert provider._chat_middleware_attached(agent)  # type: ignore[attr-defined]
+
+        # Without the middleware, the per-turn "not attached" warning still fires.
+        bare = FakeAgent()
+        bare.context_providers.append(provider)
+        assert not provider._chat_middleware_attached(bare)  # type: ignore[attr-defined]
+        context = SimpleNamespace(
+            input_messages=[_user_msg("weather in Paris")], extend_tools=lambda *a, **k: None
+        )
+        with caplog.at_level("WARNING"):
+            await provider.before_run(agent=bare, session=None, context=context, state={})
+        assert "query_strategy='per_turn'" in caplog.text
+        assert "as_chat_middleware" in caplog.text
+
     def test_relative_threshold_accepted_at_construction(
         self, gantry_with_tools: AgentGantry
     ) -> None:
