@@ -7,11 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.23.1] - 2026-11-23
+## [0.24.0] - 2026-11-23
 
-A patch release: one bug fix in skill loading, and the bundled skill
-reorganised so it fits the limit this library applies to skills. No API
-changes and nothing to migrate.
+One vocabulary for how often tools are re-selected, a bug fix in skill
+loading, and the bundled skill reorganised so it fits the limit this library
+applies to skills. It is a minor release because two public values are
+renamed; both old spellings keep working.
+
+**Migrating.** Nothing breaks. When convenient:
+
+- write `query_strategy="per_turn"` where you wrote `"per_call"`;
+- compare `adapter.live_tier` with `"per-run"` where you compared it with
+  `"per-call"`.
+
+Each old spelling emits a `DeprecationWarning` naming the new one. One case is
+not bridged: a `dict` or `set` keyed by `"per-call"` or `"per_call"` will not
+find the new value, because the two strings hash differently.
+
+### Changed
+
+- **`live_tier="per-call"` is now `"per-run"`, and
+  `query_strategy="per_call"` is now `"per_turn"`.** "call" named opposite
+  ends of one scale: the `per-call` tier was the coarsest (rebuild once per
+  top-level invocation), while `GantryContextProvider(query_strategy=
+  "per_call")` was the finest (re-select on every model step). A *turn* is now
+  a model step and a *run* a top-level invocation, in both:
+
+  | Re-select | `live_tier` | `query_strategy` |
+  |---|---|---|
+  | every model step | `per-turn` | `per_turn` (was `per_call`) |
+  | once per top-level invocation | `per-run` (was `per-call`) | `per_run` |
+
+  LangChain, CrewAI, Agno, Haystack and DSPy report `"per-run"`.
+  `AgentFrameworkAdapter.live()` defaults to `query_strategy="per_turn"`. The
+  log lines and docs that said "per-call" for either meaning now say which
+  one. This is naming only: the object each `live()` returns is unchanged.
+
+### Deprecated
+
+- `query_strategy="per_call"`: accepted as `"per_turn"`.
+- Comparing `adapter.live_tier` with `"per-call"`, or
+  `provider.query_strategy` with `"per_call"`: both still compare equal
+  (`==`, `!=`, `in`, `match`), through the new
+  `agent_gantry._deprecation.RenamedValue`, a `str` that is the new spelling
+  in every other respect.
 
 ### Fixed
 
@@ -44,6 +83,12 @@ changes and nothing to migrate.
 - The selector-versus-reranker contrast added in 0.23.0 (a selector can return
   nothing; a reranker only reorders) is now also in the README's feature list,
   the docs site's Architecture page and the top of the bundled skill.
+- `integrations/frameworks/README.md` now says where a framework's
+  `live_tier` and the object `live()` returns differ:
+  `OpenAIAgentsAdapter.live()` returns a per-run session although the tier is
+  per-turn (that path is `dynamic_tools()`), and LangChain and Haystack are
+  per-run by `live()`'s delegate although `middleware()` and `agent()`
+  re-select every model turn. Re-pointing `live()` is left for a later change.
 - A note the 0.23.0 entry left out: since that release the published JSON
   schema of `SelectorConfig.type` and `RerankerConfig.type` lists
   `"system_one"` only. `"jev"` is still accepted when a config is loaded, with
@@ -5395,8 +5440,8 @@ adapters, and the provider dialects agree with it.
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.23.1...HEAD
-[0.23.1]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.23.0...v0.23.1
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.20.0...v0.21.0
