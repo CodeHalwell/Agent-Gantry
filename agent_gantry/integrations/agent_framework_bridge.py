@@ -101,6 +101,15 @@ class RetrievalDecision:
         effective_threshold: The numeric cutoff actually applied for this
             round (the input ``threshold`` for absolute mode, or the
             resolved ``frac * top_score`` for relative mode).
+        backend: Which backend produced the candidates: ``"selector"`` when
+            the gantry's configured selector answered, ``"semantic"`` when
+            the router did.
+        selector_fallback: ``True`` when a selector is configured but the
+            semantic router answered this round instead, because the
+            selector failed, was over its candidate ceiling, or had nothing
+            to work with. An eval that configures a selector should assert
+            this is ``False``.
+        selector_fallback_reason: Why, when ``selector_fallback`` is set.
     """
 
     query: str = ""
@@ -109,6 +118,9 @@ class RetrievalDecision:
     threshold: float | str | None = None
     threshold_mode: str = "absolute"
     effective_threshold: float | None = None
+    backend: str = "semantic"
+    selector_fallback: bool = False
+    selector_fallback_reason: str | None = None
 
     @property
     def kept(self) -> list[RetrievalCandidate]:
@@ -141,6 +153,9 @@ class RetrievalDecision:
             "scores": [c.score for c in self.candidates],
             "kept": [c.qualified_name for c in self.candidates if c.kept],
             "injected": list(self.injected),
+            "backend": self.backend,
+            "selector_fallback": self.selector_fallback,
+            "selector_fallback_reason": self.selector_fallback_reason,
         }
 
 
@@ -925,6 +940,11 @@ class GantryToolBridge:
                 list(result.tools), threshold=threshold, limit=limit
             )
             decision.query = query
+            # Which backend this round's candidates came from. ``getattr``: a
+            # gantry stand-in may return a result object without the fields.
+            decision.backend = getattr(result, "backend", "semantic")
+            decision.selector_fallback = bool(getattr(result, "selector_fallback", False))
+            decision.selector_fallback_reason = getattr(result, "selector_fallback_reason", None)
             tools = self.wrap_tools([st.tool for st in kept_top], cache=cache)
             decision.injected = [getattr(t, "name", None) or t.__name__ for t in tools]
 

@@ -24,6 +24,30 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from agent_gantry.schema.selection import SelectionCandidate, SelectionResult
 
 
+class SelectorFallbackError(RuntimeError):
+    """The configured selector was asked and did not answer, in strict mode.
+
+    Raised by retrieval only when the caller opted in with
+    ``AgentGantry(on_selector_fallback="raise")`` (or
+    ``SelectorConfig(on_fallback="raise")``). By default a selector that
+    cannot answer fails open to the semantic router, which is right for a
+    production agent and wrong for an eval that is meant to measure the
+    selector: there it would pass on a different backend.
+
+    Attributes:
+        kind: What was being selected: ``"tool"``, ``"skill"`` or ``"mcp_server"``.
+        reason: Why the selector did not answer.
+    """
+
+    def __init__(self, kind: str, reason: str) -> None:
+        self.kind = kind
+        self.reason = reason
+        super().__init__(
+            f"The selector did not answer for {kind} selection ({reason}), and "
+            "on_selector_fallback='raise' forbids falling back to semantic routing."
+        )
+
+
 class SelectorAdapter(Protocol):
     """Choose relevant entries from a catalogue without embedding it.
 

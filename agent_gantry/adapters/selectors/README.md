@@ -112,9 +112,39 @@ The selector covers all three catalogues — tools (`retrieve`/`retrieve_tools`)
 
 ## How it behaves
 
-**It fails open.** A selector never raises because a provider was unavailable, rate-limited or slow.
-It reports `fallback=True`, and retrieval quietly takes the semantic path instead. A selection layer
-that fails closed hands the agent an empty tool list, which is worse than an unranked one.
+**It fails open, and says so.** A selector never raises because a provider was unavailable,
+rate-limited or slow. It reports `fallback=True`, and retrieval takes the semantic path instead. A
+selection layer that fails closed hands the agent an empty tool list, which is worse than an unranked
+one. But a result the semantic router produced in the selector's place is not the selector's, and
+you can tell them apart:
+
+```python
+result = await gantry.retrieve(ToolQuery(context=ConversationContext(query=prompt)))
+result.backend                    # "selector" or "semantic"
+result.selector_fallback          # True: a selector is configured, the router answered
+result.selector_fallback_reason   # e.g. "catalogue of 600 exceeds max_candidates=512"
+```
+
+The same three fields are on `RetrievalDecision`, so `provider.last_selection`,
+`provider.selections` and `provider.dry_run_retrieve()` carry them too.
+
+Two words are kept apart. A selector **declines** when it answers with nothing: it looked at the
+catalogue and no entry served the query. That is a result (`backend == "selector"`, no tools). It
+**falls back** when it did not answer at all.
+
+- **Logging.** A fallback is logged at `WARNING` as `Selector failed for tool selection (<reason>);
+  using semantic routing`, once per distinct reason and again if it recurs after the selector has
+  answered; repeats are at `DEBUG`. The case to watch is `max_candidates` (default 512): a larger
+  catalogue falls back on *every* call, permanently, because selecting over a prefix would hide the
+  rest. The library attaches no log handler; call `enable_console_logging()` to see these.
+- **Strict mode.** Failing open is right in production and wrong in an eval, where it lets a run
+  pass on a backend you did not configure. `AgentGantry(selector=..., on_selector_fallback="raise")`
+  (or `SelectorConfig(on_fallback="raise")`) raises `SelectorFallbackError` instead of falling back,
+  for tools, skills and MCP servers. An empty query, or nothing registered, is not a selector failure:
+  it is reported on the result and never raised.
+- **Plain lists carry no provenance.** `retrieve_tools()` and the framework adapters' `select()`
+  return tool lists with nowhere to put it. Use `retrieve()`, a `RetrievalDecision`, or strict mode
+  when you need to know.
 
 **It respects the query's hard constraints.** Deprecation, namespaces, capabilities, sources and
 circuit-breaker health are applied by the router's own `filter_tools` before anything is sent, so a

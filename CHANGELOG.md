@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A retrieval result says which backend produced it.** With a selector
+  configured, a result that came from the semantic router instead (because the
+  selector failed, was over its candidate ceiling, or had nothing to work
+  with) was indistinguishable from one the selector served: `fallback` and
+  `reason` were on `SelectionResult` and dropped at the gantry boundary.
+  `RetrievalResult` now carries `backend` (`"selector"` or `"semantic"`),
+  `selector_fallback` and `selector_fallback_reason`, and `RetrievalDecision`
+  carries the same three, so `provider.last_selection`, `provider.selections`
+  and `dry_run_retrieve()` report it and `as_span_attributes()` includes it.
+  A selector that answers with no tools is a decline, not a fallback:
+  `backend == "selector"` and `selector_fallback is False`. The console
+  telemetry adapter logs the three fields with each retrieval.
+- **Strict mode for selectors.** `AgentGantry(selector=...,
+  on_selector_fallback="raise")`, or `SelectorConfig(on_fallback="raise")`,
+  raises the new `SelectorFallbackError` (with `.kind` and `.reason`) when the
+  selector is asked and does not answer, for tool, skill and MCP-server
+  selection. The default, `"semantic"`, still fails open. An empty query or
+  an empty catalogue is reported on the result and never raised.
+  `on_selector_fallback` is keyword-only.
+- `SystemOneClient` and `SelectorFallbackError` are importable from
+  `agent_gantry`, beside `SystemOneSelector` and `SystemOneReranker`.
+
+### Changed
+
+- **A selector fallback is logged at `WARNING`, once per reason.** The gantry
+  logged it at `DEBUG` as `Selector declined (...)`, which used the library's
+  word for the useful thing a selector does (choose nothing) for a failure.
+  It now logs `Selector failed for <kind> selection (<reason>); using semantic
+  routing` at `WARNING` the first time a reason is seen, and again if it
+  recurs after the selector has answered; repeats are at `DEBUG`. A selector
+  that was not consulted because there was nothing to select on is logged at
+  `DEBUG` as `Selector not consulted ...`. Skill and MCP-server selection log
+  the same way; the skill-catalogue ceiling message changes with it.
+- `SystemOneSelector` logs its `max_candidates` ceiling at `WARNING` once per
+  catalogue size and at `DEBUG` after that, where it warned on every call.
+
 ## [0.24.0] - 2026-11-23
 
 One vocabulary for how often tools are re-selected, a bug fix in skill

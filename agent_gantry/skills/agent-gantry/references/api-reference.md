@@ -29,6 +29,10 @@ from agent_gantry import (
 #   AgentGantry(selector=SystemOneSelector(threshold=0.4))  -> no embedder/vector store/sync
 #   AgentGantry(reranker=SystemOneReranker())               -> refine a semantic shortlist
 #   SelectionResult.scores                            -> every candidate, not just winners
+#   (await gantry.retrieve(ToolQuery(...))).backend   -> "selector" | "semantic"
+#       .selector_fallback / .selector_fallback_reason -> the router answered for the selector, and why
+#   AgentGantry(selector=..., on_selector_fallback="raise") -> SelectorFallbackError instead of failing open
+#   also importable from agent_gantry: SystemOneClient, SelectorFallbackError
 # MCP:    gantry.serve_mcp(transport="stdio"|"http"|"sse", mode=..., expose=[...])
 #         reset_sse_shutdown_latch()  -> release sse_starlette's process-global
 #           shutdown latch between servers in one process; without it a second

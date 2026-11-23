@@ -95,7 +95,10 @@ class SelectorConfig(BaseModel):
     retrieval with ``RerankerConfig(type="system_one")`` over its shortlist.
 
     Retrieval falls back to the semantic router whenever the selector is
-    disabled, over its candidate ceiling, or unable to answer.
+    disabled, over its candidate ceiling, or unable to answer. A fallback is
+    reported on the result (``RetrievalResult.selector_fallback`` and
+    ``selector_fallback_reason``) and logged at WARNING; ``on_fallback="raise"``
+    turns it into an error.
     """
 
     enabled: bool = False
@@ -134,6 +137,15 @@ class SelectorConfig(BaseModel):
     )
     timeout_s: float | None = Field(
         default=None, gt=0, description="Per-request timeout; the SDK's own default is 10s."
+    )
+    on_fallback: Literal["semantic", "raise"] = Field(
+        default="semantic",
+        description=(
+            "What retrieval does when the selector is asked and does not answer. "
+            "'semantic' (the default) fails open to the semantic router, which is "
+            "right in production. 'raise' raises SelectorFallbackError instead, "
+            "for evals and CI that must not pass on a different backend."
+        ),
     )
 
     _accept_jev = field_validator("type", mode="before")(_system_one_type)

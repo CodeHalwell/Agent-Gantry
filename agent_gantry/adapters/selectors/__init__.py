@@ -10,10 +10,11 @@ that pull in optional dependencies (typesafe-sdk) are lazy-loaded via
 
 from __future__ import annotations
 
-from agent_gantry.adapters.selectors.base import SelectorAdapter
+from agent_gantry.adapters.selectors.base import SelectorAdapter, SelectorFallbackError
 
 __all__ = [
     "SelectorAdapter",
+    "SelectorFallbackError",
     "SystemOneSelector",
 ]
 

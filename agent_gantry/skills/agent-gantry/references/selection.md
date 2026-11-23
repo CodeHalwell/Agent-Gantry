@@ -94,9 +94,23 @@ candidate the model simply did not answer for can be pushed out of the result.
 It is a precision loss rather than a correctness one, and it cannot happen on
 the selector path.
 
-If you see selection quietly stop working, check the logs for `System One selection
-failed, falling back:` — that is the library declining to guess, not a silent
-failure.
+**Know which backend answered.** A fallback is not silent. `gantry.retrieve(...)`
+returns `backend` (`"selector"` or `"semantic"`), `selector_fallback` and
+`selector_fallback_reason`; `RetrievalDecision` (`provider.last_selection`,
+`provider.selections`, `dry_run_retrieve()`) carries the same three. In an eval
+that configures a selector, assert `selector_fallback is False`, or construct
+the gantry with `on_selector_fallback="raise"` so a fallback raises
+`SelectorFallbackError` instead of passing on semantic routing. Production
+should keep the default and fail open.
+
+A selector *declines* when it answers with nothing (a result: `backend ==
+"selector"`, no tools); it *falls back* when it does not answer. The log line
+for a fallback is `Selector failed for tool selection (<reason>); using
+semantic routing`, at `WARNING` once per distinct reason. The reason to watch
+is `catalogue of N exceeds max_candidates=512`: a catalogue over the ceiling
+falls back on every call, so raise `max_candidates` or use the reranker.
+`retrieve_tools()` and the adapters' `select()` return plain lists and cannot
+carry the flag; use `retrieve()` or strict mode there.
 
 Query constraints are applied *before* anything is sent — deprecation,
 namespaces, capabilities, sources and circuit-breaker health all go through the
