@@ -4,7 +4,7 @@
 
 *Context is precious. Execution is sacred. Trust is earned.*
 
-Agent-Gantry is a Python library (**v0.22.0**) for building agents that can discover, select, and execute the right tools without flooding every prompt with every schema your organization owns. It combines semantic retrieval, provider schema conversion, secure execution, framework bridges, MCP/A2A interoperability, persistence adapters, and observability into one tool orchestration layer.
+Agent-Gantry is a Python library (**v0.23.0**) for building agents that can discover, select, and execute the right tools without flooding every prompt with every schema your organization owns. It combines semantic retrieval, provider schema conversion, secure execution, framework bridges, MCP/A2A interoperability, persistence adapters, and observability into one tool orchestration layer.
 
 ## Documentation
 
@@ -106,14 +106,14 @@ for each framework's install command, static tools, and live selection hook.
 - **Semantic tool routing:** reduce prompt context by retrieving top-k relevant tools instead of injecting every tool.
 - **Register once, run anywhere:** emit schemas for OpenAI (Chat Completions and Responses), Anthropic, Gemini, Mistral, Groq, and Microsoft Agent Framework dialects — plus the framework-native adapters, MCP, and A2A paths below.
 - **Secure execution:** run tools through policies, capabilities, timeouts, retries, rate limits, circuit breakers, callbacks, and telemetry. Batch and streaming tool calls are supported via `execute_batch()` and `execute_tool_calls()`.
-- **Persistence and retrieval:** use in-memory defaults, LanceDB, Qdrant, Chroma, pgvector, OpenAI/Azure/Nomic/sentence-transformers embeddings, and Cohere / cross-encoder / Jev rerankers.
+- **Persistence and retrieval:** use in-memory defaults, LanceDB, Qdrant, Chroma, pgvector, OpenAI/Azure/Nomic/sentence-transformers embeddings, and Cohere / cross-encoder / System One rerankers.
 - **Framework coverage:** Microsoft Agent Framework plus LangChain, LangGraph, LlamaIndex, CrewAI, Google ADK, Pydantic AI, OpenAI Agents SDK, Haystack, Agno, Strands Agents, and DSPy.
 - **MCP both ways:** consume local (stdio) and remote (Streamable HTTP / SSE) MCP servers, and serve your registry to Claude Desktop, Claude Code or any remote client with `gantry.serve_mcp()` / `agent-gantry serve-mcp --module my_app.tools` — two meta-tools instead of the whole tool list.
 - **A2A both ways:** discover and call remote A2A agents as tools with `add_a2a_agent()`, and serve your own registry as an A2A agent (Agent Card at `/.well-known/agent.json`) with `gantry.serve_a2a()`.
 - **Skills, retrieved by meaning:** load any Agent Skills (`SKILL.md`) directory with `gantry.add_skills_from_directory(...)` and inject only the skills relevant to each prompt.
 - **Bundled Claude Skill:** install with `agent-gantry install-skill --claude` or target a project-local skills directory.
 - **Observability:** emit retrieval/execution telemetry to the console, OpenTelemetry, or Prometheus, and track token savings with the built-in metrics helpers.
-- **Selection without embeddings:** point a decision model at the catalogue instead of a vector store. `JevSelector` replaces embed-then-search for tools, skills and MCP servers; `JevReranker` refines the shortlist when the catalogue is too large to send. Both fail open to semantic routing.
+- **Selection without embeddings:** point a decision model at the catalogue instead of a vector store. `SystemOneSelector` replaces embed-then-search for tools, skills and MCP servers; `SystemOneReranker` refines the shortlist when the catalogue is too large to send. Both fail open to semantic routing.
 
 Agent-Gantry supports Python 3.10–3.14. CrewAI's current SDK requires Python
 3.10–3.13; the `agent-frameworks` extra includes it only on those versions.
@@ -125,9 +125,9 @@ model directly, which needs no embedder, no vector store and no sync — and can
 return nothing when nothing fits, which top-k cannot express.
 
 ```python
-from agent_gantry import AgentGantry, JevSelector
+from agent_gantry import AgentGantry, SystemOneSelector
 
-gantry = AgentGantry(selector=JevSelector(threshold=0.3))  # reads TYPESAFE_API_KEY
+gantry = AgentGantry(selector=SystemOneSelector(threshold=0.3))  # reads TYPESAFE_API_KEY
 
 @gantry.register(tags=["email"], examples=["show my messages", "any new mail"])
 def list_inbox(limit: int = 10) -> list[str]:
@@ -148,10 +148,19 @@ The same selector covers `retrieve_skills()` and `retrieve_mcp_servers()`. Above
 a few hundred entries, keep semantic search and refine it instead:
 
 ```python
-from agent_gantry import AgentGantry, JevReranker
+from agent_gantry import AgentGantry, SystemOneReranker
 
-gantry = AgentGantry(reranker=JevReranker())   # reorders the vector-search shortlist
+gantry = AgentGantry(reranker=SystemOneReranker())   # reorders the vector-search shortlist
 ```
+
+The two are not interchangeable on one point: a reranker only *orders* the
+shortlist, so it still returns its top-k for a query no tool can serve. Only
+the selector, which gates each entry at `threshold`, can return nothing.
+
+Both ask a "System One" decision model: TypeSafe's Jev by default
+(`pip install 'agent-gantry[system-one]'`), or another via `model=`. They were
+called `JevSelector` / `JevReranker` before 0.23.0; those names, the `jev`
+extra and `type="jev"` still work, with a `DeprecationWarning`.
 
 Write `examples=[...]` on your tools before reaching for either: on our own
 benchmark that moved the default embedder from 1/5 to 5/5, more than any model

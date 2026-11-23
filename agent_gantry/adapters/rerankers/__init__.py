@@ -14,8 +14,8 @@ from agent_gantry.adapters.rerankers.base import RerankerAdapter
 __all__ = [
     "CohereReranker",
     "CrossEncoderReranker",
-    "JevReranker",
     "RerankerAdapter",
+    "SystemOneReranker",
 ]
 
 
@@ -28,10 +28,16 @@ def __getattr__(name: str) -> type:
         from agent_gantry.adapters.rerankers.cross_encoder import CrossEncoderReranker
 
         return CrossEncoderReranker
-    if name == "JevReranker":
-        from agent_gantry.adapters.rerankers.jev import JevReranker
+    if name == "SystemOneReranker":
+        from agent_gantry.adapters.rerankers.system_one import SystemOneReranker
 
-        return JevReranker
+        return SystemOneReranker
+    if name == "JevReranker":  # renamed in 0.23.0
+        from agent_gantry._deprecation import warn_renamed
+        from agent_gantry.adapters.rerankers.system_one import SystemOneReranker
+
+        warn_renamed(f"{__name__}.JevReranker", f"{__name__}.SystemOneReranker")
+        return SystemOneReranker
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

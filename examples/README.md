@@ -102,7 +102,7 @@ with no error.
 - `basics/` — registration patterns, async execution, multi-tool routing,
   plug-and-play imports, and skills (retrieved guidance, never executed).
 - `routing/` — semantic routing, custom adapters, health-aware ranking, asymmetric
-  embedders, and the Jev selector.
+  embedders, and the System One selector.
 - `execution/` — circuit breakers, batch execution, security policy enforcement.
 - `llm_integration/` — end-to-end loops against OpenAI/Anthropic/Google/Groq/Mistral
   using the `@with_semantic_tools` decorator.

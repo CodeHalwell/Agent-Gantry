@@ -14,28 +14,31 @@ How deep can it go on this SDK?
 The OpenAI Agents SDK reads the agent's tool surface from ``agent.tools`` afresh
 **on every turn**: the run loop calls ``Agent.get_all_tools`` once per turn to
 snapshot the callable functions before invoking the model. There is no
-documented "return the tools for this turn" callback, but there is a per-model
-lifecycle hook, ``RunHooks.on_llm_start`` (and the per-agent
-``AgentHooks.on_llm_start``), that fires immediately before each model request.
-Because ``agent.tools`` is a plain mutable list, two complementary mechanisms
-give genuine per-turn re-selection:
+documented "return the tools for this turn" callback, but there are lifecycle
+hooks on ``RunHooks``: ``on_agent_start`` fires as the agent starts and
+``on_llm_start`` immediately before each model request. Because ``agent.tools``
+is a plain mutable list, two complementary mechanisms give genuine per-turn
+re-selection:
 
 1. **Mid-run (hook-driven), via** :func:`_gantry_run_hooks`. The returned
-   :class:`agents.RunHooks` re-selects tools from the run's current input and
-   rewrites ``agent.tools`` in place on every ``on_llm_start``. The SDK snapshots
-   tools at the *start* of each turn and fires ``on_llm_start`` *within* that
-   turn, so a rewrite here is picked up by the **next** turn's snapshot — i.e.
-   within a single multi-turn ``Runner.run`` the tool set tracks the evolving
-   conversation turn by turn, with no application code between turns. This is the
-   deepest the SDK natively supports.
+   :class:`agents.RunHooks` rewrites ``agent.tools`` in place at two points.
+   ``on_agent_start`` selects from the run's input; from ``openai-agents``
+   0.23.1 the SDK fires it *before* the turn's snapshot, so the **first** model
+   request already carries the selection. ``on_llm_start`` re-selects from the
+   running conversation; it fires *within* a turn, after the snapshot, so its
+   rewrite is picked up by the **next** turn — within a single multi-turn
+   ``Runner.run`` the tool set tracks the evolving conversation turn by turn,
+   with no application code between turns. This is the deepest the SDK natively
+   supports. (Before 0.23.1 the snapshot precedes every hook, so the first
+   request uses ``agent.tools`` as the caller left it; mechanism 2 covers that.)
 
 2. **Per-run (loop-driven), via** :class:`GantryAgentSession` /
    :func:`_run_with_gantry`. Re-selects tools from the run input and updates
    ``agent.tools`` **before** each ``Runner.run`` call, so the new selection is
-   in force on the very *first* turn of that run. Driving a multi-turn
-   conversation as a sequence of runs (the common chat pattern) yields immediate,
-   query-accurate re-selection each turn and composes with the hook for
-   intra-run dynamism.
+   in force on the very *first* turn of that run on every SDK version. Driving
+   a multi-turn conversation as a sequence of runs (the common chat pattern)
+   yields immediate, query-accurate re-selection each turn and composes with
+   the hook for intra-run dynamism.
 
 Both update ``agent.tools`` in place (an ``agent.clone(tools=...)`` variant is
 also offered) and route every tool call back through ``gantry.execute`` via the
@@ -73,6 +76,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import warnings
 import weakref
 from typing import TYPE_CHECKING, Any
 
@@ -96,6 +100,8 @@ from agent_gantry.integrations.frameworks.native import (
 )
 from agent_gantry.integrations.frameworks.openai_agents import (
     _INSTALL_HINT,
+    _first_request_sees_input,
+    _require_per_turn_sdk,
     _spec_to_openai_agents,
 )
 from agent_gantry.query import latest_activity
@@ -179,6 +185,56 @@ async def _select_function_tools(
     ]
 
 
+async def _apply_selection(
+    agent: Any,
+    gantry: AgentGantry,
+    query_or_input: Any,
+    *,
+    limit: int = DEFAULT_TOOL_LIMIT,
+    score_threshold: float = 0.0,
+    namespaces: list[str] | None = None,
+    required: list[str] | None = None,
+    always_include: list[str] | None = None,
+    error_mode: ErrorMode = "model",
+    error_formatter: ErrorFormatter | None = None,
+) -> list[Any] | None:
+    """Select for ``query_or_input`` and rewrite ``agent.tools`` in place.
+
+    Returns the new tools, or ``None`` when retrieval failed and
+    ``agent.tools`` was left as it was (logged at WARNING).
+
+    Raises:
+        ImportError: If ``openai-agents`` is not installed.
+    """
+    try:
+        tools = await _select_function_tools(
+            gantry,
+            query_or_input,
+            limit=limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+            required=required,
+            always_include=always_include,
+            error_mode=error_mode,
+            error_formatter=error_formatter,
+        )
+    except (ImportError, MissingRequiredToolError, QueryBoundsError):
+        # Install-time and configuration errors, not transient retrieval
+        # failures — keep failing fast/loudly.
+        raise
+    except Exception:
+        logger.warning(
+            "_refresh_agent_tools: semantic retrieval failed; "
+            "continuing with the previous turn's tools.",
+            exc_info=True,
+        )
+        return None
+    # Mutate in place: the run loop reads ``agent.tools`` each turn, and other
+    # references to this agent must see the same updated list.
+    agent.tools[:] = tools
+    return tools
+
+
 async def _refresh_agent_tools(
     agent: Any,
     gantry: AgentGantry,
@@ -208,33 +264,19 @@ async def _refresh_agent_tools(
     Raises:
         ImportError: If ``openai-agents`` is not installed.
     """
-    try:
-        tools = await _select_function_tools(
-            gantry,
-            query_or_input,
-            limit=limit,
-            score_threshold=score_threshold,
-            namespaces=namespaces,
-            required=required,
-            always_include=always_include,
-            error_mode=error_mode,
-            error_formatter=error_formatter,
-        )
-    except (ImportError, MissingRequiredToolError, QueryBoundsError):
-        # Install-time and configuration errors, not transient retrieval
-        # failures — keep failing fast/loudly.
-        raise
-    except Exception:
-        logger.warning(
-            "_refresh_agent_tools: semantic retrieval failed; "
-            "continuing with the previous turn's tools.",
-            exc_info=True,
-        )
-        return list(agent.tools)
-    # Mutate in place: the run loop reads ``agent.tools`` each turn, and other
-    # references to this agent must see the same updated list.
-    agent.tools[:] = tools
-    return tools
+    tools = await _apply_selection(
+        agent,
+        gantry,
+        query_or_input,
+        limit=limit,
+        score_threshold=score_threshold,
+        namespaces=namespaces,
+        required=required,
+        always_include=always_include,
+        error_mode=error_mode,
+        error_formatter=error_formatter,
+    )
+    return list(agent.tools) if tools is None else tools
 
 
 def _gantry_run_hooks(
@@ -248,46 +290,72 @@ def _gantry_run_hooks(
     always_include: list[str] | None = None,
     error_mode: ErrorMode = "model",
     error_formatter: ErrorFormatter | None = None,
+    applied_query: str | None = None,
 ) -> Any:
-    """Build a :class:`agents.RunHooks` that re-selects tools every model call.
+    """Build a :class:`agents.RunHooks` that keeps ``agent.tools`` selected.
 
-    Pass the returned hooks to ``Runner.run(agent, input, hooks=...)``. Before
-    each model request (``on_llm_start``) Gantry re-selects the relevant tools
-    from the turn's current input items and rewrites ``agent.tools`` in place.
-    The SDK snapshots tools at the start of each turn, so the rewrite takes
-    effect from the **next** turn within the same run — giving intra-run,
-    per-turn dynamism with no application code between turns.
+    Pass the returned hooks to ``Runner.run(agent, input, hooks=...)``. They
+    re-select at two points, both by rewriting ``agent.tools`` in place:
 
-    For immediate first-turn accuracy, combine this with
-    :func:`_run_with_gantry` / :class:`GantryAgentSession`, which re-select
-    *before* the run starts.
+    - ``on_agent_start`` -- from the run's input, as the agent starts (and
+      again when a handoff returns to it). From ``openai-agents`` 0.23.1 the
+      SDK fires this before it lists the turn's tools, so the **first** model
+      request already carries the selection.
+    - ``on_llm_start`` -- from the running conversation, before each model
+      request. The turn's tools are already listed by then, so this takes
+      effect from the **next** turn: the tool surface follows the run as it
+      chains tools, with no application code between turns.
+
+    Before 0.23.1 the SDK lists a turn's tools before either hook fires, so
+    the first request uses ``agent.tools`` as the caller left it. Select first
+    with :func:`_refresh_agent_tools`, or use :func:`_run_with_gantry` /
+    :class:`GantryAgentSession`, which do. A run that starts there with tools
+    other than the ones its input selects gets a ``RuntimeWarning``.
+
+    Args:
+        applied_query: A query the caller has already selected ``agent.tools``
+            for (the session's pre-run selection), so the hooks do not repeat
+            that retrieval.
 
     Raises:
         ImportError: If ``openai-agents`` is not installed.
     """
     agents = _require_agents()
     check_query_bounds(limit=limit, score_threshold=score_threshold, owner="OpenAIAgentsAdapter")
+    first_request_covered = _first_request_sees_input()
 
     class _GantryRunHooks(agents.RunHooks):  # type: ignore[misc, valid-type]
-        """Re-selects ``agent.tools`` from the live input before each model call."""
+        """Re-selects ``agent.tools`` at agent start and before each model call."""
 
-        async def on_llm_start(
-            self,
-            context: Any,
-            hook_agent: Any,
-            system_prompt: str | None,
-            input_items: list[Any],
-        ) -> None:
-            # Run hooks fire for every agent in the run (handoff targets too);
-            # only the bound agent's tools are Gantry's to rewrite.
-            if hook_agent is not None and hook_agent is not agent:
+        def __init__(self) -> None:
+            super().__init__()
+            # The query ``agent.tools`` currently reflects, so an unchanged
+            # conversation (agent start, then the first model call) costs one
+            # retrieval rather than one per hook. Paired with the tool objects
+            # that selection put there: if anything else has rewritten the
+            # list since (a ``refresh`` for another query, a second hooks
+            # object, a reuse of this one across runs), the record is stale
+            # and the selection is made again.
+            self._applied: str | None = applied_query
+            self._applied_tools = list(agent.tools) if applied_query is not None else None
+
+        def _still_applied(self, query: str) -> bool:
+            held = self._applied_tools
+            return (
+                held is not None
+                and query == self._applied
+                and len(held) == len(agent.tools)
+                and all(mine is theirs for mine, theirs in zip(held, agent.tools, strict=True))
+            )
+
+        async def _reselect(self, query_or_input: Any) -> None:
+            query = _query_from(query_or_input)
+            if self._still_applied(query):
                 return
-            # ``input_items`` is the model input for the upcoming call: the full
-            # running conversation. Derive the query from its latest activity.
-            await _refresh_agent_tools(
+            tools = await _apply_selection(
                 agent,
                 gantry,
-                input_items,
+                query,
                 limit=limit,
                 score_threshold=score_threshold,
                 namespaces=namespaces,
@@ -296,6 +364,51 @@ def _gantry_run_hooks(
                 error_mode=error_mode,
                 error_formatter=error_formatter,
             )
+            # A failed retrieval is not recorded, so the next hook tries again.
+            if tools is not None:
+                self._applied = query
+                self._applied_tools = list(tools)
+
+        async def on_agent_start(self, context: Any, hook_agent: Any) -> None:
+            # Run hooks fire for every agent in the run (handoff targets too);
+            # only the bound agent's tools are Gantry's to rewrite.
+            if hook_agent is not None and hook_agent is not agent:
+                return
+            turn_input = getattr(context, "turn_input", None)
+            if not _query_from(turn_input):
+                # No input on the context (SDKs before ``turn_input``, or a
+                # resumed run): leave the tools alone rather than clear them.
+                return
+            offered = [getattr(tool, "name", None) for tool in agent.tools]
+            await self._reselect(turn_input)
+            if first_request_covered:
+                return
+            selected = [getattr(tool, "name", None) for tool in agent.tools]
+            if sorted(map(str, offered)) != sorted(map(str, selected)):
+                warnings.warn(
+                    "openai-agents<0.23.1 lists an agent's tools before any run hook fires, "
+                    f"so this run's first model request was built with {offered} rather "
+                    f"than the selection for its input, {selected}. Call "
+                    "adapter.refresh(agent, input) before Runner.run, or use adapter.run() "
+                    "/ adapter.session(), which do; openai-agents>=0.23.1 needs neither.",
+                    RuntimeWarning,
+                    # The SDK calls this hook, so no frame above is the user's:
+                    # attribute the warning to this module, not SDK internals.
+                    stacklevel=1,
+                )
+
+        async def on_llm_start(
+            self,
+            context: Any,
+            hook_agent: Any,
+            system_prompt: str | None,
+            input_items: list[Any],
+        ) -> None:
+            if hook_agent is not None and hook_agent is not agent:
+                return
+            # ``input_items`` is the model input for the upcoming call: the full
+            # running conversation. Derive the query from its latest activity.
+            await self._reselect(input_items)
 
     return _GantryRunHooks()
 
@@ -366,7 +479,11 @@ class GantryAgentSession:
         without immediately running (e.g. to inspect the chosen tools). Returns
         the freshly selected :class:`agents.FunctionTool` list.
         """
-        return await _refresh_agent_tools(
+        tools = await self._apply(query_or_input)
+        return list(self._agent.tools) if tools is None else tools
+
+    async def _apply(self, query_or_input: Any) -> list[Any] | None:
+        return await _apply_selection(
             self._agent,
             self._gantry,
             query_or_input,
@@ -390,11 +507,15 @@ class GantryAgentSession:
         hook is not installed.
         """
         agents = _require_agents()
-        await self.refresh(run_input)
-        run_kwargs.setdefault("hooks", self._gantry_hooks())
+        applied = await self._apply(run_input)
+        if "hooks" not in run_kwargs:
+            # The hooks start from this selection instead of repeating it.
+            run_kwargs["hooks"] = self._gantry_hooks(
+                None if applied is None else _query_from(run_input)
+            )
         return await agents.Runner.run(self._agent, run_input, **run_kwargs)
 
-    def _gantry_hooks(self) -> Any:
+    def _gantry_hooks(self, applied_query: str | None = None) -> Any:
         return _gantry_run_hooks(
             self._gantry,
             self._agent,
@@ -405,6 +526,7 @@ class GantryAgentSession:
             always_include=self._always_include,
             error_mode=self._error_mode,
             error_formatter=self._error_formatter,
+            applied_query=applied_query,
         )
 
 
@@ -582,8 +704,14 @@ class GantryDynamicTools:
         self._pinned: frozenset[str] = frozenset()
 
     async def build(self) -> list[Any]:
-        """The catalogue (in-scope registry tools) as gated ``FunctionTool``s."""
+        """The catalogue (in-scope registry tools) as gated ``FunctionTool``s.
+
+        Raises:
+            ImportError: If ``openai-agents`` is missing or older than 0.23.1
+                (see :func:`~agent_gantry.integrations.frameworks.openai_agents._require_per_turn_sdk`).
+        """
         _require_agents()
+        _require_per_turn_sdk()
         try:
             await self._gantry.ensure_synced()
         except Exception:

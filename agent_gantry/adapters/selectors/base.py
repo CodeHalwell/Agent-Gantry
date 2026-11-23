@@ -27,7 +27,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 class SelectorAdapter(Protocol):
     """Choose relevant entries from a catalogue without embedding it.
 
-    Implementations: JevSelector.
+    Implementations: SystemOneSelector.
     """
 
     @abstractmethod

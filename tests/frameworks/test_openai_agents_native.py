@@ -440,6 +440,88 @@ async def test_dynamic_tools_retry_after_failure_when_only_other_tools_ran(gantr
     assert "get_weather" in _offered(model)[2]
 
 
+# --------------------------------------------------------------------------- #
+# The first model request: every live path offers the selected tools on it
+# --------------------------------------------------------------------------- #
+
+_FIRST_PROMPT = "look up the customer record for Jo"
+
+
+async def _first_request(gantry, path: str):
+    """Run ``path`` once; return what the model was offered and the tool outputs."""
+    adapter = OpenAIAgentsAdapter(gantry)
+    model = _script([("lookup_customer", {"name": "Jo"})])
+    if path == "dynamic_tools":
+        agent = Agent(name="a", model=model, tools=await adapter.dynamic_tools(limit=1))
+        result = await Runner.run(agent, _FIRST_PROMPT)
+    elif path == "run_hooks":
+        agent = Agent(name="a", model=model, tools=[])
+        result = await Runner.run(agent, _FIRST_PROMPT, hooks=adapter.run_hooks(agent, limit=1))
+    elif path == "run":
+        agent = Agent(name="a", model=model, tools=[])
+        result = await adapter.run(agent, _FIRST_PROMPT, limit=1)
+    elif path == "session":
+        agent = Agent(name="a", model=model, tools=[])
+        result = await adapter.session(agent, limit=1).run(_FIRST_PROMPT)
+    else:
+        agent = Agent(name="a", model=model, tools=[])
+        await adapter.refresh(agent, _FIRST_PROMPT, limit=1)
+        result = await Runner.run(agent, _FIRST_PROMPT)
+    return _offered(model), _outputs(result)
+
+
+@pytest.mark.parametrize("path", ["dynamic_tools", "run_hooks", "run", "session", "refresh"])
+async def test_first_model_request_carries_the_selected_tools(gantry, path):
+    """A one-turn task must be able to call its tool: the handler has to run.
+
+    Checking the answer text alone hides a first request with no tools, since
+    a model can often answer from its own knowledge.
+    """
+    offered, outputs = await _first_request(gantry, path)
+    assert offered[0] == ["lookup_customer"]
+    assert outputs and outputs[0].startswith("Customer found")
+
+
+async def test_run_hooks_follow_the_run_from_tool_output(gantry):
+    """Later turns track the conversation: the request plus the newest tool result."""
+    adapter = OpenAIAgentsAdapter(gantry)
+    queries = []
+    original = gantry.retrieve
+
+    async def spy(query):
+        queries.append(query.context.query)
+        return await original(query)
+
+    gantry.retrieve = spy
+    model = _script([("lookup_customer", {"name": "Jo"})])
+    agent = Agent(name="a", model=model, tools=[])
+    await Runner.run(agent, _FIRST_PROMPT, hooks=adapter.run_hooks(agent, limit=1))
+
+    # One retrieval for the first turn (agent start and its model call share an
+    # input), one after the tool result.
+    assert queries == [
+        _FIRST_PROMPT,
+        f"{_FIRST_PROMPT}\nCustomer found. Next step: send an email message to jo@example.com",
+    ]
+
+
+async def test_session_run_selects_once_for_the_first_turn(gantry):
+    """The session's pre-run selection is not repeated by the hooks it installs."""
+    queries = []
+    original = gantry.retrieve
+
+    async def spy(query):
+        queries.append(query.context.query)
+        return await original(query)
+
+    gantry.retrieve = spy
+    model = ScriptedModel([[assistant_message("done")]])
+    agent = Agent(name="a", model=model, tools=[])
+    await OpenAIAgentsAdapter(gantry).session(agent, limit=1).run(_FIRST_PROMPT)
+    assert queries == [_FIRST_PROMPT]
+    assert _offered(model) == [["lookup_customer"]]
+
+
 async def test_dynamic_tools_validate_arguments(gantry):
     with pytest.raises(ValueError, match="max_offered"):
         await OpenAIAgentsAdapter(gantry).dynamic_tools(max_offered=0)

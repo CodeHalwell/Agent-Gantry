@@ -88,7 +88,7 @@ uv add "agent-gantry[agno]"             # Agno (>=2.6.10)
 uv add "agent-gantry[haystack]"         # Haystack (>=3.0)
 uv add "agent-gantry[dspy]"             # DSPy (>=3.5)
 uv add "agent-gantry[lancedb]"          # disk-persistent vector store
-uv add "agent-gantry[jev]"              # selection without embeddings (TypeSafe Jev)
+uv add "agent-gantry[system-one]"       # selection without embeddings (a System One decision model)
 uv add "agent-gantry[mcp]"              # MCP client/server
 uv add "agent-gantry[a2a]"              # A2A agent
 uv add "agent-gantry[all]"              # everything
@@ -173,10 +173,11 @@ from agent_gantry.agent_framework import AgentFrameworkAdapter
 provider = AgentFrameworkAdapter(gantry).context_provider(
     top_k=3,
     query_strategy="per_call",
-    # Default for per_call is latest_activity: the newest user message or the
-    # newest tool result, whichever came last. Pass query_generator=... only
-    # for a different rotation (e.g. last_tool_result to always follow the
-    # previous tool's output in a pipeline that takes no user turns).
+    # Default for per_call is latest_activity: the newest user message, plus
+    # the newest tool result when one came after it. Pass query_generator=...
+    # only for a different rotation (e.g. partial(latest_activity,
+    # include_request=False) to query on the tool's output alone in a pipeline
+    # whose results name the next step).
 )
 
 agent = Agent(
@@ -363,7 +364,8 @@ if result.interruptions:                              # Gantry's confirmation ga
 - **Approval**: `needs_approval` follows `gantry.requires_confirmation(tool)` (the tool's flag or a `SecurityPolicy` pattern). A custom policy that only decides at call time still blocks the call; the model is told it needs approval.
 - **Run context**: `agent_gantry.openai_agents.current_run_context()` returns the call's `ToolContext` (`.context` is what you passed to `Runner.run(context=...)`, plus `.tool_call_id`, `.tool_name`).
 - **Tracing**: the SDK's current span (when tracing) or an OpenTelemetry span becomes the `ToolCall`'s `trace_id`/`parent_span_id`.
-- The older `session` / `run` / `run_hooks` helpers rewrite `agent.tools`; use them for one run at a time per agent.
+- The older `session` / `run` / `run_hooks` helpers rewrite `agent.tools`; use them for one run at a time per agent. `run_hooks` selects at `on_agent_start` (so the first model request has the tools) and re-selects before each later request.
+- **First request, older SDKs**: before `openai-agents` 0.23.1 the SDK lists tools before it records the turn's input, so `dynamic_tools()` raises `ImportError` and `run_hooks()` cannot cover request one (it warns). There, use `adapter.run(agent, input)`, `adapter.session(agent).run(input)` or `adapter.refresh(agent, input)`, which take the input from you.
 
 ## LangChain and LangGraph
 
@@ -596,23 +598,35 @@ Pydantic AI goes further than the other adapters (native retries, approval, `dep
 
 Frameworks whose tool list is **fixed at agent construction** (CrewAI, Agno, DSPy, and Haystack outside `HaystackAdapter.agent()`) can't re-advertise tools mid-run. Build a self-rebuilding agent with `<Adapter>(gantry).agent_builder(...)` (Haystack: `HaystackAdapter(gantry).tool_invoker_builder(...)`; DSPy: `DSPyAdapter(gantry).agent_builder(signature, ...)`, since `dspy.ReAct` needs a task signature); it re-selects and rebuilds on each top-level call. For a one-shot fresh slice of native tools, call `<Adapter>(gantry).live_tools(query)` (async, not available on DSPy — use `.select(query)` instead).
 
-## Selection without embeddings (Jev)
+## Selection without embeddings (System One)
 
-Added in 0.16.0. `JevSelector` replaces embed-then-search entirely: it puts the
-catalogue to TypeSafe's Jev decision model and asks, per entry, whether it is
-relevant. No embedder, no vector store, no `sync()`. `JevReranker` instead
+Added in 0.16.0. `SystemOneSelector` replaces embed-then-search entirely: it puts the
+catalogue to a System One decision model and asks, per entry, whether it is
+relevant. No embedder, no vector store, no `sync()`. `SystemOneReranker` instead
 refines an ordinary semantic shortlist. Both are optional, both are off by
-default, and both live behind the `jev` extra.
+default, and both live behind the `system-one` extra. The default model is
+TypeSafe's Jev (`jev-latest`); `model=` names a different one.
+
+Renamed in 0.23.0 from `JevSelector` / `JevReranker` / the `jev` extra /
+`type="jev"`, since Jev is only the default model. The old names still work,
+with a `DeprecationWarning`; write the new ones.
+
+**Only the selector can decline.** It gates each entry at `threshold`, so a
+query nothing serves can come back empty. The reranker only *orders* the
+shortlist and returns the best `limit` of it however low the scores, so a
+reranker-backed setup returns tools for an unanswerable query just as plain
+semantic search does. If "return nothing when nothing fits" matters, use the
+selector.
 
 ```bash
-uv add "agent-gantry[jev]"
+uv add "agent-gantry[system-one]"
 export TYPESAFE_API_KEY=...
 ```
 
 ```python
-from agent_gantry import AgentGantry, JevSelector
+from agent_gantry import AgentGantry, SystemOneSelector
 
-gantry = AgentGantry(selector=JevSelector(threshold=0.4))
+gantry = AgentGantry(selector=SystemOneSelector(threshold=0.4))
 # register tools as usual; no sync() needed on the selector path
 tools = await gantry.retrieve_tools("refund the customer's order", limit=3)
 ```
@@ -623,9 +637,9 @@ It covers all three catalogues, not just tools: `retrieve_tools`,
 As a reranker instead, keeping semantic retrieval:
 
 ```python
-from agent_gantry import AgentGantry, JevReranker
+from agent_gantry import AgentGantry, SystemOneReranker
 
-gantry = AgentGantry(reranker=JevReranker())
+gantry = AgentGantry(reranker=SystemOneReranker())
 ```
 
 **When each one fits.** A selector sends every candidate on every query, so
@@ -645,7 +659,7 @@ The sharper win is distinctions an embedder cannot make, because it compares
 text rather than reasoning about fit. Measured live against `jev-1.13.0`, with
 a `get_weather` tool described as "get the **current** weather":
 
-| catalogue | query | Jev score |
+| catalogue | query | model score |
 |---|---|---|
 | current only | "the forecast for Leeds **tomorrow**" | `get_weather` **0.21** → nothing selected |
 | current only | "the weather in Leeds **right now**" | `get_weather` **0.98** |
@@ -653,8 +667,8 @@ a `get_weather` tool described as "get the **current** weather":
 | current + forecast | "the weather right now" | `get_weather` **0.98**, `get_forecast` 0.35 |
 
 "current weather" and "weather forecast" embed almost on top of each other, so
-a vector search hands the agent a tool that cannot answer the question. Jev
-declined instead. If a user is choosing between the two approaches, that — not
+a vector search hands the agent a tool that cannot answer the question. The
+selector declined instead. If a user is choosing between the two approaches, that — not
 the token count — is the argument.
 
 **Both fail open**, and neither raises into a caller's retrieval path — but
@@ -677,7 +691,7 @@ candidate the model simply did not answer for can be pushed out of the result.
 It is a precision loss rather than a correctness one, and it cannot happen on
 the selector path.
 
-If you see selection quietly stop working, check the logs for `Jev selection
+If you see selection quietly stop working, check the logs for `System One selection
 failed, falling back:` — that is the library declining to guess, not a silent
 failure.
 
@@ -688,7 +702,7 @@ surface a tool the semantic path would hide.
 
 **Debugging.** `SelectionResult` carries `scores` for every candidate, not just
 the winners, so you can see exactly what a threshold would keep and cut before
-committing to it — see `examples/routing/jev_threshold_tuning_demo.py`, which
+committing to it — see `examples/routing/system_one_threshold_tuning_demo.py`, which
 sweeps thresholds over a labelled query set.
 
 ## Multi-turn re-selection (ToolRefresher)
@@ -710,10 +724,10 @@ Used-tool tracking reads the name from wherever the SDK keeps it — an OpenAI `
 
 The default query generator (`agent_gantry.query.latest_activity`) is **recency-aware**, so one refresher serves both styles with no config:
 
-- **Autonomous agents / tool pipelines** — newest message is a tool result, so that result's *content* selects the next tool (`fetch → clean → train → evaluate → report`).
+- **Autonomous agents / tool pipelines** — newest message is a tool result, so that result's *content* steers the next tool (`fetch → clean → train → evaluate → report`). The query is the latest user message plus the result, so a bare value (`"desserts"`) cannot pull the turn away from the rest of the request.
 - **Conversational agents** — newest message is the user's, so their new request drives selection (`weather → flights → hotel → email`).
 
-Force one behaviour with `query_generator=last_user_text` or `last_tool_result`.
+Force one behaviour with `query_generator=last_user_text`, `last_tool_result`, or `partial(latest_activity, include_request=False)` (the tool result on its own, the pre-0.23.0 query).
 
 ## Schema-only adapter (`fetch_framework_tools`)
 
@@ -1042,9 +1056,13 @@ This catches the headline mistakes: a tool description that names another tool (
 |---|---|---|
 | Empty tool surface | `score_threshold` too aggressive for query length | Lower to `0.0` or use `"relative:0.8"` |
 | `per_call` not adapting | `as_chat_middleware()` not attached | Use `provider.attach_to(agent)` or add to `middleware=[...]` |
-| `per_call` set but identical surface each round | An explicit `query_generator=last_user_text` returns the same text every round | The default is `latest_activity` (newest user message *or* tool result); drop the override |
+| `per_call` set but identical surface each round | An explicit `query_generator=last_user_text` returns the same text every round | The default is `latest_activity` (newest user message, plus the tool result when one is newer); drop the override |
 | `per_call` ignores the user's new message once a tool has run | `fallback_chain(last_tool_result, last_user_text)` prefers a tool result anywhere in the session | Use the `latest_activity` default; keep the chain only for a pipeline with no user turns mid-run |
 | `per_call` drops useful tools after an opaque result | A password, bare number, or ID carries no semantic retrieval signal | `latest_activity` falls back to the latest user text for opaque results; use a custom generator if identifiers should drive routing |
+| `per_call` routed on a tool's output and lost the rest of the task (pre-0.23.0) | The query was the bare result (`"desserts"`, a fetched document), which says nothing about the request | Upgrade: `latest_activity` now queries on the latest user message plus the result |
+| After a tool call the tool that just ran still ranks first | The request stays in the query and still matches it; the next tool is just behind | Expected at `limit` 3-5 (the model chooses). For result-led pipelines or `limit=1`: `query_generator=partial(latest_activity, include_request=False)` |
+| OpenAI Agents: the model answered without calling a tool on a one-turn task | `openai-agents<0.23.1` lists tools before it records the turn's input, so request one had none | Use `adapter.run()` / `.session().run()` / `.refresh()` there, or upgrade; `dynamic_tools()` raises on those SDKs from 0.23.0. Assert the handler ran, not just the answer |
+| A reranker setup returns tools for a query nothing serves | Rerankers order the shortlist and return top-k; scores are never thresholded | Only `SystemOneSelector` (gated by `threshold`) can return nothing |
 | Wrong tools selected | Description names another tool ("unrelated to factorial…") | Run `agent-gantry lint`; remove cross-references |
 | `top_k=6` but I see 8 tools | Skills / `always_include` / `static_tools` add on top of dynamic top_k | Expected; subtract those |
 | Cold-start re-embeds every time | Default `InMemoryVectorStore` is ephemeral | Wrap embedder in `CachedEmbedder` or use `[lancedb]` |
@@ -1099,10 +1117,10 @@ Cache is keyed by `(embedder_id, sha256(text))` — different models / dimension
 | `fallback_chain(*gens)` | Try each in order until one returns non-empty |
 | `keyword_focused` | Long instructional queries dilute the signal |
 | `truncated(gen, max_chars=200)` | Cap the query length, defaults to keeping the tail |
-| `latest_activity` (default for `per_call` and `ToolRefresher`) | Recency-aware: picks user text *or* last tool result, whichever is newest |
+| `latest_activity` (default for `per_call` and `ToolRefresher`) | Recency-aware: the newest user text, or — when a tool result is newer — that user text plus the result |
 | `tool_names_used` | Not a query generator: lists every tool the history shows being called, for `tools_already_used` |
 
-Both `query_strategy="per_call"` and `ToolRefresher` default to `latest_activity`, which serves autonomous and conversational agents alike: a new user message pivots the surface, and while the agent chains tools the previous result drives the next selection. `fallback_chain(last_tool_result, last_user_text)` — the former `per_call` default — prefers a tool result anywhere in the history, so a session that carries an earlier run's result stops following new user requests; use it only for a fixed pipeline with no user turns in between.
+Both `query_strategy="per_call"` and `ToolRefresher` default to `latest_activity`, which serves autonomous and conversational agents alike: a new user message pivots the surface, and while the agent chains tools the previous result, appended to that message, steers the next selection. `fallback_chain(last_tool_result, last_user_text)` — the former `per_call` default — prefers a tool result anywhere in the history, so a session that carries an earlier run's result stops following new user requests; use it only for a fixed pipeline with no user turns in between.
 
 Every generator reads the common SDK shapes: role/content dicts, OpenAI Chat Completions `tool` messages, OpenAI Responses items (`function_call` / `function_call_output`), Anthropic `tool_result` turns (a `user`-role message of result blocks), LangChain messages and Agent Framework `contents`.
 
@@ -1130,9 +1148,9 @@ from agent_gantry import (
 )
 # Skills: gantry.add_skill / add_skills / add_skills_from_directory(path)
 #         gantry.retrieve_skills(query) / retrieve_skills_as_prompt(query)
-# Selection (0.16.0+, needs the `jev` extra):
-#   AgentGantry(selector=JevSelector(threshold=0.4))  -> no embedder/vector store/sync
-#   AgentGantry(reranker=JevReranker())               -> refine a semantic shortlist
+# Selection (0.16.0+, needs the `system-one` extra; Jev* names are deprecated aliases):
+#   AgentGantry(selector=SystemOneSelector(threshold=0.4))  -> no embedder/vector store/sync
+#   AgentGantry(reranker=SystemOneReranker())               -> refine a semantic shortlist
 #   SelectionResult.scores                            -> every candidate, not just winners
 # MCP:    gantry.serve_mcp(transport="stdio"|"http"|"sse", mode=..., expose=[...])
 #         reset_sse_shutdown_latch()  -> release sse_starlette's process-global

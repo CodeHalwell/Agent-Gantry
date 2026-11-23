@@ -564,7 +564,7 @@ wheels = [
 
 [[package]]
 name = "agent-gantry"
-version = "0.22.0"
+version = "0.23.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -786,6 +786,9 @@ qdrant = [
 strands = [
     { name = "strands-agents" },
 ]
+system-one = [
+    { name = "typesafe-sdk" },
+]
 vector-stores = [
     { name = "asyncpg" },
     { name = "chromadb" },
@@ -796,9 +799,10 @@ vector-stores = [
 requires-dist = [
     { name = "agent-framework", marker = "extra == 'agent-frameworks'", specifier = ">=1.19.0,<2.0.0" },
     { name = "agent-gantry", extras = ["chroma"], marker = "extra == 'vector-stores'" },
-    { name = "agent-gantry", extras = ["dev", "embeddings", "openai", "cohere", "jev", "vector-stores", "lancedb", "nomic", "mcp", "a2a", "llm-providers", "agent-frameworks", "pydantic-ai", "example-tools"], marker = "extra == 'all'" },
-    { name = "agent-gantry", extras = ["jev"], marker = "extra == 'dev'" },
+    { name = "agent-gantry", extras = ["dev", "embeddings", "openai", "cohere", "system-one", "vector-stores", "lancedb", "nomic", "mcp", "a2a", "llm-providers", "agent-frameworks", "pydantic-ai", "example-tools"], marker = "extra == 'all'" },
     { name = "agent-gantry", extras = ["openai", "anthropic", "google-genai", "google-vertexai", "mistral", "groq"], marker = "extra == 'llm-providers'" },
+    { name = "agent-gantry", extras = ["system-one"], marker = "extra == 'dev'" },
+    { name = "agent-gantry", extras = ["system-one"], marker = "extra == 'jev'" },
     { name = "agno", marker = "extra == 'agno'", specifier = ">=2.6.10" },
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.120.2" },
     { name = "asyncpg", marker = "extra == 'pgvector'", specifier = ">=0.29.0" },
@@ -874,10 +878,10 @@ requires-dist = [
     { name = "strands-agents", marker = "extra == 'strands'", specifier = ">=1.38.0" },
     { name = "sympy", marker = "extra == 'example-tools'", specifier = ">=1.14.0" },
     { name = "textblob", marker = "extra == 'example-tools'", specifier = ">=0.18.0" },
-    { name = "typesafe-sdk", marker = "extra == 'jev'", specifier = ">=0.7.0" },
+    { name = "typesafe-sdk", marker = "extra == 'system-one'", specifier = ">=0.7.0" },
     { name = "uvicorn", marker = "extra == 'a2a'", specifier = ">=0.24.0" },
 ]
-provides-extras = ["dev", "agent-frameworks", "pydantic-ai", "openai-agents", "langchain", "langgraph", "google-adk", "crewai", "llamaindex", "strands", "agno", "haystack", "dspy", "example-tools", "embeddings", "openai", "cohere", "jev", "qdrant", "chroma", "pgvector", "lancedb", "vector-stores", "nomic", "mcp", "a2a", "anthropic", "google-genai", "google-vertexai", "mistral", "groq", "llm-providers", "all"]
+provides-extras = ["dev", "agent-frameworks", "pydantic-ai", "openai-agents", "langchain", "langgraph", "google-adk", "crewai", "llamaindex", "strands", "agno", "haystack", "dspy", "example-tools", "embeddings", "openai", "cohere", "system-one", "jev", "qdrant", "chroma", "pgvector", "lancedb", "vector-stores", "nomic", "mcp", "a2a", "anthropic", "google-genai", "google-vertexai", "mistral", "groq", "llm-providers", "all"]
 
 [[package]]
 name = "agno"

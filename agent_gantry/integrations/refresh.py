@@ -43,8 +43,8 @@ Two behaviours make this genuinely multi-turn / direction-changing:
   generator is :func:`~agent_gantry.query.latest_activity`, which drives
   retrieval from whatever happened *most recently* — the newest user message
   **or** the newest tool result. Autonomous agents chaining tools select the
-  next tool from the previous tool's *result*; conversational agents pivot
-  with each new user message.
+  next tool from the request plus the previous tool's *result*;
+  conversational agents pivot with each new user message.
 - **Used tools nudge the agent forward.** When ``track_used`` is on, every
   tool call the history shows — read with
   :func:`~agent_gantry.query.tool_names_used`, so an OpenAI ``tool_calls``

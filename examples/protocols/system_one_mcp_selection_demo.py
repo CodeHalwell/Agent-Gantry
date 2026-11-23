@@ -1,7 +1,7 @@
 """
 Choosing MCP servers and Agent Skills without embeddings.
 
-``JevSelector`` covers all three of Gantry's catalogues, not just tools. This
+``SystemOneSelector`` covers all three of Gantry's catalogues, not just tools. This
 demo drives the two that the tool-focused demos do not show:
 
 * ``retrieve_mcp_servers()`` — which of your connected MCP servers a prompt
@@ -14,9 +14,9 @@ needs an embedder, a vector store or a sync.
 
 Run with::
 
-    pip install agent-gantry[jev,mcp]
+    pip install 'agent-gantry[system-one,mcp]'
     export TYPESAFE_API_KEY=...
-    python examples/protocols/jev_mcp_selection_demo.py
+    python examples/protocols/system_one_mcp_selection_demo.py
 
 Without a key it still runs: selection fails open and the semantic path
 answers instead, which is the behaviour you want in production.
@@ -27,7 +27,7 @@ from __future__ import annotations
 import asyncio
 import os
 
-from agent_gantry import AgentGantry, JevSelector, Skill
+from agent_gantry import AgentGantry, Skill, SystemOneSelector
 
 SERVERS = [
     ("filesystem", "Reads, writes and lists files on the local disk.",
@@ -61,7 +61,7 @@ async def main() -> None:
     if not os.getenv("TYPESAFE_API_KEY"):
         print("TYPESAFE_API_KEY is not set — selection will fail open to semantic search.\n")
 
-    gantry = AgentGantry(selector=JevSelector(threshold=0.4))
+    gantry = AgentGantry(selector=SystemOneSelector(threshold=0.4))
     if gantry._mcp_registry is None:
         print("MCP support is not installed: pip install agent-gantry[mcp]")
         await gantry.close()

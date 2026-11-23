@@ -22,8 +22,9 @@ Built-in strategies:
 - :func:`latest_activity` — whichever is newer of the latest user message and
   the latest tool result (the ``per_call`` and ``ToolRefresher`` default).
   Serves conversational agents, whose user pivots each turn, and autonomous
-  agents, whose next tool follows the previous tool's output. Opaque tool
-  results fall back to the latest user message.
+  agents, whose next tool follows the previous tool's output. A tool result
+  is appended to the latest user message rather than replacing it, so the
+  request stays in the query; opaque tool results are left out altogether.
 - :func:`last_user_text` — most recent user-role message (the ``per_run``
   default).
 - :func:`last_assistant_text` — most recent assistant-role message

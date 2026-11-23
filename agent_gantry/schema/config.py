@@ -53,13 +53,35 @@ class EmbedderConfig(BaseModel):
     task_type: str | None = Field(default=None, description="Task type for embeddings (for Nomic)")
 
 
+def _system_one_type(value: Any) -> Any:
+    """Accept the pre-0.23.0 ``"jev"`` spelling of the ``"system_one"`` type.
+
+    The backend was named after TypeSafe's Jev, its default model, before it
+    was renamed for what it is: any System One decision model. Stored configs
+    that still say ``"jev"`` load unchanged, with a ``DeprecationWarning``.
+    """
+    if value == "jev":
+        from agent_gantry._deprecation import warn_renamed
+
+        warn_renamed('type="jev"', 'type="system_one"', stacklevel=2)
+        return "system_one"
+    return value
+
+
 class RerankerConfig(BaseModel):
-    """Configuration for reranker backend."""
+    """Configuration for reranker backend.
+
+    ``type="system_one"`` reranks with a System One decision model (TypeSafe's
+    Jev unless ``model`` names another). A reranker reorders the shortlist; it
+    cannot decline a query the way ``SelectorConfig`` can.
+    """
 
     enabled: bool = False
-    type: Literal["cohere", "cross_encoder", "jev"] = "cross_encoder"
+    type: Literal["cohere", "cross_encoder", "system_one"] = "cross_encoder"
     model: str | None = None
     top_k: int = 10
+
+    _accept_jev = field_validator("type", mode="before")(_system_one_type)
 
 
 class SelectorConfig(BaseModel):
@@ -70,15 +92,21 @@ class SelectorConfig(BaseModel):
     Every candidate is sent on every query, so cost grows with the catalogue
     rather than staying flat — which is affordable for tens to a few hundred
     entries and is why ``max_candidates`` exists. Above that, prefer semantic
-    retrieval with ``RerankerConfig(type="jev")`` over its shortlist.
+    retrieval with ``RerankerConfig(type="system_one")`` over its shortlist.
 
     Retrieval falls back to the semantic router whenever the selector is
     disabled, over its candidate ceiling, or unable to answer.
     """
 
     enabled: bool = False
-    type: Literal["jev"] = "jev"
-    model: str | None = None
+    type: Literal["system_one"] = "system_one"
+    model: str | None = Field(
+        default=None,
+        description=(
+            "Decision model id. Unset uses the SDK's default, TypeSafe's Jev "
+            "(jev-latest); any other System One model id is accepted."
+        ),
+    )
     threshold: float = Field(
         default=0.3,
         ge=0.0,
@@ -107,6 +135,8 @@ class SelectorConfig(BaseModel):
     timeout_s: float | None = Field(
         default=None, gt=0, description="Per-request timeout; the SDK's own default is 10s."
     )
+
+    _accept_jev = field_validator("type", mode="before")(_system_one_type)
 
 
 class LLMConfig(BaseModel):

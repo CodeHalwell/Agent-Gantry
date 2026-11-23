@@ -1,7 +1,7 @@
 """
 Tuning a selector's threshold from its own scores.
 
-``threshold`` is the one knob on ``JevSelector`` that really matters, and you
+``threshold`` is the one knob on ``SystemOneSelector`` that really matters, and you
 should not have to guess it. It is a *probability* ("how likely is this entry
 relevant"), not the cosine ``score_threshold`` of the semantic router, so the
 two are not interchangeable. Every pass returns a probability for *every*
@@ -14,9 +14,9 @@ trade so you can pick from data rather than from a blog post.
 
 Run with::
 
-    pip install agent-gantry[jev]
+    pip install agent-gantry[system-one]
     export TYPESAFE_API_KEY=...
-    python examples/routing/jev_threshold_tuning_demo.py
+    python examples/routing/system_one_threshold_tuning_demo.py
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import os
 
-from agent_gantry import AgentGantry, JevSelector, SelectionCandidate
+from agent_gantry import AgentGantry, SelectionCandidate, SystemOneSelector
 
 # Tools carry examples because that is what the retrieval path embeds and what
 # a selector reads. Skimping here costs more accuracy than any model choice.
@@ -70,7 +70,7 @@ async def main() -> None:
         print("TYPESAFE_API_KEY is not set — this demo needs the live model to score anything.")
         return
 
-    selector = JevSelector()
+    selector = SystemOneSelector()
     catalogue = candidates()
 
     # One pass per query, keeping every score. The selector's own threshold
@@ -121,7 +121,7 @@ async def main() -> None:
     # The same numbers, applied. A gantry configured this way returns only what
     # cleared the bar — including nothing at all, which a top-k retriever
     # cannot express.
-    gantry = AgentGantry(selector=JevSelector(threshold=0.5))
+    gantry = AgentGantry(selector=SystemOneSelector(threshold=0.5))
     try:
         for ns, name, desc, ex in TOOLS:
 

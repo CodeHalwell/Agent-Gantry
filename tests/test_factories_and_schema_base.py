@@ -153,7 +153,7 @@ class TestUnsetModelDefaults:
             build_reranker(SimpleNamespace(enabled=True, type="nope", model=None))  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize("kind", ["cohere", "cross_encoder", "jev"])
+@pytest.mark.parametrize("kind", ["cohere", "cross_encoder", "system_one"])
 def test_every_schema_allowed_reranker_type_reaches_a_builder(kind: str) -> None:
     """A type the schema accepts must not fall through to the unsupported-type raise."""
     from typing import get_args

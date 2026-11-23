@@ -141,10 +141,10 @@ def build_reranker(config: RerankerConfig) -> RerankerAdapter | None:
         return CrossEncoderReranker(
             model=config.model or "cross-encoder/ms-marco-MiniLM-L-6-v2",
         )
-    if config.type == "jev":
-        from agent_gantry.adapters.rerankers.jev import JevReranker
+    if config.type == "system_one":
+        from agent_gantry.adapters.rerankers.system_one import SystemOneReranker
 
-        return JevReranker(model=config.model)
+        return SystemOneReranker(model=config.model)
     raise ValueError(f"Unsupported reranker type: {config.type!r}")
 
 
@@ -152,10 +152,10 @@ def build_selector(config: SelectorConfig) -> SelectorAdapter | None:
     """Construct a selector from configuration, or ``None`` when disabled."""
     if not config.enabled:
         return None
-    if config.type == "jev":
-        from agent_gantry.adapters.selectors.jev import JevSelector
+    if config.type == "system_one":
+        from agent_gantry.adapters.selectors.system_one import SystemOneSelector
 
-        return JevSelector(
+        return SystemOneSelector(
             model=config.model,
             threshold=config.threshold,
             max_candidates=config.max_candidates,

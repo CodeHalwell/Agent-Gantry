@@ -25,7 +25,12 @@ callables:
 The ``agents`` import is lazy so ``import agent_gantry`` never requires the SDK.
 Supported: ``openai-agents`` >= 0.23.1 for everything above. Older SDKs still
 get static tools, readable errors and run context, but no ``needs_approval``
-(a gated call is refused, not paused) and no :meth:`~OpenAIAgentsAdapter.dynamic_tools`.
+(a gated call is refused, not paused) and no :meth:`~OpenAIAgentsAdapter.dynamic_tools`:
+before 0.23.1 the SDK lists an agent's tools *before* it records the turn's
+input, so nothing evaluated at that point (an ``is_enabled`` gate, a run hook)
+can see the prompt on the first model request. ``dynamic_tools()`` raises there
+rather than send a first request with no tools; ``run()``, ``session()`` and
+``refresh()`` take the run input from the caller and work on any SDK version.
 
 Public entry point: :class:`OpenAIAgentsAdapter`.
 """
@@ -35,6 +40,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.adapters.tool_spec.schema_utils import (
@@ -69,6 +75,12 @@ _INSTALL_HINT = (
     "The OpenAI Agents SDK is required for OpenAIAgentsAdapter; install it with "
     "`pip install 'agent-gantry[openai-agents]'` (or `uv add 'agent-gantry[openai-agents]'`)."
 )
+
+#: First SDK release whose run loop records ``turn_input`` and fires
+#: ``on_agent_start`` *before* it lists the agent's tools for a turn. Earlier
+#: releases list the tools first, so on the first model request of a run no
+#: ``is_enabled`` gate and no hook can see the prompt.
+_MIN_PER_TURN_SDK = (0, 23, 1)
 
 _PENDING_APPROVAL_TEXT = (
     "This tool call requires human approval and was not run. Ask the user to "
@@ -114,6 +126,50 @@ def _strict_schema(params: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         )
         return copy.deepcopy(params), False
     return strict_json_schema(params), True
+
+
+def _sdk_version() -> tuple[int, ...] | None:
+    """The installed ``openai-agents`` version as a tuple, or ``None`` if unknown."""
+    from importlib import metadata
+
+    try:
+        raw = metadata.version("openai-agents")
+    except Exception:  # not installed as a distribution (vendored, test double)
+        return None
+    numbers = re.match(r"\d+(?:\.\d+)*", raw)
+    if numbers is None:
+        return None
+    return tuple(int(part) for part in numbers.group().split("."))
+
+
+def _first_request_sees_input() -> bool:
+    """Whether the SDK exposes a run's input before listing tools for its first request.
+
+    ``True`` from 0.23.1 (see :data:`_MIN_PER_TURN_SDK`), and when the version
+    cannot be read, so an unusual install is never refused on a guess.
+    """
+    version = _sdk_version()
+    return version is None or version >= _MIN_PER_TURN_SDK
+
+
+def _require_per_turn_sdk() -> None:
+    """Refuse per-turn ``is_enabled`` selection on an SDK that cannot serve turn one.
+
+    Raises:
+        ImportError: If the installed ``openai-agents`` predates 0.23.1.
+    """
+    if _first_request_sees_input():
+        return
+    installed = ".".join(str(part) for part in _sdk_version() or ())
+    raise ImportError(
+        f"OpenAIAgentsAdapter.dynamic_tools() needs openai-agents>=0.23.1; {installed} is "
+        "installed. Before 0.23.1 the SDK lists an agent's tools before it records the "
+        "turn's input, so the first model request of every run would carry no tools. "
+        "Upgrade (`pip install 'agent-gantry[openai-agents]'`, or `uv add "
+        "'agent-gantry[openai-agents]'`), or on this SDK use adapter.run(agent, input), "
+        "adapter.session(agent).run(input) or adapter.refresh(agent, input), which take "
+        "the run input from you."
+    )
 
 
 def _function_tool_fields(function_tool: Any) -> frozenset[str]:
@@ -394,6 +450,11 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
         rewritten. Tools registered after this call are not in the catalogue;
         call it again to pick them up.
 
+        Needs ``openai-agents>=0.23.1``: earlier SDKs list an agent's tools
+        before they record the turn's input, so the first request of a run
+        would carry no tools. On those, use :meth:`run`, :meth:`session` or
+        :meth:`refresh`, which take the run input from the caller.
+
         Args:
             sticky: Keep tools offered earlier in the run, up to ``max_offered``
                 per turn (default ``3 * limit``; current selection and pins
@@ -401,6 +462,9 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
             query_from_results: Let tool output (its first 2,000 characters)
                 drive the next selection; it is sent to the embedder. Set
                 ``False`` to keep tool output out of retrieval.
+
+        Raises:
+            ImportError: If ``openai-agents`` is missing or older than 0.23.1.
         """
         from agent_gantry.integrations.frameworks.openai_agents_live import (
             GantryDynamicTools,
@@ -475,7 +539,21 @@ class OpenAIAgentsAdapter(BaseFrameworkAdapter):
         required: list[str] | None = None,
         always_include: list[str] | None = None,
     ) -> Any:
-        """Build ``agents.RunHooks`` that re-select ``agent.tools`` before each model call."""
+        """Build ``agents.RunHooks`` that keep ``agent.tools`` selected through a run.
+
+        ``Runner.run(agent, input, hooks=adapter.run_hooks(agent))``. When the
+        agent starts (``on_agent_start``) the hooks select from the run input,
+        so the first model request already carries the right tools; before
+        each later request (``on_llm_start``) they re-select from the running
+        conversation, which the SDK picks up on the following turn.
+
+        The first-request selection needs ``openai-agents>=0.23.1``. Earlier
+        SDKs list the tools before any hook fires, so there the first request
+        uses ``agent.tools`` as it stands: call :meth:`refresh` first, or use
+        :meth:`run` / :meth:`session`, which do. If such a run starts with
+        tools other than the ones its input selects, the hooks emit a
+        ``RuntimeWarning``.
+        """
         from agent_gantry.integrations.frameworks.openai_agents_live import (
             _gantry_run_hooks,
         )

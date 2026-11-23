@@ -204,9 +204,10 @@ async def check_autonomous_pipeline() -> tuple[bool, str]:
     """ToolRefresher must chain tools in an autonomous run with NO new user input.
 
     The agent is given one goal, then runs a pipeline; each tool's *result*
-    must drive selection of the next tool (the recency-aware default reads the
-    latest tool result when there is no newer user message). This is the
-    autonomous-agent counterpart to the conversational pivot check.
+    must bring the next tool into the selection (the recency-aware default
+    queries on the goal plus the latest tool result when there is no newer
+    user message). This is the autonomous-agent counterpart to the
+    conversational pivot check.
     """
     embedder, _label, is_real = _best_embedder()
     if not is_real:
@@ -259,7 +260,10 @@ async def check_autonomous_pipeline() -> tuple[bool, str]:
         for _ in expected_order:
             schemas = await refresher.refresh(messages)
             names = [s["function"]["name"] for s in schemas]
-            pick = names[0] if names else None
+            # The simulated agent calls the best-ranked tool it has not already
+            # run. The goal stays in the query, so the stage it describes can
+            # keep ranking first; an agent reading the result moves on.
+            pick = next((name for name in names if name not in picks), None)
             picks.append(pick or "—")
             if pick is None:
                 break
@@ -268,11 +272,11 @@ async def check_autonomous_pipeline() -> tuple[bool, str]:
             messages.append({"role": "assistant", "content": f"calling {pick}"})
             messages.append({"role": "tool", "name": pick, "content": result_text})
 
-        # Result-driven chaining should advance through the pipeline. Require the
-        # first step correct and the run to traverse most of the distinct stages.
-        distinct_stages = len(set(picks) & set(expected_order))
-        ok = picks[0] == "fetch_raw_data" and distinct_stages >= 4
-        return ok, f"picks={picks} distinct_pipeline_stages={distinct_stages}/5"
+        # Result-driven chaining should advance through the pipeline in order.
+        # Require the first step correct and most stages reached at their turn.
+        in_order = sum(pick == stage for pick, stage in zip(picks, expected_order, strict=False))
+        ok = picks[0] == "fetch_raw_data" and in_order >= 4
+        return ok, f"picks={picks} pipeline_stages_in_order={in_order}/5"
     finally:
         await g.close()
 

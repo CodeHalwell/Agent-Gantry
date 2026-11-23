@@ -417,7 +417,8 @@ class TestGantryContextProvider:
         assert provider.last_selection is not None
         assert provider.last_selection.query == "book a flight to Tokyo"
 
-        # And while the agent is chaining tools, the newest result drives it.
+        # And while the agent is chaining tools, the newest result joins the
+        # request it is serving.
         history.append(
             af.Message(
                 role="tool",
@@ -427,7 +428,40 @@ class TestGantryContextProvider:
             )
         )
         await provider._refresh_tools_on_chat_context(_ChatCtx(history))
-        assert provider.last_selection.query == "flight booked"
+        assert provider.last_selection.query == "book a flight to Tokyo\nflight booked"
+
+    @pytest.mark.asyncio
+    async def test_per_call_keeps_the_request_beside_a_bare_tool_result(
+        self, gantry_with_tools: AgentGantry
+    ) -> None:
+        """A two-step task's second round must not query on the first result alone.
+
+        ``"desserts"`` (the output of reversing ``"stressed"``) says nothing
+        about the task: on its own it surfaced an unrelated tool and dropped
+        the one the rest of the request still needed.
+        """
+        provider = GantryContextProvider(
+            gantry_with_tools, top_k=2, query_strategy="per_call"
+        )
+
+        class _ChatCtx:
+            def __init__(self, messages: list) -> None:
+                self.options: dict = {"tools": []}
+                self.messages = messages
+
+        task = "First reverse the text 'stressed'. Then count how many words it has."
+        history = [_user_msg(task)]
+        await provider._refresh_tools_on_chat_context(_ChatCtx(history))
+        assert provider.last_selection.query == task
+
+        history.append(
+            af.Message(
+                role="tool",
+                contents=[af.Content.from_function_result(call_id="c1", result="desserts")],
+            )
+        )
+        await provider._refresh_tools_on_chat_context(_ChatCtx(history))
+        assert provider.last_selection.query == f"{task}\ndesserts"
 
     @pytest.mark.asyncio
     async def test_per_call_with_last_user_text_warns(

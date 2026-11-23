@@ -11,7 +11,9 @@ cosine similarity alone.
 - `cohere.py`: Cohere ReRank implementation that scores tool descriptions (and docstrings) using
   Cohere's hosted models.
 - `cross_encoder.py`: Local sentence-transformers cross-encoder, no API calls.
-- `jev.py`: `JevReranker`, backed by [TypeSafe's Jev](https://docs.typesafe.ai). Asks one yes/no
+- `system_one.py`: `SystemOneReranker`, backed by a "System One" decision model —
+  [TypeSafe's Jev](https://docs.typesafe.ai) by default, or whichever model `model=` names. (Named
+  `JevReranker` before 0.23.0; that name still imports, with a `DeprecationWarning`.) Asks one yes/no
   question per candidate — "would this tool help?" — and orders by the returned probability. This is
   the recipe TypeSafe publish for retrieval: on their CLERC benchmark, reranking a BM25 top-30
   shortlist moved top-1 accuracy from 5% to 18% and top-10 from 38% to 62%.
@@ -36,9 +38,17 @@ candidates to the reranker and merges those scores with health weighting before 
 ## Reranking vs. selecting
 
 A reranker refines an existing shortlist; a *selector* (`../selectors/`) replaces the search that
-produced it. `JevReranker` and `JevSelector` ask the same model the same question — the difference
+produced it. `SystemOneReranker` and `SystemOneSelector` ask the same model the same question — the difference
 is whether it sees 30 candidates or the whole catalogue. Use the reranker at any catalogue size; the
 selector only where the catalogue is small enough to send on every query.
+
+**A reranker cannot decline.** It orders the shortlist and returns the best `limit` of it, however
+low the scores: `SystemOneReranker`'s probabilities are never compared with a threshold. Asked
+something no tool can serve, a reranker-backed setup still returns tools, exactly as semantic search
+alone does. `SystemOneSelector` gates each entry at its `threshold`, so it is the one backend that
+can return nothing — "rerank" sounds as though it brings the model's judgement about fit with it,
+and it brings only the ordering. See
+[Selector or reranker](../selectors/README.md#selector-or-reranker-only-one-of-them-can-say-no).
 
 A reranker also fails open: if the provider is unavailable, the vector-search order is returned
 untouched, so losing it costs precision rather than tools.

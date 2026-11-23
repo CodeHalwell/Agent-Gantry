@@ -16,7 +16,7 @@ call that would go live.
 - `dynamic_mcp_selection_demo.py`: Registers MCP servers by metadata only, syncs it and uses
   `retrieve_mcp_servers` to pick the one server a prompt needs. Connecting to it
   (`discover_tools_from_server`) is shown but not run. Needs `agent-gantry[mcp]`.
-- `jev_mcp_selection_demo.py`: The same job through a decision model instead of embeddings, covering
+- `system_one_mcp_selection_demo.py`: The same job through a decision model instead of embeddings, covering
   both MCP servers and Agent Skills, and ending with the fragment that a selected skill injects
   into the system prompt. Runs without a key (falls back to semantic search).
 - `claude_desktop_config.json`: Points Claude Desktop at the `agent-gantry serve-mcp` CLI over
@@ -30,7 +30,7 @@ call that would go live.
 python examples/protocols/mcp_integration_demo.py
 python examples/protocols/a2a_integration_demo.py
 python examples/protocols/dynamic_mcp_selection_demo.py   # needs agent-gantry[mcp]
-python examples/protocols/jev_mcp_selection_demo.py       # needs agent-gantry[jev,mcp]; runs without a key
+python examples/protocols/system_one_mcp_selection_demo.py       # needs agent-gantry[system-one,mcp]; runs without a key
 ```
 
 To serve for real: `agent-gantry serve-mcp --module my_project.tools` (stdio, dynamic mode) for

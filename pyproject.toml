@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-gantry"
-version = "0.22.0"
+version = "0.23.0"
 description = "Universal Tool Orchestration Platform - Intelligent, secure tool orchestration for LLM-based agent systems"
 readme = "README.md"
 license = "MIT"
@@ -52,11 +52,11 @@ dev = [
     "ruff>=0.1.0",
     "python-dotenv>=1.0.0",
     # Unlike the other adapter extras (torch, chromadb) this is pure Python
-    # with five small dependencies, so it is cheap to install and lets the Jev
+    # with five small dependencies, so it is cheap to install and lets the System One
     # tests build real question objects instead of stand-ins — worth having for
     # an SDK this new. Tests still importorskip it, so a resolution failure
     # here skips rather than breaks the suite.
-    "agent-gantry[jev]",
+    "agent-gantry[system-one]",
 ]
 agent-frameworks = [
     # Range: >=1.19.0,<2.0.0.
@@ -279,9 +279,13 @@ pydantic-ai = [
 # RunState approvals (all present from 0.21), but per-turn selection through
 # is_enabled needs RunContextWrapper.turn_input to be populated before the
 # first is_enabled evaluation of a run, which 0.21.x-0.22.x did not do
-# (verified 2026-11-20 against 0.21.0-0.25.0). Older SDKs that other extras
-# pull in transitively (0.4.2 in the agent-frameworks env) still work for
-# static tools: the adapter feature-detects FunctionTool's fields.
+# (verified 2026-11-20 against 0.21.0-0.25.0; 0.20.0 re-checked 2026-11-23:
+# its run loop lists the tools, then sets turn_input, then fires
+# on_agent_start). Older SDKs that other extras pull in transitively (0.4.2 in
+# the agent-frameworks env) still work for static tools and for run() /
+# session() / refresh(): the adapter feature-detects FunctionTool's fields,
+# and since 0.23.0 dynamic_tools() checks the installed version and raises
+# below this floor rather than send a first request with no tools.
 # Deliberately NOT part of `all` or `agent-frameworks`: openai-agents>=0.23
 # requires openai>=3, while crewai (in agent-frameworks) pins openai<3, so the
 # two cannot share an environment. Declared as conflicting under [tool.uv]
@@ -436,8 +440,10 @@ cohere = [
     #         https://docs.cohere.com/v2/reference/rerank
     "cohere>=7.0.8",
 ]
-jev = [
-    # TypeSafe's Jev decision model, behind JevReranker and JevSelector.
+system-one = [
+    # A System One decision model, behind SystemOneReranker and SystemOneSelector:
+    # TypeSafe's SDK and its `system_one` endpoint, whose default model is Jev.
+    # (Named `jev` before 0.23.0; that extra is kept below as an alias.)
     # Launched 2026-09-15; 0.7.0 is the release this code was written and
     # verified against on 2026-09-18 — signatures checked against the installed
     # package rather than the docs, because the SDK is days old and its API is
@@ -451,6 +457,11 @@ jev = [
     #   - ships against `httpx2`, a SEPARATE distribution from the `httpx` the
     #     mcp extra pulls in. The two coexist; do not "consolidate" them.
     "typesafe-sdk>=0.7.0",
+]
+# Pre-0.23.0 name of `system-one`, kept so existing installs and lockfiles
+# that ask for `agent-gantry[jev]` keep resolving. Same dependency set.
+jev = [
+    "agent-gantry[system-one]",
 ]
 # Individual vector store providers
 qdrant = [
@@ -563,7 +574,7 @@ llm-providers = [
     "agent-gantry[openai,anthropic,google-genai,google-vertexai,mistral,groq]",
 ]
 all = [
-    "agent-gantry[dev,embeddings,openai,cohere,jev,vector-stores,lancedb,nomic,mcp,a2a,llm-providers,agent-frameworks,pydantic-ai,example-tools]",
+    "agent-gantry[dev,embeddings,openai,cohere,system-one,vector-stores,lancedb,nomic,mcp,a2a,llm-providers,agent-frameworks,pydantic-ai,example-tools]",
 ]
 
 [project.scripts]

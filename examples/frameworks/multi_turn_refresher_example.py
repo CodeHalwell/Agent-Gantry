@@ -7,12 +7,12 @@ default query generator (:func:`agent_gantry.query.latest_activity`) is
 recency-aware, so the **same** refresher works for both:
 
 - **Autonomous agents / tool pipelines** — no new user input; each tool's
-  *result* selects the next tool.
+  *result*, added to the goal, brings the next tool into the selection.
 - **Conversational agents** — each new user message selects the next tool.
 
-This example runs offline (no LLM). A simulated model always picks the
-top-ranked tool; the point is that the *selection* advances correctly in both
-modes. It uses the strongest embedder available (SentenceTransformers if
+This example runs offline (no LLM). A simulated model picks the top-ranked
+tool (in the pipeline, the top-ranked one it has not already run); the point
+is that the *selection* advances correctly in both modes. It uses the strongest embedder available (SentenceTransformers if
 installed) and falls back to the offline ``SimpleEmbedder`` — note the toy
 embedder is too coarse for the autonomous result-driven routing.
 
@@ -57,7 +57,7 @@ def _register(gantry: AgentGantry, tools: list[tuple[str, str, list[str], list[s
 
 
 async def autonomous_pipeline_demo(embedder) -> None:
-    """No new user input — each tool result drives the next selection."""
+    """No new user input — the goal plus each tool result drives the next selection."""
     print("\n=== AUTONOMOUS PIPELINE (result-driven) ===")
     gantry = AgentGantry(embedder=embedder)
     try:
@@ -90,13 +90,18 @@ async def autonomous_pipeline_demo(embedder) -> None:
         messages: list[dict[str, Any]] = [
             {"role": "user", "content": "Build and evaluate a model from the raw source data."}
         ]
+        called: list[str] = []
         for step in range(5):
             schemas = await refresher.refresh(messages)
             names = [s["function"]["name"] for s in schemas]
-            pick = names[0] if names else None
+            # The goal stays in the query, so a stage it describes can keep
+            # ranking first; like an agent reading the result, move on to the
+            # best-ranked tool not yet run.
+            pick = next((name for name in names if name not in called), None)
             print(f"  step {step + 1}: picked={pick}   (top3={names})")
             if not pick:
                 break
+            called.append(pick)
             # Autonomously advance — NO new user message, only the tool result.
             messages.append({"role": "assistant", "content": f"calling {pick}"})
             messages.append({"role": "tool", "name": pick, "content": forward.get(pick, "done")})
