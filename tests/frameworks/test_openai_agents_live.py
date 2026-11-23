@@ -184,6 +184,29 @@ async def test_hook_does_not_repeat_an_unchanged_selection(gantry, monkeypatch):
     assert _tool_names(agent) == {"send_email"}
 
 
+async def test_hook_reselects_when_the_tools_were_rewritten_elsewhere(gantry, monkeypatch):
+    """An unchanged query is only skipped while the tools are still that selection.
+
+    A hooks object reused across runs, or a ``refresh`` for another query in
+    between, leaves ``agent.tools`` holding something else under the same
+    query text.
+    """
+    monkeypatch.setattr(live_module, "_first_request_sees_input", lambda: True)
+    agent = Agent(name="assistant", tools=[])
+    adapter = OpenAIAgentsAdapter(gantry)
+    hooks = adapter.run_hooks(agent, limit=1)
+    start = _start("what is the weather in Paris today")
+
+    await hooks.on_agent_start(start, agent)
+    assert _tool_names(agent) == {"get_weather"}
+
+    await adapter.refresh(agent, "send an email message to the team", limit=1)
+    assert _tool_names(agent) == {"send_email"}
+
+    await hooks.on_agent_start(start, agent)  # same query as before, stale tools
+    assert _tool_names(agent) == {"get_weather"}
+
+
 async def test_hook_retries_after_a_failed_selection(gantry, monkeypatch):
     """A retrieval failure is not remembered as done: the next hook tries again."""
     monkeypatch.setattr(live_module, "_first_request_sees_input", lambda: True)
@@ -275,3 +298,32 @@ async def test_dynamic_tools_refuses_an_sdk_that_hides_the_first_turn(gantry, mo
     monkeypatch.setattr(adapter_module, "_sdk_version", lambda: (0, 20, 0))
     with pytest.raises(ImportError, match=r"openai-agents>=0\.23\.1; 0\.20\.0 is installed"):
         await OpenAIAgentsAdapter(gantry).dynamic_tools(limit=1)
+
+
+@pytest.mark.parametrize(
+    ("reported", "parsed"),
+    [
+        ("0.23.1", (0, 23, 1)),
+        ("0.23.1rc1", (0, 23, 1)),  # a pre-release of the floor has the new run loop
+        ("0.24.0.dev3", (0, 24, 0)),
+        ("0.22.0.post1", (0, 22, 0)),
+        ("1.0", (1, 0)),
+        ("unknown", None),
+    ],
+)
+def test_sdk_version_reads_release_numbers(monkeypatch, reported, parsed):
+    from importlib import metadata
+
+    monkeypatch.setattr(metadata, "version", lambda name: reported)
+    assert adapter_module._sdk_version() == parsed
+
+
+def test_sdk_version_is_unknown_when_the_distribution_is_missing(monkeypatch):
+    from importlib import metadata
+
+    def missing(name):
+        raise metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(metadata, "version", missing)
+    assert adapter_module._sdk_version() is None
+    assert adapter_module._first_request_sees_input() is True

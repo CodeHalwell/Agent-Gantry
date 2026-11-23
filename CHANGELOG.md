@@ -28,7 +28,8 @@ because of the three behaviour changes below.
   providers, returns the latest user message plus the newest tool result where
   it returned the tool result alone. Selections after a tool call can differ.
 - `OpenAIAgentsAdapter.run_hooks()` now also selects when the agent starts,
-  and skips a re-selection whose query has not changed.
+  and skips a re-selection whose query has not changed while `agent.tools`
+  still holds that selection.
 
 **Migrating.**
 

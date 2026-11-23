@@ -331,12 +331,26 @@ def _gantry_run_hooks(
             super().__init__()
             # The query ``agent.tools`` currently reflects, so an unchanged
             # conversation (agent start, then the first model call) costs one
-            # retrieval rather than one per hook.
+            # retrieval rather than one per hook. Paired with the tool objects
+            # that selection put there: if anything else has rewritten the
+            # list since (a ``refresh`` for another query, a second hooks
+            # object, a reuse of this one across runs), the record is stale
+            # and the selection is made again.
             self._applied: str | None = applied_query
+            self._applied_tools = list(agent.tools) if applied_query is not None else None
+
+        def _still_applied(self, query: str) -> bool:
+            held = self._applied_tools
+            return (
+                held is not None
+                and query == self._applied
+                and len(held) == len(agent.tools)
+                and all(mine is theirs for mine, theirs in zip(held, agent.tools, strict=True))
+            )
 
         async def _reselect(self, query_or_input: Any) -> None:
             query = _query_from(query_or_input)
-            if query == self._applied:
+            if self._still_applied(query):
                 return
             tools = await _apply_selection(
                 agent,
@@ -353,6 +367,7 @@ def _gantry_run_hooks(
             # A failed retrieval is not recorded, so the next hook tries again.
             if tools is not None:
                 self._applied = query
+                self._applied_tools = list(tools)
 
         async def on_agent_start(self, context: Any, hook_agent: Any) -> None:
             # Run hooks fire for every agent in the run (handoff targets too);
@@ -377,7 +392,9 @@ def _gantry_run_hooks(
                     "adapter.refresh(agent, input) before Runner.run, or use adapter.run() "
                     "/ adapter.session(), which do; openai-agents>=0.23.1 needs neither.",
                     RuntimeWarning,
-                    stacklevel=2,
+                    # The SDK calls this hook, so no frame above is the user's:
+                    # attribute the warning to this module, not SDK internals.
+                    stacklevel=1,
                 )
 
         async def on_llm_start(
