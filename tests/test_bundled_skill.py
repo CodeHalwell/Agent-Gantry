@@ -144,3 +144,78 @@ def test_cli_install_skill_print_path(capsys: pytest.CaptureFixture[str]) -> Non
     assert exit_code == 0
     printed = capsys.readouterr().out.strip()
     assert printed == str(skill_path())
+
+
+# ---------------------------------------------------------------------------
+# The bundled skill must fit the limits this library applies to skills it
+# loads. At 80k characters its body tripped the loader's own 50k cap, so a
+# registry that indexed it stored (and injected) only the first two-thirds.
+# The per-framework material now lives in ``references/``; these keep the hub
+# within the cap and its links pointing at real files and headings.
+# ---------------------------------------------------------------------------
+
+
+def _anchor(heading: str) -> str:
+    """GitHub's anchor for a Markdown heading."""
+    title = heading.lstrip("#").strip().lower()
+    return re.sub(r"[^a-z0-9 \-_]", "", title).replace(" ", "-")
+
+
+def _anchors(markdown: str) -> set[str]:
+    anchors, fenced = set(), False
+    for line in markdown.splitlines():
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+        elif not fenced and re.match(r"#{1,6} ", line):
+            anchors.add(_anchor(line))
+    return anchors
+
+
+def test_bundled_skill_fits_the_loader_body_limit(caplog: pytest.LogCaptureFixture) -> None:
+    import logging
+
+    from agent_gantry.skills import load_skill
+    from agent_gantry.skills.loader import _CONTENT_MAX, parse_skill_markdown
+
+    text = (skill_path() / "SKILL.md").read_text(encoding="utf-8")
+    _, body = parse_skill_markdown(text)
+    assert len(body.strip()) <= _CONTENT_MAX, (
+        "SKILL.md body is over the loader's cap; move detail into references/"
+    )
+    with caplog.at_level(logging.WARNING, logger="agent_gantry.skills.loader"):
+        skill = load_skill(skill_path())
+    assert "truncated" not in caplog.text
+    assert skill.content.rstrip().endswith(body.strip()[-200:])  # stored whole
+
+
+def test_bundled_skill_links_resolve() -> None:
+    """Every relative link in the skill names a file that ships, and every
+    ``#anchor`` a heading that exists in the file it points into."""
+    root = skill_path()
+    files = [root / "SKILL.md", *sorted((root / "references").glob("*.md"))]
+    assert len(files) > 2
+    anchors = {f: _anchors(f.read_text(encoding="utf-8")) for f in files}
+
+    broken = []
+    for source in files:
+        text = source.read_text(encoding="utf-8")
+        for target in re.findall(r"\]\(([^)\s]+)\)", text):
+            if re.match(r"[a-z][a-z0-9+.-]*:", target):  # http(s), mailto, ...
+                continue
+            path, _, fragment = target.partition("#")
+            destination = (source.parent / path).resolve() if path else source
+            if not destination.is_file():
+                broken.append(f"{source.name}: {target} (no such file)")
+            elif fragment and fragment not in anchors.get(destination, set()):
+                broken.append(f"{source.name}: {target} (no such heading)")
+        for name in re.findall(r"`references/([a-z0-9-]+\.md)`", text):
+            if not (root / "references" / name).is_file():
+                broken.append(f"{source.name}: references/{name} (no such file)")
+    assert not broken, broken
+
+
+def test_install_to_copies_every_reference(tmp_path: Path) -> None:
+    dst = install_to(tmp_path / "skills")
+    shipped = {f.name for f in (skill_path() / "references").glob("*.md")}
+    assert {f.name for f in (dst / "references").glob("*.md")} == shipped
+    assert {"openai-agents.md", "selection.md", "api-reference.md"} <= shipped

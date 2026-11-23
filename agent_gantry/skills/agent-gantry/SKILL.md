@@ -2,29 +2,28 @@
 name: agent-gantry
 description: Use this skill when the user is writing or debugging code that uses the `agent-gantry` Python library (semantic tool routing for LLM agents). Triggers on `import agent_gantry`, mentions of `AgentGantry`, `GantryContextProvider`, `GantryToolBridge`, `gantry.register`, `with_semantic_tools`, `LangChainAdapter`/`CrewAIAdapter`/`StrandsAdapter`/`DSPyAdapter`/other `<Framework>Adapter` classes (or the per-SDK `OpenAIAdapter`/`AnthropicAdapter`/`GeminiAdapter`/`GroqAdapter`/`VertexAIAdapter`/`MistralAdapter`), `ToolRefresher`, or tool retrieval / surfacing problems with Microsoft Agent Framework, LangChain, LangGraph, CrewAI, LlamaIndex, Pydantic AI, OpenAI Agents SDK, Haystack, Agno, Strands Agents, DSPy, Google ADK, A2A, or MCP. Use proactively when the code imports `agent_gantry` even if the user did not explicitly invoke the skill.
 ---
-
 # Agent-Gantry
 
 Universal semantic tool router for LLM agents. Register tools once with `@gantry.register`, sync them into a vector store, then have the router surface only the top-K relevant tools per query — typically cutting prompt token spend by ~80% versus listing every tool.
 
-This skill is the canonical reference for using the library. Read the section that matches the user's framework before writing code. When a user reports "the LLM doesn't see tool X" or "my surface is empty", jump straight to **Debugging routing** below — that's the most common failure mode and the library ships first-class introspection for it.
+This skill is the canonical reference for using the library. This file holds what applies everywhere: the concepts, the plain-SDK and MCP paths, debugging and pitfalls. Each framework has its own guide under `references/` (the table below names it): read that guide before writing code for the framework. When a user reports "the LLM doesn't see tool X" or "my surface is empty", jump straight to **Debugging routing** below — that's the most common failure mode and the library ships first-class introspection for it.
 
 ## When to use which integration path
 
-| User's framework | API to use | Section |
+| User's framework | API to use | Read |
 |---|---|---|
-| Microsoft Agent Framework (AF 1.x) | `AgentFrameworkAdapter(gantry).context_provider(top_k=...)` (dynamic, per-turn or per-call) or `.tool_bridge()` (static) | [Microsoft Agent Framework](#microsoft-agent-framework) |
-| LangChain (>=1.0) | `LangChainAdapter(gantry).select(query, limit=...)` → `bind_tools`, or `create_agent(model, middleware=[await adapter.middleware()])` | [LangChain and LangGraph](#langchain-and-langgraph) |
-| LangGraph (>=1.0) | `create_agent(model, middleware=[await LangGraphAdapter(gantry).middleware()])` (per-turn), `.areact_agent(model)`, or `.select(...)` (static) | [LangChain and LangGraph](#langchain-and-langgraph) |
-| LlamaIndex (>=0.13) | `LlamaIndexAdapter(gantry).function_agent(llm)` (per step) or `.select(...)` (static) | [LlamaIndex](#llamaindex) |
-| CrewAI (>=1.15.22) | `CrewAIAdapter(gantry, approve=...).select(...)` or `.agent_builder(...)` (per call) | [CrewAI](#crewai) |
-| Pydantic AI (2.x) | `PydanticAIAdapter(gantry).capability()` (per-turn) / `.capability(mode="search")` (Gantry-backed `ToolSearch`), or `.toolset()` / `.select(...)` | [Pydantic AI](#pydantic-ai) |
-| OpenAI Agents SDK (>=0.23.1) | `Agent(tools=await OpenAIAgentsAdapter(gantry).dynamic_tools())` (per-turn) or `.select(...)` (static) | [OpenAI Agents SDK](#openai-agents-sdk) |
-| Haystack (>=3.0) | `HaystackAdapter(gantry).agent(chat_generator=...)` (per-step) or `.select(...)` (static) | [Haystack](#haystack) |
-| Agno (>=2.6.10) | `AgnoAdapter(gantry).agent(model=...)` (per-run) or `.select(...)` (static) | [Agno](#agno) |
-| Strands Agents (>=1.38) | `StrandsAdapter(gantry).agent(model=...)` / `.tool_hook()` (per-turn) or `.select(...)` (static) | [Strands Agents](#strands-agents) |
-| DSPy (>=3.5) | `DSPyAdapter(gantry).select(...)` (static) or `.agent_builder(signature, ...)` (per-call) | [DSPy](#dspy) |
-| Google ADK (>=2.6.1) | `GoogleADKAdapter(gantry).agent(model=, name=)` (per-turn) or `.select(...)` (static) | [Google ADK](#google-adk) |
+| Microsoft Agent Framework (AF 1.x) | `AgentFrameworkAdapter(gantry).context_provider(top_k=...)` (dynamic, per-turn or per-call) or `.tool_bridge()` (static) | [Microsoft Agent Framework](references/microsoft-agent-framework.md) |
+| LangChain (>=1.0) | `LangChainAdapter(gantry).select(query, limit=...)` → `bind_tools`, or `create_agent(model, middleware=[await adapter.middleware()])` | [LangChain and LangGraph](references/langchain-langgraph.md) |
+| LangGraph (>=1.0) | `create_agent(model, middleware=[await LangGraphAdapter(gantry).middleware()])` (per-turn), `.areact_agent(model)`, or `.select(...)` (static) | [LangChain and LangGraph](references/langchain-langgraph.md) |
+| LlamaIndex (>=0.13) | `LlamaIndexAdapter(gantry).function_agent(llm)` (per step) or `.select(...)` (static) | [LlamaIndex](references/llamaindex.md) |
+| CrewAI (>=1.15.22) | `CrewAIAdapter(gantry, approve=...).select(...)` or `.agent_builder(...)` (per call) | [CrewAI](references/crewai.md) |
+| Pydantic AI (2.x) | `PydanticAIAdapter(gantry).capability()` (per-turn) / `.capability(mode="search")` (Gantry-backed `ToolSearch`), or `.toolset()` / `.select(...)` | [Pydantic AI](references/pydantic-ai.md) |
+| OpenAI Agents SDK (>=0.23.1) | `Agent(tools=await OpenAIAgentsAdapter(gantry).dynamic_tools())` (per-turn) or `.select(...)` (static) | [OpenAI Agents SDK](references/openai-agents.md) |
+| Haystack (>=3.0) | `HaystackAdapter(gantry).agent(chat_generator=...)` (per-step) or `.select(...)` (static) | [Haystack](references/haystack.md) |
+| Agno (>=2.6.10) | `AgnoAdapter(gantry).agent(model=...)` (per-run) or `.select(...)` (static) | [Agno](references/agno.md) |
+| Strands Agents (>=1.38) | `StrandsAdapter(gantry).agent(model=...)` / `.tool_hook()` (per-turn) or `.select(...)` (static) | [Strands Agents](references/strands.md) |
+| DSPy (>=3.5) | `DSPyAdapter(gantry).select(...)` (static) or `.agent_builder(signature, ...)` (per-call) | [DSPy](references/dspy.md) |
+| Google ADK (>=2.6.1) | `GoogleADKAdapter(gantry).agent(model=, name=)` (per-turn) or `.select(...)` (static) | [Google ADK](references/google-adk.md) |
 | Any framework, re-select every turn | `ToolRefresher(gantry).refresh(messages)` | [Multi-turn re-selection](#multi-turn-re-selection-toolrefresher) |
 | Plain OpenAI / Anthropic / Gemini SDK | `OpenAIAdapter(gantry).tools(query)` (or `@with_semantic_tools(dialect=...)`) | [LLM-SDK direct](#llm-sdk-direct) |
 | MCP server (expose Gantry as MCP) | `gantry.serve_mcp(mode="dynamic")` | [MCP](#mcp) |
@@ -38,6 +37,34 @@ This skill is the canonical reference for using the library. Read the section th
 > security policy). Prefer these. `fetch_framework_tools` still exists but only
 > emits OpenAI-shape JSON schemas and supports a smaller name set — see
 > [its note](#schema-only-adapter-fetch_framework_tools).
+
+## Reference files
+
+Load only the one the task needs. Every framework guide covers the install
+extra and tested version floor, the per-turn selection entry point, how errors
+reach the model, the approval flow for confirmation-gated tools, and how a tool
+handler reaches the framework's run context.
+
+| File | Read it for |
+|---|---|
+| `references/microsoft-agent-framework.md` | `GantryContextProvider` (`per_run` / `per_call`), `GantryToolBridge`, workflows |
+| `references/pydantic-ai.md` | `capability()`, `toolset()`, tool search, `ModelRetry` / `ApprovalRequired` |
+| `references/openai-agents.md` | `dynamic_tools()`, `needs_approval`, the first-request rules for older SDKs |
+| `references/langchain-langgraph.md` | `middleware()`, `StructuredTool` errors, `interrupt()` approval |
+| `references/google-adk.md`, `crewai.md`, `llamaindex.md`, `strands.md`, `agno.md`, `haystack.md`, `dspy.md` | That framework's adapter |
+| `references/native-adapters.md` | What every `<Framework>Adapter` shares: `select`, `live()` / `live_tier`, pins, error modes |
+| `references/selection.md` | `SystemOneSelector` / `SystemOneReranker`: selection by a decision model instead of embeddings |
+| `references/api-reference.md` | Import-by-import quick-card of the public API |
+| `references/cookbook.md` | End-to-end recipes |
+
+Two facts from those files worth carrying everywhere:
+
+- **Only a selector can decline.** `SystemOneSelector` gates each entry at
+  `threshold`, so a query nothing serves can return no tools. Semantic search
+  and every reranker (`SystemOneReranker` included) return their top-k
+  regardless: a reranker only reorders.
+- **Assert that a tool's handler ran**, not just that the answer is right. With
+  no tools offered, a model often answers a simple task from its own knowledge.
 
 ## Core concepts (read first)
 
@@ -127,583 +154,6 @@ asyncio.run(main())
 ```
 
 `retrieve_tools(...)` returns OpenAI-shape tool schemas by default. Pass `dialect="anthropic"`, `"gemini"`, `"agent_framework"`, etc. to convert.
-
-## Microsoft Agent Framework
-
-The native, idiomatic integration. The one-class entry point is
-`AgentFrameworkAdapter`; `AgentFrameworkAdapter(gantry).context_provider(top_k=...)`
-returns a `GantryContextProvider` — an AF `ContextProvider` that runs at
-`before_run` (per-run mode) or on every chat-completion round (per-call mode, via
-a paired middleware). The adapter's other methods build the tool bridge and the
-approval / observability / tool-choice middleware:
-`.tool_bridge()`, `.approval_middleware(policy)`, `.observability_middleware()`,
-`.tool_choice_middleware(decider)`. The returned types (`GantryContextProvider`,
-`GantryToolBridge`, the middleware classes) are still importable directly for type
-annotations.
-
-### Per-run mode (default — fixed tool set for one `agent.run(...)` call)
-
-```python
-from agent_framework import Agent
-from agent_framework.openai import OpenAIChatClient
-from agent_gantry import AgentGantry
-from agent_gantry.agent_framework import AgentFrameworkAdapter
-
-gantry = AgentGantry()
-# ... register tools, await gantry.sync() ...
-
-provider = AgentFrameworkAdapter(gantry).context_provider(top_k=5)  # -> GantryContextProvider
-
-agent = Agent(
-    OpenAIChatClient(),
-    "You are a helpful assistant.",
-    context_providers=[provider],
-)
-
-result = await agent.run("Book me a flight to Tokyo")
-```
-
-### Per-call mode (re-runs retrieval every chat round)
-
-Use when the agent reasons in multiple steps and needs different tools at different stages. The chat middleware is **required** — without it the per-call mode silently degrades to per-run.
-
-```python
-from agent_gantry.agent_framework import AgentFrameworkAdapter
-
-provider = AgentFrameworkAdapter(gantry).context_provider(
-    top_k=3,
-    query_strategy="per_call",
-    # Default for per_call is latest_activity: the newest user message, plus
-    # the newest tool result when one came after it. Pass query_generator=...
-    # only for a different rotation (e.g. partial(latest_activity,
-    # include_request=False) to query on the tool's output alone in a pipeline
-    # whose results name the next step).
-)
-
-agent = Agent(
-    OpenAIChatClient(),
-    "...",
-    context_providers=[provider],
-    middleware=[provider.as_chat_middleware()],  # REQUIRED for per_call
-)
-```
-
-Or use the one-call helper:
-
-```python
-agent = Agent(OpenAIChatClient(), "...")
-provider.attach_to(agent)                 # appends provider + middleware in one shot
-provider.attach_to(agent, trace=True)     # ...and a console trace of every tool call
-```
-
-`trace=True` also installs the built-in trace middleware (see
-[Observability & tracing](#observability--tracing)) — the library-owned
-replacement for hand-rolled `@function_middleware` logging.
-
-### Pinning tools that must always be visible
-
-```python
-provider = AgentFrameworkAdapter(gantry).context_provider(
-    top_k=5,
-    required=["validate_input"],     # MissingRequiredToolError at construction if absent
-    always_include=["log_event"],    # warning + skip if absent
-    static_tools=[some_af_native_tool],  # tool not registered with gantry
-)
-```
-
-`required` and `always_include` reference *gantry-registered* tool names. `static_tools` is for AF-native `@tool` callables that live outside the gantry registry — they're appended every round and never filtered.
-
-### Static (no per-turn retrieval — bake once)
-
-Use `GantryToolBridge` directly when the tool set is fixed at construction:
-
-```python
-from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
-
-bridge = GantryToolBridge(gantry)
-tools = await bridge.get_tools("customer support tasks", limit=5)
-agent = Agent(OpenAIChatClient(), "...", tools=tools)
-```
-
-The bridge also exposes one-call agent constructors: `bridge.as_agent(...)`, `bridge.build_handoff_workflow(...)`, `bridge.build_sequential_workflow(...)`, `bridge.build_workflow(...)`.
-
-### Approval middleware + observability
-
-```python
-from agent_gantry.core.security import SecurityPolicy
-from agent_gantry.integrations.agent_framework_middleware import (
-    GantryApprovalMiddleware,
-    GantryObservabilityMiddleware,
-    GantryToolChoiceMiddleware,
-)
-
-policy = SecurityPolicy(require_confirmation=["delete_*", "refund_*"])
-
-# tool_choice modulation: force tool calls for the first N rounds, then auto.
-rounds = {"n": 0}
-def choose(_ctx):
-    rounds["n"] += 1
-    return "required" if rounds["n"] <= 5 else "auto"
-
-agent = Agent(
-    OpenAIChatClient(),
-    "...",
-    context_providers=[provider],
-    middleware=[
-        provider.as_chat_middleware(),
-        GantryApprovalMiddleware(policy),
-        GantryObservabilityMiddleware(gantry),
-        GantryToolChoiceMiddleware(choose),
-    ],
-)
-```
-
-## Pydantic AI
-
-Install with `uv add "agent-gantry[pydantic-ai]"` (pins `pydantic-ai-slim>=2.0.0`; tested on 2.0.0 and the latest 2.x). Gantry uses Pydantic AI's own extension points, so tool failures, approvals, `deps` and tracing behave like hand-written Pydantic AI tools.
-
-### Pick a mode
-
-| Mode | Build | Plug into | Use when |
-|---|---|---|---|
-| Per-turn (default) | `adapter.capability()` or `adapter.toolset()` (= `.live()`) | `Agent(capabilities=[...])` / `Agent(toolsets=[...])` | Most agents: top-k re-selected every model step |
-| Search | `adapter.capability(mode="search")` | `Agent(capabilities=[...])` | Large catalogues; prompt-cache-sensitive agents (tool list stays stable) |
-| Static | `await adapter.select(query)` | `Agent(tools=[...])` | Fixed task, one selection |
-
-```python
-from pydantic_ai import Agent, DeferredToolRequests
-from agent_gantry.pydantic_ai import PydanticAIAdapter
-#   also: current_run_context, GantryCapability, GantryToolset,
-#         GantryDeferredToolset, gantry_search_strategy, ErrorMode
-
-adapter = PydanticAIAdapter(gantry)          # or gantry.framework("pydantic-ai")
-agent = Agent(
-    "openai:gpt-5.5",
-    deps_type=MyDeps,
-    output_type=[str, DeferredToolRequests],  # only if a tool can need approval
-    capabilities=[adapter.capability(limit=5, skills=2)],
-)
-```
-
-`capability(skills=N)` also injects the N Gantry skills relevant to each turn as instructions (`skill_namespaces=[...]` to restrict). Search mode is `deferred_toolset()` (catalogue marked `defer_loading`; `required`/`always_include` stay visible) plus `tool_search()` (Pydantic AI's `ToolSearch` with Gantry's router as `strategy`); compose those yourself if you need to.
-
-### Per-turn behaviour
-
-- Each step's query is the newest user prompt, or after a tool call the run's prompt plus the newest tool result (first 2,000 chars) — so "look up the customer, then email them" surfaces the email tool mid-run.
-- Tools already called feed the router's `tools_already_used` signal.
-- Tool-result text is sent to the embedder; `query_from_results=False` (on `toolset()` / `capability()`) keeps tool output out of retrieval when it may hold sensitive data.
-- One retrieval per distinct query per run (cached), not one per step.
-- `sticky=True` (default) keeps tools offered earlier in the run, up to `max_offered` per step (default `3 * limit`; the current selection and pins always stay, older tools drop least recently selected first); `sticky=False` for a strict top-k.
-- State lives on the per-run copy from `for_run`, so concurrent runs can share one toolset.
-- Retrieval failure mid-run: keeps the run's earlier tools, logs a WARNING, never raises.
-- Several Gantry toolsets on one agent need distinct `id=` values and non-clashing names (`namespaces=` or `.prefixed(...)`).
-
-### Errors and approval
-
-Pydantic AI ends a run on an ordinary tool exception, so with the default `error_mode="model"`:
-
-| Gantry outcome | Pydantic AI exception | What the model sees |
-|---|---|---|
-| Bad arguments (`ValidationError`, `ToolNotFound`) | `ModelRetry` | The error; it retries within `max_retries` (default 1) |
-| Handler error, timeout, circuit open, permission denied | `ToolFailed` (on early 2.x, returned as the tool's `Error: ...` result) | A terminal failure it can adapt to |
-| Confirmation required (`requires_confirmation=True` or a `SecurityPolicy` pattern) | `ApprovalRequired` | Nothing yet — the run pauses with `DeferredToolRequests` |
-
-```python
-from pydantic_ai import DeferredToolRequests, DeferredToolResults
-
-result = await agent.run("refund order 4471")
-if isinstance(result.output, DeferredToolRequests):
-    decisions = {c.tool_call_id: approve(c) for c in result.output.approvals}
-    result = await agent.run(
-        message_history=result.all_messages(),
-        deferred_tool_results=DeferredToolResults(approvals=decisions),
-    )
-```
-
-The approved replay runs once through `gantry.execute` with only the confirmation gate cleared. `result.output.metadata[call_id]["agent_gantry"]` holds the tool's qualified name and the reason. Pass `error_mode="raise"` (adapter or any builder) to get `ToolExecutionError` instead, like the other adapters. The model sees the failure's text (capped at 2,000 chars); to redact it, pass `PydanticAIAdapter(gantry, error_formatter=lambda exc: ...)`, which rewrites every model-facing failure and falls back to a generic message if the formatter itself raises.
-
-### Run context and tracing
-
-```python
-from agent_gantry.pydantic_ai import current_run_context
-
-@gantry.register
-async def get_balance(account: str) -> str:
-    """Fetch an account balance for the signed-in user."""
-    ctx = current_run_context()        # pydantic_ai.RunContext, or None outside a run
-    return await ctx.deps.bank.balance(account)
-```
-
-`agent_gantry.current_tool_invocation()` is the framework-neutral form (`.deps`, `.run_id`, `.tool_call_id`, `.native_context`). Not available to out-of-process executors (sandbox, MCP, A2A, HTTP). When Pydantic AI is instrumented (Logfire / OpenTelemetry), the tool span's ids become the `ToolCall`'s `trace_id`/`parent_span_id`, so `on_tool_call` events join the agent's trace.
-
-### Debugging
-
-There is no `last_selection` on the Pydantic AI toolset; reproduce a step's selection with `await adapter.select(query, limit=...)` (same router, same pins), or spy with `gantry.on_tool_call`. In search mode, `search_tools` results appear as tool-return parts in `result.all_messages()`.
-
-## OpenAI Agents SDK
-
-Install with `uv add "agent-gantry[openai-agents]"` (pins `openai-agents>=0.23.1`; tested on 0.23.1 and the latest). It cannot share an environment with `[agent-frameworks]`/`[all]`: `openai-agents>=0.23` needs `openai>=3`, CrewAI pins `openai<3`.
-
-```python
-from agents import Agent, Runner
-from agent_gantry.openai_agents import OpenAIAgentsAdapter
-#   also: current_run_context, GantryDynamicTools; AgentGantry.requires_confirmation(tool)
-
-adapter = OpenAIAgentsAdapter(gantry)                 # error_formatter=... to redact failure text
-agent = Agent(name="assistant", tools=await adapter.dynamic_tools(limit=5))
-result = await Runner.run(agent, "refund order 4471", context=my_deps)
-if result.interruptions:                              # Gantry's confirmation gate -> needs_approval
-    state = result.to_state()
-    for item in result.interruptions:
-        state.approve(item)                           # or state.reject(item)
-    result = await Runner.run(agent, state)           # the approved call runs exactly once
-```
-
-- **Per-turn selection** (`dynamic_tools`): the catalogue as `FunctionTool`s gated by `is_enabled`. Each turn's query is the newest user message, or after a Gantry tool call that message plus the tool's output (`query_from_results=False` to keep output out of retrieval). Cached per run, sticky up to `max_offered` (default `3 * limit`), state keyed to the run, so concurrent runs are independent and `agent.tools` is never rewritten. Tools registered later need a fresh `dynamic_tools()` call.
-- **Errors**: returned to the model as tool output, `Error: <type>: <message>` (capped at 2,000 chars), so it can correct bad arguments. The SDK would otherwise end the run with `UserError`. `error_mode="raise"` restores `ToolExecutionError`.
-- **Approval**: `needs_approval` follows `gantry.requires_confirmation(tool)` (the tool's flag or a `SecurityPolicy` pattern). A custom policy that only decides at call time still blocks the call; the model is told it needs approval.
-- **Run context**: `agent_gantry.openai_agents.current_run_context()` returns the call's `ToolContext` (`.context` is what you passed to `Runner.run(context=...)`, plus `.tool_call_id`, `.tool_name`).
-- **Tracing**: the SDK's current span (when tracing) or an OpenTelemetry span becomes the `ToolCall`'s `trace_id`/`parent_span_id`.
-- The older `session` / `run` / `run_hooks` helpers rewrite `agent.tools`; use them for one run at a time per agent. `run_hooks` selects at `on_agent_start` (so the first model request has the tools) and re-selects before each later request.
-- **First request, older SDKs**: before `openai-agents` 0.23.1 the SDK lists tools before it records the turn's input, so `dynamic_tools()` raises `ImportError` and `run_hooks()` cannot cover request one (it warns). There, use `adapter.run(agent, input)`, `adapter.session(agent).run(input)` or `adapter.refresh(agent, input)`, which take the input from you.
-
-## LangChain and LangGraph
-
-Install with `uv add "agent-gantry[langgraph]"` (or `[langchain]`; pins `langchain`/`langchain-core`/`langgraph>=1.0.0`, tested on 1.0.0 and the latest).
-
-```python
-from langchain.agents import create_agent
-from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.types import Command
-from agent_gantry.langgraph import LangGraphAdapter, current_tool_runtime
-
-adapter = LangGraphAdapter(gantry)                    # error_formatter=... to redact failure text
-agent = create_agent(model, middleware=[await adapter.middleware(limit=5)],
-                     checkpointer=InMemorySaver(), context_schema=MyContext)
-config = {"configurable": {"thread_id": "t1"}}
-result = await agent.ainvoke({"messages": [("user", "refund order 4471")]}, config, context=my_ctx)
-if "__interrupt__" in result:                         # Gantry's confirmation gate -> interrupt()
-    result = await agent.ainvoke(Command(resume=True), config)   # approved call runs exactly once
-```
-
-- **Per-turn selection** (`middleware()`): carries the catalogue as its `tools` and narrows `request.tools` in `wrap_model_call` each model turn; your own `create_agent(tools=...)` stay. Query = newest user message or last *successful* tool result (`query_from_results=False` to exclude output). Per-run state keyed by thread + newest user message; cached, sticky up to `max_offered` (default `3 * limit`); a retrieval failure keeps the previous tools plus pins. `areact_agent(model, ...)` builds the same agent in one call.
-- **Errors**: LangChain's `ToolException` with `handle_tool_error=True`, so the model gets an error `ToolMessage` (`status="error"`) and the run continues. `error_mode="raise"` restores `ToolExecutionError`.
-- **Approval**: gated calls (`gantry.requires_confirmation(tool)`) call LangGraph's `interrupt()` with `{"type": "gantry_approval", "tool", "arguments", "tool_call_id"}`; resume with `Command(resume=True)` / `{"approved": True}` to run, anything else rejects. Needs a checkpointer; without one the model is told the call needs approval and it is not run.
-- **Run context**: `current_tool_runtime()` gives `.context` (the graph's `context=`), `.store`, `.config`, `.tool_call_id`; `current_tool_invocation().metadata["thread_id"]`.
-- **Tracing**: an OpenTelemetry span, else the current LangSmith run, becomes the `ToolCall`'s `trace_id`/`parent_span_id`.
-
-## Google ADK
-
-Install with `uv add "agent-gantry[google-adk]"` (pins `google-adk>=2.6.1`; tested on 2.6.1 and the latest).
-
-```python
-from google.adk.runners import InMemoryRunner
-from google.genai import types
-from agent_gantry.google_adk import GoogleADKAdapter, current_tool_context
-
-adapter = GoogleADKAdapter(gantry)                    # error_formatter=... to redact failure text
-agent = adapter.agent(model="gemini-2.5-flash", name="support", limit=5)
-runner = InMemoryRunner(agent=agent, app_name="app")
-# a gated tool emits an "adk_request_confirmation" function call; answer it with
-# FunctionResponse(name="adk_request_confirmation", id=call.id, response={"confirmed": True})
-```
-
-- **Per-turn selection** (`agent()` / `before_model_callback()`): injects each model request's tools with `LlmRequest.append_tools`; the agent's own tools stay. Query = newest user message + latest successful tool result (`query_from_results=False` to exclude output). Per-run state keyed by the ADK invocation; cached, sticky up to `max_offered` (default `3 * limit`); a retrieval failure keeps the previous tools plus pins.
-- **Errors**: the function response is `{"error": "<type>: <message>"}` (ADK's convention), so the model can correct itself; an exception would end the run. `error_mode="raise"` restores `ToolExecutionError`.
-- **Approval**: `gantry.requires_confirmation(tool)` drives ADK's `require_confirmation`; a confirmed call runs exactly once, ADK refuses a rejected one. A hand-built `Agent(before_model_callback=adapter.before_model_callback())` also needs `tools=[adapter.confirmation_toolset()]` so the confirmed call can resume (`adapter.agent()` adds it).
-- **Run context**: `current_tool_context()` returns the ADK `ToolContext` (`.state`, `.user_id`, `.invocation_id`, `.function_call_id`, artifacts, memory).
-- **Tracing**: ADK's OpenTelemetry span becomes the `ToolCall`'s `trace_id`/`parent_span_id`.
-
-## CrewAI
-
-Install with `uv add "agent-gantry[crewai]"` (pins `crewai>=1.15.22`, Python 3.10–3.13; tested on 1.15.22 and the latest). Not with `[openai-agents]` (openai 3 vs CrewAI's `openai<3`).
-
-```python
-from crewai import Agent, Crew, Task
-from agent_gantry.crewai import ApprovalRequest, CrewAIAdapter, current_crew_context
-
-adapter = CrewAIAdapter(gantry, approve=lambda req: ask_a_human(req))   # or approve="console"
-agent = Agent(role="support", goal="...", backstory="...", tools=await adapter.select(task_text))
-output = await Crew(agents=[agent], tasks=[Task(description=task_text, expected_output="...", agent=agent)]).kickoff_async()
-output.tasks_output[0].tool_failures                  # Gantry failures recorded as CrewAI ToolFailure
-```
-
-- **Selection**: per call (`select` per agent, or `agent_builder(...).build(query)` per task); CrewAI has no hook to swap tools between model turns.
-- **Errors**: `_run` returns CrewAI's `ToolFailure` (`code` = error type, `retryable` for argument errors); `tool_failure_policy` on the agent/task decides whether to abort. `error_mode="raise"` restores `ToolExecutionError`.
-- **Approval**: a `before_tool_call` hook (registered once per process) asks `approve(request) -> bool` for gated tools (`gantry.requires_confirmation`); refused calls are blocked by CrewAI; no approver means "needs approval, not run".
-- **Run context**: `current_crew_context()` returns CrewAI's `ToolCallHookContext` (`.agent`, `.task`, `.crew`).
-
-## LlamaIndex
-
-Install with `uv add "agent-gantry[llamaindex]"` (pins `llama-index-core>=0.13.0`; tested on 0.13.0 and the latest).
-
-```python
-from llama_index.core.workflow import HumanResponseEvent, InputRequiredEvent
-from agent_gantry.llamaindex import LlamaIndexAdapter, current_workflow_context
-
-agent = LlamaIndexAdapter(gantry).function_agent(llm, limit=5)   # error_formatter=... on the adapter
-handler = agent.run(user_msg="refund order 4471")
-async for event in handler.stream_events():
-    if isinstance(event, InputRequiredEvent):                     # a Gantry-gated call waiting
-        handler.ctx.send_event(HumanResponseEvent(response="yes", gantry_approval_id=event.gantry_approval_id))
-result = await handler
-```
-
-- **Errors**: `LlamaIndexToolError` (text `<type>: <message>`), shown to the model as `ToolOutput(is_error=True)`.
-- **Approval**: gated calls `ctx.wait_for_event(HumanResponseEvent, waiter_event=InputRequiredEvent(gantry_tool=..., gantry_arguments=..., gantry_approval_id=...))`; answer with a `HumanResponseEvent` echoing `gantry_approval_id` (so an answer only decides its own call); "yes"/"y"/"approve"/"approved" runs once. Use `function_agent()` or `GantryFunctionAgent(tools=...)` for gated tools, so each call has its own request. Direct `tool.call` reports "needs approval".
-- **Run context**: hidden `ctx` parameter; `current_workflow_context()` returns the workflow `Context` (`.store` for state).
-- **Per step**: `tool_retriever()` re-selects each step; on a retrieval failure only the pins are offered.
-
-## Strands Agents
-
-Install with `uv add "agent-gantry[strands]"` (pins `strands-agents>=1.38.0`; tested on 1.38.0 and the latest).
-
-```python
-from agent_gantry.strands import StrandsAdapter, current_tool_context
-
-agent = StrandsAdapter(gantry).agent(model=my_model, limit=5)   # error_formatter=... on the adapter
-result = await agent.invoke_async("refund order 4471", user=current_user)
-if result.stop_reason == "interrupt":                            # a Gantry-gated call
-    [interrupt] = result.interrupts
-    result = await agent.invoke_async([{"interruptResponse": {"interruptId": interrupt.id, "response": "yes"}}])
-```
-
-- **Errors**: error `ToolResult` (`{"status": "error", "content": [{"text": "<type>: <message>"}]}`) everywhere; `error_mode="raise"` raises `ToolExecutionError`.
-- **Approval**: gated tools call `tool_context.interrupt("gantry-approval", reason=...)`; "yes"/`True`/`{"approved": True}` runs once on resume, anything else rejects. Direct calls report "needs approval".
-- **Run context**: `current_tool_context()` gives Strands' `ToolContext` (`.invocation_state` = kwargs passed to `agent(...)`, `.agent`, `.tool_use`).
-- **Per-turn**: `tool_hook()` swaps the tool registry in `BeforeModelCallEvent`; on a retrieval failure the previous turn's tools stay.
-
-## Agno
-
-Install with `uv add "agent-gantry[agno]"` (pins `agno>=2.6.10`; tested on 2.6.10 and the latest).
-
-```python
-from agent_gantry.agno import AgnoAdapter, current_run_context
-
-agent = AgnoAdapter(gantry).agent(model=my_model, limit=5)   # error_formatter=... on the adapter
-run = await agent.arun("refund order 4471", user_id="dan", dependencies={"db": db})
-if run.is_paused:                                             # a Gantry-gated call
-    for requirement in run.active_requirements:
-        requirement.confirm()
-    run = await agent.acontinue_run(run_response=run)
-```
-
-- **Errors**: `AgnoToolError` (a `ToolExecutionError`), which Agno records as a failed tool result showing `"<type>: <message>"`; `error_mode="raise"` raises the plain `ToolExecutionError`.
-- **Approval**: gated tools are `Function(requires_confirmation=True)`; a confirmed requirement runs the call once on `continue_run`, a rejected one never runs. Direct calls report "needs approval".
-- **Run context**: `current_run_context()` gives Agno's `RunContext` (`.dependencies`, `.session_state`, `.user_id`, `.session_id`, `.run_id`).
-- **Per-run**: `agent()` re-selects inside Agno (callable `tools` factory) for each run and keeps the selection for `continue_run`; works with `run()` and `arun()`.
-
-## Haystack
-
-Install with `uv add "agent-gantry[haystack]"` (pins `haystack-ai>=3.0.0`; tested on 3.0.0 and the latest).
-
-```python
-from agent_gantry.haystack import HaystackAdapter, current_agent_state
-from haystack.hooks.human_in_the_loop import SimpleConsoleUI
-
-agent = HaystackAdapter(gantry).agent(
-    chat_generator=generator, limit=5, confirmation_ui=SimpleConsoleUI()  # error_formatter=... on the adapter
-)
-result = agent.run(messages=[ChatMessage.from_user("refund order 4471")])
-```
-
-- **Errors**: `HaystackToolError` (a `ToolExecutionError`), which the Agent turns into an error tool result showing `"<type>: <message>"`; `error_mode="raise"` raises the plain `ToolExecutionError`.
-- **Approval**: `confirmation_hook(ui)` (added by `agent(confirmation_ui=...)`) asks a Haystack `ConfirmationUI` about gated Gantry tools only; confirm/modify runs the call once, reject never runs it. Without a UI, gated calls report "needs approval".
-- **Run context**: `current_agent_state()` gives the Agent's `State` (`.get(key)`, `.data`); `current_tool_invocation().deps` is `state.data`.
-- **Per-step**: `agent()` re-selects before the first step and after every tool step (dynamic `Toolset` + `before_run`/`after_tool` hooks); sticky up to `max_offered`; previous tools plus pins on a retrieval failure.
-
-## DSPy
-
-Install with `uv add "agent-gantry[dspy]"` (pins `dspy>=3.5.0`, the redesigned `dspy.ReAct` with native `tool_calls` and a `submit` tool; tested on 3.5.0 and the latest).
-
-```python
-import dspy
-from agent_gantry.dspy import DSPyAdapter, current_dspy_module
-
-adapter = DSPyAdapter(gantry, approve=lambda request: request.tool_name != "delete_account")
-react = dspy.ReAct("question -> answer", tools=await adapter.select("refund order 4471", limit=5))
-pred = react(question="refund order 4471")          # or: await react.acall(...)
-builder = adapter.agent_builder("question -> answer")  # per call: react = await builder.build(query)
-```
-
-- **Errors**: `DSPyToolError` (a `ToolExecutionError`), which `dspy.ReAct` records as an error tool result (`is_error=True`); the text ends with `"<type>: <message>"` after DSPy's own short traceback, with no chained original error, so `error_formatter` redaction holds. `error_mode="raise"` raises the plain `ToolExecutionError`.
-- **Approval**: DSPy has no HITL, so `approve=fn` decides gated calls (`ApprovalRequest`: `tool_name`, `arguments`, `description`, `module`); `True` runs the call once, anything else (or a raising approver) blocks it. Without an approver, gated calls report "needs approval".
-- **Run context**: `current_dspy_module()` gives the module running the call (normally the `dspy.ReAct`). DSPy has no run or call ids.
-- **Per-call**: `dspy.ReAct` fixes its tools at construction, so `agent_builder()` builds a fresh one per query; pins are offered if retrieval fails.
-
-## Native framework adapters
-
-For LangChain, LangGraph, LlamaIndex, CrewAI, Pydantic AI, OpenAI Agents SDK, Haystack, Agno, Strands Agents, DSPy, and Google ADK, use the native `<Framework>Adapter` class. Its `.select(query, limit=...)` method selects the top-K relevant tools and returns the framework's **native tool objects**, with every call still routed through `gantry.execute`.
-
-```python
-from agent_gantry import AgentGantry
-from agent_gantry.langchain import LangChainAdapter   # clean per-framework namespace
-
-gantry = AgentGantry()
-# ... register tools, await gantry.sync() ...
-
-tools = await LangChainAdapter(gantry).select("email the quarterly report to finance", limit=3)
-# hand `tools` straight to a LangChain agent / ChatModel.bind_tools(tools)
-```
-
-Every adapter shares the identical signature `<Framework>Adapter(gantry).select(query, *, limit=3, **select_kwargs)` and the same per-framework namespace (`agent_gantry.<framework>`):
-
-| Framework | Adapter class | Native object | Namespace import |
-|---|---|---|---|
-| LangChain | `LangChainAdapter` | `StructuredTool` | `from agent_gantry.langchain import LangChainAdapter` |
-| LangGraph | `LangGraphAdapter` | LangChain `StructuredTool` | `from agent_gantry.langgraph import LangGraphAdapter` |
-| LlamaIndex | `LlamaIndexAdapter` | `FunctionTool` | `from agent_gantry.llamaindex import LlamaIndexAdapter` |
-| CrewAI | `CrewAIAdapter` | `crewai.tools.BaseTool` | `from agent_gantry.crewai import CrewAIAdapter` |
-| Pydantic AI | `PydanticAIAdapter` | `pydantic_ai.tools.Tool` | `from agent_gantry.pydantic_ai import PydanticAIAdapter` |
-| OpenAI Agents SDK | `OpenAIAgentsAdapter` | `agents.FunctionTool` | `from agent_gantry.openai_agents import OpenAIAgentsAdapter` |
-| Haystack | `HaystackAdapter` | `haystack.tools.Tool` | `from agent_gantry.haystack import HaystackAdapter` |
-| Agno | `AgnoAdapter` | `agno.tools.function.Function` | `from agent_gantry.agno import AgnoAdapter` |
-| Strands Agents | `StrandsAdapter` | `strands.tools.decorator.DecoratedFunctionTool` | `from agent_gantry.strands import StrandsAdapter` |
-| DSPy | `DSPyAdapter` | `dspy.Tool` | `from agent_gantry.dspy import DSPyAdapter` |
-| Google ADK | `GoogleADKAdapter` | `google.adk.tools.FunctionTool` | `from agent_gantry.google_adk import GoogleADKAdapter` |
-
-Adapters with secondary methods expose them on the same class — there is nothing extra to import.
-
-Need one conversion at a time (you already hold the selected specs)? Use `<Adapter>.convert(spec)` (a staticmethod) with specs from `GantryToolset(gantry).select(query, limit=...)`.
-
-```python
-from agent_gantry.integrations.frameworks import GantryToolset
-from agent_gantry.crewai import CrewAIAdapter
-
-specs = await GantryToolset(gantry).select("research and writing", limit=4)
-crew_tools = [CrewAIAdapter.convert(s) for s in specs]
-```
-
-### Deep per-turn "live" providers
-
-The `.select(...)` method is *static* — select once, hand over a fixed list. The **live** adapter methods hook each framework's own per-turn lifecycle so Gantry re-selects tools on **every turn**, matching `GantryContextProvider` depth for Microsoft Agent Framework. Construct the adapter from the per-framework namespace, then call the live method.
-
-```python
-from agent_gantry.llamaindex import LlamaIndexAdapter
-agent = LlamaIndexAdapter(gantry).function_agent(llm)   # re-selects tools each step
-```
-
-| Framework | Live adapter method | Native hook |
-|---|---|---|
-| LlamaIndex | `LlamaIndexAdapter(gantry).tool_retriever()` / `.function_agent(llm)` | `FunctionAgent(tool_retriever=…)` |
-| Pydantic AI | `PydanticAIAdapter(gantry).toolset()` / `.capability()` / `.deferred_toolset()` + `.tool_search()` | `AbstractToolset.get_tools()` + `for_run()`; `AbstractCapability`; `ToolSearch(strategy=…)` |
-| Google ADK | `GoogleADKAdapter(gantry).before_model_callback()` / `.agent(model=, name=)` | `Agent(before_model_callback=…)` |
-| Strands Agents | `StrandsAdapter(gantry).tool_hook()` / `.agent(...)` | `Agent(hooks=[…])` — `BeforeModelCallEvent` |
-| LangGraph | `LangGraphAdapter(gantry).middleware()` (recommended) / `.areact_agent(model)` / `.react_agent(model)` | `create_agent` `AgentMiddleware.wrap_model_call` (narrows `request.tools` per turn) |
-| OpenAI Agents SDK | `OpenAIAgentsAdapter(gantry).dynamic_tools()` (recommended) / `.run(agent, run_input)` / `.session(agent)` / `.run_hooks(agent)` | `FunctionTool.is_enabled` per turn; `RunHooks.on_llm_start` + per-run refresh |
-
-The returned live objects keep their classes, importable from the framework's `*_live` module for `isinstance` checks: `GantryToolRetriever` (`llamaindex_live`), `GantryToolset` / `GantryDeferredToolset` (`pydantic_ai_live`, also `agent_gantry.pydantic_ai`), `GantryAgentSession` (`openai_agents_live`) and `GantryStrandsToolHook` (`strands_live`). Google ADK returns a plain `before_model_callback` callable and LangGraph's `react_agent` a compiled agent, so there is no Gantry class to check for; LangGraph's `middleware()` returns a `GantryToolMiddleware` (built lazily, as it subclasses LangChain's `AgentMiddleware`).
-
-Pydantic AI goes further than the other adapters (native retries, approval, `deps`, tool search, a `Capability`) — see [Pydantic AI](#pydantic-ai).
-
-Frameworks whose tool list is **fixed at agent construction** (CrewAI, Agno, DSPy, and Haystack outside `HaystackAdapter.agent()`) can't re-advertise tools mid-run. Build a self-rebuilding agent with `<Adapter>(gantry).agent_builder(...)` (Haystack: `HaystackAdapter(gantry).tool_invoker_builder(...)`; DSPy: `DSPyAdapter(gantry).agent_builder(signature, ...)`, since `dspy.ReAct` needs a task signature); it re-selects and rebuilds on each top-level call. For a one-shot fresh slice of native tools, call `<Adapter>(gantry).live_tools(query)` (async, not available on DSPy — use `.select(query)` instead).
-
-## Selection without embeddings (System One)
-
-Added in 0.16.0. `SystemOneSelector` replaces embed-then-search entirely: it puts the
-catalogue to a System One decision model and asks, per entry, whether it is
-relevant. No embedder, no vector store, no `sync()`. `SystemOneReranker` instead
-refines an ordinary semantic shortlist. Both are optional, both are off by
-default, and both live behind the `system-one` extra. The default model is
-TypeSafe's Jev (`jev-latest`); `model=` names a different one.
-
-Renamed in 0.23.0 from `JevSelector` / `JevReranker` / the `jev` extra /
-`type="jev"`, since Jev is only the default model. The old names still work,
-with a `DeprecationWarning`; write the new ones.
-
-**Only the selector can decline.** It gates each entry at `threshold`, so a
-query nothing serves can come back empty. The reranker only *orders* the
-shortlist and returns the best `limit` of it however low the scores, so a
-reranker-backed setup returns tools for an unanswerable query just as plain
-semantic search does. If "return nothing when nothing fits" matters, use the
-selector.
-
-```bash
-uv add "agent-gantry[system-one]"
-export TYPESAFE_API_KEY=...
-```
-
-```python
-from agent_gantry import AgentGantry, SystemOneSelector
-
-gantry = AgentGantry(selector=SystemOneSelector(threshold=0.4))
-# register tools as usual; no sync() needed on the selector path
-tools = await gantry.retrieve_tools("refund the customer's order", limit=3)
-```
-
-It covers all three catalogues, not just tools: `retrieve_tools`,
-`retrieve_skills` and `retrieve_mcp_servers` all consult the selector first.
-
-As a reranker instead, keeping semantic retrieval:
-
-```python
-from agent_gantry import AgentGantry, SystemOneReranker
-
-gantry = AgentGantry(reranker=SystemOneReranker())
-```
-
-**When each one fits.** A selector sends every candidate on every query, so
-cost grows with catalogue size rather than staying flat. That suits tens to a
-few hundred entries. Above that, keep semantic retrieval and put the reranker
-over its shortlist — only the shortlist is sent, so it works at any catalogue
-size. `SelectorConfig.group_after` handles the middle ground by narrowing to
-the best namespaces before scoring their members.
-
-**What it buys.** Measured against a properly configured embedder, recall is a
-tie. The difference is precision: 1–3 spurious tools against 16 on the same
-set. That is the context-window saving, not "finds better tools". A selector
-can also answer *none of these*, which top-k cannot — with `limit=3` a vector
-search always returns three tools whether or not any of them fit.
-
-The sharper win is distinctions an embedder cannot make, because it compares
-text rather than reasoning about fit. Measured live against `jev-1.13.0`, with
-a `get_weather` tool described as "get the **current** weather":
-
-| catalogue | query | model score |
-|---|---|---|
-| current only | "the forecast for Leeds **tomorrow**" | `get_weather` **0.21** → nothing selected |
-| current only | "the weather in Leeds **right now**" | `get_weather` **0.98** |
-| current + forecast | "the forecast for tomorrow" | `get_forecast` **0.94**, `get_weather` 0.25 |
-| current + forecast | "the weather right now" | `get_weather` **0.98**, `get_forecast` 0.35 |
-
-"current weather" and "weather forecast" embed almost on top of each other, so
-a vector search hands the agent a tool that cannot answer the question. The
-selector declined instead. If a user is choosing between the two approaches, that — not
-the token count — is the argument.
-
-**Both fail open**, and neither raises into a caller's retrieval path — but
-they fail open differently, and the difference matters if you are choosing
-between them.
-
-A provider that is unavailable, rate-limited or slow costs precision and never
-the catalogue: the selector reports a fallback and retrieval takes the semantic
-path, while the reranker returns the vector-search order untouched, truncated
-to `top_k`.
-
-A provider that answers for only *some* of the candidates is not the same case.
-The selector treats it as a failed pass and falls back — a candidate that was
-never scored is indistinguishable from one scored zero, so ranking the answered
-subset would be a confident guess. The reranker keeps the pass: answered
-candidates are ordered by probability, unanswered ones keep their search rank
-*below* all of them, and the result is truncated to `top_k`. That last step is
-the caveat — where more candidates were sent than `top_k`, a high-ranked
-candidate the model simply did not answer for can be pushed out of the result.
-It is a precision loss rather than a correctness one, and it cannot happen on
-the selector path.
-
-If you see selection quietly stop working, check the logs for `System One selection
-failed, falling back:` — that is the library declining to guess, not a silent
-failure.
-
-Query constraints are applied *before* anything is sent — deprecation,
-namespaces, capabilities, sources and circuit-breaker health all go through the
-router's own filter (`SemanticRouter.filter_tools()`), so a selector can never
-surface a tool the semantic path would hide.
-
-**Debugging.** `SelectionResult` carries `scores` for every candidate, not just
-the winners, so you can see exactly what a threshold would keep and cut before
-committing to it — see `examples/routing/system_one_threshold_tuning_demo.py`, which
-sweeps thresholds over a labelled query set.
 
 ## Multi-turn re-selection (ToolRefresher)
 
@@ -967,6 +417,8 @@ results = await gantry.retrieve_skills("paginate the users endpoint", limit=3, n
 
 `retrieve_skills_as_prompt` formats each hit with `Skill.to_prompt_text()` (a heading, the category, the full content, related tools). Skill content is injected verbatim — register skills only from sources you trust. Works with the default in-memory store and LanceDB; a model switch re-embeds stored skills automatically.
 
+Loading rules worth knowing: only the frontmatter (`name`, `description`, tags) is embedded, so retrieval quality is the description's; symlinked skill directories are followed (a library shared between agents by linking each skill into `~/.claude/skills` loads in full; 0.23.0 and earlier silently skipped them in a recursive load); hidden directories are skipped; a body over 50,000 characters is truncated for storage with a `WARNING`, so keep `SKILL.md` a hub and put detail in `references/` files, which are not loaded.
+
 ## Debugging routing
 
 When a user says "the LLM doesn't see my tool" / "my surface is empty" / "wrong tools are being selected", use these in order:
@@ -1065,6 +517,8 @@ This catches the headline mistakes: a tool description that names another tool (
 | A reranker setup returns tools for a query nothing serves | Rerankers order the shortlist and return top-k; scores are never thresholded | Only `SystemOneSelector` (gated by `threshold`) can return nothing |
 | Wrong tools selected | Description names another tool ("unrelated to factorial…") | Run `agent-gantry lint`; remove cross-references |
 | `top_k=6` but I see 8 tools | Skills / `always_include` / `static_tools` add on top of dynamic top_k | Expected; subtract those |
+| `add_skills_from_directory` loaded fewer skills than `find -name SKILL.md` counts (0.23.0 and earlier) | The recursive walk did not follow symlinked skill directories | Upgrade; or pass the real directory the links point at |
+| `Skill '...' body is N characters; truncated to 50000` | The `SKILL.md` body is over the storage cap, so only its start is stored and injected | Move detail into `references/*.md` beside it and link to them |
 | Cold-start re-embeds every time | Default `InMemoryVectorStore` is ephemeral | Wrap embedder in `CachedEmbedder` or use `[lancedb]` |
 | OpenAI embedder can't reach my proxy | Custom base_url not configured | Pass `api_base=...` in `EmbedderConfig` or set `OPENAI_BASE_URL` |
 | No telemetry / INFO logs appear (0.8.0+) | Library no longer configures logging by default | Call `enable_console_logging()` or configure your own handler on the `agent_gantry` logger |
@@ -1123,93 +577,3 @@ Cache is keyed by `(embedder_id, sha256(text))` — different models / dimension
 Both `query_strategy="per_call"` and `ToolRefresher` default to `latest_activity`, which serves autonomous and conversational agents alike: a new user message pivots the surface, and while the agent chains tools the previous result, appended to that message, steers the next selection. `fallback_chain(last_tool_result, last_user_text)` — the former `per_call` default — prefers a tool result anywhere in the history, so a session that carries an earlier run's result stops following new user requests; use it only for a fixed pipeline with no user turns in between.
 
 Every generator reads the common SDK shapes: role/content dicts, OpenAI Chat Completions `tool` messages, OpenAI Responses items (`function_call` / `function_call_output`), Anthropic `tool_result` turns (a `user`-role message of result blocks), LangChain messages and Agent Framework `contents`.
-
-## API reference quick-card
-
-```python
-from agent_gantry import (
-    AgentGantry,                  # main facade
-    GantryContextProvider,        # AF native provider (per-run / per-call)
-    MissingRequiredToolError,     # raised when required=[...] tool absent
-    RetrievalDecision,            # introspection: what the bridge surfaced
-    RetrievalCandidate,           # one row in RetrievalDecision.candidates
-    with_semantic_tools,          # decorator for plain LLM SDK calls
-    set_default_gantry,           # bind a gantry to with_semantic_tools
-    create_default_gantry,        # quick factory (auto-picks Nomic if available)
-    render_result,                # stringify any tool result (incl. AF Content lists)
-    enable_console_logging,       # opt into console output (lib configures no logging)
-    ToolCall, ToolResult,
-    ToolCallEvent,                # delivered to gantry.on_tool_call(callback)
-    current_tool_invocation,      # framework run state inside a tool handler (or None)
-    ToolInvocationContext,        # .framework / .deps / .run_id / .tool_call_id / .native_context
-    ToolQuery, ConversationContext,
-    ToolCapability, ToolCost, ToolDefinition, ToolHealth, ToolSource,
-    Skill, SkillCategory, SkillSearchResult,   # procedural memory (see "Skills")
-)
-# Skills: gantry.add_skill / add_skills / add_skills_from_directory(path)
-#         gantry.retrieve_skills(query) / retrieve_skills_as_prompt(query)
-# Selection (0.16.0+, needs the `system-one` extra; Jev* names are deprecated aliases):
-#   AgentGantry(selector=SystemOneSelector(threshold=0.4))  -> no embedder/vector store/sync
-#   AgentGantry(reranker=SystemOneReranker())               -> refine a semantic shortlist
-#   SelectionResult.scores                            -> every candidate, not just winners
-# MCP:    gantry.serve_mcp(transport="stdio"|"http"|"sse", mode=..., expose=[...])
-#         reset_sse_shutdown_latch()  -> release sse_starlette's process-global
-#           shutdown latch between servers in one process; without it a second
-#           EventSourceResponse is cancelled between headers and body (hangs).
-#           Needs the `mcp` extra; raises AttributeError without it.
-#         gantry.add_mcp_server(MCPServerConfig(command=[...] | url="https://...", headers=...))
-#         gantry.register_mcp_server(name, command=None, *, url=None, description=...)
-#         gantry.sync(prune=True) drops stored tools that are no longer registered
-# Observability built-ins (0.8.0+):
-#   gantry.on_tool_call(cb)            -> framework-agnostic ToolCallEvent stream
-#   provider.trace() / attach_to(..., trace=True)  -> console trace middleware
-#   provider.selections                -> per-round RetrievalDecision history
-from agent_gantry.integrations import (
-    GantryToolBridge,             # static AF bridge + workflow builders
-    GantryApprovalMiddleware,
-    GantryObservabilityMiddleware,
-    GantryToolChoiceMiddleware,   # round-by-round tool_choice modulation
-    ToolRefresher,                # framework-agnostic multi-turn re-selection
-    fetch_framework_tools,        # legacy schema-only adapter (OpenAI-shape)
-)
-from agent_gantry.integrations.frameworks import (
-    GantryToolset,                # selection core behind every <Framework>Adapter
-    ToolSpec,                     # framework-neutral tool handle (.ainvoke/.invoke)
-    spec_from_tool,
-)
-# One <Framework>Adapter class per framework, from the clean per-framework
-# namespace. Each exposes .select(query, limit=...) (async) and
-# .convert(spec) (staticmethod):
-from agent_gantry.langchain import LangChainAdapter
-from agent_gantry.langgraph import LangGraphAdapter
-from agent_gantry.llamaindex import LlamaIndexAdapter
-from agent_gantry.crewai import CrewAIAdapter
-from agent_gantry.pydantic_ai import PydanticAIAdapter
-from agent_gantry.openai_agents import OpenAIAgentsAdapter
-from agent_gantry.haystack import HaystackAdapter
-from agent_gantry.agno import AgnoAdapter
-from agent_gantry.strands import StrandsAdapter
-from agent_gantry.dspy import DSPyAdapter
-from agent_gantry.google_adk import GoogleADKAdapter
-from agent_gantry.agent_framework import AgentFrameworkAdapter   # Microsoft Agent Framework
-# Per-SDK LLM adapters (dialect baked in): .tools(query, limit=...)
-from agent_gantry.openai import OpenAIAdapter
-from agent_gantry.anthropic import AnthropicAdapter
-from agent_gantry.gemini import GeminiAdapter
-from agent_gantry.groq import GroqAdapter
-from agent_gantry.vertexai import VertexAIAdapter
-from agent_gantry.mistral import MistralAdapter
-from agent_gantry.query import (
-    last_user_text, last_assistant_text, last_tool_result,
-    concatenate_recent, fallback_chain,
-    keyword_focused, truncated, latest_activity,
-)
-from agent_gantry.adapters.embedders.cached import CachedEmbedder
-from agent_gantry.skills import load_skills_from_directory, load_skill   # Agent Skills (SKILL.md) loaders
-from agent_gantry.servers.mcp_server import create_mcp_server          # .streamable_http_app() / .sse_app()
-from agent_gantry.utils.registry_linter import (
-    analyze_registry, pairwise_similarity, RegistryAnalysis,
-)
-```
-
-For detailed reference on individual modules, see `references/` next to this file.

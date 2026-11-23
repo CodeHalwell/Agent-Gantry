@@ -2688,6 +2688,12 @@ class AgentGantry:
         :meth:`retrieve_skills_as_prompt` then injects only the skills that
         match the current prompt instead of every skill's metadata.
 
+        Symlinked skill directories are followed, so a library shared
+        between agents by linking each skill into place loads in full; a
+        link that loops back on itself ends there. Hidden directories under
+        ``path`` are skipped. A ``SKILL.md`` body longer than 50,000
+        characters is truncated to that for storage, with a warning.
+
         Args:
             path: A skills directory (e.g. ``~/.claude/skills``) or one
                 skill's directory.

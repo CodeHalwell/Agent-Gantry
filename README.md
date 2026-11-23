@@ -113,7 +113,7 @@ for each framework's install command, static tools, and live selection hook.
 - **Skills, retrieved by meaning:** load any Agent Skills (`SKILL.md`) directory with `gantry.add_skills_from_directory(...)` and inject only the skills relevant to each prompt.
 - **Bundled Claude Skill:** install with `agent-gantry install-skill --claude` or target a project-local skills directory.
 - **Observability:** emit retrieval/execution telemetry to the console, OpenTelemetry, or Prometheus, and track token savings with the built-in metrics helpers.
-- **Selection without embeddings:** point a decision model at the catalogue instead of a vector store. `SystemOneSelector` replaces embed-then-search for tools, skills and MCP servers; `SystemOneReranker` refines the shortlist when the catalogue is too large to send. Both fail open to semantic routing.
+- **Selection without embeddings:** point a decision model at the catalogue instead of a vector store. `SystemOneSelector` replaces embed-then-search for tools, skills and MCP servers; `SystemOneReranker` refines the shortlist when the catalogue is too large to send. A selector can return nothing when no tool fits; a reranker only reorders, so it always returns its top-k. Both fail open to semantic routing.
 
 Agent-Gantry supports Python 3.10–3.14. CrewAI's current SDK requires Python
 3.10–3.13; the `agent-frameworks` extra includes it only on those versions.

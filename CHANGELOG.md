@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`add_skills_from_directory` skipped symlinked skill directories.** The
+  recursive walk used `Path.glob("**/SKILL.md")`, which does not descend into
+  linked directories, so a skill installed as a link (the usual way to share
+  one library between agents: `~/.claude/skills/pdf -> ~/.agents/skills/pdf`)
+  was silently missing from the index, while `recursive=False` found it.
+  `iter_skill_files` now follows links on every supported Python version.
+  Each real directory is visited once, so a link that loops back into a
+  directory already walked ends there and a directory reachable by two paths
+  is loaded once. A link whose target is missing is ignored. Hidden
+  directories are still skipped by their name under the root, so a link that
+  leads into a dot-directory is followed.
+
+### Changed
+
+- **The bundled skill is split into a hub and reference files.** Its
+  `SKILL.md` body was 80,000 characters, over the 50,000-character cap this
+  library applies to skills it loads, so a registry that indexed it stored and
+  injected only the first two-thirds (`Skill 'agent-gantry' body is ...
+  truncated to 50000 for storage`). The per-framework guides, the System One
+  selection guide and the API quick-card now live in `references/` (14 new
+  files), and `SKILL.md` (about 41,000 characters) keeps what applies everywhere
+  plus an index of them. No content was removed. `agent-gantry install-skill`
+  and the wheel's `share/claude/skills/` copy include the new files.
+
+### Documentation
+
+- The selector-versus-reranker contrast added in 0.23.0 (a selector can return
+  nothing; a reranker only reorders) is now also in the README's feature list,
+  the docs site's Architecture page and the top of the bundled skill.
+
 ## [0.23.0] - 2026-11-23
 
 Two fixes to per-turn tool selection, and a rename. On the OpenAI Agents SDK,
