@@ -7,6 +7,120 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-11-23
+
+Two fixes to per-turn tool selection, and a rename. On the OpenAI Agents SDK,
+the first model request of a run now carries the selected tools on every
+supported path, and the one configuration that cannot do so fails loudly
+instead of sending a request with no tools. Per-turn queries built from a tool
+result now keep the request they are serving. `JevSelector` and `JevReranker`
+become `SystemOneSelector` and `SystemOneReranker`. It is a minor release
+because of the three behaviour changes below.
+
+**Behaviour changes.**
+
+- `OpenAIAgentsAdapter.dynamic_tools()` raises `ImportError` on
+  `openai-agents<0.23.1`. It never worked there (see Fixed); the extra's floor
+  is already 0.23.1, so this affects only environments that install an older
+  SDK another way, such as alongside CrewAI.
+- `latest_activity`, the default query generator for
+  `query_strategy="per_call"`, `ToolRefresher` and the hook-based live
+  providers, returns the latest user message plus the newest tool result where
+  it returned the tool result alone. Selections after a tool call can differ.
+- `OpenAIAgentsAdapter.run_hooks()` now also selects when the agent starts,
+  and skips a re-selection whose query has not changed.
+
+**Migrating.**
+
+- On `openai-agents<0.23.1`, replace `dynamic_tools()` with
+  `adapter.run(agent, input)`, `adapter.session(agent).run(input)` or
+  `adapter.refresh(agent, input)` before `Runner.run`, or upgrade the SDK
+  (`pip install 'agent-gantry[openai-agents]'`).
+- To keep a tool result as the whole query, pass
+  `query_generator=functools.partial(latest_activity, include_request=False)`.
+  Worth doing for a pipeline whose results name the next step and should rank
+  it first, or one running at `limit=1`: with the request in the query, the
+  tool that has just run can still rank first with the next one behind it.
+- Rename `JevSelector` → `SystemOneSelector`, `JevReranker` →
+  `SystemOneReranker`, the `jev` extra → `system-one`, and `type="jev"` →
+  `type="system_one"` at your convenience: every old spelling still works and
+  emits a `DeprecationWarning`.
+
+### Changed
+
+- **`JevSelector` and `JevReranker` are now `SystemOneSelector` and
+  `SystemOneReranker`.** They ask a "System One" decision model; TypeSafe's
+  Jev is the default (`jev-latest`), not the only one, and `model=` names
+  another. Renamed with them: `JevClient`, `JevVerdict` and
+  `JevIncompleteResponseError` (`SystemOneClient`, `SystemOneVerdict`,
+  `SystemOneIncompleteResponseError`); the modules
+  `adapters/selectors/jev.py`, `adapters/rerankers/jev.py` and
+  `adapters/jev_client.py` (`system_one.py`, `system_one.py`,
+  `system_one_client.py`); the `jev` extra (`system-one`); and the config
+  value `type="jev"` (`type="system_one"`) on `SelectorConfig` and
+  `RerankerConfig`. Log lines read `System One selection failed, falling
+  back:` where they read `Jev selection failed, falling back:`. The example
+  scripts are `system_one_selection_demo.py`,
+  `system_one_threshold_tuning_demo.py` and `system_one_mcp_selection_demo.py`.
+- `latest_activity` appends the newest tool result to the latest user message
+  instead of returning the result on its own, the way the first-class per-turn
+  adapters (Pydantic AI, OpenAI Agents `dynamic_tools`, Google ADK) already
+  composed their queries. An opaque result (a number, an ID, a secret) is
+  still left out, and a history with no user message still yields the result
+  alone. `include_request=False` restores the result-only query.
+- `examples/frameworks/verify_all.py` and `multi_turn_refresher_example.py`
+  simulate an autonomous agent that calls the best-ranked tool it has not
+  already run, instead of always the top-ranked one, and `verify_all` now
+  requires the pipeline's stages to be reached in order.
+
+### Deprecated
+
+- `JevSelector`, `JevReranker`, `JevClient`, `JevVerdict`,
+  `JevIncompleteResponseError`, the `agent_gantry.adapters.selectors.jev`,
+  `agent_gantry.adapters.rerankers.jev` and `agent_gantry.adapters.jev_client`
+  modules, the `jev` extra and `type="jev"`. Each resolves to its System One
+  replacement (the same class, so `isinstance` checks keep matching) and emits
+  a `DeprecationWarning`. `agent-gantry[jev]` installs the same dependencies as
+  `agent-gantry[system-one]`.
+
+### Fixed
+
+- **OpenAI Agents SDK: `run_hooks()` offered no tools on the first model
+  request of a run.** The hooks re-selected only in `on_llm_start`, which the
+  SDK fires after it has listed the turn's tools, so a selection took effect a
+  turn late and a one-turn task never saw a tool. They now also select in
+  `on_agent_start`, which `openai-agents>=0.23.1` fires before listing the
+  tools, so request one carries the selection for the run's input.
+  `adapter.run()` and `adapter.session().run()` start their hooks from the
+  selection they have already made rather than repeating it.
+- **OpenAI Agents SDK: `dynamic_tools()` offered no tools on the first model
+  request on `openai-agents<0.23.1`.** Those SDKs list an agent's tools before
+  they record the turn's input, so every `is_enabled` gate saw an empty prompt
+  and resolved `False`; on 0.4.x, which has no `turn_input` at all, no tool was
+  ever enabled. The adapter checked only that `FunctionTool.is_enabled`
+  existed. `dynamic_tools()` now raises `ImportError` there, naming the
+  installed version and the paths that work on it. On those SDKs `run_hooks()`
+  cannot reach the first request either: it emits a `RuntimeWarning` when a
+  run starts with tools other than the ones its input selects, and stays quiet
+  when the caller selected first with `adapter.refresh(agent, input)`.
+- **A bare tool result no longer becomes the whole per-turn query.** With
+  `GantryContextProvider(query_strategy="per_call")` a two-step task queried
+  its second round on the first tool's output alone (`"desserts"`), which
+  surfaced an unrelated tool and dropped the one the rest of the request
+  needed. The alphabetic-token guard from 0.18.0 does not catch a result that
+  is a real word. See `latest_activity` under Changed.
+
+### Documentation
+
+- The selector and reranker READMEs, the README and the bundled skill now say
+  that a reranker cannot decline: `SystemOneReranker` orders the shortlist and
+  returns its top-k however low the scores, so only `SystemOneSelector`, which
+  gates each entry at `threshold`, can return nothing for a query no tool
+  serves.
+- The OpenAI Agents docs describe what each live path does on the first
+  request and on older SDKs, and recommend asserting that a tool's handler ran
+  rather than checking the answer text.
+
 ## [0.22.0] - 2026-11-21
 
 Every agent framework Agent-Gantry supports is now first-class. Gantry plugs
@@ -5238,7 +5352,8 @@ adapters, and the provider dialects agree with it.
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.19.0...v0.20.0

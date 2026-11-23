@@ -15,7 +15,7 @@ attaches the distributions and SHA-256 checksums to a GitHub Release.
 3. Check the metadata and review the exact notes that GitHub will receive:
 
    ```bash
-   python scripts/check_release.py --tag v0.22.0 --notes-file /tmp/release-notes.md
+   python scripts/check_release.py --tag v0.23.0 --notes-file /tmp/release-notes.md
    uv lock --check
    ```
 
@@ -82,6 +82,6 @@ in a fresh environment:
 
 ```bash
 uv venv /tmp/gantry-release-check
-uv pip install --python /tmp/gantry-release-check/bin/python agent-gantry==0.22.0
+uv pip install --python /tmp/gantry-release-check/bin/python agent-gantry==0.23.0
 /tmp/gantry-release-check/bin/python -I -c 'import agent_gantry; print(agent_gantry.__version__)'
 ```
