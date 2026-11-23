@@ -330,7 +330,7 @@ def test_symlinked_skill_directories_are_loaded(tmp_path: Path) -> None:
     _symlink(root / "relative-link", Path("..") / "library" / "relative-link")
     _symlink(root / "pack", library / "pack")  # a linked directory *of* skills
 
-    found = [str(f.relative_to(root).parent) for f in iter_skill_files(root)]
+    found = [f.relative_to(root).parent.as_posix() for f in iter_skill_files(root)]
     assert found == sorted(["absolute-link", "relative-link", "pack/inner", "real"])
     assert {s.name for s in load_skills_from_directory(root)} == {
         "absolute-link",
@@ -362,7 +362,7 @@ def test_symlink_cycles_end_instead_of_looping(tmp_path: Path) -> None:
     _symlink(root / "outer" / "inner" / "back-to-parent", root / "outer")
     _symlink(root / "self", root / "self")  # resolves to nothing
 
-    found = [str(f.relative_to(root).parent) for f in iter_skill_files(root)]
+    found = [f.relative_to(root).parent.as_posix() for f in iter_skill_files(root)]
     assert found == ["outer", "outer/inner"]
 
 

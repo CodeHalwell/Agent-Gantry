@@ -191,7 +191,7 @@ def test_bundled_skill_fits_the_loader_body_limit(caplog: pytest.LogCaptureFixtu
 def test_bundled_skill_links_resolve() -> None:
     """Every relative link in the skill names a file that ships, and every
     ``#anchor`` a heading that exists in the file it points into."""
-    root = skill_path()
+    root = skill_path().resolve()  # links are resolved below; key by the same form
     files = [root / "SKILL.md", *sorted((root / "references").glob("*.md"))]
     assert len(files) > 2
     anchors = {f: _anchors(f.read_text(encoding="utf-8")) for f in files}
