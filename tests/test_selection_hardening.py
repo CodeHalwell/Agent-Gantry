@@ -223,8 +223,8 @@ class TestQueryStrategies:
         assert last_user_text(messages) == "weather in Paris"
         # last_tool_result names the tool it came from, as it does for dicts
         assert last_tool_result(messages) == "result of get_weather: sunny 21C"
-        # latest_activity reports the newest activity's own text, unprefixed
-        assert latest_activity(messages) == "sunny 21C"
+        # latest_activity appends the newest result, unprefixed, to the request
+        assert latest_activity(messages) == "weather in Paris\nsunny 21C"
         assert tool_names_used(messages) == ["get_weather"]
 
     def test_zero_caps_return_nothing(self) -> None:

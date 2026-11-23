@@ -366,8 +366,9 @@ def latest_activity(
     messages: Iterable[Any] | None,
     *,
     max_chars: int = 500,
+    include_request: bool = True,
 ) -> str:
-    """Return text from the single most recent *activity* message.
+    """Return the retrieval query for the most recent *activity*.
 
     This is the recency-aware generator: it drives retrieval from whatever just
     happened, regardless of role — so it serves **both** modes of agent
@@ -378,20 +379,42 @@ def latest_activity(
       pivots → tools pivot.)
     - **Autonomous agents / tool pipelines.** When the agent is chaining tools
       with no fresh user input, the newest message is the last tool's result,
-      so the *next* tool is selected from what the previous one produced.
+      so the *next* tool is selected from the request **plus** what the
+      previous tool produced.
 
-    It walks from the end of the conversation and returns the text of the first
-    ``user`` or ``tool``/``function`` message it finds (skipping the empty
-    tool-call stub ``assistant`` messages many frameworks emit). User text is
-    returned verbatim; a tool result is returned as its raw content snippet
-    (capped at ``max_chars``) so the *content* — not the tool's name — drives
-    the next selection. Opaque result values such as numbers, IDs, and random
-    secrets fall back to the latest user text because they carry no useful
-    retrieval signal. Falls back to the latest assistant text, then empty.
+    It walks from the end of the conversation to the first ``user`` or
+    ``tool``/``function`` message (skipping the empty tool-call stub
+    ``assistant`` messages many frameworks emit). User text is returned
+    verbatim. A tool result is returned as ``"<latest user text>\n<result>"``,
+    the result capped at ``max_chars``: its *content* — not the tool's name —
+    steers the next selection, while the request it is serving stays in the
+    query. A result on its own is often data rather than a hand-off — a bare
+    value (``"desserts"``), a fetched document — that says nothing about the
+    task and would route to unrelated tools, dropping the ones the rest of the
+    request still needs. With no user message in the history the result is
+    returned alone.
+
+    Keeping the request has a cost worth knowing: it goes on matching the tool
+    it already matched, so a finished step can still rank first with the next
+    one just behind it. That is harmless at the usual ``limit`` of 3-5, where
+    the model chooses among the surfaced tools. For a pipeline whose results
+    name the next step and should rank it first (or one running at
+    ``limit=1``), pass ``include_request=False`` to query on the result alone::
+
+        from functools import partial
+
+        ToolRefresher(gantry, query_generator=partial(latest_activity, include_request=False))
+
+    Opaque result values such as numbers, IDs, and random secrets carry no
+    retrieval signal at all and are left out: the latest user text is returned
+    on its own. Falls back to the latest assistant text, then empty.
 
     Args:
         messages: Conversation history (most recent message last).
         max_chars: Cap on characters taken from a tool result. Defaults to 500.
+        include_request: Prefix a tool result with the latest user message
+            (the default). ``False`` returns the result on its own, as every
+            release before 0.23.0 did.
 
     Returns:
         The driving query text for the current turn, or the empty string.
@@ -408,10 +431,11 @@ def latest_activity(
             text = _msg_text(msg)
             if text.strip():
                 snippet = text.strip()[:max_chars]
+                request = last_user_text(messages)
                 tokens = (token.strip(string.punctuation) for token in snippet.split())
                 if any(len(token) >= 2 and token.isalpha() for token in tokens):
-                    return snippet
-                return last_user_text(messages) or last_assistant_text(messages)
+                    return f"{request}\n{snippet}" if request and include_request else snippet
+                return request or last_assistant_text(messages)
     # Nothing concrete in the tail — fall back to the model's latest planning.
     return last_assistant_text(messages)
 

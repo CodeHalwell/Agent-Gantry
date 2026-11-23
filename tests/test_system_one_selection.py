@@ -1,5 +1,5 @@
 """
-Selection through TypeSafe's Jev model, as an alternative to semantic matching.
+Selection through a System One decision model, as an alternative to semantic matching.
 
 Runs against the real ``typesafe_sdk`` question and response models — the SDK
 is days old and explicitly early access, so building genuine ``Noul`` objects
@@ -13,14 +13,14 @@ from typing import Any
 
 import pytest
 
-from agent_gantry.adapters.jev_client import (
-    JevClient,
-    JevVerdict,
+from agent_gantry.adapters.rerankers.system_one import SystemOneReranker
+from agent_gantry.adapters.selectors.system_one import SystemOneSelector
+from agent_gantry.adapters.system_one_client import (
+    SystemOneClient,
+    SystemOneVerdict,
     candidate_payload,
     estimate_tokens,
 )
-from agent_gantry.adapters.rerankers.jev import JevReranker
-from agent_gantry.adapters.selectors.jev import JevSelector
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 from agent_gantry.schema.selection import SelectionCandidate, SelectionResult
 from agent_gantry.schema.tool import ToolDefinition
@@ -77,21 +77,21 @@ class _StubTypeSafe:
         raise AssertionError("a supplied client must not be closed by the wrapper")
 
 
-class _StubJevClient:
-    """Stands in for :class:`JevClient` at the verdict level."""
+class _StubSystemOneClient:
+    """Stands in for :class:`SystemOneClient` at the verdict level."""
 
-    def __init__(self, *verdicts: JevVerdict) -> None:
+    def __init__(self, *verdicts: SystemOneVerdict) -> None:
         self._verdicts = list(verdicts)
         self.scored: list[list[str]] = []
 
-    async def score(self, state: Any, candidates: Any, question: str) -> JevVerdict:
+    async def score(self, state: Any, candidates: Any, question: str) -> SystemOneVerdict:
         self.scored.append([c.id for c in candidates])
-        return self._verdicts.pop(0) if self._verdicts else JevVerdict()
+        return self._verdicts.pop(0) if self._verdicts else SystemOneVerdict()
 
 
-def _client(scores: dict[str, float], **kwargs: Any) -> tuple[JevClient, _StubTypeSafe]:
+def _client(scores: dict[str, float], **kwargs: Any) -> tuple[SystemOneClient, _StubTypeSafe]:
     stub = _StubTypeSafe(scores, **kwargs)
-    return JevClient(client=stub), stub
+    return SystemOneClient(client=stub), stub
 
 
 def _tool(name: str, description: str | None = None) -> ToolDefinition:
@@ -141,7 +141,7 @@ def test_token_estimates_grow_with_payload_size() -> None:
 
 
 def test_candidates_are_split_into_requests_that_fit_the_budget() -> None:
-    client = JevClient(client=_StubTypeSafe({}), token_budget=120)
+    client = SystemOneClient(client=_StubTypeSafe({}), token_budget=120)
     candidates = [
         SelectionCandidate(id=str(i), name=f"tool_{i}", description="d " * 40)
         for i in range(10)
@@ -159,7 +159,7 @@ def test_a_candidate_too_large_for_the_budget_still_gets_sent() -> None:
     Truncation already bounds how large one candidate can be, so the remedy is
     a batch of its own rather than an exclusion the caller never hears about.
     """
-    client = JevClient(client=_StubTypeSafe({}), token_budget=1)
+    client = SystemOneClient(client=_StubTypeSafe({}), token_budget=1)
     batches = client.batch("q", [_candidate("a"), _candidate("b")], "?")
     assert [c.id for batch in batches for c in batch] == ["a", "b"]
 
@@ -198,7 +198,7 @@ async def test_one_failed_batch_discards_the_whole_pass() -> None:
     zero, so keeping the batches that succeeded would silently bury everything
     in the batch that did not.
     """
-    client = JevClient(
+    client = SystemOneClient(
         client=_StubTypeSafe({"a": 0.9, "b": 0.8}, fail_on_call=2), token_budget=1
     )
     verdict = await client.score("q", [_candidate("a"), _candidate("b")], "help?")
@@ -255,7 +255,7 @@ async def test_the_reranker_reorders_by_probability() -> None:
     client, _stub = _client({"default.beta": 0.95, "default.alpha": 0.05})
     # The stub keys off the name the model is shown, which deliberately has no
     # version in it even though the id does.
-    reranker = JevReranker(client=client)
+    reranker = SystemOneReranker(client=client)
     tools = [(_tool("alpha"), 0.9), (_tool("beta"), 0.1)]
 
     ranked = await reranker.rerank("do the beta thing", tools, top_k=2)
@@ -266,7 +266,7 @@ async def test_the_reranker_reorders_by_probability() -> None:
 
 async def test_the_reranker_keeps_search_order_when_the_api_fails() -> None:
     client, _stub = _client({}, fail_on_call=1)
-    reranker = JevReranker(client=client)
+    reranker = SystemOneReranker(client=client)
     tools = [(_tool("alpha"), 0.9), (_tool("beta"), 0.1)]
 
     ranked = await reranker.rerank("q", tools, top_k=2)
@@ -277,7 +277,7 @@ async def test_the_reranker_keeps_search_order_when_the_api_fails() -> None:
 
 async def test_unscored_tools_rank_below_scored_ones_but_are_not_dropped() -> None:
     client, _stub = _client({"default.beta": 0.4})
-    reranker = JevReranker(client=client)
+    reranker = SystemOneReranker(client=client)
     tools = [(_tool("alpha"), 0.9), (_tool("beta"), 0.1)]
 
     ranked = await reranker.rerank("q", tools, top_k=2)
@@ -289,16 +289,16 @@ async def test_the_reranker_accepts_a_client_predating_require_all() -> None:
     """A stub written against the published three-argument ``score``.
 
     ``client`` is documented as taking "a compatible stub", and ``require_all``
-    was added to :meth:`JevClient.score` after that contract was published.
+    was added to :meth:`SystemOneClient.score` after that contract was published.
     Passing it blindly turns such a stub into a ``TypeError`` raised straight
     out of ``rerank()`` — in the one path that promises a failing provider
     costs precision and never the catalogue.
     """
     # Keyed by qualified_name, which is what the reranker looks up; the
     # ``_client`` helper's map is keyed by the name shown to the model instead,
-    # because JevClient does that translation.
-    client = _StubJevClient(JevVerdict(scores={"default.beta:1.0.0": 0.9}))
-    reranker = JevReranker(client=client)
+    # because SystemOneClient does that translation.
+    client = _StubSystemOneClient(SystemOneVerdict(scores={"default.beta:1.0.0": 0.9}))
+    reranker = SystemOneReranker(client=client)
     tools = [(_tool("alpha"), 0.9), (_tool("beta"), 0.1)]
 
     ranked = await reranker.rerank("q", tools, top_k=2)
@@ -309,7 +309,7 @@ async def test_the_reranker_accepts_a_client_predating_require_all() -> None:
 
 async def test_the_reranker_returns_nothing_for_nothing() -> None:
     client, stub = _client({})
-    assert await JevReranker(client=client).rerank("q", [], top_k=5) == []
+    assert await SystemOneReranker(client=client).rerank("q", [], top_k=5) == []
     assert stub.calls == [], "an empty shortlist must not cost a request"
 
 
@@ -320,7 +320,7 @@ async def test_the_reranker_returns_nothing_for_nothing() -> None:
 
 async def test_the_selector_keeps_only_candidates_over_the_threshold() -> None:
     client, _stub = _client({"a": 0.91, "b": 0.42, "c": 0.02})
-    selector = JevSelector(client=client, threshold=0.3)
+    selector = SystemOneSelector(client=client, threshold=0.3)
 
     result = await selector.select(
         "q", [_candidate("a"), _candidate("b"), _candidate("c")], limit=10
@@ -335,7 +335,7 @@ async def test_the_selector_keeps_only_candidates_over_the_threshold() -> None:
 
 async def test_the_selector_respects_the_limit() -> None:
     client, _stub = _client({"a": 0.9, "b": 0.8, "c": 0.7})
-    selector = JevSelector(client=client, threshold=0.0)
+    selector = SystemOneSelector(client=client, threshold=0.0)
 
     result = await selector.select(
         "q", [_candidate("a"), _candidate("b"), _candidate("c")], limit=2
@@ -346,7 +346,7 @@ async def test_the_selector_respects_the_limit() -> None:
 
 async def test_the_selector_falls_back_rather_than_raising() -> None:
     client, _stub = _client({}, fail_on_call=1)
-    result = await JevSelector(client=client).select("q", [_candidate("a")], limit=5)
+    result = await SystemOneSelector(client=client).select("q", [_candidate("a")], limit=5)
 
     assert result.fallback is True
     assert result.selected == []
@@ -357,11 +357,11 @@ async def test_a_large_grouped_catalogue_narrows_by_group_first() -> None:
     members = [_candidate(f"t{i}", group="alpha") for i in range(5)]
     members += [_candidate(f"u{i}", group="beta") for i in range(5)]
 
-    stub = _StubJevClient(
-        JevVerdict(scores={"alpha": 0.9, "beta": 0.1}),
-        JevVerdict(scores={f"t{i}": 0.8 for i in range(5)}),
+    stub = _StubSystemOneClient(
+        SystemOneVerdict(scores={"alpha": 0.9, "beta": 0.1}),
+        SystemOneVerdict(scores={f"t{i}": 0.8 for i in range(5)}),
     )
-    selector = JevSelector(client=stub, group_after=5, max_groups=1)
+    selector = SystemOneSelector(client=stub, group_after=5, max_groups=1)
 
     result = await selector.select("q", members, limit=10)
 
@@ -379,12 +379,12 @@ async def test_the_group_pass_is_not_gated_by_the_threshold() -> None:
     members = [_candidate(f"t{i}", group="alpha") for i in range(3)]
     members += [_candidate(f"u{i}", group="beta") for i in range(3)]
 
-    stub = _StubJevClient(
+    stub = _StubSystemOneClient(
         # Both groups sit well under the 0.3 threshold.
-        JevVerdict(scores={"alpha": 0.05, "beta": 0.01}),
-        JevVerdict(scores={"t0": 0.99}),
+        SystemOneVerdict(scores={"alpha": 0.05, "beta": 0.01}),
+        SystemOneVerdict(scores={"t0": 0.99}),
     )
-    selector = JevSelector(client=stub, threshold=0.3, group_after=2, max_groups=1)
+    selector = SystemOneSelector(client=stub, threshold=0.3, group_after=2, max_groups=1)
 
     result = await selector.select("q", members, limit=10)
 
@@ -395,8 +395,8 @@ async def test_the_group_pass_is_not_gated_by_the_threshold() -> None:
 async def test_a_failed_group_pass_falls_back_rather_than_scoring_everything() -> None:
     """Scoring every member instead would be the budget blow-out this avoids."""
     members = [_candidate(f"t{i}", group=f"g{i % 3}") for i in range(9)]
-    stub = _StubJevClient(JevVerdict(fallback=True, reason="429"))
-    selector = JevSelector(client=stub, group_after=2)
+    stub = _StubSystemOneClient(SystemOneVerdict(fallback=True, reason="429"))
+    selector = SystemOneSelector(client=stub, group_after=2)
 
     result = await selector.select("q", members, limit=10)
 
@@ -406,7 +406,7 @@ async def test_a_failed_group_pass_falls_back_rather_than_scoring_everything() -
 
 async def test_an_ungrouped_catalogue_stays_single_stage() -> None:
     client, stub = _client({f"t{i}": 0.9 for i in range(6)})
-    selector = JevSelector(client=client, group_after=2)
+    selector = SystemOneSelector(client=client, group_after=2)
 
     result = await selector.select(
         "q", [_candidate(f"t{i}") for i in range(6)], limit=10
@@ -418,8 +418,8 @@ async def test_an_ungrouped_catalogue_stays_single_stage() -> None:
 
 async def test_the_selector_returns_nothing_for_nothing() -> None:
     client, stub = _client({})
-    assert (await JevSelector(client=client).select("q", [], limit=5)).selected == []
-    assert (await JevSelector(client=client).select("q", [_candidate("a")], 0)).selected == []
+    assert (await SystemOneSelector(client=client).select("q", [], limit=5)).selected == []
+    assert (await SystemOneSelector(client=client).select("q", [_candidate("a")], 0)).selected == []
     assert stub.calls == []
 
 
@@ -644,7 +644,7 @@ async def test_a_catalogue_over_the_ceiling_falls_back_rather_than_truncating() 
     which has no such ceiling — never gets a look in, so a tool registered past
     the ceiling could never be retrieved however relevant it was.
     """
-    selector = JevSelector(client=_StubJevClient(), max_candidates=3)
+    selector = SystemOneSelector(client=_StubSystemOneClient(), max_candidates=3)
     candidates = [_candidate(f"t{i}") for i in range(10)]
 
     result = await selector.select("q", candidates, limit=5)
@@ -660,11 +660,11 @@ async def test_an_ungrouped_candidate_does_not_break_the_two_stage_path() -> Non
     The ``ValidationError`` escaped ``select()`` instead of failing open, so a
     single ungrouped entry in a large catalogue took the caller's tools away.
     """
-    stub = _StubJevClient(
-        JevVerdict(scores={"g1": 0.9, "g2": 0.4, "(ungrouped)": 0.2}),
-        JevVerdict(scores={"a": 0.8}),
+    stub = _StubSystemOneClient(
+        SystemOneVerdict(scores={"g1": 0.9, "g2": 0.4, "(ungrouped)": 0.2}),
+        SystemOneVerdict(scores={"a": 0.8}),
     )
-    selector = JevSelector(client=stub, group_after=2, max_groups=1)
+    selector = SystemOneSelector(client=stub, group_after=2, max_groups=1)
     candidates = [
         _candidate("a", group="g1"),
         _candidate("b", group="g2"),
@@ -685,7 +685,7 @@ async def test_an_adapter_defect_falls_open_like_a_provider_failure() -> None:
         async def score(self, state: Any, candidates: Any, question: str) -> Any:
             raise ValueError("adapter defect")
 
-    result = await JevSelector(client=_Exploding()).select("q", [_candidate("a")], limit=5)
+    result = await SystemOneSelector(client=_Exploding()).select("q", [_candidate("a")], limit=5)
 
     assert result.fallback is True
     assert "ValueError" in (result.reason or "")
@@ -800,7 +800,7 @@ def test_the_question_is_budgeted_once_per_candidate_not_once_per_batch() -> Non
     candidates = [SelectionCandidate(id=f"t{i}", name=f"t{i}") for i in range(20)]
 
     budget = estimate_tokens("q") + estimate_tokens(question) * 4
-    client = JevClient(client=_StubTypeSafe({}), token_budget=budget)
+    client = SystemOneClient(client=_StubTypeSafe({}), token_budget=budget)
     batches = client.batch("q", candidates, question)
 
     assert len(batches) > 1, "a long question repeated 20 times must not fit one request"
@@ -818,11 +818,11 @@ async def test_each_catalogue_is_asked_about_the_thing_it_holds() -> None:
     asked: list[str] = []
 
     class _Recording:
-        async def score(self, state: Any, candidates: Any, question: str) -> JevVerdict:
+        async def score(self, state: Any, candidates: Any, question: str) -> SystemOneVerdict:
             asked.append(question)
-            return JevVerdict(scores={c.id: 0.9 for c in candidates})
+            return SystemOneVerdict(scores={c.id: 0.9 for c in candidates})
 
-    selector = JevSelector(client=_Recording())
+    selector = SystemOneSelector(client=_Recording())
     for kind in ("tool", "skill", "mcp_server"):
         await selector.select("q", [_candidate("a")], limit=1, kind=kind)
 
@@ -836,11 +836,11 @@ async def test_an_explicit_question_overrides_every_catalogue() -> None:
     asked: list[str] = []
 
     class _Recording:
-        async def score(self, state: Any, candidates: Any, question: str) -> JevVerdict:
+        async def score(self, state: Any, candidates: Any, question: str) -> SystemOneVerdict:
             asked.append(question)
-            return JevVerdict()
+            return SystemOneVerdict()
 
-    selector = JevSelector(client=_Recording(), question="my own question")
+    selector = SystemOneSelector(client=_Recording(), question="my own question")
     for kind in ("tool", "skill", "mcp_server"):
         await selector.select("q", [_candidate("a")], limit=1, kind=kind)
 
@@ -879,7 +879,7 @@ async def test_a_half_answered_response_falls_back_instead_of_ranking_the_subset
     """
     import types as _types
 
-    from agent_gantry.adapters.jev_client import JevClient
+    from agent_gantry.adapters.system_one_client import SystemOneClient
 
     class _Answer:
         def __init__(self, noul: float) -> None:
@@ -907,7 +907,7 @@ async def test_a_half_answered_response_falls_back_instead_of_ranking_the_subset
         for i in range(3)
     ]
 
-    client = JevClient()
+    client = SystemOneClient()
     client._client = _Client()
     client._sdk = pytest.importorskip("typesafe_sdk")
 
@@ -1193,3 +1193,124 @@ async def test_the_cosine_threshold_default_does_not_cut_selector_probabilities(
         assert tightened.tools == []
     finally:
         await gantry.close()
+
+
+# ---------------------------------------------------------------------------
+# Renamed in 0.23.0: Jev is the default model, not the only one, so the classes
+# are named for what they ask (a System One decision model). Every pre-0.23.0
+# spelling keeps working and says what to write instead.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("module", "old", "new"),
+    [
+        ("agent_gantry", "JevSelector", "SystemOneSelector"),
+        ("agent_gantry", "JevReranker", "SystemOneReranker"),
+        ("agent_gantry.adapters.selectors", "JevSelector", "SystemOneSelector"),
+        ("agent_gantry.adapters.rerankers", "JevReranker", "SystemOneReranker"),
+        ("agent_gantry.adapters.selectors.jev", "JevSelector", "SystemOneSelector"),
+        ("agent_gantry.adapters.rerankers.jev", "JevReranker", "SystemOneReranker"),
+        ("agent_gantry.adapters.jev_client", "JevClient", "SystemOneClient"),
+        ("agent_gantry.adapters.jev_client", "JevVerdict", "SystemOneVerdict"),
+        (
+            "agent_gantry.adapters.jev_client",
+            "JevIncompleteResponseError",
+            "SystemOneIncompleteResponseError",
+        ),
+    ],
+)
+def test_jev_names_are_deprecated_aliases(module: str, old: str, new: str) -> None:
+    import importlib
+
+    import agent_gantry.adapters.rerankers.system_one as rerankers
+    import agent_gantry.adapters.selectors.system_one as selectors
+    import agent_gantry.adapters.system_one_client as client
+
+    current = next(getattr(m, new) for m in (selectors, rerankers, client) if hasattr(m, new))
+    with pytest.warns(DeprecationWarning, match=rf"{old} is deprecated.*{new}"):
+        alias = getattr(importlib.import_module(module), old)
+    # The same class, not a subclass: isinstance checks and except clauses
+    # written against either name keep matching.
+    assert alias is current
+
+
+def test_old_module_paths_still_expose_their_constants() -> None:
+    import agent_gantry.adapters.selectors.jev as old_selectors
+    from agent_gantry.adapters.selectors.system_one import DEFAULT_THRESHOLD
+
+    with pytest.warns(DeprecationWarning):
+        assert old_selectors.DEFAULT_THRESHOLD == DEFAULT_THRESHOLD
+    with pytest.raises(AttributeError):
+        old_selectors.no_such_name  # noqa: B018
+
+
+def test_new_names_do_not_warn() -> None:
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        import agent_gantry
+        from agent_gantry.adapters.rerankers import SystemOneReranker
+        from agent_gantry.adapters.selectors import SystemOneSelector
+
+        assert agent_gantry.SystemOneSelector is SystemOneSelector
+        assert agent_gantry.SystemOneReranker is SystemOneReranker
+
+
+def test_config_type_jev_loads_as_system_one() -> None:
+    """A stored config written before the rename keeps loading."""
+    from agent_gantry.schema.config import RerankerConfig, SelectorConfig
+
+    assert SelectorConfig().type == "system_one"
+    with pytest.warns(DeprecationWarning, match='type="system_one"'):
+        assert SelectorConfig(type="jev").type == "system_one"
+    with pytest.warns(DeprecationWarning, match='type="system_one"'):
+        assert RerankerConfig.model_validate({"type": "jev"}).type == "system_one"
+
+
+def test_config_type_jev_still_builds_the_backends() -> None:
+    from agent_gantry.adapters.rerankers.system_one import SystemOneReranker
+    from agent_gantry.adapters.selectors.system_one import SystemOneSelector
+    from agent_gantry.core.factories import build_reranker, build_selector
+    from agent_gantry.schema.config import RerankerConfig, SelectorConfig
+
+    with pytest.warns(DeprecationWarning):
+        selector_config = SelectorConfig(enabled=True, type="jev")
+        reranker_config = RerankerConfig(enabled=True, type="jev")
+    assert isinstance(build_selector(selector_config), SystemOneSelector)
+    assert isinstance(build_reranker(reranker_config), SystemOneReranker)
+
+
+async def test_reranker_cannot_decline_where_the_selector_can() -> None:
+    """Same model, same low scores: the selector returns nothing, the reranker top-k.
+
+    The reranker orders a shortlist and never compares a probability with a
+    threshold, so a reranker-backed setup has no way to answer "none of these".
+    """
+    from agent_gantry.adapters.rerankers.system_one import SystemOneReranker
+    from agent_gantry.adapters.selectors.system_one import SystemOneSelector
+    from agent_gantry.adapters.system_one_client import SystemOneVerdict
+    from agent_gantry.schema.selection import SelectionCandidate
+    from agent_gantry.schema.tool import ToolDefinition
+
+    tools = [
+        ToolDefinition(name=name, description=f"{name} tool", parameters_schema={})
+        for name in ("add_numbers", "reverse_text", "count_words")
+    ]
+    candidates = [SelectionCandidate.from_tool(tool) for tool in tools]
+
+    class NothingFits:
+        """A decision model that finds every candidate irrelevant."""
+
+        async def score(self, state, candidates, question, **kwargs):
+            return SystemOneVerdict(scores={c.id: 0.02 for c in candidates}, requests=1)
+
+    query = "what is the capital of France?"
+    selected = await SystemOneSelector(client=NothingFits()).select(query, candidates, limit=2)
+    reranked = await SystemOneReranker(client=NothingFits()).rerank(
+        query, [(tool, 0.4) for tool in tools], top_k=2
+    )
+
+    assert selected.selected == [] and not selected.fallback
+    assert len(reranked) == 2

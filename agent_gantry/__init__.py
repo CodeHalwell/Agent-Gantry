@@ -92,14 +92,22 @@ def __getattr__(name: str) -> "Any":
         from agent_gantry.adapters.tool_spec import round_trip
 
         return round_trip.StreamingToolCallAccumulator
-    if name == "JevReranker":
-        from agent_gantry.adapters.rerankers.jev import JevReranker
+    if name == "SystemOneReranker":
+        from agent_gantry.adapters.rerankers.system_one import SystemOneReranker
 
-        return JevReranker
-    if name == "JevSelector":
-        from agent_gantry.adapters.selectors.jev import JevSelector
+        return SystemOneReranker
+    if name == "SystemOneSelector":
+        from agent_gantry.adapters.selectors.system_one import SystemOneSelector
 
-        return JevSelector
+        return SystemOneSelector
+    if name in ("JevReranker", "JevSelector"):
+        # Renamed in 0.23.0: Jev is the default model behind these, not the
+        # only one. The old names resolve to the same classes.
+        from agent_gantry._deprecation import warn_renamed
+
+        target = "SystemOne" + name[len("Jev") :]
+        warn_renamed(f"agent_gantry.{name}", f"agent_gantry.{target}")
+        return __getattr__(target)
     if name == "reset_sse_shutdown_latch":
         try:
             from agent_gantry.servers.mcp_server import reset_sse_shutdown_latch
@@ -134,8 +142,8 @@ __all__ = [
     "AgentGantry",
     "StreamingToolCallAccumulator",
     "GantryContextProvider",
-    "JevReranker",
-    "JevSelector",
+    "SystemOneReranker",
+    "SystemOneSelector",
     "MissingRequiredToolError",
     "RetrievalCandidate",
     "RetrievalDecision",

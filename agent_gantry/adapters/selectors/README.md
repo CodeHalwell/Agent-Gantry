@@ -7,8 +7,11 @@ relevant. No embeddings, no vector store, no sync step.
 ## Modules
 
 - `base.py`: Declares the `SelectorAdapter` protocol.
-- `jev.py`: `JevSelector`, backed by [TypeSafe's Jev](https://docs.typesafe.ai) — a "System One"
-  model that returns typed decisions with calibrated probabilities rather than text.
+- `system_one.py`: `SystemOneSelector`, backed by a "System One" decision model — one that returns
+  typed decisions with calibrated probabilities rather than text. The default is
+  [TypeSafe's Jev](https://docs.typesafe.ai) (`jev-latest`); `model=` names a different one, and
+  `client=` accepts any object with the same `score()` contract. (Named `JevSelector` before 0.23.0;
+  that name still imports, with a `DeprecationWarning`.)
 
 ## When to use one
 
@@ -18,6 +21,7 @@ relevant. No embeddings, no vector store, no sync step.
 | Setup | Embedder + vector store + sync | An API key |
 | Recall of paraphrases | Good | Good |
 | Understands negation, scoping, "not X" | Poor | Good |
+| Can return nothing when nothing fits | No | Yes (the threshold) |
 | Catalogue ceiling | Millions | Tens to a few hundred |
 
 Measured on one 12-tool catalogue and 13 queries, through the real retrieval path, with `limit=2`.
@@ -28,8 +32,8 @@ to matter more than anything else here.
 |---|---|---|---|---|
 | `all-MiniLM-L6-v2` (the default) | 10/11 | 16 | 0/2 | 9 ms |
 | `nomic-embed-text-v1.5` | 10/11 | 16 | 0/2 | 13 ms |
-| `JevSelector` (threshold 0.3) | 11/11 | 3 | 0/2 | 251 ms |
-| `JevSelector` (threshold 0.5) | 10/11 | 1 | 1/2 | 256 ms |
+| `SystemOneSelector` (threshold 0.3) | 11/11 | 3 | 0/2 | 251 ms |
+| `SystemOneSelector` (threshold 0.5) | 10/11 | 1 | 1/2 | 256 ms |
 
 Read that carefully, because the headline is not "the selector finds better tools".
 
@@ -57,8 +61,26 @@ One 151-tool pass cost 11,127 input tokens in a single request, about 1.2 s, and
 The ceiling is the thing to plan around. Every candidate is sent as input on every query, so a
 selector re-reads the catalogue each time. That is affordable because a decision model is priced
 roughly two orders of magnitude below a frontier LLM, but it is not sub-linear the way a vector
-index is. Above a few hundred entries, prefer semantic retrieval with `JevReranker` over its
+index is. Above a few hundred entries, prefer semantic retrieval with `SystemOneReranker` over its
 shortlist — same model, same question, applied to 30 candidates rather than 3,000.
+
+## Selector or reranker: only one of them can say no
+
+`SystemOneSelector` and `SystemOneReranker` put the same question to the same model, so it is easy
+to assume the reranker inherits the model's judgement about whether anything fits. It does not.
+
+| Backend | What the model's probability does | Query no tool can serve |
+|---|---|---|
+| Semantic routing | (no model) | Returns its top-k anyway |
+| `SystemOneReranker` | *Orders* the search shortlist | Returns its top-k anyway |
+| `SystemOneSelector` | *Gates* each entry at `threshold` | Can return nothing |
+
+A reranker reorders what search handed it and returns the best `limit` of them, however low they
+scored: the probabilities are never compared with a threshold, so a reranker-backed setup declines
+exactly as often as semantic search alone, which is never. The selector is the only backend that
+can answer "none of these". How reliably it does so depends on `threshold` (see the measurements
+above and [Tuning](#tuning)), so measure it on your own catalogue — but if declining matters, a
+selector is the one to choose.
 
 ## Configuration
 
@@ -75,10 +97,10 @@ gantry = AgentGantry(config=config)  # reads TYPESAFE_API_KEY
 Or inject one directly, which also lets you tune the question:
 
 ```python
-from agent_gantry import AgentGantry, JevSelector
+from agent_gantry import AgentGantry, SystemOneSelector
 
 gantry = AgentGantry(
-    selector=JevSelector(
+    selector=SystemOneSelector(
         question="Would this tool help accomplish the request? Answer about this tool only.",
         threshold=0.3,
     )
@@ -110,7 +132,9 @@ before any individual tool has been looked at.
 
 ## Tuning
 
-- **`threshold`** is the knob that matters, and 0.30 holds up against jev-1.13's actual output.
+- **`threshold`** is the knob that matters, and 0.30 holds up against the default model's
+  (jev-1.13) actual output. A different model may calibrate differently, so re-check it if you
+  change `model`.
   Measured over a 12-tool catalogue and 32 deliberately meaningless tool descriptions:
 
   | candidate | observed probability |
@@ -137,11 +161,13 @@ before any individual tool has been looked at.
   Gantry's zero-trust execution model rather than inside it: selection decides what an agent *sees*,
   while policies and capabilities still decide what it may *run*.
 - **The SDK is early access.** `typesafe-sdk` shipped on 2026-09-15; the pinned floor and the
-  co-resolution notes are in `pyproject.toml` under the `jev` extra.
+  co-resolution notes are in `pyproject.toml` under the `system-one` extra.
 
 ## Installing
 
 ```bash
-pip install agent-gantry[jev]
+pip install 'agent-gantry[system-one]'
 export TYPESAFE_API_KEY=...
 ```
+
+The extra was called `jev` before 0.23.0; `agent-gantry[jev]` still installs the same thing.

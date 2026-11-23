@@ -29,10 +29,12 @@ if result.interruptions:
     <li><strong>Stickiness:</strong> tools offered earlier in a run stay offered, up to <code>max_offered</code> (default <code>3 * limit</code>); the current selection and pinned tools always stay. Use <code>sticky=False</code> for a strict top-k.</li>
     <li><strong>Failure:</strong> if retrieval fails mid-run, the turn keeps the run's earlier tools and logs a warning.</li>
     <li><strong>New tools:</strong> tools registered after <code>dynamic_tools()</code> is called are not in the catalogue; call it again.</li>
+    <li><strong>SDK version:</strong> needs <code>openai-agents&gt;=0.23.1</code>. Earlier SDKs list an agent's tools before they record the turn's input, so the first request of a run would carry no tools; <code>dynamic_tools()</code> raises <code>ImportError</code> there instead.</li>
   </ul>
 
   <h2>Older per-run helpers</h2>
   <p><code>adapter.session(agent)</code>, <code>adapter.run(agent, input)</code> and <code>adapter.run_hooks(agent)</code> re-select by rewriting <code>agent.tools</code>. They still work and gain the same error and approval behaviour, but because they mutate the agent, use them for one run at a time per agent. <code>dynamic_tools()</code> has no such restriction.</p>
+  <p><code>run_hooks(agent)</code> selects from the run input when the agent starts, so the first model request already carries the right tools, then re-selects before each later request. On <code>openai-agents&lt;0.23.1</code> the SDK lists the tools before any hook fires: call <code>adapter.refresh(agent, input)</code> first, or use <code>run()</code> / <code>session()</code>, which take the input from you and work on every SDK version.</p>
 
   <h2>Tracing</h2>
   <p>When the SDK is tracing, its current span becomes the Gantry <code>ToolCall</code>'s <code>trace_id</code> and <code>parent_span_id</code>; otherwise an active OpenTelemetry span is used. <code>gantry.on_tool_call</code> events then line up with the agent's trace.</p>

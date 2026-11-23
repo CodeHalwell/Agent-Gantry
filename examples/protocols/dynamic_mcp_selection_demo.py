@@ -268,7 +268,7 @@ async def main():
 
     print("\n\nFor more examples, see:")
     print("• examples/protocols/mcp_integration_demo.py")
-    print("• examples/protocols/jev_mcp_selection_demo.py  (same selection via a decision model)")
+    print("• examples/protocols/system_one_mcp_selection_demo.py  (same selection via a decision model)")
     print("• tests/test_dynamic_mcp_selection.py")
 
 

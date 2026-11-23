@@ -72,7 +72,7 @@ while not done:
     # ...call the model with `tools`, append its output to `messages`...
 ```
 
-The default `latest_activity` query generator is recency-aware: a tool result drives the next selection in an autonomous pipeline (`fetch → clean → train → report`), while a new user message drives it in a chat agent (`weather → flights → hotel`). Pin one with `query_generator=last_user_text` or `last_tool_result`.
+The default `latest_activity` query generator is recency-aware: a tool result steers the next selection in an autonomous pipeline (`fetch → clean → train → report`) — appended to the latest user message, so the request stays in the query — while a new user message drives it in a chat agent (`weather → flights → hotel`). Pin one with `query_generator=last_user_text` or `last_tool_result`.
 
 For frameworks with a native per-turn hook (LlamaIndex, Pydantic AI, Google ADK, LangGraph, OpenAI Agents SDK), prefer the deep **live** adapter method instead of `ToolRefresher` — e.g. `from agent_gantry.llamaindex import LlamaIndexAdapter` then `LlamaIndexAdapter(gantry).function_agent(llm)`, or for Pydantic AI `Agent(model, capabilities=[PydanticAIAdapter(gantry).capability()])` (Recipe 1c).
 

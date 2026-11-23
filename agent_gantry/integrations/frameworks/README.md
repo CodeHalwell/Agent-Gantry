@@ -259,7 +259,13 @@ The default query generator (`agent_gantry.query.latest_activity`) is
 
 - **Autonomous agents / tool pipelines** — when the newest message is a tool
   result (the agent is chaining tools with no new user input), that result's
-  *content* selects the next tool: `fetch → clean → train → evaluate → report`.
+  *content* steers the next tool: `fetch → clean → train → evaluate → report`.
+  The query is the latest user message plus the result, so a bare value such
+  as `"desserts"` cannot route the turn away from the rest of the request.
+  The request goes on matching the tool it already matched, so that tool can
+  still rank first with the next one behind it; for a pipeline whose results
+  name the next step, `partial(latest_activity, include_request=False)` queries
+  on the result alone.
 - **Conversational agents** — when the newest message is the user's, their new
   request selects the next tool: `weather → flights → hotel → email`.
 
@@ -464,7 +470,11 @@ trace.
 runs the adapter tests on 0.23.1 and on the latest release). The extra cannot
 share an environment with `agent-frameworks`: `openai-agents>=0.23` needs
 `openai>=3` while CrewAI pins `openai<3`. Older SDKs that arrive transitively
-still work for static tools (the adapter feature-detects `FunctionTool`).
+still work for static tools (the adapter feature-detects `FunctionTool`) and
+for `run()` / `session()` / `refresh()`, which take the run input from you.
+`dynamic_tools()` raises `ImportError` on them: before 0.23.1 the SDK lists an
+agent's tools *before* it records the turn's input, so no `is_enabled` gate and
+no run hook can see the prompt on the first model request of a run.
 
 | Mode | Build | Use when |
 |---|---|---|
@@ -485,6 +495,22 @@ object between a run's context and its tool contexts), so concurrent runs of
 one agent are independent and `agent.tools` is never rewritten. Tools
 registered after `dynamic_tools()` is called are not in the catalogue; call it
 again to pick them up.
+
+**Run hooks.** `Runner.run(agent, input, hooks=adapter.run_hooks(agent))`
+selects from the run input when the agent starts (`on_agent_start`), so the
+first model request already carries the right tools, then re-selects before
+each later request (`on_llm_start`) from the request plus the newest tool
+result; the SDK picks that up on the following turn. `adapter.run()` and
+`adapter.session(agent).run()` install the same hooks after selecting once
+themselves. On `openai-agents<0.23.1` the hooks fire too late for the first
+request, which then uses `agent.tools` as it stands: call
+`adapter.refresh(agent, input)` first (or use `run()` / `session()`). A run
+that starts there with tools other than the ones its input selects gets a
+`RuntimeWarning`.
+
+When you test any of these, assert that the tool's handler ran, not just that
+the answer is right: with no tools offered, a model will often answer a simple
+task from its own knowledge.
 
 **Errors and approval.** Failures reach the model as tool output (see the
 [error-handling policy](#error-handling-policy)). Gantry's confirmation gate

@@ -570,7 +570,7 @@ def test_latest_activity_prefers_newest_user_message():
 
 
 def test_latest_activity_uses_tool_result_when_it_is_newest():
-    """Autonomous: with no newer user message, the latest tool result drives it."""
+    """Autonomous: with no newer user message, the latest tool result steers it."""
     from agent_gantry.query import latest_activity
 
     messages = [
@@ -578,8 +578,55 @@ def test_latest_activity_uses_tool_result_when_it_is_newest():
         {"role": "assistant", "content": "calling clean_dataset"},
         {"role": "tool", "name": "clean_dataset", "content": "dataset ready to train a model"},
     ]
-    # Returns the tool result content (not the older user message).
-    assert latest_activity(messages) == "dataset ready to train a model"
+    # The tool result joins the request it is serving rather than replacing it.
+    assert latest_activity(messages) == (
+        "build a model from the data\ndataset ready to train a model"
+    )
+
+
+def test_latest_activity_keeps_the_request_beside_a_bare_tool_result():
+    """A one-word result routes nowhere useful on its own.
+
+    Two-step task, step one done: ``"desserts"`` alone surfaced an unrelated
+    tool and dropped the one the second half of the request still needed.
+    """
+    from agent_gantry.query import latest_activity
+
+    request = "First reverse the text 'stressed'. Then count how many words it has."
+    messages = [
+        {"role": "user", "content": request},
+        {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "reverse_text"}}]},
+        {"role": "tool", "name": "reverse_text", "content": "desserts"},
+    ]
+    assert latest_activity(messages) == f"{request}\ndesserts"
+
+
+def test_latest_activity_include_request_false_returns_the_result_alone():
+    """The pre-0.23.0 query, for pipelines whose results name the next step."""
+    from functools import partial
+
+    from agent_gantry.query import latest_activity
+
+    messages = [
+        {"role": "user", "content": "build a model from the data"},
+        {"role": "tool", "name": "clean_dataset", "content": "dataset ready to train a model"},
+    ]
+    result_only = partial(latest_activity, include_request=False)
+    assert result_only(messages) == "dataset ready to train a model"
+    # An opaque result still falls back to the request: there is nothing else to use.
+    messages[-1]["content"] = "8841"
+    assert result_only(messages) == "build a model from the data"
+    # A newer user message is the activity either way.
+    messages.append({"role": "user", "content": "now email it"})
+    assert result_only(messages) == "now email it"
+
+
+def test_latest_activity_tool_result_alone_without_a_user_message():
+    """No request in the history: the result is all there is to go on."""
+    from agent_gantry.query import latest_activity
+
+    messages = [{"role": "tool", "name": "clean_dataset", "content": "dataset ready"}]
+    assert latest_activity(messages) == "dataset ready"
 
 
 @pytest.mark.parametrize(
@@ -696,7 +743,7 @@ def test_latest_activity_caps_langchain_tool_result():
         _LangChainMessage("human", "look it up"),
         _LangChainMessage("tool", "y" * 2000, name="lookup"),
     ]
-    assert len(latest_activity(messages, max_chars=100)) == 100
+    assert latest_activity(messages, max_chars=100) == "look it up\n" + "y" * 100
 
 
 # ---------------------------------------------------------------------------
@@ -763,10 +810,10 @@ _SDK_HISTORIES = [
 
 @pytest.mark.parametrize("history", _SDK_HISTORIES)
 def test_latest_activity_reads_sdk_tool_output(history: list[dict]) -> None:
-    """With no newer user message, the tool's output drives the next selection."""
-    from agent_gantry.query import latest_activity
+    """With no newer user message, the tool's output joins the request it serves."""
+    from agent_gantry.query import last_user_text, latest_activity
 
-    assert latest_activity(history) == "sunny, 21C"
+    assert latest_activity(history) == f"{last_user_text(history)}\nsunny, 21C"
 
 
 @pytest.mark.parametrize("history", _SDK_HISTORIES)
@@ -939,7 +986,7 @@ def test_anthropic_object_shaped_tool_result_is_read() -> None:
         _ObjMsg("assistant", [_Block("tool_use", id="t1", name="get_weather", input={})]),
         _ObjMsg("user", [_Block("tool_result", tool_use_id="t1", content="sunny, 21C")]),
     ]
-    assert latest_activity(msgs) == "sunny, 21C"
+    assert latest_activity(msgs) == "weather in Paris\nsunny, 21C"
     assert last_tool_result(msgs) == "tool result: sunny, 21C"
     assert tool_names_used(msgs) == ["get_weather"]
 
@@ -962,7 +1009,7 @@ def test_responses_object_shaped_function_call_output_is_read() -> None:
         _RespItem("function_call", call_id="c1", name="get_weather", arguments="{}"),
         _RespItem("function_call_output", call_id="c1", output="sunny, 21C"),
     ]
-    assert latest_activity(msgs) == "sunny, 21C"
+    assert latest_activity(msgs) == "weather in Paris\nsunny, 21C"
     assert tool_names_used(msgs) == ["get_weather"]
 
 

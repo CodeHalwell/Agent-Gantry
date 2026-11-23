@@ -1,20 +1,20 @@
 """
-Selecting tools, skills and MCP servers with TypeSafe's Jev, instead of embeddings.
+Selecting tools, skills and MCP servers with a System One decision model, instead of embeddings.
 
 Two ways to use the same model:
 
-1. ``JevSelector`` *replaces* semantic matching. No embedder, no vector store,
+1. ``SystemOneSelector`` *replaces* semantic matching. No embedder, no vector store,
    no sync — the catalogue is put to the model and it answers which entries are
    relevant. Suits catalogues of tens to a few hundred entries, because every
    candidate is sent on every query.
-2. ``JevReranker`` *refines* semantic matching, reordering the vector-search
+2. ``SystemOneReranker`` *refines* semantic matching, reordering the vector-search
    shortlist. Works at any catalogue size, because only the shortlist is sent.
 
 Run with::
 
-    pip install agent-gantry[jev]
+    pip install agent-gantry[system-one]
     export TYPESAFE_API_KEY=...
-    python examples/routing/jev_selection_demo.py
+    python examples/routing/system_one_selection_demo.py
 
 Without a key the script still runs: selection fails open, and you will see the
 semantic path answer instead — which is the point of the fallback.
@@ -25,12 +25,12 @@ from __future__ import annotations
 import asyncio
 import os
 
-from agent_gantry import AgentGantry, JevReranker, JevSelector, Skill
+from agent_gantry import AgentGantry, Skill, SystemOneReranker, SystemOneSelector
 
 
 async def build_gantry(
-    selector: JevSelector | None = None,
-    reranker: JevReranker | None = None,
+    selector: SystemOneSelector | None = None,
+    reranker: SystemOneReranker | None = None,
 ) -> AgentGantry:
     """A small catalogue spanning two namespaces, plus one skill."""
     gantry = AgentGantry(selector=selector, reranker=reranker)
@@ -82,7 +82,7 @@ async def build_gantry(
 async def demo_selection() -> None:
     """Choose tools with no embeddings involved."""
     print("\n=== selector: no embeddings, no vector search ===")
-    gantry = await build_gantry(selector=JevSelector(threshold=0.3))
+    gantry = await build_gantry(selector=SystemOneSelector(threshold=0.3))
     try:
         for query in (
             "what's 12 divided by 4?",
@@ -111,8 +111,8 @@ async def demo_selection() -> None:
 
 async def demo_reranking() -> None:
     """Keep semantic search, but reorder its shortlist with the same model."""
-    print("\n=== reranker: semantic search first, Jev second ===")
-    gantry = await build_gantry(reranker=JevReranker())
+    print("\n=== reranker: semantic search first, the decision model second ===")
+    gantry = await build_gantry(reranker=SystemOneReranker())
     try:
         await gantry.sync()
         tools = await gantry.retrieve_tools("what's 12 divided by 4?", limit=2)
