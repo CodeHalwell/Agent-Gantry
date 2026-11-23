@@ -1,6 +1,6 @@
 """Validate release metadata without importing optional dependencies.
 
-Run ``python scripts/check_release.py --tag v0.24.0 --notes-file release-notes.md``.
+Run ``python scripts/check_release.py --tag v0.25.0 --notes-file release-notes.md``.
 Omit ``--tag`` for a branch build; ``--check-git-tag`` also checks an existing
 version tag points to the checked-out commit before anything can be published.
 """

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-11-23
+
+A selector that cannot answer still fails open to semantic routing, but no
+longer silently: the result says which backend produced it, the fallback is
+logged once at `WARNING`, and an opt-in strict mode raises instead. It is a
+minor release because it adds public API and changes a log line's level and
+wording. Nothing breaks for existing callers.
+
+**Migrating.** Nothing to change. Two things to know:
+
+- anything matching the gantry's old log line, `Selector declined (...)` at
+  `DEBUG`, should match `Selector failed for <kind> selection (...)` at
+  `WARNING` instead;
+- an eval or CI job that configures a selector should assert
+  `result.selector_fallback is False`, or construct the gantry with
+  `on_selector_fallback="raise"`, so it cannot pass on semantic routing.
+
 ### Added
 
 - **A retrieval result says which backend produced it.** With a selector
@@ -44,6 +61,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the same way; the skill-catalogue ceiling message changes with it.
 - `SystemOneSelector` logs its `max_candidates` ceiling at `WARNING` once per
   catalogue size and at `DEBUG` after that, where it warned on every call.
+
+### Fixed
+
+- The `DeprecationWarning` for comparing a renamed value with its old spelling
+  (`live_tier != "per-call"`, `query_strategy != "per_call"`) is attributed to
+  the caller's line for `!=` as it already was for `==` and `in`. It was
+  attributed one frame short, to `agent_gantry/_deprecation.py`.
 
 ## [0.24.0] - 2026-11-23
 
@@ -5481,7 +5505,8 @@ adapters, and the provider dialects agree with it.
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.21.0...v0.22.0
