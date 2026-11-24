@@ -132,6 +132,18 @@ decimals.
   server with a catalogue has more vectors to match with than one without,
   and with the hash embedder that costs one paraphrase case on the eval; with
   the real embedder it costs none.
+- **One ranked view across tools, skills and MCP servers.**
+  `await gantry.retrieve_context(query, tools=5, skills=2, servers=1)` runs
+  the three searches concurrently and returns a `ContextResult`: `entries`
+  merged by rank (every kind's best match before any kind's second), each
+  with its kind, id, rank and own score, plus `.tools`, `.skills` and
+  `.mcp_servers`, and the tool search's full provenance in
+  `.tool_retrieval`. It merges by rank because the three are scored on
+  different scales (a blend or a selector's probability for tools, a cosine
+  for skills) and cannot be merged by score without calibration. That makes
+  the order an interleaving, not a judgement that one kind's best beats
+  another's. A kind that cannot be searched, such as MCP servers without the
+  `mcp` package, is left out and named in `.skipped`.
 - **Calibrate a threshold instead of guessing one.**
   `agent_gantry.evaluation.calibrate_threshold(make_retriever, cases)` finds,
   from labelled queries, the score threshold at which queries nothing fits

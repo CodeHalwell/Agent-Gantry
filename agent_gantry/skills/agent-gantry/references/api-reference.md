@@ -37,11 +37,18 @@ from agent_gantry import (
 #       selector path. "simple-hash-embedder" = sentence-transformers is missing and retrieval is
 #       matching tokens, not meaning (logged once at WARNING). EmbedderConfig(on_unavailable="raise")
 #       raises ImportError instead of falling back.
+#   ctx = await gantry.retrieve_context(query, tools=5, skills=2, servers=1) -> ContextResult
+#       ctx.entries (merged by rank; .kind/.id/.rank/.score/.entry), ctx.tools / .skills / .mcp_servers,
+#       ctx.tool_retrieval (backend, embedder, selector_fallback), ctx.skipped
+#   gantry.retrieve_skills(q, rerank=True, diversity_factor=0.4) / retrieve_mcp_servers(q, rerank=True, ...)
+#   long tool descriptions and skill bodies are indexed in pieces (RoutingConfig(chunk_long_text=False) to stop)
 # Measuring retrieval: from agent_gantry.evaluation import RetrievalCase, evaluate_retrieval,
 #       tool_retriever, skill_retriever, mcp_server_retriever
 #   report = await evaluate_retrieval(tool_retriever(gantry), [RetrievalCase("q", {"ns.tool"}),
 #       RetrievalCase("nothing fits", expect_decline=True)], k=5)
 #   report.recall_at_1 / .recall_at_k / .decline_correctness / .by_kind() / .misses()
+#   found = await calibrate_threshold(lambda t: tool_retriever(gantry, score_threshold=t), cases)
+#       found.threshold, found.window (None = no threshold separates answers from non-answers)
 # MCP:    gantry.serve_mcp(transport="stdio"|"http"|"sse", mode=..., expose=[...])
 #         reset_sse_shutdown_latch()  -> release sse_starlette's process-global
 #           shutdown latch between servers in one process; without it a second

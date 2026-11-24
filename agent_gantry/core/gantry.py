@@ -62,7 +62,14 @@ from agent_gantry.schema.execution import (
 )
 from agent_gantry.schema.introspection import _callable_target, build_parameters_schema
 from agent_gantry.schema.mcp import MCPServerDefinition
-from agent_gantry.schema.query import ConversationContext, RetrievalResult, ScoredTool, ToolQuery
+from agent_gantry.schema.query import (
+    ContextEntry,
+    ContextResult,
+    ConversationContext,
+    RetrievalResult,
+    ScoredTool,
+    ToolQuery,
+)
 from agent_gantry.schema.selection import SelectionCandidate
 from agent_gantry.schema.skill import Skill, SkillSearchResult
 from agent_gantry.schema.tool import (
@@ -1539,6 +1546,125 @@ class AgentGantry:
         )
         result = await self.retrieve(tool_query)
         return result.to_dialect(dialect, **adapter_options)
+
+    async def retrieve_context(
+        self,
+        query: str,
+        *,
+        tools: int = 5,
+        skills: int = 2,
+        servers: int = 1,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+    ) -> ContextResult:
+        """
+        Retrieve tools, skills and MCP servers for one query, in one ranked view.
+
+        The three catalogues are otherwise three calls with three score scales
+        and nothing that ranks across them. This runs the three searches
+        concurrently and merges them by rank: every kind's best match first,
+        then every kind's second, and so on. See
+        :class:`~agent_gantry.schema.query.ContextResult` for why by rank and
+        not by score.
+
+        A kind that cannot be searched (MCP support not installed, a vector
+        store without skills) is left out and named in ``result.skipped``,
+        so the call still answers with what it has.
+
+        Args:
+            query: The natural language query
+            tools: How many tools to retrieve; ``0`` for none
+            skills: How many skills to retrieve; ``0`` for none
+            servers: How many MCP servers to retrieve; ``0`` for none
+            score_threshold: Minimum score for a tool. Defaults to ``0.0``
+                (no filtering), as for :meth:`retrieve_tools`. Skills and
+                servers are not thresholded here: their scales differ, and
+                :func:`~agent_gantry.evaluation.calibrate_threshold` is the
+                way to find one for each.
+            namespaces: Restrict all three searches to these namespaces
+
+        Returns:
+            A :class:`~agent_gantry.schema.query.ContextResult`
+        """
+        started = perf_counter()
+        skipped: dict[str, str] = {}
+
+        async def find_tools() -> RetrievalResult | None:
+            if tools <= 0:
+                return None
+            return await self.retrieve(
+                ToolQuery(
+                    context=ConversationContext(query=query),
+                    limit=tools,
+                    score_threshold=score_threshold,
+                    namespaces=namespaces,
+                )
+            )
+
+        async def find_skills() -> list[SkillSearchResult]:
+            if skills <= 0:
+                return []
+            try:
+                self._skills_store()
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                skipped["skill"] = str(exc)
+                return []
+            return await self.retrieve_skills(query, limit=skills, namespace=namespaces)
+
+        async def find_servers() -> list[MCPServerDefinition]:
+            if servers <= 0:
+                return []
+            if self._mcp_manager is None:
+                skipped["mcp_server"] = "MCP support is not installed"
+                return []
+            if self._mcp_registry is None or not self._mcp_registry.list_servers():
+                return []
+            return await self.retrieve_mcp_servers(query, limit=servers, namespaces=namespaces)
+
+        tool_result, skill_results, server_results = await asyncio.gather(
+            find_tools(), find_skills(), find_servers()
+        )
+
+        ranked: list[list[ContextEntry]] = [
+            [
+                ContextEntry(
+                    kind="tool",
+                    id=f"{scored.tool.namespace}.{scored.tool.name}",
+                    rank=rank,
+                    score=scored.final_score,
+                    entry=scored.tool,
+                )
+                for rank, scored in enumerate(tool_result.tools if tool_result else [], 1)
+            ],
+            [
+                ContextEntry(
+                    kind="skill",
+                    id=f"{found.skill.namespace}.{found.skill.name}",
+                    rank=rank,
+                    score=found.score,
+                    entry=found.skill,
+                )
+                for rank, found in enumerate(skill_results, 1)
+            ],
+            [
+                ContextEntry(
+                    kind="mcp_server",
+                    id=f"{server.namespace}.{server.name}",
+                    rank=rank,
+                    entry=server,
+                )
+                for rank, server in enumerate(server_results, 1)
+            ],
+        ]
+        # By rank, then by kind in the order above. ``sorted`` is stable, so
+        # flattening kind by kind and sorting on rank alone gives exactly that.
+        entries = sorted((entry for group in ranked for entry in group), key=lambda e: e.rank)
+        return ContextResult(
+            entries=entries,
+            tool_retrieval=tool_result,
+            skipped=skipped,
+            total_time_ms=(perf_counter() - started) * 1000,
+        )
 
     async def retrieve_tools_from_server(
         self,
