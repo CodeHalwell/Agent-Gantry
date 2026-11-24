@@ -20,7 +20,7 @@ from agent_gantry.evaluation import (
     evaluate_retrieval,
     format_reports,
 )
-from agent_gantry.schema.tool import RESERVED_NAMESPACES
+from agent_gantry.schema.tool import is_reserved_namespace
 from tests.retrieval import catalogue
 from tests.retrieval.harness import flatten, load_baseline, measure
 
@@ -202,7 +202,7 @@ async def test_retrieval_is_no_worse_than_the_committed_baseline() -> None:
     assert compare_to_baseline(flatten(reports), baseline["metrics"]) == []
     for report in reports:
         for outcome in report.outcomes:
-            leaked = [i for i in outcome.returned if i.split(".", 1)[0] in RESERVED_NAMESPACES]
+            leaked = [i for i in outcome.returned if is_reserved_namespace(i.split(".", 1)[0])]
             assert not leaked, f"{outcome.case.query!r} was handed index bookkeeping: {leaked}"
 
 
@@ -291,3 +291,29 @@ async def test_a_wrong_answer_at_zero_does_not_drag_the_threshold_down() -> None
     ]
     calibration = await calibrate_threshold(_scored_retriever(scores), cases, resolution=0.005)
     assert calibration.window is not None and calibration.window[1] >= 0.61
+
+
+async def test_calibration_copes_with_tuples_including_an_empty_one() -> None:
+    """A retriever may answer with a tuple of ids, and an empty one is a decline."""
+    from agent_gantry.evaluation import calibrate_threshold
+
+    scores = {"add": [("add_numbers", 0.62), ("other", 0.3)], "book a flight": [("other", 0.31)]}
+
+    def make(threshold: float):
+        async def retrieve(query: str, limit: int) -> tuple[str, ...]:
+            return tuple(name for name, score in scores[query] if score >= threshold)[:limit]
+
+        return retrieve
+
+    calibration = await calibrate_threshold(
+        make,
+        [
+            RetrievalCase("add", {"add_numbers"}),
+            RetrievalCase("book a flight", expect_decline=True, kind="decline"),
+        ],
+        k=2,
+        resolution=0.005,
+    )
+    assert calibration.window is not None
+    assert calibration.report.recall_at_1 == 1.0
+    assert calibration.report.decline_correctness == 1.0

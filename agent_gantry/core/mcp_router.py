@@ -164,7 +164,13 @@ class MCPRouter:
             fetch *= 4
         scored_servers.sort(key=lambda entry: entry.score, reverse=True)
         scored_servers = scored_servers[:pool]
-        if diverse and len(scored_servers) > 1 and len(vectors) == len(scored_servers):
+        # Each server kept must have its vector; ``vectors`` may also hold
+        # those of servers the cut above dropped.
+        if (
+            diverse
+            and len(scored_servers) > 1
+            and all((e.server.namespace, e.server.name) in vectors for e in scored_servers)
+        ):
             order = mmr_order(
                 [entry.score for entry in scored_servers],
                 [vectors[(entry.server.namespace, entry.server.name)] for entry in scored_servers],

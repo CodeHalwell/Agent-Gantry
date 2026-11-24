@@ -18,7 +18,7 @@ from agent_gantry.schema.a2a import AgentCard, AgentSkill, a2a_agent_tag
 from agent_gantry.schema.config import A2AAgentConfig
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 from agent_gantry.schema.selection import SelectionCandidate, SelectionResult
-from agent_gantry.schema.tool import A2A_AGENT_NAMESPACE, RESERVED_NAMESPACES
+from agent_gantry.schema.tool import A2A_AGENT_NAMESPACE, is_reserved_namespace
 
 _CARDS = {
     "travel": AgentCard(
@@ -185,7 +185,7 @@ async def test_agent_entries_are_never_returned_as_tools_and_go_with_the_agent(
 
         result = await gantry.retrieve(_query("plans trips and books travel", limit=10))
         assert result.tools
-        assert not [t for t in result.tools if t.tool.namespace in RESERVED_NAMESPACES]
+        assert not [t for t in result.tools if is_reserved_namespace(t.tool.namespace)]
 
         # Pruning tools leaves the agents' entries alone.
         await gantry.sync(prune=True)

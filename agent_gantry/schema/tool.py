@@ -102,9 +102,21 @@ _GENERIC_PARAMETER_NAMES = frozenset(
 #: index, so that one vector store can route to servers as well as to tools.
 MCP_SERVER_NAMESPACE = "__mcp_servers__"
 
-#: Namespace of the pieces a long tool description is indexed in, beside the
-#: tool's own entry. See :mod:`agent_gantry.core.chunks`.
+#: Prefix of the namespaces the pieces of long text are indexed in, beside the
+#: entry they were cut from. See :mod:`agent_gantry.core.chunks`.
 CHUNK_NAMESPACE = "__chunks__"
+
+
+def chunk_namespace(parent_namespace: str) -> str:
+    """The namespace holding the chunks of entries in ``parent_namespace``.
+
+    One per parent namespace, not one for all: a search scoped to a namespace
+    then asks the store for that namespace's chunks only. With a single shared
+    chunk namespace, every other namespace's chunks were admitted to a scoped
+    search and discarded afterwards, and enough of them could fill the
+    candidate window and leave the search with nothing.
+    """
+    return f"{CHUNK_NAMESPACE}{parent_namespace}"
 
 #: Namespace of the pseudo-tools that stand in for A2A agents in the tools
 #: index, as :data:`MCP_SERVER_NAMESPACE` does for MCP servers.
@@ -113,6 +125,11 @@ A2A_AGENT_NAMESPACE = "__a2a_agents__"
 #: Namespaces whose entries are index bookkeeping, not tools. Tool retrieval
 #: never returns them.
 RESERVED_NAMESPACES = frozenset({MCP_SERVER_NAMESPACE, A2A_AGENT_NAMESPACE, CHUNK_NAMESPACE})
+
+
+def is_reserved_namespace(namespace: str) -> bool:
+    """Whether ``namespace`` holds index bookkeeping, not tools or skills."""
+    return namespace in RESERVED_NAMESPACES or namespace.startswith(CHUNK_NAMESPACE)
 
 class ToolDefinition(BaseModel):
     """

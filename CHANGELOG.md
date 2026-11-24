@@ -126,10 +126,13 @@ signal, but not as an equal partner in a rank fusion.
   is only in the body go from 2/4 to 4/4 and skill recall@1 from 0.750 to
   0.917.
 
-  Both store their pieces in a reserved `__chunks__` namespace of the
-  existing tables, so no vector store needs a new method. Pieces carry their
-  parent's tags and category, so namespace, category and per-server scopes
-  still apply. They are never returned, listed or counted as tools or skills,
+  Both store their pieces in reserved namespaces of the existing tables
+  (`__chunks__<namespace>`, one per namespace of the entries they were cut
+  from), so no vector store needs a new method and a search scoped to a
+  namespace is not crowded by another namespace's pieces. Pieces carry their
+  parent's tags and category, so category and per-server scopes still apply.
+  A tool's pieces are written before the tool itself, so a failure part-way
+  leaves the tool looking unsynced and the next `sync()` retries it. They are never returned, listed or counted as tools or skills,
   they are not shown to a selector, and they are removed with their parent
   and by pruning. `RoutingConfig(chunk_long_text=False)` turns both off. The
   cost is one extra embedding per piece at sync or `add_skills()`: none for a

@@ -76,11 +76,11 @@ from agent_gantry.schema.selection import SelectionCandidate
 from agent_gantry.schema.skill import Skill, SkillSearchResult
 from agent_gantry.schema.tool import (
     A2A_AGENT_NAMESPACE,
-    CHUNK_NAMESPACE,
     MCP_SERVER_NAMESPACE,
-    RESERVED_NAMESPACES,
     ToolCapability,
     ToolDefinition,
+    chunk_namespace,
+    is_reserved_namespace,
 )
 from agent_gantry.utils.async_utils import is_coroutine_function
 
@@ -1242,7 +1242,7 @@ class AgentGantry:
                     namespace=ns, limit=page_size, offset=offset, **store_kwargs
                 )
                 # The pieces a skill's content is indexed in are not skills.
-                skills.extend(s for s in page if s.namespace != CHUNK_NAMESPACE)
+                skills.extend(s for s in page if not is_reserved_namespace(s.namespace))
                 offset += len(page)
                 if len(skills) > _MAX_SELECTABLE_SKILLS:
                     over_ceiling = True
@@ -1351,7 +1351,12 @@ class AgentGantry:
 
         by_id = {f"{server.namespace}.{server.name}": server for server in servers}
         candidates = [SelectionCandidate.from_mcp_server(server) for server in servers]
-        result = await self._selector.select(query, candidates, limit, kind="mcp_server")
+        # As for tools: ask for as many extra as could be demoted, so that a
+        # server which cannot be reached has a healthy one to give way to.
+        unavailable = sum(1 for server in servers if not server.health.available)
+        result = await self._selector.select(
+            query, candidates, limit + unavailable, kind="mcp_server"
+        )
         if result.fallback:
             self._selector_fell_back("mcp_server", result.reason, failed=True)
             return None
@@ -1371,7 +1376,7 @@ class AgentGantry:
                 - (0.0 if by_id[candidate_id].health.available else UNAVAILABLE_SERVER_PENALTY),
                 reverse=True,
             )
-        return [by_id[candidate_id] for candidate_id in chosen]
+        return [by_id[candidate_id] for candidate_id in chosen[:limit]]
 
     def _reranker_for(self, rerank: bool) -> Any:
         """The configured reranker when ``rerank`` is asked for, else ``None``."""
@@ -2916,7 +2921,9 @@ class AgentGantry:
         # Index bookkeeping (chunks of long descriptions, the entries MCP
         # servers are routed by) shares the store and is not a tool; it is
         # listed only when its namespace is asked for by name.
-        return [t for t in stored if t.namespace == namespace or t.namespace not in RESERVED_NAMESPACES]
+        return [
+            t for t in stored if t.namespace == namespace or not is_reserved_namespace(t.namespace)
+        ]
 
     @staticmethod
     async def _list_all_pages(
@@ -3452,7 +3459,10 @@ class AgentGantry:
         if wanted is not None:
             # A skill's content is indexed in pieces in their own namespace;
             # without it here a namespace filter would hide them.
-            filters["namespace"] = [*sorted(wanted), CHUNK_NAMESPACE]
+            filters["namespace"] = [
+                *sorted(wanted),
+                *(chunk_namespace(parent) for parent in sorted(wanted)),
+            ]
         if category is not None:
             filters["category"] = category
 
@@ -3567,7 +3577,7 @@ class AgentGantry:
         while len(skills) < limit:
             page = await store.list_all_skills(namespace=None, limit=page_size, offset=cursor)
             for skill in page:
-                if skill.namespace == CHUNK_NAMESPACE:
+                if is_reserved_namespace(skill.namespace):
                     continue
                 if skipped < offset:
                     skipped += 1
@@ -3582,11 +3592,17 @@ class AgentGantry:
         """Count stored skills."""
         store = self._skills_store()
         await self._ensure_initialized()
-        total = int(await store.count_skills(namespace=namespace))
-        if namespace is None:
-            # Not counting the pieces skills' content is indexed in.
-            total -= int(await store.count_skills(namespace=CHUNK_NAMESPACE))
-        return total
+        if namespace is not None:
+            return int(await store.count_skills(namespace=namespace))
+        # Not counting the pieces skills' content is indexed in. They live in
+        # one namespace per skill namespace, so they are told apart by listing.
+        total, offset, page_size = 0, 0, 1000
+        while True:
+            page = await store.list_all_skills(namespace=None, limit=page_size, offset=offset)
+            total += sum(1 for skill in page if not is_reserved_namespace(skill.namespace))
+            offset += len(page)
+            if len(page) < page_size:
+                return total
 
     async def delete_tool(self, name: str, namespace: str = "default") -> bool:
         """

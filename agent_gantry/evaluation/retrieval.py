@@ -215,6 +215,24 @@ def _aggregate(modality: str, k: int, outcomes: Sequence[CaseOutcome]) -> Retrie
     )
 
 
+def _split_answer(answer: Any) -> tuple[Sequence[str], str | None]:
+    """A retriever's answer as ``(ids, backend)``.
+
+    ``(ids, backend)`` has a sequence of ids first. Two ids returned as a
+    tuple are also a two-tuple ending in a string, and reading that as the
+    backend form scored the first id's characters as the results; an empty
+    tuple is simply no ids.
+    """
+    if (
+        isinstance(answer, tuple)
+        and len(answer) == 2
+        and isinstance(answer[1], str)
+        and not isinstance(answer[0], str)
+    ):
+        return answer[0], answer[1]
+    return answer, None
+
+
 async def evaluate_retrieval(
     retriever: Retriever,
     cases: Iterable[RetrievalCase],
@@ -244,19 +262,7 @@ async def evaluate_retrieval(
         started = time.perf_counter()
         answer = await retriever(case.query, k)
         latency_ms = (time.perf_counter() - started) * 1000
-        backend: str | None = None
-        # ``(ids, backend)`` has a sequence of ids first. Two ids returned as
-        # a tuple are also a two-tuple ending in a string, and reading that as
-        # the backend form scored the first id's characters as the results.
-        if (
-            isinstance(answer, tuple)
-            and len(answer) == 2
-            and isinstance(answer[1], str)
-            and not isinstance(answer[0], str)
-        ):
-            ids, backend = answer
-        else:
-            ids = answer
+        ids, backend = _split_answer(answer)
         outcomes.append(
             CaseOutcome(
                 case=case, returned=tuple(ids)[:k], latency_ms=latency_ms, backend=backend
@@ -359,9 +365,7 @@ async def _boundary(
     """
 
     async def holds(threshold: float) -> bool:
-        answer = await make_retriever(threshold)(case.query, k)
-        ids = answer[0] if isinstance(answer, tuple) and not isinstance(answer[0], str) else answer
-        ids = list(ids)[:k]
+        ids = list(_split_answer(await make_retriever(threshold)(case.query, k))[0])[:k]
         return bool(ids) if case.expect_decline else bool(case.expected.intersection(ids))
 
     if not await holds(0.0):

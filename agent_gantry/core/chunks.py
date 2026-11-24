@@ -25,7 +25,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from agent_gantry.schema.skill import Skill
-from agent_gantry.schema.tool import CHUNK_NAMESPACE, ToolDefinition
+from agent_gantry.schema.tool import CHUNK_NAMESPACE, ToolDefinition, chunk_namespace
 
 if TYPE_CHECKING:
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
@@ -111,13 +111,13 @@ def tool_chunks(tool: ToolDefinition) -> list[ToolDefinition]:
     search scoped to one MCP server) finds a tool by its chunks too.
     """
     text = tool.extended_description or tool.description
-    if len(text) <= CHUNK_AFTER or tool.namespace == CHUNK_NAMESPACE:
+    if len(text) <= CHUNK_AFTER or tool.namespace.startswith(CHUNK_NAMESPACE):
         return []
     head = " ".join(part for part in (tool.name, " ".join(tool.tags)) if part)
     return [
         ToolDefinition(
             name=_chunk_name(tool.namespace, tool.name, index),
-            namespace=CHUNK_NAMESPACE,
+            namespace=chunk_namespace(tool.namespace),
             description=f"{head} {piece}"[:2000],
             parameters_schema={"type": "object", "properties": {}},
             tags=list(tool.tags),
@@ -134,7 +134,7 @@ def tool_chunks(tool: ToolDefinition) -> list[ToolDefinition]:
 
 def chunk_parent(entry: Any) -> tuple[str, str] | None:
     """``(namespace, name)`` of the entry a chunk was cut from, or ``None``."""
-    if getattr(entry, "namespace", None) != CHUNK_NAMESPACE:
+    if not str(getattr(entry, "namespace", "")).startswith(CHUNK_NAMESPACE):
         return None
     metadata = getattr(entry, "metadata", None) or {}
     name, namespace = metadata.get("parent_name"), metadata.get("parent_namespace")
@@ -154,7 +154,9 @@ async def delete_tool_chunks(
     removed = 0
     for index in range(start, MAX_CHUNKS):
         try:
-            deleted = await store.delete(_chunk_name(namespace, name, index), CHUNK_NAMESPACE)
+            deleted = await store.delete(
+                _chunk_name(namespace, name, index), chunk_namespace(namespace)
+            )
         except Exception:
             logger.debug("Error deleting a tool chunk from the vector store", exc_info=True)
             break
@@ -216,12 +218,15 @@ def skill_chunks(skill: Skill) -> list[Skill]:
     A chunk keeps the skill's category and tags, so the filters a search
     applies to skills apply to their chunks alike.
     """
-    if skill.namespace == CHUNK_NAMESPACE or skill.content.strip() == skill.description.strip():
+    if (
+        skill.namespace.startswith(CHUNK_NAMESPACE)
+        or skill.content.strip() == skill.description.strip()
+    ):
         return []
     return [
         Skill(
             name=_chunk_name(skill.namespace, skill.name, index),
-            namespace=CHUNK_NAMESPACE,
+            namespace=chunk_namespace(skill.namespace),
             description=f"Part of {skill.name}: {piece}"[:2000],
             content=piece,
             category=skill.category,
@@ -242,7 +247,9 @@ async def delete_skill_chunks(store: Any, name: str, namespace: str, *, start: i
     removed = 0
     for index in range(start, MAX_SKILL_CHUNKS):
         try:
-            deleted = await store.delete_skill(_chunk_name(namespace, name, index), CHUNK_NAMESPACE)
+            deleted = await store.delete_skill(
+                _chunk_name(namespace, name, index), chunk_namespace(namespace)
+            )
         except Exception:
             logger.debug("Error deleting a skill chunk from the vector store", exc_info=True)
             break

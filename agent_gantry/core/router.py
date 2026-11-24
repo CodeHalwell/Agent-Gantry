@@ -21,7 +21,7 @@ from agent_gantry.adapters.embedders.base import embed_query
 from agent_gantry.core.chunks import chunk_parent
 from agent_gantry.schema.a2a import a2a_agent_tag
 from agent_gantry.schema.mcp import mcp_server_tag
-from agent_gantry.schema.tool import CHUNK_NAMESPACE, RESERVED_NAMESPACES, ToolDefinition
+from agent_gantry.schema.tool import ToolDefinition, chunk_namespace, is_reserved_namespace
 
 _logger = logging.getLogger(__name__)
 
@@ -453,6 +453,20 @@ class SemanticRouter:
         Returns:
             Routing result with scores and timings
         """
+        scoped = query.mcp_servers is not None or query.a2a_agents is not None
+        if scoped and not query.mcp_servers and not query.a2a_agents:
+            # A scope that names nothing matches nothing. Stores read an empty
+            # tag filter as no filter at all, so the search would have run in
+            # full only for every candidate to be rejected afterwards.
+            return RoutingResult(
+                tools=[],
+                query_embedding_time_ms=0.0,
+                vector_search_time_ms=0.0,
+                rerank_time_ms=None,
+                candidate_count=0,
+                filtered_count=0,
+            )
+
         # Intent resolution is independent of embedding + vector search, so run
         # it concurrently. With keyword classification this is near-free; with
         # LLM classification it removes an entire LLM round-trip from the
@@ -470,12 +484,16 @@ class SemanticRouter:
 
             filters: dict[str, list[str]] | None = None
             if query.namespaces:
-                # The pieces of a long description live in their own
-                # namespace; without it here a namespace filter would hide
-                # them, and the tool would again be findable only by the
-                # opening of its text. ``_fold_chunks`` checks each piece's
-                # parent against the namespaces asked for.
-                filters = {"namespace": [*query.namespaces, CHUNK_NAMESPACE]}
+                # The pieces of a long description live in a namespace of
+                # their own per parent namespace; without those here a
+                # namespace filter would hide them, and the tool would again
+                # be findable only by the opening of its text.
+                filters = {
+                    "namespace": [
+                        *query.namespaces,
+                        *(chunk_namespace(namespace) for namespace in query.namespaces),
+                    ]
+                }
             if query.mcp_servers is not None or query.a2a_agents is not None:
                 # Every discovered tool carries its server or agent as a tag,
                 # and every store filters on tags (any-of), so the scope costs
@@ -506,7 +524,7 @@ class SemanticRouter:
                 # MCP servers are indexed beside the tools as pseudo-entries
                 # that can never be returned. Each one that ranks takes a real
                 # tool's place in the pool, so ask again for that many more.
-                reserved = sum(1 for c in candidates if c[0].namespace in RESERVED_NAMESPACES)
+                reserved = sum(1 for c in candidates if is_reserved_namespace(c[0].namespace))
                 if (
                     not reserved
                     or len(candidates) < requested  # the store has no more to give
@@ -587,13 +605,21 @@ class SemanticRouter:
             score = best.pop((tool.namespace, tool.name), None)
             if score is not None and score > candidate[1]:
                 folded[index] = (tool, score, *candidate[2:])
-        for (namespace, name), score in best.items():
-            try:
-                tool = await self._vector_store.get_by_name(name, namespace)
-            except Exception:  # noqa: BLE001 - a piece without its tool is skipped
-                _logger.debug("Could not fetch the tool a chunk belongs to", exc_info=True)
-                continue
-            if isinstance(tool, ToolDefinition):
+        # Together, not one after another: on a remote store each is a round trip.
+        parents = list(best.items())
+        fetched = await asyncio.gather(
+            *(self._vector_store.get_by_name(name, namespace) for (namespace, name), _ in parents),
+            return_exceptions=True,
+        )
+        for ((namespace, name), score), tool in zip(parents, fetched):
+            if isinstance(tool, BaseException):
+                # The search itself worked, so this is an anomaly worth seeing:
+                # the tool is left out, and silently so would be a quiet loss.
+                _logger.warning(
+                    f"Could not fetch tool '{namespace}.{name}', matched through a chunk "
+                    f"of its description; leaving it out of this result: {tool}"
+                )
+            elif isinstance(tool, ToolDefinition):
                 # No stored embedding to hand: MMR embeds it again if it needs to.
                 folded.append((tool, score))
         return folded
@@ -683,7 +709,7 @@ class SemanticRouter:
         # Index bookkeeping, not a tool: the pseudo-entry an MCP server is
         # embedded as shares this index, and used to be handed back as a tool
         # that no executor can run whenever it out-scored the real ones.
-        if tool.namespace in RESERVED_NAMESPACES:
+        if is_reserved_namespace(tool.namespace):
             return False
         if query.exclude_deprecated and tool.deprecated:
             return False

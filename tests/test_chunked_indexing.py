@@ -26,7 +26,11 @@ from agent_gantry.core.chunks import (
 )
 from agent_gantry.schema.config import AgentGantryConfig, RoutingConfig
 from agent_gantry.schema.query import ConversationContext, ToolQuery
-from agent_gantry.schema.tool import CHUNK_NAMESPACE, RESERVED_NAMESPACES, ToolDefinition
+from agent_gantry.schema.tool import (
+    ToolDefinition,
+    chunk_namespace,
+    is_reserved_namespace,
+)
 
 _FILLER = "Results are paged and times are in UTC unless a zone is given. "
 _TAIL = "Zebra quagga okapi: use this for striped ungulate questions."
@@ -58,8 +62,8 @@ def _distractors(count: int = 40) -> list[ToolDefinition]:
     return [_tool(f"read_report_{i}", f"Read report number {i} to the user.") for i in range(count)]
 
 
-async def _chunk_rows(gantry: AgentGantry) -> list[ToolDefinition]:
-    return await gantry.list_tools(namespace=CHUNK_NAMESPACE)
+async def _chunk_rows(gantry: AgentGantry, namespace: str = "default") -> list[ToolDefinition]:
+    return await gantry.list_tools(namespace=chunk_namespace(namespace))
 
 
 def _names(result: Any) -> list[str]:
@@ -98,7 +102,9 @@ def test_a_chunk_says_what_it_is_a_piece_of() -> None:
     tool = _long_tool(namespace="ops", tags=["mcp:datadog"])
     chunks = tool_chunks(tool)
 
-    assert all(c.namespace == CHUNK_NAMESPACE for c in chunks)
+    assert all(c.namespace == chunk_namespace("ops") == "__chunks__ops" for c in chunks)
+    assert all(is_reserved_namespace(c.namespace) for c in chunks)
+    assert not is_reserved_namespace("ops")
     assert all(re.fullmatch(r"[a-z][a-z0-9_]*", c.name) for c in chunks)
     assert len({c.name for c in chunks}) == len(chunks)
     assert all(chunk_parent(c) == ("ops", "search_archive") for c in chunks)
@@ -161,7 +167,7 @@ async def test_chunks_are_never_returned_listed_or_counted_as_tools() -> None:
     gantry = await _gantry([_long_tool(), *_distractors(5)])
     try:
         result = await gantry.retrieve(_query("zebra quagga okapi striped ungulate", limit=50))
-        assert not [t for t in result.tools if t.tool.namespace in RESERVED_NAMESPACES]
+        assert not [t for t in result.tools if is_reserved_namespace(t.tool.namespace)]
         assert len(_names(result)) == len(set(_names(result))) == 6
 
         listed = await gantry.list_tools()
@@ -197,12 +203,12 @@ async def test_a_tool_found_only_through_a_chunk_joins_the_candidates() -> None:
     ]
     gantry = await _gantry([_long_tool(), *noise])
     try:
-        result = await gantry.retrieve(_query("quagga okapi striped ungulate questions", limit=5))
+        result = await gantry.retrieve(_query("zebra quagga okapi striped ungulate", limit=5))
         assert "search_archive" in _names(result)
         # ...and asking for diversity, which wants each candidate's embedding,
         # copes with one that arrived without it.
         diverse = await gantry.retrieve(
-            _query("quagga okapi striped ungulate questions", limit=5, diversity_factor=0.5)
+            _query("zebra quagga okapi striped ungulate", limit=5, diversity_factor=0.5)
         )
         assert "search_archive" in _names(diverse)
     finally:
@@ -247,7 +253,7 @@ async def test_a_shorter_description_leaves_no_chunks_behind() -> None:
     await store.initialize()
 
     async def chunk_count() -> int:
-        return len(await store.list_all(namespace=CHUNK_NAMESPACE))
+        return len(await store.list_all(namespace=chunk_namespace("default")))
 
     long = _tool("search_archive", "Search the archive.", extended_description=_FILLER * 60)
     shorter = _tool("search_archive", "Search the archive. " + _FILLER * 23)
@@ -334,7 +340,7 @@ def test_a_skills_content_is_chunked_whatever_its_length() -> None:
 
     assert len(chunks) == 1
     assert chunks[0].is_chunk and not short.is_chunk
-    assert chunks[0].namespace == CHUNK_NAMESPACE
+    assert chunks[0].namespace == chunk_namespace("default")
     assert chunk_parent(chunks[0]) == ("default", "greeting")
     assert chunks[0].to_embedding_text() == "greeting Say hello and use their name."
     # Nothing to add when the body only repeats the description.
@@ -397,7 +403,7 @@ async def test_skill_chunks_are_not_listed_counted_or_shown_to_a_selector() -> N
         assert [s.name for s in await gantry.list_skills(limit=2, offset=1)] == [
             s.name for s in (await gantry.list_skills())[1:3]
         ]
-        assert await gantry.count_skills(namespace=CHUNK_NAMESPACE) >= 5
+        assert await gantry.count_skills(namespace=chunk_namespace("default")) >= 5
 
         await selecting.retrieve_skills("anything at all", limit=3)
         assert sorted(seen) == sorted(f"default.{s.name}" for s in skills)
@@ -434,7 +440,7 @@ async def test_a_shorter_body_and_a_deleted_skill_leave_no_chunks() -> None:
     try:
 
         async def chunk_count() -> int:
-            return await gantry.count_skills(namespace=CHUNK_NAMESPACE)
+            return await gantry.count_skills(namespace=chunk_namespace("default"))
 
         assert await chunk_count() >= 2
         await gantry.add_skill(_skill("log_search_syntax", "Logwatch reference card.", "See the wiki."))
@@ -443,5 +449,104 @@ async def test_a_shorter_body_and_a_deleted_skill_leave_no_chunks() -> None:
         assert await gantry.delete_skill("log_search_syntax")
         assert await chunk_count() == 0
         assert await gantry.count_skills() == 0
+    finally:
+        await gantry.close()
+
+
+# --------------------------------------------------------------------------- #
+# Regressions
+# --------------------------------------------------------------------------- #
+
+
+async def test_another_namespaces_chunks_cannot_crowd_a_scoped_search() -> None:
+    """Two hundred chunks elsewhere that out-score the one tool the scope holds.
+
+    With one chunk namespace shared by all, they were admitted to the scoped
+    search, filled its window three times over and left it with nothing.
+    """
+    foreign = [
+        _tool(
+            f"zebra_archive_{i}",
+            "Zebra quagga okapi. " * 60 + "Striped ungulate questions go here.",
+            namespace="zoo",
+        )
+        for i in range(40)
+    ]
+    wanted = _tool("ask_keeper", "Ask the keeper about a striped ungulate.", namespace="ops")
+    gantry = await _gantry([*foreign, wanted])
+    try:
+        assert len(await _chunk_rows(gantry, "zoo")) >= 80
+        result = await gantry.retrieve(
+            _query("zebra quagga okapi striped ungulate", limit=5, namespaces=["ops"])
+        )
+        assert _names(result) == ["ask_keeper"]
+    finally:
+        await gantry.close()
+
+
+async def test_a_skill_search_scoped_to_a_namespace_is_not_crowded_either() -> None:
+    elsewhere = [
+        _skill(f"zoo_note_{i}", f"Zoo note number {i} for the keepers.", "Zebra quagga okapi. " * 30, namespace="zoo")
+        for i in range(60)
+    ]
+    here = _skill("keeper_rota", "The keeper rota for the week.", "Zebra duty is on Monday.", namespace="ops")
+    gantry = await _skills_gantry([*elsewhere, here])
+    try:
+        results = await gantry.retrieve_skills("zebra quagga okapi", limit=3, namespace="ops")
+        assert [r.skill.name for r in results] == ["keeper_rota"]
+        assert await gantry.count_skills() == 61
+    finally:
+        await gantry.close()
+
+
+async def test_a_tool_whose_chunks_failed_to_index_is_tried_again() -> None:
+    """The tool's fingerprint is what marks it synced, so its chunks go first."""
+
+    class _Flaky(SimpleEmbedder):
+        fail = True
+
+        async def embed_batch(self, texts: list[str], batch_size: int | None = None) -> Any:
+            if self.fail and any(text.startswith("search_archive ") for text in texts):
+                raise RuntimeError("the embedding service is down")
+            return await super().embed_batch(texts, batch_size)
+
+    embedder = _Flaky()
+    gantry = AgentGantry(embedder=embedder, config=AgentGantryConfig(auto_sync=False))
+    try:
+        await gantry.add_tool(_long_tool())
+        with pytest.raises(RuntimeError, match="embedding service is down"):
+            await gantry.sync()
+        # Straight from the store: listing through the gantry would sync again.
+        assert await gantry._vector_store.list_all(namespace=chunk_namespace("default")) == []
+        assert await gantry._vector_store.get_by_name("search_archive") is None
+
+        embedder.fail = False
+        assert await gantry.sync() == 1  # not "already up to date"
+        assert len(await _chunk_rows(gantry)) >= 2
+        result = await gantry.retrieve(_query("zebra quagga okapi striped ungulate", limit=1))
+        assert _names(result) == ["search_archive"]
+    finally:
+        await gantry.close()
+
+
+async def test_a_store_failure_fetching_a_chunks_tool_is_reported(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    noise = [
+        _tool(f"zebra_fact_{i}", "Zebra. Zebra facts about a zebra and another zebra.")
+        for i in range(60)
+    ]
+    gantry = await _gantry([_long_tool(), *noise])
+    try:
+
+        async def broken(name: str, namespace: str = "default") -> Any:
+            raise ConnectionError("store unreachable")
+
+        gantry._vector_store.get_by_name = broken  # type: ignore[method-assign]
+        with caplog.at_level("WARNING", logger="agent_gantry.core.router"):
+            result = await gantry.retrieve(_query("zebra quagga okapi striped ungulate", limit=5))
+
+        assert "search_archive" not in _names(result)  # left out, and said so
+        assert any("default.search_archive" in r.getMessage() for r in caplog.records)
     finally:
         await gantry.close()

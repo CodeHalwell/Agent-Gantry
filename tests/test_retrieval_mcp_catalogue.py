@@ -639,7 +639,7 @@ async def test_syncing_servers_counts_servers_not_index_rows() -> None:
 
 
 async def test_catalogue_pieces_are_never_returned_as_tools() -> None:
-    from agent_gantry.schema.tool import RESERVED_NAMESPACES
+    from agent_gantry.schema.tool import is_reserved_namespace
 
     gantry = await _gantry(_native_tools(8))
     try:
@@ -649,7 +649,7 @@ async def test_catalogue_pieces_are_never_returned_as_tools() -> None:
 
         result = await gantry.retrieve(_query("restore the backup", limit=8))
         assert len(result.tools) == 8
-        assert not [t for t in result.tools if t.tool.namespace in RESERVED_NAMESPACES]
+        assert not [t for t in result.tools if is_reserved_namespace(t.tool.namespace)]
     finally:
         await gantry.close()
 

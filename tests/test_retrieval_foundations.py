@@ -25,7 +25,7 @@ from agent_gantry.schema.config import EmbedderConfig
 from agent_gantry.schema.mcp import mcp_server_tag
 from agent_gantry.schema.query import ConversationContext, ToolQuery
 from agent_gantry.schema.selection import SelectionCandidate, SelectionResult
-from agent_gantry.schema.tool import RESERVED_NAMESPACES, ToolDefinition
+from agent_gantry.schema.tool import RESERVED_NAMESPACES, ToolDefinition, is_reserved_namespace
 
 FACTORIES_LOG = "agent_gantry.core.factories"
 
@@ -316,7 +316,7 @@ async def test_an_mcp_server_entry_is_not_returned_as_a_tool() -> None:
     try:
         result = await gantry.retrieve(_query("restart the service", limit=5))
         assert result.tools
-        assert not [t for t in result.tools if t.tool.namespace in RESERVED_NAMESPACES]
+        assert not [t for t in result.tools if is_reserved_namespace(t.tool.namespace)]
         # The servers themselves are still routable, through their own call.
         assert len(await gantry.retrieve_mcp_servers("restart the service", limit=3)) == 3
     finally:
@@ -623,5 +623,77 @@ async def test_diverse_servers_are_not_three_copies_of_one() -> None:
 
         with pytest.raises(ValueError, match="between 0 and 1"):
             await gantry.retrieve_mcp_servers("logs", diversity_factor=-0.1)
+    finally:
+        await gantry.close()
+
+
+# --------------------------------------------------------------------------- #
+# Regressions
+# --------------------------------------------------------------------------- #
+
+
+async def test_server_diversity_survives_more_matches_than_its_pool() -> None:
+    """Nine matching servers and ``limit=2``: the pool is eight, and diversity used to
+    switch itself off because it held nine vectors for eight servers."""
+    pytest.importorskip("mcp")
+    gantry = AgentGantry(embedder=SimpleEmbedder())
+    try:
+        for i in range(8):
+            gantry.register_mcp_server(
+                f"logs_{i}",
+                url=f"https://logs-{i}.example/mcp",
+                description="Search the application logs in production" + " now" * i + ".",
+            )
+        gantry.register_mcp_server(
+            "traces",
+            url="https://traces.example/mcp",
+            description="Search the application request traces for latency.",
+        )
+        plain = await gantry.retrieve_mcp_servers("search the application logs", limit=2)
+        assert all(s.name.startswith("logs_") for s in plain)
+
+        diverse = await gantry.retrieve_mcp_servers(
+            "search the application logs", limit=2, diversity_factor=0.45
+        )
+        assert diverse[0].name == plain[0].name
+        assert diverse[1].name == "traces"
+    finally:
+        await gantry.close()
+
+
+async def test_a_selector_gives_an_unreachable_server_a_healthy_one_to_give_way_to() -> None:
+    """At ``limit=1`` there was no second server to reorder against."""
+    selector = _FixedSelector({"primary": 0.9, "backup": 0.7})
+    gantry = await _two_servers(selector=selector)
+    try:
+        gantry._mcp_registry.update_health(
+            "primary", "default", available=False, consecutive_failures=1
+        )
+        servers = await gantry.retrieve_mcp_servers("logs", limit=1)
+        assert [s.name for s in servers] == ["backup"]
+        assert selector.limits[-1] == 2  # one more than asked, for the one that could be demoted
+    finally:
+        await gantry.close()
+
+
+async def test_a_scope_that_names_nothing_does_not_search() -> None:
+    gantry = AgentGantry(embedder=SimpleEmbedder())
+    try:
+        await gantry.add_tool(_tool("add_numbers", "Add two numbers together."))
+        searches = 0
+        search = gantry._vector_store.search
+
+        async def counting(*args: Any, **kwargs: Any) -> Any:
+            nonlocal searches
+            searches += 1
+            return await search(*args, **kwargs)
+
+        gantry._vector_store.search = counting  # type: ignore[method-assign]
+
+        assert (await gantry.retrieve(_query("add", mcp_servers=[]))).tools == []
+        assert (await gantry.retrieve(_query("add", a2a_agents=[]))).tools == []
+        assert searches == 0
+        assert (await gantry.retrieve(_query("add"))).tools
+        assert searches == 1
     finally:
         await gantry.close()
