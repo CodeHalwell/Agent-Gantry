@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 from agent_gantry.adapters.embedders.base import embed_query
 from agent_gantry.adapters.embedders.openai import OpenAIEmbedder
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+from agent_gantry.adapters.rerankers.base import rerank_texts
 from agent_gantry.adapters.selectors.base import SelectorFallbackError
 from agent_gantry.core.chunks import (
     chunk_parent,
@@ -1329,6 +1330,17 @@ class AgentGantry:
             )
         return [by_id[candidate_id] for candidate_id in chosen]
 
+    def _reranker_for(self, rerank: bool) -> Any:
+        """The configured reranker when ``rerank`` is asked for, else ``None``."""
+        if not rerank:
+            return None
+        if self._reranker is None:
+            raise ValueError(
+                "rerank=True needs a reranker: pass reranker=... to AgentGantry, "
+                "or enable one in RerankerConfig."
+            )
+        return self._reranker
+
     def _embedder_name(self) -> str | None:
         """``model_name`` of the embedder in use, for result provenance.
 
@@ -2135,6 +2147,7 @@ class AgentGantry:
         namespaces: list[str] | None = None,
         *,
         diversity_factor: float = 0.0,
+        rerank: bool = False,
     ) -> list[MCPServerDefinition]:
         """
         Retrieve relevant MCP servers based on a query using semantic search.
@@ -2147,10 +2160,16 @@ class AgentGantry:
             diversity_factor: ``0`` ranks by relevance alone. Above it, a
                 server much like one already picked gives way to a different
                 one (maximal marginal relevance). Not applied when a selector
-                answers.
+                answers, or together with ``rerank``, which decides the order.
+            rerank: Rescore the best candidates with the gantry's reranker,
+                the one tool retrieval uses, and return its top ``limit``.
+                Off unless asked for. Not applied when a selector answers.
 
         Returns:
             List of relevant MCP server definitions
+
+        Raises:
+            ValueError: If ``rerank`` is set and no reranker is configured.
 
         Example:
             >>> servers = await gantry.retrieve_mcp_servers(
@@ -2162,6 +2181,7 @@ class AgentGantry:
         """
         self._require_mcp_manager()
         _check_diversity(diversity_factor)
+        reranker = self._reranker_for(rerank)
 
         # Before the sync, not after. ``register_server()`` puts the definition
         # straight into the registry that ``_select_mcp_servers`` reads; the
@@ -2178,11 +2198,22 @@ class AgentGantry:
 
         result = await self._mcp_router.route(
             query=query,
-            limit=limit,
+            # A reranker chooses among more candidates than it returns.
+            limit=limit * 4 if reranker is not None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
-            diversity_factor=diversity_factor,
+            diversity_factor=0.0 if reranker is not None else diversity_factor,
         )
+        if reranker is not None and result.servers:
+            ranked = await rerank_texts(
+                reranker,
+                query,
+                [scored.server.to_searchable_text() for scored in result.servers],
+                limit,
+                names=[scored.server.name for scored in result.servers],
+                scores=[scored.score for scored in result.servers],
+            )
+            return [result.servers[index].server for index, _ in ranked]
 
         return [scored.server for scored in result.servers]
 
@@ -3073,6 +3104,7 @@ class AgentGantry:
         score_threshold: float | None = None,
         *,
         diversity_factor: float = 0.0,
+        rerank: bool = False,
     ) -> list[SkillSearchResult]:
         """
         Retrieve the skills most relevant to a query.
@@ -3089,11 +3121,19 @@ class AgentGantry:
                 one (maximal marginal relevance), up to ``1``, which ignores
                 relevance after the first pick. Not applied when a selector
                 answers. Costs one embedding per candidate considered.
+            rerank: Rescore the best candidates with the gantry's reranker,
+                the one tool retrieval uses, and return its top ``limit``
+                with its scores. Off unless asked for. Not applied when a
+                selector answers.
 
         Returns:
             Scored skills, most relevant first
+
+        Raises:
+            ValueError: If ``rerank`` is set and no reranker is configured.
         """
         _check_diversity(diversity_factor)
+        reranker = self._reranker_for(rerank)
         # A blank query has no semantic signal: it embeds to a zero vector,
         # every skill ties at 0.0, and with no threshold the first `limit`
         # skills would be returned (and prompt-injected) arbitrarily.
@@ -3123,7 +3163,7 @@ class AgentGantry:
         # pieces. Pieces take places in the result, so more than ``limit`` are
         # fetched, and fetched again wider if they crowded the skills out.
         # Diversity chooses among more candidates than it returns.
-        pool = limit * 4 if diversity_factor > 0 else limit
+        pool = limit * 4 if diversity_factor > 0 or reranker is not None else limit
         fetch = pool * 4
         best: dict[tuple[str, str], tuple[Skill | None, float]] = {}
         for _ in range(3):
@@ -3157,6 +3197,19 @@ class AgentGantry:
             # Clamp: float32 cosine can exceed 1.0 by rounding error, and the
             # schema bounds score to [0, 1].
             results.append(SkillSearchResult(skill=skill, score=min(1.0, max(0.0, score))))
+        if reranker is not None and results:
+            ranked = await rerank_texts(
+                reranker,
+                query,
+                [result.skill.to_embedding_text() for result in results],
+                limit,
+                names=[result.skill.name for result in results],
+                scores=[result.score for result in results],
+            )
+            results = [
+                SkillSearchResult(skill=results[index].skill, score=min(1.0, max(0.0, score)))
+                for index, score in ranked
+            ]
         if diversity_factor > 0 and len(results) > 1:
             embeddings = await self._embedder.embed_batch(
                 [result.skill.to_embedding_text() for result in results]

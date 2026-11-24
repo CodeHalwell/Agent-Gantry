@@ -132,6 +132,20 @@ decimals.
   server with a catalogue has more vectors to match with than one without,
   and with the hash embedder that costs one paraphrase case on the eval; with
   the real embedder it costs none.
+- **Rerankers serve skills and MCP servers.**
+  `retrieve_skills(..., rerank=True)` and
+  `retrieve_mcp_servers(..., rerank=True)` rescore the best candidates with
+  the gantry's reranker. `RerankerAdapter.rerank` takes tools, so the
+  library's best relevance machinery was unavailable to two of its three
+  catalogues; `agent_gantry.adapters.rerankers.base.rerank_texts` puts any
+  text where a tool reranker looks, so every reranker works as it stands,
+  third-party ones included. A reranker may define `rerank_texts(query,
+  texts, top_k)` itself to skip that wrapping; `CrossEncoderReranker` does.
+  Reranking skills and servers is off unless asked for, so configuring a
+  reranker for tools does not start charging for the other two. Tested with
+  stand-in rerankers and a stand-in cross-encoder model, not against Cohere
+  or a live decision model; `SystemOneReranker` asks its question as worded
+  for tools.
 - **Diversity for skills and MCP servers.**
   `retrieve_skills(..., diversity_factor=0.4)` and
   `retrieve_mcp_servers(..., diversity_factor=0.4)` apply the maximal marginal
