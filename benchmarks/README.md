@@ -76,6 +76,14 @@ queries. Here that gives tools a threshold of 0.26, at which all 8 unanswerable
 queries are declined and no right answer is lost, but from a window only 0.01
 wide; skills and MCP servers have no threshold that separates the two.
 
+Tried on the same eval and not built: fusing lexical (BM25, k1=1.5, b=0.75,
+over each tool's searchable text) with vector results by reciprocal rank
+(k=60). Over the 51 answerable tool queries, vector alone gets 39 top-1 and 45
+in the top five; lexical alone 25 and 31; the fusion 29 and 44. It loses eight
+paraphrases at top-1 (21/30 to 13/30) to gain two parameter-name queries in
+the top five. A lexical signal would have to be weighted well below the
+vector one to be worth adding.
+
 These are one synthetic catalogue and a few dozen queries per modality. They
 are for comparing a change with what came before it, not for quoting as the
 library's accuracy.

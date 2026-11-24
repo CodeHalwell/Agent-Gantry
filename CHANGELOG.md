@@ -9,11 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.26.0] - 2026-11-24
 
-Retrieval can now be measured, and large MCP servers can be worked with: a
-labelled eval with a baseline CI holds, search within one server, cataloguing
-a server without embedding every tool it has, and a selector that narrows by
-server above its ceiling instead of giving up. It is a minor release because
-it adds public API and changes what a tool is embedded from.
+Retrieval can now be measured, and this release's relevance changes were
+measured before they stayed in. There is a labelled eval, with a baseline that
+CI holds. Long tool descriptions and skill bodies are searchable to their end. A large MCP
+server can be catalogued without embedding every tool it has, searched within,
+and routed to by what it lists. A2A agents get the registry and routing MCP
+servers had. Rerankers, diversity and the conversation's penalties reach the
+paths they had missed. It is a minor release because it adds public API and
+changes what a tool is embedded from.
 
 **Migrating.** Nothing has to change. Eight things to know:
 
@@ -43,14 +46,29 @@ it adds public API and changes what a tool is embedded from.
   version does not until those servers are discovered again, so a process
   that only reads such a store gets nothing back from a scoped search.
 
-Measured on the new eval (345 tools, 59 labelled queries, `all-MiniLM-L6-v2`,
-`k=5`): tool recall@1 went from 0.549 to 0.725 and recall@5 from 0.765 to
-0.833. By kind of query, top-1 went from 0/5 to 5/5 where only the MCP
-server's name tells the answer from its twins, from 0/6 to 3/6 where the
-query names a parameter, and from 20/30 to 21/30 on paraphrases. Skills and
-MCP-server routing are unchanged, as nothing here touches them. It is one
-synthetic catalogue and a small labelled set: read the direction, not the
-decimals.
+Measured on the new eval (345 tools, 20 skills and 12 MCP servers with labelled
+queries; `all-MiniLM-L6-v2`, `k=5`), before this release's changes and after:
+
+| | recall@1 | recall@5 |
+|---|---|---|
+| tools (59 queries) | 0.549 to 0.765 | 0.765 to 0.873 |
+| skills (14) | 0.750 to 0.917 | 1.000 to 1.000 |
+| MCP servers (13) | 0.636 to 0.727 | 0.818 to 0.909 |
+
+By kind of tool query, top-1: only the MCP server's name tells the answer from
+its twins, 0/5 to 5/5; the query names a parameter, 0/6 to 3/6; the answer
+sits past character 2,000 of a description, 0/2 to 2/2; paraphrases, 20/30 to
+21/30. It is one synthetic catalogue and a few dozen queries per kind: read
+the direction, not the decimals.
+
+Two things were tried and left out, because the eval said so. Writing an MCP
+server's tool names into its one description moved nothing; indexing the
+catalogue in pieces did, and that is what shipped. Fusing lexical (BM25)
+search with vector search by rank, as an optional `search_text()` on the
+vector-store protocol, was not built: on the eval it takes tool top-1 from
+39/51 to 29/51 (paraphrases 21/30 to 13/30) for a gain of two parameter-name
+queries in the top five. Lexical search may yet earn a place as a weighted
+signal, but not as an equal partner in a rank fusion.
 
 ### Added
 
