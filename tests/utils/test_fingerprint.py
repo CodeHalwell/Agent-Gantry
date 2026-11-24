@@ -12,7 +12,7 @@ def test_compute_tool_fingerprint_valid():
         capabilities=[ToolCapability.READ_DATA],
     )
     fp = compute_tool_fingerprint(tool)
-    assert fp.startswith("v1.1:")
+    assert fp.startswith("v1.2:")
     assert len(fp.split(":")[1]) == 16
 
 

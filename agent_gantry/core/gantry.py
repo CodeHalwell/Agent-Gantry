@@ -21,7 +21,15 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 from agent_gantry.adapters.embedders.base import embed_query
 from agent_gantry.adapters.embedders.openai import OpenAIEmbedder
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+from agent_gantry.adapters.rerankers.base import rerank_texts
 from agent_gantry.adapters.selectors.base import SelectorFallbackError
+from agent_gantry.core.a2a_manager import A2AManager
+from agent_gantry.core.chunks import (
+    chunk_parent,
+    delete_skill_chunks,
+    delete_tool_chunks,
+    sync_skill_chunks,
+)
 from agent_gantry.core.executor import ExecutionEngine
 from agent_gantry.core.factories import (
     build_embedder,
@@ -30,9 +38,16 @@ from agent_gantry.core.factories import (
     build_telemetry,
     build_vector_store,
 )
-from agent_gantry.core.registry import ToolRegistry
-from agent_gantry.core.router import RoutingWeights, SemanticRouter
+from agent_gantry.core.registry import ToolRegistry, reject_reserved_namespace
+from agent_gantry.core.router import (
+    UNAVAILABLE_SERVER_PENALTY,
+    RoutingWeights,
+    SemanticRouter,
+    conversation_penalty,
+    mmr_order,
+)
 from agent_gantry.core.security import SecurityPolicy
+from agent_gantry.schema.a2a import A2AAgentDefinition
 from agent_gantry.schema.config import (
     A2AAgentConfig,
     AgentGantryConfig,
@@ -49,10 +64,24 @@ from agent_gantry.schema.execution import (
 )
 from agent_gantry.schema.introspection import _callable_target, build_parameters_schema
 from agent_gantry.schema.mcp import MCPServerDefinition
-from agent_gantry.schema.query import ConversationContext, RetrievalResult, ScoredTool, ToolQuery
+from agent_gantry.schema.query import (
+    ContextEntry,
+    ContextResult,
+    ConversationContext,
+    RetrievalResult,
+    ScoredTool,
+    ToolQuery,
+)
 from agent_gantry.schema.selection import SelectionCandidate
 from agent_gantry.schema.skill import Skill, SkillSearchResult
-from agent_gantry.schema.tool import ToolCapability, ToolDefinition
+from agent_gantry.schema.tool import (
+    A2A_AGENT_NAMESPACE,
+    MCP_SERVER_NAMESPACE,
+    ToolCapability,
+    ToolDefinition,
+    chunk_namespace,
+    is_reserved_namespace,
+)
 from agent_gantry.utils.async_utils import is_coroutine_function
 
 if TYPE_CHECKING:
@@ -100,6 +129,12 @@ async def _close_adapter(adapter: Any) -> None:
         except Exception:
             logger.debug(f"Error closing {type(adapter).__name__}", exc_info=True)
         return
+
+
+def _check_diversity(diversity_factor: float) -> None:
+    """Reject a diversity factor outside ``[0, 1]``."""
+    if not 0.0 <= diversity_factor <= 1.0:
+        raise ValueError(f"diversity_factor must be between 0 and 1, got {diversity_factor!r}")
 
 
 class AgentGantry:
@@ -195,9 +230,11 @@ class AgentGantry:
             vector_store=self._vector_store,
             embedder=self._embedder,
             registry=self._registry,
+            chunk_long_text=self._config.routing.chunk_long_text,
         )
 
         self._create_mcp_components()
+        self._a2a_manager = A2AManager(self._vector_store, self._embedder, self._sync_manager)
         self._llm_client = self._create_llm_client()
         self._router = self._create_router()
         self._rate_limiter = self._create_rate_limiter()
@@ -302,6 +339,9 @@ class AgentGantry:
         not loaded here because import + embedding is async.
         """
         self._pending_tools: list[ToolDefinition] = []
+        # What each MCP server listed when last asked, keyed by
+        # (namespace, name), so part of it can be adopted without asking again.
+        self._mcp_catalogues: dict[tuple[str, str], list[ToolDefinition]] = {}
         # Locks are created lazily, inside a running loop, on first use.
         self._init_lock: asyncio.Lock | None = None
         # One-shot guard for _ensure_skill_vectors_current (embedder is fixed
@@ -590,7 +630,7 @@ class AgentGantry:
                 examples=examples or [],
             )
 
-            self._pending_tools.append(tool)
+            self._enqueue([tool])
             # Definition and handler go into the registry right away, so the
             # tool is executable before the next sync().
             self._registry.register_tool(tool, underlying)
@@ -629,7 +669,7 @@ class AgentGantry:
                 registry-held handler (MCP/A2A discovery already do this, and
                 keep working unchanged since ``handler`` defaults to ``None``).
         """
-        self._pending_tools.append(tool)
+        self._enqueue([tool])
         if handler is not None:
             # Mirror register(): the definition goes into the registry right
             # away (not just _pending_tools) so the tool is executable before
@@ -770,6 +810,16 @@ class AgentGantry:
         for tool in self._pending_tools:
             self._registry.register_tool(tool)
 
+    def _enqueue(self, tools: Sequence[ToolDefinition]) -> None:
+        """Queue ``tools`` for the next sync, refusing any in a reserved namespace.
+
+        All are checked before any is queued: a tool that would never be found
+        must not be left in the queue to fail every later sync.
+        """
+        for tool in tools:
+            reject_reserved_namespace(tool.namespace, f"tool '{tool.name}'")
+        self._pending_tools.extend(tools)
+
     async def prune_stale_tools(self, keep: Sequence[ToolDefinition] | None = None) -> int:
         """
         Delete stored tools that this gantry no longer registers.
@@ -807,7 +857,12 @@ class AgentGantry:
         stored = await self._list_all_pages(self._vector_store.list_all)
         removed = 0
         for tool in stored:
-            if tool.namespace == "__mcp_servers__":
+            if tool.namespace in (MCP_SERVER_NAMESPACE, A2A_AGENT_NAMESPACE):
+                # Routed by their own registries, which prune their own.
+                continue
+            # A chunk lives and dies with the tool it was cut from.
+            parent = chunk_parent(tool)
+            if parent is not None and f"{parent[0]}.{parent[1]}" in wanted:
                 continue
             if f"{tool.namespace}.{tool.name}" in wanted:
                 continue
@@ -955,7 +1010,7 @@ class AgentGantry:
             # pending as well, so the first retrieval embeds them.
             for tool in tools_to_add:
                 self._registry.register_tool(tool)
-            self._pending_tools.extend(tools_to_add)
+            self._enqueue(tools_to_add)
         elif tools_to_add:
             await self._ensure_initialized()
             await self._sync_manager.sync_batches(tools_to_add, batch_size=100)
@@ -1096,8 +1151,21 @@ class AgentGantry:
         by_id = {tool.qualified_name: tool for tool in tools}
         candidates = [SelectionCandidate.from_tool(tool) for tool in tools]
 
+        # What the conversation knows about each tool: called already, failed,
+        # deprecated. The selector judges relevance and cannot see any of it,
+        # so a tool that failed twice this turn would rank exactly where its
+        # description put it. Ask for as many extra as could be demoted, so
+        # that demoting one lets the next best take its place.
+        used = set(query.context.tools_already_used)
+        failed = set(query.context.tools_failed)
+        penalties = {
+            tool.qualified_name: penalty
+            for tool in tools
+            if (penalty := conversation_penalty(tool, used, failed))
+        }
+
         start = perf_counter()
-        result = await self._selector.select(text, candidates, query.limit)
+        result = await self._selector.select(text, candidates, query.limit + len(penalties))
         elapsed_ms = (perf_counter() - start) * 1000
         if result.fallback:
             return self._selector_fell_back("tool", result.reason, failed=True)
@@ -1114,13 +1182,23 @@ class AgentGantry:
         scored = [
             ScoredTool(
                 tool=by_id[candidate_id],
-                semantic_score=result.scores.get(candidate_id, 0.0),
+                # The probability, less what the conversation holds against
+                # the tool. The threshold is applied to the probability
+                # itself: a penalty reorders, it does not make a relevant
+                # tool irrelevant.
+                semantic_score=max(
+                    0.0, result.scores.get(candidate_id, 0.0) - penalties.get(candidate_id, 0.0)
+                ),
                 rerank_score=None,
             )
             for candidate_id in result.selected
             if candidate_id in by_id and result.scores.get(candidate_id, 0.0) >= threshold
         ]
-        return scored, elapsed_ms, len(candidates)
+        if penalties:
+            # Stable: tools the conversation says nothing about keep the
+            # selector's own order among themselves.
+            scored.sort(key=lambda entry: entry.semantic_score, reverse=True)
+        return scored[: query.limit], elapsed_ms, len(candidates)
 
     async def _select_skills(
         self,
@@ -1173,7 +1251,8 @@ class AgentGantry:
                 page = await store.list_all_skills(
                     namespace=ns, limit=page_size, offset=offset, **store_kwargs
                 )
-                skills.extend(page)
+                # The pieces a skill's content is indexed in are not skills.
+                skills.extend(s for s in page if not is_reserved_namespace(s.namespace))
                 offset += len(page)
                 if len(skills) > _MAX_SELECTABLE_SKILLS:
                     over_ceiling = True
@@ -1229,6 +1308,37 @@ class AgentGantry:
             if candidate_id in by_id and result.scores.get(candidate_id, 0.0) >= threshold
         ]
 
+    async def _select_a2a_agents(
+        self,
+        query: str,
+        limit: int,
+        score_threshold: float | None,
+        namespaces: list[str] | None,
+    ) -> list[A2AAgentDefinition] | None:
+        """Choose A2A agents with the configured selector, or ``None`` to fall back."""
+        if self._selector is None:
+            return None
+        agents = self._a2a_manager.list()
+        if namespaces:
+            allowed = set(namespaces)
+            agents = [agent for agent in agents if agent.namespace in allowed]
+        if not agents:
+            return None
+
+        by_id = {agent.qualified_name: agent for agent in agents}
+        candidates = [SelectionCandidate.from_a2a_agent(agent) for agent in agents]
+        result = await self._selector.select(query, candidates, limit, kind="a2a_agent")
+        if result.fallback:
+            self._selector_fell_back("a2a_agent", result.reason, failed=True)
+            return None
+        self._selector_answered("a2a_agent")
+        threshold = score_threshold or 0.0
+        return [
+            by_id[candidate_id]
+            for candidate_id in result.selected
+            if candidate_id in by_id and result.scores.get(candidate_id, 0.0) >= threshold
+        ]
+
     async def _select_mcp_servers(
         self,
         query: str,
@@ -1251,18 +1361,52 @@ class AgentGantry:
 
         by_id = {f"{server.namespace}.{server.name}": server for server in servers}
         candidates = [SelectionCandidate.from_mcp_server(server) for server in servers]
-        result = await self._selector.select(query, candidates, limit, kind="mcp_server")
+        # As for tools: ask for as many extra as could be demoted, so that a
+        # server which cannot be reached has a healthy one to give way to.
+        unavailable = sum(1 for server in servers if not server.health.available)
+        result = await self._selector.select(
+            query, candidates, limit + unavailable, kind="mcp_server"
+        )
         if result.fallback:
             self._selector_fell_back("mcp_server", result.reason, failed=True)
             return None
         self._selector_answered("mcp_server")
 
         threshold = score_threshold or 0.0
-        return [
-            by_id[candidate_id]
+        chosen = [
+            candidate_id
             for candidate_id in result.selected
             if candidate_id in by_id and result.scores.get(candidate_id, 0.0) >= threshold
         ]
+        if any(not by_id[candidate_id].health.available for candidate_id in chosen):
+            # As on the semantic path: a server whose last connection attempt
+            # failed is still offered, below a healthy one of like relevance.
+            chosen.sort(
+                key=lambda candidate_id: result.scores.get(candidate_id, 0.0)
+                - (0.0 if by_id[candidate_id].health.available else UNAVAILABLE_SERVER_PENALTY),
+                reverse=True,
+            )
+        return [by_id[candidate_id] for candidate_id in chosen[:limit]]
+
+    def _reranker_for(self, rerank: bool) -> Any:
+        """The configured reranker when ``rerank`` is asked for, else ``None``."""
+        if not rerank:
+            return None
+        if self._reranker is None:
+            raise ValueError(
+                "rerank=True needs a reranker: pass reranker=... to AgentGantry, "
+                "or enable one in RerankerConfig."
+            )
+        return self._reranker
+
+    def _embedder_name(self) -> str | None:
+        """``model_name`` of the embedder in use, for result provenance.
+
+        ``None`` for a duck-typed embedder that does not name itself: this is
+        reporting, and must not be what makes a retrieval fail.
+        """
+        name = getattr(self._embedder, "model_name", None)
+        return name if isinstance(name, str) and name else None
 
     async def retrieve(self, query: ToolQuery) -> RetrievalResult:
         """
@@ -1387,6 +1531,7 @@ class AgentGantry:
             # say so, so a caller can tell which backend it is looking at.
             selector_fallback=fell_back is not None,
             selector_fallback_reason=fell_back.reason if fell_back is not None else None,
+            embedder=self._embedder_name(),
         )
         await self._telemetry.record_retrieval(query, retrieval)
         return retrieval
@@ -1452,6 +1597,183 @@ class AgentGantry:
         )
         result = await self.retrieve(tool_query)
         return result.to_dialect(dialect, **adapter_options)
+
+    async def retrieve_context(
+        self,
+        query: str,
+        *,
+        tools: int = 5,
+        skills: int = 2,
+        servers: int = 1,
+        agents: int = 1,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+    ) -> ContextResult:
+        """
+        Retrieve tools, skills, MCP servers and A2A agents for one query, in one ranked view.
+
+        The catalogues are otherwise separate calls with separate score scales
+        and nothing that ranks across them. This runs the searches
+        concurrently and merges them by rank: every kind's best match first,
+        then every kind's second, and so on. See
+        :class:`~agent_gantry.schema.query.ContextResult` for why by rank and
+        not by score.
+
+        A kind this gantry has no means to search (MCP support not installed,
+        a vector store without skills) is left out and named in
+        ``result.skipped``, so the call still answers with what it has. An
+        error from a search that did run, such as an unreachable store, is
+        raised as it would be from that search called on its own: reporting
+        it as "nothing matched" would hide it.
+
+        Args:
+            query: The natural language query
+            tools: How many tools to retrieve; ``0`` for none
+            skills: How many skills to retrieve; ``0`` for none
+            servers: How many MCP servers to retrieve; ``0`` for none
+            agents: How many A2A agents to retrieve; ``0`` for none
+            score_threshold: Minimum score for a tool. Defaults to ``0.0``
+                (no filtering), as for :meth:`retrieve_tools`. Skills and
+                servers are not thresholded here: their scales differ, and
+                :func:`~agent_gantry.evaluation.calibrate_threshold` is the
+                way to find one for each.
+            namespaces: Restrict all three searches to these namespaces
+
+        Returns:
+            A :class:`~agent_gantry.schema.query.ContextResult`
+        """
+        started = perf_counter()
+        skipped: dict[str, str] = {}
+
+        async def find_tools() -> RetrievalResult | None:
+            if tools <= 0:
+                return None
+            return await self.retrieve(
+                ToolQuery(
+                    context=ConversationContext(query=query),
+                    limit=tools,
+                    score_threshold=score_threshold,
+                    namespaces=namespaces,
+                )
+            )
+
+        async def find_skills() -> list[SkillSearchResult]:
+            if skills <= 0:
+                return []
+            try:
+                self._skills_store()
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                skipped["skill"] = str(exc)
+                return []
+            return await self.retrieve_skills(query, limit=skills, namespace=namespaces)
+
+        async def find_servers() -> list[MCPServerDefinition]:
+            if servers <= 0:
+                return []
+            if self._mcp_manager is None:
+                skipped["mcp_server"] = "MCP support is not installed"
+                return []
+            if self._mcp_registry is None or not self._mcp_registry.list_servers():
+                return []
+            return await self.retrieve_mcp_servers(query, limit=servers, namespaces=namespaces)
+
+        async def find_agents() -> list[A2AAgentDefinition]:
+            if agents <= 0:
+                return []
+            return await self.retrieve_a2a_agents(query, limit=agents, namespaces=namespaces)
+
+        tool_result, skill_results, server_results, agent_results = await asyncio.gather(
+            find_tools(), find_skills(), find_servers(), find_agents()
+        )
+
+        ranked: list[list[ContextEntry]] = [
+            [
+                ContextEntry(
+                    kind="tool",
+                    id=f"{scored.tool.namespace}.{scored.tool.name}",
+                    rank=rank,
+                    score=scored.final_score,
+                    entry=scored.tool,
+                )
+                for rank, scored in enumerate(tool_result.tools if tool_result else [], 1)
+            ],
+            [
+                ContextEntry(
+                    kind="skill",
+                    id=f"{found.skill.namespace}.{found.skill.name}",
+                    rank=rank,
+                    score=found.score,
+                    entry=found.skill,
+                )
+                for rank, found in enumerate(skill_results, 1)
+            ],
+            [
+                ContextEntry(
+                    kind="mcp_server",
+                    id=f"{server.namespace}.{server.name}",
+                    rank=rank,
+                    entry=server,
+                )
+                for rank, server in enumerate(server_results, 1)
+            ],
+            [
+                ContextEntry(kind="a2a_agent", id=agent.qualified_name, rank=rank, entry=agent)
+                for rank, agent in enumerate(agent_results, 1)
+            ],
+        ]
+        # By rank, then by kind in the order above. ``sorted`` is stable, so
+        # flattening kind by kind and sorting on rank alone gives exactly that.
+        entries = sorted((entry for group in ranked for entry in group), key=lambda e: e.rank)
+        return ContextResult(
+            entries=entries,
+            tool_retrieval=tool_result,
+            skipped=skipped,
+            total_time_ms=(perf_counter() - started) * 1000,
+        )
+
+    async def retrieve_tools_from_server(
+        self,
+        server_name: str,
+        query: str,
+        limit: int = 5,
+        dialect: str = "openai",
+        score_threshold: float = 0.0,
+        dialect_options: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        """
+        Retrieve tools from one MCP server only.
+
+        The search runs within that server's tools, not across the registry and
+        then narrowed, so the result is what searching that server on its own
+        would return however many other tools are registered. The tools must
+        already be discovered (``add_mcp_server`` or
+        ``discover_tools_from_server``).
+
+        Args:
+            server_name: The MCP server's name, as given in its
+                :class:`~agent_gantry.schema.config.MCPServerConfig`.
+            query: The natural language query
+            limit: Maximum number of tools to return
+            dialect: Target dialect/provider name (default: 'openai')
+            score_threshold: Minimum cosine score to keep a tool (default
+                ``0.0``, as for :meth:`retrieve_tools`)
+            dialect_options: Options forwarded to the dialect adapter
+            **kwargs: As for :meth:`retrieve_tools`. For several servers at
+                once, call that with ``mcp_servers=[...]`` instead.
+
+        Returns:
+            List of provider-specific tool schemas, all from ``server_name``
+        """
+        return await self.retrieve_tools(
+            query,
+            limit=limit,
+            dialect=dialect,
+            score_threshold=score_threshold,
+            dialect_options=dialect_options,
+            mcp_servers=[server_name],
+            **kwargs,
+        )
 
     async def execute(self, call: ToolCall) -> ToolResult:
         """
@@ -1777,7 +2099,7 @@ class AgentGantry:
         # Add all tools first, then sync once — per-tool add_tool() would
         # trigger a full sync (and a size-1 embedding batch) per tool when
         # auto_sync is enabled.
-        self._pending_tools.extend(tools)
+        self._enqueue(tools)
         if self._config.auto_sync:
             await self.sync()
 
@@ -1907,6 +2229,7 @@ class AgentGantry:
                 await self._vector_store.delete(t.name, t.namespace)
             except Exception:
                 logger.debug("Error removing stale MCP tool from vector store", exc_info=True)
+            await delete_tool_chunks(self._vector_store, t.name, t.namespace)
         self._pending_tools[:] = [t for t in self._pending_tools if not is_stale(t)]
         if stale:
             logger.info(
@@ -1994,6 +2317,9 @@ class AgentGantry:
         # the next retrieval; ``_ensure_mcp_synced`` also checks the pending
         # list, this just keeps the flag honest.
         self._mcp_synced = False
+        # A listing made under the previous registration may be another
+        # server's by now.
+        self._mcp_catalogues.pop((namespace, name), None)
 
     def _require_mcp_manager(self) -> Any:
         """Return the MCP manager, or explain how to enable MCP support."""
@@ -2010,6 +2336,9 @@ class AgentGantry:
         limit: int = 3,
         score_threshold: float | None = None,
         namespaces: list[str] | None = None,
+        *,
+        diversity_factor: float = 0.0,
+        rerank: bool = False,
     ) -> list[MCPServerDefinition]:
         """
         Retrieve relevant MCP servers based on a query using semantic search.
@@ -2019,9 +2348,19 @@ class AgentGantry:
             limit: Maximum number of servers to return
             score_threshold: Minimum similarity score (0-1)
             namespaces: Filter by server namespaces
+            diversity_factor: ``0`` ranks by relevance alone. Above it, a
+                server much like one already picked gives way to a different
+                one (maximal marginal relevance). Not applied when a selector
+                answers, or together with ``rerank``, which decides the order.
+            rerank: Rescore the best candidates with the gantry's reranker,
+                the one tool retrieval uses, and return its top ``limit``.
+                Off unless asked for. Not applied when a selector answers.
 
         Returns:
             List of relevant MCP server definitions
+
+        Raises:
+            ValueError: If ``rerank`` is set and no reranker is configured.
 
         Example:
             >>> servers = await gantry.retrieve_mcp_servers(
@@ -2032,6 +2371,8 @@ class AgentGantry:
             ...     print(f"Server: {server.name} - {server.description}")
         """
         self._require_mcp_manager()
+        _check_diversity(diversity_factor)
+        reranker = self._reranker_for(rerank)
 
         # Before the sync, not after. ``register_server()`` puts the definition
         # straight into the registry that ``_select_mcp_servers`` reads; the
@@ -2048,12 +2389,218 @@ class AgentGantry:
 
         result = await self._mcp_router.route(
             query=query,
-            limit=limit,
+            # A reranker chooses among more candidates than it returns.
+            limit=limit * 4 if reranker is not None else limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            diversity_factor=0.0 if reranker is not None else diversity_factor,
         )
+        if reranker is not None and result.servers:
+            # A server's own text says nothing of the tools it lists, which
+            # may be all that matched: show the reranker that passage too.
+            ranked = await rerank_texts(
+                reranker,
+                query,
+                [
+                    " ".join(
+                        part
+                        for part in (scored.server.to_searchable_text(), scored.passage)
+                        if part
+                    )
+                    for scored in result.servers
+                ],
+                limit,
+                names=[scored.server.name for scored in result.servers],
+                scores=[scored.score for scored in result.servers],
+            )
+            return [result.servers[index].server for index, _ in ranked]
 
         return [scored.server for scored in result.servers]
+
+    async def _fetch_mcp_catalogue(
+        self, server_name: str, namespace: str, timeout: float
+    ) -> tuple[Any, list[ToolDefinition]]:
+        """Connect to a registered MCP server and list its tools, recording its health.
+
+        Registers nothing and embeds nothing. The listing is remembered so
+        that :meth:`adopt_server_tools` can commit part of it without asking
+        the server again.
+        """
+        self._require_mcp_manager()
+        await self._ensure_initialized()
+
+        client = self._mcp_registry.get_client(server_name, namespace)
+        if not client:
+            raise ValueError(
+                f"MCP server '{namespace}.{server_name}' not found. "
+                f"Register it first with register_mcp_server()."
+            )
+
+        def _mark_failed() -> None:
+            server = self._mcp_registry.get_server(server_name, namespace)
+            self._mcp_registry.update_health(
+                server_name,
+                namespace,
+                available=False,
+                last_failure=datetime.now(timezone.utc),
+                consecutive_failures=server.health.consecutive_failures + 1 if server else 1,
+            )
+
+        try:
+            tools = await asyncio.wait_for(client.list_tools(), timeout=timeout)
+        except asyncio.TimeoutError:
+            _mark_failed()
+            logger.error(
+                f"Timeout while discovering tools from MCP server {namespace}.{server_name} "
+                f"(timeout: {timeout}s)"
+            )
+            raise TimeoutError(
+                f"MCP server {namespace}.{server_name} did not respond within {timeout}s"
+            )
+        except Exception as e:
+            _mark_failed()
+            logger.error(f"Failed to discover tools from MCP server {namespace}.{server_name}: {e}")
+            raise
+
+        self._mcp_registry.update_health(
+            server_name,
+            namespace,
+            available=True,
+            last_success=datetime.now(timezone.utc),
+            consecutive_failures=0,
+        )
+        self._mcp_catalogues[(namespace, server_name)] = list(tools)
+        # The server is routed to by what it lists as well as by what its
+        # registration says; the pieces are embedded at the next server sync.
+        self._mcp_manager.set_catalogue(server_name, namespace, tools)
+        self._mcp_synced = False
+        return client, tools
+
+    async def list_server_tools(
+        self,
+        server_name: str,
+        namespace: str = "default",
+        timeout: float = 30.0,
+    ) -> list[ToolDefinition]:
+        """
+        List the tools a registered MCP server offers, without committing any of them.
+
+        This is discovery without the cost: the server is asked what it has,
+        and nothing is registered, embedded or given a handler, so the tools
+        do not compete with the rest of the registry and cannot be retrieved
+        or executed yet. Commit the ones you want with
+        :meth:`adopt_server_tools`. A server with several hundred tools can be
+        catalogued this way for the price of one request.
+
+        Args:
+            server_name: Name of the registered MCP server
+            namespace: Server namespace
+            timeout: Connection timeout in seconds (default: 30.0)
+
+        Returns:
+            The server's tools as :class:`~agent_gantry.schema.tool.ToolDefinition`
+            objects: names, descriptions and schemas.
+
+        Raises:
+            ValueError: If the server is not registered
+            TimeoutError: If the connection or tool discovery times out
+            Exception: If tool discovery fails
+        """
+        _, tools = await self._fetch_mcp_catalogue(server_name, namespace, timeout)
+        return list(tools)
+
+    async def adopt_server_tools(
+        self,
+        server_name: str,
+        names: Sequence[str] | None = None,
+        *,
+        namespace: str = "default",
+        timeout: float = 30.0,
+        refresh: bool = False,
+    ) -> int:
+        """
+        Register and embed tools from a registered MCP server: all of them, or some.
+
+        Adoption adds to what was adopted before; it does not replace it. A
+        tool the server no longer lists is removed, whether or not it is named
+        here.
+
+        Args:
+            server_name: Name of the registered MCP server
+            names: The tools to adopt, by the name Gantry gives them or the
+                name the server knows them by. ``None`` adopts every tool the
+                server lists, which is what
+                :meth:`discover_tools_from_server` does.
+            namespace: Server namespace
+            timeout: Connection timeout in seconds (default: 30.0)
+            refresh: Ask the server for its tools again even if
+                :meth:`list_server_tools` already has. Without it, a listing
+                made earlier in this process is reused, however old: a tool
+                the server has dropped since can still be adopted from it and
+                will fail when called, and is not removed until the server is
+                asked again. Pass ``True`` when the listing may be stale.
+
+        Returns:
+            Number of tools adopted
+
+        Raises:
+            ValueError: If the server is not registered, or a name in
+                ``names`` is not one of its tools
+            TimeoutError: If the connection or tool discovery times out
+            Exception: If tool discovery fails
+
+        Example:
+            >>> catalogue = await gantry.list_server_tools("datadog")
+            >>> wanted = [t.name for t in catalogue if "log" in t.name]
+            >>> await gantry.adopt_server_tools("datadog", wanted)
+        """
+        self._require_mcp_manager()
+        catalogue = None if refresh else self._mcp_catalogues.get((namespace, server_name))
+        client = self._mcp_registry.get_client(server_name, namespace)
+        if catalogue is None or client is None:
+            client, catalogue = await self._fetch_mcp_catalogue(server_name, namespace, timeout)
+        else:
+            await self._ensure_initialized()
+
+        # Before the names are checked, and against the whole listing, not the
+        # adopted part. A tool adopted earlier and still offered stays; one
+        # the server has dropped goes, even when this call then fails on a
+        # name, because what the server no longer has cannot be called.
+        await self._remove_stale_mcp_tools(client, catalogue)
+
+        if names is None:
+            tools = list(catalogue)
+        else:
+            from agent_gantry.adapters.executors.mcp_client import MCPClient
+
+            wanted = set(names)
+            tools = [
+                t for t in catalogue if t.name in wanted or MCPClient.server_tool_name(t) in wanted
+            ]
+            found = {t.name for t in tools} | {MCPClient.server_tool_name(t) for t in tools}
+            missing = sorted(wanted - found)
+            if missing:
+                raise ValueError(
+                    f"MCP server '{namespace}.{server_name}' has no tool named "
+                    f"{', '.join(repr(name) for name in missing)}."
+                )
+
+        registry = self._mcp_registry
+
+        def _current_client() -> Any:
+            return registry.get_client(server_name, namespace) if registry else None
+
+        self._register_mcp_tool_handlers(client, tools, resolve_client=_current_client)
+
+        self._enqueue(tools)
+        if self._config.auto_sync:
+            await self.sync()
+
+        logger.info(
+            f"Adopted {len(tools)} of {len(catalogue)} tools from MCP server: "
+            f"{namespace}.{server_name}"
+        )
+        return len(tools)
 
     async def discover_tools_from_server(
         self,
@@ -2064,8 +2611,10 @@ class AgentGantry:
         """
         Dynamically discover and register tools from a previously registered MCP server.
 
-        This method connects to the server, discovers its tools, and adds them to
-        the gantry's tool registry.
+        This method connects to the server, discovers its tools, and adds
+        every one of them to the gantry's tool registry. For a server with
+        many tools, :meth:`list_server_tools` and :meth:`adopt_server_tools`
+        commit only the ones you choose.
 
         Args:
             server_name: Name of the registered MCP server
@@ -2089,86 +2638,9 @@ class AgentGantry:
             >>> count = await gantry.discover_tools_from_server("filesystem")
             >>> print(f"Discovered {count} tools")
         """
-        self._require_mcp_manager()
-        await self._ensure_initialized()
-
-        # Get the MCP client for this server
-        client = self._mcp_registry.get_client(server_name, namespace)
-        if not client:
-            raise ValueError(
-                f"MCP server '{namespace}.{server_name}' not found. "
-                f"Register it first with register_mcp_server()."
-            )
-
-        try:
-            # Discover tools from the server with timeout protection
-            tools = await asyncio.wait_for(client.list_tools(), timeout=timeout)
-
-            # Wire execution handlers (tools execute via the MCP client).
-            # Resolved through the registry on every call so a server
-            # re-registered with a different endpoint is honoured by tools
-            # discovered before the change.
-            registry = self._mcp_registry
-
-            def _current_client() -> Any:
-                return registry.get_client(server_name, namespace) if registry else None
-
-            self._register_mcp_tool_handlers(client, tools, resolve_client=_current_client)
-            await self._remove_stale_mcp_tools(client, tools)
-
-            # Add all tools first, then sync once (avoids per-tool full syncs)
-            self._pending_tools.extend(tools)
-            if self._config.auto_sync:
-                await self.sync()
-
-            # Update server health
-            self._mcp_registry.update_health(
-                server_name,
-                namespace,
-                available=True,
-                last_success=datetime.now(timezone.utc),
-                consecutive_failures=0,
-            )
-
-            logger.info(f"Discovered {len(tools)} tools from MCP server: {namespace}.{server_name}")
-            return len(tools)
-
-        except asyncio.TimeoutError:
-            # Update server health on timeout
-            server = self._mcp_registry.get_server(server_name, namespace)
-            consecutive_failures = server.health.consecutive_failures + 1 if server else 1
-
-            self._mcp_registry.update_health(
-                server_name,
-                namespace,
-                available=False,
-                last_failure=datetime.now(timezone.utc),
-                consecutive_failures=consecutive_failures,
-            )
-
-            logger.error(
-                f"Timeout while discovering tools from MCP server {namespace}.{server_name} "
-                f"(timeout: {timeout}s)"
-            )
-            raise TimeoutError(
-                f"MCP server {namespace}.{server_name} did not respond within {timeout}s"
-            )
-
-        except Exception as e:
-            # Update server health on failure
-            server = self._mcp_registry.get_server(server_name, namespace)
-            consecutive_failures = server.health.consecutive_failures + 1 if server else 1
-
-            self._mcp_registry.update_health(
-                server_name,
-                namespace,
-                available=False,
-                last_failure=datetime.now(timezone.utc),
-                consecutive_failures=consecutive_failures,
-            )
-
-            logger.error(f"Failed to discover tools from MCP server {namespace}.{server_name}: {e}")
-            raise
+        return await self.adopt_server_tools(
+            server_name, None, namespace=namespace, timeout=timeout, refresh=True
+        )
 
     async def serve_mcp(
         self,
@@ -2251,6 +2723,7 @@ class AgentGantry:
         """
         from agent_gantry.providers.a2a_client import A2AClient
 
+        reject_reserved_namespace(config.namespace, f"the skills of agent '{config.name}'")
         await self._ensure_initialized()
 
         # Discovery-only client: close it when done so its persistent HTTP
@@ -2263,12 +2736,136 @@ class AgentGantry:
         finally:
             await client.close()
 
+        # The agent itself becomes routable, described by its own card. A
+        # registration made by hand keeps its wording and gains the card's
+        # skills.
+        card = client._agent_card
+        if card is not None:
+            known = self._a2a_manager.get(config.name, config.namespace)
+            description = (known.description if known else card.description).strip()
+            self._a2a_manager.register(
+                A2AAgentDefinition(
+                    name=config.name,
+                    namespace=config.namespace,
+                    url=config.url,
+                    description=(
+                        description if len(description) >= 10 else f"A2A agent {config.name}. {description}"
+                    )[:2000],
+                    tags=known.tags if known else [],
+                    examples=known.examples if known else [],
+                    skills=[f"{skill.name}: {skill.description}" for skill in card.skills],
+                    input_modes=sorted({m for skill in card.skills for m in skill.input_modes}),
+                    output_modes=sorted({m for skill in card.skills for m in skill.output_modes}),
+                )
+            )
+
         # Add all tools first, then sync once (avoids per-tool full syncs)
-        self._pending_tools.extend(tools)
+        self._enqueue(tools)
         if self._config.auto_sync:
             await self.sync()
 
         return len(tools)
+
+    def register_a2a_agent(
+        self,
+        name: str,
+        url: str,
+        *,
+        description: str,
+        namespace: str = "default",
+        tags: list[str] | None = None,
+        examples: list[str] | None = None,
+    ) -> None:
+        """
+        Register an A2A agent for routing, without contacting it.
+
+        The agent becomes findable with :meth:`retrieve_a2a_agents` by this
+        description. None of its skills is a tool until
+        :meth:`discover_skills_from_agent` (or :meth:`add_a2a_agent`) reads
+        its card, which also adds the card's skills to what the agent is
+        found by.
+
+        Args:
+            name: Name for the agent
+            url: Base URL of the agent
+            description: What the agent does (at least 10 characters)
+            namespace: Namespace for the agent and its skills' tools
+            tags: Tags for categorising the agent
+            examples: Example requests the agent handles
+        """
+        # Validates the URL exactly as a discovery would.
+        A2AAgentConfig(name=name, url=url, namespace=namespace)
+        self._a2a_manager.register(
+            A2AAgentDefinition(
+                name=name,
+                namespace=namespace,
+                url=url,
+                description=description,
+                tags=tags or [],
+                examples=examples or [],
+            )
+        )
+
+    async def discover_skills_from_agent(self, name: str, namespace: str = "default") -> int:
+        """
+        Read a registered A2A agent's card and register its skills as tools.
+
+        Args:
+            name: Name of the registered agent
+            namespace: Its namespace
+
+        Returns:
+            Number of skills discovered and registered as tools
+
+        Raises:
+            ValueError: If the agent is not registered
+        """
+        agent = self._a2a_manager.get(name, namespace)
+        if agent is None:
+            raise ValueError(
+                f"A2A agent '{namespace}.{name}' not found. "
+                f"Register it first with register_a2a_agent()."
+            )
+        return await self.add_a2a_agent(
+            A2AAgentConfig(name=agent.name, url=agent.url, namespace=agent.namespace)
+        )
+
+    async def retrieve_a2a_agents(
+        self,
+        query: str,
+        limit: int = 3,
+        score_threshold: float | None = None,
+        namespaces: list[str] | None = None,
+    ) -> list[A2AAgentDefinition]:
+        """
+        Retrieve the registered A2A agents most relevant to a query.
+
+        Args:
+            query: Natural language query describing what is needed
+            limit: Maximum number of agents to return
+            score_threshold: Minimum similarity score (0-1)
+            namespaces: Filter by agent namespaces
+
+        Returns:
+            Agent definitions, most relevant first
+        """
+        if not query.strip() or not self._a2a_manager.list():
+            return []
+        selected = await self._select_a2a_agents(query, limit, score_threshold, namespaces)
+        if selected is not None:
+            return selected
+
+        await self._ensure_initialized()
+        if self._a2a_manager.needs_sync:
+            await self._a2a_manager.sync()
+        routed = await self._a2a_manager.route(
+            query, limit=limit, score_threshold=score_threshold, namespaces=namespaces
+        )
+        return [agent for agent, _ in routed]
+
+    def list_a2a_agents(self, namespace: str | None = None) -> list[A2AAgentDefinition]:
+        """The registered A2A agents, optionally those of one namespace."""
+        return self._a2a_manager.list(namespace)
 
     def serve_a2a(self, host: str = "0.0.0.0", port: int = 8080) -> None:
         """
@@ -2343,7 +2940,13 @@ class AgentGantry:
         """
         await self._ensure_initialized()
         await self.ensure_synced()
-        return await self._list_all_pages(self._vector_store.list_all, namespace=namespace)
+        stored = await self._list_all_pages(self._vector_store.list_all, namespace=namespace)
+        # Index bookkeeping (chunks of long descriptions, the entries MCP
+        # servers are routed by) shares the store and is not a tool; it is
+        # listed only when its namespace is asked for by name.
+        return [
+            t for t in stored if t.namespace == namespace or not is_reserved_namespace(t.namespace)
+        ]
 
     @staticmethod
     async def _list_all_pages(
@@ -2762,16 +3365,28 @@ class AgentGantry:
 
         Returns:
             Number of skills stored
+
+        Raises:
+            ValueError: If a skill's namespace is one the index keeps for the
+                pieces of skill bodies; nothing there is ever retrieved.
         """
         if not skills:
             return 0
+        for skill in skills:
+            reject_reserved_namespace(skill.namespace, f"skill '{skill.name}'")
         store = self._skills_store()
         await self._ensure_initialized()
         await self._ensure_skill_vectors_current(store)
         embeddings = await self._embedder.embed_batch(
             [skill.to_embedding_text() for skill in skills]
         )
-        return int(await store.add_skills(skills, embeddings, upsert=True))
+        stored = int(await store.add_skills(skills, embeddings, upsert=True))
+        # With chunking off this still runs, to remove the pieces an earlier
+        # configuration indexed for these skills.
+        await sync_skill_chunks(
+            store, self._embedder, skills, enabled=self._config.routing.chunk_long_text
+        )
+        return stored
 
     async def add_skills_from_directory(
         self,
@@ -2823,6 +3438,9 @@ class AgentGantry:
         namespace: str | list[str] | None = None,
         category: str | None = None,
         score_threshold: float | None = None,
+        *,
+        diversity_factor: float = 0.0,
+        rerank: bool = False,
     ) -> list[SkillSearchResult]:
         """
         Retrieve the skills most relevant to a query.
@@ -2834,10 +3452,24 @@ class AgentGantry:
             category: Optional category filter as its string value, e.g.
                 ``"how_to"`` or ``SkillCategory.PATTERN.value``
             score_threshold: Minimum similarity score (0-1)
+            diversity_factor: ``0`` ranks by relevance alone. Above it, a
+                skill much like one already picked gives way to a different
+                one (maximal marginal relevance), up to ``1``, which ignores
+                relevance after the first pick. Not applied when a selector
+                answers. Costs one embedding per candidate considered.
+            rerank: Rescore the best candidates with the gantry's reranker,
+                the one tool retrieval uses, and return its top ``limit``
+                with its scores. Off unless asked for. Not applied when a
+                selector answers.
 
         Returns:
             Scored skills, most relevant first
+
+        Raises:
+            ValueError: If ``rerank`` is set and no reranker is configured.
         """
+        _check_diversity(diversity_factor)
+        reranker = self._reranker_for(rerank)
         # A blank query has no semantic signal: it embeds to a zero vector,
         # every skill ties at 0.0, and with no threshold the first `limit`
         # skills would be returned (and prompt-injected) arbitrarily.
@@ -2854,23 +3486,98 @@ class AgentGantry:
         await self._ensure_initialized()
         await self._ensure_skill_vectors_current(store)
         query_embedding = await embed_query(self._embedder, query)
+        wanted = None if namespace is None else {namespace} if isinstance(namespace, str) else set(namespace)
         filters: dict[str, Any] = {}
-        if namespace is not None:
-            filters["namespace"] = namespace
+        if wanted is not None:
+            # A skill's content is indexed in pieces in their own namespace;
+            # without it here a namespace filter would hide them.
+            filters["namespace"] = [
+                *sorted(wanted),
+                *(chunk_namespace(parent) for parent in sorted(wanted)),
+            ]
         if category is not None:
             filters["category"] = category
-        matches = await store.search_skills(
-            query_vector=query_embedding,
-            limit=limit,
-            filters=filters or None,
-            score_threshold=score_threshold,
-        )
-        # Clamp: float32 cosine can exceed 1.0 by rounding error, and the
-        # schema bounds score to [0, 1].
-        return [
-            SkillSearchResult(skill=skill, score=min(1.0, max(0.0, float(score))))
-            for skill, score in matches
-        ]
+
+        # A skill is scored by the best of its own vector and its content's
+        # pieces. Pieces take places in the result, so more than ``limit`` are
+        # fetched, and fetched again four times wider while they crowd the
+        # skills out: until enough skills are found or the store has no more
+        # rows, within a bound no real table reaches (4,096 times the first
+        # window). Diversity chooses among more candidates than it returns.
+        pool = limit * 4 if diversity_factor > 0 or reranker is not None else limit
+        fetch = pool * 4
+        best: dict[tuple[str, str], tuple[Skill | None, float]] = {}
+        passages: dict[tuple[str, str], str] = {}
+        for _ in range(7):
+            matches = await store.search_skills(
+                query_vector=query_embedding,
+                limit=fetch,
+                filters=filters or None,
+                score_threshold=score_threshold,
+            )
+            best = {}
+            passages = {}
+            for skill, score in matches:
+                parent = chunk_parent(skill)
+                key = parent or (skill.namespace, skill.name)
+                if parent is not None and wanted is not None and parent[0] not in wanted:
+                    continue
+                known, top = best.get(key, (None, 0.0))
+                best[key] = (known if parent is not None else skill, max(top, float(score)))
+                if parent is not None and key not in passages:
+                    # Best first, so this is the piece of the body that
+                    # matched the query best.
+                    passages[key] = skill.content
+            if len(best) >= pool or len(matches) < fetch:
+                break
+            fetch *= 4
+
+        results: list[SkillSearchResult] = []
+        for (parent_namespace, name), (skill, score) in sorted(
+            best.items(), key=lambda item: item[1][1], reverse=True
+        )[:pool]:
+            if skill is None:
+                # Found only through its content: fetch the skill itself.
+                skill = await store.get_skill_by_name(name, parent_namespace)
+                if skill is None:
+                    continue
+            # Clamp: float32 cosine can exceed 1.0 by rounding error, and the
+            # schema bounds score to [0, 1].
+            results.append(SkillSearchResult(skill=skill, score=min(1.0, max(0.0, score))))
+        if reranker is not None and results:
+            # A skill's own text leaves its body out, and the body may be the
+            # only thing that matched: give the reranker the passage that did,
+            # or it would judge such a skill on a description that says none
+            # of it and rank it away.
+            ranked = await rerank_texts(
+                reranker,
+                query,
+                [
+                    " ".join(
+                        part
+                        for part in (
+                            result.skill.to_embedding_text(),
+                            passages.get((result.skill.namespace, result.skill.name)),
+                        )
+                        if part
+                    )
+                    for result in results
+                ],
+                limit,
+                names=[result.skill.name for result in results],
+                scores=[result.score for result in results],
+            )
+            results = [
+                SkillSearchResult(skill=results[index].skill, score=min(1.0, max(0.0, score)))
+                for index, score in ranked
+            ]
+        if diversity_factor > 0 and len(results) > 1:
+            embeddings = await self._embedder.embed_batch(
+                [result.skill.to_embedding_text() for result in results]
+            )
+            order = mmr_order([r.score for r in results], embeddings, diversity_factor, limit)
+            return [results[index] for index in order]
+        return results[:limit]
 
     async def retrieve_skills_as_prompt(
         self,
@@ -2902,7 +3609,9 @@ class AgentGantry:
         """Delete a skill by name."""
         store = self._skills_store()
         await self._ensure_initialized()
-        return bool(await store.delete_skill(name, namespace))
+        deleted = bool(await store.delete_skill(name, namespace))
+        await delete_skill_chunks(store, name, namespace)
+        return deleted
 
     async def list_skills(
         self, namespace: str | None = None, limit: int = 1000, offset: int = 0
@@ -2910,13 +3619,44 @@ class AgentGantry:
         """List stored skills."""
         store = self._skills_store()
         await self._ensure_initialized()
-        return list(await store.list_all_skills(namespace=namespace, limit=limit, offset=offset))
+        if namespace is not None:
+            return list(
+                await store.list_all_skills(namespace=namespace, limit=limit, offset=offset)
+            )
+        # The pieces a skill's content is indexed in share the table and are
+        # not skills: they are skipped, and the page is filled from what
+        # follows them so ``limit`` and ``offset`` still count skills.
+        skills: list[Skill] = []
+        cursor, skipped, page_size = 0, 0, max(limit, 1) * 2
+        while len(skills) < limit:
+            page = await store.list_all_skills(namespace=None, limit=page_size, offset=cursor)
+            for skill in page:
+                if is_reserved_namespace(skill.namespace):
+                    continue
+                if skipped < offset:
+                    skipped += 1
+                elif len(skills) < limit:
+                    skills.append(skill)
+            cursor += len(page)
+            if len(page) < page_size:
+                break
+        return skills
 
     async def count_skills(self, namespace: str | None = None) -> int:
         """Count stored skills."""
         store = self._skills_store()
         await self._ensure_initialized()
-        return int(await store.count_skills(namespace=namespace))
+        if namespace is not None:
+            return int(await store.count_skills(namespace=namespace))
+        # Not counting the pieces skills' content is indexed in. They live in
+        # one namespace per skill namespace, so they are told apart by listing.
+        total, offset, page_size = 0, 0, 1000
+        while True:
+            page = await store.list_all_skills(namespace=None, limit=page_size, offset=offset)
+            total += sum(1 for skill in page if not is_reserved_namespace(skill.namespace))
+            offset += len(page)
+            if len(page) < page_size:
+                return total
 
     async def delete_tool(self, name: str, namespace: str = "default") -> bool:
         """
@@ -2936,6 +3676,7 @@ class AgentGantry:
         """
         await self._ensure_initialized()
         deleted_from_store = await self._vector_store.delete(name, namespace)
+        await delete_tool_chunks(self._vector_store, name, namespace)
         deleted_from_registry = self._registry.has_tool(name, namespace)
         removed_handler = self._registry.delete_tool(name, namespace)
         if removed_handler is not None:

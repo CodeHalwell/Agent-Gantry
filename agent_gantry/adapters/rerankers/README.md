@@ -35,6 +35,22 @@ During retrieval the semantic router first performs vector search, then (if conf
 candidates to the reranker and merges those scores with health weighting before returning
 `ScoredTool` results.
 
+## Skills and MCP servers
+
+A reranker is written against tools, but it is not limited to them:
+
+```python
+skills = await gantry.retrieve_skills("how do I refund a customer", rerank=True)
+servers = await gantry.retrieve_mcp_servers("charge a card", rerank=True)
+```
+
+Both rescore the best candidates with the gantry's reranker and are off unless asked for, so a
+reranker configured for tools does not start charging for the other two. Underneath,
+`rerank_texts(reranker, query, texts, top_k)` in `base.py` dresses each text as a tool-shaped
+document whose searchable text is the text exactly, so any reranker works as it stands. One that
+defines `async def rerank_texts(query, texts, top_k) -> list[tuple[int, float]]` is called
+directly instead; `CrossEncoderReranker` does.
+
 ## Reranking vs. selecting
 
 A reranker refines an existing shortlist; a *selector* (`../selectors/`) replaces the search that

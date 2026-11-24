@@ -122,9 +122,44 @@ def build_embedder(config: EmbedderConfig) -> EmbeddingAdapter:
                 model=config.model or "all-MiniLM-L6-v2",
                 dimension=config.dimension,
             )
-        except ImportError:
-            logger.debug("sentence-transformers not available, falling back to SimpleEmbedder")
+        except ImportError as exc:
+            if config.on_unavailable == "raise":
+                raise ImportError(
+                    "The configured embedder needs sentence-transformers, which is not "
+                    f"installed, and on_unavailable='raise' forbids falling back. {_EMBEDDER_HINT}"
+                ) from exc
+            _warn_simple_fallback()
     return SimpleEmbedder()
+
+
+_EMBEDDER_HINT = (
+    "Install it with: pip install 'agent-gantry[embeddings]' "
+    "(or pass embedder=..., or set EmbedderConfig(type='openai'))."
+)
+
+#: Set once the downgrade below has been reported, so a process that builds
+#: many gantries says it once rather than once per gantry.
+_simple_fallback_warned = False
+
+
+def _warn_simple_fallback() -> None:
+    """Say, once per process, that retrieval is running on the hash embedder.
+
+    This used to be logged at DEBUG. ``SimpleEmbedder`` matches tokens, not
+    meaning, and it serves tools, skills and MCP servers alike, so a deployment
+    missing one optional extra lost semantic retrieval everywhere with nothing
+    above DEBUG to say so.
+    """
+    global _simple_fallback_warned
+    if _simple_fallback_warned:
+        logger.debug("sentence-transformers not available, falling back to SimpleEmbedder")
+        return
+    _simple_fallback_warned = True
+    logger.warning(
+        "sentence-transformers is not installed, so retrieval is using SimpleEmbedder: "
+        "a hash of tokens with no semantic understanding, meant for tests. Results "
+        f"report it as RetrievalResult.embedder. {_EMBEDDER_HINT}"
+    )
 
 
 def build_reranker(config: RerankerConfig) -> RerankerAdapter | None:

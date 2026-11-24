@@ -56,13 +56,14 @@ Everything funnels through one facade: **`AgentGantry`** in `agent_gantry/core/g
 5. **Execute** — `execute(ToolCall)` runs through the **ExecutionEngine** (`core/executor.py`), gated by **security** (`core/security.py`: policies, capabilities), **rate limiting** (`core/rate_limiter.py`), and circuit breakers; emits telemetry events.
 
 ### Module map (`agent_gantry/`)
-- `core/` — facade (`gantry.py`), `registry.py`, `router.py`, `executor.py`, `security.py`, `rate_limiter.py`, `sync_manager.py`, `context.py` (a small conversation-state tracker that builds `ConversationContext`), `invocation.py` (`current_tool_invocation()`: a contextvar through which framework adapters expose their run context, e.g. Pydantic AI `deps`, to tool handlers), and the MCP control plane (`mcp_manager.py`, `mcp_registry.py`, `mcp_router.py`).
+- `core/` — facade (`gantry.py`), `registry.py`, `router.py`, `executor.py`, `security.py`, `rate_limiter.py`, `sync_manager.py`, `chunks.py` (long tool descriptions and skill bodies are indexed a second time in pieces, as pseudo-entries in reserved `__chunks__<namespace>` namespaces; an entry is scored by the best of its own vector and its pieces', a tool's pieces at `CHUNK_SCORE_WEIGHT`), `a2a_manager.py` (register and route to A2A agents, mirroring the MCP control plane), `context.py` (a small conversation-state tracker that builds `ConversationContext`), `invocation.py` (`current_tool_invocation()`: a contextvar through which framework adapters expose their run context, e.g. Pydantic AI `deps`, to tool handlers), and the MCP control plane (`mcp_manager.py`, `mcp_registry.py`, `mcp_router.py`).
 - `schema/` — **Pydantic v2** data models: `tool.py` (ToolDefinition, ToolCapability, ToolCost, ToolHealth, ToolSource), `execution.py` (ToolCall, ToolResult, ToolCallEvent), `query.py`, `config.py`, `mcp.py`, `a2a.py`, `skill.py`, `base.py`. **Schema-first**: define/extend a model here before implementing behavior.
 - `adapters/` — pluggable backends behind base protocols: `vector_stores/` (in-memory default, LanceDB, Qdrant, Chroma, pgvector), `embedders/` (OpenAI, Nomic, sentence-transformers), `rerankers/` (Cohere, CrossEncoder, SystemOne), `selectors/` (SystemOne — chooses catalogue entries by asking a decision model instead of embedding, as an alternative to the semantic router; TypeSafe's Jev is the default model, and the pre-0.23.0 `Jev*` names remain as deprecated aliases), `executors/` (direct, sandbox, MCP, HTTP, A2A), `tool_spec/` (provider schema transcoding), `llm_client.py`.
 - `integrations/` + framework modules at package root (`langchain.py`, `langgraph.py`, `crewai.py`, `llamaindex.py`, `google_adk.py`, `agno.py`, `haystack.py`, `pydantic_ai.py`, `openai_agents.py`, `strands.py`, `dspy.py`) and LLM provider modules (`openai.py`, `anthropic.py`, `gemini.py`, `groq.py`, `mistral.py`, `vertexai.py`). The Microsoft Agent Framework bridge/provider/middleware live in `integrations/`. `semantic_tools.py` provides `with_semantic_tools` + `set_default_gantry`.
 - `providers/` — import tools from external sources.
 - `servers/` — MCP and A2A server implementations (`serve_mcp`, `serve_a2a`).
 - `observability/` — telemetry, metrics, console logging (`enable_console_logging`).
+- `evaluation/` — the retrieval eval (`RetrievalCase`, `evaluate_retrieval`): recall@1, recall@k and decline-correctness for any retriever. `scripts/eval_retrieval.py` runs it over the labelled catalogue in `tests/retrieval/`; `--check` gates on `baseline.json`, as does the test suite. Relevance changes quote their before/after from it.
 - `skills/agent-gantry/` — the bundled Claude Skill (`SKILL.md` + `references/`), shipped in the wheel via hatch `shared-data` to `share/claude/skills/`.
 
 ## Conventions
@@ -93,7 +94,7 @@ Everything funnels through one facade: **`AgentGantry`** in `agent_gantry/core/g
 
 ## Repo notes
 
-- Version of record is `pyproject.toml` / `agent_gantry/__init__.py` `__version__` (currently `0.25.0`). Keep `package.json`, `package-lock.json`, `uv.lock`, `README.md` and the dated changelog in sync too; `scripts/check_release.py` validates release metadata.
+- Version of record is `pyproject.toml` / `agent_gantry/__init__.py` `__version__` (currently `0.26.0`). Keep `package.json`, `package-lock.json`, `uv.lock`, `README.md` and the dated changelog in sync too; `scripts/check_release.py` validates release metadata.
 - `.jules/` holds accumulated performance-optimization learnings (e.g. vectorized MMR, fast token matching) — useful context when optimizing the router or serialization paths.
 - `CHANGELOG.md` should be updated for user-facing changes.
 - Releasing/publishing: see `RELEASING.md` and `PUBLISHING.md`.

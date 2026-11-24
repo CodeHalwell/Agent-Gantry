@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 from dataclasses import dataclass
 from enum import Enum
@@ -18,18 +19,21 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from agent_gantry.adapters.embedders.base import embed_query
+from agent_gantry.core.chunks import CHUNK_SCORE_WEIGHT, chunk_parent
+from agent_gantry.schema.a2a import a2a_agent_tag
+from agent_gantry.schema.mcp import mcp_server_tag
+from agent_gantry.schema.tool import ToolDefinition, chunk_namespace, is_reserved_namespace
 
 _logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Collection, Sequence
 
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
     from agent_gantry.adapters.llm_client import LLMClient
     from agent_gantry.adapters.rerankers.base import RerankerAdapter
     from agent_gantry.adapters.vector_stores.base import VectorStoreAdapter
     from agent_gantry.schema.query import ToolQuery
-    from agent_gantry.schema.tool import ToolDefinition
 
 
 @lru_cache(maxsize=256)
@@ -96,6 +100,154 @@ INTENT_TAG_PATTERNS: dict[TaskIntent, re.Pattern[str]] = {
     intent: _keyword_pattern(keywords) for intent, keywords in INTENT_TAG_MAPPING.items()
 }
 
+#: What a tool loses for having been called already in this conversation, for
+#: having failed in it, and for being deprecated. Subtracted from a score in
+#: ``[0, 1]`` on every path that ranks tools.
+ALREADY_USED_PENALTY = 0.1
+ALREADY_FAILED_PENALTY = 0.3
+DEPRECATED_PENALTY = 0.5
+
+#: What an MCP server loses while its last connection attempt failed: the
+#: same as a tool that failed in this conversation.
+UNAVAILABLE_SERVER_PENALTY = ALREADY_FAILED_PENALTY
+
+
+def conversation_penalty(
+    tool: ToolDefinition, tools_used: Collection[str], tools_failed: Collection[str]
+) -> float:
+    """How much to take off ``tool``'s score for what the conversation knows.
+
+    Relevance says whether a tool fits the request. It cannot say that the
+    tool was just tried and failed, or has already been called: that is the
+    conversation's state, and it is orthogonal to relevance, so the penalty
+    is applied on top of whichever score a path ranks by (a blended score on
+    the semantic path, a probability on the selector path) and is the same
+    on both.
+
+    Args:
+        tool: The tool being ranked.
+        tools_used: Names (bare or ``namespace.name``) already called.
+        tools_failed: Names (bare or ``namespace.name``) that failed.
+
+    Returns:
+        The total penalty, ``0.0`` for a tool the conversation says nothing
+        about.
+    """
+    qualified = f"{tool.namespace}.{tool.name}"
+    penalty = DEPRECATED_PENALTY if tool.deprecated else 0.0
+    if tool.name in tools_used or qualified in tools_used:
+        penalty += ALREADY_USED_PENALTY
+    if tool.name in tools_failed or qualified in tools_failed:
+        penalty += ALREADY_FAILED_PENALTY
+    return penalty
+
+
+def mmr_order(
+    relevance: Sequence[float],
+    embeddings: Sequence[Sequence[float]],
+    diversity_factor: float,
+    limit: int,
+) -> list[int]:
+    """Order candidates by maximal marginal relevance.
+
+    Each pick maximises ``(1 - d) * relevance - d * similarity to what is
+    already picked``, so with ``d = 0`` this is plain ranking and with a
+    larger ``d`` a near-duplicate of something already chosen gives way to
+    something different. It works on anything with a score and a vector:
+    tools, skills and MCP servers all use it.
+
+    Args:
+        relevance: One score per candidate.
+        embeddings: One vector per candidate, in the same order.
+        diversity_factor: ``d``, in ``[0, 1]``.
+        limit: How many to pick.
+
+    Returns:
+        Indices into the inputs, in pick order, at most ``limit`` of them.
+    """
+    if not relevance or limit <= 0:
+        return []
+    lambda_param = 1.0 - diversity_factor
+
+    # Convert to numpy matrix for vectorized cosine similarity
+    emb_matrix = np.array(embeddings, dtype=np.float64)
+    norms = np.linalg.norm(emb_matrix, axis=1)
+
+    # Pre-normalize embeddings to simplify cosine similarity to dot product
+    with np.errstate(divide="ignore", invalid="ignore"):
+        normed_emb = emb_matrix / norms[:, np.newaxis]
+        normed_emb[np.isnan(normed_emb)] = 0.0
+
+    selected: list[int] = []
+    candidates = list(range(len(relevance)))
+
+    first_idx = max(candidates, key=lambda i: relevance[i])
+    selected.append(first_idx)
+    candidates.remove(first_idx)
+
+    # Track maximum similarity to any selected item for each candidate
+    max_sims = {idx: 0.0 for idx in candidates}
+
+    while candidates and len(selected) < limit:
+        last_emb = normed_emb[selected[-1]]
+
+        # Vectorized dot product of all remaining candidates with the last selected item
+        all_sims = np.dot(normed_emb, last_emb)
+
+        best_idx = -1
+        best_score = -float("inf")
+
+        for idx in candidates:
+            sim = float(all_sims[idx])
+            if sim > max_sims[idx]:
+                max_sims[idx] = sim
+
+            score = lambda_param * relevance[idx] - (1.0 - lambda_param) * max_sims[idx]
+            if score > best_score:
+                best_score = score
+                best_idx = idx
+
+        selected.append(best_idx)
+        candidates.remove(best_idx)
+
+    return selected
+
+
+#: A keyword found only in a tool's description counts for this much at most,
+#: against 1.0 for one in its name or tags.
+_INTENT_DESCRIPTION_WEIGHT = 0.5
+#: ...and for less the longer the description is, in proportion, past this
+#: many characters.
+_INTENT_DESCRIPTION_CHARS = 200
+
+
+def intent_match_score(tool: ToolDefinition, pattern: re.Pattern[str]) -> float:
+    """How strongly ``tool`` matches an intent's keywords, in ``[0, 1]``.
+
+    A keyword in the name or tags says what the tool *is* (``search_logs``,
+    ``list_users``) and scores 1.0. A keyword that appears only in the
+    description scores at most half that, scaled down as the description
+    grows, because prose mentions verbs in passing: any one of ``get``,
+    ``list``, ``read``, ``search``, ``query`` or ``fetch`` turns up somewhere
+    in most long descriptions.
+
+    This used to be 1.0 for a keyword anywhere in name, description or tags.
+    Measured over the library's own docstrings, 14% of those under 200
+    characters matched the data-query keywords and 83% of those over 800 did,
+    so the signal stopped discriminating on exactly the catalogues with long
+    descriptions, and handed verbose tools a flat 0.15 of the final score
+    over concise ones for no reason of relevance.
+    """
+    if pattern.search(f"{tool.name.lower()} {' '.join(tool.tags).lower()}"):
+        return 1.0
+    description = tool.description
+    if not pattern.search(description.lower()):
+        return 0.0
+    return _INTENT_DESCRIPTION_WEIGHT * min(
+        1.0, _INTENT_DESCRIPTION_CHARS / max(len(description), 1)
+    )
+
+
 # Per-keyword patterns for classification, which counts how many of an
 # intent's keywords a query mentions rather than whether it mentions any.
 _INTENT_KEYWORD_PATTERNS: dict[TaskIntent, list[re.Pattern[str]]] = {
@@ -139,6 +291,49 @@ class RoutingSignals:
 #: two covers the cosine spread a few-hundred-tool catalogue shows in practice;
 #: fetching them costs a top-k over the same vectors either way.
 MIN_CANDIDATE_POOL = 32
+
+#: How many times :meth:`SemanticRouter.route` may search again for a wider
+#: pool when rows that are not tools of their own (server and agent entries,
+#: pieces of long descriptions) crowded tools out of the first one. It stops
+#: sooner, as soon as the pool is full or the store has no more rows.
+_MAX_POOL_WIDENINGS = 6
+
+#: The widest that search may get. Every row short of it that is not a tool is
+#: an MCP server's or A2A agent's entry or a piece of a long description, so
+#: reaching it takes thousands of those ranked ahead of the tools asked for.
+_MAX_POOL_ROWS = 4096
+
+
+def _with_passage(tool: ToolDefinition, passages: dict[tuple[str, str], str]) -> ToolDefinition:
+    """``tool`` as a reranker should see it: opening with the piece that matched.
+
+    The tool itself when no piece of it matched. Otherwise a copy whose
+    description is that piece followed by the tool's own, cut to what a
+    description may hold; the piece comes first because rerankers, like
+    embedders, read a bounded amount.
+    """
+    passage = passages.get((tool.namespace, tool.name))
+    if not passage:
+        return tool
+    return tool.model_copy(update={"description": f"{passage} {tool.description}"[:2000]})
+
+
+def _distinct_tools(candidates: Sequence[Any]) -> int:
+    """How many tools a page of search results amounts to.
+
+    A piece of a long description counts as the tool it was cut from, once
+    however many of its pieces are there; an MCP server's or A2A agent's entry
+    counts as none.
+    """
+    tools: set[tuple[str, str]] = set()
+    for candidate in candidates:
+        entry = candidate[0]
+        parent = chunk_parent(entry)
+        if parent is not None:
+            tools.add(parent)
+        elif not is_reserved_namespace(entry.namespace):
+            tools.add((entry.namespace, entry.name))
+    return len(tools)
 
 
 @dataclass
@@ -298,6 +493,20 @@ class SemanticRouter:
         Returns:
             Routing result with scores and timings
         """
+        scoped = query.mcp_servers is not None or query.a2a_agents is not None
+        if scoped and not query.mcp_servers and not query.a2a_agents:
+            # A scope that names nothing matches nothing. Stores read an empty
+            # tag filter as no filter at all, so the search would have run in
+            # full only for every candidate to be rejected afterwards.
+            return RoutingResult(
+                tools=[],
+                query_embedding_time_ms=0.0,
+                vector_search_time_ms=0.0,
+                rerank_time_ms=None,
+                candidate_count=0,
+                filtered_count=0,
+            )
+
         # Intent resolution is independent of embedding + vector search, so run
         # it concurrently. With keyword classification this is near-free; with
         # LLM classification it removes an entire LLM round-trip from the
@@ -315,21 +524,64 @@ class SemanticRouter:
 
             filters: dict[str, list[str]] | None = None
             if query.namespaces:
-                filters = {"namespace": query.namespaces}
+                # The pieces of a long description live in a namespace of
+                # their own per parent namespace; without those here a
+                # namespace filter would hide them, and the tool would again
+                # be findable only by the opening of its text.
+                filters = {
+                    "namespace": [
+                        *query.namespaces,
+                        *(chunk_namespace(namespace) for namespace in query.namespaces),
+                    ]
+                }
+            if query.mcp_servers is not None or query.a2a_agents is not None:
+                # Every discovered tool carries its server or agent as a tag,
+                # and every store filters on tags (any-of), so the scope costs
+                # no protocol change.
+                filters = {
+                    **(filters or {}),
+                    "tags": [
+                        *(mcp_server_tag(server) for server in query.mcp_servers or ()),
+                        *(a2a_agent_tag(agent) for agent in query.a2a_agents or ()),
+                    ],
+                }
 
             # Request embeddings if MMR will be used (optimization to avoid re-embedding)
             include_embeddings = query.diversity_factor > 0
 
             search_start = perf_counter()
-            candidates = await self._vector_store.search(
-                query_vector=query_embedding,
-                # Wide enough for re-scoring to change the answer; see
-                # MIN_CANDIDATE_POOL for why ``limit * 4`` alone was not.
-                limit=max(query.limit * 4, MIN_CANDIDATE_POOL),
-                filters=filters,
-                score_threshold=query.score_threshold,
-                include_embeddings=include_embeddings,
-            )
+            # Wide enough for re-scoring to change the answer; see
+            # MIN_CANDIDATE_POOL for why ``limit * 4`` alone was not.
+            pool = requested = max(query.limit * 4, MIN_CANDIDATE_POOL)
+            for _ in range(_MAX_POOL_WIDENINGS + 1):
+                candidates = await self._vector_store.search(
+                    query_vector=query_embedding,
+                    limit=requested,
+                    filters=filters,
+                    score_threshold=query.score_threshold,
+                    include_embeddings=include_embeddings,
+                )
+                # Not every row is a tool of its own. MCP servers and A2A
+                # agents are indexed beside the tools as entries that can
+                # never be returned, and a long description is indexed in
+                # pieces, several of which may be one tool's. What the pool
+                # needs is that many tools, so count those.
+                found = _distinct_tools(candidates)
+                if (
+                    found >= pool
+                    or len(candidates) < requested  # the store has no more to give
+                    or requested >= _MAX_POOL_ROWS
+                ):
+                    break
+                # Ask again for as many rows as the pool would take at the
+                # rate tools have turned up so far, and four times as many
+                # when none has yet. No more than eight times wider in one
+                # step: one tool among thirty-one other rows says little about
+                # the rows after them.
+                wanted = math.ceil(requested * pool / found) if found else requested * 4
+                requested = min(wanted, requested * 8, _MAX_POOL_ROWS)
+            passages: dict[tuple[str, str], str] = {}
+            candidates = await self._fold_chunks(candidates, query, passages)
             vector_search_time_ms = (perf_counter() - search_start) * 1000
         except BaseException:
             # Cancel AND await the intent task so it never outlives route()
@@ -355,11 +607,19 @@ class SemanticRouter:
         rerank_time_ms: float | None = None
         if self._reranker and query.enable_reranking:
             rerank_start = perf_counter()
-            scored_tools = await self._reranker.rerank(
+            # A reranker reads a tool's own text, and a tool matched by a
+            # piece of a long description may say none of it there: the piece
+            # can lie beyond what ``description`` holds. Show the reranker a
+            # copy that opens with that piece, and hand back the tool itself.
+            originals = {(tool.namespace, tool.name): tool for tool, _ in scored_tools}
+            ranked = await self._reranker.rerank(
                 query.context.query,
-                scored_tools,
+                [(_with_passage(tool, passages), score) for tool, score in scored_tools],
                 query.limit,
             )
+            scored_tools = [
+                (originals.get((tool.namespace, tool.name), tool), score) for tool, score in ranked
+            ]
             rerank_time_ms = (perf_counter() - rerank_start) * 1000
 
         if query.diversity_factor > 0 and len(scored_tools) > 1:
@@ -376,6 +636,65 @@ class SemanticRouter:
             candidate_count=len(candidates),
             filtered_count=len(scored_tools),
         )
+
+    async def _fold_chunks(
+        self,
+        candidates: Sequence[Any],
+        query: ToolQuery,
+        passages: dict[tuple[str, str], str] | None = None,
+    ) -> list[Any]:
+        """Credit each chunk hit to the tool it was cut from.
+
+        A long description is indexed in pieces beside the tool's own entry
+        (see :mod:`agent_gantry.core.chunks`). A tool's semantic score becomes
+        the best of its own and its pieces', a piece counting for
+        ``CHUNK_SCORE_WEIGHT`` of its score, and a tool that was found only
+        through a piece, because the matching sentence sits past what one
+        embedding carries, is fetched and joins the candidates.
+
+        Args:
+            candidates: The store's results, best first.
+            query: The query, for its namespace scope.
+            passages: If given, filled with each tool's best-matching piece,
+                by ``(namespace, name)``, for a reranker to be shown.
+        """
+        best: dict[tuple[str, str], float] = {}
+        folded: list[Any] = []
+        for candidate in candidates:
+            parent = chunk_parent(candidate[0])
+            if parent is None:
+                folded.append(candidate)
+            elif not query.namespaces or parent[0] in query.namespaces:
+                best[parent] = max(best.get(parent, 0.0), float(candidate[1]) * CHUNK_SCORE_WEIGHT)
+                if passages is not None:
+                    # Best first, so the first piece seen is the best one.
+                    passages.setdefault(parent, candidate[0].description)
+        if not best:
+            return folded
+
+        for index, candidate in enumerate(folded):
+            tool = candidate[0]
+            score = best.pop((tool.namespace, tool.name), None)
+            if score is not None and score > candidate[1]:
+                folded[index] = (tool, score, *candidate[2:])
+        # Together, not one after another: on a remote store each is a round trip.
+        parents = list(best.items())
+        fetched = await asyncio.gather(
+            *(self._vector_store.get_by_name(name, namespace) for (namespace, name), _ in parents),
+            return_exceptions=True,
+        )
+        for ((namespace, name), score), tool in zip(parents, fetched):
+            if isinstance(tool, BaseException):
+                # The search itself worked, so this is an anomaly worth seeing:
+                # the tool is left out, and silently so would be a quiet loss.
+                _logger.warning(
+                    f"Could not fetch tool '{namespace}.{name}', matched through a chunk "
+                    f"of its description; leaving it out of this result: {tool}"
+                )
+            elif isinstance(tool, ToolDefinition):
+                # No stored embedding to hand: MMR embeds it again if it needs to.
+                folded.append((tool, score))
+        return folded
 
     def _score_and_filter_candidates(
         self,
@@ -402,12 +721,12 @@ class SemanticRouter:
         )
 
         for candidate in candidates:
-            if include_embeddings:
-                tool, semantic_score, embedding = candidate  # type: ignore
-                tool_key = f"{tool.namespace}.{tool.name}"
-                tool_embeddings[tool_key] = embedding
-            else:
-                tool, semantic_score = candidate  # type: ignore
+            # ``(tool, score)`` or ``(tool, score, embedding)``. A tool brought
+            # in through one of its chunks has no stored embedding even when
+            # embeddings were asked for.
+            tool, semantic_score, *rest = candidate
+            if include_embeddings and rest:
+                tool_embeddings[f"{tool.namespace}.{tool.name}"] = rest[0]
 
             if not self._is_tool_allowed(tool, query, req_caps, exc_caps):
                 continue
@@ -459,6 +778,11 @@ class SemanticRouter:
         exc_caps: set[str] | None = None,
     ) -> bool:
         """Filter candidates based on query constraints."""
+        # Index bookkeeping, not a tool: the pseudo-entry an MCP server is
+        # embedded as shares this index, and used to be handed back as a tool
+        # that no executor can run whenever it out-scored the real ones.
+        if is_reserved_namespace(tool.namespace):
+            return False
         if query.exclude_deprecated and tool.deprecated:
             return False
         if query.namespaces and tool.namespace not in query.namespaces:
@@ -473,6 +797,14 @@ class SemanticRouter:
 
         if query.sources and tool.source not in query.sources:
             return False
+        # The tag does the pushdown; the metadata is the authority. A tag is
+        # free text anyone can put on a tool, and this filter must not be how a
+        # hand-tagged native tool gets returned as a server's.
+        if query.mcp_servers is not None or query.a2a_agents is not None:
+            from_server = tool.metadata.get("mcp_server") in (query.mcp_servers or ())
+            from_agent = tool.metadata.get("a2a_agent") in (query.a2a_agents or ())
+            if not (from_server or from_agent):
+                return False
         if query.exclude_unhealthy and tool.health.circuit_breaker_open:
             return False
         return True
@@ -504,11 +836,7 @@ class SemanticRouter:
         if intent != TaskIntent.UNKNOWN:
             pattern = INTENT_TAG_PATTERNS.get(intent)
             if pattern:
-                tool_text = (
-                    f"{tool.name.lower()} {tool.description.lower()} {' '.join(tool.tags).lower()}"
-                )
-                if pattern.search(tool_text):
-                    intent_match = 1.0
+                intent_match = intent_match_score(tool, pattern)
 
         # Conversation relevance
         tool_name_lower = tool.name.lower()
@@ -531,9 +859,9 @@ class SemanticRouter:
         cost_score = 1.0 - min(tool.cost.estimated_latency_ms / 10000, 1.0)
 
         # Penalties
-        already_used_penalty = 0.1 if was_used else 0.0
-        already_failed_penalty = 0.3 if previously_failed else 0.0
-        deprecated_penalty = 0.5 if tool.deprecated else 0.0
+        already_used_penalty = ALREADY_USED_PENALTY if was_used else 0.0
+        already_failed_penalty = ALREADY_FAILED_PENALTY if previously_failed else 0.0
+        deprecated_penalty = DEPRECATED_PENALTY if tool.deprecated else 0.0
 
         return RoutingSignals(
             semantic_similarity=semantic_score,
@@ -557,7 +885,6 @@ class SemanticRouter:
         if not scored_tools:
             return []
 
-        lambda_param = 1.0 - diversity_factor
         relevance_scores = [score for _, score in scored_tools]
 
         # Embeddings the store returned with the candidates are reused; only
@@ -574,48 +901,7 @@ class SemanticRouter:
             for idx, emb in zip(missing, fresh):
                 embeddings[idx] = emb
 
-        # Convert to numpy matrix for vectorized cosine similarity
-        emb_matrix = np.array(embeddings, dtype=np.float64)
-        norms = np.linalg.norm(emb_matrix, axis=1)
-
-        # Pre-normalize embeddings to simplify cosine similarity to dot product
-        with np.errstate(divide="ignore", invalid="ignore"):
-            normed_emb = emb_matrix / norms[:, np.newaxis]
-            normed_emb[np.isnan(normed_emb)] = 0.0
-
-        selected: list[int] = []
-        candidates = list(range(len(scored_tools)))
-
-        first_idx = max(candidates, key=lambda i: relevance_scores[i])
-        selected.append(first_idx)
-        candidates.remove(first_idx)
-
-        # Track maximum similarity to any selected item for each candidate
-        max_sims = {idx: 0.0 for idx in candidates}
-
-        while candidates and len(selected) < limit:
-            last_selected = selected[-1]
-            last_emb = normed_emb[last_selected]
-
-            # Vectorized dot product of all remaining candidates with the last selected item
-            all_sims = np.dot(normed_emb, last_emb)
-
-            best_idx = -1
-            best_score = -float("inf")
-
-            for idx in candidates:
-                sim = float(all_sims[idx])
-                if sim > max_sims[idx]:
-                    max_sims[idx] = sim
-
-                score = lambda_param * relevance_scores[idx] - (1.0 - lambda_param) * max_sims[idx]
-                if score > best_score:
-                    best_score = score
-                    best_idx = idx
-
-            selected.append(best_idx)
-            candidates.remove(best_idx)
-
+        selected = mmr_order(relevance_scores, embeddings, diversity_factor, limit)
         return [scored_tools[i] for i in selected]
 
     def _contains_token(self, text: str, token: str) -> bool:

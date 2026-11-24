@@ -51,6 +51,15 @@ class EmbedderConfig(BaseModel):
         default=None, description="Output dimension (for Matryoshka truncation)"
     )
     task_type: str | None = Field(default=None, description="Task type for embeddings (for Nomic)")
+    on_unavailable: Literal["simple", "raise"] = Field(
+        default="simple",
+        description=(
+            "What to do when type is 'sentence_transformers' and that package is not "
+            "installed. 'simple' falls back to the hash-based SimpleEmbedder, which "
+            "matches tokens rather than meaning, and logs a WARNING. 'raise' raises "
+            "ImportError instead, for deployments that must not retrieve on it."
+        ),
+    )
 
 
 def _system_one_type(value: Any) -> Any:
@@ -183,6 +192,17 @@ class RoutingConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     enable_mmr: bool = True
     mmr_lambda: float = 0.7
+    chunk_long_text: bool = Field(
+        default=True,
+        description=(
+            "Index a tool's long description (over about 900 characters) a second "
+            "time in pieces, and score the tool by its best piece. Without it a tool "
+            "is searchable only by what fits in one embedding, which for the default "
+            "model is roughly its first thousand characters. Costs one extra "
+            "embedding per piece at sync. Turned off, pieces already indexed are "
+            "removed as their tool or skill is next updated."
+        ),
+    )
 
 
 class RateLimitConfig(BaseModel):

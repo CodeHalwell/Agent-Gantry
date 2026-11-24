@@ -44,6 +44,10 @@ DEFAULT_QUESTIONS = {
         "Would this server provide tools useful for the request? "
         "Answer about this server only."
     ),
+    "a2a_agent": (
+        "Could this agent carry out the request, or part of it? "
+        "Answer about this agent only."
+    ),
 }
 
 DEFAULT_QUESTION = DEFAULT_QUESTIONS["tool"]
@@ -59,6 +63,10 @@ DEFAULT_GROUP_QUESTIONS = {
     ),
     "mcp_server": (
         "Could any server in this group provide tools useful for the request? "
+        "Answer about this group only."
+    ),
+    "a2a_agent": (
+        "Could any agent in this group carry out the request, or part of it? "
         "Answer about this group only."
     ),
 }
@@ -95,8 +103,13 @@ class SystemOneSelector(SelectorAdapter):
         group_question: The question asked of each group in the two-stage path,
             overriding the per-catalogue defaults.
         threshold: Minimum probability for a candidate to be selected.
-        max_candidates: Hard ceiling on candidates scored in one call, before
-            grouping. Guards cost on an unexpectedly large registry.
+        max_candidates: Ceiling on candidates scored in one pass. A larger
+            catalogue whose entries carry more than one group (namespaces, or
+            the MCP servers tools came from) is narrowed to its best groups
+            first and the ceiling applied to their members; one with a single
+            group cannot be narrowed and falls back to semantic routing.
+            Single MCP servers ship several hundred tools, so size this to the
+            registry rather than leaving it to be found out.
         group_after: Catalogue size above which the two-stage path is used,
             when the candidates carry groups.
         max_groups: How many groups the first stage keeps.
@@ -174,33 +187,47 @@ class SystemOneSelector(SelectorAdapter):
         if not candidates or limit <= 0:
             return SelectionResult()
 
-        if len(candidates) > self._max_candidates:
-            # Falling back, not truncating. Scoring an insertion-order prefix
-            # would make every later entry permanently unreachable while
-            # reporting success, so a tool registered after the ceiling could
-            # never be retrieved however relevant it was — and semantic
-            # routing, which has no such ceiling, would never get a look in.
-            # A configuration mismatch, not a transient fault: it recurs on
-            # every call for as long as the catalogue stays this size. Say it
-            # at WARNING once per size, then at DEBUG, so it is seen without
-            # flooding the log.
-            log = logger.debug if self._ceiling_warned == len(candidates) else logger.warning
-            self._ceiling_warned = len(candidates)
-            log(
-                f"System One selection saw {len(candidates)} candidates, over the "
-                f"{self._max_candidates} ceiling; not selecting, so every call falls back "
-                "to semantic routing. Raise max_candidates, or use the reranker over "
-                "semantic search at this size."
-            )
-            return SelectionResult(
-                fallback=True,
-                reason=f"catalogue of {len(candidates)} exceeds max_candidates={self._max_candidates}",
-            )
         considered = list(candidates)
-
         groups = {c.group for c in considered if c.group}
+        over_ceiling = len(considered) > self._max_candidates
+
+        if over_ceiling:
+            # A configuration fact, not a transient fault: it recurs on every
+            # call for as long as the catalogue stays this size. Say it at
+            # WARNING once per size, then at DEBUG, so it is seen without
+            # flooding the log.
+            log = logger.debug if self._ceiling_warned == len(considered) else logger.warning
+            self._ceiling_warned = len(considered)
+            if len(groups) <= 1:
+                # Falling back, not truncating. Scoring an insertion-order
+                # prefix would make every later entry permanently unreachable
+                # while reporting success, so a tool registered after the
+                # ceiling could never be retrieved however relevant it was —
+                # and semantic routing, which has no such ceiling, would never
+                # get a look in. With one group there is nothing to narrow by.
+                log(
+                    f"System One selection saw {len(considered)} candidates, over the "
+                    f"{self._max_candidates} ceiling, and they share one group, so there "
+                    "is nothing to narrow by; not selecting, so every call falls back to "
+                    "semantic routing. Raise max_candidates, give the entries namespaces, "
+                    "or use the reranker over semantic search at this size."
+                )
+                return SelectionResult(
+                    fallback=True,
+                    reason=(
+                        f"catalogue of {len(considered)} exceeds "
+                        f"max_candidates={self._max_candidates}"
+                    ),
+                )
+            log(
+                f"System One selection saw {len(considered)} candidates, over the "
+                f"{self._max_candidates} ceiling; narrowing to the best of {len(groups)} "
+                "groups first, which costs one extra request per call. Raise "
+                "max_candidates to score every entry in one pass."
+            )
+
         try:
-            if len(considered) > self._group_after and len(groups) > 1:
+            if over_ceiling or (len(considered) > self._group_after and len(groups) > 1):
                 return await self._select_two_stage(query, considered, limit, kind)
             return await self._select_one_stage(query, considered, limit, kind)
         except Exception as exc:  # noqa: BLE001 - fail open is the contract
@@ -277,7 +304,27 @@ class SystemOneSelector(SelectorAdapter):
         ranked_groups = sorted(
             by_group, key=lambda g: group_verdict.scores.get(g, 0.0), reverse=True
         )
-        kept = ranked_groups[: self._max_groups]
+        # The member pass is held to the same ceiling as a one-stage pass.
+        # Groups are taken best first until the next one would not fit, and
+        # never skipped: passing over a better group to score a smaller,
+        # worse one would hide the likeliest answers while reporting success.
+        kept: list[str] = []
+        budget = self._max_candidates
+        for group in ranked_groups[: self._max_groups]:
+            if len(by_group[group]) > budget:
+                break
+            kept.append(group)
+            budget -= len(by_group[group])
+        if not kept:
+            best = ranked_groups[0]
+            return SelectionResult(
+                fallback=True,
+                reason=(
+                    f"group {best!r} holds {len(by_group[best])} candidates, over "
+                    f"max_candidates={self._max_candidates}"
+                ),
+                requests=group_verdict.requests,
+            )
         members = [c for group in kept for c in by_group[group]]
 
         verdict = await self._client.score(query, members, self._question_for(kind))

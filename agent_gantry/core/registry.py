@@ -12,7 +12,29 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from agent_gantry.schema.tool import ToolDefinition
+from agent_gantry.schema.tool import ToolDefinition, is_reserved_namespace
+
+
+def reject_reserved_namespace(namespace: str, what: str) -> None:
+    """Raise if ``namespace`` is one the index keeps for its own entries.
+
+    Retrieval never returns anything from those namespaces, so a tool or
+    skill put there would be stored and then never found, with nothing to
+    say why.
+
+    Args:
+        namespace: The namespace asked for.
+        what: What is being registered, for the message: ``"tool 'ping'"``.
+
+    Raises:
+        ValueError: If the namespace is reserved.
+    """
+    if is_reserved_namespace(namespace):
+        raise ValueError(
+            f"Cannot register {what} in namespace '{namespace}': it is reserved for the "
+            "index's own entries (MCP servers, A2A agents, pieces of long text), which "
+            "retrieval never returns. Use another namespace."
+        )
 
 
 class ToolRegistry:
@@ -109,7 +131,13 @@ class ToolRegistry:
             handler: The callable that executes the tool. ``None`` leaves any
                 existing handler untouched, which is what a re-registration
                 from a sync wants.
+
+        Raises:
+            ValueError: If the tool's namespace is one the index keeps for its
+                own entries. Retrieval never returns anything from those, so a
+                tool registered there would sync and then never be found.
         """
+        reject_reserved_namespace(tool.namespace, f"tool '{tool.name}'")
         key = f"{tool.namespace}.{tool.name}"
         self._tools[key] = tool
         self._index_tool(key, tool)

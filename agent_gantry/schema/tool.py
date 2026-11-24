@@ -78,6 +78,59 @@ class ToolHealth(HealthMetrics):
     circuit_breaker_open: bool = Field(default=False)
 
 
+#: Bounds on the parameter names :meth:`ToolDefinition.to_searchable_text`
+#: indexes, so a tool with a very wide schema cannot crowd out its own
+#: description.
+_MAX_INDEXED_PARAMETERS = 16
+_MAX_INDEXED_PARAMETER_CHARS = 240
+
+#: Parameter names too common to tell one tool from another. They are left out
+#: of the searchable text for the reason stop words are left out of an index:
+#: on the retrieval eval, indexing them cost paraphrase accuracy (a tool with a
+#: ``text`` parameter is no likelier to be about text) and bought nothing.
+_GENERIC_PARAMETER_NAMES = frozenset(
+    {
+        "a", "args", "b", "body", "changes", "content", "count", "cursor", "data",
+        "details", "end", "fields", "filter", "filters", "format", "from", "id", "ids",
+        "input", "key", "kwargs", "limit", "name", "names", "offset", "options", "order",
+        "page", "page_size", "params", "path", "per_page", "q", "query", "since", "size",
+        "sort", "start", "text", "to", "type", "until", "url", "value", "values", "x", "y",
+    }
+)  # fmt: skip
+
+#: Namespace of the pseudo-tools that stand in for MCP servers in the tools
+#: index, so that one vector store can route to servers as well as to tools.
+MCP_SERVER_NAMESPACE = "__mcp_servers__"
+
+#: Prefix of the namespaces the pieces of long text are indexed in, beside the
+#: entry they were cut from. See :mod:`agent_gantry.core.chunks`.
+CHUNK_NAMESPACE = "__chunks__"
+
+
+def chunk_namespace(parent_namespace: str) -> str:
+    """The namespace holding the chunks of entries in ``parent_namespace``.
+
+    One per parent namespace, not one for all: a search scoped to a namespace
+    then asks the store for that namespace's chunks only. With a single shared
+    chunk namespace, every other namespace's chunks were admitted to a scoped
+    search and discarded afterwards, and enough of them could fill the
+    candidate window and leave the search with nothing.
+    """
+    return f"{CHUNK_NAMESPACE}{parent_namespace}"
+
+#: Namespace of the pseudo-tools that stand in for A2A agents in the tools
+#: index, as :data:`MCP_SERVER_NAMESPACE` does for MCP servers.
+A2A_AGENT_NAMESPACE = "__a2a_agents__"
+
+#: Namespaces whose entries are index bookkeeping, not tools. Tool retrieval
+#: never returns them.
+RESERVED_NAMESPACES = frozenset({MCP_SERVER_NAMESPACE, A2A_AGENT_NAMESPACE, CHUNK_NAMESPACE})
+
+
+def is_reserved_namespace(namespace: str) -> bool:
+    """Whether ``namespace`` holds index bookkeeping, not tools or skills."""
+    return namespace in RESERVED_NAMESPACES or namespace.startswith(CHUNK_NAMESPACE)
+
 class ToolDefinition(BaseModel):
     """
     Universal representation of a tool.
@@ -171,8 +224,15 @@ class ToolDefinition(BaseModel):
         """
         Convert tool metadata to searchable text for embedding.
 
-        Combines name, namespace, description, tags, and examples into a
-        single text representation optimized for semantic search.
+        Combines name, namespace, tags, parameter names, description and
+        examples into a single text representation for semantic search.
+
+        The short fields come first on purpose. An embedder reads a bounded
+        number of tokens (256 word-pieces for the default
+        ``all-MiniLM-L6-v2``, which a 2000-character description alone
+        overruns), and whatever sits after a long description is cut off. Tags
+        and parameter names are a few tokens each and often the most exact
+        signal a tool has, so they go where they cannot be truncated away.
 
         Returns:
             Concatenated string of tool metadata for embedding
@@ -192,4 +252,35 @@ class ToolDefinition(BaseModel):
         """
         tags = " ".join(self.tags)
         examples = " ".join(self.examples)
-        return f"{self.name} {self.namespace} {self.description} {tags} {examples}"
+        parts = (
+            self.name,
+            self.namespace,
+            tags,
+            self._parameter_names(),
+            self.description,
+            examples,
+        )
+        return " ".join(part for part in parts if part)
+
+    def _parameter_names(self) -> str:
+        """Top-level parameter names, bounded, for :meth:`to_searchable_text`.
+
+        Names only: a parameter's description is prose that competes with the
+        tool's own for the embedder's token budget, while its name is often the
+        one exact token a query and a tool share (``facet_query``,
+        ``resource_group``). Names every API has (``query``, ``limit``,
+        ``page``) are skipped; see ``_GENERIC_PARAMETER_NAMES``.
+        """
+        properties = self.parameters_schema.get("properties")
+        if not isinstance(properties, dict):
+            return ""
+        names: list[str] = []
+        length = 0
+        for name in properties:
+            if not isinstance(name, str) or name.lower() in _GENERIC_PARAMETER_NAMES:
+                continue
+            length += len(name) + 1
+            if len(names) >= _MAX_INDEXED_PARAMETERS or length > _MAX_INDEXED_PARAMETER_CHARS:
+                break
+            names.append(name)
+        return " ".join(names)

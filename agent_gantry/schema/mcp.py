@@ -19,6 +19,21 @@ from agent_gantry.schema.base import (
     resolve_mcp_transport,
 )
 
+#: Prefix of the tag every tool discovered from an MCP server carries.
+MCP_SERVER_TAG_PREFIX = "mcp:"
+
+
+def mcp_server_tag(server_name: str) -> str:
+    """The tag carried by every tool discovered from ``server_name``.
+
+    One tag does three jobs. Tags are part of a tool's searchable text, so the
+    server's name reaches the embedding; vector stores filter on tags, so
+    ``filters={"tags": [mcp_server_tag("datadog")]}`` scopes a search to one
+    server; and selectors read tags, so a decision model sees where a tool
+    came from.
+    """
+    return f"{MCP_SERVER_TAG_PREFIX}{server_name}"
+
 
 class MCPServerHealth(HealthMetrics):
     """Runtime health metrics for an MCP server."""

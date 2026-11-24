@@ -137,3 +137,22 @@ class CrossEncoderReranker(LazyModelMixin):
         # Sort by cross-encoder score (descending) and take top_k
         scored_tools.sort(key=lambda x: x[1], reverse=True)
         return scored_tools[:top_k]
+
+    async def rerank_texts(self, query: str, texts: list[str], top_k: int) -> list[tuple[int, float]]:
+        """
+        Rerank arbitrary texts: a skill's or an MCP server's, as well as a tool's.
+
+        Args:
+            query: The user's query
+            texts: The texts to rank
+            top_k: Number of top results to return
+
+        Returns:
+            ``(index into texts, score)``, best first
+        """
+        if not texts:
+            return []
+        await self._aensure_initialized()
+        raw = await asyncio.to_thread(self._model.predict, [[query, text] for text in texts])
+        scores = _bounded_scores([float(score) for score in raw])
+        return sorted(enumerate(scores), key=lambda pair: pair[1], reverse=True)[:top_k]

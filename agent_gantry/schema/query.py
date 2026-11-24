@@ -84,6 +84,19 @@ class ToolQuery(BaseModel):
     required_capabilities: list[ToolCapability] | None = None
     excluded_capabilities: list[ToolCapability] | None = None
     sources: list[ToolSource] | None = None
+    #: Search only within the tools discovered from these MCP servers, by
+    #: server name. Unlike ``sources``, which can only say "any MCP server"
+    #: and is applied after the candidate pool is drawn, this is pushed down
+    #: to the vector store, so a server holding a few of a large registry's
+    #: tools is searched in full rather than through whatever part of it made
+    #: the pool. ``None`` is no scope; an empty list names no server, so it
+    #: matches nothing and no search is made.
+    mcp_servers: list[str] | None = None
+    #: Search only within the tools converted from these A2A agents' skills,
+    #: by agent name. Pushed down like ``mcp_servers``, with the same meaning
+    #: for ``None`` and an empty list; naming both searches the tools of
+    #: either.
+    a2a_agents: list[str] | None = None
     exclude_deprecated: bool = True
     exclude_unhealthy: bool = True
 
@@ -140,6 +153,12 @@ class RetrievalResult(BaseModel):
     selector_fallback: bool = False
     #: Why the selector did not answer, when ``selector_fallback`` is set.
     selector_fallback_reason: str | None = None
+    #: ``model_name`` of the embedder that searched for ``tools``, e.g.
+    #: ``"all-MiniLM-L6-v2"``. ``"simple-hash-embedder"`` means the hash-based
+    #: test embedder answered, which matches tokens rather than meaning: the
+    #: usual cause is a deployment without sentence-transformers installed.
+    #: ``None`` when a selector answered, because no embedding was made.
+    embedder: str | None = None
 
     model_config = ConfigDict(validate_assignment=True)
 
@@ -159,3 +178,76 @@ class RetrievalResult(BaseModel):
             List of provider-specific tool schemas
         """
         return [t.tool.to_dialect(dialect, **options) for t in self.tools]
+
+
+class ContextEntry(BaseModel):
+    """One entry of a :class:`ContextResult`: a tool, a skill, an MCP server or an A2A agent.
+
+    Attributes:
+        kind: Which catalogue the entry came from.
+        id: ``namespace.name``.
+        rank: Its place among the entries of its own kind, from 1.
+        score: Its score on that kind's own scale, when the path that
+            retrieved it reports one. Scores of different kinds are not
+            comparable: a tool's blends several signals or is a selector's
+            probability, a skill's is a cosine.
+        entry: The ``ToolDefinition``, ``Skill``, ``MCPServerDefinition`` or
+            ``A2AAgentDefinition``.
+    """
+
+    kind: Literal["tool", "skill", "mcp_server", "a2a_agent"]
+    id: str
+    rank: int = Field(ge=1)
+    score: float | None = None
+    entry: Any
+
+
+class ContextResult(BaseModel):
+    """Tools, skills and MCP servers for one query, in one ranked view.
+
+    ``entries`` is ordered by rank within each kind, not by score: every
+    kind's best match comes before any kind's second, and so on. The three
+    catalogues are scored on different scales, so their scores cannot be
+    merged without calibration; their ranks can. Within one rank the order is
+    tools, then skills, then MCP servers, then A2A agents.
+
+    Attributes:
+        entries: The merged view.
+        tool_retrieval: The full result of the tool search, with its backend,
+            embedder and selector provenance. ``None`` if no tools were asked
+            for.
+        skipped: Kinds that were asked for and could not be searched, with
+            the reason: for example MCP support not being installed. A kind
+            that was searched and matched nothing is not here.
+        total_time_ms: Wall-clock time for the whole call; the searches run
+            concurrently.
+    """
+
+    entries: list[ContextEntry]
+    tool_retrieval: RetrievalResult | None = None
+    skipped: dict[str, str] = Field(default_factory=dict)
+    total_time_ms: float = 0.0
+
+    def of_kind(self, kind: str) -> list[Any]:
+        """The underlying objects of one kind, best first."""
+        return [e.entry for e in sorted(self.entries, key=lambda e: e.rank) if e.kind == kind]
+
+    @property
+    def tools(self) -> list[ToolDefinition]:
+        """The tools, best first."""
+        return self.of_kind("tool")
+
+    @property
+    def skills(self) -> list[Any]:
+        """The skills, best first."""
+        return self.of_kind("skill")
+
+    @property
+    def mcp_servers(self) -> list[Any]:
+        """The MCP servers, best first."""
+        return self.of_kind("mcp_server")
+
+    @property
+    def a2a_agents(self) -> list[Any]:
+        """The A2A agents, best first."""
+        return self.of_kind("a2a_agent")

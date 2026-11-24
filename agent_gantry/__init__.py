@@ -108,6 +108,10 @@ def __getattr__(name: str) -> "Any":
         from agent_gantry.adapters.selectors.base import SelectorFallbackError
 
         return SelectorFallbackError
+    if name in ("ContextEntry", "ContextResult"):
+        from agent_gantry.schema import query
+
+        return getattr(query, name)
     if name in ("JevReranker", "JevSelector"):
         # Renamed in 0.23.0: Jev is the default model behind these, not the
         # only one. The old names resolve to the same classes.
@@ -145,12 +149,14 @@ def __getattr__(name: str) -> "Any":
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__version__ = "0.25.0"
+__version__ = "0.26.0"
 __all__ = [
     "AgentGantry",
     "StreamingToolCallAccumulator",
     "GantryContextProvider",
     "SelectorFallbackError",
+    "ContextEntry",
+    "ContextResult",
     "SystemOneClient",
     "SystemOneReranker",
     "SystemOneSelector",

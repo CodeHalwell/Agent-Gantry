@@ -18,7 +18,12 @@ FINGERPRINT_LENGTH = 16
 
 # Bump when the hashed payload changes; every stored fingerprint then mismatches
 # and the next sync re-embeds everything once.
-FINGERPRINT_VERSION = "v1.1"
+#
+# v1.2: ``ToolDefinition.to_searchable_text()`` gained parameter names and
+# moved tags ahead of the description. The payload below did not change, but
+# the text embedded from it did, and without a bump existing stores would keep
+# serving vectors made from the old text.
+FINGERPRINT_VERSION = "v1.2"
 
 
 def compute_tool_fingerprint(tool: ToolDefinition) -> str:

@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from agent_gantry.core.chunks import sync_tool_chunks
 from agent_gantry.utils.fingerprint import compute_tool_fingerprint
 
 if TYPE_CHECKING:
@@ -32,10 +33,13 @@ class SyncManager:
         vector_store: VectorStoreAdapter,
         embedder: EmbeddingAdapter,
         registry: ToolRegistry,
+        *,
+        chunk_long_text: bool = True,
     ) -> None:
         self._vector_store = vector_store
         self._embedder = embedder
         self._registry = registry
+        self._chunk_long_text = chunk_long_text
 
     def get_embedder_id(self) -> str:
         """
@@ -156,10 +160,35 @@ class SyncManager:
             Number of tools synced
         """
         total_synced = 0
+        previously_stored: set[str] | None = None
+        if tools_to_sync:
+            # Only a tool that was already stored can have chunks left over
+            # from an earlier, longer description, and a store that keeps
+            # fingerprints says which those are. One that does not answers
+            # with an empty mapping whatever it holds; reading that as "none
+            # were stored" would leave a shortened description's old chunks
+            # in the index for good, so there every tool is checked.
+            stored = await self._vector_store.get_stored_fingerprints()
+            if isinstance(stored, dict) and (stored or self._keeps_fingerprints()):
+                previously_stored = set(stored)
         for i in range(0, len(tools_to_sync), batch_size):
             batch = tools_to_sync[i : i + batch_size]
             texts = [t.to_searchable_text() for t in batch]
             embeddings = await self._embedder.embed_batch(texts)
+            # Before the tools themselves. Writing a tool records its
+            # fingerprint, which is what tells the next sync it is up to
+            # date; had its chunks failed after that, no later sync would
+            # have tried them again. This way a failure here leaves the
+            # tool looking unsynced, and the whole of it is retried. With
+            # chunking off this still runs, to remove what an earlier
+            # configuration indexed for these tools.
+            await sync_tool_chunks(
+                self._vector_store,
+                self._embedder,
+                batch,
+                previously_stored=previously_stored,
+                enabled=self._chunk_long_text,
+            )
             count = await self._vector_store.add_tools(batch, embeddings, upsert=True)
 
             for tool in batch:
@@ -167,6 +196,15 @@ class SyncManager:
 
             total_synced += count
         return total_synced
+
+    def _keeps_fingerprints(self) -> bool:
+        """Whether the store implements fingerprints, or only inherits the stub."""
+        from agent_gantry.adapters.vector_stores.base import VectorStoreAdapter
+
+        implemented = getattr(type(self._vector_store), "get_stored_fingerprints", None)
+        return implemented is not None and implemented is not getattr(
+            VectorStoreAdapter, "get_stored_fingerprints", None
+        )
 
     async def update_metadata(self) -> None:
         """Update sync metadata in the vector store."""

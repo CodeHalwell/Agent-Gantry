@@ -7,6 +7,348 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-11-24
+
+Retrieval can now be measured, and this release's relevance changes were
+measured before they stayed in. There is a labelled eval, with a baseline that
+CI holds. Long tool descriptions and skill bodies are searchable to their end. A large MCP
+server can be catalogued without embedding every tool it has, searched within,
+and routed to by what it lists. A2A agents get the registry and routing MCP
+servers had. Rerankers, diversity and the conversation's penalties reach the
+paths they had missed. It is a minor release because it adds public API and
+changes what a tool is embedded from.
+
+**Migrating.** Nothing has to change. Eight things to know:
+
+- the next `sync()` re-embeds every tool once, because the text a tool is
+  embedded from changed (fingerprint `v1.2`). With a hosted embedder that is
+  one batch of embedding calls per registry, plus one call's worth for each
+  piece of a long description;
+- skills already in a persistent store get their bodies indexed when they are
+  next passed to `add_skills()`, not before. Until then they are found as
+  they were: by description only;
+- `list_tools()` no longer returns the entries registered MCP servers are
+  indexed as, unless their namespace is asked for by name;
+- tools discovered from an MCP server now carry one tag, `mcp:<server>`, and
+  tools converted from an A2A agent's skills carry `a2a:<agent>`. Code that
+  assumed such a tool has no tags will see it;
+- if sentence-transformers is not installed, the fallback to the hash-based
+  `SimpleEmbedder` is now a `WARNING`, not a `DEBUG` line. Install the
+  `embeddings` extra, pass an embedder, or set
+  `EmbedderConfig(on_unavailable="raise")` to refuse it;
+- with a `SystemOneSelector`, a catalogue over `max_candidates` whose tools
+  come from more than one namespace or MCP server now gets a selector answer
+  (two requests) where it used to fall back to semantic routing;
+- rankings can shift a little: a tool whose long description merely mentions
+  `get`, `list` or `search` no longer gets the full intent boost;
+- a search scoped with `mcp_servers=` finds tools by the new tag. Tools
+  discovered by 0.26.0 carry it. A persistent store written by an earlier
+  version does not until those servers are discovered again, so a process
+  that only reads such a store gets nothing back from a scoped search.
+
+Measured on the new eval (345 tools, 20 skills and 12 MCP servers with labelled
+queries; `all-MiniLM-L6-v2`, `k=5`), before this release's changes and after:
+
+| | recall@1 | recall@5 |
+|---|---|---|
+| tools (59 queries) | 0.549 to 0.765 | 0.765 to 0.873 |
+| skills (14) | 0.750 to 0.917 | 1.000 to 1.000 |
+| MCP servers (13) | 0.636 to 0.727 | 0.818 to 0.909 |
+
+By kind of tool query, top-1: only the MCP server's name tells the answer from
+its twins, 0/5 to 5/5; the query names a parameter, 0/6 to 3/6; the answer
+sits past character 2,000 of a description, 0/2 to 2/2; paraphrases, 20/30 to
+21/30. It is one synthetic catalogue and a few dozen queries per kind: read
+the direction, not the decimals.
+
+Two things were tried and left out, because the eval said so. Writing an MCP
+server's tool names into its one description moved nothing; indexing the
+catalogue in pieces did, and that is what shipped. Fusing lexical (BM25)
+search with vector search by rank, as an optional `search_text()` on the
+vector-store protocol, was not built: on the eval it takes tool top-1 from
+39/51 to 29/51 (paraphrases 21/30 to 13/30) for a gain of two parameter-name
+queries in the top five. Lexical search may yet earn a place as a weighted
+signal, but not as an equal partner in a rank fusion.
+
+### Added
+
+- **A retrieval eval.** `agent_gantry.evaluation` scores any retriever against
+  labelled queries: `RetrievalCase(query, expected_ids)` or
+  `RetrievalCase(query, expect_decline=True)`, then
+  `await evaluate_retrieval(tool_retriever(gantry), cases, k=5)` for
+  recall@1, recall@k, decline-correctness and latency, split by a per-case
+  `kind`. `skill_retriever` and `mcp_server_retriever` cover the other two
+  modalities, and the backend measured is whatever the gantry was built with.
+  `python scripts/eval_retrieval.py` runs it over a generated catalogue
+  (`tests/retrieval/`), and `--check` fails on a regression against the
+  committed baseline; the same gate runs in the test suite. See
+  `benchmarks/README.md` for the numbers.
+- **`RetrievalResult.embedder`**, also on `RetrievalDecision` and its span
+  attributes: the `model_name` of the embedder that searched, or `None` when a
+  selector answered. `"simple-hash-embedder"` means the hash-based test
+  embedder is in use.
+- **`EmbedderConfig(on_unavailable="raise")`** raises `ImportError` when
+  sentence-transformers is not installed, instead of falling back to
+  `SimpleEmbedder`. The default, `"simple"`, still falls back.
+- **`mcp_server_tag(name)`** in `agent_gantry.schema.mcp`: the tag every tool
+  discovered from that MCP server carries (`"mcp:<name>"`). A store search
+  with `filters={"tags": [mcp_server_tag("datadog")]}` returns only that
+  server's tools.
+- **Search within one MCP server.**
+  `gantry.retrieve_tools_from_server("datadog", query)`, or
+  `ToolQuery(mcp_servers=[...])` / `retrieve_tools(query, mcp_servers=[...])`
+  for several; an empty list matches nothing, without searching. The scope is pushed down to the vector store, so the result is
+  what searching that server alone would return; `sources=[MCP_SERVER]` could
+  only say "any MCP server" and was applied after the candidate pool was
+  drawn. A selector is shown only the scoped servers' tools. Several servers
+  are any-of in every store. Only the in-memory store applies the tag as it
+  scans: LanceDB, Qdrant, Chroma and pgvector keep tags inside the stored
+  tool, not in a column, so there the scope is found by widening the search
+  window until enough of the server's tools turn up. That is correct, but
+  slower on a very large table.
+
+- **Long text is searchable to its end.** An embedder reads a bounded number
+  of tokens (256 word-pieces for the default model, roughly a thousand
+  characters), so a tool with a long description was findable only by its
+  opening, and MCP tools put the discriminating part last: "use this
+  when...", filter syntax, what not to use it for. A description over about
+  900 characters is now indexed a second time in pieces of about 700, and the
+  tool is scored by the best of its own vector and its pieces'. For an MCP
+  tool the pieces come from the full text, which discovery keeps in
+  `extended_description` when it runs past 2,000 characters and which was
+  never embedded before. On the eval the two queries whose answer sits past
+  character 2,000 go from 0/2 to 2/2, and nothing else moves.
+
+  A match on a piece counts for nine tenths of its score
+  (`CHUNK_SCORE_WEIGHT`). A long-winded tool has many pieces and so many
+  chances to match, each on one passage of incidental text; at full weight,
+  with a third of the eval's other tools given long descriptions, two short
+  right answers lost first place to one. `benchmarks/chunk_weight.py`
+  measures it, and the table is in `benchmarks/README.md`. With the hash
+  embedder, whose scores sit close together, the weight costs one
+  parameter-name case in the top five on the eval; with the real embedder it
+  costs none.
+- **A skill is searchable by its body.** A skill's vector is made from its
+  name, description, tags and summary; the content, up to 50,000 characters,
+  was never indexed, so a skill could only be found by what its one-line
+  description happened to say. The content is now indexed in pieces beside
+  it, and the whole skill is what comes back. On the eval, skills whose answer
+  is only in the body go from 2/4 to 4/4 and skill recall@1 from 0.750 to
+  0.917.
+
+  Both store their pieces in reserved namespaces of the existing tables
+  (`__chunks__<namespace>`, one per namespace of the entries they were cut
+  from), so no vector store needs a new method and a search scoped to a
+  namespace is not crowded by another namespace's pieces. Pieces carry their
+  parent's tags and category, so category and per-server scopes still apply.
+  A tool's pieces are written before the tool itself, so a failure part-way
+  leaves the tool looking unsynced and the next `sync()` retries it. They are never returned, listed or counted as tools or skills,
+  they are not shown to a selector, and they are removed with their parent
+  and by pruning. `RoutingConfig(chunk_long_text=False)` turns both off; pieces
+  indexed while it was on stay until their tool or skill is next updated or
+  deleted, and are removed then. The
+  cost is one extra embedding per piece at sync or `add_skills()`: none for a
+  tool with a short description, at least one for every skill with a body.
+- **An MCP server is routed to by what it lists.** A server's hand-written
+  description was all `retrieve_mcp_servers()` had to match, and nothing
+  checked it against the server's tools: one registered as "Observability
+  platform." does not match "why is my pod crashlooping". Once a server's
+  tools have been listed (`list_server_tools()`, `adopt_server_tools()` or
+  `discover_tools_from_server()`), the catalogue is indexed in pieces beside
+  the server's own entry, a handful of tools to a piece, and the server is
+  scored by the best of them. The registration itself is not rewritten.
+  Listing embeds nothing; the pieces are embedded at the next server search,
+  a few dozen at most per server. On the eval, MCP-server recall@1 goes from
+  0.636 to 0.727 and recall@5 from 0.818 to 0.909, with vaguely described
+  servers found by their tools in 2 of 3 cases, up from 1. A first attempt,
+  writing the tool names into the server's one description, moved nothing:
+  one vector over nineteen tools is too diffuse to match any of them. A
+  server with a catalogue has more vectors to match with than one without,
+  and with the hash embedder that costs one paraphrase case on the eval; with
+  the real embedder it costs none. Listings are held in memory, like the
+  registrations themselves: after a restart a server is routed to by its
+  description alone until its tools are listed again.
+- **A2A agents can be registered, routed to and searched within.** The only
+  way to bring an A2A agent in was `add_a2a_agent()`: fetch its card and turn
+  every skill into a tool. Nothing indexed the agent itself. Now, mirroring
+  MCP servers:
+  - `gantry.register_a2a_agent(name, url, description=...)` registers an
+    agent without contacting it, and
+    `await gantry.retrieve_a2a_agents(query)` routes a query to the agents
+    registered. `list_a2a_agents()` lists them.
+  - `await gantry.discover_skills_from_agent(name)` reads a registered
+    agent's card and registers its skills as tools. `add_a2a_agent()` still
+    does that in one step, and now also makes the agent routable from its
+    card.
+  - Once the card has been read, its skills are indexed in pieces beside the
+    agent's own entry, so the agent is found by what it can do.
+  - A tool converted from a skill is tagged `a2a:<agent>` (`a2a_agent_tag()`
+    in `agent_gantry.schema.a2a`) and a selector groups such tools by agent.
+    That matters more than it does for MCP: every converted skill has the
+    same single `query` parameter, so its description was all a retriever had.
+  - `ToolQuery(a2a_agents=[...])` scopes a search to those agents' tools.
+  - A selector chooses among agents (`kind="a2a_agent"`, with its own
+    question) and is shown their skills.
+
+  Tested against stand-in agent cards, not a live A2A agent. Agents are held
+  in memory, like MCP server registrations: register them at start-up.
+- **One ranked view across tools, skills, MCP servers and A2A agents.**
+  `await gantry.retrieve_context(query, tools=5, skills=2, servers=1,
+  agents=1)` runs the searches concurrently and returns a `ContextResult`:
+  `entries` merged by rank (every kind's best match before any kind's
+  second), each with its kind, id, rank and own score, plus `.tools`,
+  `.skills`, `.mcp_servers` and `.a2a_agents`, and the tool search's full
+  provenance in `.tool_retrieval`. It merges by rank because they are scored on
+  different scales (a blend or a selector's probability for tools, a cosine
+  for skills) and cannot be merged by score without calibration. That makes
+  the order an interleaving, not a judgement that one kind's best beats
+  another's. A kind that cannot be searched, such as MCP servers without the
+  `mcp` package, is left out and named in `.skipped`.
+- **Calibrate a threshold instead of guessing one.**
+  `agent_gantry.evaluation.calibrate_threshold(make_retriever, cases)` finds,
+  from labelled queries, the score threshold at which queries nothing fits
+  are declined without losing the answers to the rest, and says when no such
+  threshold exists. At the default of `0.0` semantic retrieval returns its
+  `limit` whatever the query, so it can never decline; a fixed cutoff fixes
+  that only if it is the right one, and the right one does not transfer
+  between embedders, catalogues or modalities. On the eval with
+  `all-MiniLM-L6-v2`: tools have a window only 0.01 wide (0.25 to 0.26), at
+  which all 8 unanswerable queries are declined and recall@1 is unchanged;
+  skills and MCP servers have none, and their best trade-off declines 1 of 2.
+  `python scripts/eval_retrieval.py --calibrate` prints it. No default
+  changed.
+- **Rerankers serve skills and MCP servers.**
+  `retrieve_skills(..., rerank=True)` and
+  `retrieve_mcp_servers(..., rerank=True)` rescore the best candidates with
+  the gantry's reranker. `RerankerAdapter.rerank` takes tools, so the
+  library's best relevance machinery was unavailable to two of its three
+  catalogues; `agent_gantry.adapters.rerankers.base.rerank_texts` puts any
+  text where a tool reranker looks, so every reranker works as it stands,
+  third-party ones included. A reranker may define `rerank_texts(query,
+  texts, top_k)` itself to skip that wrapping; `CrossEncoderReranker` does.
+  Reranking skills and servers is off unless asked for, so configuring a
+  reranker for tools does not start charging for the other two. Tested with
+  stand-in rerankers and a stand-in cross-encoder model, not against Cohere
+  or a live decision model; `SystemOneReranker` asks its question as worded
+  for tools.
+- **Diversity for skills and MCP servers.**
+  `retrieve_skills(..., diversity_factor=0.4)` and
+  `retrieve_mcp_servers(..., diversity_factor=0.4)` apply the maximal marginal
+  relevance the tool path already had, so three near-copies of one answer
+  give way to three different ones. `agent_gantry.core.router.mmr_order` is
+  the shared implementation. The default stays `0.0` on every path: the eval
+  has no measure of near-duplicates, so there is nothing to justify a change
+  of default. It is not applied when a selector answers, and it is not
+  group-aware (it does not prefer spreading across MCP servers).
+- **Catalogue an MCP server without committing its tools.**
+  `await gantry.list_server_tools("datadog")` asks a registered server what
+  it has and returns the definitions; nothing is registered, embedded or given
+  a handler. `await gantry.adopt_server_tools("datadog", names)` then commits
+  the ones you choose, by Gantry's name or the server's own, reusing the
+  listing. Cataloguing 500 tools embeds none and adopting 5 embeds 5, where
+  `discover_tools_from_server()` embedded all 500 and left them competing with
+  your own tools. Adoption is additive, and a tool the server has dropped is
+  removed. `discover_tools_from_server()` is now
+  `adopt_server_tools(..., names=None, refresh=True)` and behaves as before,
+  except that a failure while embedding no longer marks the server itself
+  unhealthy: only failing to list its tools does.
+
+### Changed
+
+- **Falling back to `SimpleEmbedder` is logged at `WARNING`, once per
+  process**, naming the extra to install. It was `DEBUG`, so a deployment
+  missing sentence-transformers retrieved tools, skills and MCP servers on a
+  hash of tokens with nothing to say so. Passing `embedder=SimpleEmbedder()`
+  yourself is a choice, not a fallback, and logs nothing.
+- **Tools discovered from an MCP server are tagged `mcp:<server>`.** MCP
+  supplies no tags, and the server's name was recorded in `metadata` where no
+  retriever read it. The tag puts the name in the tool's searchable text and
+  makes it filterable. Tags you set yourself are untouched; code that assumed
+  an MCP tool has no tags will see one.
+- **A selector groups MCP tools by server**, not by namespace. Every server's
+  tools usually share the `default` namespace, which left the two-stage path
+  one group and so nothing to narrow.
+- **Above `max_candidates`, `SystemOneSelector` narrows by group instead of
+  falling back.** A catalogue over the ceiling used to fall back to semantic
+  routing on every call, so the selector stopped selecting exactly when a
+  catalogue was large enough to need it. Now, when its entries form more than
+  one group, the best groups are chosen first and the ceiling is applied to
+  their members: groups are taken best first until the next would not fit,
+  and never skipped. That is one extra request per call, logged once at
+  `WARNING`. It still falls back when there is a single group, or when the
+  best group alone is over the ceiling (`group 'x' holds N candidates, over
+  max_candidates=512`). Token cost was not measured against a real model: the
+  tests count requests and candidates with a stub.
+- **`ToolDefinition.to_searchable_text()`** now reads
+  `name namespace tags parameter-names description examples`. Parameter names
+  are new: up to 16, top-level only, skipping names every API has (`query`,
+  `limit`, `page`), which measurably cost accuracy. Tags moved ahead of the
+  description because an embedder truncates its input (256 word-pieces for
+  the default model) and what follows a long description is cut off.
+  Parameter descriptions are not indexed. The fingerprint version is now
+  `v1.2`, which is what triggers the one-off re-embed.
+
+- **What the conversation knows reaches the selector path.** A tool already
+  called (0.1), one that failed in this conversation (0.3) and a deprecated
+  one (0.5) lose that much from their score. This ran only on the semantic
+  path; with a selector, a tool that had failed twice this turn ranked
+  exactly where its description put it. The same amounts now come off the
+  selector's probability. The selector is asked for as many extra results as
+  there are tools that could be demoted, so the next best can take a demoted
+  tool's place, and its own threshold still decides what is selected: a
+  penalty reorders, it does not unselect. `ScoredTool.semantic_score` on the
+  selector path is the probability less the penalty.
+- **An MCP server that cannot be reached routes below a healthy one.** Server
+  health was tracked and never read when ranking, so a server whose last five
+  connection attempts had failed still routed first. While a server's last
+  attempt failed, 0.3 comes off its score, on the semantic and selector paths
+  alike; a selector is asked for one extra per such server, so a healthy one
+  can take its place. It is still offered. The other signals the tool path blends (intent,
+  cost, a skill's usage count) are not applied to servers or skills: there is
+  nothing on the eval to say they would help.
+- **The intent signal no longer rewards long descriptions.** A tool used to
+  get the full intent score (0.15 of the final score) if any of an intent's
+  keywords appeared anywhere in its name, description or tags, and the longer
+  a description is, the likelier one of `get`, `list`, `read`, `search`,
+  `query` or `fetch` appears in it somewhere. A keyword in the name or tags
+  still scores 1.0. One only in the description now scores at most 0.5,
+  scaled down past 200 characters. Over the library's own docstrings, the
+  mean score across all seven intents was 0.91 for those under 200 characters
+  and 2.31 for those over 800; it is now 0.61 and 0.19. The eval is unchanged
+  by this (its queries with an intent keyword match tool names), so the
+  evidence is that probe and a test in which a verbose tool stops outranking
+  the concise right one. A long description whose name and tags carry no
+  intent keyword now gets almost no intent score, by design.
+
+### Fixed
+
+- **An MCP server with a long `extended_description` can be indexed.** The
+  model allows 10,000 characters, but the server's searchable text was copied
+  whole into a field that holds 2,000, so syncing such a server raised a
+  validation error. The text is now cut to fit, with as much of it as the
+  model allows (10,000 characters) kept beside it. `register_mcp_server()` takes no extended description, so this
+  was only reachable by setting one on the definition.
+- **A tool or skill cannot be registered where it would never be found.**
+  The index keeps three kinds of namespace for its own entries
+  (`__mcp_servers__`, `__a2a_agents__` and anything starting `__chunks__`),
+  and retrieval returns nothing from them. Registering a tool or adding a
+  skill in one, by decorator, `add_tool()`, `add_skills()` or as the target
+  namespace of MCP or A2A discovery, now raises `ValueError` at the call
+  instead of storing an entry no search will return.
+- **`retrieve_mcp_servers(namespaces=[...])` finds a server among other
+  namespaces' servers.** The namespace was applied to what the store
+  returned, and the store was asked for `limit * 2` rows: with `limit=1`,
+  two better-matching servers in another namespace were enough for the call
+  to return nothing. The search is now widened until enough servers in scope
+  are found or the store has no more rows.
+- **`retrieve()` no longer returns MCP-server placeholders as tools.** A
+  server registered with `register_mcp_server()` is indexed beside the tools
+  under the `__mcp_servers__` namespace, and nothing kept it out of tool
+  results: on the eval, with the filter switched off, 19 of 59 tool queries
+  have such an entry in their top five and 4 have one ranked first, as a "tool"
+  no executor can run. Reserved namespaces are now filtered out, and the
+  candidate pool is widened when they crowd real tools out of it.
+
 ## [0.25.0] - 2026-11-23
 
 A selector that cannot answer still fails open to semantic routing, but no
@@ -5515,7 +5857,8 @@ adapters, and the provider dialects agree with it.
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.22.0...v0.23.0

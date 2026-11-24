@@ -13,10 +13,12 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+from agent_gantry.core.chunks import CHUNK_CHARS
 from agent_gantry.schema.mcp import MCPServerDefinition
-from agent_gantry.schema.tool import ToolDefinition
+from agent_gantry.schema.tool import MCP_SERVER_NAMESPACE, ToolDefinition
 
 if TYPE_CHECKING:
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
@@ -27,7 +29,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 #: Namespace of the pseudo-tools that stand in for MCP servers in the store.
-PSEUDO_NAMESPACE = "__mcp_servers__"
+PSEUDO_NAMESPACE = MCP_SERVER_NAMESPACE
+
+#: ``metadata["entity_type"]`` of a server's own entry, and of a piece of its
+#: tool catalogue. The router credits both to the server.
+SERVER_ENTITY = "mcp_server"
+CATALOGUE_ENTITY = "mcp_server_tools"
 
 
 def _pseudo_tool_name(server: MCPServerDefinition) -> str:
@@ -42,15 +49,27 @@ def _pseudo_tool_name(server: MCPServerDefinition) -> str:
     return f"mcp_server_{stem}_{digest}"
 
 
+#: ``ToolDefinition.description``'s ceiling, which the pseudo-tool's text must fit.
+_DESCRIPTION_MAX = 2000
+_EXTENDED_DESCRIPTION_MAX = 10000
+
+
 def _pseudo_tool(server: MCPServerDefinition) -> ToolDefinition:
     """The ``ToolDefinition`` that stands in for ``server`` in the vector store."""
+    text = server.to_searchable_text()
     return ToolDefinition(
         name=_pseudo_tool_name(server),
         namespace=PSEUDO_NAMESPACE,
-        description=server.to_searchable_text(),
+        # A server may carry up to 10,000 characters of extended description,
+        # and a tool's description holds 2,000: without the cut, a server with
+        # a long one could not be indexed at all (it failed validation here).
+        description=text[:_DESCRIPTION_MAX],
+        extended_description=(
+            text[:_EXTENDED_DESCRIPTION_MAX] if len(text) > _DESCRIPTION_MAX else None
+        ),
         parameters_schema={"type": "object", "properties": {}},
         metadata={
-            "entity_type": "mcp_server",
+            "entity_type": SERVER_ENTITY,
             "server_name": server.name,
             "server_namespace": server.namespace,
             "server_tags": server.tags,
@@ -58,6 +77,73 @@ def _pseudo_tool(server: MCPServerDefinition) -> ToolDefinition:
             "server_command": server.command,
         },
     )
+
+
+#: Most pieces one server's tool catalogue is indexed in.
+MAX_CATALOGUE_CHUNKS = 48
+
+
+def catalogue_chunks(server: MCPServerDefinition, tools: Sequence[ToolDefinition]) -> list[ToolDefinition]:
+    """Index entries that say what ``server`` does, from the tools it lists.
+
+    A server's hand-written description is all a query has to match, and
+    nothing checks it against the server's tools: one registered as
+    "Observability platform." does not match "why is my pod crashlooping"
+    however good the embedder is. Writing the tools into that one description
+    does not help either. Measured, a single vector over nineteen tools is too
+    diffuse to match any one of them.
+
+    So the catalogue is indexed in pieces beside the server's own entry, a
+    handful of tools to a piece, and the router scores a server by the best of
+    its own vector and its pieces'. Each tool contributes its name, as words,
+    and the first sentence of its description. A server with too many tools
+    for that falls back to names alone, which fit about four times as many.
+
+    Args:
+        server: The server the tools belong to.
+        tools: Its tools, as discovery lists them.
+
+    Returns:
+        At most :data:`MAX_CATALOGUE_CHUNKS` pseudo-tools; none for a server
+        with no tools.
+    """
+
+    def pack(lines: list[str]) -> list[str]:
+        pieces: list[str] = []
+        current = ""
+        for line in lines:
+            if current and len(current) + len(line) + 2 > CHUNK_CHARS:
+                pieces.append(current)
+                current = ""
+            current = f"{current}; {line}" if current else line
+        if current:
+            pieces.append(current)
+        return pieces
+
+    names = [tool.name.replace("_", " ") for tool in tools]
+    described = [
+        f"{name}: {tool.description.split('. ')[0].rstrip('.')[:120]}"
+        for name, tool in zip(names, tools)
+    ]
+    pieces = pack(described)
+    if len(pieces) > MAX_CATALOGUE_CHUNKS:
+        pieces = pack(names)
+    digest = hashlib.sha256(f"{server.namespace}.{server.name}".encode()).hexdigest()[:16]
+    return [
+        ToolDefinition(
+            name=f"mcp_tools_{digest}_{index:02d}",
+            namespace=PSEUDO_NAMESPACE,
+            description=f"{server.name} tools: {piece}"[:_DESCRIPTION_MAX],
+            parameters_schema={"type": "object", "properties": {}},
+            metadata={
+                "entity_type": CATALOGUE_ENTITY,
+                "server_name": server.name,
+                "server_namespace": server.namespace,
+                "chunk": index,
+            },
+        )
+        for index, piece in enumerate(pieces[:MAX_CATALOGUE_CHUNKS])
+    ]
 
 
 class MCPManager:
@@ -74,6 +160,21 @@ class MCPManager:
         self._embedder = embedder
         self._registry = registry
         self._sync_manager = sync_manager
+        # What each server listed when last asked, keyed by (namespace, name).
+        self._catalogues: dict[tuple[str, str], list[ToolDefinition]] = {}
+
+    def set_catalogue(
+        self, name: str, namespace: str, tools: Sequence[ToolDefinition] | None
+    ) -> None:
+        """Record the tools ``namespace.name`` lists, to be indexed at the next sync.
+
+        ``None`` or an empty listing forgets them, and the next sync removes
+        their index entries.
+        """
+        if tools:
+            self._catalogues[(namespace, name)] = list(tools)
+        else:
+            self._catalogues.pop((namespace, name), None)
 
     def register_server(
         self,
@@ -117,6 +218,9 @@ class MCPManager:
         previous = self._registry.get_server(name, namespace)
         if previous is not None and previous.to_config() != server_def.to_config():
             self._registry.forget_client(name, namespace)
+            # A listing made under the previous endpoint may be another
+            # server's by now.
+            self._catalogues.pop((namespace, name), None)
 
         self._registry.register_server(server_def)
         self._registry.add_pending(server_def)
@@ -143,16 +247,25 @@ class MCPManager:
             return 0
 
         pseudo_tools = [_pseudo_tool(server) for server in all_servers]
+        for server in all_servers:
+            listed = self._catalogues.get((server.namespace, server.name))
+            if listed:
+                pseudo_tools.extend(catalogue_chunks(server, listed))
         to_sync = await self._sync_manager.detect_changes(pseudo_tools, force)
         self._registry.drain_pending(pending_snapshot)
         total_synced = 0
         if to_sync:
-            logger.info(f"Syncing {len(to_sync)}/{len(all_servers)} MCP servers...")
+            logger.info(f"Syncing {len(to_sync)} MCP server entries...")
             for i in range(0, len(to_sync), batch_size):
                 batch = to_sync[i : i + batch_size]
                 # A pseudo-tool's description is the server's searchable text.
                 embeddings = await self._embedder.embed_batch([tool.description for tool in batch])
-                total_synced += await self._vector_store.add_tools(batch, embeddings, upsert=True)
+                await self._vector_store.add_tools(batch, embeddings, upsert=True)
+                # Servers, not rows: the pieces of a server's tool catalogue
+                # are synced with it and are not servers themselves.
+                total_synced += sum(
+                    1 for tool in batch if tool.metadata.get("entity_type") == SERVER_ENTITY
+                )
             await self._sync_manager.update_metadata()
             logger.info(f"Synced {total_synced} MCP servers")
         else:

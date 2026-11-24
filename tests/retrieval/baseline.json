@@ -1,0 +1,111 @@
+{
+  "embedder": "simple-hash-embedder",
+  "k": 5,
+  "metrics": {
+    "tools": {
+      "k": 5,
+      "cases": 59,
+      "recall_at_1": 0.1373,
+      "recall_at_k": 0.2157,
+      "decline_correctness": 0.0
+    },
+    "tools/decline": {
+      "k": 5,
+      "cases": 8,
+      "recall_at_1": null,
+      "recall_at_k": null,
+      "decline_correctness": 0.0
+    },
+    "tools/identifier": {
+      "k": 5,
+      "cases": 8,
+      "recall_at_1": 0.375,
+      "recall_at_k": 0.375,
+      "decline_correctness": null
+    },
+    "tools/parameter": {
+      "k": 5,
+      "cases": 6,
+      "recall_at_1": 0.0,
+      "recall_at_k": 0.0,
+      "decline_correctness": null
+    },
+    "tools/paraphrase": {
+      "k": 5,
+      "cases": 30,
+      "recall_at_1": 0.0333,
+      "recall_at_k": 0.1,
+      "decline_correctness": null
+    },
+    "tools/server": {
+      "k": 5,
+      "cases": 5,
+      "recall_at_1": 0.6,
+      "recall_at_k": 1.0,
+      "decline_correctness": null
+    },
+    "tools/tail": {
+      "k": 5,
+      "cases": 2,
+      "recall_at_1": 0.0,
+      "recall_at_k": 0.0,
+      "decline_correctness": null
+    },
+    "skills": {
+      "k": 5,
+      "cases": 14,
+      "recall_at_1": 0.0833,
+      "recall_at_k": 0.6667,
+      "decline_correctness": 0.0
+    },
+    "skills/body": {
+      "k": 5,
+      "cases": 4,
+      "recall_at_1": 0.25,
+      "recall_at_k": 0.75,
+      "decline_correctness": null
+    },
+    "skills/decline": {
+      "k": 5,
+      "cases": 2,
+      "recall_at_1": null,
+      "recall_at_k": null,
+      "decline_correctness": 0.0
+    },
+    "skills/paraphrase": {
+      "k": 5,
+      "cases": 8,
+      "recall_at_1": 0.0,
+      "recall_at_k": 0.625,
+      "decline_correctness": null
+    },
+    "mcp_servers": {
+      "k": 5,
+      "cases": 13,
+      "recall_at_1": 0.3636,
+      "recall_at_k": 0.7273,
+      "decline_correctness": 0.0
+    },
+    "mcp_servers/decline": {
+      "k": 5,
+      "cases": 2,
+      "recall_at_1": null,
+      "recall_at_k": null,
+      "decline_correctness": 0.0
+    },
+    "mcp_servers/derived": {
+      "k": 5,
+      "cases": 3,
+      "recall_at_1": 0.6667,
+      "recall_at_k": 1.0,
+      "decline_correctness": null
+    },
+    "mcp_servers/paraphrase": {
+      "k": 5,
+      "cases": 8,
+      "recall_at_1": 0.25,
+      "recall_at_k": 0.625,
+      "decline_correctness": null
+    }
+  }
+}
