@@ -36,6 +36,10 @@ class MCPServerScore:
 
     server: MCPServerDefinition
     score: float
+    #: The piece of the server's tool catalogue that matched the query best,
+    #: when one did. A reranker is shown it beside the server's own text,
+    #: which says nothing of the tools the server was found by.
+    passage: str | None = None
 
 
 @dataclass
@@ -136,6 +140,7 @@ class MCPRouter:
             scored_servers = []
             vectors = {}
             penalised = 0
+            passages: dict[tuple[str, str], str] = {}
             seen: set[tuple[str, str]] = set()
             for pseudo_tool, score, *rest in candidates:
                 if (
@@ -148,6 +153,9 @@ class MCPRouter:
                 if not server_name or (namespaces and server_namespace not in namespaces):
                     continue
                 key = (server_namespace, server_name)
+                if pseudo_tool.metadata.get("entity_type") == CATALOGUE_ENTITY:
+                    # Best first, so the first piece seen is the best one.
+                    passages.setdefault(key, pseudo_tool.description)
                 if key in seen:
                     continue
                 seen.add(key)
@@ -168,6 +176,8 @@ class MCPRouter:
             # A server marked down may now sit below one the window has not
             # reached, so each of those found asks for one more server: with
             # ``pool`` healthy ones in hand, nothing unseen can outrank them.
+            for entry in scored_servers:
+                entry.passage = passages.get((entry.server.namespace, entry.server.name))
             if len(scored_servers) >= pool + penalised or len(candidates) < fetch:
                 break
             fetch *= 4

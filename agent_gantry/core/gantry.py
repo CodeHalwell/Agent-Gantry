@@ -2396,10 +2396,19 @@ class AgentGantry:
             diversity_factor=0.0 if reranker is not None else diversity_factor,
         )
         if reranker is not None and result.servers:
+            # A server's own text says nothing of the tools it lists, which
+            # may be all that matched: show the reranker that passage too.
             ranked = await rerank_texts(
                 reranker,
                 query,
-                [scored.server.to_searchable_text() for scored in result.servers],
+                [
+                    " ".join(
+                        part
+                        for part in (scored.server.to_searchable_text(), scored.passage)
+                        if part
+                    )
+                    for scored in result.servers
+                ],
                 limit,
                 names=[scored.server.name for scored in result.servers],
                 scores=[scored.score for scored in result.servers],

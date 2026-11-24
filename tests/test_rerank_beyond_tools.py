@@ -185,3 +185,84 @@ async def test_a_skill_matched_by_its_body_is_reranked_on_that_passage() -> None
         assert shown["keeper_notes_b"].startswith("keeper_notes_b")  # its own text still leads
     finally:
         await gantry.close()
+
+
+async def test_a_tool_matched_by_a_piece_is_reranked_on_that_piece() -> None:
+    """The matching sentence is past what ``description`` holds, so show it to the reranker."""
+    from agent_gantry.schema.query import ConversationContext, ToolQuery
+
+    tail = "Zebra quagga okapi: use this for striped ungulate questions."
+    filler = "Results are paged and times are in UTC unless a zone is given. "
+    reranker = _KeywordReranker("zebra")
+    gantry = AgentGantry(embedder=SimpleEmbedder(), reranker=reranker)
+    try:
+        await gantry.add_tool(
+            ToolDefinition(
+                name="search_archive",
+                description="Search the archive.",
+                extended_description=filler * 40 + tail,
+                parameters_schema={"type": "object", "properties": {}},
+            )
+        )
+        await gantry.add_tool(
+            ToolDefinition(
+                name="list_animals",
+                description="List the animals in the collection.",
+                parameters_schema={"type": "object", "properties": {}},
+            )
+        )
+        await gantry.sync()
+
+        result = await gantry.retrieve(
+            ToolQuery(
+                context=ConversationContext(query="zebra quagga okapi striped ungulate"),
+                limit=2,
+                score_threshold=0.0,
+                enable_reranking=True,
+            )
+        )
+
+        assert result.tools[0].tool.name == "search_archive"
+        shown = {tool.name: tool for tool in reranker.seen}
+        assert tail in shown["search_archive"].description  # the piece that matched
+        assert "Search the archive." in shown["search_archive"].description  # and its own text
+        # What comes back is the tool itself, not the copy the reranker read.
+        assert result.tools[0].tool.description == "Search the archive."
+        assert shown["list_animals"].description == "List the animals in the collection."
+    finally:
+        await gantry.close()
+
+
+async def test_a_server_matched_by_its_catalogue_is_reranked_on_that_passage() -> None:
+    """A vaguely described server found by a tool it lists; the reranker must see the tool."""
+    pytest.importorskip("mcp")
+    reranker = _KeywordReranker("backup")
+    gantry = AgentGantry(embedder=SimpleEmbedder(), reranker=reranker)
+    try:
+        gantry.register_mcp_server(
+            "skyhost", url="https://skyhost.example/mcp", description="Platform services."
+        )
+        gantry.register_mcp_server(
+            "mailroom", url="https://mailroom.example/mcp", description="Send and search email."
+        )
+
+        async def list_tools() -> list[ToolDefinition]:
+            return [
+                ToolDefinition(
+                    name="restore_backup",
+                    description="Restore a database backup by its number.",
+                    parameters_schema={"type": "object", "properties": {}},
+                )
+            ]
+
+        gantry._mcp_registry.get_client("skyhost").list_tools = list_tools  # type: ignore[method-assign]
+        await gantry.list_server_tools("skyhost")
+
+        servers = await gantry.retrieve_mcp_servers("restore the backup", limit=1, rerank=True)
+
+        assert [s.name for s in servers] == ["skyhost"]
+        shown = {d.name.rsplit("_", 1)[0]: d.to_searchable_text() for d in reranker.seen}
+        assert "restore backup" in shown["skyhost"]  # from its catalogue
+        assert "Platform services." in shown["skyhost"]  # after its own text
+    finally:
+        await gantry.close()

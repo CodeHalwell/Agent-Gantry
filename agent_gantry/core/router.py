@@ -304,6 +304,20 @@ _MAX_POOL_WIDENINGS = 6
 _MAX_POOL_ROWS = 4096
 
 
+def _with_passage(tool: ToolDefinition, passages: dict[tuple[str, str], str]) -> ToolDefinition:
+    """``tool`` as a reranker should see it: opening with the piece that matched.
+
+    The tool itself when no piece of it matched. Otherwise a copy whose
+    description is that piece followed by the tool's own, cut to what a
+    description may hold; the piece comes first because rerankers, like
+    embedders, read a bounded amount.
+    """
+    passage = passages.get((tool.namespace, tool.name))
+    if not passage:
+        return tool
+    return tool.model_copy(update={"description": f"{passage} {tool.description}"[:2000]})
+
+
 def _distinct_tools(candidates: Sequence[Any]) -> int:
     """How many tools a page of search results amounts to.
 
@@ -566,7 +580,8 @@ class SemanticRouter:
                 # the rows after them.
                 wanted = math.ceil(requested * pool / found) if found else requested * 4
                 requested = min(wanted, requested * 8, _MAX_POOL_ROWS)
-            candidates = await self._fold_chunks(candidates, query)
+            passages: dict[tuple[str, str], str] = {}
+            candidates = await self._fold_chunks(candidates, query, passages)
             vector_search_time_ms = (perf_counter() - search_start) * 1000
         except BaseException:
             # Cancel AND await the intent task so it never outlives route()
@@ -592,11 +607,19 @@ class SemanticRouter:
         rerank_time_ms: float | None = None
         if self._reranker and query.enable_reranking:
             rerank_start = perf_counter()
-            scored_tools = await self._reranker.rerank(
+            # A reranker reads a tool's own text, and a tool matched by a
+            # piece of a long description may say none of it there: the piece
+            # can lie beyond what ``description`` holds. Show the reranker a
+            # copy that opens with that piece, and hand back the tool itself.
+            originals = {(tool.namespace, tool.name): tool for tool, _ in scored_tools}
+            ranked = await self._reranker.rerank(
                 query.context.query,
-                scored_tools,
+                [(_with_passage(tool, passages), score) for tool, score in scored_tools],
                 query.limit,
             )
+            scored_tools = [
+                (originals.get((tool.namespace, tool.name), tool), score) for tool, score in ranked
+            ]
             rerank_time_ms = (perf_counter() - rerank_start) * 1000
 
         if query.diversity_factor > 0 and len(scored_tools) > 1:
@@ -614,7 +637,12 @@ class SemanticRouter:
             filtered_count=len(scored_tools),
         )
 
-    async def _fold_chunks(self, candidates: Sequence[Any], query: ToolQuery) -> list[Any]:
+    async def _fold_chunks(
+        self,
+        candidates: Sequence[Any],
+        query: ToolQuery,
+        passages: dict[tuple[str, str], str] | None = None,
+    ) -> list[Any]:
         """Credit each chunk hit to the tool it was cut from.
 
         A long description is indexed in pieces beside the tool's own entry
@@ -623,6 +651,12 @@ class SemanticRouter:
         ``CHUNK_SCORE_WEIGHT`` of its score, and a tool that was found only
         through a piece, because the matching sentence sits past what one
         embedding carries, is fetched and joins the candidates.
+
+        Args:
+            candidates: The store's results, best first.
+            query: The query, for its namespace scope.
+            passages: If given, filled with each tool's best-matching piece,
+                by ``(namespace, name)``, for a reranker to be shown.
         """
         best: dict[tuple[str, str], float] = {}
         folded: list[Any] = []
@@ -632,6 +666,9 @@ class SemanticRouter:
                 folded.append(candidate)
             elif not query.namespaces or parent[0] in query.namespaces:
                 best[parent] = max(best.get(parent, 0.0), float(candidate[1]) * CHUNK_SCORE_WEIGHT)
+                if passages is not None:
+                    # Best first, so the first piece seen is the best one.
+                    passages.setdefault(parent, candidate[0].description)
         if not best:
             return folded
 
