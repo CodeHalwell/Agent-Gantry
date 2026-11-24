@@ -102,9 +102,13 @@ _GENERIC_PARAMETER_NAMES = frozenset(
 #: index, so that one vector store can route to servers as well as to tools.
 MCP_SERVER_NAMESPACE = "__mcp_servers__"
 
+#: Namespace of the pieces a long tool description is indexed in, beside the
+#: tool's own entry. See :mod:`agent_gantry.core.chunks`.
+CHUNK_NAMESPACE = "__chunks__"
+
 #: Namespaces whose entries are index bookkeeping, not tools. Tool retrieval
 #: never returns them.
-RESERVED_NAMESPACES = frozenset({MCP_SERVER_NAMESPACE})
+RESERVED_NAMESPACES = frozenset({MCP_SERVER_NAMESPACE, CHUNK_NAMESPACE})
 
 class ToolDefinition(BaseModel):
     """

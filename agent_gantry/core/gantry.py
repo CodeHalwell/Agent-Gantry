@@ -22,6 +22,12 @@ from agent_gantry.adapters.embedders.base import embed_query
 from agent_gantry.adapters.embedders.openai import OpenAIEmbedder
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 from agent_gantry.adapters.selectors.base import SelectorFallbackError
+from agent_gantry.core.chunks import (
+    chunk_parent,
+    delete_skill_chunks,
+    delete_tool_chunks,
+    sync_skill_chunks,
+)
 from agent_gantry.core.executor import ExecutionEngine
 from agent_gantry.core.factories import (
     build_embedder,
@@ -52,7 +58,13 @@ from agent_gantry.schema.mcp import MCPServerDefinition
 from agent_gantry.schema.query import ConversationContext, RetrievalResult, ScoredTool, ToolQuery
 from agent_gantry.schema.selection import SelectionCandidate
 from agent_gantry.schema.skill import Skill, SkillSearchResult
-from agent_gantry.schema.tool import ToolCapability, ToolDefinition
+from agent_gantry.schema.tool import (
+    CHUNK_NAMESPACE,
+    MCP_SERVER_NAMESPACE,
+    RESERVED_NAMESPACES,
+    ToolCapability,
+    ToolDefinition,
+)
 from agent_gantry.utils.async_utils import is_coroutine_function
 
 if TYPE_CHECKING:
@@ -195,6 +207,7 @@ class AgentGantry:
             vector_store=self._vector_store,
             embedder=self._embedder,
             registry=self._registry,
+            chunk_long_text=self._config.routing.chunk_long_text,
         )
 
         self._create_mcp_components()
@@ -810,7 +823,11 @@ class AgentGantry:
         stored = await self._list_all_pages(self._vector_store.list_all)
         removed = 0
         for tool in stored:
-            if tool.namespace == "__mcp_servers__":
+            if tool.namespace == MCP_SERVER_NAMESPACE:
+                continue
+            # A chunk lives and dies with the tool it was cut from.
+            parent = chunk_parent(tool)
+            if parent is not None and f"{parent[0]}.{parent[1]}" in wanted:
                 continue
             if f"{tool.namespace}.{tool.name}" in wanted:
                 continue
@@ -1176,7 +1193,8 @@ class AgentGantry:
                 page = await store.list_all_skills(
                     namespace=ns, limit=page_size, offset=offset, **store_kwargs
                 )
-                skills.extend(page)
+                # The pieces a skill's content is indexed in are not skills.
+                skills.extend(s for s in page if s.namespace != CHUNK_NAMESPACE)
                 offset += len(page)
                 if len(skills) > _MAX_SELECTABLE_SKILLS:
                     over_ceiling = True
@@ -1964,6 +1982,7 @@ class AgentGantry:
                 await self._vector_store.delete(t.name, t.namespace)
             except Exception:
                 logger.debug("Error removing stale MCP tool from vector store", exc_info=True)
+            await delete_tool_chunks(self._vector_store, t.name, t.namespace)
         self._pending_tools[:] = [t for t in self._pending_tools if not is_stale(t)]
         if stale:
             logger.info(
@@ -2509,7 +2528,11 @@ class AgentGantry:
         """
         await self._ensure_initialized()
         await self.ensure_synced()
-        return await self._list_all_pages(self._vector_store.list_all, namespace=namespace)
+        stored = await self._list_all_pages(self._vector_store.list_all, namespace=namespace)
+        # Index bookkeeping (chunks of long descriptions, the entries MCP
+        # servers are routed by) shares the store and is not a tool; it is
+        # listed only when its namespace is asked for by name.
+        return [t for t in stored if t.namespace == namespace or t.namespace not in RESERVED_NAMESPACES]
 
     @staticmethod
     async def _list_all_pages(
@@ -2937,7 +2960,10 @@ class AgentGantry:
         embeddings = await self._embedder.embed_batch(
             [skill.to_embedding_text() for skill in skills]
         )
-        return int(await store.add_skills(skills, embeddings, upsert=True))
+        stored = int(await store.add_skills(skills, embeddings, upsert=True))
+        if self._config.routing.chunk_long_text:
+            await sync_skill_chunks(store, self._embedder, skills)
+        return stored
 
     async def add_skills_from_directory(
         self,
@@ -3020,23 +3046,52 @@ class AgentGantry:
         await self._ensure_initialized()
         await self._ensure_skill_vectors_current(store)
         query_embedding = await embed_query(self._embedder, query)
+        wanted = None if namespace is None else {namespace} if isinstance(namespace, str) else set(namespace)
         filters: dict[str, Any] = {}
-        if namespace is not None:
-            filters["namespace"] = namespace
+        if wanted is not None:
+            # A skill's content is indexed in pieces in their own namespace;
+            # without it here a namespace filter would hide them.
+            filters["namespace"] = [*sorted(wanted), CHUNK_NAMESPACE]
         if category is not None:
             filters["category"] = category
-        matches = await store.search_skills(
-            query_vector=query_embedding,
-            limit=limit,
-            filters=filters or None,
-            score_threshold=score_threshold,
-        )
-        # Clamp: float32 cosine can exceed 1.0 by rounding error, and the
-        # schema bounds score to [0, 1].
-        return [
-            SkillSearchResult(skill=skill, score=min(1.0, max(0.0, float(score))))
-            for skill, score in matches
-        ]
+
+        # A skill is scored by the best of its own vector and its content's
+        # pieces. Pieces take places in the result, so more than ``limit`` are
+        # fetched, and fetched again wider if they crowded the skills out.
+        fetch = limit * 4
+        best: dict[tuple[str, str], tuple[Skill | None, float]] = {}
+        for _ in range(3):
+            matches = await store.search_skills(
+                query_vector=query_embedding,
+                limit=fetch,
+                filters=filters or None,
+                score_threshold=score_threshold,
+            )
+            best = {}
+            for skill, score in matches:
+                parent = chunk_parent(skill)
+                key = parent or (skill.namespace, skill.name)
+                if parent is not None and wanted is not None and parent[0] not in wanted:
+                    continue
+                known, top = best.get(key, (None, 0.0))
+                best[key] = (known if parent is not None else skill, max(top, float(score)))
+            if len(best) >= limit or len(matches) < fetch:
+                break
+            fetch *= 4
+
+        results: list[SkillSearchResult] = []
+        for (parent_namespace, name), (skill, score) in sorted(
+            best.items(), key=lambda item: item[1][1], reverse=True
+        )[:limit]:
+            if skill is None:
+                # Found only through its content: fetch the skill itself.
+                skill = await store.get_skill_by_name(name, parent_namespace)
+                if skill is None:
+                    continue
+            # Clamp: float32 cosine can exceed 1.0 by rounding error, and the
+            # schema bounds score to [0, 1].
+            results.append(SkillSearchResult(skill=skill, score=min(1.0, max(0.0, score))))
+        return results
 
     async def retrieve_skills_as_prompt(
         self,
@@ -3068,7 +3123,9 @@ class AgentGantry:
         """Delete a skill by name."""
         store = self._skills_store()
         await self._ensure_initialized()
-        return bool(await store.delete_skill(name, namespace))
+        deleted = bool(await store.delete_skill(name, namespace))
+        await delete_skill_chunks(store, name, namespace)
+        return deleted
 
     async def list_skills(
         self, namespace: str | None = None, limit: int = 1000, offset: int = 0
@@ -3076,13 +3133,38 @@ class AgentGantry:
         """List stored skills."""
         store = self._skills_store()
         await self._ensure_initialized()
-        return list(await store.list_all_skills(namespace=namespace, limit=limit, offset=offset))
+        if namespace is not None:
+            return list(
+                await store.list_all_skills(namespace=namespace, limit=limit, offset=offset)
+            )
+        # The pieces a skill's content is indexed in share the table and are
+        # not skills: they are skipped, and the page is filled from what
+        # follows them so ``limit`` and ``offset`` still count skills.
+        skills: list[Skill] = []
+        cursor, skipped, page_size = 0, 0, max(limit, 1) * 2
+        while len(skills) < limit:
+            page = await store.list_all_skills(namespace=None, limit=page_size, offset=cursor)
+            for skill in page:
+                if skill.namespace == CHUNK_NAMESPACE:
+                    continue
+                if skipped < offset:
+                    skipped += 1
+                elif len(skills) < limit:
+                    skills.append(skill)
+            cursor += len(page)
+            if len(page) < page_size:
+                break
+        return skills
 
     async def count_skills(self, namespace: str | None = None) -> int:
         """Count stored skills."""
         store = self._skills_store()
         await self._ensure_initialized()
-        return int(await store.count_skills(namespace=namespace))
+        total = int(await store.count_skills(namespace=namespace))
+        if namespace is None:
+            # Not counting the pieces skills' content is indexed in.
+            total -= int(await store.count_skills(namespace=CHUNK_NAMESPACE))
+        return total
 
     async def delete_tool(self, name: str, namespace: str = "default") -> bool:
         """
@@ -3102,6 +3184,7 @@ class AgentGantry:
         """
         await self._ensure_initialized()
         deleted_from_store = await self._vector_store.delete(name, namespace)
+        await delete_tool_chunks(self._vector_store, name, namespace)
         deleted_from_registry = self._registry.has_tool(name, namespace)
         removed_handler = self._registry.delete_tool(name, namespace)
         if removed_handler is not None:

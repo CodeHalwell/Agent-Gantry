@@ -21,6 +21,7 @@ from pathlib import Path
 
 from agent_gantry import AgentGantry
 from agent_gantry.schema.query import ConversationContext, ToolQuery
+from agent_gantry.schema.tool import RESERVED_NAMESPACES
 
 # Default skill install target, and Claude Code's personal skills directory
 # (searched at startup). install_to() expands the leading ~ via Path.expanduser().
@@ -565,7 +566,7 @@ async def _run_sync_command(
             stale = [
                 f"{t.namespace}.{t.name}"
                 for t in await gantry._list_all_pages(gantry._vector_store.list_all)
-                if t.namespace != "__mcp_servers__" and f"{t.namespace}.{t.name}" not in wanted
+                if t.namespace not in RESERVED_NAMESPACES and f"{t.namespace}.{t.name}" not in wanted
             ]
             if stale:
                 print(f"{len(stale)} stale tool(s) would be pruned: {', '.join(sorted(stale))}")

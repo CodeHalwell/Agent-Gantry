@@ -192,6 +192,16 @@ class RoutingConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     enable_mmr: bool = True
     mmr_lambda: float = 0.7
+    chunk_long_text: bool = Field(
+        default=True,
+        description=(
+            "Index a tool's long description (over about 900 characters) a second "
+            "time in pieces, and score the tool by its best piece. Without it a tool "
+            "is searchable only by what fits in one embedding, which for the default "
+            "model is roughly its first thousand characters. Costs one extra "
+            "embedding per piece at sync."
+        ),
+    )
 
 
 class RateLimitConfig(BaseModel):

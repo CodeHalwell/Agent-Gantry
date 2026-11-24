@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from agent_gantry.core.chunks import sync_tool_chunks
 from agent_gantry.utils.fingerprint import compute_tool_fingerprint
 
 if TYPE_CHECKING:
@@ -32,10 +33,13 @@ class SyncManager:
         vector_store: VectorStoreAdapter,
         embedder: EmbeddingAdapter,
         registry: ToolRegistry,
+        *,
+        chunk_long_text: bool = True,
     ) -> None:
         self._vector_store = vector_store
         self._embedder = embedder
         self._registry = registry
+        self._chunk_long_text = chunk_long_text
 
     def get_embedder_id(self) -> str:
         """
@@ -156,11 +160,24 @@ class SyncManager:
             Number of tools synced
         """
         total_synced = 0
+        previously_stored: set[str] | None = None
+        if self._chunk_long_text and tools_to_sync:
+            # Only a tool that was already stored can have chunks left over
+            # from an earlier, longer description.
+            stored = await self._vector_store.get_stored_fingerprints()
+            previously_stored = set(stored) if isinstance(stored, dict) else None
         for i in range(0, len(tools_to_sync), batch_size):
             batch = tools_to_sync[i : i + batch_size]
             texts = [t.to_searchable_text() for t in batch]
             embeddings = await self._embedder.embed_batch(texts)
             count = await self._vector_store.add_tools(batch, embeddings, upsert=True)
+            if self._chunk_long_text:
+                await sync_tool_chunks(
+                    self._vector_store,
+                    self._embedder,
+                    batch,
+                    previously_stored=previously_stored,
+                )
 
             for tool in batch:
                 self._registry.register_tool(tool)

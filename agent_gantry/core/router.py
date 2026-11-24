@@ -18,8 +18,9 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from agent_gantry.adapters.embedders.base import embed_query
+from agent_gantry.core.chunks import chunk_parent
 from agent_gantry.schema.mcp import mcp_server_tag
-from agent_gantry.schema.tool import RESERVED_NAMESPACES
+from agent_gantry.schema.tool import CHUNK_NAMESPACE, RESERVED_NAMESPACES, ToolDefinition
 
 _logger = logging.getLogger(__name__)
 
@@ -31,7 +32,6 @@ if TYPE_CHECKING:
     from agent_gantry.adapters.rerankers.base import RerankerAdapter
     from agent_gantry.adapters.vector_stores.base import VectorStoreAdapter
     from agent_gantry.schema.query import ToolQuery
-    from agent_gantry.schema.tool import ToolDefinition
 
 
 @lru_cache(maxsize=256)
@@ -356,7 +356,12 @@ class SemanticRouter:
 
             filters: dict[str, list[str]] | None = None
             if query.namespaces:
-                filters = {"namespace": query.namespaces}
+                # The pieces of a long description live in their own
+                # namespace; without it here a namespace filter would hide
+                # them, and the tool would again be findable only by the
+                # opening of its text. ``_fold_chunks`` checks each piece's
+                # parent against the namespaces asked for.
+                filters = {"namespace": [*query.namespaces, CHUNK_NAMESPACE]}
             if query.mcp_servers is not None:
                 # Every discovered tool carries its server as a tag, and every
                 # store filters on tags, so the scope costs no protocol change.
@@ -391,6 +396,7 @@ class SemanticRouter:
                 ):
                     break
                 requested = pool + reserved
+            candidates = await self._fold_chunks(candidates, query)
             vector_search_time_ms = (perf_counter() - search_start) * 1000
         except BaseException:
             # Cancel AND await the intent task so it never outlives route()
@@ -438,6 +444,42 @@ class SemanticRouter:
             filtered_count=len(scored_tools),
         )
 
+    async def _fold_chunks(self, candidates: Sequence[Any], query: ToolQuery) -> list[Any]:
+        """Credit each chunk hit to the tool it was cut from.
+
+        A long description is indexed in pieces beside the tool's own entry
+        (see :mod:`agent_gantry.core.chunks`). A tool's semantic score becomes
+        the best of its own and its pieces', and a tool that was found only
+        through a piece, because the matching sentence sits past what one
+        embedding carries, is fetched and joins the candidates.
+        """
+        best: dict[tuple[str, str], float] = {}
+        folded: list[Any] = []
+        for candidate in candidates:
+            parent = chunk_parent(candidate[0])
+            if parent is None:
+                folded.append(candidate)
+            elif not query.namespaces or parent[0] in query.namespaces:
+                best[parent] = max(best.get(parent, 0.0), float(candidate[1]))
+        if not best:
+            return folded
+
+        for index, candidate in enumerate(folded):
+            tool = candidate[0]
+            score = best.pop((tool.namespace, tool.name), None)
+            if score is not None and score > candidate[1]:
+                folded[index] = (tool, score, *candidate[2:])
+        for (namespace, name), score in best.items():
+            try:
+                tool = await self._vector_store.get_by_name(name, namespace)
+            except Exception:  # noqa: BLE001 - a piece without its tool is skipped
+                _logger.debug("Could not fetch the tool a chunk belongs to", exc_info=True)
+                continue
+            if isinstance(tool, ToolDefinition):
+                # No stored embedding to hand: MMR embeds it again if it needs to.
+                folded.append((tool, score))
+        return folded
+
     def _score_and_filter_candidates(
         self,
         candidates: list[Any],
@@ -463,12 +505,12 @@ class SemanticRouter:
         )
 
         for candidate in candidates:
-            if include_embeddings:
-                tool, semantic_score, embedding = candidate  # type: ignore
-                tool_key = f"{tool.namespace}.{tool.name}"
-                tool_embeddings[tool_key] = embedding
-            else:
-                tool, semantic_score = candidate  # type: ignore
+            # ``(tool, score)`` or ``(tool, score, embedding)``. A tool brought
+            # in through one of its chunks has no stored embedding even when
+            # embeddings were asked for.
+            tool, semantic_score, *rest = candidate
+            if include_embeddings and rest:
+                tool_embeddings[f"{tool.namespace}.{tool.name}"] = rest[0]
 
             if not self._is_tool_allowed(tool, query, req_caps, exc_caps):
                 continue

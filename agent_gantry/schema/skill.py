@@ -112,9 +112,16 @@ class Skill(BaseModel):
         """
         Flatten skill metadata into text for embedding.
 
+        The content is left out: see
+        :func:`agent_gantry.core.chunks.skill_chunks`, which indexes it in
+        pieces beside this vector. For one of those pieces, the text is the
+        piece itself, headed by the skill it belongs to.
+
         Returns:
             Text representation for embedding
         """
+        if self.is_chunk:
+            return f"{self.metadata.get('parent_name', '')} {self.content}".strip()
         parts = [
             self.name,
             self.namespace,
@@ -124,6 +131,14 @@ class Skill(BaseModel):
             self.summary or "",
         ]
         return " ".join(filter(None, parts))
+
+    @property
+    def is_chunk(self) -> bool:
+        """``True`` for an index entry holding one piece of another skill's content.
+
+        See :func:`agent_gantry.core.chunks.skill_chunks`.
+        """
+        return self.metadata.get("entity_type") == "skill_chunk"
 
 
 class SkillSearchResult(BaseModel):

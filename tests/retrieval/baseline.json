@@ -6,7 +6,7 @@
       "k": 5,
       "cases": 59,
       "recall_at_1": 0.1373,
-      "recall_at_k": 0.2157,
+      "recall_at_k": 0.2353,
       "decline_correctness": 0.0
     },
     "tools/decline": {
@@ -27,7 +27,7 @@
       "k": 5,
       "cases": 6,
       "recall_at_1": 0.0,
-      "recall_at_k": 0.0,
+      "recall_at_k": 0.1667,
       "decline_correctness": null
     },
     "tools/paraphrase": {
@@ -54,15 +54,15 @@
     "skills": {
       "k": 5,
       "cases": 14,
-      "recall_at_1": 0.0,
-      "recall_at_k": 0.4167,
+      "recall_at_1": 0.0833,
+      "recall_at_k": 0.6667,
       "decline_correctness": 0.0
     },
     "skills/body": {
       "k": 5,
       "cases": 4,
-      "recall_at_1": 0.0,
-      "recall_at_k": 0.5,
+      "recall_at_1": 0.25,
+      "recall_at_k": 0.75,
       "decline_correctness": null
     },
     "skills/decline": {
@@ -76,7 +76,7 @@
       "k": 5,
       "cases": 8,
       "recall_at_1": 0.0,
-      "recall_at_k": 0.375,
+      "recall_at_k": 0.625,
       "decline_correctness": null
     },
     "mcp_servers": {

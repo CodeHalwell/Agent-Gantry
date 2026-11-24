@@ -15,11 +15,17 @@ a server without embedding every tool it has, and a selector that narrows by
 server above its ceiling instead of giving up. It is a minor release because
 it adds public API and changes what a tool is embedded from.
 
-**Migrating.** Nothing has to change. Six things to know:
+**Migrating.** Nothing has to change. Eight things to know:
 
 - the next `sync()` re-embeds every tool once, because the text a tool is
   embedded from changed (fingerprint `v1.2`). With a hosted embedder that is
-  one batch of embedding calls per registry;
+  one batch of embedding calls per registry, plus one call's worth for each
+  piece of a long description;
+- skills already in a persistent store get their bodies indexed when they are
+  next passed to `add_skills()`, not before. Until then they are found as
+  they were: by description only;
+- `list_tools()` no longer returns the entries registered MCP servers are
+  indexed as, unless their namespace is asked for by name;
 - tools discovered from an MCP server now carry one tag, `mcp:<server>`. Code
   that assumed an MCP tool has no tags will see it;
 - if sentence-transformers is not installed, the fallback to the hash-based
@@ -82,6 +88,33 @@ decimals.
   window until enough of the server's tools turn up. That is correct, but
   slower on a very large table.
 
+- **Long text is searchable to its end.** An embedder reads a bounded number
+  of tokens (256 word-pieces for the default model, roughly a thousand
+  characters), so a tool with a long description was findable only by its
+  opening, and MCP tools put the discriminating part last: "use this
+  when...", filter syntax, what not to use it for. A description over about
+  900 characters is now indexed a second time in pieces of about 700, and the
+  tool is scored by the best of its own vector and its pieces'. For an MCP
+  tool the pieces come from the full text, which discovery keeps in
+  `extended_description` when it runs past 2,000 characters and which was
+  never embedded before. On the eval the two queries whose answer sits past
+  character 2,000 go from 0/2 to 2/2, and nothing else moves.
+- **A skill is searchable by its body.** A skill's vector is made from its
+  name, description, tags and summary; the content, up to 50,000 characters,
+  was never indexed, so a skill could only be found by what its one-line
+  description happened to say. The content is now indexed in pieces beside
+  it, and the whole skill is what comes back. On the eval, skills whose answer
+  is only in the body go from 2/4 to 4/4 and skill recall@1 from 0.750 to
+  0.917.
+
+  Both store their pieces in a reserved `__chunks__` namespace of the
+  existing tables, so no vector store needs a new method. Pieces carry their
+  parent's tags and category, so namespace, category and per-server scopes
+  still apply. They are never returned, listed or counted as tools or skills,
+  they are not shown to a selector, and they are removed with their parent
+  and by pruning. `RoutingConfig(chunk_long_text=False)` turns both off. The
+  cost is one extra embedding per piece at sync or `add_skills()`: none for a
+  tool with a short description, at least one for every skill with a body.
 - **Catalogue an MCP server without committing its tools.**
   `await gantry.list_server_tools("datadog")` asks a registered server what
   it has and returns the definitions; nothing is registered, embedded or given
