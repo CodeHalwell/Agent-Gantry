@@ -345,3 +345,30 @@ async def test_agent_entries_are_re_embedded_when_the_embedding_model_changes() 
         ]
     finally:
         await first.close()
+
+
+async def test_many_agent_entries_do_not_hide_a_tool_from_a_tool_search() -> None:
+    """Agents share the tools index; a hundred of them ranked first hid the one tool.
+
+    Three searches of 32, 64 and 96 rows held nothing but agents, and the
+    search stopped there with no tool, at a threshold of zero.
+    """
+    gantry = AgentGantry(embedder=SimpleEmbedder())
+    try:
+        for i in range(110):
+            gantry.register_a2a_agent(
+                f"payroll_{i}",
+                f"https://payroll-{i}.example",
+                description="Payroll payroll payroll queries about payroll.",
+            )
+
+        @gantry.register
+        def run_report(month: str) -> str:
+            """Run the monthly payroll report for the finance team."""
+            return month
+
+        await gantry.retrieve_a2a_agents("payroll", limit=1)  # indexes the agents
+        result = await gantry.retrieve(_query("payroll", limit=1))
+        assert [scored.tool.name for scored in result.tools] == ["run_report"]
+    finally:
+        await gantry.close()

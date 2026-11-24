@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from agent_gantry.adapters.embedders.base import embed_query
-from agent_gantry.core.chunks import CHUNK_SCORE_WEIGHT, MAX_CHUNKS, chunk_parent
+from agent_gantry.core.chunks import CHUNK_SCORE_WEIGHT, chunk_parent
 from agent_gantry.schema.a2a import a2a_agent_tag
 from agent_gantry.schema.mcp import mcp_server_tag
 from agent_gantry.schema.tool import ToolDefinition, chunk_namespace, is_reserved_namespace
@@ -294,8 +294,14 @@ MIN_CANDIDATE_POOL = 32
 
 #: How many times :meth:`SemanticRouter.route` may search again for a wider
 #: pool when rows that are not tools of their own (server and agent entries,
-#: pieces of long descriptions) crowded tools out of the first one.
-_MAX_POOL_WIDENINGS = 2
+#: pieces of long descriptions) crowded tools out of the first one. It stops
+#: sooner, as soon as the pool is full or the store has no more rows.
+_MAX_POOL_WIDENINGS = 6
+
+#: The widest that search may get. Every row short of it that is not a tool is
+#: an MCP server's or A2A agent's entry or a piece of a long description, so
+#: reaching it takes thousands of those ranked ahead of the tools asked for.
+_MAX_POOL_ROWS = 4096
 
 
 def _distinct_tools(candidates: Sequence[Any]) -> int:
@@ -533,9 +539,6 @@ class SemanticRouter:
             # Wide enough for re-scoring to change the answer; see
             # MIN_CANDIDATE_POOL for why ``limit * 4`` alone was not.
             pool = requested = max(query.limit * 4, MIN_CANDIDATE_POOL)
-            # Every tool in the pool found by its own row and by every piece
-            # of the longest description there can be: no search need be wider.
-            ceiling = pool * (MAX_CHUNKS + 1)
             for _ in range(_MAX_POOL_WIDENINGS + 1):
                 candidates = await self._vector_store.search(
                     query_vector=query_embedding,
@@ -553,14 +556,16 @@ class SemanticRouter:
                 if (
                     found >= pool
                     or len(candidates) < requested  # the store has no more to give
-                    or requested >= ceiling
+                    or requested >= _MAX_POOL_ROWS
                 ):
                     break
                 # Ask again for as many rows as the pool would take at the
-                # rate tools have turned up so far; with none yet, one more
-                # pool's worth.
-                wanted = math.ceil(requested * pool / found) if found else requested + pool
-                requested = min(ceiling, wanted)
+                # rate tools have turned up so far, and four times as many
+                # when none has yet. No more than eight times wider in one
+                # step: one tool among thirty-one other rows says little about
+                # the rows after them.
+                wanted = math.ceil(requested * pool / found) if found else requested * 4
+                requested = min(wanted, requested * 8, _MAX_POOL_ROWS)
             candidates = await self._fold_chunks(candidates, query)
             vector_search_time_ms = (perf_counter() - search_start) * 1000
         except BaseException:
