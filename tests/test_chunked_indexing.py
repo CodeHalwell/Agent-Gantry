@@ -135,6 +135,17 @@ def test_a_chunk_says_what_it_is_a_piece_of() -> None:
     assert chunk_parent(tool) is None
 
 
+def test_many_tags_do_not_push_a_piece_out_of_its_chunk() -> None:
+    """Eighty tags are 1,700 characters: with them all in front, the piece was cut off."""
+    tags = [f"capability-number-{i:03d}" for i in range(80)]
+    chunks = tool_chunks(_long_tool(tags=tags))
+
+    assert _TAIL in chunks[-1].description  # the whole piece is still there
+    assert all(len(c.description) < 1000 for c in chunks)
+    assert all(c.description.startswith("search_archive capability-number-000 ") for c in chunks)
+    assert all(c.tags == tags for c in chunks)  # a tag filter still sees every tag
+
+
 def test_the_full_text_is_the_extended_description_when_there_is_one() -> None:
     """MCP discovery keeps a long description there, with only its head in ``description``."""
     tool = _tool("search_logs", "Search the logs.", extended_description=_FILLER * 30 + _TAIL)

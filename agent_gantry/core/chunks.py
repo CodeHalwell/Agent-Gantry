@@ -75,6 +75,9 @@ MAX_SKILL_CHUNKS = 72
 #: "Chunk weight" in ``benchmarks/README.md``.
 CHUNK_SCORE_WEIGHT = 0.9
 
+#: Most characters of a tool's name and tags that open each of its chunks.
+_HEAD_CHARS = 160
+
 _SENTENCE_END = re.compile(r"(?<=[.!?;:])\s+")
 
 #: A piece shorter than this joins its neighbour. A few words are no use as a
@@ -151,7 +154,10 @@ def tool_chunks(tool: ToolDefinition) -> list[ToolDefinition]:
     text = tool.extended_description or tool.description
     if len(text) <= CHUNK_AFTER or tool.namespace.startswith(CHUNK_NAMESPACE):
         return []
-    head = " ".join(part for part in (tool.name, " ".join(tool.tags)) if part)
+    # The name and as many tags as fit: a tool may carry any number of tags,
+    # and a head that long would push the piece past what the embedder reads
+    # and past what a description may hold. The chunk's ``tags`` keep them all.
+    head = " ".join((tool.name, *tool.tags))[:_HEAD_CHARS].rstrip()
     return [
         ToolDefinition(
             name=_chunk_name(tool.namespace, tool.name, index),
