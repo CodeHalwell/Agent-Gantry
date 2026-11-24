@@ -15,7 +15,7 @@ a server without embedding every tool it has, and a selector that narrows by
 server above its ceiling instead of giving up. It is a minor release because
 it adds public API and changes what a tool is embedded from.
 
-**Migrating.** Nothing has to change. Five things to know:
+**Migrating.** Nothing has to change. Six things to know:
 
 - the next `sync()` re-embeds every tool once, because the text a tool is
   embedded from changed (fingerprint `v1.2`). With a hosted embedder that is
@@ -30,7 +30,11 @@ it adds public API and changes what a tool is embedded from.
   come from more than one namespace or MCP server now gets a selector answer
   (two requests) where it used to fall back to semantic routing;
 - rankings can shift a little: a tool whose long description merely mentions
-  `get`, `list` or `search` no longer gets the full intent boost.
+  `get`, `list` or `search` no longer gets the full intent boost;
+- a search scoped with `mcp_servers=` finds tools by the new tag. Tools
+  discovered by 0.26.0 carry it. A persistent store written by an earlier
+  version does not until those servers are discovered again, so a process
+  that only reads such a store gets nothing back from a scoped search.
 
 Measured on the new eval (345 tools, 59 labelled queries, `all-MiniLM-L6-v2`,
 `k=5`): tool recall@1 went from 0.549 to 0.725 and recall@5 from 0.765 to
@@ -71,10 +75,12 @@ decimals.
   for several. The scope is pushed down to the vector store, so the result is
   what searching that server alone would return; `sources=[MCP_SERVER]` could
   only say "any MCP server" and was applied after the candidate pool was
-  drawn. A selector is shown only the scoped servers' tools. LanceDB keeps
-  tags inside the stored tool, not in a column, so there the scope is found by
-  widening the search window rather than by a predicate: correct, but slower
-  on a very large table.
+  drawn. A selector is shown only the scoped servers' tools. Several servers
+  are any-of in every store. Only the in-memory store applies the tag as it
+  scans: LanceDB, Qdrant, Chroma and pgvector keep tags inside the stored
+  tool, not in a column, so there the scope is found by widening the search
+  window until enough of the server's tools turn up. That is correct, but
+  slower on a very large table.
 
 - **Catalogue an MCP server without committing its tools.**
   `await gantry.list_server_tools("datadog")` asks a registered server what
@@ -143,8 +149,8 @@ decimals.
 - **An MCP server with a long `extended_description` can be indexed.** The
   model allows 10,000 characters, but the server's searchable text was copied
   whole into a field that holds 2,000, so syncing such a server raised a
-  validation error. The text is now cut to fit, with the full text kept
-  beside it. `register_mcp_server()` takes no extended description, so this
+  validation error. The text is now cut to fit, with as much of it as the
+  model allows (10,000 characters) kept beside it. `register_mcp_server()` takes no extended description, so this
   was only reachable by setting one on the definition.
 - **`retrieve()` no longer returns MCP-server placeholders as tools.** A
   server registered with `register_mcp_server()` is indexed beside the tools

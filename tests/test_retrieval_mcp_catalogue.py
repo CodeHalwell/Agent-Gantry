@@ -477,3 +477,41 @@ async def test_a_server_with_a_long_description_can_be_indexed() -> None:
         assert [s.name for s in await gantry.retrieve_mcp_servers("logs and traces")] == ["datadog"]
     finally:
         await gantry.close()
+
+
+async def test_a_failure_to_embed_does_not_mark_the_server_unhealthy() -> None:
+    """The server answered; it is the embedder that failed."""
+
+    class _Broken(SimpleEmbedder):
+        async def embed_batch(self, texts: list[str], batch_size: int | None = None) -> Any:
+            raise RuntimeError("the embedding service is down")
+
+    gantry = AgentGantry(embedder=_Broken())
+    try:
+        _Server(gantry, "datadog", _server_tools("datadog", 3))
+        with pytest.raises(RuntimeError, match="embedding service is down"):
+            await gantry.discover_tools_from_server("datadog")
+
+        health = gantry._mcp_registry.get_server("datadog").health
+        assert health.available is True
+        assert health.consecutive_failures == 0
+    finally:
+        await gantry.close()
+
+
+async def test_a_reused_listing_is_as_old_as_the_call_that_made_it() -> None:
+    """Documented, and the reason ``refresh`` exists."""
+    gantry = AgentGantry(embedder=SimpleEmbedder())
+    try:
+        tools = _server_tools("datadog", 4)
+        server = _Server(gantry, "datadog", tools)
+        await gantry.list_server_tools("datadog")
+        server.tools = tools[1:]  # dropped after the listing was made
+
+        assert await gantry.adopt_server_tools("datadog", [tools[0].name]) == 1
+        with pytest.raises(ValueError, match="has no tool named"):
+            await gantry.adopt_server_tools("datadog", [tools[0].name], refresh=True)
+        # Asking again also removed the tool adopted from the stale listing.
+        assert _registered(gantry, "datadog") == []
+    finally:
+        await gantry.close()

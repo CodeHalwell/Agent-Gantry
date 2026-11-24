@@ -2229,7 +2229,10 @@ class AgentGantry:
             timeout: Connection timeout in seconds (default: 30.0)
             refresh: Ask the server for its tools again even if
                 :meth:`list_server_tools` already has. Without it, a listing
-                made earlier in this process is reused.
+                made earlier in this process is reused, however old: a tool
+                the server has dropped since can still be adopted from it and
+                will fail when called, and is not removed until the server is
+                asked again. Pass ``True`` when the listing may be stale.
 
         Returns:
             Number of tools adopted
@@ -2252,6 +2255,12 @@ class AgentGantry:
             client, catalogue = await self._fetch_mcp_catalogue(server_name, namespace, timeout)
         else:
             await self._ensure_initialized()
+
+        # Before the names are checked, and against the whole listing, not the
+        # adopted part. A tool adopted earlier and still offered stays; one
+        # the server has dropped goes, even when this call then fails on a
+        # name, because what the server no longer has cannot be called.
+        await self._remove_stale_mcp_tools(client, catalogue)
 
         if names is None:
             tools = list(catalogue)
@@ -2276,9 +2285,6 @@ class AgentGantry:
             return registry.get_client(server_name, namespace) if registry else None
 
         self._register_mcp_tool_handlers(client, tools, resolve_client=_current_client)
-        # Against the whole listing, not the adopted part: a tool adopted
-        # earlier and still offered stays, one the server has dropped goes.
-        await self._remove_stale_mcp_tools(client, catalogue)
 
         self._pending_tools.extend(tools)
         if self._config.auto_sync:

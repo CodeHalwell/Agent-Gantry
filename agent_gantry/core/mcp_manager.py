@@ -46,6 +46,7 @@ def _pseudo_tool_name(server: MCPServerDefinition) -> str:
 _DESCRIPTION_MAX = 2000
 _EXTENDED_DESCRIPTION_MAX = 10000
 
+
 def _pseudo_tool(server: MCPServerDefinition) -> ToolDefinition:
     """The ``ToolDefinition`` that stands in for ``server`` in the vector store."""
     text = server.to_searchable_text()
