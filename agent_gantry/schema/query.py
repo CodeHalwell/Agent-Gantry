@@ -89,11 +89,13 @@ class ToolQuery(BaseModel):
     #: and is applied after the candidate pool is drawn, this is pushed down
     #: to the vector store, so a server holding a few of a large registry's
     #: tools is searched in full rather than through whatever part of it made
-    #: the pool.
+    #: the pool. ``None`` is no scope; an empty list names no server, so it
+    #: matches nothing and no search is made.
     mcp_servers: list[str] | None = None
     #: Search only within the tools converted from these A2A agents' skills,
-    #: by agent name. Pushed down like ``mcp_servers``; naming both searches
-    #: the tools of either.
+    #: by agent name. Pushed down like ``mcp_servers``, with the same meaning
+    #: for ``None`` and an empty list; naming both searches the tools of
+    #: either.
     a2a_agents: list[str] | None = None
     exclude_deprecated: bool = True
     exclude_unhealthy: bool = True
