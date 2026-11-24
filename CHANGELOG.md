@@ -7,9 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-The first tranche of the retrieval roadmap: a way to measure retrieval, and the
-three changes that needed nothing else first. Upgrading re-embeds every tool
-once, on the next `sync()`, because the text a tool is embedded from changed.
+## [0.26.0] - 2026-11-24
+
+Retrieval can now be measured, and large MCP servers can be worked with: a
+labelled eval with a baseline CI holds, search within one server, cataloguing
+a server without embedding every tool it has, and a selector that narrows by
+server above its ceiling instead of giving up. It is a minor release because
+it adds public API and changes what a tool is embedded from.
+
+**Migrating.** Nothing has to change. Five things to know:
+
+- the next `sync()` re-embeds every tool once, because the text a tool is
+  embedded from changed (fingerprint `v1.2`). With a hosted embedder that is
+  one batch of embedding calls per registry;
+- tools discovered from an MCP server now carry one tag, `mcp:<server>`. Code
+  that assumed an MCP tool has no tags will see it;
+- if sentence-transformers is not installed, the fallback to the hash-based
+  `SimpleEmbedder` is now a `WARNING`, not a `DEBUG` line. Install the
+  `embeddings` extra, pass an embedder, or set
+  `EmbedderConfig(on_unavailable="raise")` to refuse it;
+- with a `SystemOneSelector`, a catalogue over `max_candidates` whose tools
+  come from more than one namespace or MCP server now gets a selector answer
+  (two requests) where it used to fall back to semantic routing;
+- rankings can shift a little: a tool whose long description merely mentions
+  `get`, `list` or `search` no longer gets the full intent boost.
 
 Measured on the new eval (345 tools, 59 labelled queries, `all-MiniLM-L6-v2`,
 `k=5`): tool recall@1 went from 0.549 to 0.725 and recall@5 from 0.765 to
@@ -5641,7 +5662,8 @@ adapters, and the provider dialects agree with it.
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.22.0...v0.23.0
